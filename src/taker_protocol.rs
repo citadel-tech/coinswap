@@ -1,53 +1,65 @@
-use std::collections::{HashMap, HashSet};
-use std::io::ErrorKind;
-use std::iter::once;
-use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet},
+    io::ErrorKind,
+    iter::once,
+    time::Duration,
+};
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::tcp::{ReadHalf, WriteHalf};
-use tokio::net::TcpStream;
-use tokio::select;
-use tokio::time::sleep;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::{
+        tcp::{ReadHalf, WriteHalf},
+        TcpStream,
+    },
+    select,
+    time::sleep,
+};
 
 use tokio_socks::tcp::Socks5Stream;
 
-use bitcoin::consensus::encode::deserialize;
-use bitcoin::hashes::hash160::Hash as Hash160;
-use bitcoin::hashes::{hex::ToHex, Hash};
-use bitcoin::secp256k1::{SecretKey, Signature};
-use bitcoin::util::ecdsa::PublicKey;
-use bitcoin::{BlockHash, OutPoint, Script, Transaction, Txid};
+use bitcoin::{
+    consensus::encode::deserialize,
+    hashes::{hash160::Hash as Hash160, hex::ToHex, Hash},
+    secp256k1::{
+        rand::{OsRng, RngCore},
+        SecretKey, Signature,
+    },
+    util::ecdsa::PublicKey,
+    BlockHash, OutPoint, Script, Transaction, Txid,
+};
 use bitcoincore_rpc::{Client, RpcApi};
-
-use rand::rngs::OsRng;
-use rand::RngCore;
 
 use itertools::izip;
 
-use crate::contracts;
-use crate::contracts::SwapCoin;
-use crate::contracts::{
-    calculate_coinswap_fee, create_contract_redeemscript, create_receivers_contract_tx,
-    find_funding_output, read_pubkeys_from_multisig_redeemscript, sign_contract_tx,
-    validate_contract_tx, WatchOnlySwapCoin, MAKER_FUNDING_TX_VBYTE_SIZE,
-};
-use crate::error::Error;
-use crate::messages::{
-    ConfirmedCoinSwapTxInfo, HashPreimage, MakerToTakerMessage, NextCoinSwapTxInfo, Preimage,
-    PrivateKeyHandover, ProofOfFunding, ReceiversContractTxInfo, SenderContractTxNoncesInfo,
-    SendersAndReceiversContractSigs, SignReceiversContractTx, SignSendersAndReceiversContractTxes,
-    SignSendersContractTx, SwapCoinPrivateKey, TakerHello, TakerToMakerMessage, PREIMAGE_LEN,
+use crate::{
+    contracts,
+    contracts::{
+        calculate_coinswap_fee, create_contract_redeemscript, create_receivers_contract_tx,
+        find_funding_output, read_pubkeys_from_multisig_redeemscript, sign_contract_tx,
+        validate_contract_tx, SwapCoin, WatchOnlySwapCoin, MAKER_FUNDING_TX_VBYTE_SIZE,
+    },
+    error::Error,
+    messages::{
+        ContractSigsForRecvingAndSending, ContractSigsForRecvr, ContractSigsForSender,
+        ContractTxForRecvr, ContractTxForSender, FundingTxInfo, HashPreimage, MakerToTakerMessage,
+        MultisigPrivkey, NextHopInfo, Preimage, PrivateKeyHandover, ProofOfFunding,
+        ReqContractSigsForRecvr, ReqContractSigsForSender, RequestContractSigsAsReceiverAndSender,
+        TakerHello, TakerToMakerMessage,
+    },
 };
 
-use crate::offerbook_sync::{sync_offerbook, MakerAddress, OfferAndAddress};
-use crate::wallet_sync::{
-    generate_keypair, import_watchonly_redeemscript, IncomingSwapCoin, OutgoingSwapCoin, Wallet,
+use crate::{
+    offerbook_sync::{sync_offerbook, MakerAddress, OfferAndAddress},
+    wallet_sync::{
+        generate_keypair, import_watchonly_redeemscript, IncomingSwapCoin, OutgoingSwapCoin, Wallet,
+    },
 };
 
 use crate::watchtower_protocol::{
     check_for_broadcasted_contract_txes, ContractTransaction, ContractsInfo,
 };
 
+// TODO: Put them into a config file.
 //relatively low value for now so that its easier to test without having to wait too much
 //right now only the very brave will try coinswap out on mainnet with non-trivial amounts
 pub const REFUND_LOCKTIME: u16 = 48; //in blocks
@@ -111,6 +123,10 @@ async fn send_coinswap(
     OsRng.fill_bytes(&mut preimage);
     let hashvalue = Hash160::hash(&preimage);
 
+    // TODO: REFUND_LOCKTIME_STEP should be a Maker's policy, to defend against possible DOS by very high LockTime value
+    // by malicious Takers. Different Makers could have different LockTime requirements. Taker needs to know this value at the OfferBook layer.
+    // This will require a moderate redesign of the current protocol to implement. Maker's need to be predetermined before starting the
+    // swap, for this to work. Currently they are found on the fly during the swapping process.
     let first_swap_locktime = REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * config.maker_count;
 
     let mut maker_offers_addresses = all_maker_offers_addresses
@@ -119,40 +135,39 @@ async fn send_coinswap(
 
     let (
         first_maker,
-        mut this_maker_multisig_privkeys,
-        mut this_maker_hashlock_privkeys,
+        maker_multisig_nonce,
+        maker_hashlock_nonce,
         my_funding_txes,
         mut outgoing_swapcoins,
-        first_maker_senders_contract_sigs,
+        contract_sigs_for_sender,
     ) = loop {
-        //loop to help error handling, loop ends if we run out of makers to try
+        // This loop attempts to create the first coinswap between a taker and a maker.
+        // The loop iterates over all the makers, and returns an [`OutgoingSwapCoins`] for the first suitable maker.
+        // Return Error if no suitable makers are found.
         let first_maker = choose_next_maker(&mut maker_offers_addresses, config.send_amount)
             .expect("not enough offers");
         let (
-            first_maker_multisig_pubkeys,
-            this_maker_multisig_privkeys,
-            first_maker_hashlock_pubkeys,
-            this_maker_hashlock_privkeys,
-        ) = generate_maker_multisig_and_hashlock_keys(
-            &first_maker.offer.tweakable_point,
-            config.tx_count,
-        );
+            maker_multisig_pubkeys,
+            maker_multisig_nonce,
+            maker_hashlock_pubkeys,
+            maker_hashlock_nonce,
+        ) = generate_maker_keys(&first_maker.offer.tweakable_point, config.tx_count);
         let (my_funding_txes, outgoing_swapcoins, _my_total_miner_fee) = wallet
             .initalize_coinswap(
                 rpc,
                 config.send_amount,
-                &first_maker_multisig_pubkeys,
-                &first_maker_hashlock_pubkeys,
+                &maker_multisig_pubkeys,
+                &maker_hashlock_pubkeys,
                 hashvalue,
                 first_swap_locktime,
                 config.fee_rate,
             )
             .unwrap();
-        let first_maker_senders_contract_sigs = match request_senders_contract_tx_signatures(
+        let contract_sigs_for_sender = match req_contract_sigs_for_sender(
             &first_maker.address,
             &outgoing_swapcoins,
-            &this_maker_multisig_privkeys,
-            &this_maker_hashlock_privkeys,
+            &maker_multisig_nonce,
+            &maker_hashlock_nonce,
             first_swap_locktime,
         )
         .await
@@ -169,14 +184,16 @@ async fn send_coinswap(
         };
         break (
             first_maker,
-            this_maker_multisig_privkeys,
-            this_maker_hashlock_privkeys,
+            maker_multisig_nonce,
+            maker_hashlock_nonce,
             my_funding_txes,
             outgoing_swapcoins,
-            first_maker_senders_contract_sigs,
+            contract_sigs_for_sender,
         );
     };
-    first_maker_senders_contract_sigs
+
+    // TODO: Contract sigs can be inserted into OutGoingSwapcoins and update the wallet, in the loop above.
+    contract_sigs_for_sender
         .iter()
         .zip(outgoing_swapcoins.iter_mut())
         .for_each(|(sig, outgoing_swapcoin)| outgoing_swapcoin.others_contract_sig = Some(*sig));
@@ -216,6 +233,7 @@ async fn send_coinswap(
 
     let mut last_checked_block_height: Option<u64> = None;
 
+    // This loop is performed for all the makers to make intermediate coinswap hops.
     for maker_index in 0..config.maker_count {
         let is_taker_next_peer = maker_index == config.maker_count - 1;
         let is_taker_previous_peer = maker_index == 0;
@@ -233,13 +251,14 @@ async fn send_coinswap(
         };
 
         let this_maker = next_maker;
+        //TODO: Create dedicated struct for `next_peer_info`.
         let (
             next_peer_multisig_pubkeys,
-            next_peer_multisig_keys_or_nonces,
-            next_peer_hashlock_keys_or_nonces,
-            maker_sign_sender_and_receiver_contracts,
+            next_peer_multisig_nonces,
+            next_peer_hashlock_nonces,
+            req_contract_sigs_as_sender_and_recvr,
             next_swap_contract_redeemscripts,
-            found_next_maker,
+            next_maker,
         ) = exchange_signatures_and_find_next_maker(
             rpc,
             &config,
@@ -251,9 +270,9 @@ async fn send_coinswap(
             &funding_txes,
             &funding_tx_merkleproofs,
             &this_maker_multisig_redeemscripts,
-            &this_maker_multisig_privkeys,
+            &maker_multisig_nonce,
             &this_maker_contract_redeemscripts,
-            &this_maker_hashlock_privkeys,
+            &maker_hashlock_nonce,
             &this_maker_contract_txes,
             maker_refund_locktime,
             hashvalue,
@@ -261,13 +280,13 @@ async fn send_coinswap(
             &mut watchonly_swapcoins,
         )
         .await?;
-        next_maker = found_next_maker;
         active_maker_addresses.push(&this_maker.address);
 
+        // TODO: Simplify this function call.
         let wait_for_confirm_result = wait_for_funding_tx_confirmation(
             rpc,
-            &maker_sign_sender_and_receiver_contracts
-                .senders_contract_txes_info
+            &req_contract_sigs_as_sender_and_recvr
+                .senders_contract_txs_info
                 .iter()
                 .map(|senders_contract_tx_info| {
                     senders_contract_tx_info.contract_tx.input[0]
@@ -298,6 +317,9 @@ async fn send_coinswap(
             &mut last_checked_block_height,
         )
         .await?;
+
+        // TODO: Recovery script should be run automatically when this happens.
+        // With more logging information of which maker deviated, and banning their fidelity bond.
         if wait_for_confirm_result.is_none() {
             log::info!(concat!(
                 "Somebody deviated from the protocol by broadcasting one or more contract",
@@ -310,34 +332,38 @@ async fn send_coinswap(
         funding_txes = next_funding_txes;
         funding_tx_merkleproofs = next_funding_tx_merkleproofs;
 
+        //TODO: Because this will only run once for the last hop, take this out of the loop and
+        // put it in the next section. This will be more intuitive to read and reduce size of the
+        // the intermediate hop code.
         if is_taker_next_peer {
             incoming_swapcoins = create_incoming_swapcoins(
                 rpc,
                 &wallet,
-                &maker_sign_sender_and_receiver_contracts,
+                &req_contract_sigs_as_sender_and_recvr,
                 &funding_txes,
                 &funding_tx_merkleproofs,
                 &next_swap_contract_redeemscripts,
-                &next_peer_hashlock_keys_or_nonces,
+                &next_peer_hashlock_nonces,
                 &next_peer_multisig_pubkeys,
-                &next_peer_multisig_keys_or_nonces,
+                &next_peer_multisig_nonces,
                 preimage,
             )
             .unwrap();
             //TODO reason about why this unwrap is here without any error handling
             //do we expect this to never error? are the conditions checked earlier?
         }
-        this_maker_multisig_privkeys = next_peer_multisig_keys_or_nonces;
-        this_maker_hashlock_privkeys = next_peer_hashlock_keys_or_nonces;
+        maker_multisig_nonce = next_peer_multisig_nonces;
+        maker_hashlock_nonce = next_peer_hashlock_nonces;
         previous_maker = Some(this_maker);
     }
 
+    // Intermediate hops completed. Perform the last receiving hop.
     let last_maker = previous_maker.unwrap();
     log::info!(
-        "===> Sending SignReceiversContractTx to {}",
+        "===> Sending ReqContractSigsForRecvr to {}",
         last_maker.address
     );
-    let last_receiver_contract_sig = request_receivers_contract_tx_signatures(
+    let receiver_contract_sig = req_contract_sigs_for_recvr(
         &last_maker.address,
         &incoming_swapcoins,
         &incoming_swapcoins
@@ -348,7 +374,7 @@ async fn send_coinswap(
     .await?;
     for (incoming_swapcoin, &receiver_contract_sig) in incoming_swapcoins
         .iter_mut()
-        .zip(last_receiver_contract_sig.iter())
+        .zip(receiver_contract_sig.iter())
     {
         incoming_swapcoin.others_contract_sig = Some(receiver_contract_sig);
     }
@@ -357,7 +383,7 @@ async fn send_coinswap(
     }
     wallet.update_swapcoins_list().unwrap();
 
-    settle_all_coinswaps_send_hash_preimage_and_privkeys(
+    settle_all_coinswaps(
         &config,
         preimage,
         &active_maker_addresses,
@@ -385,7 +411,7 @@ async fn send_coinswap(
             .collect::<Vec<_>>()
     );
 
-    //update incoming_swapcoins with privkey on disk here
+    //TODO: update incoming_swapcoins with privkey on disk here
     for incoming_swapcoin in &incoming_swapcoins {
         wallet
             .find_incoming_swapcoin_mut(&incoming_swapcoin.get_multisig_redeemscript())
@@ -398,6 +424,7 @@ async fn send_coinswap(
     Ok(())
 }
 
+/// Chose the next Maker who's offer amount range satisfies the given amount.
 fn choose_next_maker<'a>(
     maker_offers_addresses: &mut Vec<&'a OfferAndAddress>,
     amount: u64,
@@ -413,6 +440,7 @@ fn choose_next_maker<'a>(
     }
 }
 
+//TODO: Move it to util module
 pub async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     message: TakerToMakerMessage,
@@ -424,6 +452,7 @@ pub async fn send_message(
     Ok(())
 }
 
+//TODO: Move it to util module.
 pub async fn read_message(
     reader: &mut BufReader<ReadHalf<'_>>,
 ) -> Result<MakerToTakerMessage, Error> {
@@ -443,6 +472,7 @@ pub async fn read_message(
     Ok(message)
 }
 
+/// Performs a handshake with a Maker and returns and Reader and Writer halves.
 pub async fn handshake_maker<'a>(
     socket: &'a mut TcpStream,
     maker_address: &MakerAddress,
@@ -473,7 +503,10 @@ pub async fn handshake_maker<'a>(
     Ok((socket_reader, socket_writer))
 }
 
-fn generate_maker_multisig_and_hashlock_keys(
+/// Generate The Maker's Multisig and HashLock keys and respective nonce values.
+/// Nonce values are random integers and resulting Pubkeys are derived by tweaking the
+/// Make's advertised Pubkey with these two nonces.
+fn generate_maker_keys(
     tweakable_point: &PublicKey,
     count: u32,
 ) -> (
@@ -496,6 +529,7 @@ fn generate_maker_multisig_and_hashlock_keys(
     )
 }
 
+// TODO: Remove this function and perform key generation inline.
 fn generate_my_multisig_and_hashlock_keys(
     count: u32,
 ) -> (
@@ -516,18 +550,24 @@ fn generate_my_multisig_and_hashlock_keys(
     )
 }
 
-async fn request_senders_contract_tx_signatures<S: SwapCoin>(
+/// Request Contract transaction signatures *required by* a "Sender".
+/// "Sender" = The party funding into the coinswap multisig.
+/// Could be both Taker or Maker, depending on the position in the hop.
+///
+/// For Ex: If the Sender is a Taker, and Receiver is a Maker, this function will return
+/// the Maker's Signatures.
+async fn req_contract_sigs_for_sender<S: SwapCoin>(
     maker_address: &MakerAddress,
     outgoing_swapcoins: &[S],
     maker_multisig_nonces: &[SecretKey],
     maker_hashlock_nonces: &[SecretKey],
     locktime: u16,
-) -> Result<Vec<Signature>, Error> {
+) -> Result<ContractSigsForSender, Error> {
     let mut ii = 0;
     loop {
         ii += 1;
         select! {
-            ret = request_senders_contract_tx_signatures_attempt_once(
+            ret = req_contract_sigs_for_sender(
                 maker_address,
                 outgoing_swapcoins,
                 maker_multisig_nonces,
@@ -568,13 +608,19 @@ async fn request_senders_contract_tx_signatures<S: SwapCoin>(
     }
 }
 
-async fn request_senders_contract_tx_signatures_attempt_once<S: SwapCoin>(
+/// Request Contract transaction signatures *required by* a "Receiver".
+/// "Receiver" = The party receiving the fund in coinswap multisig.
+/// Could be both Taker or Maker, depending on the position in the hop.
+///
+/// For Ex: If the Sender is a Taker, and Receiver is a Maker, this function will return
+/// the Taker's Signatures.
+async fn req_contract_sigs_for_sender_once<S: SwapCoin>(
     maker_address: &MakerAddress,
     outgoing_swapcoins: &[S],
     maker_multisig_nonces: &[SecretKey],
     maker_hashlock_nonces: &[SecretKey],
     locktime: u16,
-) -> Result<Vec<Signature>, Error> {
+) -> Result<ContractSigsForSender, Error> {
     log::info!("Connecting to {}", maker_address);
     let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
     let (mut socket_reader, mut socket_writer) =
@@ -582,15 +628,15 @@ async fn request_senders_contract_tx_signatures_attempt_once<S: SwapCoin>(
     log::info!("===> Sending SignSendersContractTx to {}", maker_address);
     send_message(
         &mut socket_writer,
-        TakerToMakerMessage::SignSendersContractTx(SignSendersContractTx {
-            txes_info: izip!(
+        TakerToMakerMessage::ReqContractSigsForSender(ReqContractSigsForSender {
+            txs_info: izip!(
                 maker_multisig_nonces.iter(),
                 maker_hashlock_nonces.iter(),
                 outgoing_swapcoins.iter()
             )
             .map(
                 |(&multisig_key_nonce, &hashlock_key_nonce, outgoing_swapcoin)| {
-                    SenderContractTxNoncesInfo {
+                    ContractTxForSender {
                         multisig_key_nonce,
                         hashlock_key_nonce,
                         timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey(),
@@ -600,13 +646,13 @@ async fn request_senders_contract_tx_signatures_attempt_once<S: SwapCoin>(
                     }
                 },
             )
-            .collect::<Vec<SenderContractTxNoncesInfo>>(),
+            .collect::<Vec<ContractTxForSender>>(),
             hashvalue: outgoing_swapcoins[0].get_hashvalue(),
             locktime,
         }),
     )
     .await?;
-    let maker_senders_contract_sig = if let MakerToTakerMessage::SendersContractSig(m) =
+    let maker_senders_contract_sig = if let MakerToTakerMessage::ContractSigsForSender(m) =
         read_message(&mut socket_reader).await?
     {
         m
@@ -625,19 +671,19 @@ async fn request_senders_contract_tx_signatures_attempt_once<S: SwapCoin>(
         return Err(Error::Protocol("invalid signature from maker"));
     }
     log::info!("<=== Received SendersContractSig from {}", maker_address);
-    Ok(maker_senders_contract_sig.sigs)
+    Ok(maker_senders_contract_sig)
 }
 
-async fn request_receivers_contract_tx_signatures<S: SwapCoin>(
+async fn req_contract_sigs_for_recvr<S: SwapCoin>(
     maker_address: &MakerAddress,
     incoming_swapcoins: &[S],
     receivers_contract_txes: &[Transaction],
-) -> Result<Vec<Signature>, Error> {
+) -> Result<Vec<ContractSigsForRecvr>, Error> {
     let mut ii = 0;
     loop {
         ii += 1;
         select! {
-            ret = request_receivers_contract_tx_signatures_attempt_once(
+            ret = req_contract_sigs_for_recvr_once(
                 maker_address,
                 incoming_swapcoins,
                 receivers_contract_txes,
@@ -683,32 +729,30 @@ async fn request_receivers_contract_tx_signatures<S: SwapCoin>(
     }
 }
 
-async fn request_receivers_contract_tx_signatures_attempt_once<S: SwapCoin>(
+async fn req_contract_sigs_for_recvr_once<S: SwapCoin>(
     maker_address: &MakerAddress,
     incoming_swapcoins: &[S],
     receivers_contract_txes: &[Transaction],
-) -> Result<Vec<Signature>, Error> {
+) -> Result<Vec<ContractSigsForRecvr>, Error> {
     log::info!("Connecting to {}", maker_address);
     let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
     let (mut socket_reader, mut socket_writer) =
         handshake_maker(&mut socket, maker_address).await?;
     send_message(
         &mut socket_writer,
-        TakerToMakerMessage::SignReceiversContractTx(SignReceiversContractTx {
-            txes: incoming_swapcoins
+        TakerToMakerMessage::ReqContractSigsForRecvr(ReqContractSigsForRecvr {
+            txs: incoming_swapcoins
                 .iter()
                 .zip(receivers_contract_txes.iter())
-                .map(
-                    |(swapcoin, receivers_contract_tx)| ReceiversContractTxInfo {
-                        multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
-                        contract_tx: receivers_contract_tx.clone(),
-                    },
-                )
-                .collect::<Vec<ReceiversContractTxInfo>>(),
+                .map(|(swapcoin, receivers_contract_tx)| ContractTxForRecvr {
+                    multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
+                    contract_tx: receivers_contract_tx.clone(),
+                })
+                .collect::<Vec<ContractTxForRecvr>>(),
         }),
     )
     .await?;
-    let maker_receiver_contract_sig = if let MakerToTakerMessage::ReceiversContractSig(m) =
+    let maker_receiver_contract_sig = if let MakerToTakerMessage::ContractSigsForRecvr(m) =
         read_message(&mut socket_reader).await?
     {
         m
@@ -728,7 +772,7 @@ async fn request_receivers_contract_tx_signatures_attempt_once<S: SwapCoin>(
     }
 
     log::info!("<=== Received ReceiversContractSig from {}", maker_address);
-    Ok(maker_receiver_contract_sig.sigs)
+    Ok(maker_receiver_contract_sig)
 }
 
 //return a list of the transactions and merkleproofs if the funding txes confirmed
@@ -828,6 +872,7 @@ async fn wait_for_funding_tx_confirmation(
     }
 }
 
+// TODO: Remove this function and use inplace iterators to get these values from Swapcoins.
 fn get_swapcoin_multisig_contract_redeemscripts_txes<S: SwapCoin>(
     swapcoins: &[S],
 ) -> (Vec<Script>, Vec<Script>, Vec<Transaction>) {
@@ -848,6 +893,11 @@ fn get_swapcoin_multisig_contract_redeemscripts_txes<S: SwapCoin>(
     )
 }
 
+// TODO: Simplify this function signature. Group related items into dedictaed structs.
+// TODO: Add function doc.
+/// Exchange all the required signatures with a Maker. Find the next Maker in the hop.
+/// Initiate Coinswap between this Maker and the next Maker. This call will keep persisting
+/// connection with a Maker if it is unresponsive, until a timeout.
 async fn exchange_signatures_and_find_next_maker<'a>(
     rpc: &Client,
     config: &TakerConfig,
@@ -859,9 +909,9 @@ async fn exchange_signatures_and_find_next_maker<'a>(
     funding_txes: &[Transaction],
     funding_tx_merkleproofs: &[String],
     this_maker_multisig_redeemscripts: &[Script],
-    this_maker_multisig_privkeys: &[SecretKey],
+    this_maker_multisig_nonce: &[SecretKey],
     this_maker_contract_redeemscripts: &[Script],
-    this_maker_hashlock_privkeys: &[SecretKey],
+    this_maker_hashlock_nonce: &[SecretKey],
     this_maker_contract_txes: &[Transaction],
     maker_refund_locktime: u16,
     hashvalue: Hash160,
@@ -872,7 +922,7 @@ async fn exchange_signatures_and_find_next_maker<'a>(
         Vec<PublicKey>,
         Vec<SecretKey>,
         Vec<SecretKey>,
-        SignSendersAndReceiversContractTxes,
+        RequestContractSigsAsReceiverAndSender,
         Vec<Script>,
         &'a OfferAndAddress,
     ),
@@ -893,9 +943,9 @@ async fn exchange_signatures_and_find_next_maker<'a>(
                 funding_txes,
                 funding_tx_merkleproofs,
                 this_maker_multisig_redeemscripts,
-                this_maker_multisig_privkeys,
+                this_maker_multisig_nonce,
                 this_maker_contract_redeemscripts,
-                this_maker_hashlock_privkeys,
+                this_maker_hashlock_nonce,
                 this_maker_contract_txes,
                 maker_refund_locktime,
                 hashvalue,
@@ -954,9 +1004,9 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
     funding_txes: &[Transaction],
     funding_tx_merkleproofs: &[String],
     this_maker_multisig_redeemscripts: &[Script],
-    this_maker_multisig_privkeys: &[SecretKey],
+    this_maker_multisig_nonce: &[SecretKey],
     this_maker_contract_redeemscripts: &[Script],
-    this_maker_hashlock_privkeys: &[SecretKey],
+    this_maker_hashlock_nonce: &[SecretKey],
     this_maker_contract_txes: &[Transaction],
     maker_refund_locktime: u16,
     hashvalue: Hash160,
@@ -967,7 +1017,7 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
         Vec<PublicKey>,
         Vec<SecretKey>,
         Vec<SecretKey>,
-        SignSendersAndReceiversContractTxes,
+        RequestContractSigsAsReceiverAndSender,
         Vec<Script>,
         &'a OfferAndAddress,
     ),
@@ -1003,23 +1053,20 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
                 .expect("not enough offers");
             //next_maker is only ever accessed when the next peer is a maker, not a taker
             //i.e. if its ever used when is_taker_next_peer == true, then thats a bug
-            generate_maker_multisig_and_hashlock_keys(
-                &next_maker.offer.tweakable_point,
-                config.tx_count,
-            )
+            generate_maker_keys(&next_maker.offer.tweakable_point, config.tx_count)
         };
         log::info!("===> Sending ProofOfFunding to {}", this_maker.address);
-        let (maker_sign_sender_and_receiver_contracts, next_swap_contract_redeemscripts) =
-            send_proof_of_funding_and_check_reply(
+        let (sign_contract_txs_for_maker_as_receiver_and_sender, next_swap_contract_redeemscripts) =
+            send_proof_of_funding_and_init_next_hop(
                 &mut socket_reader,
                 &mut socket_writer,
                 this_maker,
                 funding_txes,
                 funding_tx_merkleproofs,
                 this_maker_multisig_redeemscripts,
-                this_maker_multisig_privkeys,
+                this_maker_multisig_nonce,
                 this_maker_contract_redeemscripts,
-                this_maker_hashlock_privkeys,
+                this_maker_hashlock_nonce,
                 &next_peer_multisig_pubkeys,
                 &next_peer_hashlock_pubkeys,
                 maker_refund_locktime,
@@ -1033,20 +1080,22 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
             this_maker.address
         );
 
+        // If This Maker is the Sender, and we (the Taker) are the Receiver (Last Hop). We provide the Sender's Contact Tx Sigs.
         let senders_sigs = if is_taker_next_peer {
             log::info!("Taker is next peer. Signing Sender's Contract Txs",);
-            sign_senders_contract_txes(
+            sign_senders_contract_txs(
                 &next_peer_multisig_keys_or_nonces,
-                &maker_sign_sender_and_receiver_contracts,
+                &sign_contract_txs_for_maker_as_receiver_and_sender,
             )?
         } else {
+            // If Next Maker is the Receiver, and This Maker is The Sender, Request Sender's Contract Tx Sig to Next Maker.
             let next_swapcoins = create_watch_only_swapcoins(
                 rpc,
-                &maker_sign_sender_and_receiver_contracts,
+                &sign_contract_txs_for_maker_as_receiver_and_sender,
                 &next_peer_multisig_pubkeys,
                 &next_swap_contract_redeemscripts,
             )?;
-            let sigs = match request_senders_contract_tx_signatures(
+            let sigs = match req_contract_sigs_for_sender(
                 &next_maker.address,
                 &next_swapcoins,
                 &next_peer_multisig_keys_or_nonces,
@@ -1058,7 +1107,7 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
                 Ok(r) => r,
                 Err(e) => {
                     log::debug!(
-                        "Fail to obtain senders contract tx signature from next_maker {}: {:?}",
+                        "Fail to obtain sender's contract tx signature from next_maker {}: {:?}",
                         next_maker.address,
                         e
                     );
@@ -1072,19 +1121,21 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
             next_peer_multisig_pubkeys,
             next_peer_multisig_keys_or_nonces,
             next_peer_hashlock_keys_or_nonces,
-            maker_sign_sender_and_receiver_contracts,
+            sign_contract_txs_for_maker_as_receiver_and_sender,
             next_swap_contract_redeemscripts,
             senders_sigs,
         );
     };
 
+    // If This Maker is the Reciver, and We (The Taker) are the Sender (First Hop), Sign the Contract Tx.
     let receivers_sigs = if is_taker_previous_peer {
         log::info!("Taker is previous peer. Signing Receivers Contract Txs",);
-        sign_receivers_contract_txes(
-            &maker_sign_sender_and_receiver_contracts.receivers_contract_txes,
+        sign_receivers_contract_txs(
+            &maker_sign_sender_and_receiver_contracts.receivers_contract_txs,
             outgoing_swapcoins,
         )?
     } else {
+        // If Next Maker is the Receiver, and Previous Maker is the Sender, request Previous Maker to sign the Reciever's Contract Tx.
         assert!(previous_maker.is_some());
         let previous_maker_addr = &previous_maker.unwrap().address;
         log::info!(
@@ -1097,20 +1148,20 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
             //if the next peer is a maker not a taker, then that maker's swapcoins are last
             &watchonly_swapcoins[watchonly_swapcoins.len() - 2]
         };
-        request_receivers_contract_tx_signatures(
+        req_contract_sigs_for_recvr(
             &previous_maker_addr,
             previous_maker_watchonly_swapcoins,
-            &maker_sign_sender_and_receiver_contracts.receivers_contract_txes,
+            &maker_sign_sender_and_receiver_contracts.receivers_contract_txs,
         )
         .await?
     };
     log::info!(
-        "===> Sending SendersAndReceiversContractSigs to {}",
+        "===> Sending ContractSigsAsReceiverAndSender to {}",
         this_maker.address
     );
     send_message(
         &mut socket_writer,
-        TakerToMakerMessage::SendersAndReceiversContractSigs(SendersAndReceiversContractSigs {
+        TakerToMakerMessage::ContractSigsForRecvingAndSending(ContractSigsForRecvingAndSending {
             receivers_sigs,
             senders_sigs,
         }),
@@ -1126,7 +1177,9 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
     ))
 }
 
-async fn send_proof_of_funding_and_check_reply(
+// TODO: Simplify this function. Use dedicated structs for related items.
+/// Send proof of funding to a Maker and initiate next Coinswap hop with this Maker and the Next Maker.
+async fn send_proof_of_funding_and_init_next_hop(
     socket_reader: &mut BufReader<ReadHalf<'_>>,
     socket_writer: &mut WriteHalf<'_>,
     this_maker: &OfferAndAddress,
@@ -1142,7 +1195,7 @@ async fn send_proof_of_funding_and_check_reply(
     next_maker_fee_rate: u64,
     this_maker_contract_txes: &[Transaction],
     hashvalue: Hash160,
-) -> Result<(SignSendersAndReceiversContractTxes, Vec<Script>), Error> {
+) -> Result<(RequestContractSigsAsReceiverAndSender, Vec<Script>), Error> {
     send_message(
         socket_writer,
         TakerToMakerMessage::ProofOfFunding(ProofOfFunding {
@@ -1162,33 +1215,33 @@ async fn send_proof_of_funding_and_check_reply(
                     &multisig_key_nonce,
                     contract_redeemscript,
                     &hashlock_key_nonce,
-                )| ConfirmedCoinSwapTxInfo {
+                )| FundingTxInfo {
                     funding_tx: funding_tx.clone(),
                     funding_tx_merkleproof: funding_tx_merkleproof.clone(),
                     multisig_redeemscript: multisig_redeemscript.clone(),
-                    multisig_key_nonce,
+                    multisig_nonce: multisig_key_nonce,
                     contract_redeemscript: contract_redeemscript.clone(),
-                    hashlock_key_nonce,
+                    hashlock_nonce: hashlock_key_nonce,
                 },
             )
-            .collect::<Vec<ConfirmedCoinSwapTxInfo>>(),
+            .collect::<Vec<FundingTxInfo>>(),
             next_coinswap_info: next_peer_multisig_pubkeys
                 .iter()
                 .zip(next_peer_hashlock_pubkeys.iter())
                 .map(
-                    |(&next_coinswap_multisig_pubkey, &next_hashlock_pubkey)| NextCoinSwapTxInfo {
-                        next_coinswap_multisig_pubkey,
+                    |(&next_coinswap_multisig_pubkey, &next_hashlock_pubkey)| NextHopInfo {
+                        next_multisig_pubkey: next_coinswap_multisig_pubkey,
                         next_hashlock_pubkey,
                     },
                 )
-                .collect::<Vec<NextCoinSwapTxInfo>>(),
+                .collect::<Vec<NextHopInfo>>(),
             next_locktime: next_maker_refund_locktime,
             next_fee_rate: next_maker_fee_rate,
         }),
     )
     .await?;
     let maker_sign_sender_and_receiver_contracts =
-        if let MakerToTakerMessage::SignSendersAndReceiversContractTxes(m) =
+        if let MakerToTakerMessage::RequestContractSigsAsReceiverAndSender(m) =
             read_message(socket_reader).await?
         {
             m
@@ -1198,7 +1251,7 @@ async fn send_proof_of_funding_and_check_reply(
             ));
         };
     if maker_sign_sender_and_receiver_contracts
-        .receivers_contract_txes
+        .receivers_contract_txs
         .len()
         != this_maker_multisig_redeemscripts.len()
     {
@@ -1207,7 +1260,7 @@ async fn send_proof_of_funding_and_check_reply(
         ));
     }
     if maker_sign_sender_and_receiver_contracts
-        .senders_contract_txes_info
+        .senders_contract_txs_info
         .len()
         != next_peer_multisig_pubkeys.len()
     {
@@ -1230,7 +1283,7 @@ async fn send_proof_of_funding_and_check_reply(
     let this_amount = funding_tx_values.iter().sum::<u64>();
 
     let next_amount = maker_sign_sender_and_receiver_contracts
-        .senders_contract_txes_info
+        .senders_contract_txs_info
         .iter()
         .map(|i| i.funding_amount)
         .sum::<u64>();
@@ -1259,7 +1312,7 @@ async fn send_proof_of_funding_and_check_reply(
 
     for (receivers_contract_tx, contract_tx, contract_redeemscript) in izip!(
         maker_sign_sender_and_receiver_contracts
-            .receivers_contract_txes
+            .receivers_contract_txs
             .iter(),
         this_maker_contract_txes.iter(),
         this_maker_contract_redeemscripts.iter()
@@ -1274,7 +1327,7 @@ async fn send_proof_of_funding_and_check_reply(
         .iter()
         .zip(
             maker_sign_sender_and_receiver_contracts
-                .senders_contract_txes_info
+                .senders_contract_txs_info
                 .iter(),
         )
         .map(|(hashlock_pubkey, senders_contract_tx_info)| {
@@ -1292,7 +1345,8 @@ async fn send_proof_of_funding_and_check_reply(
     ))
 }
 
-fn sign_receivers_contract_txes(
+//TODO: Move this into util module.
+fn sign_receivers_contract_txs(
     receivers_contract_txes: &[Transaction],
     outgoing_swapcoins: &[OutgoingSwapCoin],
 ) -> Result<Vec<Signature>, Error> {
@@ -1305,15 +1359,16 @@ fn sign_receivers_contract_txes(
         .collect::<Result<Vec<Signature>, Error>>()
 }
 
-fn sign_senders_contract_txes(
+//TODO: Move this util module
+fn sign_senders_contract_txs(
     my_receiving_multisig_privkeys: &[SecretKey],
-    maker_sign_sender_and_receiver_contracts: &SignSendersAndReceiversContractTxes,
+    maker_sign_sender_and_receiver_contracts: &RequestContractSigsAsReceiverAndSender,
 ) -> Result<Vec<Signature>, Error> {
     my_receiving_multisig_privkeys
         .iter()
         .zip(
             maker_sign_sender_and_receiver_contracts
-                .senders_contract_txes_info
+                .senders_contract_txs_info
                 .iter(),
         )
         .map(
@@ -1330,15 +1385,16 @@ fn sign_senders_contract_txes(
         .map_err(|_| Error::Protocol("error with signing contract tx"))
 }
 
+// TODO: Move this into util module.
 fn create_watch_only_swapcoins(
     rpc: &Client,
-    maker_sign_sender_and_receiver_contracts: &SignSendersAndReceiversContractTxes,
+    maker_sign_sender_and_receiver_contracts: &RequestContractSigsAsReceiverAndSender,
     next_peer_multisig_pubkeys: &[PublicKey],
     next_swap_contract_redeemscripts: &[Script],
 ) -> Result<Vec<WatchOnlySwapCoin>, Error> {
     let next_swapcoins = izip!(
         maker_sign_sender_and_receiver_contracts
-            .senders_contract_txes_info
+            .senders_contract_txs_info
             .iter(),
         next_peer_multisig_pubkeys.iter(),
         next_swap_contract_redeemscripts.iter()
@@ -1363,10 +1419,11 @@ fn create_watch_only_swapcoins(
     Ok(next_swapcoins)
 }
 
+// TODO: Move this into util module.
 fn create_incoming_swapcoins(
     rpc: &Client,
     wallet: &Wallet,
-    maker_sign_sender_and_receiver_contracts: &SignSendersAndReceiversContractTxes,
+    maker_sign_sender_and_receiver_contracts: &RequestContractSigsAsReceiverAndSender,
     funding_txes: &[Transaction],
     funding_tx_merkleproofs: &[String],
     next_swap_contract_redeemscripts: &[Script],
@@ -1376,12 +1433,12 @@ fn create_incoming_swapcoins(
     preimage: Preimage,
 ) -> Result<Vec<IncomingSwapCoin>, Error> {
     let next_swap_multisig_redeemscripts = maker_sign_sender_and_receiver_contracts
-        .senders_contract_txes_info
+        .senders_contract_txs_info
         .iter()
         .map(|senders_contract_tx_info| senders_contract_tx_info.multisig_redeemscript.clone())
         .collect::<Vec<Script>>();
     let next_swap_funding_outpoints = maker_sign_sender_and_receiver_contracts
-        .senders_contract_txes_info
+        .senders_contract_txs_info
         .iter()
         .map(|senders_contract_tx_info| {
             senders_contract_tx_info.contract_tx.input[0].previous_output
@@ -1468,6 +1525,7 @@ fn create_incoming_swapcoins(
     Ok(incoming_swapcoins)
 }
 
+//TODO: Remove this function. Find these values inline.
 fn get_multisig_redeemscripts_from_swapcoins<S: SwapCoin>(swapcoins: &[S]) -> Vec<Script> {
     swapcoins
         .iter()
@@ -1475,9 +1533,10 @@ fn get_multisig_redeemscripts_from_swapcoins<S: SwapCoin>(swapcoins: &[S]) -> Ve
         .collect::<Vec<Script>>()
 }
 
+///TODO: The checking part is missing. Add the check. probably this should be added into the trait of SwapCoin.
 fn check_and_apply_maker_private_keys<S: SwapCoin>(
     swapcoins: &mut Vec<S>,
-    swapcoin_private_keys: &[SwapCoinPrivateKey],
+    swapcoin_private_keys: &[MultisigPrivkey],
 ) -> Result<(), Error> {
     for (swapcoin, swapcoin_private_key) in swapcoins.iter_mut().zip(swapcoin_private_keys.iter()) {
         swapcoin
@@ -1487,7 +1546,8 @@ fn check_and_apply_maker_private_keys<S: SwapCoin>(
     Ok(())
 }
 
-async fn settle_all_coinswaps_send_hash_preimage_and_privkeys(
+/// Settle all coinswaps by sending hash preimages and privkeys.
+async fn settle_all_coinswaps(
     config: &TakerConfig,
     preimage: Preimage,
     active_maker_addresses: &Vec<&MakerAddress>,
@@ -1495,7 +1555,7 @@ async fn settle_all_coinswaps_send_hash_preimage_and_privkeys(
     watchonly_swapcoins: &mut Vec<Vec<WatchOnlySwapCoin>>,
     incoming_swapcoins: &mut Vec<IncomingSwapCoin>,
 ) -> Result<(), Error> {
-    let mut outgoing_privkeys: Option<Vec<SwapCoinPrivateKey>> = None;
+    let mut outgoing_privkeys: Option<Vec<MultisigPrivkey>> = None;
     for (index, maker_address) in active_maker_addresses.iter().enumerate() {
         let is_taker_previous_peer = index == 0;
         let is_taker_next_peer = (index as u16) == config.maker_count - 1;
@@ -1574,7 +1634,7 @@ async fn settle_one_coinswap(
     index: usize,
     is_taker_previous_peer: bool,
     is_taker_next_peer: bool,
-    outgoing_privkeys: &mut Option<Vec<SwapCoinPrivateKey>>,
+    outgoing_privkeys: &mut Option<Vec<MultisigPrivkey>>,
     outgoing_swapcoins: &Vec<OutgoingSwapCoin>,
     watchonly_swapcoins: &mut Vec<Vec<WatchOnlySwapCoin>>,
     incoming_swapcoins: &mut Vec<IncomingSwapCoin>,
@@ -1601,11 +1661,11 @@ async fn settle_one_coinswap(
     let privkeys_reply = if is_taker_previous_peer {
         outgoing_swapcoins
             .iter()
-            .map(|outgoing_swapcoin| SwapCoinPrivateKey {
+            .map(|outgoing_swapcoin| MultisigPrivkey {
                 multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
                 key: outgoing_swapcoin.my_privkey,
             })
-            .collect::<Vec<SwapCoinPrivateKey>>()
+            .collect::<Vec<MultisigPrivkey>>()
     } else {
         assert!(outgoing_privkeys.is_some());
         let reply = outgoing_privkeys.as_ref().unwrap().to_vec();
@@ -1615,27 +1675,28 @@ async fn settle_one_coinswap(
     if is_taker_next_peer {
         check_and_apply_maker_private_keys(
             incoming_swapcoins,
-            &maker_private_key_handover.swapcoin_private_keys,
+            &maker_private_key_handover.multisig_privkeys,
         )
     } else {
         let ret = check_and_apply_maker_private_keys(
             &mut watchonly_swapcoins[index],
-            &maker_private_key_handover.swapcoin_private_keys,
+            &maker_private_key_handover.multisig_privkeys,
         );
-        *outgoing_privkeys = Some(maker_private_key_handover.swapcoin_private_keys);
+        *outgoing_privkeys = Some(maker_private_key_handover.multisig_privkeys);
         ret
     }?;
     log::info!("===> Sending PrivateKeyHandover to {}", maker_address);
     send_message(
         &mut socket_writer,
         TakerToMakerMessage::PrivateKeyHandover(PrivateKeyHandover {
-            swapcoin_private_keys: privkeys_reply,
+            multisig_privkeys: privkeys_reply,
         }),
     )
     .await?;
     Ok(())
 }
 
+/// The final step of Coinswap. When all the signatures are passed around, perform the private key handover.
 async fn send_hash_preimage_and_get_private_keys(
     socket_reader: &mut BufReader<ReadHalf<'_>>,
     socket_writer: &mut WriteHalf<'_>,
@@ -1659,9 +1720,7 @@ async fn send_hash_preimage_and_get_private_keys(
         } else {
             return Err(Error::Protocol("expected method privatekeyhandover"));
         };
-    if maker_private_key_handover.swapcoin_private_keys.len()
-        != receivers_multisig_redeemscripts_len
-    {
+    if maker_private_key_handover.multisig_privkeys.len() != receivers_multisig_redeemscripts_len {
         return Err(Error::Protocol("wrong number of private keys from maker"));
     }
     Ok(maker_private_key_handover)
