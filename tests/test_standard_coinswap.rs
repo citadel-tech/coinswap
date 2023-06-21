@@ -1,17 +1,20 @@
-use bitcoin::util::amount::Amount;
-use bitcoin::Network;
+use bitcoin::{util::amount::Amount, Network};
 use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Client, RpcApi};
 
-use teleport::fidelity_bonds::YearAndMonth;
-use teleport::maker_protocol::MakerBehavior;
-use teleport::wallet_sync::{Wallet, WalletSyncAddressAmount};
+use teleport::{
+    fidelity_bonds::YearAndMonth,
+    maker_protocol::MakerBehavior,
+    wallet_sync::{Wallet, WalletSyncAddressAmount},
+};
 
 use serde_json::Value;
 
-use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
-use std::{thread, time};
+use std::{
+    path::PathBuf,
+    sync::{Arc, RwLock},
+    thread, time,
+};
 
 use std::str::FromStr;
 
@@ -55,6 +58,7 @@ pub fn generate_1_block(rpc: &Client) {
 
 // This test requires a bitcoin regtest node running in local machine with a
 // wallet name `teleport` loaded and have enough balance to execute transactions.
+// TODO: Used `bitcoind` crate to automate spawning regtest nodes.
 #[tokio::test]
 async fn test_standard_coinswap() {
     teleport::setup_logger();

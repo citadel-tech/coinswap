@@ -2,14 +2,18 @@ const WATCHTOWER_HOSTPORT: &str = "localhost:6103";
 
 use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
-use tokio::select;
-use tokio::time::sleep;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::TcpStream,
+    select,
+    time::sleep,
+};
 
-use crate::error::Error;
-use crate::watchtower_protocol::{
-    ContractsInfo, MakerToWatchtowerMessage, Ping, WatchContractTxes, WatchtowerToMakerMessage,
+use crate::{
+    error::Error,
+    watchtower_protocol::{
+        ContractsInfo, MakerToWatchtowerMessage, Ping, WatchContractTxes, WatchtowerToMakerMessage,
+    },
 };
 
 pub const CONNECT_ATTEMPTS: u32 = 10;

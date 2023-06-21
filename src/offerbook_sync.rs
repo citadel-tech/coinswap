@@ -1,21 +1,19 @@
-use std::fmt;
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
-use tokio::net::TcpStream;
-use tokio::select;
-use tokio::sync::mpsc;
-use tokio::time::sleep;
+use tokio::{net::TcpStream, select, sync::mpsc, time::sleep};
 
 use bitcoin::Network;
 
-use crate::directory_servers::{
-    sync_maker_addresses_from_directory_servers, DirectoryServerError, TOR_ADDR,
-};
-use crate::error::Error;
-use crate::messages::{GiveOffer, MakerToTakerMessage, Offer, TakerToMakerMessage};
-use crate::taker_protocol::{
-    handshake_maker, read_message, send_message, FIRST_CONNECT_ATTEMPTS,
-    FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC, FIRST_CONNECT_SLEEP_DELAY_SEC,
+use crate::{
+    directory_servers::{
+        sync_maker_addresses_from_directory_servers, DirectoryServerError, TOR_ADDR,
+    },
+    error::Error,
+    messages::{GiveOffer, MakerToTakerMessage, Offer, TakerToMakerMessage},
+    taker_protocol::{
+        handshake_maker, read_message, send_message, FIRST_CONNECT_ATTEMPTS,
+        FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC, FIRST_CONNECT_SLEEP_DELAY_SEC,
+    },
 };
 
 #[derive(Debug, Clone)]

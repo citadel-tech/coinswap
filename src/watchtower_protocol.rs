@@ -1,36 +1,46 @@
-use std::collections::HashSet;
-use std::iter::FromIterator;
-use std::net::Ipv4Addr;
-use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::{
+    collections::HashSet,
+    iter::FromIterator,
+    net::Ipv4Addr,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
-use std::fs::File;
-use std::io;
-use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::{
+    fs::File,
+    io,
+    io::Read,
+    path::{Path, PathBuf},
+};
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::tcp::WriteHalf;
-use tokio::net::TcpListener;
-use tokio::select;
-use tokio::sync::mpsc;
-use tokio::time::sleep;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::{tcp::WriteHalf, TcpListener},
+    select,
+    sync::mpsc,
+    time::sleep,
+};
 
 use serde::{Deserialize, Serialize};
 
-use bitcoin::hashes::{hash160::Hash as Hash160, Hash};
-use bitcoin::{Address, Network, Script, Transaction, Txid};
+use bitcoin::{
+    hashes::{hash160::Hash as Hash160, Hash},
+    Address, Network, Script, Transaction, Txid,
+};
 use bitcoincore_rpc::{
     json::{GetBlockResult, ListTransactionResult},
     Client, RpcApi,
 };
 
-use crate::contracts::{
-    create_contract_redeemscript, read_hashlock_pubkey_from_contract, read_hashvalue_from_contract,
-    read_locktime_from_contract, read_timelock_pubkey_from_contract,
+use crate::{
+    contracts::{
+        create_contract_redeemscript, read_hashlock_pubkey_from_contract,
+        read_hashvalue_from_contract, read_locktime_from_contract,
+        read_timelock_pubkey_from_contract,
+    },
+    error::Error,
+    wallet_sync::import_redeemscript,
 };
-use crate::error::Error;
-use crate::wallet_sync::import_redeemscript;
 
 //TODO these two structs below are used for two different purposes
 //one purpose is as a message format for messages sent down the wire

@@ -1,15 +1,15 @@
-use std::num::ParseIntError;
-use std::str::FromStr;
+use std::{num::ParseIntError, str::FromStr};
 
 use bitcoin::{Address, Amount, Network, OutPoint, Script, Transaction, TxIn, TxOut};
 
-use bitcoincore_rpc::json::ListUnspentResultEntry;
-use bitcoincore_rpc::Client;
+use bitcoincore_rpc::{json::ListUnspentResultEntry, Client};
 
-use crate::contracts::SwapCoin;
-use crate::error::Error;
-use crate::fidelity_bonds::get_locktime_from_index;
-use crate::wallet_sync::{UTXOSpendInfo, Wallet};
+use crate::{
+    contracts::SwapCoin,
+    error::Error,
+    fidelity_bonds::get_locktime_from_index,
+    wallet_sync::{UTXOSpendInfo, Wallet},
+};
 
 #[derive(Debug)]
 pub enum SendAmount {

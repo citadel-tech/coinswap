@@ -10,29 +10,35 @@ const BOND_VALUE_EXPONENT: f64 = 1.3;
 // Set as a real number, i.e. 1 = 100% and 0.01 = 1%
 const BOND_VALUE_INTEREST_RATE: f64 = 0.015;
 
-use std::collections::HashMap;
-use std::fmt::Display;
-use std::num::ParseIntError;
-use std::str::FromStr;
+use std::{collections::HashMap, fmt::Display, num::ParseIntError, str::FromStr};
 
 use chrono::NaiveDate;
 
-use bitcoin::blockdata::opcodes;
-use bitcoin::blockdata::script::{Builder, Instruction, Script};
-use bitcoin::hashes::sha256d;
-use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{Context, Message, Secp256k1, SecretKey, Signing};
-use bitcoin::util::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey};
-use bitcoin::util::key::{PrivateKey, PublicKey};
-use bitcoin::{Address, OutPoint};
+use bitcoin::{
+    blockdata::{
+        opcodes,
+        script::{Builder, Instruction, Script},
+    },
+    hashes::{sha256d, Hash},
+    secp256k1::{Context, Message, Secp256k1, SecretKey, Signing},
+    util::{
+        bip32::{ChildNumber, DerivationPath, ExtendedPrivKey},
+        key::{PrivateKey, PublicKey},
+    },
+    Address, OutPoint,
+};
 
-use bitcoincore_rpc::json::{GetTxOutResult, ListUnspentResultEntry};
-use bitcoincore_rpc::{Client, RpcApi};
+use bitcoincore_rpc::{
+    json::{GetTxOutResult, ListUnspentResultEntry},
+    Client, RpcApi,
+};
 
-use crate::contracts::redeemscript_to_scriptpubkey;
-use crate::error::Error;
-use crate::messages::FidelityBondProof;
-use crate::wallet_sync::{generate_keypair, UTXOSpendInfo, Wallet};
+use crate::{
+    contracts::redeemscript_to_scriptpubkey,
+    error::Error,
+    messages::FidelityBondProof,
+    wallet_sync::{generate_keypair, UTXOSpendInfo, Wallet},
+};
 
 pub const TIMELOCKED_MPK_PATH: &str = "m/84'/0'/0'/2";
 pub const TIMELOCKED_ADDRESS_COUNT: u32 = 960;

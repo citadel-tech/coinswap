@@ -1,16 +1,20 @@
-use bitcoin::consensus::encode::deserialize;
-use bitcoin::hashes::{hash160::Hash as Hash160, hex::FromHex};
-use bitcoin::{Script, Transaction};
+use bitcoin::{
+    consensus::encode::deserialize,
+    hashes::{hash160::Hash as Hash160, hex::FromHex},
+    Script, Transaction,
+};
 
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
 
-use teleport;
-use teleport::direct_send::{CoinToSpend, Destination, SendAmount};
-use teleport::fidelity_bonds::YearAndMonth;
-use teleport::maker_protocol::MakerBehavior;
-use teleport::wallet_sync::{DisplayAddressType, WalletSyncAddressAmount};
-use teleport::watchtower_protocol::{ContractTransaction, ContractsInfo};
+use teleport::{
+    self,
+    direct_send::{CoinToSpend, Destination, SendAmount},
+    fidelity_bonds::YearAndMonth,
+    maker_protocol::MakerBehavior,
+    wallet_sync::{DisplayAddressType, WalletSyncAddressAmount},
+    watchtower_protocol::{ContractTransaction, ContractsInfo},
+};
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "teleport", about = "A tool for CoinSwap")]

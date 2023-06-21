@@ -9,21 +9,20 @@ use bitcoin::{
     },
     hashes::{hash160::Hash as Hash160, Hash},
     secp256k1,
-    secp256k1::{Message, Secp256k1, SecretKey, Signature},
-    util::bip143::SigHashCache,
-    util::ecdsa::PublicKey,
+    secp256k1::{
+        rand::{OsRng, RngCore},
+        Message, Secp256k1, SecretKey, Signature,
+    },
+    util::{bip143::SigHashCache, ecdsa::PublicKey},
     OutPoint, SigHashType, Transaction, TxIn, TxOut,
 };
 
 use bitcoincore_rpc::{Client, RpcApi};
 
-use rand::rngs::OsRng;
-use rand::RngCore;
-
-use crate::error::Error;
-use crate::messages::ConfirmedCoinSwapTxInfo;
-use crate::wallet_sync::{
-    create_multisig_redeemscript, IncomingSwapCoin, OutgoingSwapCoin, Wallet,
+use crate::{
+    error::Error,
+    messages::FundingTxInfo,
+    wallet_sync::{create_multisig_redeemscript, IncomingSwapCoin, OutgoingSwapCoin, Wallet},
 };
 
 //relatively simple handling of miner fees for now, each funding transaction is considered
@@ -79,6 +78,7 @@ pub fn calculate_coinswap_fee(
         + (time_in_blocks * time_relative_fee_ppb / 1_000_000_000)
 }
 
+/// Convert a redeemscript into p2wsh scriptpubkey.
 pub fn redeemscript_to_scriptpubkey(redeemscript: &Script) -> Script {
     //p2wsh address
     Script::new_witness_program(
@@ -252,6 +252,9 @@ pub fn read_pubkeys_from_multisig_redeemscript(
     Some((pubkey1.unwrap(), pubkey2.unwrap()))
 }
 
+/// Create a Contract Transaction for the "Sender" side of Coinswap.
+/// The Sender gets the coins back via timelock.
+/// Receiver gets the coins via hashlock.
 pub fn create_senders_contract_tx(
     input: OutPoint,
     input_value: u64,
@@ -266,6 +269,7 @@ pub fn create_senders_contract_tx(
         }],
         output: vec![TxOut {
             script_pubkey: redeemscript_to_scriptpubkey(&contract_redeemscript),
+            // TODO: Mining fee for contract tx is hard coded here. Make it configurable.
             value: input_value - 1000,
         }],
         lock_time: 0,
@@ -390,7 +394,7 @@ pub fn find_funding_output<'a>(
 pub fn verify_proof_of_funding(
     rpc: Arc<Client>,
     wallet: &mut Wallet,
-    funding_info: &ConfirmedCoinSwapTxInfo,
+    funding_info: &FundingTxInfo,
     funding_output_index: u32,
     next_locktime: u16,
     min_contract_react_time: u16,
@@ -429,9 +433,8 @@ pub fn verify_proof_of_funding(
         read_pubkeys_from_multisig_redeemscript(&funding_info.multisig_redeemscript)
             .ok_or(Error::Protocol("invalid multisig_redeemscript"))?;
     let (tweakable_privkey, tweakable_point) = wallet.get_tweakable_keypair();
-    let my_pubkey =
-        calculate_maker_pubkey_from_nonce(tweakable_point, funding_info.multisig_key_nonce)
-            .map_err(|_| Error::Protocol("unable to calculate maker pubkey from nonce"))?;
+    let my_pubkey = calculate_maker_pubkey_from_nonce(tweakable_point, funding_info.multisig_nonce)
+        .map_err(|_| Error::Protocol("unable to calculate maker pubkey from nonce"))?;
     if pubkey1 != my_pubkey && pubkey2 != my_pubkey {
         return Err(Error::Protocol("wrong pubkeys in multisig_redeemscript"));
     }
@@ -451,7 +454,7 @@ pub fn verify_proof_of_funding(
         read_hashlock_pubkey_from_contract(&funding_info.contract_redeemscript)
             .map_err(|_| Error::Protocol("unable to read hashlock pubkey from contract"))?;
     let derived_hashlock_pubkey =
-        calculate_maker_pubkey_from_nonce(tweakable_point, funding_info.hashlock_key_nonce)
+        calculate_maker_pubkey_from_nonce(tweakable_point, funding_info.hashlock_nonce)
             .map_err(|_| Error::Protocol("unable to calculate maker pubkey from nonce"))?;
     if contract_hashlock_pubkey != derived_hashlock_pubkey {
         return Err(Error::Protocol(
@@ -477,11 +480,11 @@ pub fn verify_proof_of_funding(
 
     let mut my_privkey = tweakable_privkey;
     my_privkey
-        .add_assign(funding_info.multisig_key_nonce.as_ref())
+        .add_assign(funding_info.multisig_nonce.as_ref())
         .map_err(|_| Error::Protocol("error with wallet tweakable privkey + nonce"))?;
     let mut hashlock_privkey = tweakable_privkey;
     hashlock_privkey
-        .add_assign(funding_info.hashlock_key_nonce.as_ref())
+        .add_assign(funding_info.hashlock_nonce.as_ref())
         .map_err(|_| Error::Protocol("error with wallet tweakable privkey + nonce"))?;
 
     let other_pubkey = if pubkey1 == my_pubkey {
@@ -785,12 +788,13 @@ impl WatchOnlySwapCoin {
 #[cfg(test)]
 mod test {
     use super::*;
-    use bitcoin::consensus::encode::deserialize;
-    use bitcoin::hashes::hex::{FromHex, ToHex};
-    use bitcoin::PrivateKey;
+    use bitcoin::{
+        consensus::encode::deserialize,
+        hashes::hex::{FromHex, ToHex},
+        PrivateKey,
+    };
     use rand::{thread_rng, Rng};
-    use std::str::FromStr;
-    use std::string::String;
+    use std::{str::FromStr, string::String};
 
     fn read_pubkeys_from_contract_reedimscript(
         contract_script: &Script,

@@ -1,5 +1,4 @@
-use std::error;
-use std::io;
+use std::{error, io};
 
 // error enum for the whole project
 // try to make functions return this

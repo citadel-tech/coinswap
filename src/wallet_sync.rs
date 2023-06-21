@@ -3,13 +3,15 @@
 // makers will only ever sync this way, but one day takers may sync in other
 // ways too such as a lightweight wallet method
 
-use std::fs;
-use std::fs::{File, OpenOptions};
-use std::io;
-use std::io::Read;
-use std::path::Path;
-use std::str::FromStr;
-use std::sync::Arc;
+use std::{
+    fs,
+    fs::{File, OpenOptions},
+    io,
+    io::Read,
+    path::Path,
+    str::FromStr,
+    sync::Arc,
+};
 
 use std::collections::{HashMap, HashSet};
 
@@ -37,25 +39,21 @@ use bitcoin::{
     Address, Amount, Network, OutPoint, SigHashType, Transaction, TxIn, TxOut, Txid,
 };
 
-use bitcoincore_rpc::json::{
-    ImportMultiOptions, ImportMultiRequest, ImportMultiRequestScriptPubkey, ImportMultiRescanSince,
-    ListUnspentResultEntry,
+use bitcoincore_rpc::{
+    json::{
+        ImportMultiOptions, ImportMultiRequest, ImportMultiRequestScriptPubkey,
+        ImportMultiRescanSince, ListUnspentResultEntry,
+    },
+    Client, RpcApi,
 };
-use bitcoincore_rpc::{Client, RpcApi};
 
-use serde_json::json;
-use serde_json::Value;
+use serde_json::{json, Value};
 
-use rand::rngs::OsRng;
-use rand::RngCore;
+use rand::{rngs::OsRng, RngCore};
 
 use chrono::NaiveDateTime;
 
-use crate::contracts;
-use crate::contracts::SwapCoin;
-use crate::error::Error;
-use crate::fidelity_bonds;
-use crate::messages::Preimage;
+use crate::{contracts, contracts::SwapCoin, error::Error, fidelity_bonds, messages::Preimage};
 
 //these subroutines are coded so that as much as possible they keep all their
 //data in the bitcoin core wallet
@@ -1728,6 +1726,8 @@ impl Wallet {
         Ok(())
     }
 
+    /// Initialize a Coinswap with the Other party.
+    /// Returns, the Funding Transactions, [`OutgoingSwapCoin`]s and the Total Miner fees.
     pub fn initalize_coinswap(
         &mut self,
         rpc: &Client,
@@ -1735,7 +1735,7 @@ impl Wallet {
         other_multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
         hashvalue: Hash160,
-        locktime: u16, //returns: funding_txes, swapcoins, total_miner_fee
+        locktime: u16,
         fee_rate: u64,
     ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, u64), Error> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
@@ -1744,6 +1744,7 @@ impl Wallet {
             .unzip();
         log::debug!(target: "wallet", "coinswap_addresses = {:?}", coinswap_addresses);
 
+        // TODO: Instead of options, return results.
         let create_funding_txes_result =
             self.create_funding_txes(rpc, total_coinswap_amount, &coinswap_addresses, fee_rate)?;
         //for sweeping there would be another function, probably

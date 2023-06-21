@@ -6,16 +6,19 @@ use itertools::izip;
 
 use bitcoin::{hashes::hex::FromHex, Address, Amount, OutPoint, Transaction, Txid};
 
-use bitcoincore_rpc::json::{CreateRawTransactionInput, WalletCreateFundedPsbtOptions};
-use bitcoincore_rpc::{Client, RpcApi};
+use bitcoincore_rpc::{
+    json::{CreateRawTransactionInput, WalletCreateFundedPsbtOptions},
+    Client, RpcApi,
+};
 
 use serde_json::Value;
 
-use rand::rngs::OsRng;
-use rand::RngCore;
+use rand::{rngs::OsRng, RngCore};
 
-use crate::error::Error;
-use crate::wallet_sync::{convert_json_rpc_bitcoin_to_satoshis, Wallet};
+use crate::{
+    error::Error,
+    wallet_sync::{convert_json_rpc_bitcoin_to_satoshis, Wallet},
+};
 
 pub struct CreateFundingTxesResult {
     pub funding_txes: Vec<Transaction>,

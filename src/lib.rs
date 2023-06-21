@@ -10,15 +10,19 @@ extern crate bitcoin_wallet;
 extern crate bitcoincore_rpc;
 
 use dirs::home_dir;
-use std::collections::HashMap;
-use std::convert::TryInto;
-use std::io;
-use std::iter::repeat;
-use std::path::PathBuf;
-use std::sync::{Arc, Once, RwLock};
+use std::{
+    collections::HashMap,
+    convert::TryInto,
+    io,
+    iter::repeat,
+    path::PathBuf,
+    sync::{Arc, Once, RwLock},
+};
 
-use bitcoin::hashes::{hash160::Hash as Hash160, hex::ToHex};
-use bitcoin::{Amount, Network};
+use bitcoin::{
+    hashes::{hash160::Hash as Hash160, hex::ToHex},
+    Amount, Network,
+};
 use bitcoin_wallet::mnemonic;
 use bitcoincore_rpc::{Auth, Client, Error, RpcApi};
 
