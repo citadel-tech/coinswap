@@ -21,7 +21,7 @@ use bitcoin::{
     consensus::encode::deserialize,
     hashes::{hash160::Hash as Hash160, hex::ToHex, Hash},
     secp256k1::{
-        rand::{OsRng, RngCore},
+        rand::{rngs::OsRng, RngCore},
         SecretKey, Signature,
     },
     util::ecdsa::PublicKey,
@@ -119,8 +119,9 @@ async fn send_coinswap(
     config: TakerConfig,
     all_maker_offers_addresses: &Vec<OfferAndAddress>,
 ) -> Result<(), Error> {
-    let mut preimage = [0u8; PREIMAGE_LEN];
-    OsRng.fill_bytes(&mut preimage);
+    let mut preimage = [0u8; 32];
+    let mut rng = OsRng::new().unwrap();
+    rng.fill_bytes(&mut preimage);
     let hashvalue = Hash160::hash(&preimage);
 
     // TODO: REFUND_LOCKTIME_STEP should be a Maker's policy, to defend against possible DOS by very high LockTime value
@@ -135,8 +136,8 @@ async fn send_coinswap(
 
     let (
         first_maker,
-        maker_multisig_nonce,
-        maker_hashlock_nonce,
+        mut maker_multisig_nonce,
+        mut maker_hashlock_nonce,
         my_funding_txes,
         mut outgoing_swapcoins,
         contract_sigs_for_sender,
@@ -194,6 +195,7 @@ async fn send_coinswap(
 
     // TODO: Contract sigs can be inserted into OutGoingSwapcoins and update the wallet, in the loop above.
     contract_sigs_for_sender
+        .sigs
         .iter()
         .zip(outgoing_swapcoins.iter_mut())
         .for_each(|(sig, outgoing_swapcoin)| outgoing_swapcoin.others_contract_sig = Some(*sig));
@@ -258,7 +260,7 @@ async fn send_coinswap(
             next_peer_hashlock_nonces,
             req_contract_sigs_as_sender_and_recvr,
             next_swap_contract_redeemscripts,
-            next_maker,
+            found_next_maker,
         ) = exchange_signatures_and_find_next_maker(
             rpc,
             &config,
@@ -280,6 +282,7 @@ async fn send_coinswap(
             &mut watchonly_swapcoins,
         )
         .await?;
+        next_maker = found_next_maker;
         active_maker_addresses.push(&this_maker.address);
 
         // TODO: Simplify this function call.
@@ -346,7 +349,7 @@ async fn send_coinswap(
                 &next_peer_hashlock_nonces,
                 &next_peer_multisig_pubkeys,
                 &next_peer_multisig_nonces,
-                preimage,
+                &preimage,
             )
             .unwrap();
             //TODO reason about why this unwrap is here without any error handling
@@ -374,7 +377,7 @@ async fn send_coinswap(
     .await?;
     for (incoming_swapcoin, &receiver_contract_sig) in incoming_swapcoins
         .iter_mut()
-        .zip(receiver_contract_sig.iter())
+        .zip(receiver_contract_sig.sigs.iter())
     {
         incoming_swapcoin.others_contract_sig = Some(receiver_contract_sig);
     }
@@ -385,7 +388,7 @@ async fn send_coinswap(
 
     settle_all_coinswaps(
         &config,
-        preimage,
+        &preimage,
         &active_maker_addresses,
         &outgoing_swapcoins,
         &mut watchonly_swapcoins,
@@ -567,7 +570,7 @@ async fn req_contract_sigs_for_sender<S: SwapCoin>(
     loop {
         ii += 1;
         select! {
-            ret = req_contract_sigs_for_sender(
+            ret = req_contract_sigs_for_sender_once(
                 maker_address,
                 outgoing_swapcoins,
                 maker_multisig_nonces,
@@ -678,7 +681,7 @@ async fn req_contract_sigs_for_recvr<S: SwapCoin>(
     maker_address: &MakerAddress,
     incoming_swapcoins: &[S],
     receivers_contract_txes: &[Transaction],
-) -> Result<Vec<ContractSigsForRecvr>, Error> {
+) -> Result<ContractSigsForRecvr, Error> {
     let mut ii = 0;
     loop {
         ii += 1;
@@ -733,7 +736,7 @@ async fn req_contract_sigs_for_recvr_once<S: SwapCoin>(
     maker_address: &MakerAddress,
     incoming_swapcoins: &[S],
     receivers_contract_txes: &[Transaction],
-) -> Result<Vec<ContractSigsForRecvr>, Error> {
+) -> Result<ContractSigsForRecvr, Error> {
     log::info!("Connecting to {}", maker_address);
     let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
     let (mut socket_reader, mut socket_writer) =
@@ -1115,7 +1118,7 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
                 }
             };
             watchonly_swapcoins.push(next_swapcoins);
-            sigs
+            sigs.sigs
         };
         break (
             next_peer_multisig_pubkeys,
@@ -1154,6 +1157,7 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
             &maker_sign_sender_and_receiver_contracts.receivers_contract_txs,
         )
         .await?
+        .sigs
     };
     log::info!(
         "===> Sending ContractSigsAsReceiverAndSender to {}",
@@ -1359,7 +1363,7 @@ fn sign_receivers_contract_txs(
         .collect::<Result<Vec<Signature>, Error>>()
 }
 
-//TODO: Move this util module
+//TODO: Move this into Wallet module
 fn sign_senders_contract_txs(
     my_receiving_multisig_privkeys: &[SecretKey],
     maker_sign_sender_and_receiver_contracts: &RequestContractSigsAsReceiverAndSender,
@@ -1430,7 +1434,7 @@ fn create_incoming_swapcoins(
     next_peer_hashlock_keys_or_nonces: &[SecretKey],
     next_peer_multisig_pubkeys: &[PublicKey],
     next_peer_multisig_keys_or_nonces: &[SecretKey],
-    preimage: Preimage,
+    preimage: &Preimage,
 ) -> Result<Vec<IncomingSwapCoin>, Error> {
     let next_swap_multisig_redeemscripts = maker_sign_sender_and_receiver_contracts
         .senders_contract_txs_info
@@ -1518,7 +1522,7 @@ fn create_incoming_swapcoins(
             hashlock_privkey,
             maker_funding_tx_value,
         );
-        incoming_swapcoin.hash_preimage = Some(preimage);
+        incoming_swapcoin.hash_preimage = Some(*preimage);
         incoming_swapcoins.push(incoming_swapcoin);
     }
 
@@ -1549,7 +1553,7 @@ fn check_and_apply_maker_private_keys<S: SwapCoin>(
 /// Settle all coinswaps by sending hash preimages and privkeys.
 async fn settle_all_coinswaps(
     config: &TakerConfig,
-    preimage: Preimage,
+    preimage: &Preimage,
     active_maker_addresses: &Vec<&MakerAddress>,
     outgoing_swapcoins: &Vec<OutgoingSwapCoin>,
     watchonly_swapcoins: &mut Vec<Vec<WatchOnlySwapCoin>>,
@@ -1640,7 +1644,7 @@ async fn settle_one_coinswap(
     incoming_swapcoins: &mut Vec<IncomingSwapCoin>,
     senders_multisig_redeemscripts: &Vec<Script>,
     receivers_multisig_redeemscripts: &Vec<Script>,
-    preimage: Preimage,
+    preimage: &Preimage,
 ) -> Result<(), Error> {
     log::info!("Connecting to {}", maker_address);
     let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
@@ -1702,7 +1706,7 @@ async fn send_hash_preimage_and_get_private_keys(
     socket_writer: &mut WriteHalf<'_>,
     senders_multisig_redeemscripts: &Vec<Script>,
     receivers_multisig_redeemscripts: &Vec<Script>,
-    preimage: Preimage,
+    preimage: &Preimage,
 ) -> Result<PrivateKeyHandover, Error> {
     let receivers_multisig_redeemscripts_len = receivers_multisig_redeemscripts.len();
     send_message(
@@ -1710,7 +1714,7 @@ async fn send_hash_preimage_and_get_private_keys(
         TakerToMakerMessage::HashPreimage(HashPreimage {
             senders_multisig_redeemscripts: senders_multisig_redeemscripts.to_vec(),
             receivers_multisig_redeemscripts: receivers_multisig_redeemscripts.to_vec(),
-            preimage,
+            preimage: *preimage,
         }),
     )
     .await?;

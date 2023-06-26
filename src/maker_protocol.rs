@@ -896,7 +896,7 @@ fn handle_hash_preimage(
     {
         let mut wallet_mref = wallet.write().unwrap();
         for multisig_redeemscript in message.senders_multisig_redeemscripts {
-            let mut incoming_swapcoin = wallet_mref
+            let incoming_swapcoin = wallet_mref
                 .find_incoming_swapcoin_mut(&multisig_redeemscript)
                 .ok_or(Error::Protocol("senders multisig_redeemscript not found"))?;
             if read_hashvalue_from_contract(&incoming_swapcoin.contract_redeemscript)

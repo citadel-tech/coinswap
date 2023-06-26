@@ -329,8 +329,10 @@ fn get_timelocked_master_key_from_root_master_key(master_key: &ExtendedPrivKey) 
 pub fn get_locktime_from_index(index: u32) -> i64 {
     let year_off = index as i32 / 12;
     let month = index % 12;
-    NaiveDate::from_ymd(2020 + year_off, 1 + month, 1)
-        .and_hms(0, 0, 0)
+    NaiveDate::from_ymd_opt(2020 + year_off, 1 + month, 1)
+        .expect("expected")
+        .and_hms_opt(0, 0, 0)
+        .expect("expected")
         .timestamp()
 }
 

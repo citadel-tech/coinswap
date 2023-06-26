@@ -10,7 +10,7 @@ use bitcoin::{
     hashes::{hash160::Hash as Hash160, Hash},
     secp256k1,
     secp256k1::{
-        rand::{OsRng, RngCore},
+        rand::{rngs::OsRng, RngCore},
         Message, Secp256k1, SecretKey, Signature,
     },
     util::{bip143::SigHashCache, ecdsa::PublicKey},
@@ -104,7 +104,8 @@ pub fn derive_maker_pubkey_and_nonce(
     tweakable_point: PublicKey,
 ) -> Result<(PublicKey, SecretKey), secp256k1::Error> {
     let mut nonce_bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut nonce_bytes);
+    let mut rng = OsRng::new().unwrap();
+    rng.fill_bytes(&mut nonce_bytes);
     let nonce = SecretKey::from_slice(&nonce_bytes)?;
     let maker_pubkey = calculate_maker_pubkey_from_nonce(tweakable_point, nonce)?;
 
@@ -791,9 +792,9 @@ mod test {
     use bitcoin::{
         consensus::encode::deserialize,
         hashes::hex::{FromHex, ToHex},
+        secp256k1::rand::{random, thread_rng, Rng},
         PrivateKey,
     };
-    use rand::{thread_rng, Rng};
     use std::{str::FromStr, string::String};
 
     fn read_pubkeys_from_contract_reedimscript(
@@ -855,7 +856,7 @@ mod test {
         .unwrap();
 
         // Use an u16 to strictly positive 2 byte integer
-        let locktime = rand::random::<u16>();
+        let locktime = random::<u16>();
         println!("randomly chosen locktime = {}", locktime);
 
         let contract_script =

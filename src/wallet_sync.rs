@@ -49,7 +49,7 @@ use bitcoincore_rpc::{
 
 use serde_json::{json, Value};
 
-use rand::{rngs::OsRng, RngCore};
+use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
 
 use chrono::NaiveDateTime;
 
@@ -607,7 +607,8 @@ impl Wallet {
                     Address::from_script(timelocked_scriptpubkey, self.network).unwrap(),
                     fidelity_bonds::TIMELOCKED_MPK_PATH,
                     index,
-                    NaiveDateTime::from_timestamp(locktime, 0)
+                    NaiveDateTime::from_timestamp_opt(locktime, 0)
+                        .expect("expected")
                         .format("%Y-%m-%d")
                         .to_string(),
                     locktime,
@@ -1812,7 +1813,8 @@ impl Wallet {
 
 pub fn generate_keypair() -> (PublicKey, SecretKey) {
     let mut privkey = [0u8; 32];
-    OsRng.fill_bytes(&mut privkey);
+    let mut rng = OsRng::new().expect("Panic while creating OsRng");
+    rng.fill_bytes(&mut privkey);
     let secp = Secp256k1::new();
     let privkey = SecretKey::from_slice(&privkey).unwrap();
     let pubkey = PublicKey {

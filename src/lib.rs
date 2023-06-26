@@ -400,7 +400,7 @@ pub fn display_wallet_balance(wallet_file_name: &PathBuf, long_form: Option<bool
                 if long_form { "" } else { "...." },
                 if long_form { &"" } else { &addr[addr.len() - 10..addr.len()] },
                 utxo.confirmations,
-                NaiveDateTime::from_timestamp(unix_locktime, 0)
+                NaiveDateTime::from_timestamp_opt(unix_locktime, 0).expect("expected")
                     .format("%Y-%m-%d")
                     .to_string(),
                 if mediantime >= unix_locktime.try_into().unwrap() { "unlocked" } else { "locked" },
@@ -508,7 +508,8 @@ pub fn print_fidelity_bond_address(wallet_file_name: &PathBuf, locktime: &YearAn
     ));
     println!(
         "Coins sent to this address will not be spendable until {}",
-        NaiveDateTime::from_timestamp(unix_locktime, 0)
+        NaiveDateTime::from_timestamp_opt(unix_locktime, 0)
+            .expect("expected")
             .format("%Y-%m-%d")
             .to_string()
     );

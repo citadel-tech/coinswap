@@ -47,7 +47,17 @@
 //! 20. Taker -> Maker2: [`TakerToMakerMessage::HashPreimage`] for Maker2-Taker Contract.
 //! 21. Maker2 -> Taker: [`MakerToTakerMessage::PrivateKeyHandover`] for Privkey of Maker2 between Maker2-Taker swap.
 
-use bitcoin::{OutPoint, Script, Transaction};
+use bitcoin::{
+    secp256k1::{SecretKey, Signature},
+    OutPoint, PublicKey, Script, Transaction,
+};
+
+use serde::{Deserialize, Serialize};
+
+use bitcoin::hashes::hash160::Hash as Hash160;
+
+pub const PREIMAGE_LEN: usize = 32;
+pub type Preimage = [u8; PREIMAGE_LEN];
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TakerHello {

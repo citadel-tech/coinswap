@@ -13,7 +13,7 @@ use bitcoincore_rpc::{
 
 use serde_json::Value;
 
-use rand::{rngs::OsRng, RngCore};
+use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
 
 use crate::{
     error::Error,
@@ -73,9 +73,10 @@ impl Wallet {
         total_amount: u64,
         lower_limit: u64,
     ) -> Result<Vec<f32>, Error> {
+        let mut rng = OsRng::new().unwrap();
         for _ in 0..100000 {
             let mut knives = (1..count)
-                .map(|_| OsRng.next_u32() as f32 / u32::MAX as f32)
+                .map(|_| rng.next_u32() as f32 / u32::MAX as f32)
                 .collect::<Vec<f32>>();
             knives.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
 
