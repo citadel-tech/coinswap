@@ -43,7 +43,7 @@ pub mod maker_protocol;
 use maker_protocol::MakerBehavior;
 
 pub mod taker_protocol;
-use taker_protocol::TakerConfig;
+use taker_protocol::SwapParams;
 
 pub mod offerbook_sync;
 use offerbook_sync::{get_advertised_maker_addresses, sync_offerbook_with_addresses, MakerAddress};
@@ -51,10 +51,11 @@ use offerbook_sync::{get_advertised_maker_addresses, sync_offerbook_with_address
 pub mod fidelity_bonds;
 use fidelity_bonds::{get_locktime_from_index, YearAndMonth};
 
-pub mod directory_servers;
-pub mod error;
-pub mod funding_tx;
-pub mod messages;
+mod directory_servers;
+mod error;
+mod funding_tx;
+mod messages;
+mod util;
 pub mod watchtower_client;
 pub mod watchtower_protocol;
 
@@ -583,7 +584,7 @@ pub fn run_taker(
     taker_protocol::start_taker(
         &rpc,
         &mut wallet,
-        TakerConfig {
+        SwapParams {
             send_amount,
             maker_count,
             tx_count,
