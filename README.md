@@ -12,15 +12,20 @@ Project design document: [Design for a CoinSwap Implementation for Massively Imp
 
 ## Contents
 
-- [State of the project](#state-of-the-project)
-- [How to create a CoinSwap on regtest with yourself](#how-to-create-a-coinswap-on-regtest-with-yourself)
-- [How to create a CoinSwap on networks other than regtest](#how-to-create-a-coinswap-on-networks-other-than-regtest)
-- [How to recover from a failed coinswap](#how-to-recover-from-a-failed-coinswap)
-- [Developer resources](#developer-resources)
-- [Protocol between takers and makers](#protocol-between-takers-and-makers)
-- [Notes on architecture](#notes-on-architecture)
-- [Chris Belcher's personal roadmap for the project](#chris-belchers-personal-roadmap-for-the-project)
-- [Community](#community)
+- [Teleport Transactions](#teleport-transactions)
+  - [Contents](#contents)
+  - [State of the project](#state-of-the-project)
+  - [How to create a CoinSwap on regtest with yourself](#how-to-create-a-coinswap-on-regtest-with-yourself)
+  - [How to create a CoinSwap on networks other than regtest](#how-to-create-a-coinswap-on-networks-other-than-regtest)
+  - [How to recover from a failed coinswap](#how-to-recover-from-a-failed-coinswap)
+  - [Developer resources](#developer-resources)
+    - [How CoinSwap works](#how-coinswap-works)
+    - [Notes on architecture](#notes-on-architecture)
+    - [Protocol between takers and makers](#protocol-between-takers-and-makers)
+    - [Code Structure](#code-structure)
+    - [Further reading](#further-reading)
+  - [Chris Belcher's personal roadmap for the project](#chris-belchers-personal-roadmap-for-the-project)
+  - [Community](#community)
 
 ## State of the project
 
@@ -335,12 +340,60 @@ X                <---------------------------------------- privD(D+A)    | (R)
 Y.    privC(C+D) ---------------------------------------->               | (R)
 ```
 
-#### Note on terminology: Sender and Receiver
+### Code Structure
 
 In the codebase and protocol documentation the words "Sender" and "Receiver" are used. These refer
-to either side of a coinswap address. The entity which created a transaction paying into a coinswap
+to either side of a coinswap hop. The entity which created a transaction paying into a coinswap
 address is called the sender, because they sent the coins into the coinswap address. The other
 entity is called the receiver, because they will receive the coins after the coinswap is complete.
+
+Protocol messages are defined in two enums in the `src/messages.rs`. The individual message names
+use `Send` and `Recv` in them to identify their context as per the above definition.
+
+```rust
+pub enum MakerToTakerMessage {
+    /// Protocol Handshake.
+    MakerHello(MakerHello),
+    /// Send the Maker's offer advertisement.
+    RespOffer(Offer),
+    /// Send Contract Sigs **for** the Sender side of the hop. The Maker sending this message is the Receiver of the hop.
+    RespContractSigsForSender(ContractSigsForSender),
+    /// Request Contract Sigs, **as** both the Sending and Receiving side of the hop.
+    ReqContractSigsAsRecvrAndSender(ContractSigsAsRecvrAndSender),
+    /// Send Contract Sigs **for** the Receiver side of the hop. The Maker sending this message is the Sender of the hop.
+    RespContractSigsForRecvr(ContractSigsForRecvr),
+    /// Send the multisig private keys of the swap, declaring completion of the contract.
+    RespPrivKeyHandover(PrivKeyHandover),
+}
+```
+```rust
+pub enum TakerToMakerMessage {
+    /// Protocol Handshake.
+    TakerHello(TakerHello),
+    /// Request the Maker's Offer advertisement.
+    ReqGiveOffer(GiveOffer),
+    /// Request Contract Sigs **for** the Sender side of the hop. The Maker receiving this message is the Receiver of the hop.
+    ReqContractSigsForSender(ReqContractSigsForSender),
+    /// Respond with the [ProofOfFunding] message. This is sent when the funding transaction gets confirmed.
+    RespProofOfFunding(ProofOfFunding),
+    /// Request Contract Sigs **for** the Receiver and Sender side of the Hop.
+    RespContractSigsForRecvrAndSender(ContractSigsForRecvrAndSender),
+    /// Request Contract Sigs **for** the Receiver side of the hop. The Maker receiving this message is the Sender of the hop.
+    ReqContractSigsForRecvr(ReqContractSigsForRecvr),
+    /// Respond with the hash preimage. This settles the HTLC contract. The Receiver side will use this preimage unlock the HTLC.
+    RespHashPreimage(HashPreimage),
+    /// Respond by handing over the Private Keys of coinswap multisig. This denotes the completion of the whole swap.
+    RespPrivKeyHandover(PrivKeyHandover),
+}
+```
+
+A step-by-step communication sequence with the above messages is provided in `src/messages.rs` [docs](https://github.com/utxo-teleport/teleport-transactions/blob/30be708642cfdaa206d52e147ecb580af7db0bda/src/messages.rs#L20-L59).
+
+The `Taker` carries out all the heavy lifting of the protocol. `Maker`s work like simple state-machine responding to `TakerToMakerMessage`s.
+
+`src/taker.rs` : describes the Taker protocol, which is the workflow defined in the [section above](#protocol-between-takers-and-makers). This is the core of the protocol implementation and the most security-critical section of the library.
+
+`src/maker.rs` : describes the Maker state-machine. This is a simple server responding to various `TakerToMakerMessage`s depending on a `ConnectionState`. Each `ConnectionState` will have specific messages as "allowed". The Maker will terminate the protocol if a received message doesn't match the allowed messages of a specific state.
 
 ### Further reading
 
