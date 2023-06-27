@@ -71,11 +71,11 @@ async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer,
 
     send_message(
         &mut socket_writer,
-        TakerToMakerMessage::GiveOffer(GiveOffer),
+        TakerToMakerMessage::ReqGiveOffer(GiveOffer),
     )
     .await?;
 
-    let offer = if let MakerToTakerMessage::Offer(o) = read_message(&mut socket_reader).await? {
+    let offer = if let MakerToTakerMessage::RespOffer(o) = read_message(&mut socket_reader).await? {
         o
     } else {
         return Err(Error::Protocol("expected method offer"));

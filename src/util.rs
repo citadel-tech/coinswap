@@ -18,7 +18,7 @@ use crate::{
     },
     error::Error,
     messages::{
-        MakerToTakerMessage, MultisigPrivkey, Preimage, RequestContractSigsAsReceiverAndSender,
+        ContractSigsAsRecvrAndSender, MakerToTakerMessage, MultisigPrivkey, Preimage,
         TakerToMakerMessage,
     },
     offerbook_sync::OfferAndAddress,
@@ -90,7 +90,7 @@ pub fn sign_receivers_contract_txs(
 //TODO: This Should be a wallet API.
 pub fn sign_senders_contract_txs(
     my_receiving_multisig_privkeys: &[SecretKey],
-    maker_sign_sender_and_receiver_contracts: &RequestContractSigsAsReceiverAndSender,
+    maker_sign_sender_and_receiver_contracts: &ContractSigsAsRecvrAndSender,
 ) -> Result<Vec<Signature>, Error> {
     my_receiving_multisig_privkeys
         .iter()
@@ -116,7 +116,7 @@ pub fn sign_senders_contract_txs(
 // TODO: This should be a Wallet API.
 pub fn create_watch_only_swapcoins(
     rpc: &Client,
-    maker_sign_sender_and_receiver_contracts: &RequestContractSigsAsReceiverAndSender,
+    maker_sign_sender_and_receiver_contracts: &ContractSigsAsRecvrAndSender,
     next_peer_multisig_pubkeys: &[PublicKey],
     next_swap_contract_redeemscripts: &[Script],
 ) -> Result<Vec<WatchOnlySwapCoin>, Error> {
@@ -151,7 +151,7 @@ pub fn create_watch_only_swapcoins(
 pub fn create_incoming_swapcoins(
     rpc: &Client,
     wallet: &Wallet,
-    maker_sign_sender_and_receiver_contracts: &RequestContractSigsAsReceiverAndSender,
+    maker_sign_sender_and_receiver_contracts: &ContractSigsAsRecvrAndSender,
     funding_txes: &[Transaction],
     funding_tx_merkleproofs: &[String],
     next_swap_contract_redeemscripts: &[Script],

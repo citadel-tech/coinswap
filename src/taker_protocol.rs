@@ -37,11 +37,11 @@ use crate::{
     },
     error::Error,
     messages::{
-        ContractSigsForRecvingAndSending, ContractSigsForRecvr, ContractSigsForSender,
-        ContractTxForRecvr, ContractTxForSender, FundingTxInfo, HashPreimage, MakerToTakerMessage,
-        MultisigPrivkey, NextHopInfo, Preimage, PrivateKeyHandover, ProofOfFunding,
-        ReqContractSigsForRecvr, ReqContractSigsForSender, RequestContractSigsAsReceiverAndSender,
-        TakerHello, TakerToMakerMessage,
+        ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
+        ContractSigsForSender, ContractTxInfoForRecvr, ContractTxInfoForSender, FundingTxInfo,
+        HashPreimage, MakerToTakerMessage, MultisigPrivkey, NextHopInfo, Preimage, PrivKeyHandover,
+        ProofOfFunding, ReqContractSigsForRecvr, ReqContractSigsForSender, TakerHello,
+        TakerToMakerMessage,
     },
 };
 
@@ -577,7 +577,7 @@ async fn req_contract_sigs_for_sender_once<S: SwapCoin>(
             )
             .map(
                 |(&multisig_key_nonce, &hashlock_key_nonce, outgoing_swapcoin)| {
-                    ContractTxForSender {
+                    ContractTxInfoForSender {
                         multisig_key_nonce,
                         hashlock_key_nonce,
                         timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey(),
@@ -587,13 +587,13 @@ async fn req_contract_sigs_for_sender_once<S: SwapCoin>(
                     }
                 },
             )
-            .collect::<Vec<ContractTxForSender>>(),
+            .collect::<Vec<ContractTxInfoForSender>>(),
             hashvalue: outgoing_swapcoins[0].get_hashvalue(),
             locktime,
         }),
     )
     .await?;
-    let maker_senders_contract_sig = if let MakerToTakerMessage::ContractSigsForSender(m) =
+    let maker_senders_contract_sig = if let MakerToTakerMessage::RespContractSigsForSender(m) =
         read_message(&mut socket_reader).await?
     {
         m
@@ -685,15 +685,15 @@ async fn req_contract_sigs_for_recvr_once<S: SwapCoin>(
             txs: incoming_swapcoins
                 .iter()
                 .zip(receivers_contract_txes.iter())
-                .map(|(swapcoin, receivers_contract_tx)| ContractTxForRecvr {
+                .map(|(swapcoin, receivers_contract_tx)| ContractTxInfoForRecvr {
                     multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
                     contract_tx: receivers_contract_tx.clone(),
                 })
-                .collect::<Vec<ContractTxForRecvr>>(),
+                .collect::<Vec<ContractTxInfoForRecvr>>(),
         }),
     )
     .await?;
-    let maker_receiver_contract_sig = if let MakerToTakerMessage::ContractSigsForRecvr(m) =
+    let maker_receiver_contract_sig = if let MakerToTakerMessage::RespContractSigsForRecvr(m) =
         read_message(&mut socket_reader).await?
     {
         m
@@ -843,7 +843,7 @@ async fn exchange_signatures_and_find_next_maker<'a>(
         Vec<PublicKey>,
         Vec<SecretKey>,
         Vec<SecretKey>,
-        RequestContractSigsAsReceiverAndSender,
+        ContractSigsAsRecvrAndSender,
         Vec<Script>,
         &'a OfferAndAddress,
     ),
@@ -938,7 +938,7 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
         Vec<PublicKey>,
         Vec<SecretKey>,
         Vec<SecretKey>,
-        RequestContractSigsAsReceiverAndSender,
+        ContractSigsAsRecvrAndSender,
         Vec<Script>,
         &'a OfferAndAddress,
     ),
@@ -1092,7 +1092,7 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
     );
     send_message(
         &mut socket_writer,
-        TakerToMakerMessage::ContractSigsForRecvingAndSending(ContractSigsForRecvingAndSending {
+        TakerToMakerMessage::RespContractSigsForRecvrAndSender(ContractSigsForRecvrAndSender {
             receivers_sigs,
             senders_sigs,
         }),
@@ -1126,10 +1126,10 @@ async fn send_proof_of_funding_and_init_next_hop(
     next_maker_fee_rate: u64,
     this_maker_contract_txes: &[Transaction],
     hashvalue: Hash160,
-) -> Result<(RequestContractSigsAsReceiverAndSender, Vec<Script>), Error> {
+) -> Result<(ContractSigsAsRecvrAndSender, Vec<Script>), Error> {
     send_message(
         socket_writer,
-        TakerToMakerMessage::ProofOfFunding(ProofOfFunding {
+        TakerToMakerMessage::RespProofOfFunding(ProofOfFunding {
             confirmed_funding_txes: izip!(
                 funding_txes.iter(),
                 funding_tx_merkleproofs.iter(),
@@ -1172,7 +1172,7 @@ async fn send_proof_of_funding_and_init_next_hop(
     )
     .await?;
     let maker_sign_sender_and_receiver_contracts =
-        if let MakerToTakerMessage::RequestContractSigsAsReceiverAndSender(m) =
+        if let MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(m) =
             read_message(socket_reader).await?
         {
             m
@@ -1430,7 +1430,7 @@ async fn settle_one_coinswap(
     log::info!("===> Sending PrivateKeyHandover to {}", maker_address);
     send_message(
         &mut socket_writer,
-        TakerToMakerMessage::PrivateKeyHandover(PrivateKeyHandover {
+        TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {
             multisig_privkeys: privkeys_reply,
         }),
     )
@@ -1445,11 +1445,11 @@ async fn send_hash_preimage_and_get_private_keys(
     senders_multisig_redeemscripts: &Vec<Script>,
     receivers_multisig_redeemscripts: &Vec<Script>,
     preimage: &Preimage,
-) -> Result<PrivateKeyHandover, Error> {
+) -> Result<PrivKeyHandover, Error> {
     let receivers_multisig_redeemscripts_len = receivers_multisig_redeemscripts.len();
     send_message(
         socket_writer,
-        TakerToMakerMessage::HashPreimage(HashPreimage {
+        TakerToMakerMessage::RespHashPreimage(HashPreimage {
             senders_multisig_redeemscripts: senders_multisig_redeemscripts.to_vec(),
             receivers_multisig_redeemscripts: receivers_multisig_redeemscripts.to_vec(),
             preimage: *preimage,
@@ -1457,7 +1457,7 @@ async fn send_hash_preimage_and_get_private_keys(
     )
     .await?;
     let maker_private_key_handover =
-        if let MakerToTakerMessage::PrivateKeyHandover(m) = read_message(socket_reader).await? {
+        if let MakerToTakerMessage::RespPrivKeyHandover(m) = read_message(socket_reader).await? {
             m
         } else {
             return Err(Error::Protocol("expected method privatekeyhandover"));
