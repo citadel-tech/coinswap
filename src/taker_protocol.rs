@@ -274,11 +274,11 @@ async fn send_coinswap(
                     .iter()
                     .map(|s| s.get_multisig_redeemscript())
                     .collect::<Vec<Script>>(),
-                outgoing_swapcoins
+                watchonly_swapcoins.last().unwrap()
                     .iter()
                     .map(|s| s.get_contract_redeemscript())
                     .collect::<Vec<Script>>(),
-                outgoing_swapcoins
+                watchonly_swapcoins.last().unwrap()
                     .iter()
                     .map(|s| s.get_contract_tx())
                     .collect::<Vec<Transaction>>(),
@@ -1134,9 +1134,9 @@ async fn send_proof_of_funding_and_init_next_hop(
                 funding_txes.iter(),
                 funding_tx_merkleproofs.iter(),
                 this_maker_multisig_redeemscripts.iter(),
-                this_maker_multisig_nonces,
+                this_maker_multisig_nonces.iter(),
                 this_maker_contract_redeemscripts.iter(),
-                this_maker_hashlock_nonces
+                this_maker_hashlock_nonces.iter()
             )
             .map(
                 |(
