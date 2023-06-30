@@ -274,11 +274,15 @@ async fn send_coinswap(
                     .iter()
                     .map(|s| s.get_multisig_redeemscript())
                     .collect::<Vec<Script>>(),
-                watchonly_swapcoins.last().unwrap()
+                watchonly_swapcoins
+                    .last()
+                    .unwrap()
                     .iter()
                     .map(|s| s.get_contract_redeemscript())
                     .collect::<Vec<Script>>(),
-                watchonly_swapcoins.last().unwrap()
+                watchonly_swapcoins
+                    .last()
+                    .unwrap()
                     .iter()
                     .map(|s| s.get_contract_tx())
                     .collect::<Vec<Transaction>>(),
