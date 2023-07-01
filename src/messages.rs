@@ -112,7 +112,7 @@ pub struct ReqContractSigsForRecvr {
 }
 
 /// Confirmed Funding Tx with extra metadata.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FundingTxInfo {
     pub funding_tx: Transaction,
     pub funding_tx_merkleproof: String,

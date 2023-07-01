@@ -289,6 +289,39 @@ async fn send_coinswap(
             )
         };
 
+        let funding_tx_infos = funding_txes
+            .iter()
+            .zip(funding_tx_merkleproofs.iter())
+            .zip(this_maker_multisig_redeemscripts.iter())
+            .zip(maker_multisig_nonce.iter())
+            .zip(this_maker_contract_redeemscripts.iter())
+            .zip(maker_hashlock_nonce.iter())
+            .map(
+                |(
+                    (
+                        (
+                            (
+                                (funding_tx, funding_tx_merkle_proof),
+                                this_maker_multisig_reedeemscript,
+                            ),
+                            maker_multisig_nonce,
+                        ),
+                        this_maker_contract_reedemscript,
+                    ),
+                    maker_hashlock_nonce,
+                )| {
+                    FundingTxInfo {
+                        funding_tx: funding_tx.clone(),
+                        funding_tx_merkleproof: funding_tx_merkle_proof.clone(),
+                        multisig_redeemscript: this_maker_multisig_reedeemscript.clone(),
+                        multisig_nonce: maker_multisig_nonce.clone(),
+                        contract_redeemscript: this_maker_contract_reedemscript.clone(),
+                        hashlock_nonce: maker_hashlock_nonce.clone(),
+                    }
+                },
+            )
+            .collect::<Vec<_>>();
+
         let this_maker = next_maker;
         //TODO: Create dedicated struct for `next_peer_info`.
         let (
@@ -306,12 +339,7 @@ async fn send_coinswap(
             previous_maker,
             is_taker_previous_peer,
             is_taker_next_peer,
-            &funding_txes,
-            &funding_tx_merkleproofs,
-            &this_maker_multisig_redeemscripts,
-            &maker_multisig_nonce,
-            &this_maker_contract_redeemscripts,
-            &maker_hashlock_nonce,
+            &funding_tx_infos,
             &this_maker_contract_txes,
             maker_refund_locktime,
             hashvalue,
@@ -831,12 +859,7 @@ async fn exchange_signatures_and_find_next_maker<'a>(
     previous_maker: Option<&'a OfferAndAddress>,
     is_taker_previous_peer: bool,
     is_taker_next_peer: bool,
-    funding_txes: &[Transaction],
-    funding_tx_merkleproofs: &[String],
-    this_maker_multisig_redeemscripts: &[Script],
-    this_maker_multisig_nonce: &[SecretKey],
-    this_maker_contract_redeemscripts: &[Script],
-    this_maker_hashlock_nonce: &[SecretKey],
+    funding_tx_infos: &Vec<FundingTxInfo>,
     this_maker_contract_txes: &[Transaction],
     maker_refund_locktime: u16,
     hashvalue: Hash160,
@@ -865,12 +888,7 @@ async fn exchange_signatures_and_find_next_maker<'a>(
                 previous_maker,
                 is_taker_previous_peer,
                 is_taker_next_peer,
-                funding_txes,
-                funding_tx_merkleproofs,
-                this_maker_multisig_redeemscripts,
-                this_maker_multisig_nonce,
-                this_maker_contract_redeemscripts,
-                this_maker_hashlock_nonce,
+                funding_tx_infos,
                 this_maker_contract_txes,
                 maker_refund_locktime,
                 hashvalue,
@@ -926,12 +944,7 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
     previous_maker: Option<&'a OfferAndAddress>,
     is_taker_previous_peer: bool,
     is_taker_next_peer: bool,
-    funding_txes: &[Transaction],
-    funding_tx_merkleproofs: &[String],
-    this_maker_multisig_redeemscripts: &[Script],
-    this_maker_multisig_nonce: &[SecretKey],
-    this_maker_contract_redeemscripts: &[Script],
-    this_maker_hashlock_nonce: &[SecretKey],
+    funding_tx_infos: &Vec<FundingTxInfo>,
     this_maker_contract_txes: &[Transaction],
     maker_refund_locktime: u16,
     hashvalue: Hash160,
@@ -995,12 +1008,7 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
                 &mut socket_reader,
                 &mut socket_writer,
                 this_maker,
-                funding_txes,
-                funding_tx_merkleproofs,
-                this_maker_multisig_redeemscripts,
-                this_maker_multisig_nonce,
-                this_maker_contract_redeemscripts,
-                this_maker_hashlock_nonce,
+                funding_tx_infos,
                 &next_peer_multisig_pubkeys,
                 &next_peer_hashlock_pubkeys,
                 maker_refund_locktime,
@@ -1118,12 +1126,7 @@ async fn send_proof_of_funding_and_init_next_hop(
     socket_reader: &mut BufReader<ReadHalf<'_>>,
     socket_writer: &mut WriteHalf<'_>,
     this_maker: &OfferAndAddress,
-    funding_txes: &[Transaction],
-    funding_tx_merkleproofs: &[String],
-    this_maker_multisig_redeemscripts: &[Script],
-    this_maker_multisig_nonces: &[SecretKey],
-    this_maker_contract_redeemscripts: &[Script],
-    this_maker_hashlock_nonces: &[SecretKey],
+    funding_tx_infos: &Vec<FundingTxInfo>,
     next_peer_multisig_pubkeys: &[PublicKey],
     next_peer_hashlock_pubkeys: &[PublicKey],
     next_maker_refund_locktime: u16,
@@ -1134,32 +1137,7 @@ async fn send_proof_of_funding_and_init_next_hop(
     send_message(
         socket_writer,
         TakerToMakerMessage::RespProofOfFunding(ProofOfFunding {
-            confirmed_funding_txes: izip!(
-                funding_txes.iter(),
-                funding_tx_merkleproofs.iter(),
-                this_maker_multisig_redeemscripts.iter(),
-                this_maker_multisig_nonces.iter(),
-                this_maker_contract_redeemscripts.iter(),
-                this_maker_hashlock_nonces.iter()
-            )
-            .map(
-                |(
-                    funding_tx,
-                    funding_tx_merkleproof,
-                    multisig_redeemscript,
-                    &multisig_key_nonce,
-                    contract_redeemscript,
-                    &hashlock_key_nonce,
-                )| FundingTxInfo {
-                    funding_tx: funding_tx.clone(),
-                    funding_tx_merkleproof: funding_tx_merkleproof.clone(),
-                    multisig_redeemscript: multisig_redeemscript.clone(),
-                    multisig_nonce: multisig_key_nonce,
-                    contract_redeemscript: contract_redeemscript.clone(),
-                    hashlock_nonce: hashlock_key_nonce,
-                },
-            )
-            .collect::<Vec<FundingTxInfo>>(),
+            confirmed_funding_txes: funding_tx_infos.clone(),
             next_coinswap_info: next_peer_multisig_pubkeys
                 .iter()
                 .zip(next_peer_hashlock_pubkeys.iter())
@@ -1188,7 +1166,7 @@ async fn send_proof_of_funding_and_init_next_hop(
     if maker_sign_sender_and_receiver_contracts
         .receivers_contract_txs
         .len()
-        != this_maker_multisig_redeemscripts.len()
+        != funding_tx_infos.len()
     {
         return Err(Error::Protocol(
             "wrong number of receivers contracts tx from maker",
@@ -1204,17 +1182,20 @@ async fn send_proof_of_funding_and_init_next_hop(
         ));
     }
 
-    let funding_tx_values = funding_txes
+    let funding_tx_values = funding_tx_infos
         .iter()
-        .zip(this_maker_multisig_redeemscripts.iter())
-        .map(|(makers_funding_tx, multisig_redeemscript)| {
-            find_funding_output(&makers_funding_tx, &multisig_redeemscript)
-                .ok_or(Error::Protocol(
-                    "multisig redeemscript not found in funding tx",
-                ))
-                .map(|txout| txout.1.value)
+        .map(|funding_info| {
+            find_funding_output(
+                &funding_info.funding_tx,
+                &funding_info.multisig_redeemscript,
+            )
+            .ok_or(Error::Protocol(
+                "multisig redeemscript not found in funding tx",
+            ))
+            .map(|txout| txout.1.value)
         })
         .collect::<Result<Vec<u64>, Error>>()?;
+
     let this_amount = funding_tx_values.iter().sum::<u64>();
 
     let next_amount = maker_sign_sender_and_receiver_contracts
@@ -1245,17 +1226,17 @@ async fn send_proof_of_funding_and_init_next_hop(
         next_amount
     );
 
-    for (receivers_contract_tx, contract_tx, contract_redeemscript) in izip!(
+    for ((receivers_contract_tx, contract_tx), contract_redeemscript) in
         maker_sign_sender_and_receiver_contracts
             .receivers_contract_txs
-            .iter(),
-        this_maker_contract_txes.iter(),
-        this_maker_contract_redeemscripts.iter()
-    ) {
+            .iter()
+            .zip(this_maker_contract_txes.iter())
+            .zip(funding_tx_infos.iter().map(|fi| &fi.contract_redeemscript))
+    {
         validate_contract_tx(
             &receivers_contract_tx,
             Some(&contract_tx.input[0].previous_output),
-            &contract_redeemscript,
+            contract_redeemscript,
         )?;
     }
     let next_swap_contract_redeemscripts = next_peer_hashlock_pubkeys
@@ -1375,6 +1356,7 @@ async fn settle_all_coinswaps(
     Ok(())
 }
 
+// Use active coinswap info.
 async fn settle_one_coinswap(
     maker_address: &MakerAddress,
     index: usize,
