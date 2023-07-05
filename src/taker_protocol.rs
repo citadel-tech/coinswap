@@ -43,6 +43,7 @@ use crate::{
         ProofOfFunding, ReqContractSigsForRecvr, ReqContractSigsForSender, TakerHello,
         TakerToMakerMessage,
     },
+    taker::NextSwapInfo,
 };
 
 use crate::{
@@ -135,9 +136,20 @@ async fn send_coinswap(
     // swap, for this to work. Currently they are found on the fly during the swapping process.
     let first_swap_locktime = REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * config.maker_count;
 
-    let mut maker_offers_addresses = all_maker_offers_addresses
-        .iter()
-        .collect::<Vec<&OfferAndAddress>>();
+    // Create The Taker struct
+    // with internal states.
+
+    // Collect all the state variables so far.
+
+    // Pass them around correctly.
+
+    // Group them into structs.
+
+    // Export to other module.
+
+    // Rewire everything with Taker struct.
+
+    let mut maker_offers_addresses = all_maker_offers_addresses.clone();
 
     let (
         first_maker,
@@ -231,9 +243,9 @@ async fn send_coinswap(
     //unwrap the option without checking for Option::None because we passed no contract txes
     //to watch and therefore they cant be broadcast
 
-    let mut active_maker_addresses = Vec::<&MakerAddress>::new();
-    let mut next_maker = first_maker;
-    let mut previous_maker: Option<&OfferAndAddress> = None;
+    let mut active_maker_addresses = Vec::<MakerAddress>::new();
+    let mut next_maker = first_maker.clone();
+    let mut previous_maker: Option<OfferAndAddress> = None;
 
     let mut watchonly_swapcoins = Vec::<Vec<WatchOnlySwapCoin>>::new();
     let mut incoming_swapcoins = Vec::<IncomingSwapCoin>::new();
@@ -324,36 +336,31 @@ async fn send_coinswap(
 
         let this_maker = next_maker;
         //TODO: Create dedicated struct for `next_peer_info`.
-        let (
-            next_peer_multisig_pubkeys,
-            next_peer_multisig_nonces,
-            next_peer_hashlock_nonces,
-            req_contract_sigs_as_sender_and_recvr,
-            next_swap_contract_redeemscripts,
-            found_next_maker,
-        ) = exchange_signatures_and_find_next_maker(
-            rpc,
-            &config,
-            &mut maker_offers_addresses,
-            &this_maker,
-            previous_maker,
-            is_taker_previous_peer,
-            is_taker_next_peer,
-            &funding_tx_infos,
-            &this_maker_contract_txes,
-            maker_refund_locktime,
-            hashvalue,
-            &outgoing_swapcoins,
-            &mut watchonly_swapcoins,
-        )
-        .await?;
-        next_maker = found_next_maker;
-        active_maker_addresses.push(&this_maker.address);
+
+        let (next_swap_info, contract_sigs_as_recvr_and_sender) =
+            exchange_signatures_and_find_next_maker(
+                rpc,
+                &config,
+                &mut maker_offers_addresses,
+                &this_maker,
+                &previous_maker,
+                is_taker_previous_peer,
+                is_taker_next_peer,
+                &funding_tx_infos,
+                &this_maker_contract_txes,
+                maker_refund_locktime,
+                hashvalue,
+                &outgoing_swapcoins,
+                &mut watchonly_swapcoins,
+            )
+            .await?;
+        next_maker = next_swap_info.peer.clone();
+        active_maker_addresses.push(this_maker.address.clone());
 
         // TODO: Simplify this function call.
         let wait_for_confirm_result = wait_for_funding_tx_confirmation(
             rpc,
-            &req_contract_sigs_as_sender_and_recvr
+            &contract_sigs_as_recvr_and_sender
                 .senders_contract_txs_info
                 .iter()
                 .map(|senders_contract_tx_info| {
@@ -407,21 +414,18 @@ async fn send_coinswap(
             incoming_swapcoins = create_incoming_swapcoins(
                 rpc,
                 &wallet,
-                &req_contract_sigs_as_sender_and_recvr,
+                &contract_sigs_as_recvr_and_sender,
                 &funding_txes,
                 &funding_tx_merkleproofs,
-                &next_swap_contract_redeemscripts,
-                &next_peer_hashlock_nonces,
-                &next_peer_multisig_pubkeys,
-                &next_peer_multisig_nonces,
+                &next_swap_info,
                 &preimage,
             )
             .unwrap();
             //TODO reason about why this unwrap is here without any error handling
             //do we expect this to never error? are the conditions checked earlier?
         }
-        maker_multisig_nonce = next_peer_multisig_nonces;
-        maker_hashlock_nonce = next_peer_hashlock_nonces;
+        maker_multisig_nonce = next_swap_info.multisig_nonces;
+        maker_hashlock_nonce = next_swap_info.hashlock_nonces;
         previous_maker = Some(this_maker);
     }
 
@@ -854,9 +858,9 @@ async fn wait_for_funding_tx_confirmation(
 async fn exchange_signatures_and_find_next_maker<'a>(
     rpc: &Client,
     config: &SwapParams,
-    maker_offers_addresses: &mut Vec<&'a OfferAndAddress>,
+    maker_offers_addresses: &mut Vec<OfferAndAddress>,
     this_maker: &'a OfferAndAddress,
-    previous_maker: Option<&'a OfferAndAddress>,
+    previous_maker: &'a Option<OfferAndAddress>,
     is_taker_previous_peer: bool,
     is_taker_next_peer: bool,
     funding_tx_infos: &Vec<FundingTxInfo>,
@@ -865,17 +869,7 @@ async fn exchange_signatures_and_find_next_maker<'a>(
     hashvalue: Hash160,
     outgoing_swapcoins: &Vec<OutgoingSwapCoin>,
     watchonly_swapcoins: &mut Vec<Vec<WatchOnlySwapCoin>>,
-) -> Result<
-    (
-        Vec<PublicKey>,
-        Vec<SecretKey>,
-        Vec<SecretKey>,
-        ContractSigsAsRecvrAndSender,
-        Vec<Script>,
-        &'a OfferAndAddress,
-    ),
-    Error,
-> {
+) -> Result<(NextSwapInfo, ContractSigsAsRecvrAndSender), Error> {
     let mut ii = 0;
     loop {
         ii += 1;
@@ -939,9 +933,9 @@ async fn exchange_signatures_and_find_next_maker<'a>(
 async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
     rpc: &Client,
     config: &SwapParams,
-    maker_offers_addresses: &mut Vec<&'a OfferAndAddress>,
+    maker_offers_addresses: &mut Vec<OfferAndAddress>,
     this_maker: &'a OfferAndAddress,
-    previous_maker: Option<&'a OfferAndAddress>,
+    previous_maker: &'a Option<OfferAndAddress>,
     is_taker_previous_peer: bool,
     is_taker_next_peer: bool,
     funding_tx_infos: &Vec<FundingTxInfo>,
@@ -950,17 +944,7 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
     hashvalue: Hash160,
     outgoing_swapcoins: &Vec<OutgoingSwapCoin>,
     watchonly_swapcoins: &mut Vec<Vec<WatchOnlySwapCoin>>,
-) -> Result<
-    (
-        Vec<PublicKey>,
-        Vec<SecretKey>,
-        Vec<SecretKey>,
-        ContractSigsAsRecvrAndSender,
-        Vec<Script>,
-        &'a OfferAndAddress,
-    ),
-    Error,
-> {
+) -> Result<(NextSwapInfo, ContractSigsAsRecvrAndSender), Error> {
     //return next_peer_multisig_pubkeys, next_peer_multisig_keys_or_nonces,
     //    next_peer_hashlock_keys_or_nonces, (), next_swap_contract_redeemscripts, found_next_maker
 
@@ -968,7 +952,7 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
     let mut socket = TcpStream::connect(this_maker.address.get_tcpstream_address()).await?;
     let (mut socket_reader, mut socket_writer) =
         handshake_maker(&mut socket, &this_maker.address).await?;
-    let mut next_maker = this_maker;
+    let mut next_maker = this_maker.clone();
     let (
         next_peer_multisig_pubkeys,
         next_peer_multisig_keys_or_nonces,
@@ -1079,7 +1063,7 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
     } else {
         // If Next Maker is the Receiver, and Previous Maker is the Sender, request Previous Maker to sign the Reciever's Contract Tx.
         assert!(previous_maker.is_some());
-        let previous_maker_addr = &previous_maker.unwrap().address;
+        let previous_maker_addr = previous_maker.clone().unwrap().address;
         log::info!(
             "===> Sending SignReceiversContractTx, previous maker is {}",
             previous_maker_addr,
@@ -1110,14 +1094,14 @@ async fn exchange_signatures_and_find_next_maker_attempt_once<'a>(
         }),
     )
     .await?;
-    Ok((
-        next_peer_multisig_pubkeys,
-        next_peer_multisig_keys_or_nonces,
-        next_peer_hashlock_keys_or_nonces,
-        maker_sign_sender_and_receiver_contracts,
-        next_swap_contract_redeemscripts,
-        next_maker,
-    ))
+    let next_swap_info = NextSwapInfo {
+        peer: next_maker.clone(),
+        multisig_pubkeys: next_peer_multisig_pubkeys,
+        multisig_nonces: next_peer_multisig_keys_or_nonces,
+        hashlock_nonces: next_peer_hashlock_keys_or_nonces,
+        contract_reedemscripts: next_swap_contract_redeemscripts,
+    };
+    Ok((next_swap_info, maker_sign_sender_and_receiver_contracts))
 }
 
 // TODO: Simplify this function. Use dedicated structs for related items.
@@ -1265,7 +1249,7 @@ async fn send_proof_of_funding_and_init_next_hop(
 async fn settle_all_coinswaps(
     config: &SwapParams,
     preimage: &Preimage,
-    active_maker_addresses: &Vec<&MakerAddress>,
+    active_maker_addresses: &Vec<MakerAddress>,
     outgoing_swapcoins: &Vec<OutgoingSwapCoin>,
     watchonly_swapcoins: &mut Vec<Vec<WatchOnlySwapCoin>>,
     incoming_swapcoins: &mut Vec<IncomingSwapCoin>,

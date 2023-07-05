@@ -26,10 +26,10 @@ use crate::{
 };
 
 /// Chose the next Maker who's offer amount range satisfies the given amount.
-pub fn choose_next_maker<'a>(
-    maker_offers_addresses: &mut Vec<&'a OfferAndAddress>,
+pub fn choose_next_maker(
+    maker_offers_addresses: &mut Vec<OfferAndAddress>,
     amount: u64,
-) -> Option<&'a OfferAndAddress> {
+) -> Option<OfferAndAddress> {
     loop {
         let m = maker_offers_addresses.pop()?;
         if amount < m.offer.min_size || amount > m.offer.max_size {
@@ -154,10 +154,7 @@ pub fn create_incoming_swapcoins(
     maker_sign_sender_and_receiver_contracts: &ContractSigsAsRecvrAndSender,
     funding_txes: &[Transaction],
     funding_tx_merkleproofs: &[String],
-    next_swap_contract_redeemscripts: &[Script],
-    next_peer_hashlock_keys_or_nonces: &[SecretKey],
-    next_peer_multisig_pubkeys: &[PublicKey],
-    next_peer_multisig_keys_or_nonces: &[SecretKey],
+    next_swap_info: &crate::taker::NextSwapInfo,
     preimage: &Preimage,
 ) -> Result<Vec<IncomingSwapCoin>, Error> {
     let next_swap_multisig_redeemscripts = maker_sign_sender_and_receiver_contracts
@@ -187,7 +184,7 @@ pub fn create_incoming_swapcoins(
     let my_receivers_contract_txes = izip!(
         next_swap_funding_outpoints.iter(),
         last_makers_funding_tx_values.iter(),
-        next_swap_contract_redeemscripts.iter()
+        next_swap_info.contract_reedemscripts.iter()
     )
     .map(
         |(&previous_funding_output, &maker_funding_tx_value, next_contract_redeemscript)| {
@@ -213,11 +210,11 @@ pub fn create_incoming_swapcoins(
         funding_tx_merkleproof,
     ) in izip!(
         next_swap_multisig_redeemscripts.iter(),
-        next_peer_multisig_pubkeys.iter(),
-        next_peer_multisig_keys_or_nonces.iter(),
+        next_swap_info.multisig_pubkeys.iter(),
+        next_swap_info.multisig_nonces.iter(),
         my_receivers_contract_txes.iter(),
-        next_swap_contract_redeemscripts.iter(),
-        next_peer_hashlock_keys_or_nonces.iter(),
+        next_swap_info.contract_reedemscripts.iter(),
+        next_swap_info.hashlock_nonces.iter(),
         last_makers_funding_tx_values.iter(),
         funding_txes.iter(),
         funding_tx_merkleproofs.iter(),

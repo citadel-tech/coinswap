@@ -5,16 +5,21 @@
 
 use std::path::PathBuf;
 
+use bitcoin::{secp256k1::SecretKey, PublicKey, Script};
 use bitcoincore_rpc::Client;
 use tokio::net::ToSocketAddrs;
 
-use crate::{wallet_sync::{OutgoingSwapCoin, IncomingSwapCoin, Wallet}, contracts::WatchOnlySwapCoin, offerbook_sync::MakerAddress, taker_protocol::SwapParams, messages::Preimage};
+use crate::{
+    contracts::WatchOnlySwapCoin,
+    messages::Preimage,
+    offerbook_sync::{MakerAddress, OfferAndAddress},
+    taker_protocol::SwapParams,
+    wallet_sync::{IncomingSwapCoin, OutgoingSwapCoin, Wallet},
+};
 
 // Taker's internal OfferBook.
 // This should be updatable from public offer servers.
-struct OfferBook {
-    /* placeholder */
-}
+struct OfferBook {/* placeholder */}
 
 struct TakerConfig {
     /* placeholder */
@@ -63,14 +68,24 @@ impl TakerConfig {
 //     }
 // }
 
-pub struct CurrentSwapInfo {
+#[derive(Debug, Default)]
+pub struct OngoingSwapInfo {
     pub outgoing_swapcoins: Vec<OutgoingSwapCoin>,
     pub watchonly_swapcoins: Vec<Vec<WatchOnlySwapCoin>>,
     pub incoming_swapcoins: Vec<IncomingSwapCoin>,
     // List of active makers for a coinswap round
     pub active_makers: Vec<MakerAddress>,
     /// The preimage for a active coinswap round
-    pub active_preimage: Preimage
+    pub active_preimage: Preimage,
+}
+
+#[derive(Debug, Clone)]
+pub struct NextSwapInfo {
+    pub peer: OfferAndAddress,
+    pub multisig_pubkeys: Vec<PublicKey>,
+    pub multisig_nonces: Vec<SecretKey>,
+    pub hashlock_nonces: Vec<SecretKey>,
+    pub contract_reedemscripts: Vec<Script>,
 }
 
 struct Taker {
@@ -79,9 +94,10 @@ struct Taker {
     // TODO: Move this inside Wallet
     rpc: Client,
     config: TakerConfig,
-    offerbook: OfferBook,
+    offerbook: Vec<OfferAndAddress>,
     // All information regarding the current Swap
-    current_swap_info: CurrentSwapInfo
+    // Empty vectors represent no ongoing swaps.
+    current_swap_info: OngoingSwapInfo,
 }
 
 impl Taker {

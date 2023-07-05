@@ -55,6 +55,7 @@ mod directory_servers;
 mod error;
 mod funding_tx;
 mod messages;
+mod taker;
 mod util;
 pub mod watchtower_client;
 pub mod watchtower_protocol;
