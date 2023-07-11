@@ -16,7 +16,7 @@ use serde_json::Value;
 use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
 
 use crate::{
-    error::Error,
+    error::TeleportError,
     wallet_sync::{convert_json_rpc_bitcoin_to_satoshis, Wallet},
 };
 
@@ -33,7 +33,7 @@ impl Wallet {
         coinswap_amount: u64,
         destinations: &[Address],
         fee_rate: u64,
-    ) -> Result<Option<CreateFundingTxesResult>, Error> {
+    ) -> Result<Option<CreateFundingTxesResult>, TeleportError> {
         //returns Ok(None) if there was no error but the wallet was unable to create funding txes
 
         log::debug!(target: "wallet", "coinswap_amount = {} destinations = {:?}",
@@ -72,7 +72,7 @@ impl Wallet {
         count: usize,
         total_amount: u64,
         lower_limit: u64,
-    ) -> Result<Vec<f32>, Error> {
+    ) -> Result<Vec<f32>, TeleportError> {
         let mut rng = OsRng::new().unwrap();
         for _ in 0..100000 {
             let mut knives = (1..count)
@@ -95,12 +95,15 @@ impl Wallet {
                 return Ok(fractions);
             }
         }
-        Err(Error::Protocol(
+        Err(TeleportError::Protocol(
             "unable to generate amount fractions, probably amount too small",
         ))
     }
 
-    fn generate_amount_fractions(count: usize, total_amount: u64) -> Result<Vec<u64>, Error> {
+    fn generate_amount_fractions(
+        count: usize,
+        total_amount: u64,
+    ) -> Result<Vec<u64>, TeleportError> {
         let mut output_values = Wallet::generate_amount_fractions_without_correction(
             count,
             total_amount,
@@ -133,7 +136,7 @@ impl Wallet {
         coinswap_amount: u64,
         destinations: &[Address],
         fee_rate: u64,
-    ) -> Result<Option<CreateFundingTxesResult>, Error> {
+    ) -> Result<Option<CreateFundingTxesResult>, TeleportError> {
         //this function creates funding txes by
         //randomly generating some satoshi amounts and send them into
         //walletcreatefundedpsbt to create txes that create change
@@ -211,7 +214,7 @@ impl Wallet {
         utxos: &mut dyn Iterator<Item = (Txid, u32, u64)>,
         //utxos item is (txid, vout, value)
         //utxos should be sorted by size, largest first
-    ) -> Result<Option<CreateFundingTxesResult>, Error> {
+    ) -> Result<Option<CreateFundingTxesResult>, TeleportError> {
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
         let mut total_miner_fee = 0;
@@ -339,7 +342,7 @@ impl Wallet {
         coinswap_amount: u64,
         destinations: &[Address],
         fee_rate: u64,
-    ) -> Result<Option<CreateFundingTxesResult>, Error> {
+    ) -> Result<Option<CreateFundingTxesResult>, TeleportError> {
         //this function creates funding txes by
         //using walletcreatefundedpsbt for the total amount, and if
         //the number if inputs UTXOs is >number_of_txes then split those inputs into groups
@@ -372,7 +375,7 @@ impl Wallet {
         let total_tx_inputs_len = decoded_psbt["inputs"].as_array().unwrap().len();
         log::debug!(target: "wallet", "total tx inputs.len = {}", total_tx_inputs_len);
         if total_tx_inputs_len < destinations.len() {
-            return Err(Error::Protocol(
+            return Err(TeleportError::Protocol(
                 "not enough UTXOs found, cant use this method",
             ));
         }
@@ -414,13 +417,13 @@ impl Wallet {
         coinswap_amount: u64,
         destinations: &[Address],
         fee_rate: u64,
-    ) -> Result<Option<CreateFundingTxesResult>, Error> {
+    ) -> Result<Option<CreateFundingTxesResult>, TeleportError> {
         //this function will pick the top most valuable UTXOs and use them
         //to create funding transactions
 
         let mut list_unspent_result = self.list_unspent_from_wallet(rpc, false, false)?;
         if list_unspent_result.len() < destinations.len() {
-            return Err(Error::Protocol(
+            return Err(TeleportError::Protocol(
                 "Not enough UTXOs to create this many funding txes",
             ));
         }
@@ -442,7 +445,7 @@ impl Wallet {
             }
         }
         if list_unspent_count.is_none() {
-            return Err(Error::Protocol(
+            return Err(TeleportError::Protocol(
                 "Not enough UTXOs/value to create funding txes",
             ));
         }

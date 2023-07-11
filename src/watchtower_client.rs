@@ -10,7 +10,7 @@ use tokio::{
 };
 
 use crate::{
-    error::Error,
+    error::TeleportError,
     watchtower_protocol::{
         ContractsInfo, MakerToWatchtowerMessage, Ping, WatchContractTxes, WatchtowerToMakerMessage,
     },
@@ -28,14 +28,14 @@ pub async fn test_watchtower_client(contracts_to_watch: ContractsInfo) {
         .unwrap();
 }
 
-fn parse_message(line: &str) -> Result<WatchtowerToMakerMessage, Error> {
+fn parse_message(line: &str) -> Result<WatchtowerToMakerMessage, TeleportError> {
     serde_json::from_str::<WatchtowerToMakerMessage>(line)
-        .map_err(|_| Error::Protocol("watchtower sent invalid message"))
+        .map_err(|_| TeleportError::Protocol("watchtower sent invalid message"))
 }
 
 pub async fn register_coinswap_with_watchtowers(
     contracts_to_watch: ContractsInfo,
-) -> Result<(), Error> {
+) -> Result<(), TeleportError> {
     send_message_to_watchtowers(&MakerToWatchtowerMessage::WatchContractTxes(
         WatchContractTxes {
             protocol_version_min: 0,
@@ -48,7 +48,7 @@ pub async fn register_coinswap_with_watchtowers(
     Ok(())
 }
 
-pub async fn ping_watchtowers() -> Result<(), Error> {
+pub async fn ping_watchtowers() -> Result<(), TeleportError> {
     log::debug!("pinging watchtowers");
     send_message_to_watchtowers(&MakerToWatchtowerMessage::Ping(Ping {
         protocol_version_min: 0,
@@ -57,7 +57,9 @@ pub async fn ping_watchtowers() -> Result<(), Error> {
     .await
 }
 
-async fn send_message_to_watchtowers_once(message: &MakerToWatchtowerMessage) -> Result<(), Error> {
+async fn send_message_to_watchtowers_once(
+    message: &MakerToWatchtowerMessage,
+) -> Result<(), TeleportError> {
     //TODO add support for registering with multiple watchtowers concurrently
 
     let mut socket = TcpStream::connect(WATCHTOWER_HOSTPORT).await?;
@@ -71,32 +73,38 @@ async fn send_message_to_watchtowers_once(message: &MakerToWatchtowerMessage) ->
 
     let mut line1 = String::new();
     if socket_reader.read_line(&mut line1).await? == 0 {
-        return Err(Error::Protocol("watchtower eof"));
+        return Err(TeleportError::Protocol("watchtower eof"));
     }
     let _watchtower_hello =
         if let WatchtowerToMakerMessage::WatchtowerHello(h) = parse_message(&line1)? {
             h
         } else {
             log::trace!(target: "watchtower_client", "wrong protocol message");
-            return Err(Error::Protocol("wrong protocol message from watchtower"));
+            return Err(TeleportError::Protocol(
+                "wrong protocol message from watchtower",
+            ));
         };
     log::trace!(target: "watchtower_client", "watchtower hello = {:?}", _watchtower_hello);
 
     let mut line2 = String::new();
     if socket_reader.read_line(&mut line2).await? == 0 {
-        return Err(Error::Protocol("watchtower eof"));
+        return Err(TeleportError::Protocol("watchtower eof"));
     }
     let _success = if let WatchtowerToMakerMessage::Success(s) = parse_message(&line2)? {
         s
     } else {
         log::trace!(target: "watchtower_client", "wrong protocol message2");
-        return Err(Error::Protocol("wrong protocol message2 from watchtower"));
+        return Err(TeleportError::Protocol(
+            "wrong protocol message2 from watchtower",
+        ));
     };
 
     Ok(())
 }
 
-async fn send_message_to_watchtowers(message: &MakerToWatchtowerMessage) -> Result<(), Error> {
+async fn send_message_to_watchtowers(
+    message: &MakerToWatchtowerMessage,
+) -> Result<(), TeleportError> {
     let mut ii = 0;
     loop {
         ii += 1;
@@ -125,7 +133,7 @@ async fn send_message_to_watchtowers(message: &MakerToWatchtowerMessage) -> Resu
                 if ii <= CONNECT_ATTEMPTS {
                     continue;
                 } else {
-                    return Err(Error::Protocol(
+                    return Err(TeleportError::Protocol(
                         "Timed out of sending message to watchtower"));
                 }
             },

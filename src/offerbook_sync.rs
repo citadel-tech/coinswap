@@ -8,7 +8,7 @@ use crate::{
     directory_servers::{
         sync_maker_addresses_from_directory_servers, DirectoryServerError, TOR_ADDR,
     },
-    error::Error,
+    error::TeleportError,
     messages::{GiveOffer, MakerToTakerMessage, Offer, TakerToMakerMessage},
     taker_protocol::{
         handshake_maker, FIRST_CONNECT_ATTEMPTS, FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC,
@@ -17,13 +17,13 @@ use crate::{
     util::{read_message, send_message},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MakerAddress {
     Clearnet { address: String },
     Tor { address: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OfferAndAddress {
     pub offer: Offer,
     pub address: MakerAddress,
@@ -64,7 +64,7 @@ impl fmt::Display for MakerAddress {
     }
 }
 
-async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer, Error> {
+async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer, TeleportError> {
     log::debug!(target: "offerbook", "Connecting to {}", addr);
     let mut socket = TcpStream::connect(addr.get_tcpstream_address()).await?;
     let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket, addr).await?;
@@ -78,7 +78,7 @@ async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer,
     let offer = if let MakerToTakerMessage::RespOffer(o) = read_message(&mut socket_reader).await? {
         o
     } else {
-        return Err(Error::Protocol("expected method offer"));
+        return Err(TeleportError::Protocol("expected method offer"));
     };
 
     log::debug!(target: "offerbook", "Obtained offer from {}", addr);

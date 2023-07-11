@@ -69,6 +69,7 @@ use bitcoin::hashes::hash160::Hash as Hash160;
 
 pub const PREIMAGE_LEN: usize = 32;
 pub type Preimage = [u8; PREIMAGE_LEN];
+pub type Nonce = SecretKey;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TakerHello {
@@ -215,7 +216,7 @@ pub struct FidelityBondProof {
     pub onion_sig: Signature,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Offer {
     pub absolute_fee_sat: u64,
     pub amount_relative_fee_ppb: u64,
@@ -242,7 +243,7 @@ pub struct SenderContractTxInfo {
     pub funding_amount: u64,
 }
 
-/// This message is sent by a Maker to a Taker. Which is a request to gather signatures for the Maker as both Sender and Receiver of Coinswaps.
+/// This message is sent by a Maker to a Taker. Which is a request to the Taker for gathering signatures for the Maker as both Sender and Receiver of Coinswaps.
 /// This message is sent by a Maker after a [`ProofOfFunding`] has been received.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ContractSigsAsRecvrAndSender {

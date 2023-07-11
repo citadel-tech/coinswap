@@ -40,7 +40,7 @@ use crate::{
         MAKER_FUNDING_TX_VBYTE_SIZE,
     },
     directory_servers::post_maker_address_to_directory_servers,
-    error::Error,
+    error::TeleportError,
     messages::{
         ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
         ContractSigsForSender, HashPreimage, MakerHello, MakerToTakerMessage, MultisigPrivkey,
@@ -108,7 +108,7 @@ async fn run(
     rpc: Arc<Client>,
     wallet: Arc<RwLock<Wallet>>,
     config: MakerConfig,
-) -> Result<(), Error> {
+) -> Result<(), TeleportError> {
     log::debug!(
         "Running maker with special behavior = {:?}",
         config.maker_behavior
@@ -137,7 +137,7 @@ async fn run(
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, config.port)).await?;
     log::info!("Listening On Port {}", config.port);
 
-    let (server_loop_comms_tx, mut server_loop_comms_rx) = mpsc::channel::<Error>(100);
+    let (server_loop_comms_tx, mut server_loop_comms_rx) = mpsc::channel::<TeleportError>(100);
     let mut accepting_clients = true;
     let mut last_rpc_ping = Instant::now();
     let mut last_watchtowers_ping = Instant::now();
@@ -151,7 +151,7 @@ async fn run(
             client_err = server_loop_comms_rx.recv() => {
                 //unwrap the option here because we'll never close the mscp so it will always work
                 match client_err.as_ref().unwrap() {
-                    Error::Rpc(e) => {
+                    TeleportError::Rpc(e) => {
                         //doublecheck the rpc connection here because sometimes the rpc error
                         //will be unrelated to the connection itself e.g. "insufficent funds"
                         let rpc_connection_success = rpc.get_best_block_hash().is_ok();
@@ -195,7 +195,7 @@ async fn run(
                 }
 
                 if *my_kill_flag.read().unwrap() {
-                    break Err(Error::Protocol("kill flag is true"));
+                    break Err(TeleportError::Protocol("kill flag is true"));
                 }
 
                 let directory_servers_refresh_interval = Duration::from_secs(
@@ -302,17 +302,20 @@ async fn run(
                     Err(err) => {
                         log::error!("error handling client request: {:?}", err);
                         match err {
-                            Error::Network(_e) => (),
-                            Error::Protocol(_e) => (),
-                            Error::Disk(e) => {
-                                server_loop_comms_tx.send(Error::Disk(e)).await.unwrap()
-                            }
-                            Error::Rpc(e) => {
-                                server_loop_comms_tx.send(Error::Rpc(e)).await.unwrap()
-                            }
-                            Error::Socks(e) => {
-                                server_loop_comms_tx.send(Error::Socks(e)).await.unwrap()
-                            }
+                            TeleportError::Network(_e) => (),
+                            TeleportError::Protocol(_e) => (),
+                            TeleportError::Disk(e) => server_loop_comms_tx
+                                .send(TeleportError::Disk(e))
+                                .await
+                                .unwrap(),
+                            TeleportError::Rpc(e) => server_loop_comms_tx
+                                .send(TeleportError::Rpc(e))
+                                .await
+                                .unwrap(),
+                            TeleportError::Socks(e) => server_loop_comms_tx
+                                .send(TeleportError::Socks(e))
+                                .await
+                                .unwrap(),
                         };
                         break;
                     }
@@ -325,7 +328,7 @@ async fn run(
 async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     first_message: &MakerToTakerMessage,
-) -> Result<(), Error> {
+) -> Result<(), TeleportError> {
     let mut message_bytes =
         serde_json::to_vec(first_message).map_err(|e| std::io::Error::from(e))?;
     message_bytes.push(b'\n');
@@ -340,10 +343,10 @@ async fn handle_message(
     wallet: Arc<RwLock<Wallet>>,
     from_addrs: SocketAddr,
     maker_behavior: MakerBehavior,
-) -> Result<Option<MakerToTakerMessage>, Error> {
+) -> Result<Option<MakerToTakerMessage>, TeleportError> {
     let request: TakerToMakerMessage = match serde_json::from_str(&line) {
         Ok(r) => r,
-        Err(_e) => return Err(Error::Protocol("message parsing error")),
+        Err(_e) => return Err(TeleportError::Protocol("message parsing error")),
     };
 
     log::info!(
@@ -369,7 +372,7 @@ async fn handle_message(
                 connection_state.allowed_message = ExpectedMessage::NewlyConnectedTaker;
                 None
             } else {
-                return Err(Error::Protocol("Expected Taker Hello Message"));
+                return Err(TeleportError::Protocol("Expected Taker Hello Message"));
             }
         }
         ExpectedMessage::NewlyConnectedTaker => match request {
@@ -406,7 +409,9 @@ async fn handle_message(
                 handle_hash_preimage(wallet, message)?
             }
             _ => {
-                return Err(Error::Protocol("Unexpected Newly Connected Taker message"));
+                return Err(TeleportError::Protocol(
+                    "Unexpected Newly Connected Taker message",
+                ));
             }
         },
         ExpectedMessage::SignSendersContractTx => {
@@ -414,7 +419,7 @@ async fn handle_message(
                 connection_state.allowed_message = ExpectedMessage::ProofOfFunding;
                 handle_sign_senders_contract_tx(wallet, message, maker_behavior)?
             } else {
-                return Err(Error::Protocol(
+                return Err(TeleportError::Protocol(
                     "Expected Sign sender's contract transaction message",
                 ));
             }
@@ -425,7 +430,7 @@ async fn handle_message(
                     ExpectedMessage::ProofOfFundingORSendersAndReceiversContractSigs;
                 handle_proof_of_funding(connection_state, rpc, wallet, &proof)?
             } else {
-                return Err(Error::Protocol("Expected proof of funding message"));
+                return Err(TeleportError::Protocol("Expected proof of funding message"));
             }
         }
         ExpectedMessage::ProofOfFundingORSendersAndReceiversContractSigs => {
@@ -447,7 +452,7 @@ async fn handle_message(
                     .await?
                 }
                 _ => {
-                    return Err(Error::Protocol(
+                    return Err(TeleportError::Protocol(
                         "Expected proof of funding or sender's and reciever's contract signatures",
                     ));
                 }
@@ -458,7 +463,9 @@ async fn handle_message(
                 connection_state.allowed_message = ExpectedMessage::HashPreimage;
                 handle_sign_receivers_contract_tx(wallet, message)?
             } else {
-                return Err(Error::Protocol("Expected reciever's contract transaction"));
+                return Err(TeleportError::Protocol(
+                    "Expected reciever's contract transaction",
+                ));
             }
         }
         ExpectedMessage::HashPreimage => {
@@ -466,7 +473,7 @@ async fn handle_message(
                 connection_state.allowed_message = ExpectedMessage::PrivateKeyHandover;
                 handle_hash_preimage(wallet, message)?
             } else {
-                return Err(Error::Protocol("Expected hash preimgae"));
+                return Err(TeleportError::Protocol("Expected hash preimgae"));
             }
         }
         ExpectedMessage::PrivateKeyHandover => {
@@ -474,7 +481,7 @@ async fn handle_message(
                 // Nothing to send. Succesfully completed swap
                 handle_private_key_handover(wallet, message)?
             } else {
-                return Err(Error::Protocol("expected privatekey handover"));
+                return Err(TeleportError::Protocol("expected privatekey handover"));
             }
         }
     };
@@ -505,9 +512,9 @@ fn handle_sign_senders_contract_tx(
     wallet: Arc<RwLock<Wallet>>,
     message: ReqContractSigsForSender,
     maker_behavior: MakerBehavior,
-) -> Result<Option<MakerToTakerMessage>, Error> {
+) -> Result<Option<MakerToTakerMessage>, TeleportError> {
     if let MakerBehavior::CloseOnSignSendersContractTx = maker_behavior {
-        return Err(Error::Protocol(
+        return Err(TeleportError::Protocol(
             "closing connection early due to special maker behavior",
         ));
     }
@@ -549,7 +556,7 @@ fn handle_sign_senders_contract_tx(
             "rejecting contracts for amount={} because not enough funds",
             Amount::from_sat(total_amount)
         );
-        Err(Error::Protocol("not enough funds"))
+        Err(TeleportError::Protocol("not enough funds"))
     }
 }
 
@@ -558,12 +565,12 @@ fn handle_proof_of_funding(
     rpc: Arc<Client>,
     wallet: Arc<RwLock<Wallet>>,
     proof: &ProofOfFunding,
-) -> Result<Option<MakerToTakerMessage>, Error> {
+) -> Result<Option<MakerToTakerMessage>, TeleportError> {
     let mut funding_output_indexes = Vec::<u32>::new();
     let mut funding_outputs = Vec::<&TxOut>::new();
     let mut incoming_swapcoin_keys = Vec::<(SecretKey, PublicKey, SecretKey)>::new();
     if proof.confirmed_funding_txes.len() == 0 {
-        return Err(Error::Protocol("zero funding txes provided"));
+        return Err(TeleportError::Protocol("zero funding txes provided"));
     }
     for funding_info in &proof.confirmed_funding_txes {
         //check that the claimed multisig redeemscript is in the transaction
@@ -577,7 +584,7 @@ fn handle_proof_of_funding(
             &funding_info.multisig_redeemscript,
         ) {
             Some(fo) => fo,
-            None => return Err(Error::Protocol("funding tx doesnt pay to multisig")),
+            None => return Err(TeleportError::Protocol("funding tx doesnt pay to multisig")),
         };
         funding_output_indexes.push(funding_output_index);
         funding_outputs.push(funding_output);
@@ -600,12 +607,14 @@ fn handle_proof_of_funding(
             .unwrap()
             .contract_redeemscript,
     )
-    .map_err(|_| Error::Protocol("unable to read hashvalue from contract"))?;
+    .map_err(|_| TeleportError::Protocol("unable to read hashvalue from contract"))?;
     for hv in confirmed_funding_txes_hashvalue_check_iter
         .map(|info| read_hashvalue_from_contract(&info.contract_redeemscript))
     {
-        if hv.map_err(|_| Error::Protocol("unable to read hashvalue from contract"))? != hashvalue {
-            return Err(Error::Protocol(
+        if hv.map_err(|_| TeleportError::Protocol("unable to read hashvalue from contract"))?
+            != hashvalue
+        {
+            return Err(TeleportError::Protocol(
                 "contract redeemscripts dont all use the same hashvalue",
             ));
         }
@@ -622,7 +631,7 @@ fn handle_proof_of_funding(
     ) {
         let (pubkey1, pubkey2) =
             read_pubkeys_from_multisig_redeemscript(&funding_info.multisig_redeemscript)
-                .ok_or(Error::Protocol("invalid multisig redeemscript"))?;
+                .ok_or(TeleportError::Protocol("invalid multisig redeemscript"))?;
         wallet
             .read()
             .unwrap()
@@ -763,19 +772,19 @@ async fn handle_senders_and_receivers_contract_sigs(
     rpc: Arc<Client>,
     wallet: Arc<RwLock<Wallet>>,
     sigs: ContractSigsForRecvrAndSender,
-) -> Result<Option<MakerToTakerMessage>, Error> {
+) -> Result<Option<MakerToTakerMessage>, TeleportError> {
     //if incoming/outgoing_swapcoin are None then the app should crash because
     //its a logic error, so no error handling, just use unwrap()
 
     let incoming_swapcoins = connection_state.incoming_swapcoins.as_mut().unwrap();
     if sigs.receivers_sigs.len() != incoming_swapcoins.len() {
-        return Err(Error::Protocol("invalid number of recv signatures"));
+        return Err(TeleportError::Protocol("invalid number of recv signatures"));
     }
     for (receivers_sig, incoming_swapcoin) in
         sigs.receivers_sigs.iter().zip(incoming_swapcoins.iter())
     {
         if !incoming_swapcoin.verify_contract_tx_sig(receivers_sig) {
-            return Err(Error::Protocol("invalid recv signature"));
+            return Err(TeleportError::Protocol("invalid recv signature"));
         }
     }
     sigs.receivers_sigs
@@ -787,12 +796,12 @@ async fn handle_senders_and_receivers_contract_sigs(
 
     let outgoing_swapcoins = connection_state.outgoing_swapcoins.as_mut().unwrap();
     if sigs.senders_sigs.len() != outgoing_swapcoins.len() {
-        return Err(Error::Protocol("invalid number of send signatures"));
+        return Err(TeleportError::Protocol("invalid number of send signatures"));
     }
     for (senders_sig, outgoing_swapcoin) in sigs.senders_sigs.iter().zip(outgoing_swapcoins.iter())
     {
         if !outgoing_swapcoin.verify_contract_tx_sig(senders_sig) {
-            return Err(Error::Protocol("invalid send signature"));
+            return Err(TeleportError::Protocol("invalid send signature"));
         }
     }
     sigs.senders_sigs
@@ -844,7 +853,7 @@ async fn handle_senders_and_receivers_contract_sigs(
     outgoing_swapcoins
         .iter()
         .for_each(|outgoing_swapcoin| w.add_outgoing_swapcoin(outgoing_swapcoin.clone()));
-    w.update_swapcoins_list()?;
+    w.save_to_disk()?;
 
     let mut my_funding_txids = Vec::<Txid>::new();
     for my_funding_tx in connection_state.pending_funding_txes.as_ref().unwrap() {
@@ -866,7 +875,7 @@ async fn handle_senders_and_receivers_contract_sigs(
 fn handle_sign_receivers_contract_tx(
     wallet: Arc<RwLock<Wallet>>,
     message: ReqContractSigsForRecvr,
-) -> Result<Option<MakerToTakerMessage>, Error> {
+) -> Result<Option<MakerToTakerMessage>, TeleportError> {
     let mut sigs = Vec::<Signature>::new();
     for receivers_contract_tx_info in message.txs {
         sigs.push(
@@ -877,7 +886,7 @@ fn handle_sign_receivers_contract_tx(
                 .read()
                 .unwrap()
                 .find_outgoing_swapcoin(&receivers_contract_tx_info.multisig_redeemscript)
-                .ok_or(Error::Protocol("multisig_redeemscript not found"))?
+                .ok_or(TeleportError::Protocol("multisig_redeemscript not found"))?
                 .sign_contract_tx_with_my_privkey(&receivers_contract_tx_info.contract_tx)?,
         );
     }
@@ -889,19 +898,21 @@ fn handle_sign_receivers_contract_tx(
 fn handle_hash_preimage(
     wallet: Arc<RwLock<Wallet>>,
     message: HashPreimage,
-) -> Result<Option<MakerToTakerMessage>, Error> {
+) -> Result<Option<MakerToTakerMessage>, TeleportError> {
     let hashvalue = Hash160::hash(&message.preimage);
     {
         let mut wallet_mref = wallet.write().unwrap();
         for multisig_redeemscript in message.senders_multisig_redeemscripts {
             let incoming_swapcoin = wallet_mref
                 .find_incoming_swapcoin_mut(&multisig_redeemscript)
-                .ok_or(Error::Protocol("senders multisig_redeemscript not found"))?;
+                .ok_or(TeleportError::Protocol(
+                    "senders multisig_redeemscript not found",
+                ))?;
             if read_hashvalue_from_contract(&incoming_swapcoin.contract_redeemscript)
-                .map_err(|_| Error::Protocol("unable to read hashvalue from contract"))?
+                .map_err(|_| TeleportError::Protocol("unable to read hashvalue from contract"))?
                 != hashvalue
             {
-                return Err(Error::Protocol("not correct hash preimage"));
+                return Err(TeleportError::Protocol("not correct hash preimage"));
             }
             incoming_swapcoin.hash_preimage = Some(message.preimage);
         }
@@ -913,12 +924,14 @@ fn handle_hash_preimage(
     for multisig_redeemscript in message.receivers_multisig_redeemscripts {
         let outgoing_swapcoin = wallet_ref
             .find_outgoing_swapcoin(&multisig_redeemscript)
-            .ok_or(Error::Protocol("receivers multisig_redeemscript not found"))?;
+            .ok_or(TeleportError::Protocol(
+                "receivers multisig_redeemscript not found",
+            ))?;
         if read_hashvalue_from_contract(&outgoing_swapcoin.contract_redeemscript)
-            .map_err(|_| Error::Protocol("unable to read hashvalue from contract"))?
+            .map_err(|_| TeleportError::Protocol("unable to read hashvalue from contract"))?
             != hashvalue
         {
-            return Err(Error::Protocol("not correct hash preimage"));
+            return Err(TeleportError::Protocol("not correct hash preimage"));
         }
         swapcoin_private_keys.push(MultisigPrivkey {
             multisig_redeemscript,
@@ -926,7 +939,7 @@ fn handle_hash_preimage(
         });
     }
 
-    wallet_ref.update_swapcoins_list()?;
+    wallet_ref.save_to_disk()?;
     Ok(Some(MakerToTakerMessage::RespPrivKeyHandover(
         PrivKeyHandover {
             multisig_privkeys: swapcoin_private_keys,
@@ -937,15 +950,15 @@ fn handle_hash_preimage(
 fn handle_private_key_handover(
     wallet: Arc<RwLock<Wallet>>,
     message: PrivKeyHandover,
-) -> Result<Option<MakerToTakerMessage>, Error> {
+) -> Result<Option<MakerToTakerMessage>, TeleportError> {
     let mut wallet_ref = wallet.write().unwrap();
     for swapcoin_private_key in message.multisig_privkeys {
         wallet_ref
             .find_incoming_swapcoin_mut(&swapcoin_private_key.multisig_redeemscript)
-            .ok_or(Error::Protocol("multisig_redeemscript not found"))?
+            .ok_or(TeleportError::Protocol("multisig_redeemscript not found"))?
             .apply_privkey(swapcoin_private_key.key)?
     }
-    wallet_ref.update_swapcoins_list()?;
+    wallet_ref.save_to_disk()?;
     log::info!("Successfully Completed Coinswap");
     Ok(None)
 }
