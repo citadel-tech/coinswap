@@ -11,10 +11,9 @@ use crate::{
     error::TeleportError,
     messages::{GiveOffer, MakerToTakerMessage, Offer, TakerToMakerMessage},
     taker_protocol::{
-        handshake_maker, FIRST_CONNECT_ATTEMPTS, FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC,
-        FIRST_CONNECT_SLEEP_DELAY_SEC,
+        FIRST_CONNECT_ATTEMPTS, FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC, FIRST_CONNECT_SLEEP_DELAY_SEC,
     },
-    util::{read_message, send_message},
+    util::{handshake_maker, read_message, send_message},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

@@ -4,7 +4,8 @@
 //this works because of enum representations in serde
 //see https://serde.rs/enum-representations.html
 
-//! This module describes the Coinswap Protocol Messages.
+//! Coinswap Protocol Messages.
+//!
 //! Messages are Communicated between Taker and one or many Makers.
 //! Makers don't communicate with each other. One Maker will only know the Identity of the Maker, in previous and next hop.
 //!
@@ -69,7 +70,6 @@ use bitcoin::hashes::hash160::Hash as Hash160;
 
 pub const PREIMAGE_LEN: usize = 32;
 pub type Preimage = [u8; PREIMAGE_LEN];
-pub type Nonce = SecretKey;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TakerHello {
