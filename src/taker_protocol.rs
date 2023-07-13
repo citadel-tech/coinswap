@@ -1297,6 +1297,8 @@ impl<'taker> Taker<'taker> {
     /// the ends of swap round.
     async fn settle_all_swaps(&mut self) -> Result<(), TeleportError> {
         let mut outgoing_privkeys: Option<Vec<MultisigPrivkey>> = None;
+
+        // Because the last peer info is the Taker, we take upto (0..n-1), where n = peer_info.len()
         let maker_addresses = self.ongoing_swap_state.peer_infos
             [0..self.ongoing_swap_state.peer_infos.len() - 1]
             .iter()
@@ -1305,15 +1307,12 @@ impl<'taker> Taker<'taker> {
 
         for (index, maker_address) in maker_addresses.iter().enumerate() {
             if index == 0 {
-                self.ongoing_swap_state.taker_position = TakerPosition::LastPeer;
+                self.ongoing_swap_state.taker_position = TakerPosition::FirstPeer;
             } else if index == (self.ongoing_swap_state.swap_params.maker_count - 1) as usize {
                 self.ongoing_swap_state.taker_position = TakerPosition::LastPeer
             } else {
                 self.ongoing_swap_state.taker_position = TakerPosition::WatchOnly;
             }
-            // let is_taker_previous_peer = index == 0;
-            // let is_taker_next_peer =
-            //     (index as u16) == self.ongoing_swap_state.swap_params.maker_count - 1;
 
             let senders_multisig_redeemscripts =
                 if self.ongoing_swap_state.taker_position == TakerPosition::FirstPeer {
