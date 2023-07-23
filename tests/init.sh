@@ -12,9 +12,11 @@ cd "$(dirname "$0")" || exit
 # If it works you should see the usual wallet balances
 # run the taker and makers as usual.
 
-coinbaseaddr=$(bitcoin-cli getnewaddress)
+bitcoin-cli -named createwallet wallet_name=teleport descriptors=false || bitcoin-cli loadwallet teleport
 
-bitcoin-cli generatetoaddress 101 "$coinbaseaddr"
+coinbaseaddr=$(bitcoin-cli -rpcwallet=teleport getnewaddress)
+
+bitcoin-cli -rpcwallet=teleport generatetoaddress 101 "$coinbaseaddr"
 
 
 taker='../target/debug/teleport --wallet-file-name taker-wallet'
@@ -29,16 +31,16 @@ echo -ne "\n" | $maker2 generate-wallet
 for number in {0..2}
     do
         takeraddr=$($taker get-receive-invoice)
-        bitcoin-cli sendtoaddress $takeraddr 0.05
+        bitcoin-cli -rpcwallet=teleport sendtoaddress $takeraddr 0.05
 
         maker1addr=$($maker1 get-receive-invoice)
-        bitcoin-cli sendtoaddress $maker1addr 0.05
+        bitcoin-cli -rpcwallet=teleport sendtoaddress $maker1addr 0.05
 
         maker2addr=$($maker2 get-receive-invoice)
-        bitcoin-cli sendtoaddress $maker2addr 0.05
+        bitcoin-cli -rpcwallet=teleport sendtoaddress $maker2addr 0.05
     done
 
-bitcoin-cli generatetoaddress 1 "$coinbaseaddr"
+bitcoin-cli -rpcwallet=teleport generatetoaddress 1 "$coinbaseaddr"
 
 echo 'Taker Balance: '
 $taker wallet-balance

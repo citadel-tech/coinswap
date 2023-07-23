@@ -4,7 +4,8 @@
 //this works because of enum representations in serde
 //see https://serde.rs/enum-representations.html
 
-//! This module describes the Coinswap Protocol Messages.
+//! Coinswap Protocol Messages.
+//!
 //! Messages are Communicated between Taker and one or many Makers.
 //! Makers don't communicate with each other. One Maker will only know the Identity of the Maker, in previous and next hop.
 //!
@@ -112,7 +113,7 @@ pub struct ReqContractSigsForRecvr {
 }
 
 /// Confirmed Funding Tx with extra metadata.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FundingTxInfo {
     pub funding_tx: Transaction,
     pub funding_tx_merkleproof: String,
@@ -215,7 +216,7 @@ pub struct FidelityBondProof {
     pub onion_sig: Signature,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Offer {
     pub absolute_fee_sat: u64,
     pub amount_relative_fee_ppb: u64,
@@ -242,7 +243,7 @@ pub struct SenderContractTxInfo {
     pub funding_amount: u64,
 }
 
-/// This message is sent by a Maker to a Taker. Which is a request to gather signatures for the Maker as both Sender and Receiver of Coinswaps.
+/// This message is sent by a Maker to a Taker. Which is a request to the Taker for gathering signatures for the Maker as both Sender and Receiver of Coinswaps.
 /// This message is sent by a Maker after a [`ProofOfFunding`] has been received.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ContractSigsAsRecvrAndSender {

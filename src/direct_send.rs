@@ -6,7 +6,7 @@ use bitcoincore_rpc::{json::ListUnspentResultEntry, Client};
 
 use crate::{
     contracts::SwapCoin,
-    error::Error,
+    error::TeleportError,
     fidelity_bonds::get_locktime_from_index,
     wallet_sync::{UTXOSpendInfo, Wallet},
 };
@@ -106,7 +106,7 @@ impl Wallet {
         send_amount: SendAmount,
         destination: Destination,
         coins_to_spend: &[CoinToSpend],
-    ) -> Result<Transaction, Error> {
+    ) -> Result<Transaction, TeleportError> {
         let mut tx_inputs = Vec::<TxIn>::new();
         let mut unspent_inputs = Vec::<(ListUnspentResultEntry, UTXOSpendInfo)>::new();
         //TODO this search within a search could get very slow

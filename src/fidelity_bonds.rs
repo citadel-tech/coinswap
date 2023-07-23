@@ -35,7 +35,7 @@ use bitcoincore_rpc::{
 
 use crate::{
     contracts::redeemscript_to_scriptpubkey,
-    error::Error,
+    error::TeleportError,
     messages::FidelityBondProof,
     wallet_sync::{generate_keypair, UTXOSpendInfo, Wallet},
 };
@@ -148,7 +148,7 @@ impl HotWalletFidelityBond {
         &self,
         rpc: &Client,
         onion_hostname: &str,
-    ) -> Result<FidelityBondProof, Error> {
+    ) -> Result<FidelityBondProof, TeleportError> {
         const BLOCK_COUNT_SAFETY: u64 = 2;
         const RETARGET_INTERVAL: u64 = 2016;
         const CERT_MAX_VALIDITY_TIME: u64 = 1;
@@ -186,25 +186,25 @@ impl FidelityBondProof {
         rpc: &Client,
         block_count: u64,
         onion_hostname: &str,
-    ) -> Result<GetTxOutResult, Error> {
+    ) -> Result<GetTxOutResult, TeleportError> {
         let secp = Secp256k1::new();
 
         let onion_msg_hash =
             Message::from_slice(&sha256d::Hash::hash(onion_hostname.as_bytes())).unwrap();
         secp.verify(&onion_msg_hash, &self.onion_sig, &self.cert_pubkey.key)
-            .map_err(|_| Error::Protocol("onion sig does not verify"))?;
+            .map_err(|_| TeleportError::Protocol("onion sig does not verify"))?;
 
         let cert_msg_hash = create_cert_msg_hash(&self.cert_pubkey, self.cert_expiry);
         secp.verify(&cert_msg_hash, &self.cert_sig, &self.utxo_key.key)
-            .map_err(|_| Error::Protocol("cert sig does not verify"))?;
+            .map_err(|_| TeleportError::Protocol("cert sig does not verify"))?;
 
         let txo_data = rpc
             .get_tx_out(&self.utxo.txid, self.utxo.vout, None)?
-            .ok_or(Error::Protocol("fidelity bond UTXO doesnt exist"))?;
+            .ok_or(TeleportError::Protocol("fidelity bond UTXO doesnt exist"))?;
 
         const RETARGET_INTERVAL: u64 = 2016;
         if block_count > self.cert_expiry as u64 * RETARGET_INTERVAL {
-            return Err(Error::Protocol("cert has expired"));
+            return Err(TeleportError::Protocol("cert has expired"));
         }
 
         let implied_spk = redeemscript_to_scriptpubkey(&create_timelocked_redeemscript(
@@ -212,7 +212,9 @@ impl FidelityBondProof {
             &self.utxo_key,
         ));
         if txo_data.script_pub_key.hex != implied_spk.into_bytes() {
-            return Err(Error::Protocol("UTXO script doesnt match given script"));
+            return Err(TeleportError::Protocol(
+                "UTXO script doesnt match given script",
+            ));
         }
 
         //an important thing we cant verify in this function
@@ -228,7 +230,7 @@ impl FidelityBondProof {
         block_count: u64,
         txo_data: &GetTxOutResult,
         mediantime: u64,
-    ) -> Result<f64, Error> {
+    ) -> Result<f64, TeleportError> {
         let blockhash = rpc.get_block_hash(block_count - txo_data.confirmations as u64 + 1)?;
         Ok(calculate_timelocked_fidelity_bond_value(
             txo_data.value.as_sat(),
@@ -265,7 +267,7 @@ fn calculate_timelocked_fidelity_bond_value_from_utxo(
     utxo: &ListUnspentResultEntry,
     usi: &UTXOSpendInfo,
     rpc: &Client,
-) -> Result<f64, Error> {
+) -> Result<f64, TeleportError> {
     Ok(calculate_timelocked_fidelity_bond_value(
         utxo.amount.as_sat(),
         get_locktime_from_index(
@@ -394,7 +396,7 @@ impl Wallet {
     pub fn find_most_valuable_fidelity_bond(
         &self,
         rpc: &Client,
-    ) -> Result<Option<HotWalletFidelityBond>, Error> {
+    ) -> Result<Option<HotWalletFidelityBond>, TeleportError> {
         let list_unspent_result = self.list_unspent_from_wallet(&rpc, false, true)?;
         let fidelity_bond_utxos = list_unspent_result
             .iter()
@@ -410,7 +412,7 @@ impl Wallet {
         let fidelity_bond_values = fidelity_bond_utxos
             .iter()
             .map(|(utxo, usi)| calculate_timelocked_fidelity_bond_value_from_utxo(utxo, usi, rpc))
-            .collect::<Result<Vec<f64>, Error>>()?;
+            .collect::<Result<Vec<f64>, TeleportError>>()?;
         Ok(fidelity_bond_utxos
             .iter()
             .zip(fidelity_bond_values.iter())

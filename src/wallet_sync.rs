@@ -53,7 +53,9 @@ use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
 
 use chrono::NaiveDateTime;
 
-use crate::{contracts, contracts::SwapCoin, error::Error, fidelity_bonds, messages::Preimage};
+use crate::{
+    contracts, contracts::SwapCoin, error::TeleportError, fidelity_bonds, messages::Preimage,
+};
 
 //these subroutines are coded so that as much as possible they keep all their
 //data in the bitcoin core wallet
@@ -621,7 +623,7 @@ impl Wallet {
         wallet_file_name: P,
         seedphrase: String,
         extension: String,
-    ) -> Result<(), Error> {
+    ) -> Result<(), TeleportError> {
         let wallet_file_data = WalletFileData {
             version: WALLET_FILE_VERSION,
             seedphrase,
@@ -639,7 +641,9 @@ impl Wallet {
         Ok(())
     }
 
-    fn load_wallet_file_data<P: AsRef<Path>>(wallet_file_name: P) -> Result<WalletFileData, Error> {
+    fn load_wallet_file_data<P: AsRef<Path>>(
+        wallet_file_name: P,
+    ) -> Result<WalletFileData, TeleportError> {
         let mut wallet_file = File::open(wallet_file_name)?;
         let mut wallet_file_str = String::new();
         wallet_file.read_to_string(&mut wallet_file_str)?;
@@ -651,7 +655,7 @@ impl Wallet {
         wallet_file_name: P,
         network: Network,
         sync_amount: WalletSyncAddressAmount,
-    ) -> Result<Wallet, Error> {
+    ) -> Result<Wallet, TeleportError> {
         let wallet_file_name = wallet_file_name
             .as_ref()
             .as_os_str()
@@ -660,7 +664,7 @@ impl Wallet {
         let wallet_file_data = Wallet::load_wallet_file_data(&wallet_file_name)?;
         let mnemonic_ret = mnemonic::Mnemonic::from_str(&wallet_file_data.seedphrase);
         if mnemonic_ret.is_err() {
-            return Err(Error::Disk(io::Error::new(
+            return Err(TeleportError::Disk(io::Error::new(
                 io::ErrorKind::Other,
                 "invalid seed phrase",
             )));
@@ -701,11 +705,11 @@ impl Wallet {
         Ok(wallet)
     }
 
-    pub fn delete_wallet_file(&self) -> Result<(), Error> {
+    pub fn delete_wallet_file(&self) -> Result<(), TeleportError> {
         Ok(fs::remove_file(&self.wallet_file_name)?)
     }
 
-    pub fn update_external_index(&mut self, new_external_index: u32) -> Result<(), Error> {
+    pub fn update_external_index(&mut self, new_external_index: u32) -> Result<(), TeleportError> {
         self.external_index = new_external_index;
         let mut wallet_file_data = Wallet::load_wallet_file_data(&self.wallet_file_name)?;
         wallet_file_data.external_index = new_external_index;
@@ -718,7 +722,7 @@ impl Wallet {
         self.external_index
     }
 
-    pub fn update_swapcoins_list(&self) -> Result<(), Error> {
+    pub fn save_to_disk(&self) -> Result<(), TeleportError> {
         let mut wallet_file_data = Wallet::load_wallet_file_data(&self.wallet_file_name)?;
         wallet_file_data.incoming_swapcoins = self
             .incoming_swapcoins
@@ -792,7 +796,7 @@ impl Wallet {
         &self,
         prevout: &OutPoint,
         contract_scriptpubkey: &Script,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, TeleportError> {
         let wallet_file_data = Wallet::load_wallet_file_data(&self.wallet_file_name[..])?;
         Ok(
             match wallet_file_data.prevout_to_contract_map.get(prevout) {
@@ -806,7 +810,7 @@ impl Wallet {
         &mut self,
         prevout: OutPoint,
         contract: Script,
-    ) -> Result<(), Error> {
+    ) -> Result<(), TeleportError> {
         let mut wallet_file_data = Wallet::load_wallet_file_data(&self.wallet_file_name[..])?;
         wallet_file_data
             .prevout_to_contract_map
@@ -818,7 +822,11 @@ impl Wallet {
 
     //pub fn get_recovery_phrase_from_file()
 
-    fn is_xpub_descriptor_imported(&self, rpc: &Client, descriptor: &str) -> Result<bool, Error> {
+    fn is_xpub_descriptor_imported(
+        &self,
+        rpc: &Client,
+        descriptor: &str,
+    ) -> Result<bool, TeleportError> {
         let first_addr = rpc.derive_addresses(&descriptor, Some([0, 0]))?[0].clone();
         let last_index = (self.initial_address_import_count - 1) as u32;
         let last_addr =
@@ -844,7 +852,7 @@ impl Wallet {
             .unwrap_or(false)
     }
 
-    pub fn get_hd_wallet_descriptors(&self, rpc: &Client) -> Result<Vec<String>, Error> {
+    pub fn get_hd_wallet_descriptors(&self, rpc: &Client) -> Result<Vec<String>, TeleportError> {
         let secp = Secp256k1::new();
         let wallet_xpub = ExtendedPubKey::from_private(
             &secp,
@@ -861,7 +869,7 @@ impl Wallet {
                     .map(|getdescriptorinfo_result| getdescriptorinfo_result.descriptor)
             })
             .collect();
-        descriptors.map_err(|e| Error::Rpc(e))
+        descriptors.map_err(|e| TeleportError::Rpc(e))
     }
 
     pub fn get_core_wallet_label(&self) -> String {
@@ -876,7 +884,7 @@ impl Wallet {
         hd_descriptors_to_import: &[&String],
         swapcoin_descriptors_to_import: &[String],
         contract_scriptpubkeys_to_import: &[Script],
-    ) -> Result<(), Error> {
+    ) -> Result<(), TeleportError> {
         log::debug!(target: "wallet",
             "import_initial_addresses with initial_address_import_count = {}",
             self.initial_address_import_count);
@@ -935,13 +943,15 @@ impl Wallet {
         )?;
         for r in result {
             if !r.success {
-                return Err(Error::Rpc(bitcoincore_rpc::Error::UnexpectedStructure));
+                return Err(TeleportError::Rpc(
+                    bitcoincore_rpc::Error::UnexpectedStructure,
+                ));
             }
         }
         Ok(())
     }
 
-    pub fn startup_sync(&mut self, rpc: &Client) -> Result<(), Error> {
+    pub fn startup_sync(&mut self, rpc: &Client) -> Result<(), TeleportError> {
         //TODO many of these unwraps to be replaced with proper error handling
         let hd_descriptors = self.get_hd_wallet_descriptors(rpc)?;
         let hd_descriptors_to_import = hd_descriptors
@@ -1078,7 +1088,9 @@ impl Wallet {
         let scantxoutset_result: Value =
             rpc.call("scantxoutset", &[json!("start"), json!(desc_list)])?;
         if !scantxoutset_result["success"].as_bool().unwrap() {
-            return Err(Error::Rpc(bitcoincore_rpc::Error::UnexpectedStructure));
+            return Err(TeleportError::Rpc(
+                bitcoincore_rpc::Error::UnexpectedStructure,
+            ));
         }
         log::info!(target: "wallet", "TxOut set scan complete, found {} btc",
             Amount::from_sat(convert_json_rpc_bitcoin_to_satoshis(&scantxoutset_result["total_amount"])),
@@ -1240,7 +1252,7 @@ impl Wallet {
         }
     }
 
-    pub fn lock_all_nonwallet_unspents(&self, rpc: &Client) -> Result<(), Error> {
+    pub fn lock_all_nonwallet_unspents(&self, rpc: &Client) -> Result<(), TeleportError> {
         //rpc.unlock_unspent(&[])?;
         //https://github.com/rust-bitcoin/rust-bitcoincore-rpc/issues/148
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])?;
@@ -1266,7 +1278,7 @@ impl Wallet {
         rpc: &Client,
         include_live_contracts: bool,
         include_fidelity_bonds: bool,
-    ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, Error> {
+    ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, TeleportError> {
         let (contract_scriptpubkeys_outgoing_swapcoins, contract_scriptpubkeys_incoming_swapcoins) =
             if include_live_contracts {
                 (
@@ -1280,7 +1292,7 @@ impl Wallet {
                 )
             };
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
-            .map_err(|e| Error::Rpc(e))?;
+            .map_err(|e| TeleportError::Rpc(e))?;
         Ok(rpc
             .list_unspent(Some(0), Some(9999999), None, None, None)?
             .iter()
@@ -1319,10 +1331,10 @@ impl Wallet {
                 Vec<(ListUnspentResultEntry, &OutgoingSwapCoin)>,
             ),
         >,
-        Error,
+        TeleportError,
     > {
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
-            .map_err(|e| Error::Rpc(e))?;
+            .map_err(|e| TeleportError::Rpc(e))?;
 
         let completed_coinswap_hashvalues = self
             .incoming_swapcoins
@@ -1393,7 +1405,7 @@ impl Wallet {
             Vec<(&IncomingSwapCoin, ListUnspentResultEntry)>,
             Vec<(&OutgoingSwapCoin, ListUnspentResultEntry)>,
         ),
-        Error,
+        TeleportError,
     > {
         // populate hashmaps where key is contract scriptpubkey and value is the swapcoin
         let contract_scriptpubkeys_incoming_swapcoins =
@@ -1402,7 +1414,7 @@ impl Wallet {
             self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap();
 
         rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
-            .map_err(|e| Error::Rpc(e))?;
+            .map_err(|e| TeleportError::Rpc(e))?;
         let listunspent = rpc.list_unspent(Some(0), Some(9999999), None, None, None)?;
 
         let (incoming_swapcoins_utxos, outgoing_swapcoins_utxos): (Vec<_>, Vec<_>) = listunspent
@@ -1429,7 +1441,7 @@ impl Wallet {
         ))
     }
 
-    fn find_hd_next_index(&self, rpc: &Client, address_type: u32) -> Result<u32, Error> {
+    fn find_hd_next_index(&self, rpc: &Client, address_type: u32) -> Result<u32, TeleportError> {
         let mut max_index: i32 = -1;
         //TODO error handling
         let utxos = self.list_unspent_from_wallet(rpc, false, false)?;
@@ -1451,7 +1463,7 @@ impl Wallet {
         Ok((max_index + 1) as u32)
     }
 
-    pub fn get_next_external_address(&mut self, rpc: &Client) -> Result<Address, Error> {
+    pub fn get_next_external_address(&mut self, rpc: &Client) -> Result<Address, TeleportError> {
         let receive_branch_descriptor = &self.get_hd_wallet_descriptors(rpc)?[0];
         let receive_address = rpc.derive_addresses(
             receive_branch_descriptor,
@@ -1466,7 +1478,7 @@ impl Wallet {
         &self,
         rpc: &Client,
         count: u32,
-    ) -> Result<Vec<Address>, Error> {
+    ) -> Result<Vec<Address>, TeleportError> {
         let next_change_addr_index = self.find_hd_next_index(rpc, 1)?;
         let change_branch_descriptor = &self.get_hd_wallet_descriptors(rpc)?[1];
         Ok(rpc.derive_addresses(
@@ -1475,7 +1487,7 @@ impl Wallet {
         )?)
     }
 
-    pub fn refresh_offer_maxsize_cache(&mut self, rpc: Arc<Client>) -> Result<(), Error> {
+    pub fn refresh_offer_maxsize_cache(&mut self, rpc: Arc<Client>) -> Result<(), TeleportError> {
         let utxos = self.list_unspent_from_wallet(&rpc, false, false)?;
         let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.0.amount);
         self.offer_maxsize_cache = balance.as_sat();
@@ -1581,7 +1593,7 @@ impl Wallet {
         &self,
         rpc: &Client,
         psbt: &String,
-    ) -> Result<Transaction, Error> {
+    ) -> Result<Transaction, TeleportError> {
         //TODO rust-bitcoin handles psbt, use those functions instead
         let decoded_psbt = rpc.call::<Value>("decodepsbt", &[Value::String(psbt.to_string())])?;
         log::debug!(target: "wallet", "decoded_psbt = {:?}", decoded_psbt);
@@ -1702,7 +1714,7 @@ impl Wallet {
         rpc: &Client,
         pubkey1: &PublicKey,
         pubkey2: &PublicKey,
-    ) -> Result<(), Error> {
+    ) -> Result<(), TeleportError> {
         Ok(import_multisig_redeemscript_descriptor(
             rpc,
             &pubkey1,
@@ -1716,7 +1728,7 @@ impl Wallet {
         rpc: &Client,
         tx: &Transaction,
         merkleproof: String,
-    ) -> Result<(), Error> {
+    ) -> Result<(), TeleportError> {
         let rawtx_hex = bitcoin::consensus::encode::serialize(tx).to_hex();
 
         rpc.call(
@@ -1738,7 +1750,7 @@ impl Wallet {
         hashvalue: Hash160,
         locktime: u16,
         fee_rate: u64,
-    ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, u64), Error> {
+    ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, u64), TeleportError> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
             .iter()
             .map(|other_key| self.create_and_import_coinswap_address(rpc, other_key))
@@ -1753,7 +1765,9 @@ impl Wallet {
         // an integer but also can be Sweep
 
         if create_funding_txes_result.is_none() {
-            return Err(Error::Protocol("Unable to create funding transactions"));
+            return Err(TeleportError::Protocol(
+                "Unable to create funding transactions",
+            ));
             //TODO implement the idea where a maker will send its own privkey back to the
             //taker in this situation, so if a taker gets their own funding txes mined
             //but it turns out the maker cant fulfil the coinswap, then the taker gets both

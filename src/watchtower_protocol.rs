@@ -38,7 +38,7 @@ use crate::{
         read_hashvalue_from_contract, read_locktime_from_contract,
         read_timelock_pubkey_from_contract,
     },
-    error::Error,
+    error::TeleportError,
     wallet_sync::import_redeemscript,
 };
 
@@ -162,7 +162,7 @@ async fn run(
     data_file_path: &PathBuf,
     network: Network,
     kill_flag: Arc<RwLock<bool>>,
-) -> Result<(), Error> {
+) -> Result<(), TeleportError> {
     //TODO port number in config file
     let port = 6103;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
@@ -190,7 +190,8 @@ async fn run(
 
     let (watched_txes_comms_tx, mut watched_txes_comms_rx) = mpsc::channel::<ContractsInfo>(100);
 
-    let (server_loop_err_comms_tx, mut server_loop_err_comms_rx) = mpsc::channel::<Error>(100);
+    let (server_loop_err_comms_tx, mut server_loop_err_comms_rx) =
+        mpsc::channel::<TeleportError>(100);
     let mut accepting_clients = true;
 
     loop {
@@ -199,7 +200,7 @@ async fn run(
             client_err = server_loop_err_comms_rx.recv() => {
                 //unwrap the option here because we'll never close the mscp so it will always work
                 match client_err.as_ref().unwrap() {
-                    Error::Rpc(e) => {
+                    TeleportError::Rpc(e) => {
                         let rpc_connection_success = rpc.get_best_block_hash().is_ok();
                         if !rpc_connection_success {
                             log::warn!("lost connection with bitcoin node, temporarily shutting \
@@ -250,7 +251,7 @@ async fn run(
 
                 log::debug!("Heartbeat, accepting clients on port {}", port);
                 if *kill_flag.read().unwrap() {
-                    break Err(Error::Protocol("kill flag is true"));
+                    break Err(TeleportError::Protocol("kill flag is true"));
                 }
                 continue;
             },
@@ -309,16 +310,18 @@ async fn run(
                     Err(err) => {
                         log::error!("error handling request: {:?}", err);
                         match err {
-                            Error::Network(_e) => (),
-                            Error::Protocol(_e) => (),
-                            Error::Disk(e) => {
-                                server_loop_err_comms_tx.send(Error::Disk(e)).await.unwrap()
-                            }
-                            Error::Rpc(e) => {
-                                server_loop_err_comms_tx.send(Error::Rpc(e)).await.unwrap()
-                            }
-                            Error::Socks(e) => server_loop_err_comms_tx
-                                .send(Error::Socks(e))
+                            TeleportError::Network(_e) => (),
+                            TeleportError::Protocol(_e) => (),
+                            TeleportError::Disk(e) => server_loop_err_comms_tx
+                                .send(TeleportError::Disk(e))
+                                .await
+                                .unwrap(),
+                            TeleportError::Rpc(e) => server_loop_err_comms_tx
+                                .send(TeleportError::Rpc(e))
+                                .await
+                                .unwrap(),
+                            TeleportError::Socks(e) => server_loop_err_comms_tx
+                                .send(TeleportError::Socks(e))
                                 .await
                                 .unwrap(),
                         };
@@ -333,7 +336,7 @@ async fn run(
 async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     message: &WatchtowerToMakerMessage,
-) -> Result<(), Error> {
+) -> Result<(), TeleportError> {
     let mut message_bytes = serde_json::to_vec(message).map_err(|e| std::io::Error::from(e))?;
     message_bytes.push(b'\n');
     socket_writer.write_all(&message_bytes).await?;
@@ -343,10 +346,10 @@ async fn send_message(
 async fn handle_message(
     line: String,
     watched_txes_comms_tx: &mpsc::Sender<ContractsInfo>,
-) -> Result<(), Error> {
+) -> Result<(), TeleportError> {
     let request: MakerToWatchtowerMessage = match serde_json::from_str(&line) {
         Ok(r) => r,
-        Err(_e) => return Err(Error::Protocol("message parsing error")),
+        Err(_e) => return Err(TeleportError::Protocol("message parsing error")),
     };
     log::debug!("request = {:?}", request);
     match request {
@@ -364,7 +367,9 @@ async fn handle_message(
     Ok(())
 }
 
-fn read_from_data_file<P: AsRef<Path>>(data_file_path: P) -> Result<WatchtowerDataFile, Error> {
+fn read_from_data_file<P: AsRef<Path>>(
+    data_file_path: P,
+) -> Result<WatchtowerDataFile, TeleportError> {
     let mut data_file = File::open(data_file_path)?;
     let mut data_file_str = String::new();
     data_file.read_to_string(&mut data_file_str)?;
@@ -375,7 +380,7 @@ fn read_from_data_file<P: AsRef<Path>>(data_file_path: P) -> Result<WatchtowerDa
 fn write_to_data_file<P: AsRef<Path>>(
     data_file_path: P,
     data: WatchtowerDataFile,
-) -> Result<(), Error> {
+) -> Result<(), TeleportError> {
     let data_file = File::create(data_file_path)?;
     serde_json::to_writer(data_file, &data).map_err(|e| io::Error::from(e))?;
     Ok(())
