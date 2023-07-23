@@ -31,8 +31,6 @@ use bitcoin::{
 };
 use bitcoincore_rpc::{Client, RpcApi};
 
-use itertools::izip;
-
 use crate::{
     contracts::{find_funding_output, SwapCoin, WatchOnlySwapCoin},
     error::TeleportError,
@@ -973,25 +971,23 @@ impl<'taker> Taker<'taker> {
         next_peer_multisig_pubkeys: &[PublicKey],
         next_swap_contract_redeemscripts: &[Script],
     ) -> Result<Vec<WatchOnlySwapCoin>, TeleportError> {
-        let next_swapcoins = izip!(
-            contract_sigs_as_recvr_and_sender
-                .senders_contract_txs_info
-                .iter(),
-            next_peer_multisig_pubkeys.iter(),
-            next_swap_contract_redeemscripts.iter()
-        )
-        .map(
-            |(senders_contract_tx_info, &maker_multisig_pubkey, contract_redeemscript)| {
-                WatchOnlySwapCoin::new(
-                    &senders_contract_tx_info.multisig_redeemscript,
-                    maker_multisig_pubkey,
-                    senders_contract_tx_info.contract_tx.clone(),
-                    contract_redeemscript.clone(),
-                    senders_contract_tx_info.funding_amount,
-                )
-            },
-        )
-        .collect::<Result<Vec<WatchOnlySwapCoin>, TeleportError>>()?;
+        let next_swapcoins = contract_sigs_as_recvr_and_sender
+            .senders_contract_txs_info
+            .iter()
+            .zip(next_peer_multisig_pubkeys.iter())
+            .zip(next_swap_contract_redeemscripts.iter())
+            .map(
+                |((senders_contract_tx_info, &maker_multisig_pubkey), contract_redeemscript)| {
+                    WatchOnlySwapCoin::new(
+                        &senders_contract_tx_info.multisig_redeemscript,
+                        maker_multisig_pubkey,
+                        senders_contract_tx_info.contract_tx.clone(),
+                        contract_redeemscript.clone(),
+                        senders_contract_tx_info.funding_amount,
+                    )
+                },
+            )
+            .collect::<Result<Vec<WatchOnlySwapCoin>, TeleportError>>()?;
         //TODO error handle here the case where next_swapcoin.contract_tx script pubkey
         // is not equal to p2wsh(next_swap_contract_redeemscripts)
         for swapcoin in &next_swapcoins {
@@ -1039,26 +1035,30 @@ impl<'taker> Taker<'taker> {
                     .map(|txout| txout.1.value)
             })
             .collect::<Result<Vec<u64>, TeleportError>>()?;
-        let my_receivers_contract_txes = izip!(
-            next_swap_funding_outpoints.iter(),
-            last_makers_funding_tx_values.iter(),
-            self.ongoing_swap_state
-                .peer_infos
-                .last()
-                .expect("expected")
-                .contract_reedemscripts
-                .iter()
-        )
-        .map(
-            |(&previous_funding_output, &maker_funding_tx_value, next_contract_redeemscript)| {
-                crate::contracts::create_receivers_contract_tx(
-                    previous_funding_output,
-                    maker_funding_tx_value,
+        let my_receivers_contract_txes = next_swap_funding_outpoints
+            .iter()
+            .zip(last_makers_funding_tx_values.iter())
+            .zip(
+                self.ongoing_swap_state
+                    .peer_infos
+                    .last()
+                    .expect("expected")
+                    .contract_reedemscripts
+                    .iter(),
+            )
+            .map(
+                |(
+                    (&previous_funding_output, &maker_funding_tx_value),
                     next_contract_redeemscript,
-                )
-            },
-        )
-        .collect::<Vec<Transaction>>();
+                )| {
+                    crate::contracts::create_receivers_contract_tx(
+                        previous_funding_output,
+                        maker_funding_tx_value,
+                        next_contract_redeemscript,
+                    )
+                },
+            )
+            .collect::<Vec<Transaction>>();
 
         let mut incoming_swapcoins = Vec::<IncomingSwapCoin>::new();
         let next_swap_info = self
@@ -1067,26 +1067,37 @@ impl<'taker> Taker<'taker> {
             .last()
             .expect("next swap info expected");
         for (
-            multisig_redeemscript,
-            &maker_funded_multisig_pubkey,
-            &maker_funded_multisig_privkey,
-            my_receivers_contract_tx,
-            next_contract_redeemscript,
-            &hashlock_privkey,
-            &maker_funding_tx_value,
-            funding_tx,
+            (
+                (
+                    (
+                        (
+                            (
+                                (
+                                    (multisig_redeemscript, &maker_funded_multisig_pubkey),
+                                    &maker_funded_multisig_privkey,
+                                ),
+                                my_receivers_contract_tx,
+                            ),
+                            next_contract_redeemscript,
+                        ),
+                        &hashlock_privkey,
+                    ),
+                    &maker_funding_tx_value,
+                ),
+                funding_tx,
+            ),
             funding_tx_merkleproof,
-        ) in izip!(
-            next_swap_multisig_redeemscripts.iter(),
-            next_swap_info.multisig_pubkeys.iter(),
-            next_swap_info.multisig_nonces.iter(),
-            my_receivers_contract_txes.iter(),
-            next_swap_info.contract_reedemscripts.iter(),
-            next_swap_info.hashlock_nonces.iter(),
-            last_makers_funding_tx_values.iter(),
-            funding_txs.iter(),
-            funding_txs_merkleproofs.iter(),
-        ) {
+        ) in next_swap_multisig_redeemscripts
+            .iter()
+            .zip(next_swap_info.multisig_pubkeys.iter())
+            .zip(next_swap_info.multisig_nonces.iter())
+            .zip(my_receivers_contract_txes.iter())
+            .zip(next_swap_info.contract_reedemscripts.iter())
+            .zip(next_swap_info.hashlock_nonces.iter())
+            .zip(last_makers_funding_tx_values.iter())
+            .zip(funding_txs.iter())
+            .zip(funding_txs_merkleproofs.iter())
+        {
             let (o_ms_pubkey1, o_ms_pubkey2) =
                 crate::contracts::read_pubkeys_from_multisig_redeemscript(multisig_redeemscript)
                     .ok_or(TeleportError::Protocol(

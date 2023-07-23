@@ -30,8 +30,6 @@ use bitcoin::{
 };
 use bitcoincore_rpc::{Client, RpcApi};
 
-use itertools::izip;
-
 use crate::{
     contracts,
     contracts::{
@@ -623,12 +621,13 @@ fn handle_proof_of_funding(
     log::debug!("proof of funding valid, creating own funding txes");
 
     connection_state.incoming_swapcoins = Some(Vec::<IncomingSwapCoin>::new());
-    for (funding_info, &funding_output_index, &funding_output, &incoming_swapcoin_keys) in izip!(
-        proof.confirmed_funding_txes.iter(),
-        funding_output_indexes.iter(),
-        funding_outputs.iter(),
-        incoming_swapcoin_keys.iter()
-    ) {
+    for (((funding_info, &funding_output_index), &funding_output), &incoming_swapcoin_keys) in proof
+        .confirmed_funding_txes
+        .iter()
+        .zip(funding_output_indexes.iter())
+        .zip(funding_outputs.iter())
+        .zip(incoming_swapcoin_keys.iter())
+    {
         let (pubkey1, pubkey2) =
             read_pubkeys_from_multisig_redeemscript(&funding_info.multisig_redeemscript)
                 .ok_or(TeleportError::Protocol("invalid multisig redeemscript"))?;

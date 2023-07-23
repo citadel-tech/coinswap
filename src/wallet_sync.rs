@@ -15,8 +15,6 @@ use std::{
 
 use std::collections::{HashMap, HashSet};
 
-use itertools::izip;
-
 use bitcoin_wallet::mnemonic;
 
 use bitcoin::{
@@ -1777,18 +1775,16 @@ impl Wallet {
 
         let mut outgoing_swapcoins = Vec::<OutgoingSwapCoin>::new();
         for (
-            my_funding_tx,
-            &utxo_index,
-            &my_multisig_privkey,
-            &other_multisig_pubkey,
+            (((my_funding_tx, &utxo_index), &my_multisig_privkey), &other_multisig_pubkey),
             hashlock_pubkey,
-        ) in izip!(
-            create_funding_txes_result.funding_txes.iter(),
-            create_funding_txes_result.payment_output_positions.iter(),
-            my_multisig_privkeys.iter(),
-            other_multisig_pubkeys.iter(),
-            hashlock_pubkeys.iter(),
-        ) {
+        ) in create_funding_txes_result
+            .funding_txes
+            .iter()
+            .zip(create_funding_txes_result.payment_output_positions.iter())
+            .zip(my_multisig_privkeys.iter())
+            .zip(other_multisig_pubkeys.iter())
+            .zip(hashlock_pubkeys.iter())
+        {
             let (timelock_pubkey, timelock_privkey) = generate_keypair();
             let contract_redeemscript = contracts::create_contract_redeemscript(
                 hashlock_pubkey,
