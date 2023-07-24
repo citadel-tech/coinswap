@@ -5,7 +5,6 @@ use std::io::ErrorKind;
 use bitcoin::{secp256k1::SecretKey, PublicKey, Script, Transaction};
 
 use bitcoin::hashes::hash160::Hash as Hash160;
-use itertools::izip;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{
@@ -146,27 +145,27 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
     let (mut socket_reader, mut socket_writer) =
         handshake_maker(&mut socket, maker_address).await?;
     log::info!("===> Sending SignSendersContractTx to {}", maker_address);
+    let txs_info = maker_multisig_nonces
+        .iter()
+        .zip(maker_hashlock_nonces.iter())
+        .zip(outgoing_swapcoins.iter())
+        .map(
+            |((&multisig_key_nonce, &hashlock_key_nonce), outgoing_swapcoin)| {
+                ContractTxInfoForSender {
+                    multisig_key_nonce,
+                    hashlock_key_nonce,
+                    timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey(),
+                    senders_contract_tx: outgoing_swapcoin.get_contract_tx(),
+                    multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
+                    funding_input_value: outgoing_swapcoin.get_funding_amount(),
+                }
+            },
+        )
+        .collect::<Vec<ContractTxInfoForSender>>();
     send_message(
         &mut socket_writer,
         TakerToMakerMessage::ReqContractSigsForSender(ReqContractSigsForSender {
-            txs_info: izip!(
-                maker_multisig_nonces.iter(),
-                maker_hashlock_nonces.iter(),
-                outgoing_swapcoins.iter()
-            )
-            .map(
-                |(&multisig_key_nonce, &hashlock_key_nonce, outgoing_swapcoin)| {
-                    ContractTxInfoForSender {
-                        multisig_key_nonce,
-                        hashlock_key_nonce,
-                        timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey(),
-                        senders_contract_tx: outgoing_swapcoin.get_contract_tx(),
-                        multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
-                        funding_input_value: outgoing_swapcoin.get_funding_amount(),
-                    }
-                },
-            )
-            .collect::<Vec<ContractTxInfoForSender>>(),
+            txs_info,
             hashvalue: outgoing_swapcoins[0].get_hashvalue(),
             locktime,
         }),

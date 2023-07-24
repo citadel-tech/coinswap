@@ -2,8 +2,6 @@
 
 use std::collections::HashMap;
 
-use itertools::izip;
-
 use bitcoin::{hashes::hex::FromHex, Address, Amount, OutPoint, Transaction, Txid};
 
 use bitcoincore_rpc::{
@@ -151,11 +149,11 @@ impl Wallet {
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
         let mut total_miner_fee = 0;
-        for (address, &output_value, change_address) in izip!(
-            destinations.iter(),
-            output_values.iter(),
-            change_addresses.iter()
-        ) {
+        for ((address, &output_value), change_address) in destinations
+            .iter()
+            .zip(output_values.iter())
+            .zip(change_addresses.iter())
+        {
             log::debug!(target: "wallet", "output_value = {} to addr={}", output_value, address);
 
             let mut outputs = HashMap::<String, Amount>::new();
