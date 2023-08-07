@@ -1,105 +1,42 @@
-//! Various Utility and Helper functions used in both Taker and Maker protocols.
-
-use std::io::ErrorKind;
+use std::time::Duration;
 
 use bitcoin::{secp256k1::SecretKey, PublicKey, Script, Transaction};
-
-use bitcoin::hashes::hash160::Hash as Hash160;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::BufReader,
     net::{
         tcp::{ReadHalf, WriteHalf},
         TcpStream,
     },
+    select,
+    time::sleep,
 };
 use tokio_socks::tcp::Socks5Stream;
 
 use crate::{
-    contracts::{
-        self, calculate_coinswap_fee, create_contract_redeemscript, find_funding_output,
-        validate_contract_tx, SwapCoin, MAKER_FUNDING_TX_VBYTE_SIZE,
-    },
     error::TeleportError,
-    messages::{
-        ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForSender,
-        ContractTxInfoForRecvr, ContractTxInfoForSender, FundingTxInfo, HashPreimage,
-        MakerToTakerMessage, MultisigPrivkey, NextHopInfo, Preimage, PrivKeyHandover,
-        ProofOfFunding, ReqContractSigsForRecvr, ReqContractSigsForSender, TakerHello,
-        TakerToMakerMessage,
+    protocol::{
+        contract::{
+            calculate_coinswap_fee, create_contract_redeemscript, find_funding_output,
+            validate_contract_tx, MAKER_FUNDING_TX_VBYTE_SIZE,
+        },
+        messages::{
+            ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForSender,
+            ContractTxInfoForRecvr, ContractTxInfoForSender, FundingTxInfo, GiveOffer,
+            HashPreimage, MakerToTakerMessage, NextHopInfo, Offer, Preimage, PrivKeyHandover,
+            ProofOfFunding, ReqContractSigsForRecvr, ReqContractSigsForSender, TakerHello,
+            TakerToMakerMessage,
+        },
+        Hash160,
     },
-    offerbook_sync::{MakerAddress, OfferAndAddress},
+    utill::{read_message, send_message},
 };
 
-/// Send message to a Maker.
-pub async fn send_message(
-    socket_writer: &mut WriteHalf<'_>,
-    message: TakerToMakerMessage,
-) -> Result<(), TeleportError> {
-    log::debug!("==> {:#?}", message);
-    let mut result_bytes = serde_json::to_vec(&message).map_err(|e| std::io::Error::from(e))?;
-    result_bytes.push(b'\n');
-    socket_writer.write_all(&result_bytes).await?;
-    Ok(())
-}
+use super::{
+    config::TakerConfig,
+    offers::{MakerAddress, OfferAndAddress},
+};
 
-/// Read a Maker Message
-pub async fn read_message(
-    reader: &mut BufReader<ReadHalf<'_>>,
-) -> Result<MakerToTakerMessage, TeleportError> {
-    let mut line = String::new();
-    let n = reader.read_line(&mut line).await?;
-    if n == 0 {
-        return Err(TeleportError::Network(Box::new(std::io::Error::new(
-            ErrorKind::ConnectionReset,
-            "EOF",
-        ))));
-    }
-    let message: MakerToTakerMessage = match serde_json::from_str(&line) {
-        Ok(r) => r,
-        Err(_e) => return Err(TeleportError::Protocol("json parsing error")),
-    };
-    log::debug!("<== {:#?}", message);
-    Ok(message)
-}
-
-/// Apply the maker's privatekey to swapcoins, and check it's the correct privkey for corresponding pubkey.
-pub fn check_and_apply_maker_private_keys<S: SwapCoin>(
-    swapcoins: &mut Vec<S>,
-    swapcoin_private_keys: &[MultisigPrivkey],
-) -> Result<(), TeleportError> {
-    for (swapcoin, swapcoin_private_key) in swapcoins.iter_mut().zip(swapcoin_private_keys.iter()) {
-        swapcoin
-            .apply_privkey(swapcoin_private_key.key)
-            .map_err(|_| TeleportError::Protocol("wrong privkey"))?;
-    }
-    Ok(())
-}
-
-/// Generate The Maker's Multisig and HashLock keys and respective nonce values.
-/// Nonce values are random integers and resulting Pubkeys are derived by tweaking the
-/// Make's advertised Pubkey with these two nonces.
-pub fn generate_maker_keys(
-    tweakable_point: &PublicKey,
-    count: u32,
-) -> (
-    Vec<PublicKey>,
-    Vec<SecretKey>,
-    Vec<PublicKey>,
-    Vec<SecretKey>,
-) {
-    let (multisig_pubkeys, multisig_nonces): (Vec<_>, Vec<_>) = (0..count)
-        .map(|_| contracts::derive_maker_pubkey_and_nonce(*tweakable_point).unwrap())
-        .unzip();
-    let (hashlock_pubkeys, hashlock_nonces): (Vec<_>, Vec<_>) = (0..count)
-        .map(|_| contracts::derive_maker_pubkey_and_nonce(*tweakable_point).unwrap())
-        .unzip();
-    (
-        multisig_pubkeys,
-        multisig_nonces,
-        hashlock_pubkeys,
-        hashlock_nonces,
-    )
-}
+use crate::wallet::SwapCoin;
 
 /// Performs a handshake with a Maker and returns and Reader and Writer halves.
 pub async fn handshake_maker<'a>(
@@ -420,4 +357,67 @@ pub(crate) async fn send_hash_preimage_and_get_private_keys(
         ));
     }
     Ok(maker_private_key_handover)
+}
+
+async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer, TeleportError> {
+    log::debug!(target: "offerbook", "Connecting to {}", addr);
+    let mut socket = TcpStream::connect(addr.get_tcpstream_address()).await?;
+    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket, addr).await?;
+
+    send_message(
+        &mut socket_writer,
+        TakerToMakerMessage::ReqGiveOffer(GiveOffer),
+    )
+    .await?;
+
+    let offer = if let MakerToTakerMessage::RespOffer(o) = read_message(&mut socket_reader).await? {
+        o
+    } else {
+        return Err(TeleportError::Protocol("expected method offer"));
+    };
+
+    log::debug!(target: "offerbook", "Obtained offer from {}", addr);
+    Ok(offer)
+}
+
+pub async fn download_maker_offer(
+    address: MakerAddress,
+    config: TakerConfig,
+) -> Option<OfferAndAddress> {
+    let mut ii = 0;
+    loop {
+        ii += 1;
+        select! {
+            ret = download_maker_offer_attempt_once(&address) => {
+                match ret {
+                    Ok(offer) => return Some(OfferAndAddress { offer, address }),
+                    Err(e) => {
+                        log::debug!(target: "offerbook",
+                            "Failed to request offer from maker {}, \
+                            reattempting... error={:?}",
+                            address,
+                            e
+                        );
+                        if ii <= config.first_connect_attempts {
+                            sleep(Duration::from_secs(config.first_connect_sleep_delay_sec)).await;
+                            continue;
+                        } else {
+                            return None;
+                        }
+                    }
+                }
+            },
+            _ = sleep(Duration::from_secs(config.first_connect_attempt_timeout_sec)) => {
+                log::debug!(target: "offerbook",
+                    "Timeout for request offer from maker {}, reattempting...",
+                    address
+                );
+                if ii <= config.first_connect_attempts {
+                    continue;
+                } else {
+                    return None;
+                }
+            },
+        }
+    }
 }

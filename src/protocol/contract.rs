@@ -4,10 +4,10 @@ use std::convert::TryInto;
 
 use bitcoin::{
     blockdata::{
-        opcodes,
+        opcodes::{self, all},
         script::{Builder, Instruction, Script},
     },
-    hashes::{hash160::Hash as Hash160, Hash},
+    hashes::Hash,
     secp256k1,
     secp256k1::{
         rand::{rngs::OsRng, RngCore},
@@ -17,13 +17,11 @@ use bitcoin::{
     OutPoint, SigHashType, Transaction, TxIn, TxOut,
 };
 
+pub use bitcoin::hashes::hash160::Hash as Hash160;
+
 use bitcoincore_rpc::{Client, RpcApi};
 
-use crate::{
-    error::TeleportError,
-    messages::FundingTxInfo,
-    wallet_sync::{create_multisig_redeemscript, IncomingSwapCoin, OutgoingSwapCoin, Wallet},
-};
+use crate::{error::TeleportError, protocol::messages::FundingTxInfo, wallet::Wallet};
 
 //relatively simple handling of miner fees for now, each funding transaction is considered
 // to have the same size, and taker will pay all the maker's miner fees based on that
@@ -51,20 +49,20 @@ pub struct WatchOnlySwapCoin {
     pub funding_amount: u64,
 }
 
-pub trait SwapCoin {
-    fn get_multisig_redeemscript(&self) -> Script;
-    fn get_contract_tx(&self) -> Transaction;
-    fn get_contract_redeemscript(&self) -> Script;
-    fn get_timelock_pubkey(&self) -> PublicKey;
-    fn get_timelock(&self) -> u16;
-    fn get_hashlock_pubkey(&self) -> PublicKey;
-    fn get_hashvalue(&self) -> Hash160;
-    fn get_funding_amount(&self) -> u64;
-    fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool;
-    fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool;
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), TeleportError>;
-    fn is_hash_preimage_known(&self) -> bool;
-}
+// pub trait SwapCoin {
+//     fn get_multisig_redeemscript(&self) -> Script;
+//     fn get_contract_tx(&self) -> Transaction;
+//     fn get_contract_redeemscript(&self) -> Script;
+//     fn get_timelock_pubkey(&self) -> PublicKey;
+//     fn get_timelock(&self) -> u16;
+//     fn get_hashlock_pubkey(&self) -> PublicKey;
+//     fn get_hashvalue(&self) -> Hash160;
+//     fn get_funding_amount(&self) -> u64;
+//     fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool;
+//     fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool;
+//     fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), TeleportError>;
+//     fn is_hash_preimage_known(&self) -> bool;
+// }
 
 pub fn calculate_coinswap_fee(
     absolute_fee_sat: u64,
@@ -78,26 +76,38 @@ pub fn calculate_coinswap_fee(
         + (time_in_blocks * time_relative_fee_ppb / 1_000_000_000)
 }
 
-/// Convert a redeemscript into p2wsh scriptpubkey.
-pub fn redeemscript_to_scriptpubkey(redeemscript: &Script) -> Script {
-    //p2wsh address
-    Script::new_witness_program(
-        bitcoin::bech32::u5::try_from_u8(0).unwrap(),
-        &redeemscript.wscript_hash().to_vec(),
-    )
+pub fn apply_two_signatures_to_2of2_multisig_spend(
+    key1: &PublicKey,
+    key2: &PublicKey,
+    sig1: &Signature,
+    sig2: &Signature,
+    input: &mut TxIn,
+    redeemscript: &Script,
+) {
+    let (sig_first, sig_second) = if key1.key.serialize()[..] < key2.key.serialize()[..] {
+        (sig1, sig2)
+    } else {
+        (sig2, sig1)
+    };
+
+    input.witness.push(Vec::new()); //first is multisig dummy
+    input.witness.push(sig_first.serialize_der().to_vec());
+    input.witness.push(sig_second.serialize_der().to_vec());
+    input.witness[1].push(SigHashType::All as u8);
+    input.witness[2].push(SigHashType::All as u8);
+    input.witness.push(redeemscript.to_bytes());
 }
 
-pub fn calculate_maker_pubkey_from_nonce(
-    tweakable_point: PublicKey,
-    nonce: SecretKey,
-) -> Result<PublicKey, secp256k1::Error> {
-    let secp = Secp256k1::new();
-
-    let nonce_point = secp256k1::PublicKey::from_secret_key(&secp, &nonce);
-    Ok(PublicKey {
-        compressed: true,
-        key: tweakable_point.key.combine(&nonce_point)?,
-    })
+pub fn create_multisig_redeemscript(key1: &PublicKey, key2: &PublicKey) -> Script {
+    let builder = Builder::new().push_opcode(all::OP_PUSHNUM_2);
+    if key1.key.serialize()[..] < key2.key.serialize()[..] {
+        builder.push_key(key1).push_key(key2)
+    } else {
+        builder.push_key(key2).push_key(key1)
+    }
+    .push_opcode(all::OP_PUSHNUM_2)
+    .push_opcode(all::OP_CHECKMULTISIG)
+    .into_script()
 }
 
 pub fn derive_maker_pubkey_and_nonce(
@@ -110,6 +120,41 @@ pub fn derive_maker_pubkey_and_nonce(
     let maker_pubkey = calculate_maker_pubkey_from_nonce(tweakable_point, nonce)?;
 
     Ok((maker_pubkey, nonce))
+}
+
+pub fn calculate_maker_pubkey_from_nonce(
+    tweakable_point: PublicKey,
+    nonce: SecretKey,
+) -> Result<PublicKey, secp256k1::Error> {
+    let secp = Secp256k1::new();
+
+    let nonce_point = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &nonce);
+    Ok(PublicKey {
+        compressed: true,
+        key: tweakable_point.key.combine(&nonce_point)?,
+    })
+}
+
+pub fn find_funding_output<'a>(
+    funding_tx: &'a Transaction,
+    multisig_redeemscript: &Script,
+) -> Option<(u32, &'a TxOut)> {
+    let multisig_spk = redeemscript_to_scriptpubkey(&multisig_redeemscript);
+    funding_tx
+        .output
+        .iter()
+        .enumerate()
+        .map(|(i, o)| (i as u32, o))
+        .find(|(_i, o)| o.script_pubkey == multisig_spk)
+}
+
+/// Convert a redeemscript into p2wsh scriptpubkey.
+pub fn redeemscript_to_scriptpubkey(redeemscript: &Script) -> Script {
+    //p2wsh address
+    Script::new_witness_program(
+        bitcoin::bech32::u5::try_from_u8(0).unwrap(),
+        &redeemscript.wscript_hash().to_vec(),
+    )
 }
 
 #[rustfmt::skip]
@@ -361,7 +406,7 @@ pub fn validate_and_sign_senders_contract_tx(
         minimum_locktime,
     )?; //note question mark here propagating the error upwards
 
-    wallet.add_prevout_and_contract_to_cache(
+    wallet.cache_prevout_to_contract(
         senders_contract_tx.input[0].previous_output,
         senders_contract_tx.output[0].script_pubkey.clone(),
     )?;
@@ -380,19 +425,6 @@ pub fn validate_and_sign_senders_contract_tx(
         &multisig_privkey_from_nonce,
     )
     .map_err(|_| TeleportError::Protocol("error with signing contract tx"))?)
-}
-
-pub fn find_funding_output<'a>(
-    funding_tx: &'a Transaction,
-    multisig_redeemscript: &Script,
-) -> Option<(u32, &'a TxOut)> {
-    let multisig_spk = redeemscript_to_scriptpubkey(&multisig_redeemscript);
-    funding_tx
-        .output
-        .iter()
-        .enumerate()
-        .map(|(i, o)| (i as u32, o))
-        .find(|(_i, o)| o.script_pubkey == multisig_spk)
 }
 
 //returns the keys of the multisig, ready for importing
@@ -549,7 +581,7 @@ pub fn sign_contract_tx(
     Ok(secp.sign(&sighash, privkey))
 }
 
-fn verify_contract_tx_sig(
+pub fn verify_contract_tx_sig(
     contract_tx: &Transaction,
     multisig_redeemscript: &Script,
     funding_amount: u64,
@@ -570,235 +602,6 @@ fn verify_contract_tx_sig(
     };
     let secp = Secp256k1::new();
     secp.verify(&sighash, sig, &pubkey.key).is_ok()
-}
-
-macro_rules! add_simple_swapcoin_get_functions {
-    () => {
-        //unwrap() here because previously checked that contract_redeemscript is good
-        fn get_timelock_pubkey(&self) -> PublicKey {
-            read_timelock_pubkey_from_contract(&self.contract_redeemscript).unwrap()
-        }
-
-        fn get_timelock(&self) -> u16 {
-            read_locktime_from_contract(&self.contract_redeemscript).unwrap()
-        }
-
-        fn get_hashlock_pubkey(&self) -> PublicKey {
-            read_hashlock_pubkey_from_contract(&self.contract_redeemscript).unwrap()
-        }
-
-        fn get_hashvalue(&self) -> Hash160 {
-            read_hashvalue_from_contract(&self.contract_redeemscript).unwrap()
-        }
-
-        fn get_contract_tx(&self) -> Transaction {
-            self.contract_tx.clone()
-        }
-
-        fn get_contract_redeemscript(&self) -> Script {
-            self.contract_redeemscript.clone()
-        }
-
-        fn get_funding_amount(&self) -> u64 {
-            self.funding_amount
-        }
-    };
-}
-
-impl SwapCoin for IncomingSwapCoin {
-    fn get_multisig_redeemscript(&self) -> Script {
-        let secp = Secp256k1::new();
-        create_multisig_redeemscript(
-            &self.other_pubkey,
-            &PublicKey {
-                compressed: true,
-                key: secp256k1::PublicKey::from_secret_key(&secp, &self.my_privkey),
-            },
-        )
-    }
-
-    add_simple_swapcoin_get_functions!();
-
-    fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool {
-        self.verify_contract_tx_sig(sig)
-    }
-
-    fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool {
-        self.verify_contract_tx_sig(sig)
-    }
-
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), TeleportError> {
-        let secp = Secp256k1::new();
-        let pubkey = PublicKey {
-            compressed: true,
-            key: secp256k1::PublicKey::from_secret_key(&secp, &privkey),
-        };
-        if pubkey != self.other_pubkey {
-            return Err(TeleportError::Protocol("not correct privkey"));
-        }
-        self.other_privkey = Some(privkey);
-        Ok(())
-    }
-
-    fn is_hash_preimage_known(&self) -> bool {
-        self.hash_preimage.is_some()
-    }
-}
-
-impl SwapCoin for OutgoingSwapCoin {
-    fn get_multisig_redeemscript(&self) -> Script {
-        let secp = Secp256k1::new();
-        create_multisig_redeemscript(
-            &self.other_pubkey,
-            &PublicKey {
-                compressed: true,
-                key: secp256k1::PublicKey::from_secret_key(&secp, &self.my_privkey),
-            },
-        )
-    }
-
-    add_simple_swapcoin_get_functions!();
-
-    fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool {
-        self.verify_contract_tx_sig(sig)
-    }
-
-    fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool {
-        self.verify_contract_tx_sig(sig)
-    }
-
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), TeleportError> {
-        let secp = Secp256k1::new();
-        let pubkey = PublicKey {
-            compressed: true,
-            key: secp256k1::PublicKey::from_secret_key(&secp, &privkey),
-        };
-        if pubkey == self.other_pubkey {
-            Ok(())
-        } else {
-            Err(TeleportError::Protocol("not correct privkey"))
-        }
-    }
-
-    fn is_hash_preimage_known(&self) -> bool {
-        self.hash_preimage.is_some()
-    }
-}
-
-macro_rules! verify_contract {
-    ($coin:ident) => {
-        impl $coin {
-            pub fn verify_contract_tx_sig(&self, sig: &Signature) -> bool {
-                verify_contract_tx_sig(
-                    &self.contract_tx,
-                    &self.get_multisig_redeemscript(),
-                    self.funding_amount,
-                    &self.other_pubkey,
-                    sig,
-                )
-            }
-        }
-    };
-}
-
-verify_contract!(IncomingSwapCoin);
-verify_contract!(OutgoingSwapCoin);
-
-impl OutgoingSwapCoin {
-    //"_with_my_privkey" as opposed to with other_privkey
-    pub fn sign_contract_tx_with_my_privkey(
-        &self,
-        contract_tx: &Transaction,
-    ) -> Result<Signature, TeleportError> {
-        let multisig_redeemscript = self.get_multisig_redeemscript();
-        Ok(sign_contract_tx(
-            contract_tx,
-            &multisig_redeemscript,
-            self.funding_amount,
-            &self.my_privkey,
-        )
-        .map_err(|_| TeleportError::Protocol("error with signing contract tx"))?)
-    }
-}
-
-impl SwapCoin for WatchOnlySwapCoin {
-    fn get_multisig_redeemscript(&self) -> Script {
-        create_multisig_redeemscript(&self.sender_pubkey, &self.receiver_pubkey)
-    }
-
-    add_simple_swapcoin_get_functions!();
-
-    //potential confusion here:
-    //verify sender sig uses the receiver_pubkey
-    //verify receiver sig uses the sender_pubkey
-    fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool {
-        verify_contract_tx_sig(
-            &self.contract_tx,
-            &self.get_multisig_redeemscript(),
-            self.funding_amount,
-            &self.receiver_pubkey,
-            sig,
-        )
-    }
-
-    fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool {
-        verify_contract_tx_sig(
-            &self.contract_tx,
-            &self.get_multisig_redeemscript(),
-            self.funding_amount,
-            &self.sender_pubkey,
-            sig,
-        )
-    }
-
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), TeleportError> {
-        let secp = Secp256k1::new();
-        let pubkey = PublicKey {
-            compressed: true,
-            key: secp256k1::PublicKey::from_secret_key(&secp, &privkey),
-        };
-        if pubkey == self.sender_pubkey || pubkey == self.receiver_pubkey {
-            Ok(())
-        } else {
-            Err(TeleportError::Protocol("not correct privkey"))
-        }
-    }
-
-    fn is_hash_preimage_known(&self) -> bool {
-        false
-    }
-}
-
-impl WatchOnlySwapCoin {
-    pub fn new(
-        multisig_redeemscript: &Script,
-        receiver_pubkey: PublicKey,
-        contract_tx: Transaction,
-        contract_redeemscript: Script,
-        funding_amount: u64,
-    ) -> Result<WatchOnlySwapCoin, TeleportError> {
-        let (pubkey1, pubkey2) = read_pubkeys_from_multisig_redeemscript(multisig_redeemscript)
-            .ok_or(TeleportError::Protocol(
-                "invalid pubkeys in multisig_redeemscript",
-            ))?;
-        if pubkey1 != receiver_pubkey && pubkey2 != receiver_pubkey {
-            return Err(TeleportError::Protocol(
-                "given sender_pubkey not included in redeemscript",
-            ));
-        }
-        let sender_pubkey = if pubkey1 == receiver_pubkey {
-            pubkey2
-        } else {
-            pubkey1
-        };
-        Ok(WatchOnlySwapCoin {
-            sender_pubkey,
-            receiver_pubkey,
-            contract_tx,
-            contract_redeemscript,
-            funding_amount,
-        })
-    }
 }
 
 #[cfg(test)]
@@ -917,7 +720,7 @@ mod test {
         )
         .unwrap();
 
-        let multisig = crate::wallet_sync::create_multisig_redeemscript(&pub1, &pub2);
+        let multisig = create_multisig_redeemscript(&pub1, &pub2);
 
         // Check script generation works
         assert_eq!(format!("{:x}", multisig), "5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae");
@@ -1087,8 +890,7 @@ mod test {
         let pub1 = priv_1.public_key(&secp);
         let pub2 = priv_2.public_key(&secp);
 
-        let funding_outpoint_script =
-            crate::wallet_sync::create_multisig_redeemscript(&pub1, &pub2);
+        let funding_outpoint_script = create_multisig_redeemscript(&pub1, &pub2);
 
         let funding_spk = redeemscript_to_scriptpubkey(&funding_outpoint_script);
 

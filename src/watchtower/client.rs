@@ -9,11 +9,10 @@ use tokio::{
     time::sleep,
 };
 
-use crate::{
-    error::TeleportError,
-    watchtower_protocol::{
-        ContractsInfo, MakerToWatchtowerMessage, Ping, WatchContractTxes, WatchtowerToMakerMessage,
-    },
+use crate::error::TeleportError;
+
+use super::routines::{
+    ContractsInfo, MakerToWatchtowerMessage, Ping, WatchContractTxes, WatchtowerToMakerMessage,
 };
 
 pub const CONNECT_ATTEMPTS: u32 = 10;

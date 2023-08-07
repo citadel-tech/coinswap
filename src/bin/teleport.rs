@@ -8,12 +8,28 @@ use std::path::{Path, PathBuf};
 use structopt::StructOpt;
 
 use teleport::{
-    self,
-    direct_send::{CoinToSpend, Destination, SendAmount},
-    fidelity_bonds::YearAndMonth,
-    maker_protocol::MakerBehavior,
-    wallet_sync::{DisplayAddressType, WalletSyncAddressAmount},
-    watchtower_protocol::{ContractTransaction, ContractsInfo},
+    error::TeleportError,
+    maker::server::MakerBehavior,
+    scripts::{
+        maker::run_maker,
+        market::download_and_display_offers,
+        recovery::recover_from_incomplete_coinswap,
+        setup_logger,
+        taker::run_taker,
+        wallet::{
+            direct_send, display_wallet_addresses, display_wallet_balance, generate_wallet,
+            print_fidelity_bond_address, print_receive_invoice, recover_wallet,
+        },
+        watchtower::run_watchtower,
+    },
+    wallet::{
+        fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, SendAmount,
+        WalletMode,
+    },
+    watchtower::{
+        client::test_watchtower_client,
+        routines::{ContractTransaction, ContractsInfo},
+    },
 };
 
 #[derive(Debug, StructOpt)]
@@ -58,9 +74,6 @@ enum Subcommand {
         /// "swap", "incomingcontract", "outgoingcontract", "contract", "fidelitybond".
         /// Default is "all"
         types: Option<DisplayAddressType>,
-        /// Network in question, options are "main", "test", "signet", "regtest". Only used
-        /// if configured bitcoin node RPC is unreachable
-        network: Option<String>,
     },
 
     /// Prints receive invoice.
@@ -131,29 +144,28 @@ enum Subcommand {
     },
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    teleport::setup_logger();
+fn main() -> Result<(), TeleportError> {
+    setup_logger();
     let args = ArgsWithWalletFile::from_args();
 
     match args.subcommand {
         Subcommand::GenerateWallet => {
-            teleport::generate_wallet(&args.wallet_file_name)?;
+            generate_wallet(&args.wallet_file_name, None)?;
         }
         Subcommand::RecoverWallet => {
-            teleport::recover_wallet(&args.wallet_file_name)?;
+            recover_wallet(&args.wallet_file_name)?;
         }
         Subcommand::WalletBalance { long_form } => {
-            teleport::display_wallet_balance(&args.wallet_file_name, long_form);
+            display_wallet_balance(&args.wallet_file_name, None, long_form)?;
         }
-        Subcommand::DisplayWalletAddresses { types, network } => {
-            teleport::display_wallet_addresses(
+        Subcommand::DisplayWalletAddresses { types } => {
+            display_wallet_addresses(
                 &args.wallet_file_name,
                 types.unwrap_or(DisplayAddressType::All),
-                network,
-            );
+            )?;
         }
         Subcommand::GetReceiveInvoice => {
-            teleport::print_receive_invoice(&args.wallet_file_name);
+            print_receive_invoice(&args.wallet_file_name)?;
         }
         Subcommand::RunYieldGenerator {
             port,
@@ -163,25 +175,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "closeonsignsenderscontracttx" => MakerBehavior::CloseOnSignSendersContractTx,
                 _ => MakerBehavior::Normal,
             };
-            teleport::run_maker(
+            run_maker(
                 &args.wallet_file_name,
-                WalletSyncAddressAmount::Normal,
                 port.unwrap_or(6102),
+                Some(WalletMode::Testing),
                 maker_special_behavior,
                 None,
-            );
+            )?;
         }
         Subcommand::GetFidelityBondAddress { year_and_month } => {
-            teleport::print_fidelity_bond_address(&args.wallet_file_name, &year_and_month);
+            print_fidelity_bond_address(&args.wallet_file_name, &year_and_month)?;
         }
         Subcommand::DoCoinswap {
             send_amount,
             maker_count,
             tx_count,
         } => {
-            teleport::run_taker(
+            run_taker(
                 &args.wallet_file_name,
-                WalletSyncAddressAmount::Normal,
+                Some(WalletMode::Testing),
+                None,
                 args.fee_rate,
                 send_amount,
                 maker_count.unwrap_or(2),
@@ -189,37 +202,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Subcommand::RecoverFromIncompleteCoinswap { hashvalue } => {
-            teleport::recover_from_incomplete_coinswap(
+            recover_from_incomplete_coinswap(
                 &args.wallet_file_name,
                 hashvalue,
                 args.dont_broadcast,
-            );
+            )?;
         }
         Subcommand::DownloadOffers {
             network,
             maker_address,
         } => {
-            teleport::download_and_display_offers(network, maker_address);
+            download_and_display_offers(network, maker_address);
         }
         Subcommand::DirectSend {
             send_amount,
             destination,
             coins_to_spend,
         } => {
-            teleport::direct_send(
+            direct_send(
                 &args.wallet_file_name,
                 args.fee_rate,
                 send_amount,
                 destination,
                 &coins_to_spend,
                 args.dont_broadcast,
-            );
+            )?;
         }
         Subcommand::RunWatchtower { data_file_path } => {
-            teleport::run_watchtower(
+            run_watchtower(
                 &data_file_path.unwrap_or(Path::new("watchtower.dat").to_path_buf()),
                 None,
-            );
+            )?;
         }
         Subcommand::TestWatchtowerClient {
             mut contract_transactions_hex,
@@ -247,7 +260,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     timelock_spend_broadcasted: false,
                 })
                 .collect::<Vec<ContractTransaction>>();
-            teleport::watchtower_client::test_watchtower_client(ContractsInfo {
+            test_watchtower_client(ContractsInfo {
                 contract_txes,
                 wallet_label: String::new(),
             });

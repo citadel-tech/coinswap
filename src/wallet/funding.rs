@@ -6,17 +6,18 @@ use bitcoin::{hashes::hex::FromHex, Address, Amount, OutPoint, Transaction, Txid
 
 use bitcoincore_rpc::{
     json::{CreateRawTransactionInput, WalletCreateFundedPsbtOptions},
-    Client, RpcApi,
+    RpcApi,
 };
 
 use serde_json::Value;
 
 use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
 
-use crate::{
-    error::TeleportError,
-    wallet_sync::{convert_json_rpc_bitcoin_to_satoshis, Wallet},
-};
+use crate::utill::convert_json_rpc_bitcoin_to_satoshis;
+
+use super::Wallet;
+
+use super::error::WalletError;
 
 pub struct CreateFundingTxesResult {
     pub funding_txes: Vec<Transaction>,
@@ -27,36 +28,29 @@ pub struct CreateFundingTxesResult {
 impl Wallet {
     pub fn create_funding_txes(
         &self,
-        rpc: &Client,
         coinswap_amount: u64,
         destinations: &[Address],
         fee_rate: u64,
-    ) -> Result<Option<CreateFundingTxesResult>, TeleportError> {
+    ) -> Result<Option<CreateFundingTxesResult>, WalletError> {
         //returns Ok(None) if there was no error but the wallet was unable to create funding txes
 
         log::debug!(target: "wallet", "coinswap_amount = {} destinations = {:?}",
             coinswap_amount, destinations);
 
-        let ret =
-            self.create_funding_txes_random_amounts(rpc, coinswap_amount, destinations, fee_rate);
+        let ret = self.create_funding_txes_random_amounts(coinswap_amount, destinations, fee_rate);
         if ret.is_ok() {
             log::debug!(target: "wallet", "created funding txes with random amounts");
             return ret;
         }
 
-        let ret =
-            self.create_funding_txes_utxo_max_sends(rpc, coinswap_amount, destinations, fee_rate);
+        let ret = self.create_funding_txes_utxo_max_sends(coinswap_amount, destinations, fee_rate);
         if ret.is_ok() {
             log::debug!(target: "wallet", "created funding txes with fully-spending utxos");
             return ret;
         }
 
-        let ret = self.create_funding_txes_use_biggest_utxos(
-            rpc,
-            coinswap_amount,
-            destinations,
-            fee_rate,
-        );
+        let ret =
+            self.create_funding_txes_use_biggest_utxos(coinswap_amount, destinations, fee_rate);
         if ret.is_ok() {
             log::debug!(target: "wallet", "created funding txes with using the biggest utxos");
             return ret;
@@ -70,7 +64,7 @@ impl Wallet {
         count: usize,
         total_amount: u64,
         lower_limit: u64,
-    ) -> Result<Vec<f32>, TeleportError> {
+    ) -> Result<Vec<f32>, WalletError> {
         let mut rng = OsRng::new().unwrap();
         for _ in 0..100000 {
             let mut knives = (1..count)
@@ -93,15 +87,12 @@ impl Wallet {
                 return Ok(fractions);
             }
         }
-        Err(TeleportError::Protocol(
-            "unable to generate amount fractions, probably amount too small",
+        Err(WalletError::Protocol(
+            "unable to generate amount fractions, probably amount too small".to_string(),
         ))
     }
 
-    fn generate_amount_fractions(
-        count: usize,
-        total_amount: u64,
-    ) -> Result<Vec<u64>, TeleportError> {
+    fn generate_amount_fractions(count: usize, total_amount: u64) -> Result<Vec<u64>, WalletError> {
         let mut output_values = Wallet::generate_amount_fractions_without_correction(
             count,
             total_amount,
@@ -130,21 +121,20 @@ impl Wallet {
 
     fn create_funding_txes_random_amounts(
         &self,
-        rpc: &Client,
         coinswap_amount: u64,
         destinations: &[Address],
         fee_rate: u64,
-    ) -> Result<Option<CreateFundingTxesResult>, TeleportError> {
+    ) -> Result<Option<CreateFundingTxesResult>, WalletError> {
         //this function creates funding txes by
         //randomly generating some satoshi amounts and send them into
         //walletcreatefundedpsbt to create txes that create change
 
-        let change_addresses = self.get_next_internal_addresses(rpc, destinations.len() as u32)?;
+        let change_addresses = self.get_next_internal_addresses(destinations.len() as u32)?;
         log::debug!(target: "wallet", "change addrs = {:?}", change_addresses);
 
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
-        self.lock_all_nonwallet_unspents(rpc)?;
+        self.lock_all_nonwallet_unspents()?;
 
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
@@ -159,7 +149,7 @@ impl Wallet {
             let mut outputs = HashMap::<String, Amount>::new();
             outputs.insert(address.to_string(), Amount::from_sat(output_value));
 
-            let wcfp_result = rpc.wallet_create_funded_psbt(
+            let wcfp_result = self.rpc.wallet_create_funded_psbt(
                 &[],
                 &outputs,
                 None,
@@ -174,9 +164,9 @@ impl Wallet {
             total_miner_fee += wcfp_result.fee.as_sat();
             log::debug!(target: "wallet", "created funding tx, miner fee={}", wcfp_result.fee);
 
-            let funding_tx = self.from_walletcreatefundedpsbt_to_tx(rpc, &wcfp_result.psbt)?;
+            let funding_tx = self.from_walletcreatefundedpsbt_to_tx(&wcfp_result.psbt)?;
 
-            rpc.lock_unspent(
+            self.rpc.lock_unspent(
                 &funding_tx
                     .input
                     .iter()
@@ -204,7 +194,6 @@ impl Wallet {
 
     fn create_mostly_sweep_txes_with_one_tx_having_change(
         &self,
-        rpc: &Client,
         coinswap_amount: u64,
         destinations: &[Address],
         fee_rate: u64,
@@ -212,7 +201,7 @@ impl Wallet {
         utxos: &mut dyn Iterator<Item = (Txid, u32, u64)>,
         //utxos item is (txid, vout, value)
         //utxos should be sorted by size, largest first
-    ) -> Result<Option<CreateFundingTxesResult>, TeleportError> {
+    ) -> Result<Option<CreateFundingTxesResult>, WalletError> {
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
         let mut total_miner_fee = 0;
@@ -229,7 +218,7 @@ impl Wallet {
                 destinations_iter.next().unwrap().to_string(),
                 Amount::from_sat(value),
             );
-            let wcfp_result = rpc.wallet_create_funded_psbt(
+            let wcfp_result = self.rpc.wallet_create_funded_psbt(
                 &[CreateRawTransactionInput {
                     txid,
                     vout,
@@ -245,7 +234,7 @@ impl Wallet {
                 }),
                 None,
             )?;
-            let funding_tx = self.from_walletcreatefundedpsbt_to_tx(rpc, &wcfp_result.psbt)?;
+            let funding_tx = self.from_walletcreatefundedpsbt_to_tx(&wcfp_result.psbt)?;
             leftover_coinswap_amount -= funding_tx.output[0].value;
 
             total_miner_fee += wcfp_result.fee.as_sat();
@@ -272,7 +261,7 @@ impl Wallet {
             destinations_iter.next().unwrap().to_string(),
             Amount::from_sat(leftover_inputs_values.iter().sum::<u64>()),
         );
-        let wcfp_result = rpc.wallet_create_funded_psbt(
+        let wcfp_result = self.rpc.wallet_create_funded_psbt(
             &leftover_inputs,
             &outputs,
             None,
@@ -284,7 +273,7 @@ impl Wallet {
             }),
             None,
         )?;
-        let funding_tx = self.from_walletcreatefundedpsbt_to_tx(rpc, &wcfp_result.psbt)?;
+        let funding_tx = self.from_walletcreatefundedpsbt_to_tx(&wcfp_result.psbt)?;
         leftover_coinswap_amount -= funding_tx.output[0].value;
 
         total_miner_fee += wcfp_result.fee.as_sat();
@@ -299,7 +288,7 @@ impl Wallet {
             destinations_iter.next().unwrap().to_string(),
             Amount::from_sat(leftover_coinswap_amount),
         );
-        let wcfp_result = rpc.wallet_create_funded_psbt(
+        let wcfp_result = self.rpc.wallet_create_funded_psbt(
             &[CreateRawTransactionInput {
                 txid: first_txid,
                 vout: first_vout,
@@ -315,7 +304,7 @@ impl Wallet {
             }),
             None,
         )?;
-        let funding_tx = self.from_walletcreatefundedpsbt_to_tx(rpc, &wcfp_result.psbt)?;
+        let funding_tx = self.from_walletcreatefundedpsbt_to_tx(&wcfp_result.psbt)?;
 
         total_miner_fee += wcfp_result.fee.as_sat();
         log::debug!(target: "wallet", "created funding tx, miner fee={}", wcfp_result.fee);
@@ -336,11 +325,10 @@ impl Wallet {
 
     fn create_funding_txes_utxo_max_sends(
         &self,
-        rpc: &Client,
         coinswap_amount: u64,
         destinations: &[Address],
         fee_rate: u64,
-    ) -> Result<Option<CreateFundingTxesResult>, TeleportError> {
+    ) -> Result<Option<CreateFundingTxesResult>, WalletError> {
         //this function creates funding txes by
         //using walletcreatefundedpsbt for the total amount, and if
         //the number if inputs UTXOs is >number_of_txes then split those inputs into groups
@@ -351,10 +339,10 @@ impl Wallet {
             destinations[0].to_string(),
             Amount::from_sat(coinswap_amount),
         );
-        let change_address = self.get_next_internal_addresses(rpc, 1)?[0].clone();
+        let change_address = self.get_next_internal_addresses(1)?[0].clone();
 
-        self.lock_all_nonwallet_unspents(rpc)?;
-        let wcfp_result = rpc.wallet_create_funded_psbt(
+        self.lock_all_nonwallet_unspents()?;
+        let wcfp_result = self.rpc.wallet_create_funded_psbt(
             &[],
             &outputs,
             None,
@@ -367,14 +355,16 @@ impl Wallet {
             None,
         )?;
         //TODO rust-bitcoin handles psbt, use those functions instead
-        let decoded_psbt = rpc.call::<Value>("decodepsbt", &[Value::String(wcfp_result.psbt)])?;
+        let decoded_psbt = self
+            .rpc
+            .call::<Value>("decodepsbt", &[Value::String(wcfp_result.psbt)])?;
         log::debug!(target: "wallet", "total tx decoded_psbt = {:?}", decoded_psbt);
 
         let total_tx_inputs_len = decoded_psbt["inputs"].as_array().unwrap().len();
         log::debug!(target: "wallet", "total tx inputs.len = {}", total_tx_inputs_len);
         if total_tx_inputs_len < destinations.len() {
-            return Err(TeleportError::Protocol(
-                "not enough UTXOs found, cant use this method",
+            return Err(WalletError::Protocol(
+                "not enough UTXOs found, cant use this method".to_string(),
             ));
         }
 
@@ -394,7 +384,6 @@ impl Wallet {
         });
 
         self.create_mostly_sweep_txes_with_one_tx_having_change(
-            rpc,
             coinswap_amount,
             destinations,
             fee_rate,
@@ -411,18 +400,17 @@ impl Wallet {
 
     fn create_funding_txes_use_biggest_utxos(
         &self,
-        rpc: &Client,
         coinswap_amount: u64,
         destinations: &[Address],
         fee_rate: u64,
-    ) -> Result<Option<CreateFundingTxesResult>, TeleportError> {
+    ) -> Result<Option<CreateFundingTxesResult>, WalletError> {
         //this function will pick the top most valuable UTXOs and use them
         //to create funding transactions
 
-        let mut list_unspent_result = self.list_unspent_from_wallet(rpc, false, false)?;
+        let mut list_unspent_result = self.list_unspent_from_wallet(false, false)?;
         if list_unspent_result.len() < destinations.len() {
-            return Err(TeleportError::Protocol(
-                "Not enough UTXOs to create this many funding txes",
+            return Err(WalletError::Protocol(
+                "Not enough UTXOs to create this many funding txes".to_string(),
             ));
         }
         list_unspent_result.sort_by(|(a, _), (b, _)| {
@@ -443,8 +431,8 @@ impl Wallet {
             }
         }
         if list_unspent_count.is_none() {
-            return Err(TeleportError::Protocol(
-                "Not enough UTXOs/value to create funding txes",
+            return Err(WalletError::Protocol(
+                "Not enough UTXOs/value to create funding txes".to_string(),
             ));
         }
 
@@ -467,9 +455,8 @@ impl Wallet {
         } else {
             //at most one utxo bigger than the coinswap amount
 
-            let change_address = &self.get_next_internal_addresses(rpc, 1)?[0];
+            let change_address = &self.get_next_internal_addresses(1)?[0];
             self.create_mostly_sweep_txes_with_one_tx_having_change(
-                rpc,
                 coinswap_amount,
                 destinations,
                 fee_rate,

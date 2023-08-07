@@ -34,10 +34,10 @@ use bitcoincore_rpc::{
 };
 
 use crate::{
-    contracts::redeemscript_to_scriptpubkey,
     error::TeleportError,
-    messages::FidelityBondProof,
-    wallet_sync::{generate_keypair, UTXOSpendInfo, Wallet},
+    protocol::messages::FidelityBondProof,
+    utill::{generate_keypair, redeemscript_to_scriptpubkey},
+    wallet::{UTXOSpendInfo, Wallet},
 };
 
 pub const TIMELOCKED_MPK_PATH: &str = "m/84'/0'/0'/2";
@@ -352,7 +352,7 @@ fn get_timelocked_redeemscript_from_index<C: Context + Signing>(
     create_timelocked_redeemscript(locktime, &pubkey)
 }
 
-pub fn generate_all_timelocked_addresses(master_key: &ExtendedPrivKey) -> HashMap<Script, u32> {
+pub fn generate_fidelity_scripts(master_key: &ExtendedPrivKey) -> HashMap<Script, u32> {
     let timelocked_master_private_key = get_timelocked_master_key_from_root_master_key(master_key);
     let mut timelocked_script_index_map = HashMap::<Script, u32>::new();
 
@@ -372,13 +372,13 @@ impl Wallet {
     pub fn get_timelocked_redeemscript_from_index(&self, index: u32) -> Script {
         get_timelocked_redeemscript_from_index(
             &Secp256k1::new(),
-            &get_timelocked_master_key_from_root_master_key(&self.master_key),
+            &get_timelocked_master_key_from_root_master_key(&self.store.master_key),
             index,
         )
     }
 
     pub fn get_timelocked_privkey_from_index(&self, index: u32) -> PrivateKey {
-        get_timelocked_master_key_from_root_master_key(&self.master_key)
+        get_timelocked_master_key_from_root_master_key(&self.store.master_key)
             .ckd_priv(&Secp256k1::new(), ChildNumber::Normal { index })
             .unwrap()
             .private_key
@@ -386,7 +386,7 @@ impl Wallet {
 
     pub fn get_timelocked_address(&self, locktime: &YearAndMonth) -> (Address, i64) {
         let redeemscript = self.get_timelocked_redeemscript_from_index(locktime.to_index());
-        let addr = Address::p2wsh(&redeemscript, self.network);
+        let addr = Address::p2wsh(&redeemscript, self.store.network);
         let unix_locktime = read_locktime_from_timelocked_redeemscript(&redeemscript)
             .expect("bug: unable to read locktime");
         (addr, unix_locktime)
@@ -397,7 +397,7 @@ impl Wallet {
         &self,
         rpc: &Client,
     ) -> Result<Option<HotWalletFidelityBond>, TeleportError> {
-        let list_unspent_result = self.list_unspent_from_wallet(&rpc, false, true)?;
+        let list_unspent_result = self.list_unspent_from_wallet(false, true)?;
         let fidelity_bond_utxos = list_unspent_result
             .iter()
             .filter(|(utxo, _)| utxo.confirmations > 0)

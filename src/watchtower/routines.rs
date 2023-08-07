@@ -28,18 +28,21 @@ use bitcoin::{
     Address, Network, Script, Transaction, Txid,
 };
 use bitcoincore_rpc::{
+    bitcoincore_rpc_json::{
+        ImportMultiOptions, ImportMultiRequest, ImportMultiRequestScriptPubkey,
+        ImportMultiRescanSince,
+    },
     json::{GetBlockResult, ListTransactionResult},
     Client, RpcApi,
 };
 
 use crate::{
-    contracts::{
+    error::TeleportError,
+    protocol::contract::{
         create_contract_redeemscript, read_hashlock_pubkey_from_contract,
         read_hashvalue_from_contract, read_locktime_from_contract,
         read_timelock_pubkey_from_contract,
     },
-    error::TeleportError,
-    wallet_sync::import_redeemscript,
 };
 
 //TODO these two structs below are used for two different purposes
@@ -309,22 +312,27 @@ async fn run(
                     }
                     Err(err) => {
                         log::error!("error handling request: {:?}", err);
-                        match err {
-                            TeleportError::Network(_e) => (),
-                            TeleportError::Protocol(_e) => (),
-                            TeleportError::Disk(e) => server_loop_err_comms_tx
-                                .send(TeleportError::Disk(e))
-                                .await
-                                .unwrap(),
-                            TeleportError::Rpc(e) => server_loop_err_comms_tx
-                                .send(TeleportError::Rpc(e))
-                                .await
-                                .unwrap(),
-                            TeleportError::Socks(e) => server_loop_err_comms_tx
-                                .send(TeleportError::Socks(e))
-                                .await
-                                .unwrap(),
-                        };
+                        // match err {
+                        //     TeleportError::Network(_e) => (),
+                        //     TeleportError::Protocol(_e) => (),
+                        //     TeleportError::Disk(e) => server_loop_err_comms_tx
+                        //         .send(TeleportError::Disk(e))
+                        //         .await
+                        //         .unwrap(),
+                        //     TeleportError::Rpc(e) => server_loop_err_comms_tx
+                        //         .send(TeleportError::Rpc(e))
+                        //         .await
+                        //         .unwrap(),
+                        //     TeleportError::Socks(e) => server_loop_err_comms_tx
+                        //         .send(TeleportError::Socks(e))
+                        //         .await
+                        //         .unwrap(),
+                        //     TeleportError::Wallet(e) => server_loop_err_comms_tx
+                        //         .send(TeleportError::Wallet(e))
+                        //         .await
+                        //         .unwrap(),
+                        // };
+                        server_loop_err_comms_tx.send(err).await.unwrap();
                         break;
                     }
                 };
@@ -570,6 +578,35 @@ fn import_broadcasted_contract_redeemscripts(
                 continue;
             }
             import_redeemscript(rpc, &contract_tx.redeemscript, &contracts_info.wallet_label)?;
+        }
+    }
+    Ok(())
+}
+
+// Temporary function needed because the client does not have a Wallet yet.
+// Remove this after watch tower has it's own wallet interface.
+fn import_redeemscript(
+    rpc: &Client,
+    redeemscript: &Script,
+    address_label: &String,
+) -> Result<(), bitcoincore_rpc::Error> {
+    let spk = crate::protocol::contract::redeemscript_to_scriptpubkey(&redeemscript);
+    let result = rpc.import_multi(
+        &[ImportMultiRequest {
+            timestamp: ImportMultiRescanSince::Now,
+            script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(&spk)),
+            redeem_script: Some(redeemscript),
+            watchonly: Some(true),
+            label: Some(&address_label),
+            ..Default::default()
+        }],
+        Some(&ImportMultiOptions {
+            rescan: Some(false),
+        }),
+    )?;
+    for r in result {
+        if !r.success {
+            return Err(bitcoincore_rpc::Error::UnexpectedStructure);
         }
     }
     Ok(())

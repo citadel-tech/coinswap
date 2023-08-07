@@ -31,23 +31,27 @@ use bitcoin::{
 use bitcoincore_rpc::{Client, RpcApi};
 
 use crate::{
-    contracts,
-    contracts::{
-        calculate_coinswap_fee, find_funding_output, read_hashvalue_from_contract,
-        read_locktime_from_contract, read_pubkeys_from_multisig_redeemscript, SwapCoin,
-        MAKER_FUNDING_TX_VBYTE_SIZE,
-    },
-    directory_servers::post_maker_address_to_directory_servers,
     error::TeleportError,
-    messages::{
-        ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
-        ContractSigsForSender, HashPreimage, MakerHello, MakerToTakerMessage, MultisigPrivkey,
-        Offer, PrivKeyHandover, ProofOfFunding, ReqContractSigsForRecvr, ReqContractSigsForSender,
-        SenderContractTxInfo, TakerToMakerMessage,
+    market::directory::post_maker_address_to_directory_servers,
+    protocol::{
+        contract::{
+            calculate_coinswap_fee, create_receivers_contract_tx, find_funding_output,
+            read_hashvalue_from_contract, read_locktime_from_contract,
+            read_pubkeys_from_multisig_redeemscript, validate_and_sign_senders_contract_tx,
+            verify_proof_of_funding, MAKER_FUNDING_TX_VBYTE_SIZE,
+        },
+        messages::{
+            ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
+            ContractSigsForSender, HashPreimage, MakerHello, MakerToTakerMessage, MultisigPrivkey,
+            Offer, PrivKeyHandover, ProofOfFunding, ReqContractSigsForRecvr,
+            ReqContractSigsForSender, SenderContractTxInfo, TakerToMakerMessage,
+        },
     },
-    wallet_sync::{IncomingSwapCoin, OutgoingSwapCoin, Wallet, WalletSwapCoin},
-    watchtower_client::{ping_watchtowers, register_coinswap_with_watchtowers},
-    watchtower_protocol::{ContractTransaction, ContractsInfo},
+    wallet::{IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, Wallet, WalletSwapCoin},
+    watchtower::{
+        client::{ping_watchtowers, register_coinswap_with_watchtowers},
+        routines::{ContractTransaction, ContractsInfo},
+    },
 };
 
 const MAKER_HEARTBEAT_INTERVAL_SECS: u64 = 3;
@@ -111,15 +115,12 @@ async fn run(
         "Running maker with special behavior = {:?}",
         config.maker_behavior
     );
-    wallet
-        .write()
-        .unwrap()
-        .refresh_offer_maxsize_cache(Arc::clone(&rpc))?;
+    wallet.write().unwrap().refresh_offer_maxsize_cache()?;
 
     log::info!("Pinging watchtowers. . .");
     ping_watchtowers().await?;
 
-    if wallet.read().unwrap().network != Network::Regtest {
+    if wallet.read().unwrap().store.network != Network::Regtest {
         if MAKER_ONION_ADDR == "myhiddenserviceaddress.onion:6102" {
             panic!("You must set config variable MAKER_ONION_ADDR in file src/maker_protocol.rs");
         }
@@ -127,9 +128,12 @@ async fn run(
             "Adding my address ({}) to the directory servers. . .",
             MAKER_ONION_ADDR
         );
-        post_maker_address_to_directory_servers(wallet.read().unwrap().network, MAKER_ONION_ADDR)
-            .await
-            .expect("unable to add my address to the directory servers, is tor reachable?");
+        post_maker_address_to_directory_servers(
+            wallet.read().unwrap().store.network,
+            MAKER_ONION_ADDR,
+        )
+        .await
+        .expect("unable to add my address to the directory servers, is tor reachable?");
     }
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, config.port)).await?;
@@ -174,7 +178,7 @@ async fn run(
                     rpc_ping_success = wallet
                         .write()
                         .unwrap()
-                        .refresh_offer_maxsize_cache(Arc::clone(&rpc))
+                        .refresh_offer_maxsize_cache()
                         .is_ok();
                     log::debug!("rpc_ping_success = {}", rpc_ping_success);
                 }
@@ -199,12 +203,12 @@ async fn run(
                 let directory_servers_refresh_interval = Duration::from_secs(
                     config.directory_servers_refresh_interval_secs
                 );
-                if wallet.read().unwrap().network != Network::Regtest
+                if wallet.read().unwrap().store.network != Network::Regtest
                         && Instant::now().saturating_duration_since(last_directory_servers_refresh)
                         > directory_servers_refresh_interval {
                     last_directory_servers_refresh = Instant::now();
                     let result_expiry_time = post_maker_address_to_directory_servers(
-                        wallet.read().unwrap().network,
+                        wallet.read().unwrap().store.network,
                         MAKER_ONION_ADDR
                     ).await;
                     log::info!("Refreshing my address at the directory servers = {:?}",
@@ -299,22 +303,25 @@ async fn run(
                     }
                     Err(err) => {
                         log::error!("error handling client request: {:?}", err);
-                        match err {
-                            TeleportError::Network(_e) => (),
-                            TeleportError::Protocol(_e) => (),
-                            TeleportError::Disk(e) => server_loop_comms_tx
-                                .send(TeleportError::Disk(e))
-                                .await
-                                .unwrap(),
-                            TeleportError::Rpc(e) => server_loop_comms_tx
-                                .send(TeleportError::Rpc(e))
-                                .await
-                                .unwrap(),
-                            TeleportError::Socks(e) => server_loop_comms_tx
-                                .send(TeleportError::Socks(e))
-                                .await
-                                .unwrap(),
-                        };
+                        // match err {
+                        //     // TeleportError::Network(_e) => (),
+                        //     // TeleportError::Protocol(_e) => (),
+                        //     // TeleportError::Disk(e) => server_loop_comms_tx
+                        //     //     .send(TeleportError::Disk(e))
+                        //     //     .await
+                        //     //     .unwrap(),
+                        //     // TeleportError::Rpc(e) => server_loop_comms_tx
+                        //     //     .send(TeleportError::Rpc(e))
+                        //     //     .await
+                        //     //     .unwrap(),
+                        //     // TeleportError::Socks(e) => server_loop_comms_tx
+                        //     //     .send(TeleportError::Socks(e))
+                        //     //     .await
+                        //     //     .unwrap(),
+                        //     // TeleportError::Wallet(e) => server_loop_comms_tx.send(TeleportError::Wallet(e)).await.unwrap()
+
+                        // };
+                        server_loop_comms_tx.send(err).await.unwrap();
                         break;
                     }
                 };
@@ -375,7 +382,7 @@ async fn handle_message(
         }
         ExpectedMessage::NewlyConnectedTaker => match request {
             TakerToMakerMessage::ReqGiveOffer(_) => {
-                let max_size = wallet.read().unwrap().get_offer_maxsize_cache();
+                let max_size = wallet.read().unwrap().store.offer_maxsize;
                 let tweakable_point = wallet.read().unwrap().get_tweakable_keypair().1;
                 connection_state.allowed_message = ExpectedMessage::SignSendersContractTx;
                 Some(MakerToTakerMessage::RespOffer(Offer {
@@ -523,7 +530,7 @@ fn handle_sign_senders_contract_tx(
     let mut funding_txids = Vec::<Txid>::new();
     let mut total_amount = 0;
     for txinfo in message.txs_info {
-        let sig = contracts::validate_and_sign_senders_contract_tx(
+        let sig = validate_and_sign_senders_contract_tx(
             &txinfo.multisig_key_nonce,
             &txinfo.hashlock_key_nonce,
             &txinfo.timelock_pubkey,
@@ -540,7 +547,7 @@ fn handle_sign_senders_contract_tx(
         funding_txids.push(txinfo.senders_contract_tx.input[0].previous_output.txid);
         total_amount += txinfo.funding_input_value;
     }
-    if total_amount >= MIN_SIZE && total_amount < wallet.read().unwrap().get_offer_maxsize_cache() {
+    if total_amount >= MIN_SIZE && total_amount < wallet.read().unwrap().store.offer_maxsize {
         log::info!(
             "requested contracts amount={}, for funding txids = {:?}",
             Amount::from_sat(total_amount),
@@ -586,7 +593,7 @@ fn handle_proof_of_funding(
         };
         funding_output_indexes.push(funding_output_index);
         funding_outputs.push(funding_output);
-        let verify_result = contracts::verify_proof_of_funding(
+        let verify_result = verify_proof_of_funding(
             Arc::clone(&rpc),
             &mut wallet.write().unwrap(),
             &funding_info,
@@ -634,17 +641,16 @@ fn handle_proof_of_funding(
         wallet
             .read()
             .unwrap()
-            .import_wallet_multisig_redeemscript(&rpc, &pubkey1, &pubkey2)?;
+            .import_wallet_multisig_redeemscript(&pubkey1, &pubkey2)?;
         wallet.read().unwrap().import_tx_with_merkleproof(
-            &rpc,
             &funding_info.funding_tx,
             funding_info.funding_tx_merkleproof.clone(),
         )?;
         wallet
             .read()
             .unwrap()
-            .import_wallet_contract_redeemscript(&rpc, &funding_info.contract_redeemscript)?;
-        let my_receivers_contract_tx = contracts::create_receivers_contract_tx(
+            .import_wallet_contract_redeemscript(&funding_info.contract_redeemscript)?;
+        let my_receivers_contract_tx = create_receivers_contract_tx(
             OutPoint {
                 txid: funding_info.funding_tx.txid(),
                 vout: funding_output_index,
@@ -688,7 +694,6 @@ fn handle_proof_of_funding(
 
     let (my_funding_txes, outgoing_swapcoins, total_miner_fee) =
         wallet.write().unwrap().initalize_coinswap(
-            &rpc,
             outgoing_amount,
             &proof
                 .next_coinswap_info
@@ -814,7 +819,7 @@ async fn handle_senders_and_receivers_contract_sigs(
     let internal_addresses = wallet
         .read()
         .unwrap()
-        .get_next_internal_addresses(&rpc, incoming_swapcoins.len() as u32)?;
+        .get_next_internal_addresses(incoming_swapcoins.len() as u32)?;
     register_coinswap_with_watchtowers(ContractsInfo {
         contract_txes: incoming_swapcoins
             .iter()

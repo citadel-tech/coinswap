@@ -1,16 +1,17 @@
-use bitcoin::{util::amount::Amount, Network};
-use bitcoin_wallet::mnemonic;
+use bitcoin::util::amount::Amount;
 use bitcoincore_rpc::{Client, RpcApi};
 
+use bip39::Mnemonic;
+
 use teleport::{
-    fidelity_bonds::YearAndMonth,
-    maker_protocol::MakerBehavior,
-    wallet_sync::{Wallet, WalletSyncAddressAmount},
+    maker::server::MakerBehavior,
+    wallet::{fidelity::YearAndMonth, RPCConfig, Wallet, WalletMode},
 };
 
 use serde_json::Value;
 
 use std::{
+    convert::TryFrom,
     path::PathBuf,
     sync::{Arc, RwLock},
     thread, time,
@@ -24,29 +25,20 @@ static MAKER1: &str = "tests/maker-wallet-1";
 static MAKER2: &str = "tests/maker-wallet-2";
 
 // Helper function to create new wallet
-fn create_wallet_and_import(rpc: &Client, filename: PathBuf) -> Wallet {
-    let mnemonic =
-        mnemonic::Mnemonic::new_random(bitcoin_wallet::account::MasterKeyEntropy::Sufficient)
-            .unwrap();
+fn create_wallet_and_import(filename: PathBuf) -> Wallet {
+    let mnemonic = Mnemonic::generate(12).unwrap();
+    let seedphrase = mnemonic.to_string();
 
-    Wallet::save_new_wallet_file(&filename, mnemonic.to_string(), "".to_string()).unwrap();
+    let mut wallet = Wallet::init(
+        &filename,
+        &RPCConfig::default(),
+        seedphrase,
+        "".to_string(),
+        Some(WalletMode::Testing),
+    )
+    .unwrap();
 
-    let wallet =
-        Wallet::load_wallet_from_file(filename, Network::Regtest, WalletSyncAddressAmount::Testing)
-            .unwrap();
-    // import intital addresses to core
-    wallet
-        .import_initial_addresses(
-            &rpc,
-            &wallet
-                .get_hd_wallet_descriptors(&rpc)
-                .unwrap()
-                .iter()
-                .collect::<Vec<&String>>(),
-            &Vec::<_>::new(),
-            &Vec::<_>::new(),
-        )
-        .unwrap();
+    wallet.sync().unwrap();
 
     wallet
 }
@@ -61,23 +53,22 @@ pub fn generate_1_block(rpc: &Client) {
 // TODO: Used `bitcoind` crate to automate spawning regtest nodes.
 #[tokio::test]
 async fn test_standard_coinswap() {
-    teleport::setup_logger();
+    teleport::scripts::setup_logger();
 
-    let (rpc, network) = teleport::get_bitcoin_rpc().unwrap();
-    assert_eq!(network, Network::Regtest);
+    let rpc = Client::try_from(&RPCConfig::default()).unwrap();
 
     // unlock all utxos to avoid "insufficient fund" error
     rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
         .unwrap();
 
     // create taker wallet
-    let mut taker_wallet = create_wallet_and_import(&rpc, TAKER.into());
+    let mut taker_wallet = create_wallet_and_import(TAKER.into());
 
     // create maker1 wallet
-    let mut maker1_wallet = create_wallet_and_import(&rpc, MAKER1.into());
+    let mut maker1_wallet = create_wallet_and_import(MAKER1.into());
 
     // create maker2 wallet
-    let mut maker2_wallet = create_wallet_and_import(&rpc, MAKER2.into());
+    let mut maker2_wallet = create_wallet_and_import(MAKER2.into());
 
     // Check files are created
     assert!(std::path::Path::new(TAKER).exists());
@@ -86,9 +77,9 @@ async fn test_standard_coinswap() {
 
     // Create 3 taker and maker address and send 0.05 btc to each
     for _ in 0..3 {
-        let taker_address = taker_wallet.get_next_external_address(&rpc).unwrap();
-        let maker1_address = maker1_wallet.get_next_external_address(&rpc).unwrap();
-        let maker2_address = maker2_wallet.get_next_external_address(&rpc).unwrap();
+        let taker_address = taker_wallet.get_next_external_address().unwrap();
+        let maker1_address = maker1_wallet.get_next_external_address().unwrap();
+        let maker2_address = maker2_wallet.get_next_external_address().unwrap();
 
         rpc.send_to_address(
             &taker_address,
@@ -158,75 +149,79 @@ async fn test_standard_coinswap() {
     generate_1_block(&rpc);
 
     // Check inital wallet assertions
-    assert_eq!(taker_wallet.get_external_index(), 3);
-    assert_eq!(maker1_wallet.get_external_index(), 3);
-    assert_eq!(maker2_wallet.get_external_index(), 3);
+    assert_eq!(*taker_wallet.get_external_index(), 3);
+    assert_eq!(*maker1_wallet.get_external_index(), 3);
+    assert_eq!(*maker2_wallet.get_external_index(), 3);
 
     assert_eq!(
         taker_wallet
-            .list_unspent_from_wallet(&rpc, false, true)
+            .list_unspent_from_wallet(false, true)
             .unwrap()
             .len(),
         3
     );
     assert_eq!(
         maker1_wallet
-            .list_unspent_from_wallet(&rpc, false, true)
+            .list_unspent_from_wallet(false, true)
             .unwrap()
             .len(),
         4
     );
     assert_eq!(
         maker2_wallet
-            .list_unspent_from_wallet(&rpc, false, true)
+            .list_unspent_from_wallet(false, true)
             .unwrap()
             .len(),
         4
     );
 
-    assert_eq!(taker_wallet.lock_all_nonwallet_unspents(&rpc).unwrap(), ());
-    assert_eq!(maker1_wallet.lock_all_nonwallet_unspents(&rpc).unwrap(), ());
-    assert_eq!(maker2_wallet.lock_all_nonwallet_unspents(&rpc).unwrap(), ());
+    assert_eq!(taker_wallet.lock_all_nonwallet_unspents().unwrap(), ());
+    assert_eq!(maker1_wallet.lock_all_nonwallet_unspents().unwrap(), ());
+    assert_eq!(maker2_wallet.lock_all_nonwallet_unspents().unwrap(), ());
 
     let kill_flag = Arc::new(RwLock::new(false));
 
     // Start watchtower, makers and taker to execute a coinswap
     let kill_flag_watchtower = kill_flag.clone();
     let watchtower_thread = thread::spawn(|| {
-        teleport::run_watchtower(
+        teleport::scripts::watchtower::run_watchtower(
             &PathBuf::from_str(WATCHTOWER_DATA).unwrap(),
             Some(kill_flag_watchtower),
-        );
+        )
+        .unwrap();
     });
 
     let kill_flag_maker1 = kill_flag.clone();
     let maker1_thread = thread::spawn(|| {
-        teleport::run_maker(
+        teleport::scripts::maker::run_maker(
             &PathBuf::from_str(MAKER1).unwrap(),
-            WalletSyncAddressAmount::Testing,
             6102,
+            Some(WalletMode::Testing),
             MakerBehavior::Normal,
             Some(kill_flag_maker1),
-        );
+        )
+        .unwrap();
     });
 
     let kill_flag_maker2 = kill_flag.clone();
     let maker2_thread = thread::spawn(|| {
-        teleport::run_maker(
+        teleport::scripts::maker::run_maker(
             &PathBuf::from_str(MAKER2).unwrap(),
-            WalletSyncAddressAmount::Testing,
             16102,
+            Some(WalletMode::Testing),
             MakerBehavior::Normal,
             Some(kill_flag_maker2),
-        );
+        )
+        .unwrap();
     });
 
     let taker_thread = thread::spawn(|| {
         // Wait and then start the taker
         thread::sleep(time::Duration::from_secs(20));
-        teleport::run_taker(
+        teleport::scripts::taker::run_taker(
             &PathBuf::from_str(TAKER).unwrap(),
-            WalletSyncAddressAmount::Testing,
+            Some(WalletMode::Testing),
+            None, /* Default RPC */
             1000,
             500000,
             2,
@@ -253,27 +248,31 @@ async fn test_standard_coinswap() {
     block_creation_thread.join().unwrap();
 
     // Recreate the wallet
-    let taker_wallet =
-        Wallet::load_wallet_from_file(&TAKER, Network::Regtest, WalletSyncAddressAmount::Testing)
-            .unwrap();
-    let maker1_wallet =
-        Wallet::load_wallet_from_file(&MAKER1, Network::Regtest, WalletSyncAddressAmount::Testing)
-            .unwrap();
-    let maker2_wallet =
-        Wallet::load_wallet_from_file(&MAKER2, Network::Regtest, WalletSyncAddressAmount::Testing)
-            .unwrap();
+    let taker_wallet = Wallet::load(
+        &RPCConfig::default(),
+        &TAKER.into(),
+        Some(WalletMode::Testing),
+    )
+    .unwrap();
+    let maker1_wallet = Wallet::load(
+        &RPCConfig::default(),
+        &MAKER1.into(),
+        Some(WalletMode::Testing),
+    )
+    .unwrap();
+    let maker2_wallet = Wallet::load(
+        &RPCConfig::default(),
+        &MAKER2.into(),
+        Some(WalletMode::Testing),
+    )
+    .unwrap();
 
     // Check assertions
     assert_eq!(taker_wallet.get_swapcoins_count(), 6);
     assert_eq!(maker1_wallet.get_swapcoins_count(), 6);
     assert_eq!(maker2_wallet.get_swapcoins_count(), 6);
 
-    let (rpc, network) = teleport::get_bitcoin_rpc().unwrap();
-    assert_eq!(network, Network::Regtest);
-
-    let utxos = taker_wallet
-        .list_unspent_from_wallet(&rpc, false, false)
-        .unwrap();
+    let utxos = taker_wallet.list_unspent_from_wallet(false, false).unwrap();
     let balance: Amount = utxos
         .iter()
         .fold(Amount::ZERO, |acc, (u, _)| acc + u.amount);
@@ -281,7 +280,7 @@ async fn test_standard_coinswap() {
     assert!(balance < Amount::from_btc(0.15).unwrap());
 
     let utxos = maker1_wallet
-        .list_unspent_from_wallet(&rpc, false, false)
+        .list_unspent_from_wallet(false, false)
         .unwrap();
     let balance: Amount = utxos
         .iter()
@@ -290,7 +289,7 @@ async fn test_standard_coinswap() {
     assert!(balance > Amount::from_btc(0.15).unwrap());
 
     let utxos = maker2_wallet
-        .list_unspent_from_wallet(&rpc, false, false)
+        .list_unspent_from_wallet(false, false)
         .unwrap();
     let balance: Amount = utxos
         .iter()

@@ -3,7 +3,7 @@ pub const TOR_ADDR: &str = "127.0.0.1:9050";
 
 use bitcoin::Network;
 
-use crate::offerbook_sync::MakerAddress;
+use crate::taker::offers::MakerAddress;
 
 //for now just one of these, but later we'll need multiple for good decentralization
 const DIRECTORY_SERVER_ADDR: &str =

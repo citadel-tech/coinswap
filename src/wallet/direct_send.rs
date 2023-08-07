@@ -1,15 +1,11 @@
 use std::{num::ParseIntError, str::FromStr};
 
 use bitcoin::{Address, Amount, Network, OutPoint, Script, Transaction, TxIn, TxOut};
+use bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 
-use bitcoincore_rpc::{json::ListUnspentResultEntry, Client};
+use crate::wallet::{wallet::UTXOSpendInfo, SwapCoin};
 
-use crate::{
-    contracts::SwapCoin,
-    error::TeleportError,
-    fidelity_bonds::get_locktime_from_index,
-    wallet_sync::{UTXOSpendInfo, Wallet},
-};
+use super::{error::WalletError, fidelity::get_locktime_from_index, Wallet};
 
 #[derive(Debug)]
 pub enum SendAmount {
@@ -101,16 +97,15 @@ impl FromStr for CoinToSpend {
 impl Wallet {
     pub fn create_direct_send(
         &mut self,
-        rpc: &Client,
         fee_rate: u64,
         send_amount: SendAmount,
         destination: Destination,
         coins_to_spend: &[CoinToSpend],
-    ) -> Result<Transaction, TeleportError> {
+    ) -> Result<Transaction, WalletError> {
         let mut tx_inputs = Vec::<TxIn>::new();
         let mut unspent_inputs = Vec::<(ListUnspentResultEntry, UTXOSpendInfo)>::new();
         //TODO this search within a search could get very slow
-        let list_unspent_result = self.list_unspent_from_wallet(rpc, true, true)?;
+        let list_unspent_result = self.list_unspent_from_wallet(true, true)?;
         for (list_unspent_entry, spend_info) in list_unspent_result {
             for cts in coins_to_spend {
                 let previous_output = match cts {
@@ -175,14 +170,15 @@ impl Wallet {
         }
 
         let dest_addr = match destination {
-            Destination::Wallet => self.get_next_external_address(rpc)?,
+            Destination::Wallet => self.get_next_external_address()?,
             Destination::Address(a) => {
                 //testnet and signet addresses have the same vbyte
                 //so a.network is always testnet even if the address is signet
                 let testnet_signet_type = (a.network == Network::Testnet
                     || a.network == Network::Signet)
-                    && (self.network == Network::Testnet || self.network == Network::Signet);
-                if a.network != self.network && !testnet_signet_type {
+                    && (self.store.network == Network::Testnet
+                        || self.store.network == Network::Signet);
+                if a.network != self.store.network && !testnet_signet_type {
                     panic!("wrong address network type (e.g. mainnet, testnet, regtest, signet)");
                 }
                 a
@@ -204,7 +200,7 @@ impl Wallet {
         });
         if let SendAmount::Amount(amount) = send_amount {
             output.push(TxOut {
-                script_pubkey: self.get_next_internal_addresses(rpc, 1)?[0].script_pubkey(),
+                script_pubkey: self.get_next_internal_addresses(1)?[0].script_pubkey(),
                 value: total_input_value - amount.as_sat() - miner_fee,
             });
         }
