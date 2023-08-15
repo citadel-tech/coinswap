@@ -45,7 +45,7 @@ pub const TIMELOCKED_ADDRESS_COUNT: u32 = 960;
 
 pub const REGTEST_DUMMY_ONION_HOSTNAME: &str = "regtest-dummy-onion-hostname.onion";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct YearAndMonth {
     year: u32,
     month: u32,
@@ -76,6 +76,12 @@ impl FromStr for YearAndMonth {
         } else {
             Err(YearAndMonthError::OutOfRange)
         }
+    }
+}
+
+impl From<std::ffi::OsString> for YearAndMonth {
+    fn from(value: std::ffi::OsString) -> Self {
+        YearAndMonth::from_str(&value.into_string().unwrap()).unwrap()
     }
 }
 

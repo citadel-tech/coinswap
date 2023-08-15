@@ -89,7 +89,7 @@ impl KeychainKind {
 
 const WATCH_ONLY_SWAPCOIN_LABEL: &str = "watchonly_swapcoin_label";
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum DisplayAddressType {
     All,
     MasterKey,
