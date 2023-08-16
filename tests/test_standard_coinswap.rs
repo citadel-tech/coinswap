@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use std::{
     convert::TryFrom,
+    fs,
     path::PathBuf,
     sync::{Arc, RwLock},
     thread, time,
@@ -19,13 +20,17 @@ use std::{
 
 use std::str::FromStr;
 
-static WATCHTOWER_DATA: &str = "tests/watchtower.dat";
-static TAKER: &str = "tests/taker-wallet";
-static MAKER1: &str = "tests/maker-wallet-1";
-static MAKER2: &str = "tests/maker-wallet-2";
+static TEMP_FILES_DIR: &str = "tests/temp-files";
+static WATCHTOWER_DATA: &str = "tests/temp-files/watchtower.dat";
+static TAKER: &str = "tests/temp-files/taker-wallet";
+static MAKER1: &str = "tests/temp-files/maker-wallet-1";
+static MAKER2: &str = "tests/temp-files/maker-wallet-2";
 
 // Helper function to create new wallet
 fn create_wallet_and_import(filename: PathBuf) -> Wallet {
+    if filename.exists() {
+        fs::remove_file(&filename).unwrap();
+    }
     let mnemonic = Mnemonic::generate(12).unwrap();
     let seedphrase = mnemonic.to_string();
 
@@ -60,6 +65,11 @@ async fn test_standard_coinswap() {
     // unlock all utxos to avoid "insufficient fund" error
     rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
         .unwrap();
+
+    // create temp dir to hold wallet and .dat files if not exists
+    if !std::path::Path::new(TEMP_FILES_DIR).exists() {
+        fs::create_dir::<PathBuf>(TEMP_FILES_DIR.into()).unwrap();
+    }
 
     // create taker wallet
     let mut taker_wallet = create_wallet_and_import(TAKER.into());
@@ -296,4 +306,7 @@ async fn test_standard_coinswap() {
         .fold(Amount::ZERO, |acc, (u, _)| acc + u.amount);
     assert_eq!(utxos.len(), 6);
     assert!(balance > Amount::from_btc(0.15).unwrap());
+
+    // Remove test temp files and dir
+    fs::remove_dir_all::<PathBuf>(TEMP_FILES_DIR.into()).unwrap();
 }
