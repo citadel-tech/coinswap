@@ -1,6 +1,9 @@
 use std::{error, io};
 
-use crate::{market::directory::DirectoryServerError, wallet::WalletError};
+use crate::{
+    maker::error::MakerError, market::directory::DirectoryServerError,
+    protocol::error::ContractError, wallet::WalletError,
+};
 
 // error enum for the whole project
 // try to make functions return this
@@ -13,6 +16,9 @@ pub enum TeleportError {
     Socks(tokio_socks::Error),
     Wallet(WalletError),
     Market(DirectoryServerError),
+    Json(serde_json::Error),
+    Maker(MakerError),
+    Contract(ContractError),
 }
 
 impl From<Box<dyn error::Error + Send>> for TeleportError {
@@ -48,5 +54,23 @@ impl From<WalletError> for TeleportError {
 impl From<DirectoryServerError> for TeleportError {
     fn from(value: DirectoryServerError) -> Self {
         Self::Market(value)
+    }
+}
+
+impl From<serde_json::Error> for TeleportError {
+    fn from(value: serde_json::Error) -> Self {
+        Self::Json(value)
+    }
+}
+
+impl From<MakerError> for TeleportError {
+    fn from(value: MakerError) -> Self {
+        Self::Maker(value)
+    }
+}
+
+impl From<ContractError> for TeleportError {
+    fn from(value: ContractError) -> Self {
+        Self::Contract(value)
     }
 }

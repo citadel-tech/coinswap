@@ -59,6 +59,8 @@
 //! Taker -> Maker2: [`TakerToMakerMessage::RespHashPreimage`] (for Maker2-Taker HTLC).
 //! Maker2 -> Taker: [`MakerToTakerMessage::RespPrivKeyHandover`] (For Maker2-Taker funding multisig).
 
+use std::fmt::Display;
+
 use bitcoin::{
     secp256k1::{SecretKey, Signature},
     OutPoint, PublicKey, Script, Transaction,
@@ -83,8 +85,8 @@ pub struct GiveOffer;
 /// Contract Sigs requesting information for the Sender side of the hop.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ContractTxInfoForSender {
-    pub multisig_key_nonce: SecretKey,
-    pub hashlock_key_nonce: SecretKey,
+    pub multisig_nonce: SecretKey,
+    pub hashlock_nonce: SecretKey,
     pub timelock_pubkey: PublicKey,
     pub senders_contract_tx: Transaction,
     pub multisig_redeemscript: Script,
@@ -199,6 +201,23 @@ pub enum TakerToMakerMessage {
     RespPrivKeyHandover(PrivKeyHandover),
 }
 
+impl Display for TakerToMakerMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TakerHello(_) => write!(f, "TakerHello"),
+            Self::ReqGiveOffer(_) => write!(f, "ReqGiveOffer"),
+            Self::ReqContractSigsForSender(_) => write!(f, "ReqContractSigsForSender"),
+            Self::RespProofOfFunding(_) => write!(f, "RespProofOfFunding"),
+            Self::RespContractSigsForRecvrAndSender(_) => {
+                write!(f, "RespContractSigsForRecvrAndSender")
+            }
+            Self::ReqContractSigsForRecvr(_) => write!(f, "ReqContractSigsForRecvr"),
+            Self::RespHashPreimage(_) => write!(f, "RespHashPreimage"),
+            Self::RespPrivKeyHandover(_) => write!(f, "RespPrivKeyHandover"),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MakerHello {
     pub protocol_version_min: u32,
@@ -221,7 +240,7 @@ pub struct Offer {
     pub absolute_fee_sat: u64,
     pub amount_relative_fee_ppb: u64,
     pub time_relative_fee_ppb: u64,
-    pub required_confirms: i32,
+    pub required_confirms: u64,
     pub minimum_locktime: u16,
     pub max_size: u64,
     pub min_size: u64,
@@ -274,4 +293,21 @@ pub enum MakerToTakerMessage {
     RespContractSigsForRecvr(ContractSigsForRecvr),
     /// Send the multisig private keys of the swap, declaring completion of the contract.
     RespPrivKeyHandover(PrivKeyHandover),
+}
+
+impl Display for MakerToTakerMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MakerHello(_) => write!(f, "MakerHello"),
+            Self::RespOffer(_) => write!(f, "RespOffer"),
+            Self::RespContractSigsForSender(_) => write!(f, "RespContractSigsForSender"),
+            Self::ReqContractSigsAsRecvrAndSender(_) => {
+                write!(f, "ReqContractSigsAsRecvrAndSender")
+            }
+            Self::RespContractSigsForRecvr(_) => {
+                write!(f, "RespContractSigsForRecvr")
+            }
+            Self::RespPrivKeyHandover(_) => write!(f, "RespPrivKeyHandover"),
+        }
+    }
 }

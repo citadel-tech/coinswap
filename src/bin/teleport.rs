@@ -4,11 +4,11 @@ use bitcoin::{
     Script, Transaction,
 };
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::{Arc, RwLock}};
 
 use teleport::{
     error::TeleportError,
-    maker::server::MakerBehavior,
+    maker::MakerBehavior,
     scripts::{
         maker::run_maker,
         market::download_and_display_offers,
@@ -199,7 +199,7 @@ fn main() -> Result<(), TeleportError> {
                 port,
                 Some(WalletMode::Testing),
                 maker_special_behavior,
-                None,
+                Arc::new(RwLock::new(false)),
             )?;
         }
         WalletArgsSubcommand::GetFidelityBondAddress { year_and_month } => {

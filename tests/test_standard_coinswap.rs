@@ -4,7 +4,7 @@ use bitcoincore_rpc::{Client, RpcApi};
 use bip39::Mnemonic;
 
 use teleport::{
-    maker::server::MakerBehavior,
+    maker::MakerBehavior,
     wallet::{fidelity::YearAndMonth, RPCConfig, Wallet, WalletMode},
 };
 
@@ -15,7 +15,8 @@ use std::{
     fs,
     path::PathBuf,
     sync::{Arc, RwLock},
-    thread, time,
+    thread,
+    time::Duration,
 };
 
 use std::str::FromStr;
@@ -201,33 +202,33 @@ async fn test_standard_coinswap() {
         .unwrap();
     });
 
-    let kill_flag_maker1 = kill_flag.clone();
-    let maker1_thread = thread::spawn(|| {
+    let kill_flag_maker_1 = kill_flag.clone();
+    let maker1_thread = thread::spawn(move || {
         teleport::scripts::maker::run_maker(
             &PathBuf::from_str(MAKER1).unwrap(),
             6102,
             Some(WalletMode::Testing),
             MakerBehavior::Normal,
-            Some(kill_flag_maker1),
+            kill_flag_maker_1,
         )
         .unwrap();
     });
 
-    let kill_flag_maker2 = kill_flag.clone();
-    let maker2_thread = thread::spawn(|| {
+    let kill_flag_maker_2 = kill_flag.clone();
+    let maker2_thread = thread::spawn(move || {
         teleport::scripts::maker::run_maker(
             &PathBuf::from_str(MAKER2).unwrap(),
             16102,
             Some(WalletMode::Testing),
             MakerBehavior::Normal,
-            Some(kill_flag_maker2),
+            kill_flag_maker_2,
         )
         .unwrap();
     });
 
     let taker_thread = thread::spawn(|| {
         // Wait and then start the taker
-        thread::sleep(time::Duration::from_secs(20));
+        thread::sleep(Duration::from_secs(20));
         teleport::scripts::taker::run_taker(
             &PathBuf::from_str(TAKER).unwrap(),
             Some(WalletMode::Testing),
@@ -239,11 +240,11 @@ async fn test_standard_coinswap() {
         );
     });
 
-    let kill_flag_block_creation_thread = kill_flag.clone();
     let rpc_ptr = Arc::new(rpc);
+    let kill_block_creation_clone = kill_flag.clone();
     let block_creation_thread = thread::spawn(move || {
-        while !*kill_flag_block_creation_thread.read().unwrap() {
-            thread::sleep(time::Duration::from_secs(5));
+        while !*kill_block_creation_clone.read().unwrap() {
+            thread::sleep(Duration::from_secs(5));
             generate_1_block(&rpc_ptr);
             println!("created block");
         }

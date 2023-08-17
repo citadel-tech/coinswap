@@ -385,16 +385,16 @@ impl Wallet {
         self.store.incoming_swapcoins.get_mut(multisig_redeemscript)
     }
 
-    pub fn add_incoming_swapcoin(&mut self, coin: IncomingSwapCoin) {
+    pub fn add_incoming_swapcoin(&mut self, coin: &IncomingSwapCoin) {
         self.store
             .incoming_swapcoins
-            .insert(coin.get_multisig_redeemscript(), coin);
+            .insert(coin.get_multisig_redeemscript(), coin.clone());
     }
 
-    pub fn add_outgoing_swapcoin(&mut self, coin: OutgoingSwapCoin) {
+    pub fn add_outgoing_swapcoin(&mut self, coin: &OutgoingSwapCoin) {
         self.store
             .outgoing_swapcoins
-            .insert(coin.get_multisig_redeemscript(), coin);
+            .insert(coin.get_multisig_redeemscript(), coin.clone());
     }
 
     pub fn get_swapcoins_count(&self) -> usize {
@@ -1235,13 +1235,13 @@ impl Wallet {
     pub fn import_tx_with_merkleproof(
         &self,
         tx: &Transaction,
-        merkleproof: String,
+        merkleproof: &String,
     ) -> Result<(), WalletError> {
         let rawtx_hex = bitcoin::consensus::encode::serialize(tx).to_hex();
 
         self.rpc.call(
             "importprunedfunds",
-            &[Value::String(rawtx_hex), Value::String(merkleproof)],
+            &[Value::String(rawtx_hex), Value::String(merkleproof.clone())],
         )?;
         log::debug!(target: "wallet", "import_tx_with_merkleproof txid={}", tx.txid());
         Ok(())
@@ -1298,8 +1298,8 @@ impl Wallet {
             let contract_redeemscript = contract::create_contract_redeemscript(
                 hashlock_pubkey,
                 &timelock_pubkey,
-                hashvalue,
-                locktime,
+                &hashvalue,
+                &locktime,
             );
             let funding_amount = my_funding_tx.output[utxo_index as usize].value;
             let my_senders_contract_tx = contract::create_senders_contract_tx(

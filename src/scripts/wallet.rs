@@ -13,7 +13,7 @@ use crate::wallet::{
     WalletError, WalletMode, WalletSwapCoin,
 };
 
-use crate::protocol::contract::read_locktime_from_contract;
+use crate::protocol::contract::read_contract_locktime;
 
 use std::iter::repeat;
 
@@ -204,7 +204,7 @@ pub fn display_wallet_balance(
                     utxo.vout,
                     contract_type,
                     if swapcoin.is_hash_preimage_known() { "known" } else { "unknown" },
-                    read_locktime_from_contract(&swapcoin.get_contract_redeemscript())
+                    read_contract_locktime(&swapcoin.get_contract_redeemscript())
                         .expect("unable to read locktime from contract"),
                     utxo.confirmations,
                     utxo.amount
@@ -237,7 +237,7 @@ pub fn display_wallet_balance(
         for (outgoing_swapcoin, utxo) in outgoing_contract_utxos {
             let txid = utxo.txid.to_hex();
             let timelock =
-                read_locktime_from_contract(&outgoing_swapcoin.contract_redeemscript).unwrap();
+                read_contract_locktime(&outgoing_swapcoin.contract_redeemscript).unwrap();
             let hashvalue = outgoing_swapcoin.get_hashvalue().to_hex();
             #[rustfmt::skip]
             println!("{}{}{}:{} {}{} {:<8} {:<7} {:<8} {}",
@@ -269,7 +269,7 @@ pub fn display_wallet_balance(
         for (incoming_swapcoin, utxo) in incoming_contract_utxos {
             let txid = utxo.txid.to_hex();
             let timelock =
-                read_locktime_from_contract(&incoming_swapcoin.contract_redeemscript).unwrap();
+                read_contract_locktime(&incoming_swapcoin.contract_redeemscript).unwrap();
             let hashvalue = incoming_swapcoin.get_hashvalue().to_hex();
             #[rustfmt::skip]
             println!("{}{}{}:{} {}{} {:<8} {:<7} {:8} {}",

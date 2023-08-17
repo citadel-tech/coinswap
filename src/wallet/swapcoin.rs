@@ -4,19 +4,18 @@ use bitcoin::{
     Address, OutPoint, PublicKey, Script, SigHashType, Transaction, TxIn, TxOut,
 };
 
-use crate::{
-    error::TeleportError,
-    protocol::{
-        contract::{
-            apply_two_signatures_to_2of2_multisig_spend, create_multisig_redeemscript,
-            read_hashlock_pubkey_from_contract, read_hashvalue_from_contract,
-            read_locktime_from_contract, read_pubkeys_from_multisig_redeemscript,
-            read_timelock_pubkey_from_contract, sign_contract_tx, verify_contract_tx_sig,
-        },
-        messages::Preimage,
-        Hash160,
+use crate::protocol::{
+    contract::{
+        apply_two_signatures_to_2of2_multisig_spend, create_multisig_redeemscript,
+        read_contract_locktime, read_hashlock_pubkey_from_contract, read_hashvalue_from_contract,
+        read_pubkeys_from_multisig_redeemscript, read_timelock_pubkey_from_contract,
+        sign_contract_tx, verify_contract_tx_sig,
     },
+    messages::Preimage,
+    Hash160,
 };
+
+use super::WalletError;
 
 //swapcoins are UTXOs + metadata which are not from the deterministic wallet
 //they are made in the process of a coinswap
@@ -69,7 +68,7 @@ pub trait SwapCoin {
     fn get_funding_amount(&self) -> u64;
     fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> bool;
     fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> bool;
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), TeleportError>;
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), WalletError>;
 }
 
 pub trait WalletSwapCoin: SwapCoin {
@@ -141,7 +140,7 @@ macro_rules! impl_swapcoin_getters {
         }
 
         fn get_timelock(&self) -> u16 {
-            read_locktime_from_contract(&self.contract_redeemscript).unwrap()
+            read_contract_locktime(&self.contract_redeemscript).unwrap()
         }
 
         fn get_hashlock_pubkey(&self) -> PublicKey {
@@ -410,15 +409,14 @@ impl OutgoingSwapCoin {
     pub fn sign_contract_tx_with_my_privkey(
         &self,
         contract_tx: &Transaction,
-    ) -> Result<Signature, TeleportError> {
+    ) -> Result<Signature, WalletError> {
         let multisig_redeemscript = self.get_multisig_redeemscript();
         Ok(sign_contract_tx(
             contract_tx,
             &multisig_redeemscript,
             self.funding_amount,
             &self.my_privkey,
-        )
-        .map_err(|_| TeleportError::Protocol("error with signing contract tx"))?)
+        )?)
     }
 
     pub fn verify_contract_tx_sig(&self, sig: &Signature) -> bool {
@@ -439,14 +437,11 @@ impl WatchOnlySwapCoin {
         contract_tx: Transaction,
         contract_redeemscript: Script,
         funding_amount: u64,
-    ) -> Result<WatchOnlySwapCoin, TeleportError> {
-        let (pubkey1, pubkey2) = read_pubkeys_from_multisig_redeemscript(multisig_redeemscript)
-            .ok_or(TeleportError::Protocol(
-                "invalid pubkeys in multisig_redeemscript",
-            ))?;
+    ) -> Result<WatchOnlySwapCoin, WalletError> {
+        let (pubkey1, pubkey2) = read_pubkeys_from_multisig_redeemscript(multisig_redeemscript)?;
         if pubkey1 != receiver_pubkey && pubkey2 != receiver_pubkey {
-            return Err(TeleportError::Protocol(
-                "given sender_pubkey not included in redeemscript",
+            return Err(WalletError::Protocol(
+                "given sender_pubkey not included in redeemscript".to_string(),
             ));
         }
         let sender_pubkey = if pubkey1 == receiver_pubkey {
@@ -489,14 +484,14 @@ impl SwapCoin for IncomingSwapCoin {
         self.verify_contract_tx_sig(sig)
     }
 
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), TeleportError> {
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), WalletError> {
         let secp = Secp256k1::new();
         let pubkey = PublicKey {
             compressed: true,
             key: secp256k1::PublicKey::from_secret_key(&secp, &privkey),
         };
         if pubkey != self.other_pubkey {
-            return Err(TeleportError::Protocol("not correct privkey"));
+            return Err(WalletError::Protocol("not correct privkey".to_string()));
         }
         self.other_privkey = Some(privkey);
         Ok(())
@@ -525,7 +520,7 @@ impl SwapCoin for OutgoingSwapCoin {
         self.verify_contract_tx_sig(sig)
     }
 
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), TeleportError> {
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), WalletError> {
         let secp = Secp256k1::new();
         let pubkey = PublicKey {
             compressed: true,
@@ -534,7 +529,7 @@ impl SwapCoin for OutgoingSwapCoin {
         if pubkey == self.other_pubkey {
             Ok(())
         } else {
-            Err(TeleportError::Protocol("not correct privkey"))
+            Err(WalletError::Protocol("not correct privkey".to_string()))
         }
     }
 }
@@ -542,7 +537,7 @@ impl SwapCoin for OutgoingSwapCoin {
 impl SwapCoin for WatchOnlySwapCoin {
     impl_swapcoin_getters!();
 
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), TeleportError> {
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), WalletError> {
         let secp = Secp256k1::new();
         let pubkey = PublicKey {
             compressed: true,
@@ -551,7 +546,7 @@ impl SwapCoin for WatchOnlySwapCoin {
         if pubkey == self.sender_pubkey || pubkey == self.receiver_pubkey {
             Ok(())
         } else {
-            Err(TeleportError::Protocol("not correct privkey"))
+            Err(WalletError::Protocol("not correct privkey".to_string()))
         }
     }
 

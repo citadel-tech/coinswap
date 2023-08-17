@@ -1,49 +1,52 @@
+use crate::{
+    maker::{start_maker_server, Maker, MakerBehavior},
+    wallet::RPCConfig,
+};
 use std::{
-    convert::TryFrom,
     path::PathBuf,
     sync::{Arc, RwLock},
+    thread,
+    time::Duration,
 };
 
-use bitcoincore_rpc::Client;
+use crate::{error::TeleportError, wallet::WalletMode};
 
-use crate::maker::server::{start_maker, MakerBehavior, MakerConfig};
-
-use crate::{
-    error::TeleportError,
-    wallet::{RPCConfig, Wallet, WalletMode},
-};
-
-pub fn run_maker(
+#[tokio::main]
+pub async fn run_maker(
     wallet_file_name: &PathBuf,
     port: u16,
     wallet_mode: Option<WalletMode>,
     maker_behavior: MakerBehavior,
-    kill_flag: Option<Arc<RwLock<bool>>>,
-) -> Result<(), TeleportError> {
-    let rpc_config = RPCConfig::default();
-
-    let rpc = Client::try_from(&rpc_config)?;
-
-    let mut wallet = Wallet::load(&rpc_config, wallet_file_name, wallet_mode)?;
-
-    wallet.sync()?;
-
-    let rpc_ptr = Arc::new(rpc);
-    let wallet_ptr = Arc::new(RwLock::new(wallet));
-    let config = MakerConfig {
+    kill_flag: Arc<RwLock<bool>>,
+) -> Result<Arc<Maker>, TeleportError> {
+    // Hardcoded for now, tor doesn't work yet.
+    let onion_addrs = "myhiddenserviceaddress.onion:6102".to_string();
+    let maker = Maker::init(
+        wallet_file_name,
+        &RPCConfig::default(),
         port,
-        rpc_ping_interval_secs: 60,
-        watchtower_ping_interval_secs: 300,
-        directory_servers_refresh_interval_secs: 60 * 60 * 12, //12 hours
+        onion_addrs,
+        wallet_mode,
         maker_behavior,
-        kill_flag: if kill_flag.is_none() {
-            Arc::new(RwLock::new(false))
-        } else {
-            kill_flag.unwrap().clone()
-        },
-        idle_connection_timeout: 300,
-    };
-    start_maker(rpc_ptr, wallet_ptr, config);
+    )?;
 
-    Ok(())
+    let arc_maker = Arc::new(maker);
+
+    let maker_shut = arc_maker.clone();
+
+    thread::spawn(move || {
+        log::info!("Shutdown thread spawned");
+        loop {
+            thread::sleep(Duration::from_secs(3));
+            if *kill_flag.read().unwrap() {
+                maker_shut.shutdown().unwrap();
+                break;
+            }
+        }
+    });
+
+    log::info!("Maker server starting");
+    start_maker_server(arc_maker.clone()).await?;
+
+    Ok(arc_maker)
 }

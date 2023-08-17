@@ -1,3 +1,5 @@
+use crate::protocol::error::ContractError;
+
 #[derive(Debug)]
 pub enum WalletError {
     File(std::io::Error),
@@ -6,6 +8,7 @@ pub enum WalletError {
     Protocol(String),
     BIP32(bitcoin::util::bip32::Error),
     BIP39(bip39::Error),
+    Contract(ContractError),
 }
 
 impl From<std::io::Error> for WalletError {
@@ -35,5 +38,11 @@ impl From<bitcoin::util::bip32::Error> for WalletError {
 impl From<bip39::Error> for WalletError {
     fn from(value: bip39::Error) -> Self {
         Self::BIP39(value)
+    }
+}
+
+impl From<ContractError> for WalletError {
+    fn from(value: ContractError) -> Self {
+        Self::Contract(value)
     }
 }
