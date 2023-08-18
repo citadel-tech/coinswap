@@ -7,7 +7,7 @@ use crate::wallet::{wallet::UTXOSpendInfo, SwapCoin};
 
 use super::{error::WalletError, fidelity::get_locktime_from_index, Wallet};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SendAmount {
     Max,
     Amount(Amount),
@@ -25,7 +25,7 @@ impl FromStr for SendAmount {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Destination {
     Wallet,
     Address(Address),
@@ -43,7 +43,7 @@ impl FromStr for Destination {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CoinToSpend {
     LongForm(OutPoint),
     ShortForm {
