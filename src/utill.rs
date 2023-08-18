@@ -20,20 +20,19 @@ use crate::{
     error::TeleportError,
     protocol::{
         contract::derive_maker_pubkey_and_nonce,
-        messages::{MakerToTakerMessage, MultisigPrivkey, TakerToMakerMessage},
+        messages::{MakerToTakerMessage, MultisigPrivkey},
     },
     wallet::SwapCoin,
 };
 
-/// Send message to a Maker.
+/// Can send both Taker and Maker messages
 pub async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
-    message: TakerToMakerMessage,
+    message: &impl serde::Serialize,
 ) -> Result<(), TeleportError> {
-    log::debug!("==> {:#?}", message);
-    let mut result_bytes = serde_json::to_vec(&message).map_err(|e| std::io::Error::from(e))?;
-    result_bytes.push(b'\n');
-    socket_writer.write_all(&result_bytes).await?;
+    let mut message_bytes = serde_json::to_vec(message).map_err(|e| std::io::Error::from(e))?;
+    message_bytes.push(b'\n');
+    socket_writer.write_all(&message_bytes).await?;
     Ok(())
 }
 
@@ -83,10 +82,10 @@ pub fn generate_maker_keys(
     Vec<SecretKey>,
 ) {
     let (multisig_pubkeys, multisig_nonces): (Vec<_>, Vec<_>) = (0..count)
-        .map(|_| derive_maker_pubkey_and_nonce(*tweakable_point).unwrap())
+        .map(|_| derive_maker_pubkey_and_nonce(tweakable_point).unwrap())
         .unzip();
     let (hashlock_pubkeys, hashlock_nonces): (Vec<_>, Vec<_>) = (0..count)
-        .map(|_| derive_maker_pubkey_and_nonce(*tweakable_point).unwrap())
+        .map(|_| derive_maker_pubkey_and_nonce(tweakable_point).unwrap())
         .unzip();
     (
         multisig_pubkeys,

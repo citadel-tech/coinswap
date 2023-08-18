@@ -39,9 +39,8 @@ use bitcoincore_rpc::{
 use crate::{
     error::TeleportError,
     protocol::contract::{
-        create_contract_redeemscript, read_hashlock_pubkey_from_contract,
-        read_hashvalue_from_contract, read_locktime_from_contract,
-        read_timelock_pubkey_from_contract,
+        create_contract_redeemscript, read_contract_locktime, read_hashlock_pubkey_from_contract,
+        read_hashvalue_from_contract, read_timelock_pubkey_from_contract,
     },
 };
 
@@ -312,26 +311,6 @@ async fn run(
                     }
                     Err(err) => {
                         log::error!("error handling request: {:?}", err);
-                        // match err {
-                        //     TeleportError::Network(_e) => (),
-                        //     TeleportError::Protocol(_e) => (),
-                        //     TeleportError::Disk(e) => server_loop_err_comms_tx
-                        //         .send(TeleportError::Disk(e))
-                        //         .await
-                        //         .unwrap(),
-                        //     TeleportError::Rpc(e) => server_loop_err_comms_tx
-                        //         .send(TeleportError::Rpc(e))
-                        //         .await
-                        //         .unwrap(),
-                        //     TeleportError::Socks(e) => server_loop_err_comms_tx
-                        //         .send(TeleportError::Socks(e))
-                        //         .await
-                        //         .unwrap(),
-                        //     TeleportError::Wallet(e) => server_loop_err_comms_tx
-                        //         .send(TeleportError::Wallet(e))
-                        //         .await
-                        //         .unwrap(),
-                        // };
                         server_loop_err_comms_tx.send(err).await.unwrap();
                         break;
                     }
@@ -709,7 +688,7 @@ fn check_for_hashlock_spends(
                     );
                     continue;
                 };
-            let locktime = if let Some(lt) = read_locktime_from_contract(&contract_redeemscript) {
+            let locktime = if let Ok(lt) = read_contract_locktime(&contract_redeemscript) {
                 lt
             } else {
                 log::debug!(
@@ -727,7 +706,7 @@ fn check_for_hashlock_spends(
                 );
                 continue;
             };
-            if create_contract_redeemscript(&pub_hashlock, &pub_timelock, hashvalue, locktime)
+            if create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hashvalue, &locktime)
                 != contract_redeemscript
             {
                 log::debug!(

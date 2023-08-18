@@ -34,13 +34,10 @@ use bitcoincore_rpc::RpcApi;
 
 use crate::{
     error::TeleportError,
-    protocol::{
-        contract::find_funding_output,
-        messages::{
-            ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
-            ContractSigsForSender, FundingTxInfo, MultisigPrivkey, Preimage, PrivKeyHandover,
-            TakerToMakerMessage,
-        },
+    protocol::messages::{
+        ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
+        ContractSigsForSender, FundingTxInfo, MultisigPrivkey, Preimage, PrivKeyHandover,
+        TakerToMakerMessage,
     },
     taker::{config::TakerConfig, offers::OfferBook},
     wallet::{
@@ -71,7 +68,7 @@ pub struct SwapParams {
     pub tx_count: u32,
     // TODO: Following two should be moved to TakerConfig as global configuration.
     /// Confirmation count required for funding txs.
-    pub required_confirms: i32,
+    pub required_confirms: u64,
     /// Fee rate for funding txs.
     pub fee_rate: u64,
 }
@@ -334,7 +331,7 @@ impl Taker {
                 });
 
             for outgoing_swapcoin in &outgoing_swapcoins {
-                self.wallet.add_outgoing_swapcoin(outgoing_swapcoin.clone());
+                self.wallet.add_outgoing_swapcoin(outgoing_swapcoin);
             }
             self.wallet.save_to_disk().unwrap();
 
@@ -444,7 +441,7 @@ impl Taker {
                     }
                 }
                 //TODO handle confirm<0
-                if gettx.info.confirmations >= required_confirmations {
+                if gettx.info.confirmations >= required_confirmations as i32 {
                     txid_tx_map.insert(*txid, deserialize::<Transaction>(&gettx.hex).unwrap());
                     txid_blockhash_map.insert(*txid, gettx.info.blockhash.unwrap());
                     log::debug!(
@@ -781,8 +778,7 @@ impl Taker {
                             )
                         },
                     )
-                    .collect::<Result<Vec<_>, bitcoin::secp256k1::Error>>()
-                    .map_err(|_| TeleportError::Protocol("error with signing contract tx"))?
+                    .collect::<Result<Vec<_>, _>>()?
             } else {
                 // If Next Maker is the Receiver, and This Maker is The Sender, Request Sender's Contract Tx Sig to Next Maker.
                 let watchonly_swapcoins = self.create_watch_only_swapcoins(
@@ -840,7 +836,7 @@ impl Taker {
                 .map(|(receivers_contract_tx, outgoing_swapcoin)| {
                     outgoing_swapcoin.sign_contract_tx_with_my_privkey(receivers_contract_tx)
                 })
-                .collect::<Result<Vec<_>, TeleportError>>()?
+                .collect::<Result<Vec<_>, _>>()?
         } else {
             // If Next Maker is the Receiver, and Previous Maker is the Sender, request Previous Maker to sign the Reciever's Contract Tx.
             assert!(previous_maker.is_some());
@@ -871,10 +867,12 @@ impl Taker {
         );
         send_message(
             &mut socket_writer,
-            TakerToMakerMessage::RespContractSigsForRecvrAndSender(ContractSigsForRecvrAndSender {
-                receivers_sigs,
-                senders_sigs,
-            }),
+            &TakerToMakerMessage::RespContractSigsForRecvrAndSender(
+                ContractSigsForRecvrAndSender {
+                    receivers_sigs,
+                    senders_sigs,
+                },
+            ),
         )
         .await?;
         let next_swap_info = NextPeerInfo {
@@ -910,7 +908,7 @@ impl Taker {
                     )
                 },
             )
-            .collect::<Result<Vec<WatchOnlySwapCoin>, TeleportError>>()?;
+            .collect::<Result<Vec<WatchOnlySwapCoin>, _>>()?;
         //TODO error handle here the case where next_swapcoin.contract_tx script pubkey
         // is not equal to p2wsh(next_swap_contract_redeemscripts)
         for swapcoin in &next_swapcoins {
@@ -949,13 +947,23 @@ impl Taker {
             .iter()
             .zip(next_swap_multisig_redeemscripts.iter())
             .map(|(makers_funding_tx, multisig_redeemscript)| {
-                find_funding_output(makers_funding_tx, multisig_redeemscript)
-                    .ok_or(TeleportError::Protocol(
-                        "multisig redeemscript not found in funding tx",
-                    ))
-                    .map(|txout| txout.1.value)
+                let multisig_spk = redeemscript_to_scriptpubkey(&multisig_redeemscript);
+                let index = makers_funding_tx
+                    .output
+                    .iter()
+                    .enumerate()
+                    .find(|(_i, o)| o.script_pubkey == multisig_spk)
+                    .map(|(index, _)| index)
+                    .expect("funding txout output doesn't match with mutlsig scriptpubkey");
+                makers_funding_tx
+                    .output
+                    .iter()
+                    .nth(index)
+                    .expect("output expected at that index")
+                    .value
             })
-            .collect::<Result<Vec<u64>, TeleportError>>()?;
+            .collect::<Vec<_>>();
+
         let my_receivers_contract_txes = next_swap_funding_outpoints
             .iter()
             .zip(last_makers_funding_tx_values.iter())
@@ -1022,10 +1030,7 @@ impl Taker {
             let (o_ms_pubkey1, o_ms_pubkey2) =
                 crate::protocol::contract::read_pubkeys_from_multisig_redeemscript(
                     multisig_redeemscript,
-                )
-                .ok_or(TeleportError::Protocol(
-                    "invalid pubkeys in multisig redeemscript",
-                ))?;
+                )?;
             let maker_funded_other_multisig_pubkey = if o_ms_pubkey1 == maker_funded_multisig_pubkey
             {
                 o_ms_pubkey2
@@ -1041,7 +1046,7 @@ impl Taker {
             self.wallet
                 .import_wallet_multisig_redeemscript(&o_ms_pubkey1, &o_ms_pubkey2)?;
             self.wallet
-                .import_tx_with_merkleproof(funding_tx, funding_tx_merkleproof.clone())?;
+                .import_tx_with_merkleproof(funding_tx, funding_tx_merkleproof)?;
             self.wallet
                 .import_wallet_contract_redeemscript(next_contract_redeemscript)?;
 
@@ -1097,7 +1102,7 @@ impl Taker {
             incoming_swapcoin.others_contract_sig = Some(receiver_contract_sig);
         }
         for incoming_swapcoin in &self.ongoing_swap_state.incoming_swapcoins {
-            self.wallet.add_incoming_swapcoin(incoming_swapcoin.clone());
+            self.wallet.add_incoming_swapcoin(incoming_swapcoin);
         }
 
         self.wallet.save_to_disk()?;
@@ -1388,7 +1393,7 @@ impl Taker {
         log::info!("===> Sending PrivateKeyHandover to {}", maker_address);
         send_message(
             &mut socket_writer,
-            TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {
+            &TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {
                 multisig_privkeys: privkeys_reply,
             }),
         )

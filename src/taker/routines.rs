@@ -16,8 +16,8 @@ use crate::{
     error::TeleportError,
     protocol::{
         contract::{
-            calculate_coinswap_fee, create_contract_redeemscript, find_funding_output,
-            validate_contract_tx, MAKER_FUNDING_TX_VBYTE_SIZE,
+            calculate_coinswap_fee, create_contract_redeemscript, find_funding_output_index,
+            validate_contract_tx, FUNDING_TX_VBYTE_SIZE,
         },
         messages::{
             ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForSender,
@@ -53,7 +53,7 @@ pub async fn handshake_maker<'a>(
     let mut socket_reader = BufReader::new(reader);
     send_message(
         &mut socket_writer,
-        TakerToMakerMessage::TakerHello(TakerHello {
+        &TakerToMakerMessage::TakerHello(TakerHello {
             protocol_version_min: 0,
             protocol_version_max: 0,
         }),
@@ -89,8 +89,8 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
         .map(
             |((&multisig_key_nonce, &hashlock_key_nonce), outgoing_swapcoin)| {
                 ContractTxInfoForSender {
-                    multisig_key_nonce,
-                    hashlock_key_nonce,
+                    multisig_nonce: multisig_key_nonce,
+                    hashlock_nonce: hashlock_key_nonce,
                     timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey(),
                     senders_contract_tx: outgoing_swapcoin.get_contract_tx(),
                     multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
@@ -101,7 +101,7 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
         .collect::<Vec<ContractTxInfoForSender>>();
     send_message(
         &mut socket_writer,
-        TakerToMakerMessage::ReqContractSigsForSender(ReqContractSigsForSender {
+        &TakerToMakerMessage::ReqContractSigsForSender(ReqContractSigsForSender {
             txs_info,
             hashvalue: outgoing_swapcoins[0].get_hashvalue(),
             locktime,
@@ -146,7 +146,7 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
         handshake_maker(&mut socket, maker_address).await?;
     send_message(
         &mut socket_writer,
-        TakerToMakerMessage::ReqContractSigsForRecvr(ReqContractSigsForRecvr {
+        &TakerToMakerMessage::ReqContractSigsForRecvr(ReqContractSigsForRecvr {
             txs: incoming_swapcoins
                 .iter()
                 .zip(receivers_contract_txes.iter())
@@ -200,7 +200,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
 ) -> Result<(ContractSigsAsRecvrAndSender, Vec<Script>), TeleportError> {
     send_message(
         socket_writer,
-        TakerToMakerMessage::RespProofOfFunding(ProofOfFunding {
+        &TakerToMakerMessage::RespProofOfFunding(ProofOfFunding {
             confirmed_funding_txes: funding_tx_infos.clone(),
             next_coinswap_info: next_peer_multisig_pubkeys
                 .iter()
@@ -249,14 +249,14 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
     let funding_tx_values = funding_tx_infos
         .iter()
         .map(|funding_info| {
-            find_funding_output(
-                &funding_info.funding_tx,
-                &funding_info.multisig_redeemscript,
-            )
-            .ok_or(TeleportError::Protocol(
-                "multisig redeemscript not found in funding tx",
-            ))
-            .map(|txout| txout.1.value)
+            let funding_output_index = find_funding_output_index(&funding_info)?;
+            Ok(funding_info
+                .funding_tx
+                .output
+                .iter()
+                .nth(funding_output_index as usize)
+                .expect("funding output expected")
+                .value)
         })
         .collect::<Result<Vec<u64>, TeleportError>>()?;
 
@@ -274,10 +274,9 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
         this_amount,
         1, //time_in_blocks just 1 for now
     );
-    let miner_fees_paid_by_taker = MAKER_FUNDING_TX_VBYTE_SIZE
-        * next_maker_fee_rate
-        * (next_peer_multisig_pubkeys.len() as u64)
-        / 1000;
+    let miner_fees_paid_by_taker =
+        FUNDING_TX_VBYTE_SIZE * next_maker_fee_rate * (next_peer_multisig_pubkeys.len() as u64)
+            / 1000;
     let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
     if calculated_next_amount != next_amount {
         return Err(TeleportError::Protocol("next_amount incorrect"));
@@ -314,8 +313,8 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
             create_contract_redeemscript(
                 hashlock_pubkey,
                 &senders_contract_tx_info.timelock_pubkey,
-                hashvalue,
-                next_maker_refund_locktime,
+                &hashvalue,
+                &next_maker_refund_locktime,
             )
         })
         .collect::<Vec<Script>>();
@@ -336,7 +335,7 @@ pub(crate) async fn send_hash_preimage_and_get_private_keys(
     let receivers_multisig_redeemscripts_len = receivers_multisig_redeemscripts.len();
     send_message(
         socket_writer,
-        TakerToMakerMessage::RespHashPreimage(HashPreimage {
+        &TakerToMakerMessage::RespHashPreimage(HashPreimage {
             senders_multisig_redeemscripts: senders_multisig_redeemscripts.to_vec(),
             receivers_multisig_redeemscripts: receivers_multisig_redeemscripts.to_vec(),
             preimage: *preimage,
@@ -366,7 +365,7 @@ async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer,
 
     send_message(
         &mut socket_writer,
-        TakerToMakerMessage::ReqGiveOffer(GiveOffer),
+        &TakerToMakerMessage::ReqGiveOffer(GiveOffer),
     )
     .await?;
 
