@@ -4,7 +4,10 @@ use bitcoin::{
     Script, Transaction,
 };
 use clap::{Parser, Subcommand};
-use std::{path::PathBuf, sync::{Arc, RwLock}};
+use std::{
+    path::PathBuf,
+    sync::{Arc, RwLock},
+};
 
 use teleport::{
     error::TeleportError,
