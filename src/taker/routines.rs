@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use bitcoin::{secp256k1::SecretKey, PublicKey, Script, Transaction};
@@ -37,6 +38,21 @@ use super::{
 };
 
 use crate::wallet::SwapCoin;
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ContractTransaction {
+    pub tx: Transaction,
+    pub redeemscript: Script,
+    pub hashlock_spend_without_preimage: Option<Transaction>,
+    pub timelock_spend: Option<Transaction>,
+    pub timelock_spend_broadcasted: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ContractsInfo {
+    pub contract_txes: Vec<ContractTransaction>,
+    pub wallet_label: String,
+}
 
 /// Performs a handshake with a Maker and returns and Reader and Writer halves.
 pub async fn handshake_maker<'a>(

@@ -68,7 +68,6 @@ impl TryFrom<&RPCConfig> for Client {
 
 impl Wallet {
     pub fn sync(&mut self) -> Result<(), WalletError> {
-        //TODO many of these unwraps to be replaced with proper error handling
         let hd_descriptors_to_import = self.get_unimoprted_wallet_desc()?;
 
         let mut swapcoin_descriptors_to_import = self

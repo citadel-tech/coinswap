@@ -3,7 +3,6 @@ pub mod market;
 pub mod recovery;
 pub mod taker;
 pub mod wallet;
-pub mod watchtower;
 
 use std::sync::Once;
 

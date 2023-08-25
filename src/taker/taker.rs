@@ -13,7 +13,6 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    iter::once,
     path::PathBuf,
     time::Duration,
 };
@@ -43,9 +42,6 @@ use crate::{
     wallet::{
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletMode,
         WatchOnlySwapCoin,
-    },
-    watchtower::routines::{
-        check_for_broadcasted_contract_txes, ContractTransaction, ContractsInfo,
     },
 };
 
@@ -109,8 +105,6 @@ struct OngoingSwapState {
     pub active_preimage: Preimage,
     /// Enum defining the position of the Taker at each steps of a multihop swap.
     pub taker_position: TakerPosition,
-    /// Height that the wallet last checked for relevant transactions of this swap.
-    pub last_synced_height: Option<u64>,
 }
 
 /// Information for the next maker in the hop.
@@ -379,25 +373,6 @@ impl Taker {
         let mut txid_tx_map = HashMap::<Txid, Transaction>::new();
         let mut txid_blockhash_map = HashMap::<Txid, BlockHash>::new();
 
-        let contracts_to_watch = self
-            .ongoing_swap_state
-            .watchonly_swapcoins
-            .iter()
-            .map(|watchonly_swapcoin_list| {
-                watchonly_swapcoin_list
-                    .iter()
-                    .map(|watchonly_swapcoin| watchonly_swapcoin.contract_tx.clone())
-                    .collect::<Vec<Transaction>>()
-            })
-            .chain(once(
-                self.ongoing_swap_state
-                    .outgoing_swapcoins
-                    .iter()
-                    .map(|osc| osc.contract_tx.clone())
-                    .collect::<Vec<Transaction>>(),
-            ))
-            .collect::<Vec<Vec<Transaction>>>();
-
         // Required confirmation target for the funding txs.
         let required_confirmations =
             if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
@@ -417,6 +392,15 @@ impl Taker {
         );
         let mut txids_seen_once = HashSet::<Txid>::new();
         loop {
+            // Abort if any of the contract transaction is broadcasted
+            // TODO: Find the culprit Maker, and ban it's fidelity bond.
+            let contracts_broadcasted = self.check_for_broadcasted_contract_txes()?;
+            if !contracts_broadcasted.is_empty() {
+                log::info!("Contract transactions were broadcasted! Aborting");
+                return Ok(None);
+            }
+
+            // Check for funding transactions
             for txid in funding_txids {
                 if txid_tx_map.contains_key(txid) {
                     continue;
@@ -467,32 +451,6 @@ impl Taker {
                     })
                     .collect::<Result<Vec<String>, bitcoincore_rpc::Error>>()?;
                 return Ok(Some((txes, merkleproofs)));
-            }
-            if !contracts_to_watch.is_empty() {
-                let contracts_broadcasted = check_for_broadcasted_contract_txes(
-                    &self.wallet.rpc,
-                    &contracts_to_watch
-                        .iter()
-                        .map(|txes| ContractsInfo {
-                            contract_txes: txes
-                                .iter()
-                                .map(|tx| ContractTransaction {
-                                    tx: tx.clone(),
-                                    redeemscript: Script::new(),
-                                    hashlock_spend_without_preimage: None,
-                                    timelock_spend: None,
-                                    timelock_spend_broadcasted: false,
-                                })
-                                .collect::<Vec<ContractTransaction>>(),
-                            wallet_label: String::new(), // TODO: Set appropriate wallet label
-                        })
-                        .collect::<Vec<ContractsInfo>>(),
-                    &mut self.ongoing_swap_state.last_synced_height,
-                )?;
-                if !contracts_broadcasted.is_empty() {
-                    log::info!("Contract transactions were broadcasted! Aborting");
-                    return Ok(None);
-                }
             }
             sleep(Duration::from_millis(1000)).await;
         }
@@ -1473,5 +1431,39 @@ impl Taker {
         self.clear_ongoing_swaps();
 
         Ok(())
+    }
+
+    pub fn check_for_broadcasted_contract_txes(
+        &mut self,
+    ) -> Result<Vec<Txid>, bitcoincore_rpc::Error> {
+        let contract_txids = self
+            .ongoing_swap_state
+            .incoming_swapcoins
+            .iter()
+            .map(|sc| sc.contract_tx.txid())
+            .chain(
+                self.ongoing_swap_state
+                    .outgoing_swapcoins
+                    .iter()
+                    .map(|sc| sc.contract_tx.txid()),
+            )
+            .chain(
+                self.ongoing_swap_state
+                    .watchonly_swapcoins
+                    .iter()
+                    .flatten()
+                    .map(|sc| sc.contract_tx.txid()),
+            )
+            .collect::<Vec<_>>();
+
+        // TODO: Find out which txid was boradcasted first
+        // This requires -txindex to be enabled in the node.
+        let seen_txids = contract_txids
+            .iter()
+            .filter(|txid| self.wallet.rpc.get_raw_transaction_info(txid, None).is_ok())
+            .cloned()
+            .collect::<Vec<Txid>>();
+
+        Ok(seen_txids)
     }
 }

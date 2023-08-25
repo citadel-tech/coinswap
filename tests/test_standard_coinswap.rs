@@ -22,7 +22,6 @@ use std::{
 use std::str::FromStr;
 
 static TEMP_FILES_DIR: &str = "tests/temp-files";
-static WATCHTOWER_DATA: &str = "tests/temp-files/watchtower.dat";
 static TAKER: &str = "tests/temp-files/taker-wallet";
 static MAKER1: &str = "tests/temp-files/maker-wallet-1";
 static MAKER2: &str = "tests/temp-files/maker-wallet-2";
@@ -192,16 +191,6 @@ async fn test_standard_coinswap() {
 
     let kill_flag = Arc::new(RwLock::new(false));
 
-    // Start watchtower, makers and taker to execute a coinswap
-    let kill_flag_watchtower = kill_flag.clone();
-    let watchtower_thread = thread::spawn(|| {
-        teleport::scripts::watchtower::run_watchtower(
-            &PathBuf::from_str(WATCHTOWER_DATA).unwrap(),
-            Some(kill_flag_watchtower),
-        )
-        .unwrap();
-    });
-
     let kill_flag_maker_1 = kill_flag.clone();
     let maker1_thread = thread::spawn(move || {
         teleport::scripts::maker::run_maker(
@@ -255,7 +244,6 @@ async fn test_standard_coinswap() {
     *kill_flag.write().unwrap() = true;
     maker1_thread.join().unwrap();
     maker2_thread.join().unwrap();
-    watchtower_thread.join().unwrap();
     block_creation_thread.join().unwrap();
 
     // Recreate the wallet

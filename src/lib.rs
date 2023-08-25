@@ -11,4 +11,6 @@ pub mod scripts;
 pub mod taker;
 mod utill;
 pub mod wallet;
-pub mod watchtower;
+// Diasable watchtower for now. Handle contract watching
+// individually for maker and Taker.
+//pub mod watchtower;

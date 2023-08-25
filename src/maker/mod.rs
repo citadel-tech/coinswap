@@ -28,7 +28,6 @@ use crate::{
     protocol::messages::{MakerHello, MakerToTakerMessage, TakerToMakerMessage},
     utill::send_message,
     wallet::WalletError,
-    watchtower::client::ping_watchtowers,
 };
 
 use crate::maker::error::MakerError;
@@ -37,11 +36,6 @@ use crate::maker::error::MakerError;
 pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::debug!("Running maker with special behavior = {:?}", maker.behavior);
     maker.wallet.write()?.refresh_offer_maxsize_cache()?;
-
-    log::info!("Pinging watchtowers. . .");
-    ping_watchtowers()
-        .await
-        .map_err(|_| MakerError::General("Watchtower connection failed"))?;
 
     if maker.wallet.read()?.store.network != Network::Regtest {
         if maker.config.onion_addrs == "myhiddenserviceaddress.onion:6102" {
@@ -65,7 +59,6 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let (server_loop_comms_tx, mut server_loop_comms_rx) = mpsc::channel::<MakerError>(100);
     let mut accepting_clients = true;
     let mut last_rpc_ping = Instant::now();
-    let mut last_watchtowers_ping = Instant::now();
     let mut last_directory_servers_refresh = Instant::now();
 
     // Loop to keep checking for new connections
@@ -96,7 +89,6 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                     break Ok(());
                 }
                 let mut rpc_ping_success = true;
-                let mut watchtowers_ping_success = true;
 
                 let rpc_ping_interval = Duration::from_secs(maker.config.rpc_ping_interval_secs);
                 if Instant::now().saturating_duration_since(last_rpc_ping) > rpc_ping_interval {
@@ -104,18 +96,9 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                     rpc_ping_success = maker.wallet.write()?.refresh_offer_maxsize_cache().is_ok();
                     log::debug!("rpc_ping_success = {}", rpc_ping_success);
                 }
-                let watchtowers_ping_interval
-                    = Duration::from_secs(maker.config.watchtower_ping_interval_secs);
-                if Instant::now().saturating_duration_since(last_watchtowers_ping)
-                        > watchtowers_ping_interval {
-                    last_watchtowers_ping = Instant::now();
-                    watchtowers_ping_success = ping_watchtowers().await.is_ok();
-                    log::debug!("watchtowers_ping_success = {}", watchtowers_ping_success);
-                }
-                accepting_clients = rpc_ping_success && watchtowers_ping_success;
+                accepting_clients = rpc_ping_success;
                 if !accepting_clients {
-                    log::warn!("not accepting clients, rpc_ping_success={} \
-                        watchtowers_ping_success={}", rpc_ping_success, watchtowers_ping_success);
+                    log::warn!("not accepting clients, rpc_ping_success={}", rpc_ping_success);
                 }
 
                 let directory_servers_refresh_interval = Duration::from_secs(

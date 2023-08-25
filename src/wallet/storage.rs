@@ -39,6 +39,7 @@ pub struct WalletStore {
     pub(super) outgoing_swapcoins: HashMap<Script, OutgoingSwapCoin>,
     pub(super) prevout_to_contract_map: HashMap<OutPoint, Script>,
     pub(super) fidelity_scripts: HashMap<Script, u32>,
+    //TODO: Add last synced height and Wallet birthday.
 }
 
 impl TryFrom<FileData> for WalletStore {

@@ -1,8 +1,4 @@
-use bitcoin::{
-    consensus::encode::deserialize,
-    hashes::{hash160::Hash as Hash160, hex::FromHex},
-    Script, Transaction,
-};
+use bitcoin::hashes::hash160::Hash as Hash160;
 use clap::{Parser, Subcommand};
 use std::{
     path::PathBuf,
@@ -22,15 +18,10 @@ use teleport::{
             direct_send, display_wallet_addresses, display_wallet_balance, generate_wallet,
             print_fidelity_bond_address, print_receive_invoice, recover_wallet,
         },
-        watchtower::run_watchtower,
     },
     wallet::{
         fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, SendAmount,
         WalletMode,
-    },
-    watchtower::{
-        client::test_watchtower_client,
-        routines::{ContractTransaction, ContractsInfo},
     },
 };
 
@@ -153,19 +144,6 @@ enum WalletArgsSubcommand {
         #[arg(long, short, value_enum)]
         coins_to_spend: Vec<CoinToSpend>,
     },
-
-    /// Run watchtower
-    RunWatchtower {
-        /// File path used for the watchtower data file, default "watchtower.dat"
-        #[arg(long, short, value_parser = clap::value_parser!(PathBuf), default_value = "watchtower.dat")]
-        data_file_path: PathBuf,
-    },
-
-    /// Test watchtower client
-    TestWatchtowerClient {
-        #[arg(long, short)]
-        contract_transactions_hex: Vec<String>,
-    },
 }
 
 fn main() -> Result<(), TeleportError> {
@@ -249,40 +227,6 @@ fn main() -> Result<(), TeleportError> {
                 &coins_to_spend,
                 args.dont_broadcast,
             )?;
-        }
-        WalletArgsSubcommand::RunWatchtower { data_file_path } => {
-            run_watchtower(&data_file_path, None)?;
-        }
-        WalletArgsSubcommand::TestWatchtowerClient {
-            mut contract_transactions_hex,
-        } => {
-            if contract_transactions_hex.is_empty() {
-                // https://bitcoin.stackexchange.com/questions/68811/what-is-the-absolute-smallest-size-of-the-data-bytes-that-a-blockchain-transac
-                contract_transactions_hex =
-                    vec![String::from(concat!("020000000001010000000000000",
-                "0000000000000000000000000000000000000000000000000000000000000fdffffff010100000000",
-                "000000160014ffffffffffffffffffffffffffffffffffffffff02210200000000000000000000000",
-                "000000000000000000000000000000000000000014730440220777777777777777777777777777777",
-                "777777777777777777777777777777777702205555555555555555555555555555555555555555555",
-                "5555555555555555555550100000000"))];
-            }
-            let contract_txes = contract_transactions_hex
-                .iter()
-                .map(|cth| ContractTransaction {
-                    tx: deserialize::<Transaction>(
-                        &Vec::from_hex(&cth).expect("Invalid transaction hex string"),
-                    )
-                    .expect("Unable to deserialize transaction hex"),
-                    redeemscript: Script::new(),
-                    hashlock_spend_without_preimage: None,
-                    timelock_spend: None,
-                    timelock_spend_broadcasted: false,
-                })
-                .collect::<Vec<ContractTransaction>>();
-            test_watchtower_client(ContractsInfo {
-                contract_txes,
-                wallet_label: String::new(),
-            });
         }
     }
 

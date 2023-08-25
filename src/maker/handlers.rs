@@ -27,11 +27,7 @@ use crate::{
             TakerToMakerMessage,
         },
     },
-    wallet::{IncomingSwapCoin, SwapCoin, WalletSwapCoin},
-    watchtower::{
-        client::register_coinswap_with_watchtowers,
-        routines::{ContractTransaction, ContractsInfo},
-    },
+    wallet::{IncomingSwapCoin, SwapCoin},
 };
 
 use super::{
@@ -457,62 +453,19 @@ impl Maker {
             outgoing_swapcoin.others_contract_sig = Some(senders_sig.clone());
         }
 
-        let (wallet_label, internal_addresses) = {
-            let wallet_label = self.wallet.read()?.get_core_wallet_label();
-            let internal_addresses = self
+        let mut my_funding_txids = Vec::<Txid>::new();
+        for my_funding_tx in &connection_state.pending_funding_txes {
+            log::debug!("Broadcasting My Funding Tx : {:#?}", my_funding_tx);
+            let txid = self
                 .wallet
                 .read()?
-                .get_next_internal_addresses(connection_state.incoming_swapcoins.len() as u32)?;
-
-            let mut my_funding_txids = Vec::<Txid>::new();
-            for my_funding_tx in &connection_state.pending_funding_txes {
-                log::debug!("Broadcasting My Funding Tx : {:#?}", my_funding_tx);
-                let txid = self
-                    .wallet
-                    .read()?
-                    .rpc
-                    .send_raw_transaction(my_funding_tx)
-                    .map_err(|e| MakerError::Wallet(e.into()))?;
-                assert_eq!(txid, my_funding_tx.txid());
-                my_funding_txids.push(txid);
-            }
-            log::info!("Broadcasted My Funding Txes: {:?}", my_funding_txids);
-
-            (wallet_label, internal_addresses)
-        };
-
-        register_coinswap_with_watchtowers(ContractsInfo {
-            contract_txes: connection_state
-                .incoming_swapcoins
-                .iter()
-                .zip(internal_addresses.iter())
-                .map(|(isc, addr)| ContractTransaction {
-                    tx: isc.get_fully_signed_contract_tx(),
-                    redeemscript: isc.contract_redeemscript.clone(),
-                    hashlock_spend_without_preimage: Some(
-                        isc.create_hashlock_spend_without_preimage(addr),
-                    ),
-                    timelock_spend: None,
-                    timelock_spend_broadcasted: false,
-                })
-                .chain(
-                    connection_state
-                        .outgoing_swapcoins
-                        .iter()
-                        .zip(internal_addresses.iter())
-                        .map(|(osc, addr)| ContractTransaction {
-                            tx: osc.get_fully_signed_contract_tx(),
-                            redeemscript: osc.contract_redeemscript.clone(),
-                            hashlock_spend_without_preimage: None,
-                            timelock_spend: Some(osc.create_timelock_spend(addr)),
-                            timelock_spend_broadcasted: false,
-                        }),
-                )
-                .collect::<Vec<ContractTransaction>>(),
-            wallet_label,
-        })
-        .await
-        .map_err(|_| MakerError::General("Watchtower registration failed"))?;
+                .rpc
+                .send_raw_transaction(my_funding_tx)
+                .map_err(|e| MakerError::Wallet(e.into()))?;
+            assert_eq!(txid, my_funding_tx.txid());
+            my_funding_txids.push(txid);
+        }
+        log::info!("Broadcasted My Funding Txes: {:?}", my_funding_txids);
 
         {
             let mut wallet_writer = self.wallet.write()?;
