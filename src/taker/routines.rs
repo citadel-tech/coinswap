@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use bitcoin::{secp256k1::SecretKey, PublicKey, Script, Transaction};
+use bitcoin::{secp256k1::SecretKey, PublicKey, ScriptBuf, Transaction};
 use tokio::{
     io::BufReader,
     net::{
@@ -42,7 +42,7 @@ use crate::wallet::SwapCoin;
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ContractTransaction {
     pub tx: Transaction,
-    pub redeemscript: Script,
+    pub redeemscript: ScriptBuf,
     pub hashlock_spend_without_preimage: Option<Transaction>,
     pub timelock_spend: Option<Transaction>,
     pub timelock_spend_broadcasted: bool,
@@ -138,13 +138,12 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
             "wrong number of signatures from maker",
         ));
     }
-    if maker_senders_contract_sig
+    for (sig, outgoing_swapcoin) in maker_senders_contract_sig
         .sigs
         .iter()
         .zip(outgoing_swapcoins.iter())
-        .any(|(sig, outgoing_swapcoin)| !outgoing_swapcoin.verify_contract_tx_sender_sig(&sig))
     {
-        return Err(TeleportError::Protocol("invalid signature from maker"));
+        outgoing_swapcoin.verify_contract_tx_sender_sig(&sig)?;
     }
     log::info!("<=== Received SendersContractSig from {}", maker_address);
     Ok(maker_senders_contract_sig)
@@ -188,13 +187,12 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
             "wrong number of signatures from maker",
         ));
     }
-    if maker_receiver_contract_sig
+    for (sig, swapcoin) in maker_receiver_contract_sig
         .sigs
         .iter()
         .zip(incoming_swapcoins.iter())
-        .any(|(sig, swapcoin)| !swapcoin.verify_contract_tx_receiver_sig(&sig))
     {
-        return Err(TeleportError::Protocol("invalid signature from maker"));
+        swapcoin.verify_contract_tx_receiver_sig(&sig)?;
     }
 
     log::info!("<=== Received ReceiversContractSig from {}", maker_address);
@@ -213,7 +211,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
     next_maker_fee_rate: u64,
     this_maker_contract_txes: &Vec<Transaction>,
     hashvalue: Hash160,
-) -> Result<(ContractSigsAsRecvrAndSender, Vec<Script>), TeleportError> {
+) -> Result<(ContractSigsAsRecvrAndSender, Vec<ScriptBuf>), TeleportError> {
     send_message(
         socket_writer,
         &TakerToMakerMessage::RespProofOfFunding(ProofOfFunding {
@@ -333,7 +331,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
                 &next_maker_refund_locktime,
             )
         })
-        .collect::<Vec<Script>>();
+        .collect::<Vec<_>>();
     Ok((
         maker_sign_sender_and_receiver_contracts,
         next_swap_contract_redeemscripts,
@@ -344,8 +342,8 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
 pub(crate) async fn send_hash_preimage_and_get_private_keys(
     socket_reader: &mut BufReader<ReadHalf<'_>>,
     socket_writer: &mut WriteHalf<'_>,
-    senders_multisig_redeemscripts: &Vec<Script>,
-    receivers_multisig_redeemscripts: &Vec<Script>,
+    senders_multisig_redeemscripts: &Vec<ScriptBuf>,
+    receivers_multisig_redeemscripts: &Vec<ScriptBuf>,
     preimage: &Preimage,
 ) -> Result<PrivKeyHandover, TeleportError> {
     let receivers_multisig_redeemscripts_len = receivers_multisig_redeemscripts.len();

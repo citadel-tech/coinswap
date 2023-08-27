@@ -1,22 +1,26 @@
 use std::convert::TryInto;
 
 use bitcoin::{
+    absolute::LockTime,
     blockdata::{
         opcodes::{self, all},
         script::{Builder, Instruction, Script},
     },
     hashes::Hash,
     secp256k1::{
+        ecdsa::Signature,
         rand::{rngs::OsRng, RngCore},
-        Message, Secp256k1, SecretKey, Signature,
+        Message, Secp256k1, SecretKey,
     },
-    util::{bip143::SigHashCache, ecdsa::PublicKey},
-    OutPoint, SigHashType, Transaction, TxIn, TxOut,
+    sighash::{EcdsaSighashType, SighashCache},
+    OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 
 pub use bitcoin::hashes::hash160::Hash as Hash160;
 
-use crate::{error::TeleportError, protocol::messages::FundingTxInfo};
+use crate::{
+    error::TeleportError, protocol::messages::FundingTxInfo, utill::redeemscript_to_scriptpubkey,
+};
 
 use super::{error::ContractError, messages::ProofOfFunding};
 
@@ -55,23 +59,27 @@ pub fn apply_two_signatures_to_2of2_multisig_spend(
     input: &mut TxIn,
     redeemscript: &Script,
 ) {
-    let (sig_first, sig_second) = if key1.key.serialize()[..] < key2.key.serialize()[..] {
+    let (sig_first, sig_second) = if key1.inner.serialize()[..] < key2.inner.serialize()[..] {
         (sig1, sig2)
     } else {
         (sig2, sig1)
     };
 
+    let mut sig1_with_sighash = sig_first.serialize_der().to_vec();
+    sig1_with_sighash.push(EcdsaSighashType::All as u8);
+
+    let mut sig2_with_sighash = sig_second.serialize_der().to_vec();
+    sig2_with_sighash.push(EcdsaSighashType::All as u8);
+
     input.witness.push(Vec::new()); //first is multisig dummy
-    input.witness.push(sig_first.serialize_der().to_vec());
-    input.witness.push(sig_second.serialize_der().to_vec());
-    input.witness[1].push(SigHashType::All as u8);
-    input.witness[2].push(SigHashType::All as u8);
+    input.witness.push(sig1_with_sighash);
+    input.witness.push(sig2_with_sighash);
     input.witness.push(redeemscript.to_bytes());
 }
 
-pub fn create_multisig_redeemscript(key1: &PublicKey, key2: &PublicKey) -> Script {
+pub fn create_multisig_redeemscript(key1: &PublicKey, key2: &PublicKey) -> ScriptBuf {
     let builder = Builder::new().push_opcode(all::OP_PUSHNUM_2);
-    if key1.key.serialize()[..] < key2.key.serialize()[..] {
+    if key1.inner.serialize()[..] < key2.inner.serialize()[..] {
         builder.push_key(key1).push_key(key2)
     } else {
         builder.push_key(key2).push_key(key1)
@@ -85,8 +93,7 @@ pub fn derive_maker_pubkey_and_nonce(
     tweakable_point: &PublicKey,
 ) -> Result<(PublicKey, SecretKey), ContractError> {
     let mut nonce_bytes = [0u8; 32];
-    let mut rng = OsRng::new().unwrap();
-    rng.fill_bytes(&mut nonce_bytes);
+    OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = SecretKey::from_slice(&nonce_bytes)?;
     let maker_pubkey = calculate_pubkey_from_nonce(tweakable_point, &nonce)?;
     Ok((maker_pubkey, nonce))
@@ -101,7 +108,7 @@ pub fn calculate_pubkey_from_nonce(
     let nonce_point = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, nonce);
     Ok(PublicKey {
         compressed: true,
-        key: tweakable_point.key.combine(&nonce_point)?,
+        inner: tweakable_point.inner.combine(&nonce_point)?,
     })
 }
 
@@ -175,22 +182,13 @@ pub fn check_hashlock_has_pubkey(
     }
 }
 
-/// Convert a redeemscript into p2wsh scriptpubkey.
-pub fn redeemscript_to_scriptpubkey(redeemscript: &Script) -> Script {
-    //p2wsh address
-    Script::new_witness_program(
-        bitcoin::bech32::u5::try_from_u8(0).unwrap(),
-        &redeemscript.wscript_hash().to_vec(),
-    )
-}
-
 #[rustfmt::skip]
 pub fn create_contract_redeemscript(
     pub_hashlock: &PublicKey,
     pub_timelock: &PublicKey,
     hashvalue: &Hash160,
     locktime: &u16,
-) -> Script {
+) -> ScriptBuf {
     //avoid the malleability from OP_IF attack, see:
     //https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-September/000605.html
     //the attack here is that OP_IF accepts anything nonzero as true, so someone
@@ -242,7 +240,7 @@ pub fn create_contract_redeemscript(
         .push_opcode(opcodes::all::OP_SIZE)
         .push_opcode(opcodes::all::OP_SWAP)
         .push_opcode(opcodes::all::OP_HASH160)
-        .push_slice(&hashvalue[..])
+        .push_slice(hashvalue.to_byte_array())
         .push_opcode(opcodes::all::OP_EQUAL)
         .push_opcode(opcodes::all::OP_IF)
             .push_key(&pub_hashlock)
@@ -267,11 +265,11 @@ pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<Hash160, Co
     if redeemscript.to_bytes().len() < 25 {
         return Err(ContractError::Protocol("contract reedemscript too short"));
     }
-    Ok(Hash160::from_inner(
+    Ok(Hash160::from_slice(
         redeemscript.to_bytes()[4..24]
             .try_into()
             .map_err(|_| ContractError::Protocol("hash value is not 20 bytes slice"))?,
-    ))
+    )?)
 }
 
 //check that all the contract redeemscripts involve the same hashvalue
@@ -304,7 +302,9 @@ pub fn read_contract_locktime(redeemscript: &Script) -> Result<u16, ContractErro
         Instruction::PushBytes(locktime_bytes) => match locktime_bytes.len() {
             1 => Ok(locktime_bytes[0] as u16),
             2 | 3 => {
-                let (int_bytes, _rest) = locktime_bytes.split_at(std::mem::size_of::<u16>());
+                let (int_bytes, _rest) = locktime_bytes
+                    .as_bytes()
+                    .split_at(std::mem::size_of::<u16>());
                 Ok(u16::from_le_bytes(int_bytes.try_into().unwrap()))
             }
             _ => Err(ContractError::Protocol(
@@ -312,7 +312,7 @@ pub fn read_contract_locktime(redeemscript: &Script) -> Result<u16, ContractErro
             )),
         },
         Instruction::Op(opcode) => {
-            if let opcodes::Class::PushNum(n) = opcode.classify() {
+            if let opcodes::Class::PushNum(n) = opcode.classify(opcodes::ClassifyContext::Legacy) {
                 Ok(n.try_into().map_err(|_| {
                     ContractError::Protocol("Can't read locktime value from contract reedemscript")
                 })?)
@@ -359,21 +359,21 @@ pub fn read_pubkeys_from_multisig_redeemscript(
 pub fn create_senders_contract_tx(
     input: OutPoint,
     input_value: u64,
-    contract_redeemscript: &Script,
+    contract_redeemscript: &ScriptBuf,
 ) -> Transaction {
     Transaction {
         input: vec![TxIn {
             previous_output: input,
-            sequence: 0,
-            witness: Vec::new(),
-            script_sig: Script::new(),
+            sequence: Sequence::ZERO,
+            witness: Witness::new(),
+            script_sig: ScriptBuf::new(),
         }],
         output: vec![TxOut {
             script_pubkey: redeemscript_to_scriptpubkey(&contract_redeemscript),
             // TODO: Mining fee for contract tx is hard coded here. Make it configurable.
             value: input_value - 1000,
         }],
-        lock_time: 0,
+        lock_time: LockTime::ZERO,
         version: 2,
     }
 }
@@ -381,7 +381,7 @@ pub fn create_senders_contract_tx(
 pub fn create_receivers_contract_tx(
     input: OutPoint,
     input_value: u64,
-    contract_redeemscript: &Script,
+    contract_redeemscript: &ScriptBuf,
 ) -> Transaction {
     //exactly the same thing as senders contract for now, until collateral
     //inputs are implemented
@@ -414,7 +414,7 @@ pub fn is_contract_out_valid(
 pub fn validate_contract_tx(
     receivers_contract_tx: &Transaction,
     funding_outpoint: Option<&OutPoint>,
-    contract_redeemscript: &Script,
+    contract_redeemscript: &ScriptBuf,
 ) -> Result<(), TeleportError> {
     if receivers_contract_tx.input.len() != 1 || receivers_contract_tx.output.len() != 1 {
         return Err(TeleportError::Protocol(
@@ -442,15 +442,15 @@ pub fn sign_contract_tx(
 ) -> Result<Signature, ContractError> {
     let input_index = 0;
     let sighash = Message::from_slice(
-        &SigHashCache::new(contract_tx).signature_hash(
+        &SighashCache::new(contract_tx).segwit_signature_hash(
             input_index,
             multisig_redeemscript,
             funding_amount,
-            SigHashType::All,
-        )[..],
+            EcdsaSighashType::All,
+        )?[..],
     )?;
     let secp = Secp256k1::new();
-    Ok(secp.sign(&sighash, privkey))
+    Ok(secp.sign_ecdsa(&sighash, privkey))
 }
 
 pub fn verify_contract_tx_sig(
@@ -459,21 +459,18 @@ pub fn verify_contract_tx_sig(
     funding_amount: u64,
     pubkey: &PublicKey,
     sig: &Signature,
-) -> bool {
+) -> Result<(), ContractError> {
     let input_index = 0;
-    let sighash = match Message::from_slice(
-        &SigHashCache::new(contract_tx).signature_hash(
+    let sighash = Message::from_slice(
+        &SighashCache::new(contract_tx).segwit_signature_hash(
             input_index,
             multisig_redeemscript,
             funding_amount,
-            SigHashType::All,
-        )[..],
-    ) {
-        Ok(sig) => sig,
-        Err(_) => return false,
-    };
+            EcdsaSighashType::All,
+        )?[..],
+    )?;
     let secp = Secp256k1::new();
-    secp.verify(&sighash, sig, &pubkey.key).is_ok()
+    Ok(secp.verify_ecdsa(&sighash, sig, &pubkey.inner)?)
 }
 
 #[cfg(test)]
@@ -481,7 +478,7 @@ mod test {
     use super::*;
     use bitcoin::{
         consensus::encode::deserialize,
-        hashes::hex::{FromHex, ToHex},
+        hashes::hex::FromHex,
         secp256k1::{
             self,
             rand::{random, thread_rng, Rng},
@@ -528,7 +525,7 @@ mod test {
         let nonce_point = secp256k1::PublicKey::from_secret_key(&secp, &nonce);
         let expected_derivation = PublicKey {
             compressed: true,
-            key: pubkey_org.key.combine(&nonce_point).unwrap(),
+            inner: pubkey_org.inner.combine(&nonce_point).unwrap(),
         };
         assert_eq!(pubkey_derived, expected_derivation);
     }
@@ -536,7 +533,7 @@ mod test {
     #[test]
     fn test_contract_script_generation() {
         // create a random hashvalue
-        let hashvalue = Hash160::from_inner(thread_rng().gen::<[u8; 20]>());
+        let hashvalue = Hash160::from_slice(&thread_rng().gen::<[u8; 20]>()).unwrap();
 
         let pub_hashlock = PublicKey::from_str(
             "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af",
@@ -560,7 +557,7 @@ mod test {
 
         // Below is hand made script string that should be expected
         let expected = "827ca914".to_owned()
-            + &hashvalue.as_inner().to_hex()[..]
+            + &hashvalue.to_string()
             + "876321"
             + &pub_hashlock.to_string()[..]
             + "0120516721"
@@ -608,8 +605,8 @@ mod test {
     #[test]
     fn test_find_funding_output() {
         // Create a 20f2 multi + another random spk
-        let multisig_redeemscript = Script::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
-        let another_script = Script::from(Vec::from_hex("020000000156944c5d3f98413ef45cf54545538103cc9f298e0575820ad3591376e2e0f65d2a0000000000000000014871000000000000220020dad1b452caf4a0f26aecf1cc43aaae9b903a043c34f75ad9a36c86317b22236800000000").unwrap());
+        let multisig_redeemscript = ScriptBuf::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
+        let another_script = ScriptBuf::from(Vec::from_hex("020000000156944c5d3f98413ef45cf54545538103cc9f298e0575820ad3591376e2e0f65d2a0000000000000000014871000000000000220020dad1b452caf4a0f26aecf1cc43aaae9b903a043c34f75ad9a36c86317b22236800000000").unwrap());
 
         let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript);
         let another_script_pubkey = redeemscript_to_scriptpubkey(&another_script);
@@ -621,9 +618,9 @@ mod test {
                     "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:42",
                 )
                 .unwrap(),
-                sequence: 0,
-                witness: Vec::new(),
-                script_sig: Script::new(),
+                sequence: Sequence::ZERO,
+                witness: Witness::new(),
+                script_sig: ScriptBuf::new(),
             }],
             output: vec![
                 TxOut {
@@ -635,7 +632,7 @@ mod test {
                     value: 3000,
                 },
             ],
-            lock_time: 0,
+            lock_time: LockTime::ZERO,
             version: 2,
         };
 
@@ -643,9 +640,9 @@ mod test {
             funding_tx,
             multisig_redeemscript,
             funding_tx_merkleproof: String::new(),
-            multisig_nonce: SecretKey::new(&mut OsRng::new().unwrap()),
-            contract_redeemscript: Script::new(),
-            hashlock_nonce: SecretKey::new(&mut OsRng::new().unwrap()),
+            multisig_nonce: SecretKey::new(&mut thread_rng()),
+            contract_redeemscript: ScriptBuf::new(),
+            hashlock_nonce: SecretKey::new(&mut thread_rng()),
         };
 
         // Check the correct 2of2 multisig output is extracted from funding tx
@@ -654,7 +651,7 @@ mod test {
 
     #[test]
     fn test_contract_tx_miscellaneous() {
-        let contract_script = Script::from(Vec::from_hex(
+        let contract_script = ScriptBuf::from(Vec::from_hex(
             "827ca91414cdf8fe0b7b2db2bd976f27fb6f3cd5f9228633876321038cc778b555c3fe2b01d1b550a07\
             d26e38c026c4c4e1dee2a41f0431283230ee0012051672102b6b9ab72d42fb625a24598a792fa5346aa\
             64d728b446f7560f4ce1c29378b22c00012868b2757b88ac").unwrap());
@@ -723,9 +720,9 @@ mod test {
                 "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:42",
             )
             .unwrap(),
-            sequence: 0,
-            witness: Vec::new(),
-            script_sig: Script::new(),
+            sequence: Sequence::ZERO,
+            witness: Witness::new(),
+            script_sig: ScriptBuf::new(),
         });
         // Verify validation fails
         if let TeleportError::Protocol(message) =
@@ -739,7 +736,7 @@ mod test {
 
         // Change contract transaction to pay into wrong output
         let mut contract_tx_err2 = contract_tx.clone();
-        let multisig_redeemscript = Script::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
+        let multisig_redeemscript = ScriptBuf::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
         let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript);
         contract_tx_err2.output[0] = TxOut {
             script_pubkey: multi_script_pubkey,
@@ -779,22 +776,22 @@ mod test {
                     "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:42",
                 )
                 .unwrap(),
-                sequence: 0,
-                witness: Vec::new(),
-                script_sig: Script::new(),
+                sequence: Sequence::ZERO,
+                witness: Witness::new(),
+                script_sig: ScriptBuf::new(),
             }],
             output: vec![TxOut {
                 script_pubkey: funding_spk,
                 value: 2000,
             }],
-            lock_time: 0,
+            lock_time: LockTime::ZERO,
             version: 2,
         };
 
         // Create the contract transaction spending the funding outpoint
         let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
 
-        let contract_script = Script::from(Vec::from_hex("827ca914cdccf6695323f22d061a58c398deba38bba47148876321032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af0120516721039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef000812dabb690fe0fd3768b2757b88ac").unwrap());
+        let contract_script = ScriptBuf::from(Vec::from_hex("827ca914cdccf6695323f22d061a58c398deba38bba47148876321032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af0120516721039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef000812dabb690fe0fd3768b2757b88ac").unwrap());
 
         let contract_tx = create_receivers_contract_tx(
             funding_outpoint,
@@ -807,27 +804,25 @@ mod test {
             &contract_tx,
             &funding_outpoint_script,
             funding_tx.output[0].value,
-            &priv_1.key,
+            &priv_1.inner,
         )
         .unwrap();
 
-        assert_eq!(
-            verify_contract_tx_sig(
-                &contract_tx,
-                &funding_outpoint_script,
-                funding_tx.output[0].value,
-                &pub1,
-                &sig1
-            ),
-            true
-        );
+        assert!(verify_contract_tx_sig(
+            &contract_tx,
+            &funding_outpoint_script,
+            funding_tx.output[0].value,
+            &pub1,
+            &sig1
+        )
+        .is_ok());
 
         // priv2 signs the contract and verify
         let sig2 = sign_contract_tx(
             &contract_tx,
             &funding_outpoint_script,
             funding_tx.output[0].value,
-            &priv_2.key,
+            &priv_2.inner,
         )
         .unwrap();
 
@@ -837,6 +832,7 @@ mod test {
             funding_tx.output[0].value,
             &pub2,
             &sig2
-        ));
+        )
+        .is_ok());
     }
 }

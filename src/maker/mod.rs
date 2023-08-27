@@ -11,7 +11,7 @@ use std::{
 };
 
 use bitcoin::Network;
-use bitcoincore_rpc::RpcApi;
+use bitcoind::bitcoincore_rpc::RpcApi;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     net::TcpListener,

@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use bitcoin::{
     hashes::Hash,
-    secp256k1::{self, Secp256k1, Signature},
+    secp256k1::{self, ecdsa::Signature, Secp256k1},
     Amount, OutPoint, PublicKey, Transaction, Txid,
 };
-use bitcoincore_rpc::RpcApi;
+use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::protocol::{
     messages::{MultisigPrivkey, PrivKeyHandover},
@@ -271,12 +271,12 @@ impl Maker {
             );
 
             let (tweakable_privkey, _) = self.wallet.read()?.get_tweakable_keypair();
-            let mut multisig_privkey = tweakable_privkey;
-            multisig_privkey.add_assign(funding_info.multisig_nonce.as_ref())?;
+            let multisig_privkey =
+                tweakable_privkey.add_tweak(&funding_info.multisig_nonce.into())?;
 
             let multisig_pubkey = PublicKey {
                 compressed: true,
-                key: secp256k1::PublicKey::from_secret_key(&Secp256k1::new(), &multisig_privkey),
+                inner: secp256k1::PublicKey::from_secret_key(&Secp256k1::new(), &multisig_privkey),
             };
 
             let other_pubkey = if multisig_pubkey == pubkey1 {
@@ -285,8 +285,8 @@ impl Maker {
                 pubkey1
             };
 
-            let mut hashlock_privkey = tweakable_privkey;
-            hashlock_privkey.add_assign(funding_info.hashlock_nonce.as_ref())?;
+            let hashlock_privkey =
+                tweakable_privkey.add_tweak(&funding_info.hashlock_nonce.into())?;
 
             log::debug!(
                 "Adding incoming_swapcoin contract_tx = {:?} fo = {:?}",
@@ -431,9 +431,7 @@ impl Maker {
             .iter()
             .zip(connection_state.incoming_swapcoins.iter_mut())
         {
-            if !incoming_swapcoin.verify_contract_tx_sig(receivers_sig) {
-                return Err(MakerError::General("invalid reciever's signature"));
-            }
+            incoming_swapcoin.verify_contract_tx_sig(receivers_sig)?;
             incoming_swapcoin.others_contract_sig = Some(receivers_sig.clone());
         }
 
@@ -446,9 +444,7 @@ impl Maker {
             .iter()
             .zip(connection_state.outgoing_swapcoins.iter_mut())
         {
-            if !outgoing_swapcoin.verify_contract_tx_sig(senders_sig) {
-                return Err(MakerError::General("invalid sender's signature"));
-            }
+            outgoing_swapcoin.verify_contract_tx_sig(senders_sig)?;
 
             outgoing_swapcoin.others_contract_sig = Some(senders_sig.clone());
         }

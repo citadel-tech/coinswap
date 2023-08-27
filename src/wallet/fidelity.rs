@@ -15,20 +15,17 @@ use std::{collections::HashMap, fmt::Display, num::ParseIntError, str::FromStr};
 use chrono::NaiveDate;
 
 use bitcoin::{
+    bip32::{ChildNumber, DerivationPath, ExtendedPrivKey},
     blockdata::{
         opcodes,
         script::{Builder, Instruction, Script},
     },
     hashes::{sha256d, Hash},
     secp256k1::{Context, Message, Secp256k1, SecretKey, Signing},
-    util::{
-        bip32::{ChildNumber, DerivationPath, ExtendedPrivKey},
-        key::{PrivateKey, PublicKey},
-    },
-    Address, OutPoint,
+    Address, OutPoint, PublicKey, ScriptBuf,
 };
 
-use bitcoincore_rpc::{
+use bitcoind::bitcoincore_rpc::{
     json::{GetTxOutResult, ListUnspentResultEntry},
     Client, RpcApi,
 };
@@ -117,7 +114,7 @@ fn create_cert_msg_hash(cert_pubkey: &PublicKey, cert_expiry: u16) -> Message {
     btc_signed_msg.extend("\x18Bitcoin Signed Message:\n".as_bytes());
     btc_signed_msg.push(cert_msg.len() as u8);
     btc_signed_msg.extend(cert_msg);
-    Message::from_slice(&sha256d::Hash::hash(&btc_signed_msg)).unwrap()
+    Message::from_slice(sha256d::Hash::hash(&btc_signed_msg).as_byte_array()).unwrap()
 }
 
 pub struct HotWalletFidelityBond {
@@ -146,7 +143,7 @@ impl HotWalletFidelityBond {
             },
             utxo_key: read_pubkey_from_timelocked_redeemscript(&redeemscript).unwrap(),
             locktime: read_locktime_from_timelocked_redeemscript(&redeemscript).unwrap(),
-            utxo_privkey: wallet.get_timelocked_privkey_from_index(index).key,
+            utxo_privkey: wallet.get_timelocked_privkey_from_index(index),
         }
     }
 
@@ -168,11 +165,12 @@ impl HotWalletFidelityBond {
         let secp = Secp256k1::new();
 
         let cert_msg_hash = create_cert_msg_hash(&cert_pubkey, cert_expiry);
-        let cert_sig = secp.sign(&cert_msg_hash, &self.utxo_privkey);
+        let cert_sig = secp.sign_ecdsa(&cert_msg_hash, &self.utxo_privkey);
 
         let onion_msg_hash =
-            Message::from_slice(&sha256d::Hash::hash(onion_hostname.as_bytes())).unwrap();
-        let onion_sig = secp.sign(&onion_msg_hash, &cert_privkey);
+            Message::from_slice(sha256d::Hash::hash(onion_hostname.as_bytes()).as_byte_array())
+                .unwrap();
+        let onion_sig = secp.sign_ecdsa(&onion_msg_hash, &cert_privkey);
 
         Ok(FidelityBondProof {
             utxo: self.utxo,
@@ -196,12 +194,13 @@ impl FidelityBondProof {
         let secp = Secp256k1::new();
 
         let onion_msg_hash =
-            Message::from_slice(&sha256d::Hash::hash(onion_hostname.as_bytes())).unwrap();
-        secp.verify(&onion_msg_hash, &self.onion_sig, &self.cert_pubkey.key)
+            Message::from_slice(sha256d::Hash::hash(onion_hostname.as_bytes()).as_byte_array())
+                .unwrap();
+        secp.verify_ecdsa(&onion_msg_hash, &self.onion_sig, &self.cert_pubkey.inner)
             .map_err(|_| TeleportError::Protocol("onion sig does not verify"))?;
 
         let cert_msg_hash = create_cert_msg_hash(&self.cert_pubkey, self.cert_expiry);
-        secp.verify(&cert_msg_hash, &self.cert_sig, &self.utxo_key.key)
+        secp.verify_ecdsa(&cert_msg_hash, &self.cert_sig, &self.utxo_key.inner)
             .map_err(|_| TeleportError::Protocol("cert sig does not verify"))?;
 
         let txo_data = rpc
@@ -239,7 +238,7 @@ impl FidelityBondProof {
     ) -> Result<f64, TeleportError> {
         let blockhash = rpc.get_block_hash(block_count - txo_data.confirmations as u64 + 1)?;
         Ok(calculate_timelocked_fidelity_bond_value(
-            txo_data.value.as_sat(),
+            txo_data.value.to_sat(),
             self.locktime,
             rpc.get_block_header_info(&blockhash)?.time as i64,
             mediantime,
@@ -275,7 +274,7 @@ fn calculate_timelocked_fidelity_bond_value_from_utxo(
     rpc: &Client,
 ) -> Result<f64, TeleportError> {
     Ok(calculate_timelocked_fidelity_bond_value(
-        utxo.amount.as_sat(),
+        utxo.amount.to_sat(),
         get_locktime_from_index(
             if let UTXOSpendInfo::FidelityBondCoin {
                 index,
@@ -295,7 +294,7 @@ fn calculate_timelocked_fidelity_bond_value_from_utxo(
     ))
 }
 
-fn create_timelocked_redeemscript(locktime: i64, pubkey: &PublicKey) -> Script {
+fn create_timelocked_redeemscript(locktime: i64, pubkey: &PublicKey) -> ScriptBuf {
     Builder::new()
         .push_int(locktime)
         .push_opcode(opcodes::all::OP_CLTV)
@@ -308,7 +307,7 @@ fn create_timelocked_redeemscript(locktime: i64, pubkey: &PublicKey) -> Script {
 pub fn read_locktime_from_timelocked_redeemscript(redeemscript: &Script) -> Option<i64> {
     if let Instruction::PushBytes(locktime_bytes) = redeemscript.instructions().nth(0)?.ok()? {
         let mut u8slice: [u8; 8] = [0; 8];
-        u8slice[..locktime_bytes.len()].copy_from_slice(&locktime_bytes);
+        u8slice[..locktime_bytes.len()].copy_from_slice(locktime_bytes.as_bytes());
         Some(i64::from_le_bytes(u8slice))
     } else {
         None
@@ -317,7 +316,7 @@ pub fn read_locktime_from_timelocked_redeemscript(redeemscript: &Script) -> Opti
 
 fn read_pubkey_from_timelocked_redeemscript(redeemscript: &Script) -> Option<PublicKey> {
     if let Instruction::PushBytes(pubkey_bytes) = redeemscript.instructions().nth(3)?.ok()? {
-        PublicKey::from_slice(pubkey_bytes).ok()
+        PublicKey::from_slice(pubkey_bytes.as_bytes()).ok()
     } else {
         None
     }
@@ -348,19 +347,22 @@ fn get_timelocked_redeemscript_from_index<C: Context + Signing>(
     secp: &Secp256k1<C>,
     timelocked_master_private_key: &ExtendedPrivKey,
     index: u32,
-) -> Script {
+) -> ScriptBuf {
     let privkey = timelocked_master_private_key
         .ckd_priv(secp, ChildNumber::Normal { index })
         .unwrap()
         .private_key;
-    let pubkey = privkey.public_key(&secp);
+    let pubkey = PublicKey {
+        compressed: true,
+        inner: privkey.public_key(&secp),
+    };
     let locktime = get_locktime_from_index(index);
     create_timelocked_redeemscript(locktime, &pubkey)
 }
 
-pub fn generate_fidelity_scripts(master_key: &ExtendedPrivKey) -> HashMap<Script, u32> {
+pub fn generate_fidelity_scripts(master_key: &ExtendedPrivKey) -> HashMap<ScriptBuf, u32> {
     let timelocked_master_private_key = get_timelocked_master_key_from_root_master_key(master_key);
-    let mut timelocked_script_index_map = HashMap::<Script, u32>::new();
+    let mut timelocked_script_index_map = HashMap::new();
 
     let secp = Secp256k1::new();
     //all these magic numbers and constants are explained in the fidelity bonds bip
@@ -375,7 +377,7 @@ pub fn generate_fidelity_scripts(master_key: &ExtendedPrivKey) -> HashMap<Script
 }
 
 impl Wallet {
-    pub fn get_timelocked_redeemscript_from_index(&self, index: u32) -> Script {
+    pub fn get_timelocked_redeemscript_from_index(&self, index: u32) -> ScriptBuf {
         get_timelocked_redeemscript_from_index(
             &Secp256k1::new(),
             &get_timelocked_master_key_from_root_master_key(&self.store.master_key),
@@ -383,7 +385,7 @@ impl Wallet {
         )
     }
 
-    pub fn get_timelocked_privkey_from_index(&self, index: u32) -> PrivateKey {
+    pub fn get_timelocked_privkey_from_index(&self, index: u32) -> SecretKey {
         get_timelocked_master_key_from_root_master_key(&self.store.master_key)
             .ckd_priv(&Secp256k1::new(), ChildNumber::Normal { index })
             .unwrap()

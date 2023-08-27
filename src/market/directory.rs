@@ -27,6 +27,7 @@ fn network_enum_to_string(network: Network) -> &'static str {
         Network::Testnet => "testnet",
         Network::Signet => "signet",
         Network::Regtest => panic!("dont use directory servers if using regtest"),
+        _ => todo!(),
     }
 }
 

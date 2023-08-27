@@ -17,19 +17,18 @@ use std::{
     time::Duration,
 };
 
+use bitcoind::bitcoincore_rpc::RpcApi;
 use tokio::{net::TcpStream, select, time::sleep};
 
 use bitcoin::{
     consensus::encode::deserialize,
-    hashes::{hash160::Hash as Hash160, hex::ToHex, Hash},
+    hashes::{hash160::Hash as Hash160, Hash},
     secp256k1::{
         rand::{rngs::OsRng, RngCore},
         SecretKey,
     },
-    util::ecdsa::PublicKey,
-    BlockHash, OutPoint, Script, Transaction, Txid,
+    BlockHash, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
-use bitcoincore_rpc::RpcApi;
 
 use crate::{
     error::TeleportError,
@@ -114,7 +113,7 @@ struct NextPeerInfo {
     multisig_pubkeys: Vec<PublicKey>,
     multisig_nonces: Vec<SecretKey>,
     hashlock_nonces: Vec<SecretKey>,
-    contract_reedemscripts: Vec<Script>,
+    contract_reedemscripts: Vec<ScriptBuf>,
 }
 
 /// The Taker structure that performs bulk of the coinswap protocol. Taker connects
@@ -166,8 +165,7 @@ impl Taker {
     pub async fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TeleportError> {
         // Generate new random preimage and initiate the first hop.
         let mut preimage = [0u8; 32];
-        let mut rng = OsRng::new().unwrap();
-        rng.fill_bytes(&mut preimage);
+        OsRng.fill_bytes(&mut preimage);
 
         self.ongoing_swap_state.active_preimage = preimage;
         self.ongoing_swap_state.swap_params = swap_params;
@@ -405,14 +403,14 @@ impl Taker {
                 if txid_tx_map.contains_key(txid) {
                     continue;
                 }
-                let gettx = match self.wallet.rpc.get_transaction(txid, Some(true)) {
+                let gettx = match self.wallet.rpc.get_raw_transaction_info(txid, None) {
                     Ok(r) => r,
-                    //if we lose connection to the node, just try again, no point returning an error
+                    // Transaction haven't arrived in our mempool, keep looping.
                     Err(_e) => continue,
                 };
                 if !txids_seen_once.contains(txid) {
                     txids_seen_once.insert(*txid);
-                    if gettx.info.confirmations == 0 {
+                    if gettx.confirmations == None {
                         let mempool_tx = match self.wallet.rpc.get_mempool_entry(txid) {
                             Ok(m) => m,
                             Err(_e) => continue,
@@ -420,14 +418,14 @@ impl Taker {
                         log::info!(
                             "Seen in mempool: {} [{:.1} sat/vbyte]",
                             txid,
-                            mempool_tx.fees.base.as_sat() as f32 / mempool_tx.vsize as f32
+                            mempool_tx.fees.base.to_sat() as f32 / mempool_tx.vsize as f32
                         );
                     }
                 }
                 //TODO handle confirm<0
-                if gettx.info.confirmations >= required_confirmations as i32 {
+                if gettx.confirmations >= Some(required_confirmations as u32) {
                     txid_tx_map.insert(*txid, deserialize::<Transaction>(&gettx.hex).unwrap());
-                    txid_blockhash_map.insert(*txid, gettx.info.blockhash.unwrap());
+                    txid_blockhash_map.insert(*txid, gettx.blockhash.unwrap());
                     log::debug!(
                         "funding tx {} reached {} confirmation(s)",
                         txid,
@@ -447,9 +445,9 @@ impl Taker {
                         self.wallet
                             .rpc
                             .get_tx_out_proof(&[txid], Some(txid_blockhash_map.get(&txid).unwrap()))
-                            .map(|gettxoutproof_result| gettxoutproof_result.to_hex())
+                            .map(|gettxoutproof_result| to_hex(&gettxoutproof_result))
                     })
-                    .collect::<Result<Vec<String>, bitcoincore_rpc::Error>>()?;
+                    .collect::<Result<Vec<String>, _>>()?;
                 return Ok(Some((txes, merkleproofs)));
             }
             sleep(Duration::from_millis(1000)).await;
@@ -467,12 +465,12 @@ impl Taker {
                         .outgoing_swapcoins
                         .iter()
                         .map(|s| s.get_multisig_redeemscript())
-                        .collect::<Vec<Script>>(),
+                        .collect::<Vec<_>>(),
                     self.ongoing_swap_state
                         .outgoing_swapcoins
                         .iter()
                         .map(|s| s.get_contract_redeemscript())
-                        .collect::<Vec<Script>>(),
+                        .collect::<Vec<_>>(),
                 )
             } else {
                 (
@@ -482,14 +480,14 @@ impl Taker {
                         .unwrap()
                         .iter()
                         .map(|s| s.get_multisig_redeemscript())
-                        .collect::<Vec<Script>>(),
+                        .collect::<Vec<_>>(),
                     self.ongoing_swap_state
                         .watchonly_swapcoins
                         .last()
                         .unwrap()
                         .iter()
                         .map(|s| s.get_contract_redeemscript())
-                        .collect::<Vec<Script>>(),
+                        .collect::<Vec<_>>(),
                 )
             };
 
@@ -848,7 +846,7 @@ impl Taker {
         &self,
         contract_sigs_as_recvr_and_sender: &ContractSigsAsRecvrAndSender,
         next_peer_multisig_pubkeys: &[PublicKey],
-        next_swap_contract_redeemscripts: &[Script],
+        next_swap_contract_redeemscripts: &[ScriptBuf],
     ) -> Result<Vec<WatchOnlySwapCoin>, TeleportError> {
         let next_swapcoins = contract_sigs_as_recvr_and_sender
             .senders_contract_txs_info
@@ -886,7 +884,7 @@ impl Taker {
             .senders_contract_txs_info
             .iter()
             .map(|senders_contract_tx_info| senders_contract_tx_info.multisig_redeemscript.clone())
-            .collect::<Vec<Script>>();
+            .collect::<Vec<_>>();
         let next_swap_funding_outpoints = maker_sign_sender_and_receiver_contracts
             .senders_contract_txs_info
             .iter()
@@ -1298,8 +1296,8 @@ impl Taker {
         maker_address: &MakerAddress,
         index: usize,
         outgoing_privkeys: &mut Option<Vec<MultisigPrivkey>>,
-        senders_multisig_redeemscripts: &Vec<Script>,
-        receivers_multisig_redeemscripts: &Vec<Script>,
+        senders_multisig_redeemscripts: &Vec<ScriptBuf>,
+        receivers_multisig_redeemscripts: &Vec<ScriptBuf>,
     ) -> Result<(), TeleportError> {
         log::info!("Connecting to {}", maker_address);
         let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
@@ -1433,9 +1431,7 @@ impl Taker {
         Ok(())
     }
 
-    pub fn check_for_broadcasted_contract_txes(
-        &mut self,
-    ) -> Result<Vec<Txid>, bitcoincore_rpc::Error> {
+    pub fn check_for_broadcasted_contract_txes(&mut self) -> Result<Vec<Txid>, TeleportError> {
         let contract_txids = self
             .ongoing_swap_state
             .incoming_swapcoins

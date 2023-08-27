@@ -1,9 +1,9 @@
+use bitcoind::bitcoincore_rpc::RpcApi;
 use crate::{
     error::TeleportError,
     protocol::contract::Hash160,
     wallet::{RPCConfig, Wallet, WalletSwapCoin},
 };
-use bitcoincore_rpc::RpcApi;
 use std::path::PathBuf;
 
 pub fn recover_from_incomplete_coinswap(
@@ -42,7 +42,7 @@ pub fn recover_from_incomplete_coinswap(
             .import_wallet_contract_redeemscript(&swapcoin.1.get_contract_redeemscript())
             .unwrap();
 
-        let signed_contract_tx = swapcoin.1.get_fully_signed_contract_tx();
+        let signed_contract_tx = swapcoin.1.get_fully_signed_contract_tx()?;
         if dont_broadcast {
             let txhex = bitcoin::consensus::encode::serialize_hex(&signed_contract_tx);
             println!(

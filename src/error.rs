@@ -12,7 +12,7 @@ pub enum TeleportError {
     Network(Box<dyn error::Error + Send>),
     Disk(io::Error),
     Protocol(&'static str),
-    Rpc(bitcoincore_rpc::Error),
+    Rpc(bitcoind::bitcoincore_rpc::Error),
     Socks(tokio_socks::Error),
     Wallet(WalletError),
     Market(DirectoryServerError),
@@ -33,8 +33,8 @@ impl From<io::Error> for TeleportError {
     }
 }
 
-impl From<bitcoincore_rpc::Error> for TeleportError {
-    fn from(e: bitcoincore_rpc::Error) -> TeleportError {
+impl From<bitcoind::bitcoincore_rpc::Error> for TeleportError {
+    fn from(e: bitcoind::bitcoincore_rpc::Error) -> TeleportError {
         TeleportError::Rpc(e)
     }
 }

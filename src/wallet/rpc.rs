@@ -1,20 +1,22 @@
 use std::convert::TryFrom;
 
-use bitcoin::{
-    hashes::hex::{FromHex, ToHex},
-    Address, Amount, Network, Script, Txid,
-};
-use bitcoincore_rpc::{Auth, Client, RpcApi};
+use bitcoin::{Address, Amount, Network, Txid};
+use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 use serde_json::{json, Value};
 
 use crate::{
-    protocol::contract::redeemscript_to_scriptpubkey,
-    utill::convert_json_rpc_bitcoin_to_satoshis,
+    utill::{
+        convert_json_rpc_bitcoin_to_satoshis, redeemscript_to_scriptpubkey, str_to_bitcoin_network,
+        to_hex,
+    },
     wallet::{wallet::KeychainKind, WalletSwapCoin},
 };
 
+use serde::Deserialize;
+
 use super::{error::WalletError, Wallet};
 
+#[derive(Debug, Clone)]
 pub struct RPCConfig {
     /// The bitcoin node url
     pub url: String,
@@ -40,21 +42,16 @@ impl Default for RPCConfig {
     }
 }
 
-fn str_to_bitcoin_network(net_str: &str) -> Network {
-    match net_str {
-        "main" => Network::Bitcoin,
-        "test" => Network::Testnet,
-        "signet" => Network::Signet,
-        "regtest" => Network::Regtest,
-        _ => panic!("unknown network: {}", net_str),
-    }
-}
-
 impl TryFrom<&RPCConfig> for Client {
     type Error = WalletError;
     fn try_from(config: &RPCConfig) -> Result<Self, WalletError> {
         let rpc = Client::new(
-            format!("http://{}/wallet/{}", config.url, config.wallet_name),
+            format!(
+                "http://{}/wallet/{}",
+                config.url.as_str(),
+                config.wallet_name.as_str()
+            )
+            .as_str(),
             config.auth.clone(),
         )?;
         if config.network != str_to_bitcoin_network(rpc.get_blockchain_info()?.chain.as_str()) {
@@ -66,8 +63,50 @@ impl TryFrom<&RPCConfig> for Client {
     }
 }
 
+fn list_wallet_dir(client: &Client) -> Result<Vec<String>, WalletError> {
+    #[derive(Deserialize)]
+    struct Name {
+        name: String,
+    }
+    #[derive(Deserialize)]
+    struct CallResult {
+        wallets: Vec<Name>,
+    }
+
+    let result: CallResult = client.call("listwalletdir", &[])?;
+    Ok(result.wallets.into_iter().map(|n| n.name).collect())
+}
+
 impl Wallet {
     pub fn sync(&mut self) -> Result<(), WalletError> {
+        // Create or load the watch-only bitcoin core wallet
+        let wallet_name = &self.store.wallet_name;
+        if self.rpc.list_wallets()?.contains(&wallet_name) {
+            log::info!("wallet already loaded: {}", wallet_name);
+        } else if list_wallet_dir(&self.rpc)?.contains(&wallet_name) {
+            self.rpc.load_wallet(&wallet_name)?;
+            log::info!("wallet loaded: {}", wallet_name);
+        } else {
+            // pre-0.21 use legacy wallets
+            if self.rpc.version()? < 210_000 {
+                self.rpc
+                    .create_wallet(&wallet_name, Some(true), None, None, None)?;
+            } else {
+                // TODO: move back to api call when https://github.com/rust-bitcoin/rust-bitcoincore-rpc/issues/225 is closed
+                let args = [
+                    Value::String(wallet_name.clone()),
+                    Value::Bool(true),  // Disable Private Keys
+                    Value::Bool(false), // Create a blank wallet
+                    Value::Null,        // Optional Passphrase
+                    Value::Bool(false), // Avoid Reuse
+                    Value::Bool(false), // Descriptor Wallet
+                ];
+                let _: Value = self.rpc.call("createwallet", &args)?;
+            }
+
+            log::info!("wallet created: {}", wallet_name);
+        }
+
         let hd_descriptors_to_import = self.get_unimoprted_wallet_desc()?;
 
         let mut swapcoin_descriptors_to_import = self
@@ -119,7 +158,7 @@ impl Wallet {
                     None
                 }
             })
-            .collect::<Vec<Script>>();
+            .collect::<Vec<_>>();
 
         contract_scriptpubkeys_to_import.extend(
             self.store
@@ -140,7 +179,7 @@ impl Wallet {
                         None
                     }
                 })
-                .collect::<Vec<Script>>(),
+                .collect::<Vec<_>>(),
         );
 
         //get first and last timelocked script, check if both are imported
@@ -215,7 +254,7 @@ impl Wallet {
             .call("scantxoutset", &[json!("start"), json!(desc_list)])?;
         if !scantxoutset_result["success"].as_bool().unwrap() {
             return Err(WalletError::Rpc(
-                bitcoincore_rpc::Error::UnexpectedStructure,
+                bitcoind::bitcoincore_rpc::Error::UnexpectedStructure,
             ));
         }
         log::info!(target: "wallet", "TxOut set scan complete, found {} btc",
@@ -232,7 +271,7 @@ impl Wallet {
             let blockhash = self
                 .rpc
                 .get_block_hash(unspent["height"].as_u64().unwrap())?;
-            let txid = Txid::from_hex(unspent["txid"].as_str().unwrap()).unwrap();
+            let txid = unspent["txid"].as_str().unwrap().parse::<Txid>().unwrap();
             let rawtx = self.rpc.get_raw_transaction_hex(&txid, Some(&blockhash));
             if let Ok(rawtx_hex) = rawtx {
                 log::debug!(target: "wallet", "found coin {}:{} {} height={} {}",
@@ -242,10 +281,8 @@ impl Wallet {
                     unspent["height"].as_u64().unwrap(),
                     unspent["desc"].as_str().unwrap(),
                 );
-                let merkleproof = self
-                    .rpc
-                    .get_tx_out_proof(&[txid], Some(&blockhash))?
-                    .to_hex();
+                let merkleproof = to_hex(&self.rpc.get_tx_out_proof(&[txid], Some(&blockhash))?);
+
                 self.rpc.call(
                     "importprunedfunds",
                     &[Value::String(rawtx_hex), Value::String(merkleproof)],

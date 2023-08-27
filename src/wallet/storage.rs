@@ -3,7 +3,7 @@
 use std::{collections::HashMap, convert::TryFrom, io::Read, path::PathBuf};
 
 use bip39::Mnemonic;
-use bitcoin::{util::bip32::ExtendedPrivKey, Network, OutPoint, Script};
+use bitcoin::{bip32::ExtendedPrivKey, Network, OutPoint, ScriptBuf};
 use std::fs::File;
 
 use super::{error::WalletError, SwapCoin};
@@ -24,21 +24,22 @@ struct FileData {
     external_index: u32,
     incoming_swapcoins: Vec<IncomingSwapCoin>,
     outgoing_swapcoins: Vec<OutgoingSwapCoin>,
-    prevout_to_contract_map: HashMap<OutPoint, Script>,
+    prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
 }
 
 pub struct WalletStore {
+    // Wallet store name should match the bitcoin core watch-only wallet name
     pub(crate) wallet_name: String,
     pub(crate) network: Network,
     pub(super) master_key: ExtendedPrivKey,
     pub(super) external_index: u32,
     pub(crate) offer_maxsize: u64,
     /// Map of multisig reedemscript to incoming swapcoins.
-    pub(super) incoming_swapcoins: HashMap<Script, IncomingSwapCoin>,
+    pub(super) incoming_swapcoins: HashMap<ScriptBuf, IncomingSwapCoin>,
     /// Map of multisig reedemscript to outgoing swapcoins.
-    pub(super) outgoing_swapcoins: HashMap<Script, OutgoingSwapCoin>,
-    pub(super) prevout_to_contract_map: HashMap<OutPoint, Script>,
-    pub(super) fidelity_scripts: HashMap<Script, u32>,
+    pub(super) outgoing_swapcoins: HashMap<ScriptBuf, OutgoingSwapCoin>,
+    pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
+    pub(super) fidelity_scripts: HashMap<ScriptBuf, u32>,
     //TODO: Add last synced height and Wallet birthday.
 }
 
@@ -53,13 +54,13 @@ impl TryFrom<FileData> for WalletStore {
             .incoming_swapcoins
             .iter()
             .map(|sc| (sc.get_multisig_redeemscript(), sc.clone()))
-            .collect::<HashMap<Script, IncomingSwapCoin>>();
+            .collect::<HashMap<_, _>>();
 
         let outgoing_swapcoins = file_data
             .outgoing_swapcoins
             .iter()
             .map(|sc| (sc.get_multisig_redeemscript(), sc.clone()))
-            .collect::<HashMap<Script, OutgoingSwapCoin>>();
+            .collect::<HashMap<_, _>>();
 
         let timelocked_script_index_map = generate_fidelity_scripts(&xprv);
 

@@ -20,8 +20,8 @@ use teleport::{
         },
     },
     wallet::{
-        fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, SendAmount,
-        WalletMode,
+        fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, RPCConfig,
+        SendAmount, WalletMode,
     },
 };
 
@@ -177,6 +177,7 @@ fn main() -> Result<(), TeleportError> {
             };
             run_maker(
                 &args.wallet_file_name,
+                &RPCConfig::default(),
                 port,
                 Some(WalletMode::Testing),
                 maker_special_behavior,

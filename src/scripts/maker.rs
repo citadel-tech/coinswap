@@ -14,6 +14,7 @@ use crate::{error::TeleportError, wallet::WalletMode};
 #[tokio::main]
 pub async fn run_maker(
     wallet_file_name: &PathBuf,
+    rpc_config: &RPCConfig,
     port: u16,
     wallet_mode: Option<WalletMode>,
     maker_behavior: MakerBehavior,
@@ -23,7 +24,7 @@ pub async fn run_maker(
     let onion_addrs = "myhiddenserviceaddress.onion:6102".to_string();
     let maker = Maker::init(
         wallet_file_name,
-        &RPCConfig::default(),
+        rpc_config,
         port,
         onion_addrs,
         wallet_mode,

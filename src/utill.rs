@@ -3,11 +3,14 @@
 use std::io::ErrorKind;
 
 use bitcoin::{
+    address::{WitnessProgram, WitnessVersion},
+    hashes::Hash,
+    script::PushBytesBuf,
     secp256k1::{
         rand::{rngs::OsRng, RngCore},
         Secp256k1, SecretKey,
     },
-    PublicKey, Script,
+    Network, PublicKey, ScriptBuf,
 };
 
 use serde_json::Value;
@@ -24,6 +27,16 @@ use crate::{
     },
     wallet::SwapCoin,
 };
+
+pub fn str_to_bitcoin_network(net_str: &str) -> Network {
+    match net_str {
+        "main" => Network::Bitcoin,
+        "test" => Network::Testnet,
+        "signet" => Network::Signet,
+        "regtest" => Network::Regtest,
+        _ => panic!("unknown network: {}", net_str),
+    }
+}
 
 /// Can send both Taker and Maker messages
 pub async fn send_message(
@@ -138,22 +151,37 @@ pub fn get_hd_path_from_descriptor<'a>(descriptor: &'a str) -> Option<(&'a str, 
 
 pub fn generate_keypair() -> (PublicKey, SecretKey) {
     let mut privkey = [0u8; 32];
-    let mut rng = OsRng::new().expect("Panic while creating OsRng");
-    rng.fill_bytes(&mut privkey);
+    OsRng.fill_bytes(&mut privkey);
     let secp = Secp256k1::new();
     let privkey = SecretKey::from_slice(&privkey).unwrap();
     let pubkey = PublicKey {
         compressed: true,
-        key: bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &privkey),
+        inner: bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &privkey),
     };
     (pubkey, privkey)
 }
 
 /// Convert a redeemscript into p2wsh scriptpubkey.
-pub fn redeemscript_to_scriptpubkey(redeemscript: &Script) -> Script {
-    //p2wsh address
-    Script::new_witness_program(
-        bitcoin::bech32::u5::try_from_u8(0).unwrap(),
-        &redeemscript.wscript_hash().to_vec(),
+pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> ScriptBuf {
+    let witness_program = WitnessProgram::new(
+        WitnessVersion::V0,
+        PushBytesBuf::from(&redeemscript.wscript_hash().to_byte_array()),
     )
+    .unwrap();
+    //p2wsh address
+    ScriptBuf::new_witness_program(&witness_program)
+}
+
+pub fn to_hex(bytes: &Vec<u8>) -> String {
+    let hex_chars: Vec<char> = "0123456789abcdef".chars().collect();
+    let mut hex_string = String::new();
+
+    for &byte in bytes {
+        let high_nibble = (byte >> 4) & 0xF;
+        let low_nibble = byte & 0xF;
+        hex_string.push(hex_chars[high_nibble as usize]);
+        hex_string.push(hex_chars[low_nibble as usize]);
+    }
+
+    hex_string
 }

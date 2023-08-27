@@ -1,13 +1,14 @@
 use std::{path::PathBuf, sync::RwLock};
 
 use bitcoin::{
-    secp256k1::{self, Secp256k1, Signature},
+    secp256k1::{self, ecdsa::Signature, Secp256k1},
     OutPoint, PublicKey, Transaction,
 };
-use bitcoincore_rpc::RpcApi;
+use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
     protocol::{contract::check_hashvalues_are_equal, messages::ReqContractSigsForSender, Hash160},
+    utill::redeemscript_to_scriptpubkey,
     wallet::{RPCConfig, WalletMode},
 };
 
@@ -15,7 +16,7 @@ use crate::{
     protocol::{
         contract::{
             check_hashlock_has_pubkey, check_multisig_has_pubkey, check_reedemscript_is_multisig,
-            find_funding_output_index, read_contract_locktime, redeemscript_to_scriptpubkey,
+            find_funding_output_index, read_contract_locktime,
         },
         messages::ProofOfFunding,
     },
@@ -209,12 +210,11 @@ impl Maker {
 
             let secp = Secp256k1::new();
 
-            let mut hashlock_privkey = tweakable_privkey;
-            hashlock_privkey.add_assign(txinfo.hashlock_nonce.as_ref())?;
+            let hashlock_privkey = tweakable_privkey.add_tweak(&txinfo.hashlock_nonce.into())?;
 
             let hashlock_pubkey = PublicKey {
                 compressed: true,
-                key: secp256k1::PublicKey::from_secret_key(&secp, &hashlock_privkey),
+                inner: secp256k1::PublicKey::from_secret_key(&secp, &hashlock_privkey),
             };
 
             crate::protocol::contract::is_contract_out_valid(
@@ -231,8 +231,7 @@ impl Maker {
                 txinfo.senders_contract_tx.output[0].script_pubkey.clone(),
             )?;
 
-            let mut multisig_privkey = tweakable_privkey;
-            multisig_privkey.add_assign(txinfo.multisig_nonce.as_ref())?;
+            let multisig_privkey = tweakable_privkey.add_tweak(&txinfo.multisig_nonce.into())?;
 
             let sig = crate::protocol::contract::sign_contract_tx(
                 &txinfo.senders_contract_tx,
