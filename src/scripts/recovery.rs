@@ -1,9 +1,9 @@
-use bitcoind::bitcoincore_rpc::RpcApi;
 use crate::{
     error::TeleportError,
     protocol::contract::Hash160,
     wallet::{RPCConfig, Wallet, WalletSwapCoin},
 };
+use bitcoind::bitcoincore_rpc::RpcApi;
 use std::path::PathBuf;
 
 pub fn recover_from_incomplete_coinswap(
