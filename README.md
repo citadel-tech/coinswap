@@ -47,19 +47,6 @@ cargo build
 
 The project includes both unit and integration tests. The integration tests simulate a standard coinswap protocol involving a Taker and two Makers.
 
-To run integration tests, ensure you have a `bitcoind` node running in `regtest` mode on the default port, along with a sample `bitcoin.conf` file as shown:
-
-```conf
-regtest=1
-fallbackfee=0.0001
-server=1
-txindex=1
-rpcuser=regtestrpcuser
-rpcpassword=regtestrpcpass
-```
-
-You'll also need a legacy wallet named `teleport` with sufficient funds (> 0.15 BTC) loaded in Bitcoin Core.
-
 Run integration tests with:
 
 ```sh

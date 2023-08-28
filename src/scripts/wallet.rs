@@ -1,8 +1,8 @@
 use crate::wallet::{
     fidelity::get_locktime_from_index, SwapCoin, UTXOSpendInfo, Wallet, WalletStore,
 };
-use bitcoin::{hashes::hex::ToHex, Amount};
-use bitcoincore_rpc::RpcApi;
+use bitcoin::{consensus::encode::serialize_hex, Amount};
+use bitcoind::bitcoincore_rpc::RpcApi;
 use chrono::NaiveDateTime;
 use std::{convert::TryInto, path::PathBuf};
 
@@ -143,8 +143,8 @@ pub fn display_wallet_balance(
         "coin", "address", "type", "conf",
     );
     for (utxo, _) in utxos {
-        let txid = utxo.txid.to_hex();
-        let addr = utxo.address.as_ref().unwrap().to_string();
+        let txid = utxo.txid.to_string();
+        let addr = utxo.address.clone().unwrap().assume_checked().to_string();
         #[rustfmt::skip]
         println!(
             "{}{}{}:{} {}{}{} {:^8} {:<7} {}",
@@ -194,7 +194,7 @@ pub fn display_wallet_balance(
                         .zip(repeat("timelock")),
                 )
             {
-                let txid = utxo.txid.to_hex();
+                let txid = serialize_hex(&utxo.txid);
 
                 #[rustfmt::skip]
                 println!("{}{}{}:{} {:8} {:8} {:^15} {:<7} {}",
@@ -220,7 +220,7 @@ pub fn display_wallet_balance(
             println!(
                 "outgoing balance = {}\nhashvalue = {}",
                 outgoing_swapcoins_balance,
-                &hashvalue.to_hex()[..]
+                hashvalue.to_string()
             );
         }
     }
@@ -235,10 +235,10 @@ pub fn display_wallet_balance(
             "coin", "hashvalue", "timelock", "conf", "locked?", "value"
         );
         for (outgoing_swapcoin, utxo) in outgoing_contract_utxos {
-            let txid = utxo.txid.to_hex();
+            let txid = utxo.txid.to_string();
             let timelock =
                 read_contract_locktime(&outgoing_swapcoin.contract_redeemscript).unwrap();
-            let hashvalue = outgoing_swapcoin.get_hashvalue().to_hex();
+            let hashvalue = outgoing_swapcoin.get_hashvalue().to_string();
             #[rustfmt::skip]
             println!("{}{}{}:{} {}{} {:<8} {:<7} {:<8} {}",
                 if long_form { &txid } else {&txid[0..6] },
@@ -267,10 +267,10 @@ pub fn display_wallet_balance(
             "coin", "hashvalue", "timelock", "conf", "preimage", "value"
         );
         for (incoming_swapcoin, utxo) in incoming_contract_utxos {
-            let txid = utxo.txid.to_hex();
+            let txid = utxo.txid.to_string();
             let timelock =
                 read_contract_locktime(&incoming_swapcoin.contract_redeemscript).unwrap();
-            let hashvalue = incoming_swapcoin.get_hashvalue().to_hex();
+            let hashvalue = incoming_swapcoin.get_hashvalue().to_string();
             #[rustfmt::skip]
             println!("{}{}{}:{} {}{} {:<8} {:<7} {:8} {}",
                 if long_form { &txid } else {&txid[0..6] },
@@ -307,8 +307,8 @@ pub fn display_wallet_balance(
                 panic!("logic error, all these utxos should be fidelity bonds");
             };
             let unix_locktime = get_locktime_from_index(*index);
-            let txid = utxo.txid.to_hex();
-            let addr = utxo.address.as_ref().unwrap().to_string();
+            let txid = utxo.txid.to_string();
+            let addr = utxo.address.clone().unwrap().assume_checked().to_string();
             #[rustfmt::skip]
             println!(
                 "{}{}{}:{} {}{}{} {:<7} {:<11} {:<8} {:6}",
@@ -413,7 +413,7 @@ pub fn direct_send(
             .as_ref()
             .unwrap()
             .base
-            .as_sat() as f64
+            .to_sat() as f64
             / test_mempool_accept_result.vsize.unwrap() as f64
     );
     if dont_broadcast {

@@ -62,8 +62,8 @@
 use std::fmt::Display;
 
 use bitcoin::{
-    secp256k1::{SecretKey, Signature},
-    OutPoint, PublicKey, Script, Transaction,
+    secp256k1::{ecdsa::Signature, SecretKey},
+    OutPoint, PublicKey, ScriptBuf, Transaction,
 };
 
 use serde::{Deserialize, Serialize};
@@ -89,7 +89,7 @@ pub struct ContractTxInfoForSender {
     pub hashlock_nonce: SecretKey,
     pub timelock_pubkey: PublicKey,
     pub senders_contract_tx: Transaction,
-    pub multisig_redeemscript: Script,
+    pub multisig_redeemscript: ScriptBuf,
     pub funding_input_value: u64,
 }
 
@@ -104,7 +104,7 @@ pub struct ReqContractSigsForSender {
 /// Contract Sigs requesting information for the Receiver side of the hop.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ContractTxInfoForRecvr {
-    pub multisig_redeemscript: Script,
+    pub multisig_redeemscript: ScriptBuf,
     pub contract_tx: Transaction,
 }
 
@@ -119,9 +119,9 @@ pub struct ReqContractSigsForRecvr {
 pub struct FundingTxInfo {
     pub funding_tx: Transaction,
     pub funding_tx_merkleproof: String,
-    pub multisig_redeemscript: Script,
+    pub multisig_redeemscript: ScriptBuf,
     pub multisig_nonce: SecretKey,
-    pub contract_redeemscript: Script,
+    pub contract_redeemscript: ScriptBuf,
     pub hashlock_nonce: SecretKey,
 }
 
@@ -161,15 +161,15 @@ pub struct ContractSigsForRecvrAndSender {
 /// Message to Transfer `HashPreimage` from Taker to Makers.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HashPreimage {
-    pub senders_multisig_redeemscripts: Vec<Script>,
-    pub receivers_multisig_redeemscripts: Vec<Script>,
+    pub senders_multisig_redeemscripts: Vec<ScriptBuf>,
+    pub receivers_multisig_redeemscripts: Vec<ScriptBuf>,
     pub preimage: [u8; 32],
 }
 
 /// Multisig Privatekeys used in the last step of coinswap to perform privatekey handover.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MultisigPrivkey {
-    pub multisig_redeemscript: Script,
+    pub multisig_redeemscript: ScriptBuf,
     pub key: SecretKey,
 }
 
@@ -258,7 +258,7 @@ pub struct ContractSigsForSender {
 pub struct SenderContractTxInfo {
     pub contract_tx: Transaction,
     pub timelock_pubkey: PublicKey,
-    pub multisig_redeemscript: Script,
+    pub multisig_redeemscript: ScriptBuf,
     pub funding_amount: u64,
 }
 

@@ -1,7 +1,9 @@
 use std::{num::ParseIntError, str::FromStr};
 
-use bitcoin::{Address, Amount, Network, OutPoint, Script, Transaction, TxIn, TxOut};
-use bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
+use bitcoin::{
+    absolute::LockTime, Address, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn,
+    TxOut, Witness,
+};
 
 use crate::wallet::{wallet::UTXOSpendInfo, SwapCoin};
 
@@ -32,13 +34,13 @@ pub enum Destination {
 }
 
 impl FromStr for Destination {
-    type Err = bitcoin::util::address::Error;
+    type Err = bitcoin::address::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(if s == "wallet" {
             Destination::Wallet
         } else {
-            Destination::Address(Address::from_str(s)?)
+            Destination::Address(Address::from_str(s)?.assume_checked())
         })
     }
 }
@@ -103,7 +105,7 @@ impl Wallet {
         coins_to_spend: &[CoinToSpend],
     ) -> Result<Transaction, WalletError> {
         let mut tx_inputs = Vec::<TxIn>::new();
-        let mut unspent_inputs = Vec::<(ListUnspentResultEntry, UTXOSpendInfo)>::new();
+        let mut unspent_inputs = Vec::new();
         //TODO this search within a search could get very slow
         let list_unspent_result = self.list_unspent_from_wallet(true, true)?;
         for (list_unspent_entry, spend_info) in list_unspent_result {
@@ -155,9 +157,9 @@ impl Wallet {
                 };
                 tx_inputs.push(TxIn {
                     previous_output,
-                    sequence,
-                    witness: Vec::new(),
-                    script_sig: Script::new(),
+                    sequence: Sequence(sequence),
+                    witness: Witness::new(),
+                    script_sig: ScriptBuf::new(),
                 });
                 unspent_inputs.push((list_unspent_entry.clone(), spend_info.clone()));
             }
@@ -190,18 +192,18 @@ impl Wallet {
         let total_input_value = unspent_inputs
             .iter()
             .fold(Amount::ZERO, |acc, u| acc + u.0.amount)
-            .as_sat();
+            .to_sat();
         output.push(TxOut {
             script_pubkey: dest_addr.script_pubkey(),
             value: match send_amount {
                 SendAmount::Max => total_input_value - miner_fee,
-                SendAmount::Amount(a) => a.as_sat(),
+                SendAmount::Amount(a) => a.to_sat(),
             },
         });
         if let SendAmount::Amount(amount) = send_amount {
             output.push(TxOut {
                 script_pubkey: self.get_next_internal_addresses(1)?[0].script_pubkey(),
-                value: total_input_value - amount.as_sat() - miner_fee,
+                value: total_input_value - amount.to_sat() - miner_fee,
             });
         }
 
@@ -224,7 +226,7 @@ impl Wallet {
         let mut tx = Transaction {
             input: tx_inputs,
             output,
-            lock_time,
+            lock_time: LockTime::from_time(lock_time).unwrap(),
             version: 2,
         };
         log::debug!("unsigned transaction = {:#?}", tx);
