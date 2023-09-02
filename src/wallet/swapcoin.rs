@@ -21,7 +21,7 @@ use super::WalletError;
 
 //swapcoins are UTXOs + metadata which are not from the deterministic wallet
 //they are made in the process of a coinswap
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct IncomingSwapCoin {
     pub my_privkey: SecretKey,
     pub other_pubkey: PublicKey,
@@ -36,7 +36,7 @@ pub struct IncomingSwapCoin {
 
 //swapcoins are UTXOs + metadata which are not from the deterministic wallet
 //they are made in the process of a coinswap
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct OutgoingSwapCoin {
     pub my_privkey: SecretKey,
     pub other_pubkey: PublicKey,
@@ -395,7 +395,7 @@ impl OutgoingSwapCoin {
     }
 
     pub fn create_timelock_spend(&self, destination_address: &Address) -> Transaction {
-        let miner_fee = 128 * 1; //128 vbytes x 1 sat/vb, size calculated using testmempoolaccept
+        let miner_fee = 128 * 2; //128 vbytes x 2 sat/vb, size calculated using testmempoolaccept
         let mut tx = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
