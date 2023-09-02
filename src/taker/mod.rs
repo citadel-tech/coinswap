@@ -14,14 +14,25 @@ pub use taker::{SwapParams, Taker};
 
 pub use config::TakerConfig;
 
+pub use self::taker::TakerBehavior;
+
 #[tokio::main]
 pub async fn start_taker(
     rpc_config: Option<RPCConfig>,
     wallet_file: &PathBuf,
     wallet_mode: Option<WalletMode>,
     swap_params: SwapParams,
+    behavior: Option<TakerBehavior>,
 ) {
-    match run(rpc_config, wallet_file, wallet_mode, swap_params).await {
+    match run(
+        rpc_config,
+        wallet_file,
+        wallet_mode,
+        swap_params,
+        behavior.unwrap_or_default(),
+    )
+    .await
+    {
         Ok(_o) => (),
         Err(e) => log::error!("err {:?}", e),
     };
@@ -33,8 +44,9 @@ async fn run(
     wallet_file: &PathBuf,
     wallet_mode: Option<WalletMode>,
     swap_params: SwapParams,
+    behavior: TakerBehavior,
 ) -> Result<(), TeleportError> {
-    let mut taker = Taker::init(wallet_file, rpc_config, wallet_mode).await?;
+    let mut taker = Taker::init(wallet_file, rpc_config, wallet_mode, behavior).await?;
     taker.send_coinswap(swap_params).await?;
     Ok(())
 }

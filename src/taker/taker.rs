@@ -27,7 +27,7 @@ use bitcoin::{
         rand::{rngs::OsRng, RngCore},
         SecretKey,
     },
-    BlockHash, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
+    Amount, BlockHash, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
 
 use crate::{
@@ -116,6 +116,15 @@ struct NextPeerInfo {
     contract_reedemscripts: Vec<ScriptBuf>,
 }
 
+#[derive(Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TakerBehavior {
+    // No special behavior
+    #[default]
+    None,
+    // This depicts the behavior when the taker drops connections after the full coinswap setup
+    DropConnectionAfterFullSetup,
+}
+
 /// The Taker structure that performs bulk of the coinswap protocol. Taker connects
 /// to multiple Makers and send protocol messages sequentially to them. The communication
 /// sequence and corresponding SwapCoin infos are stored in `ongoing_swap_state`.
@@ -124,6 +133,7 @@ pub struct Taker {
     config: TakerConfig,
     offerbook: OfferBook,
     ongoing_swap_state: OngoingSwapState,
+    behavior: TakerBehavior,
 }
 
 impl Taker {
@@ -137,6 +147,7 @@ impl Taker {
         wallet_file: &PathBuf,
         rpc_config: Option<RPCConfig>,
         wallet_mode: Option<WalletMode>,
+        behavior: TakerBehavior,
     ) -> Result<Taker, TeleportError> {
         let mut offerbook = OfferBook::default();
 
@@ -155,7 +166,16 @@ impl Taker {
             config: config,
             offerbook,
             ongoing_swap_state: OngoingSwapState::default(),
+            behavior,
         })
+    }
+
+    pub fn get_wallet(&self) -> &Wallet {
+        &self.wallet
+    }
+
+    pub fn get_wallet_balance(&self) -> Result<Amount, TeleportError> {
+        Ok(self.wallet.get_wallet_balance()?)
     }
 
     /// Perform a coinswap round with given [SwapParams]. The Taker will try to perform swap with makers
@@ -235,6 +255,11 @@ impl Taker {
                 self.request_sigs_for_incoming_swap().await?;
             }
         } // Contract establishment completed.
+
+        if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
+            log::info!("Dropping Swap Process after full setup");
+            return Ok(());
+        }
 
         self.settle_all_swaps().await?;
         self.save_and_reset_swap_round()?;
@@ -1461,5 +1486,128 @@ impl Taker {
             .collect::<Vec<Txid>>();
 
         Ok(seen_txids)
+    }
+
+    pub fn recover_from_swap(&mut self) -> Result<(), TeleportError> {
+        let (incomings, outgoings) = self.wallet.find_unfinished_swapcoins();
+
+        // Broadcasted incoming contracts and remove them from the wallet.
+        for incoming in incomings {
+            if let Ok(_) = self
+                .wallet
+                .rpc
+                .get_raw_transaction_info(&incoming.contract_tx.txid(), None)
+            {
+                log::info!("Incoming Contract already broadacsted");
+            } else {
+                self.wallet
+                    .rpc
+                    .send_raw_transaction(&incoming.contract_tx)?;
+                log::info!(
+                    "Broadcasted Incoming Contract. Removing from wallet. Contract Txid {}",
+                    &incoming.contract_tx.txid()
+                );
+            }
+            let redeemscript = incoming.get_multisig_redeemscript();
+            log::info!(
+                "Incoming Swapcoin removed from wallet, Contact Txid: {}",
+                incoming.contract_tx.txid()
+            );
+            self.wallet.remove_incoming_swapcoin(&redeemscript)?;
+        }
+
+        let mut outgoing_infos = Vec::new();
+
+        // Broadcast the Outgoing Contracts
+        for outgoing in outgoings {
+            if let Ok(_) = self
+                .wallet
+                .rpc
+                .get_raw_transaction_info(&outgoing.contract_tx.txid(), None)
+            {
+                log::info!("Outgoing Contract already broadcasted");
+            } else {
+                self.wallet
+                    .rpc
+                    .send_raw_transaction(&outgoing.contract_tx)?;
+                log::info!(
+                    "Broadcasted Outgoing Contract, Contract txid : {}",
+                    &outgoing.contract_tx.txid()
+                );
+            }
+            let reedemscript = outgoing.get_multisig_redeemscript();
+            let timelock = outgoing.get_timelock();
+            let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
+            let timelock_spend = outgoing.create_timelock_spend(next_internal);
+            outgoing_infos.push((
+                (reedemscript, outgoing.contract_tx.clone()),
+                (timelock, timelock_spend),
+            ));
+        }
+
+        // Check for contract confirmations and broadcast timelocked transaction
+        let mut timelock_boardcasted = Vec::new();
+
+        loop {
+            for ((outgoing_reedemscript, contract), (timelock, timelocked_tx)) in
+                outgoing_infos.iter()
+            {
+                // We have already broadcasted this tx, so skip
+                if timelock_boardcasted.contains(&timelocked_tx) {
+                    continue;
+                }
+                // Check if the contract tx has reached required maturity
+                // Failure here means the transaction hasn't been broadcasted yet. So do nothing and try again.
+                if let Ok(result) = self
+                    .wallet
+                    .rpc
+                    .get_raw_transaction_info(&contract.txid(), None)
+                {
+                    log::info!(
+                        "Contract Tx : {}, reached confirmation : {:?}, required : {}",
+                        contract.txid(),
+                        result.confirmations,
+                        timelock
+                    );
+                    if let Some(confirmation) = result.confirmations {
+                        // Now the transaction is confirmed in a block, check for required maturity
+                        if confirmation > *timelock as u32 {
+                            log::info!(
+                                "Timelock maturity of {} blocks for Contract Tx is reached : {}",
+                                timelock,
+                                contract.txid()
+                            );
+                            log::info!("Broadcasting timelocked tx: {}", timelocked_tx.txid());
+                            self.wallet.rpc.send_raw_transaction(timelocked_tx).unwrap();
+                            timelock_boardcasted.push(timelocked_tx);
+
+                            let outgoing_removed = self
+                                .wallet
+                                .remove_outgoing_swapcoin(&outgoing_reedemscript)
+                                .unwrap()
+                                .expect("outgoing swapcoin expected");
+                            log::info!(
+                                "Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
+                                outgoing_removed.contract_tx.txid()
+                            );
+                        }
+                    }
+                }
+                // Everything is broadcasted. Clear the connectionstate and break the loop
+                if timelock_boardcasted.len() == outgoing_infos.len() {
+                    self.clear_ongoing_swaps();
+                    log::info!("All outgoing contracts reedemed. Cleared ongoing swap state",);
+                    self.wallet.sync()?;
+                    self.wallet.save_to_disk()?;
+                    return Ok(());
+                }
+            }
+            let block_wait_time = if cfg!(feature = "integration-test") {
+                Duration::from_secs(10)
+            } else {
+                Duration::from_secs(10 * 60)
+            };
+            std::thread::sleep(block_wait_time);
+        }
     }
 }
