@@ -45,12 +45,17 @@ The project follows the standard Rust build workflow and generates a CLI app nam
 cargo build
 ```
 
-The project includes both unit and integration tests. The integration tests simulate a standard coinswap protocol involving a Taker and two Makers.
+The project includes both unit and integration tests. The integration tests simulates various edge cases of the coinswap protocol.
 
-Run integration tests with:
+To run the unit tests:
+```sh
+cargo test
+```
+
+To run the integration tests, `--features integration-test` must be enabled. Run integration tests with:
 
 ```sh
-cargo test test_standard_coinswap
+cargo test --features integration-test
 ```
 
 For manual swaps using the `teleport` app, follow the instructions in [run_coinswap](./docs/run_teleport.md).
@@ -68,18 +73,21 @@ If you're interested in contributing to the project, explore the [open issues](h
 ### Beta Release
 - [x] Basic protocol workflow with integration tests.
 - [x] Modularize protocol components.
-- [ ] Refine logging information.
+- [x] Refine logging information.
+- [ ] Fix all clippy warnings.
+- [x] Abort Case 1: Taker aborts after setup. Makers identify this, and gets their fund back via contract tx.
+- [ ] Abort Case 2: One of the Maker aborts after setup. Taker and other Makers identify this and get their funds back via contract tx. Taker bans the aborting Maker's fidelity bond.
+- [ ] Malice Case 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
+- [ ] Malice Case 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
 - [ ] Achieve >80% test coverage, including bad and recovery paths in integration tests.
 - [ ] Switch to binary encoding for wallet data storage and network messages.
 - [ ] Implement configuration file support for Takers and Makers.
-- [ ] Deploy standalone binaries for Maker and Watchtower.
-- [ ] Introduce watchtower service fee.
+- [ ] Deploy standalone binaries for Maker.
 - [ ] Secure wallet file storage through encryption.
-- [ ] Design robust wallet backup mechanism.
-- [ ] Implement fidelity bond banning for misbehaving Makers.
 - [ ] Establish Maker marketplace via nostr relays.
-- [ ] Deploy Maker binary as a Cyphernode app.
-- [ ] Create Flutter FFI for Taker library, demoable via web/mobile app.
+- [ ] Create FFIs for Taker library.
+- [ ] Develop an example web Taker client.
+- [ ] Deploy Makers in Signet, and Demo coinswap via an example Taker client.
 
 ### Further Improvements
 - [ ] Implement UTXO merging and branch-out via swap for improved UTXO management.
