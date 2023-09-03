@@ -23,7 +23,10 @@ use tokio::{
 pub use maker::{Maker, MakerBehavior};
 
 use crate::{
-    maker::{handlers::handle_message, maker::ConnectionState},
+    maker::{
+        handlers::handle_message,
+        maker::{check_for_idle_states, ConnectionState},
+    },
     market::directory::post_maker_address_to_directory_servers,
     protocol::messages::{MakerHello, MakerToTakerMessage, TakerToMakerMessage},
     utill::send_message,
@@ -60,6 +63,16 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut accepting_clients = true;
     let mut last_rpc_ping = Instant::now();
     let mut last_directory_servers_refresh = Instant::now();
+
+    let maker_clone_1 = maker.clone();
+
+    std::thread::spawn(move || {
+        log::info!(
+            "[{}] Spawning Connection status check thread",
+            maker_clone_1.config.port
+        );
+        check_for_idle_states(maker_clone_1);
+    });
 
     // Loop to keep checking for new connections
     loop {
@@ -134,12 +147,9 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
         // Spawn a thread to handle one taker connection.
         tokio::spawn(async move {
+            log::info!("[{}] Spawning Handler Thread", maker_clone.config.port);
             let (socket_reader, mut socket_writer) = socket.split();
             let mut reader = BufReader::new(socket_reader);
-
-            //let mut maker_writer = arc_maker.write().await;
-
-            // Push a default connection state for this new connection.
 
             let mut connection_state = ConnectionState::default();
 
@@ -163,7 +173,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                     readline_ret = reader.read_line(&mut line) => {
                         match readline_ret {
                             Ok(n) if n == 0 => {
-                                log::info!("[{}] Connection closed by peer", addr.port());
+                                log::info!("[{}] Connection closed by peer", maker_clone.config.port);
                                 break;
                             }
                             Ok(_n) => (),
@@ -184,7 +194,8 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 log::info!("[{}] <=== {} ", maker_clone.config.port, message);
 
                 let message_result: Result<Option<MakerToTakerMessage>, MakerError> =
-                    handle_message(&maker_clone, &mut connection_state, message).await;
+                    handle_message(&maker_clone, &mut connection_state, message, addr.ip()).await;
+
                 match message_result {
                     Ok(reply) => {
                         if let Some(message) = reply {

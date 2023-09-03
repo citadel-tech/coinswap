@@ -359,21 +359,21 @@ impl Wallet {
 
     pub fn find_incoming_swapcoin(
         &self,
-        multisig_redeemscript: &Script,
+        multisig_redeemscript: &ScriptBuf,
     ) -> Option<&IncomingSwapCoin> {
         self.store.incoming_swapcoins.get(multisig_redeemscript)
     }
 
     pub fn find_outgoing_swapcoin(
         &self,
-        multisig_redeemscript: &Script,
+        multisig_redeemscript: &ScriptBuf,
     ) -> Option<&OutgoingSwapCoin> {
         self.store.outgoing_swapcoins.get(multisig_redeemscript)
     }
 
     pub fn find_incoming_swapcoin_mut(
         &mut self,
-        multisig_redeemscript: &Script,
+        multisig_redeemscript: &ScriptBuf,
     ) -> Option<&mut IncomingSwapCoin> {
         self.store.incoming_swapcoins.get_mut(multisig_redeemscript)
     }
@@ -390,8 +390,42 @@ impl Wallet {
             .insert(coin.get_multisig_redeemscript(), coin.clone());
     }
 
+    pub fn remove_incoming_swapcoin(
+        &mut self,
+        multisig_redeemscript: &ScriptBuf,
+    ) -> Result<Option<IncomingSwapCoin>, WalletError> {
+        Ok(self.store.incoming_swapcoins.remove(multisig_redeemscript))
+    }
+
+    pub fn remove_outgoing_swapcoin(
+        &mut self,
+        multisig_redeemscript: &ScriptBuf,
+    ) -> Result<Option<OutgoingSwapCoin>, WalletError> {
+        Ok(self.store.outgoing_swapcoins.remove(multisig_redeemscript))
+    }
+
+    pub fn get_incoming_swapcoin_list(
+        &self,
+    ) -> Result<&HashMap<ScriptBuf, IncomingSwapCoin>, WalletError> {
+        Ok(&self.store.incoming_swapcoins)
+    }
+
+    pub fn get_outgoing_swapcoin_list(
+        &self,
+    ) -> Result<&HashMap<ScriptBuf, OutgoingSwapCoin>, WalletError> {
+        Ok(&self.store.outgoing_swapcoins)
+    }
+
     pub fn get_swapcoins_count(&self) -> usize {
         self.store.incoming_swapcoins.len() + self.store.outgoing_swapcoins.len()
+    }
+
+    pub fn get_wallet_balance(&self) -> Result<Amount, WalletError> {
+        Ok(self
+            .rpc
+            .list_unspent(None, None, None, None, None)?
+            .iter()
+            .fold(Amount::ZERO, |a, x| a + x.amount))
     }
 
     //this function is used in two places
@@ -886,6 +920,36 @@ impl Wallet {
             };
         }
         Ok(incomplete_swapcoin_groups)
+    }
+
+    // A simplification of the above function
+    pub fn find_unfinished_swapcoins(&self) -> (Vec<IncomingSwapCoin>, Vec<OutgoingSwapCoin>) {
+        let unfinished_incomins = self
+            .store
+            .incoming_swapcoins
+            .iter()
+            .filter_map(|(_, ic)| {
+                if ic.other_privkey.is_none() {
+                    Some(ic.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let unfinished_outgoings = self
+            .store
+            .outgoing_swapcoins
+            .iter()
+            .filter_map(|(_, oc)| {
+                if oc.hash_preimage.is_none() {
+                    Some(oc.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        (unfinished_incomins, unfinished_outgoings)
     }
 
     // live contract refers to a contract tx which has been broadcast

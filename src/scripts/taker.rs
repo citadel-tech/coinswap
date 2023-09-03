@@ -6,6 +6,8 @@ use crate::{
     wallet::{RPCConfig, WalletMode},
 };
 
+use crate::taker::TakerBehavior;
+
 pub fn run_taker(
     wallet_file: &PathBuf,
     wallet_mode: Option<WalletMode>,
@@ -14,6 +16,7 @@ pub fn run_taker(
     send_amount: u64,
     maker_count: u16,
     tx_count: u32,
+    behavior: Option<TakerBehavior>,
 ) {
     let swap_params = SwapParams {
         send_amount,
@@ -22,5 +25,5 @@ pub fn run_taker(
         required_confirms: 1, // TODO: make it input params.
         fee_rate,
     };
-    taker::start_taker(rpc_config, wallet_file, wallet_mode, swap_params)
+    taker::start_taker(rpc_config, wallet_file, wallet_mode, swap_params, behavior)
 }

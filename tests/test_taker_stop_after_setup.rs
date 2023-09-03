@@ -1,23 +1,22 @@
 #![cfg(feature = "integration-test")]
 use bitcoin::Amount;
-use teleport::{
-    maker::MakerBehavior,
-    test_commons::*,
-    wallet::{fidelity::YearAndMonth, RPCConfig, Wallet, WalletMode},
-};
-
 use std::{
     fs,
     path::PathBuf,
+    str::FromStr,
     sync::{Arc, RwLock},
     thread,
     time::Duration,
 };
-
-use std::str::FromStr;
+use teleport::{
+    maker::MakerBehavior,
+    taker::{Taker, TakerBehavior},
+    test_commons::*,
+    wallet::{RPCConfig, Wallet, WalletMode},
+};
 
 #[tokio::test]
-async fn test_standard_coinswap() {
+async fn test_stop_taker_after_setup() {
     teleport::scripts::setup_logger();
 
     let test_framework = Arc::new(TestFrameWork::new(None));
@@ -32,10 +31,6 @@ async fn test_standard_coinswap() {
 
     let mut maker2_rpc_config = rpc_config.clone();
     maker2_rpc_config.wallet_name = "maker_2".to_string();
-
-    // // unlock all utxos to avoid "insufficient fund" error
-    // rpc.call::<Value>("lockunspent", &[Value::Bool(true)])
-    //     .unwrap();
 
     // create temp dir to hold wallet and .dat files if not exists
     if !std::path::Path::new(TEMP_FILES_DIR).exists() {
@@ -67,17 +62,6 @@ async fn test_standard_coinswap() {
         test_framework.send_to_address(&maker2_address, Amount::from_btc(0.05).unwrap());
     }
 
-    // Create a fidelity bond for each maker
-    let maker1_fbond_address = maker1_wallet
-        .get_timelocked_address(&YearAndMonth::new(2030, 1))
-        .0;
-    let maker2_fbond_address = maker2_wallet
-        .get_timelocked_address(&YearAndMonth::new(2030, 1))
-        .0;
-
-    test_framework.send_to_address(&maker1_fbond_address, Amount::from_btc(0.05).unwrap());
-    test_framework.send_to_address(&maker2_fbond_address, Amount::from_btc(0.05).unwrap());
-
     test_framework.generate_1_block();
 
     // Check inital wallet assertions
@@ -97,20 +81,23 @@ async fn test_standard_coinswap() {
             .list_unspent_from_wallet(false, true)
             .unwrap()
             .len(),
-        4
+        3
     );
     assert_eq!(
         maker2_wallet
             .list_unspent_from_wallet(false, true)
             .unwrap()
             .len(),
-        4
+        3
     );
 
     assert_eq!(taker_wallet.lock_all_nonwallet_unspents().unwrap(), ());
     assert_eq!(maker1_wallet.lock_all_nonwallet_unspents().unwrap(), ());
     assert_eq!(maker2_wallet.lock_all_nonwallet_unspents().unwrap(), ());
 
+    let org_maker1_balanace = maker1_wallet.get_wallet_balance().unwrap();
+    let org_maker2_balance = maker2_wallet.get_wallet_balance().unwrap();
+    let org_taker_balance = taker_wallet.get_wallet_balance().unwrap();
     let kill_flag = Arc::new(RwLock::new(false));
 
     let maker1_config_clone = maker1_rpc_config.clone();
@@ -153,7 +140,7 @@ async fn test_standard_coinswap() {
             500000,
             2,
             3,
-            None,
+            Some(TakerBehavior::DropConnectionAfterFullSetup),
         );
     });
 
@@ -161,7 +148,7 @@ async fn test_standard_coinswap() {
     let kill_block_creation_clone = kill_flag.clone();
     let block_creation_thread = thread::spawn(move || {
         while !*kill_block_creation_clone.read().unwrap() {
-            thread::sleep(Duration::from_secs(5));
+            thread::sleep(Duration::from_secs(1));
             test_frameowrk_ptr.generate_1_block();
             log::info!("created block");
         }
@@ -169,14 +156,37 @@ async fn test_standard_coinswap() {
     });
 
     taker_thread.join().unwrap();
-    *kill_flag.write().unwrap() = true;
+    // Makers will auto shutdown after successful redeem of timelocks.
     maker1_thread.join().unwrap();
     maker2_thread.join().unwrap();
+
+    // Both Makers should see no swapcoins in their wallet after successful redeem.
+    assert_eq!(maker1_wallet.get_swapcoins_count(), 0);
+    assert_eq!(maker2_wallet.get_swapcoins_count(), 0);
+
+    // Re-Initialize the Taker
+    let mut taker = Taker::init(
+        &PathBuf::from_str(TAKER).unwrap(),
+        Some(taker_rpc_config),
+        Some(WalletMode::Testing),
+        TakerBehavior::None,
+    )
+    .await
+    .unwrap();
+
+    // Taker still has 6 swapcoins in its list
+    assert_eq!(taker.get_wallet().get_swapcoins_count(), 6);
+
+    //Run Recovery script
+    taker.recover_from_swap().unwrap();
+
+    // All pending swapcoins are cleared now.
+    assert_eq!(taker.get_wallet().get_swapcoins_count(), 0);
+
+    // Finally stop block generation
+    *kill_flag.write().unwrap() = true;
     block_creation_thread.join().unwrap();
 
-    // Recreate the wallet
-    let taker_wallet =
-        Wallet::load(&taker_rpc_config, &TAKER.into(), Some(WalletMode::Testing)).unwrap();
     let maker1_wallet = Wallet::load(
         &maker1_rpc_config,
         &MAKER1.into(),
@@ -190,38 +200,17 @@ async fn test_standard_coinswap() {
     )
     .unwrap();
 
-    // Check assertions
-    assert_eq!(taker_wallet.get_swapcoins_count(), 6);
-    assert_eq!(maker1_wallet.get_swapcoins_count(), 6);
-    assert_eq!(maker2_wallet.get_swapcoins_count(), 6);
+    let maker1_balance = maker1_wallet.get_wallet_balance().unwrap();
 
-    let utxos = taker_wallet.list_unspent_from_wallet(false, false).unwrap();
-    let balance: Amount = utxos
-        .iter()
-        .fold(Amount::ZERO, |acc, (u, _)| acc + u.amount);
-    assert_eq!(utxos.len(), 6);
-    assert!(balance < Amount::from_btc(0.15).unwrap());
+    let maker2_balance = maker2_wallet.get_wallet_balance().unwrap();
 
-    let utxos = maker1_wallet
-        .list_unspent_from_wallet(false, false)
-        .unwrap();
-    let balance: Amount = utxos
-        .iter()
-        .fold(Amount::ZERO, |acc, (u, _)| acc + u.amount);
-    assert_eq!(utxos.len(), 6);
-    assert!(balance > Amount::from_btc(0.15).unwrap());
+    let taker_balance = taker.get_wallet_balance().unwrap();
 
-    let utxos = maker2_wallet
-        .list_unspent_from_wallet(false, false)
-        .unwrap();
-    let balance: Amount = utxos
-        .iter()
-        .fold(Amount::ZERO, |acc, (u, _)| acc + u.amount);
-    assert_eq!(utxos.len(), 6);
-    assert!(balance > Amount::from_btc(0.15).unwrap());
+    assert_eq!(org_maker1_balanace - maker1_balance, Amount::from_sat(4227));
+    assert_eq!(org_maker2_balance - maker2_balance, Amount::from_sat(4227));
+    assert_eq!(org_taker_balance - taker_balance, Amount::from_sat(4227));
 
-    // Remove test temp files and dir
+    // Remove test temp files and stop testframework
     fs::remove_dir_all::<PathBuf>(TEMP_FILES_DIR.into()).unwrap();
-
     test_framework.stop();
 }

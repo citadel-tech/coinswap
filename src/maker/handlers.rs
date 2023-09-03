@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{net::IpAddr, sync::Arc, time::Instant};
 
 use bitcoin::{
     hashes::Hash,
@@ -41,6 +41,7 @@ pub async fn handle_message(
     maker: &Arc<Maker>,
     connection_state: &mut ConnectionState,
     message: TakerToMakerMessage,
+    ip: IpAddr,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     let outgoing_message = match connection_state.allowed_message {
         ExpectedMessage::TakerHello => {
@@ -81,7 +82,7 @@ pub async fn handle_message(
             TakerToMakerMessage::RespProofOfFunding(proof) => {
                 connection_state.allowed_message =
                     ExpectedMessage::ProofOfFundingORContractSigsForRecvrAndSender;
-                Some(maker.handle_proof_of_funding(connection_state, proof)?)
+                Some(maker.handle_proof_of_funding(connection_state, proof, ip)?)
             }
             TakerToMakerMessage::ReqContractSigsForRecvr(message) => {
                 connection_state.allowed_message = ExpectedMessage::HashPreimage;
@@ -113,7 +114,7 @@ pub async fn handle_message(
             if let TakerToMakerMessage::RespProofOfFunding(proof) = message {
                 connection_state.allowed_message =
                     ExpectedMessage::ProofOfFundingORContractSigsForRecvrAndSender;
-                Some(maker.handle_proof_of_funding(connection_state, proof)?)
+                Some(maker.handle_proof_of_funding(connection_state, proof, ip)?)
             } else {
                 return Err(MakerError::UnexpectedMessage {
                     expected: "Proof OF Funding".to_string(),
@@ -126,13 +127,13 @@ pub async fn handle_message(
                 TakerToMakerMessage::RespProofOfFunding(proof) => {
                     connection_state.allowed_message =
                         ExpectedMessage::ProofOfFundingORContractSigsForRecvrAndSender;
-                    Some(maker.handle_proof_of_funding(connection_state, proof)?)
+                    Some(maker.handle_proof_of_funding(connection_state, proof, ip)?)
                 }
                 TakerToMakerMessage::RespContractSigsForRecvrAndSender(message) => {
                     // Nothing to send. Maker now creates and broadcasts his funding Txs
                     connection_state.allowed_message = ExpectedMessage::ReqContractSigsForRecvr;
                     maker
-                        .handle_senders_and_receivers_contract_sigs(connection_state, message)
+                        .handle_senders_and_receivers_contract_sigs(connection_state, message, ip)
                         .await?;
                     None
                 }
@@ -230,6 +231,7 @@ impl Maker {
         &self,
         connection_state: &mut ConnectionState,
         message: ProofOfFunding,
+        ip: IpAddr,
     ) -> Result<MakerToTakerMessage, MakerError> {
         // Basic verification of ProofOfFunding Message.
         // Check function definition for all the checks performed.
@@ -407,6 +409,12 @@ impl Maker {
             })
             .collect::<Vec<SenderContractTxInfo>>();
 
+        // Update the connection state.
+        self.connection_state
+            .write()
+            .unwrap()
+            .insert(ip, (connection_state.clone(), Instant::now()));
+
         Ok(MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(
             ContractSigsAsRecvrAndSender {
                 receivers_contract_txs,
@@ -420,6 +428,7 @@ impl Maker {
         &self,
         connection_state: &mut ConnectionState,
         message: ContractSigsForRecvrAndSender,
+        ip: IpAddr,
     ) -> Result<(), MakerError> {
         if message.receivers_sigs.len() != connection_state.incoming_swapcoins.len() {
             return Err(MakerError::General(
@@ -476,10 +485,11 @@ impl Maker {
             wallet_writer.save_to_disk()?;
         }
 
-        // Set the swapcoins info to empty as they have been saved to the wallet by this point.
-        connection_state.incoming_swapcoins = Vec::new();
-        connection_state.outgoing_swapcoins = Vec::new();
-        connection_state.pending_funding_txes = Vec::new();
+        // Update the connection state.
+        self.connection_state
+            .write()
+            .unwrap()
+            .insert(ip, (connection_state.clone(), Instant::now()));
 
         Ok(())
     }

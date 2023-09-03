@@ -200,6 +200,7 @@ fn main() -> Result<(), TeleportError> {
                 send_amount,
                 maker_count,
                 tx_count,
+                None,
             );
         }
         WalletArgsSubcommand::RecoverFromIncompleteCoinswap { hashvalue } => {

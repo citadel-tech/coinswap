@@ -9,6 +9,8 @@ pub mod market;
 pub mod protocol;
 pub mod scripts;
 pub mod taker;
+#[cfg(feature = "integration-test")]
+pub mod test_commons;
 pub mod utill;
 pub mod wallet;
 // Diasable watchtower for now. Handle contract watching
