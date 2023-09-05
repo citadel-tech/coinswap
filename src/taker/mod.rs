@@ -22,17 +22,9 @@ pub async fn start_taker(
     wallet_file: &PathBuf,
     wallet_mode: Option<WalletMode>,
     swap_params: SwapParams,
-    behavior: Option<TakerBehavior>,
+    behavior: TakerBehavior,
 ) {
-    match run(
-        rpc_config,
-        wallet_file,
-        wallet_mode,
-        swap_params,
-        behavior.unwrap_or_default(),
-    )
-    .await
-    {
+    match run(rpc_config, wallet_file, wallet_mode, swap_params, behavior).await {
         Ok(_o) => (),
         Err(e) => log::error!("err {:?}", e),
     };

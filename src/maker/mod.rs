@@ -92,9 +92,12 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                         }
                         continue;
                     },
-                    _ => log::error!("ending server"),
+                    _ => {
+                        log::error!("[{}] Maker Handling Error : {:?}", maker.config.port, client_err.unwrap());
+                        maker.shutdown()?;
+                    }
                 }
-                break Err(client_err.unwrap());
+                break Ok(());
             },
             _ = sleep(Duration::from_secs(maker.config.heart_beat_interval_secs)) => {
                 if *maker.shutdown.read()? {
@@ -209,7 +212,6 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                         //if reply is None then dont send anything to client
                     }
                     Err(err) => {
-                        log::error!("error handling client request: {:?}", err);
                         server_loop_comms_tx.send(err).await.unwrap();
                         break;
                     }

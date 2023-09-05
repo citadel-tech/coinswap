@@ -2,6 +2,7 @@ pub static TEMP_FILES_DIR: &str = "tests/temp-files";
 pub static TAKER: &str = "tests/temp-files/taker-wallet";
 pub static MAKER1: &str = "tests/temp-files/maker-wallet-1";
 pub static MAKER2: &str = "tests/temp-files/maker-wallet-2";
+pub static MAKER3: &str = "tests/temp-files/maker-wallet-3";
 
 // Helper function to create new wallet
 pub fn create_wallet_and_import(filename: PathBuf, rpc_config: &RPCConfig) -> Wallet {
@@ -113,10 +114,3 @@ impl From<&TestFrameWork> for RPCConfig {
         }
     }
 }
-
-// impl Drop for TestFrameWork {
-//     fn drop(&mut self) {
-//         log::info!("Stopping bitcoind");
-//         let _ = self.bitcoind.client.stop().unwrap();
-//     }
-// }

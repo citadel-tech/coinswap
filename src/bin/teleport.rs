@@ -19,6 +19,7 @@ use coinswap::{
             print_fidelity_bond_address, print_receive_invoice, recover_wallet,
         },
     },
+    taker::TakerBehavior,
     wallet::{
         fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, RPCConfig,
         SendAmount, WalletMode,
@@ -200,7 +201,7 @@ fn main() -> Result<(), TeleportError> {
                 send_amount,
                 maker_count,
                 tx_count,
-                None,
+                TakerBehavior::Normal,
             );
         }
         WalletArgsSubcommand::RecoverFromIncompleteCoinswap { hashvalue } => {

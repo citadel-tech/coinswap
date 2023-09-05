@@ -16,7 +16,7 @@ pub fn run_taker(
     send_amount: u64,
     maker_count: u16,
     tx_count: u32,
-    behavior: Option<TakerBehavior>,
+    behavior: TakerBehavior,
 ) {
     let swap_params = SwapParams {
         send_amount,
