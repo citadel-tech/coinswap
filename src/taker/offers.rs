@@ -55,30 +55,44 @@ impl fmt::Display for MakerAddress {
 // TODO: Persist the offerbook in disk.
 #[derive(Debug, Default)]
 pub struct OfferBook {
-    all_makers: HashSet<OfferAndAddress>,
-    good_makers: HashSet<OfferAndAddress>,
-    bad_makers: HashSet<OfferAndAddress>,
+    all_makers: Vec<OfferAndAddress>,
+    good_makers: Vec<OfferAndAddress>,
+    bad_makers: Vec<OfferAndAddress>,
 }
 
 impl OfferBook {
-    pub fn get_all_untried(&self) -> HashSet<OfferAndAddress> {
-        // TODO: Remove the clones and return BTreeSet<&OfferAndAddress>
+    pub fn get_all_untried(&self) -> Vec<&OfferAndAddress> {
         self.all_makers
-            .difference(&self.bad_makers.union(&self.good_makers).cloned().collect())
-            .cloned()
+            .iter()
+            .filter(|offer| !self.good_makers.contains(offer) && !self.bad_makers.contains(offer))
             .collect()
     }
 
     pub fn add_new_offer(&mut self, offer: &OfferAndAddress) -> bool {
-        self.all_makers.insert(offer.clone())
+        if !self.all_makers.contains(offer) {
+            self.all_makers.push(offer.clone());
+            true
+        } else {
+            false
+        }
     }
 
     pub fn add_good_maker(&mut self, good_maker: &OfferAndAddress) -> bool {
-        self.good_makers.insert(good_maker.clone())
+        if !self.good_makers.contains(good_maker) {
+            self.good_makers.push(good_maker.clone());
+            true
+        } else {
+            false
+        }
     }
 
     pub fn add_bad_maker(&mut self, bad_maker: &OfferAndAddress) -> bool {
-        self.bad_makers.insert(bad_maker.clone())
+        if !self.bad_makers.contains(bad_maker) {
+            self.bad_makers.push(bad_maker.clone());
+            true
+        } else {
+            false
+        }
     }
 
     pub async fn sync_offerbook(
@@ -100,6 +114,10 @@ impl OfferBook {
         });
 
         Ok(new_offers)
+    }
+
+    pub fn get_bad_makers(&self) -> Vec<&OfferAndAddress> {
+        self.bad_makers.iter().collect()
     }
 }
 
