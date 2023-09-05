@@ -17,6 +17,7 @@ use std::{
     time::Duration,
 };
 
+use bip39::Mnemonic;
 use bitcoind::bitcoincore_rpc::RpcApi;
 use tokio::{net::TcpStream, select, time::sleep};
 
@@ -120,7 +121,7 @@ struct NextPeerInfo {
 pub enum TakerBehavior {
     // No special behavior
     #[default]
-    None,
+    Normal,
     // This depicts the behavior when the taker drops connections after the full coinswap setup
     DropConnectionAfterFullSetup,
 }
@@ -149,22 +150,26 @@ impl Taker {
         wallet_mode: Option<WalletMode>,
         behavior: TakerBehavior,
     ) -> Result<Taker, TeleportError> {
-        let mut offerbook = OfferBook::default();
+        let mut wallet = if wallet_file.exists() {
+            Wallet::load(&rpc_config.unwrap_or_default(), wallet_file, wallet_mode)?
+        } else {
+            let mnemonic = Mnemonic::generate(12).unwrap();
+            let seedphrase = mnemonic.to_string();
+            Wallet::init(
+                wallet_file,
+                &rpc_config.unwrap_or_default(),
+                seedphrase,
+                "".to_string(),
+                wallet_mode,
+            )?
+        };
 
-        let config = TakerConfig::default();
+        wallet.sync()?;
 
-        let wallet = Wallet::load(&rpc_config.unwrap_or_default(), wallet_file, wallet_mode)?;
-
-        let got_offers = offerbook
-            .sync_offerbook(wallet.store.network, &config)
-            .await?;
-
-        log::info!("<=== Got Offers ({} offers)", got_offers.len());
-        log::debug!("Offers : {:#?}", got_offers);
         Ok(Self {
             wallet,
-            config: config,
-            offerbook,
+            config: TakerConfig::default(),
+            offerbook: OfferBook::default(),
             ongoing_swap_state: OngoingSwapState::default(),
             behavior,
         })
@@ -172,6 +177,10 @@ impl Taker {
 
     pub fn get_wallet(&self) -> &Wallet {
         &self.wallet
+    }
+
+    pub fn get_wallet_mut(&mut self) -> &mut Wallet {
+        &mut self.wallet
     }
 
     pub fn get_wallet_balance(&self) -> Result<Amount, TeleportError> {
@@ -183,6 +192,14 @@ impl Taker {
     /// If [SwapParams] doesn't fit suitably with any available offers, or not enough makers
     /// respond back, the swap round will fail.
     pub async fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TeleportError> {
+        let got_offers = self
+            .offerbook
+            .sync_offerbook(self.wallet.store.network, &self.config)
+            .await?;
+
+        log::info!("<=== Got Offers ({} offers)", got_offers.len());
+        log::debug!("Offers : {:#?}", got_offers);
+
         // Generate new random preimage and initiate the first hop.
         let mut preimage = [0u8; 32];
         OsRng.fill_bytes(&mut preimage);
@@ -1385,7 +1402,7 @@ impl Taker {
     // ######## UTILITY AND HELPERS ############
 
     /// Choose a suitable **untried** maker address from the offerbook that fits the swap params.
-    fn choose_next_maker(&self) -> Result<OfferAndAddress, TeleportError> {
+    fn choose_next_maker(&self) -> Result<&OfferAndAddress, TeleportError> {
         let send_amount = self.ongoing_swap_state.swap_params.send_amount;
         if send_amount == 0 {
             return Err(TeleportError::Protocol("Coinswap send amount not set!!"));
@@ -1398,8 +1415,7 @@ impl Taker {
             .find(|oa| send_amount > oa.offer.min_size && send_amount < oa.offer.max_size)
             .ok_or(TeleportError::Protocol(
                 "Could not find suitable maker matching requirements of swap parameters",
-            ))?
-            .clone())
+            ))?)
     }
 
     /// Get the [Preimage] of the ongoing swap. If no swap is in progress will return a `[0u8; 32]`.
@@ -1415,6 +1431,10 @@ impl Taker {
     /// Clear the [OngoingSwapState].
     fn clear_ongoing_swaps(&mut self) {
         self.ongoing_swap_state = OngoingSwapState::default();
+    }
+
+    pub fn get_bad_makers(&self) -> Vec<&OfferAndAddress> {
+        self.offerbook.get_bad_makers()
     }
 
     /// Save all the finalized swap data and reset the [OngoingSwapState].
