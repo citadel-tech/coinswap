@@ -76,7 +76,8 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [x] Refine logging information.
 - [ ] Fix all clippy warnings.
 - [x] Abort Case 1: Taker aborts after setup. Makers identify this, and gets their fund back via contract tx.
-- [ ] Abort Case 2: One of the Maker aborts after setup. Taker and other Makers identify this and get their funds back via contract tx. Taker bans the aborting Maker's fidelity bond.
+- [ ] Abort Case 2: One Maker aborts **before setup**. Taker retaliates by banning the maker, moving on with other makers, if it can't find enough makers, then recovering via contract transactions.
+- [ ] Abort Case 3: Maker aborts **after setup**. Taker and other Makers identify this and recovers back via contract tx. Taker bans the aborting Maker's fidelity bond.
 - [ ] Malice Case 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
 - [ ] Malice Case 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
 - [ ] Achieve >80% test coverage, including bad and recovery paths in integration tests.
