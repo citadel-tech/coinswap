@@ -2,6 +2,7 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::MakerBehavior,
+    taker::TakerBehavior,
     test_commons::*,
     wallet::{fidelity::YearAndMonth, RPCConfig, Wallet, WalletMode},
 };
@@ -16,6 +17,8 @@ use std::{
 
 use std::str::FromStr;
 
+/// This test demonstrates a standard coinswap round between a Taker and 2 Makers. Nothing goes wrong
+/// and the coinswap completes successfully.
 #[tokio::test]
 async fn test_standard_coinswap() {
     coinswap::scripts::setup_logger();
@@ -153,7 +156,7 @@ async fn test_standard_coinswap() {
             500000,
             2,
             3,
-            None,
+            TakerBehavior::Normal,
         );
     });
 
