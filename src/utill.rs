@@ -185,3 +185,58 @@ pub fn to_hex(bytes: &Vec<u8>) -> String {
 
     hex_string
 }
+
+#[cfg(test)]
+mod tests {
+    use bitcoin::blockdata::{opcodes::all, script::Builder};
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn test_convert_json_rpc_bitcoin_to_satoshis() {
+        // Test with an integer value
+        let amount = json!(1);
+        assert_eq!(convert_json_rpc_bitcoin_to_satoshis(&amount), 100_000_000);
+
+        // Test with a very large value
+        let amount = json!(12345678.12345678);
+        assert_eq!(
+            convert_json_rpc_bitcoin_to_satoshis(&amount),
+            1_234_567_812_345_678
+        );
+    }
+
+    #[test]
+    fn test_to_hex_empty_bytes() {
+        let bytes: Vec<u8> = Vec::new();
+        assert_eq!(to_hex(&bytes), "");
+    }
+
+    #[test]
+    fn test_to_hex_single_byte() {
+        let bytes: Vec<u8> = vec![0xAB];
+        assert_eq!(to_hex(&bytes), "ab");
+    }
+
+    #[test]
+    fn test_to_hex_multiple_bytes() {
+        let bytes: Vec<u8> = vec![0x12, 0x34, 0x56, 0xFF];
+        assert_eq!(to_hex(&bytes), "123456ff");
+    }
+
+    #[test]
+    fn test_redeemscript_to_scriptpubkey() {
+        // Create a custom puzzle script
+        let puzzle_script = Builder::new()
+            .push_opcode(all::OP_ADD)
+            .push_opcode(all::OP_PUSHNUM_2)
+            .push_opcode(all::OP_EQUAL)
+            .into_script();
+        // Compare the redeemscript_to_scriptpubkey output with the expected value in hex
+        assert_eq!(
+            redeemscript_to_scriptpubkey(&puzzle_script).to_hex_string(),
+            "0020c856c4dcad54542f34f0889a0c12acf2951f3104c85409d8b70387bbb2e95261"
+        );
+    }
+}
