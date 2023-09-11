@@ -15,15 +15,15 @@
 
 ## About
 
-Teleport Transactions is a Rust implementation of the Coinswap protocol on Bitcoin. The Coinswap protocol enhances privacy on the Bitcoin network, specifically addressing transaction ownership traceability through chain analysis.
+Teleport Transactions is a rust implementation of a variant of atomic-swap protocol, using HTLCs on Bitcoin.
 
-Imagine Alice wants to send bitcoin with maximum privacy. She initiates a unique transaction that appears ordinary on the blockchain, with her coins seemingly moving from address A to B. However, the coins actually end up in an unrelated address Z. This process confounds any attempt to trace ownership.
+Mailing list post: [here](https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-October/018221.html)
 
-This protocol also benefits users like Carol, who use regular wallets. Her transactions appear the same as Alice's, adding uncertainty to any analysis. Even users unaware of this software enjoy improved privacy.
+Detailed design, [here](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964)
 
-In a world where privacy is vital due to data collection by advertisers and institutions, this enhancement is significant. Moreover, it bolsters Bitcoin's fungibility, making it a more effective form of currency.
+Developer's Doc: [here](/docs/developer_resources.md)
 
-For detailed design, refer to the [Design for a CoinSwap Implementation for Massively Improving Bitcoin Privacy and Fungibility](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964) document.
+Run Demo: [here](/docs/run_teleport.md)
 
 ## Architecture
 

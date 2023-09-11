@@ -8,7 +8,7 @@ use std::{
     thread,
     time::Duration,
 };
-use teleport::{
+use coinswap::{
     maker::MakerBehavior,
     taker::{Taker, TakerBehavior},
     test_commons::*,
@@ -17,7 +17,7 @@ use teleport::{
 
 #[tokio::test]
 async fn test_stop_taker_after_setup() {
-    teleport::scripts::setup_logger();
+    coinswap::scripts::setup_logger();
 
     let test_framework = Arc::new(TestFrameWork::new(None));
 
@@ -103,7 +103,7 @@ async fn test_stop_taker_after_setup() {
     let maker1_config_clone = maker1_rpc_config.clone();
     let kill_flag_maker_1 = kill_flag.clone();
     let maker1_thread = thread::spawn(move || {
-        teleport::scripts::maker::run_maker(
+        coinswap::scripts::maker::run_maker(
             &PathBuf::from_str(MAKER1).unwrap(),
             &maker1_config_clone,
             6102,
@@ -117,7 +117,7 @@ async fn test_stop_taker_after_setup() {
     let maker2_config_clone = maker2_rpc_config.clone();
     let kill_flag_maker_2 = kill_flag.clone();
     let maker2_thread = thread::spawn(move || {
-        teleport::scripts::maker::run_maker(
+        coinswap::scripts::maker::run_maker(
             &PathBuf::from_str(MAKER2).unwrap(),
             &maker2_config_clone,
             16102,
@@ -132,7 +132,7 @@ async fn test_stop_taker_after_setup() {
     let taker_thread = thread::spawn(|| {
         // Wait and then start the taker
         thread::sleep(Duration::from_secs(20));
-        teleport::scripts::taker::run_taker(
+        coinswap::scripts::taker::run_taker(
             &PathBuf::from_str(TAKER).unwrap(),
             Some(WalletMode::Testing),
             Some(taker_config_clone), /* Default RPC */

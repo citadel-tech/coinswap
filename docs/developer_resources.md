@@ -1,12 +1,23 @@
 # Developer resources
 
 <!-- TOC -->
-- [How CoinSwap works](#how-coinswap-works)
-- [Notes on architecture](#notes-on-architecture)
-- [Protocol between takers and makers](#protocol-between-takers-and-makers)
-- [Code Structure](#code-structure)
-- [Further reading](#further-reading)
+- [Developer resources](#developer-resources)
+  - [What it is](#what-it-is)
+  - [How CoinSwap works](#how-coinswap-works)
+  - [Notes on architecture](#notes-on-architecture)
+  - [Protocol between takers and makers](#protocol-between-takers-and-makers)
+  - [Code Structure](#code-structure)
+  - [Further reading](#further-reading)
 <!-- /TOC -->
+
+## What it is
+The Coinswap protocol enhances privacy on the Bitcoin network, specifically addressing transaction ownership traceability through chain analysis.
+
+Imagine Alice wants to send bitcoin with maximum privacy. She initiates a unique transaction that appears ordinary on the blockchain, with her coins seemingly moving from address A to B. However, the coins actually end up in an unrelated address Z. This process confounds any attempt to trace ownership.
+
+This protocol also benefits users like Carol, who use regular wallets. Her transactions appear the same as Alice's, adding uncertainty to any analysis. Even users unaware of this software enjoy improved privacy.
+
+In a world where privacy is vital due to data collection by advertisers and institutions, this enhancement is significant. Moreover, it bolsters Bitcoin's fungibility, making it a more effective form of currency.
 
 ## How CoinSwap works
 

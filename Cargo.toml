@@ -1,5 +1,5 @@
 [package]
-name = "teleport"
+name = "coinswap"
 version = "0.1.0"
 authors = ["chris-belcher <chris-belcher@users.noreply.github.com>"]
 edition = "2018"

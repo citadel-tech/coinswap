@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use teleport::{
+use coinswap::{
     error::TeleportError,
     maker::MakerBehavior,
     scripts::{
