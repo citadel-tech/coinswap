@@ -1,5 +1,11 @@
 #![cfg(feature = "integration-test")]
 use bitcoin::Amount;
+use coinswap::{
+    maker::MakerBehavior,
+    taker::{Taker, TakerBehavior},
+    test_commons::*,
+    wallet::{RPCConfig, Wallet, WalletMode},
+};
 use std::{
     fs,
     path::PathBuf,
@@ -7,12 +13,6 @@ use std::{
     sync::{Arc, RwLock},
     thread,
     time::Duration,
-};
-use coinswap::{
-    maker::MakerBehavior,
-    taker::{Taker, TakerBehavior},
-    test_commons::*,
-    wallet::{RPCConfig, Wallet, WalletMode},
 };
 
 #[tokio::test]
