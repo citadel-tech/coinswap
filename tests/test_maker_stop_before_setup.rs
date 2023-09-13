@@ -1,5 +1,11 @@
 #![cfg(feature = "integration-test")]
 use bitcoin::Amount;
+use coinswap::{
+    maker::MakerBehavior,
+    taker::{SwapParams, Taker, TakerBehavior},
+    test_commons::*,
+    wallet::{RPCConfig, WalletMode},
+};
 use std::{
     fs,
     path::PathBuf,
@@ -8,12 +14,6 @@ use std::{
     thread,
     time::Duration,
 };
-use teleport::{
-    maker::MakerBehavior,
-    taker::{SwapParams, Taker, TakerBehavior},
-    test_commons::*,
-    wallet::{RPCConfig, WalletMode},
-};
 
 /// This test demonstrates the situation where a Maker prematurely drops connections after doing
 /// initial protocol handshake. This should not necessarily disrupt the round, the Taker will try to find
@@ -21,7 +21,7 @@ use teleport::{
 /// not swap this maker again.
 #[tokio::test]
 async fn test_abort_case_2_move_on_with_other_makers() {
-    teleport::scripts::setup_logger();
+    coinswap::scripts::setup_logger();
 
     let test_framework = Arc::new(TestFrameWork::new(None));
 
@@ -123,7 +123,7 @@ async fn test_abort_case_2_move_on_with_other_makers() {
     let maker1_config_clone = maker1_rpc_config.clone();
     let kill_flag_maker_1 = kill_flag.clone();
     let maker1_thread = thread::spawn(move || {
-        teleport::scripts::maker::run_maker(
+        coinswap::scripts::maker::run_maker(
             &PathBuf::from_str(MAKER1).unwrap(),
             &maker1_config_clone,
             6102,
@@ -137,7 +137,7 @@ async fn test_abort_case_2_move_on_with_other_makers() {
     let maker2_config_clone = maker2_rpc_config.clone();
     let kill_flag_maker_2 = kill_flag.clone();
     let maker3_thread = thread::spawn(move || {
-        teleport::scripts::maker::run_maker(
+        coinswap::scripts::maker::run_maker(
             &PathBuf::from_str(MAKER2).unwrap(),
             &maker2_config_clone,
             16102,
@@ -151,7 +151,7 @@ async fn test_abort_case_2_move_on_with_other_makers() {
     let maker3_config_clone = maker3_rpc_config.clone();
     let kill_flag_maker_3 = kill_flag.clone();
     let maker2_thread = thread::spawn(move || {
-        teleport::scripts::maker::run_maker(
+        coinswap::scripts::maker::run_maker(
             &PathBuf::from_str(MAKER3).unwrap(),
             &maker3_config_clone,
             26102,

@@ -6,6 +6,7 @@ use std::{
     time::Instant,
 };
 
+use bip39::Mnemonic;
 use bitcoin::{
     secp256k1::{self, ecdsa::Signature, Secp256k1},
     OutPoint, PublicKey, ScriptBuf, Transaction,
@@ -83,14 +84,27 @@ impl Maker {
     /// Initialize a Maker structure, with a given wallet file path, rpc configuration,
     /// listening ort, onion address, wallet and special maker behavior.
     pub fn init(
-        wallet_file_name: &PathBuf,
+        wallet_file: &PathBuf,
         rpc_config: &RPCConfig,
         port: u16,
         onion_addrs: String,
         wallet_mode: Option<WalletMode>,
         behavior: MakerBehavior,
     ) -> Result<Self, MakerError> {
-        let mut wallet = Wallet::load(&rpc_config, wallet_file_name, wallet_mode)?;
+        // Load if exists, else create new.
+        let mut wallet = if wallet_file.exists() {
+            Wallet::load(&rpc_config, wallet_file, wallet_mode)?
+        } else {
+            let mnemonic = Mnemonic::generate(12).unwrap();
+            let seedphrase = mnemonic.to_string();
+            Wallet::init(
+                wallet_file,
+                &rpc_config,
+                seedphrase,
+                "".to_string(),
+                wallet_mode,
+            )?
+        };
         wallet.sync()?;
         Ok(Self {
             behavior,
@@ -106,6 +120,10 @@ impl Maker {
         let mut flag = self.shutdown.write()?;
         *flag = true;
         Ok(())
+    }
+
+    pub fn get_wallet(&self) -> &RwLock<Wallet> {
+        &self.wallet
     }
 
     /// Checks consistency of the [ProofOfFunding] message and return the Hashvalue

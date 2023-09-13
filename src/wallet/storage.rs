@@ -4,7 +4,7 @@ use std::{collections::HashMap, convert::TryFrom, io::Read, path::PathBuf};
 
 use bip39::Mnemonic;
 use bitcoin::{bip32::ExtendedPrivKey, Network, OutPoint, ScriptBuf};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 
 use super::{error::WalletError, SwapCoin};
 
@@ -151,7 +151,8 @@ impl FileData {
 
     // Overwrite existing file or create a new one.
     fn save_to_file(&self, path: &PathBuf) -> Result<(), WalletError> {
-        let file = File::create(path)?;
+        std::fs::create_dir_all(path.parent().expect("path should not be root"))?;
+        let file = OpenOptions::new().write(true).create(true).open(&path)?;
         serde_json::to_writer(file, &self)?;
         Ok(())
     }
