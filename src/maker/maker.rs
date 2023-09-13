@@ -273,6 +273,91 @@ impl Maker {
     }
 }
 
+/// Constantly keep checking for contract transactions in the bitcoin network for all
+/// unsettled swap. If any one of the is ever observed, run the recovery routine.
+pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerError> {
+    let mut failed_swap_ip = Vec::new();
+    loop {
+        if *maker.shutdown.read()? {
+            break;
+        }
+
+        // Clear failed swap ip entry from connection state.
+        for ip in failed_swap_ip.iter() {
+            maker.connection_state.write()?.remove(&ip);
+        }
+
+        for (ip, (connection_state, _)) in maker.connection_state.read()?.iter() {
+            let txids_to_watch = connection_state
+                .incoming_swapcoins
+                .iter()
+                .map(|is| is.contract_tx.txid())
+                .chain(
+                    connection_state
+                        .outgoing_swapcoins
+                        .iter()
+                        .map(|oc| oc.contract_tx.txid()),
+                )
+                .collect::<Vec<_>>();
+
+            // No need to check for other contracts in the connection state, if any one of them
+            // is ever observed in the mempool/block, run recovery routine.
+            for txid in txids_to_watch {
+                if let Ok(_) = maker
+                    .wallet
+                    .read()?
+                    .rpc
+                    .get_raw_transaction_info(&txid, None)
+                {
+                    let mut outgoings = Vec::new();
+                    let mut incomings = Vec::new();
+                    // Something is broadcasted. Report, Recover and Abort.
+                    log::error!(
+                        "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
+                        txid,
+                        maker.config.port
+                    );
+                    // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
+                    // fully signed.
+                    for (og_sc, ic_sc) in connection_state
+                        .outgoing_swapcoins
+                        .iter()
+                        .zip(connection_state.incoming_swapcoins.iter())
+                    {
+                        let contract_timelock = og_sc.get_timelock();
+                        let contract = og_sc.get_fully_signed_contract_tx().unwrap();
+                        let next_internal_address = &maker
+                            .wallet
+                            .read()
+                            .unwrap()
+                            .get_next_internal_addresses(1)?[0];
+                        let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
+                        outgoings.push((
+                            (og_sc.get_multisig_redeemscript(), contract),
+                            (contract_timelock, time_lock_spend),
+                        ));
+                        let incoming_contract = ic_sc.get_fully_signed_contract_tx().unwrap();
+                        incomings.push((ic_sc.get_multisig_redeemscript(), incoming_contract));
+                    }
+                    failed_swap_ip.push(ip.clone());
+                    // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
+                    let maker_clone = maker.clone();
+                    log::info!(
+                        "[{}] Spawning Broadcast Contract and Timelock Thread",
+                        maker.config.port
+                    );
+                    std::thread::spawn(move || {
+                        broadcast_contracts_and_timelocks(maker_clone, outgoings, incomings);
+                    });
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
+    }
+
+    Ok(())
+}
+
 /// Check that if any Taker connection went idle.
 /// If a connection remains idle for more than idle timeout time, thats a potential DOS attack.
 /// Broadcast the contract transactions and claim funds via timelock.
@@ -332,8 +417,11 @@ pub fn check_for_idle_states(maker: Arc<Maker>) {
                 bad_ip.push(ip.clone());
                 // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
                 let maker_clone = maker.clone();
+                log::info!(
+                    "[{}] Spawning Broadcast Contract and Timelock Thread",
+                    maker.config.port
+                );
                 std::thread::spawn(move || {
-                    log::info!("Spawning Broadcast Contract and Timelock Thread");
                     broadcast_contracts_and_timelocks(maker_clone, outgoings, incomings);
                 });
             }

@@ -25,7 +25,7 @@ pub use maker::{Maker, MakerBehavior};
 use crate::{
     maker::{
         handlers::handle_message,
-        maker::{check_for_idle_states, ConnectionState},
+        maker::{check_for_broadcasted_contracts, check_for_idle_states, ConnectionState},
     },
     market::directory::post_maker_address_to_directory_servers,
     protocol::messages::{MakerHello, MakerToTakerMessage, TakerToMakerMessage},
@@ -65,13 +65,21 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut last_directory_servers_refresh = Instant::now();
 
     let maker_clone_1 = maker.clone();
-
     std::thread::spawn(move || {
         log::info!(
             "[{}] Spawning Connection status check thread",
             maker_clone_1.config.port
         );
         check_for_idle_states(maker_clone_1);
+    });
+
+    let maker_clone_2 = maker.clone();
+    std::thread::spawn(move || {
+        log::info!(
+            "[{}] Spawning contract-wathcer thread",
+            maker_clone_2.config.port
+        );
+        check_for_broadcasted_contracts(maker_clone_2).unwrap();
     });
 
     // Loop to keep checking for new connections
@@ -94,6 +102,8 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                     },
                     _ => {
                         log::error!("[{}] Maker Handling Error : {:?}", maker.config.port, client_err.unwrap());
+                        // This will happen either in special Maker behavior, or via something in the inetrnal.
+                        // in any case, call shutdown instead of hard error.
                         maker.shutdown()?;
                     }
                 }
