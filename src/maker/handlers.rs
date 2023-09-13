@@ -391,6 +391,20 @@ impl Maker {
             connection_state.outgoing_swapcoins,
         );
 
+        // Save things to disk after Proof of Funding is confirmed.
+        {
+            let mut wallet_writer = self.wallet.write()?;
+            for (incoming_sc, outgoing_sc) in connection_state
+                .incoming_swapcoins
+                .iter()
+                .zip(connection_state.outgoing_swapcoins.iter())
+            {
+                wallet_writer.add_incoming_swapcoin(incoming_sc);
+                wallet_writer.add_outgoing_swapcoin(outgoing_sc);
+            }
+            wallet_writer.save_to_disk()?;
+        }
+
         // Craft ReqContractSigsAsRecvrAndSender message to send to the Taker.
         let receivers_contract_txs = connection_state
             .incoming_swapcoins
