@@ -41,7 +41,7 @@ use crate::{
     taker::{config::TakerConfig, offers::OfferBook},
     wallet::{
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletMode,
-        WatchOnlySwapCoin,
+        WalletSwapCoin, WatchOnlySwapCoin,
     },
 };
 
@@ -226,9 +226,20 @@ impl Taker {
 
             let funding_tx_infos = self.funding_info_for_next_maker();
 
-            let (next_swap_info, contract_sigs_as_recvr_and_sender) = self
+            let (next_swap_info, contract_sigs_as_recvr_and_sender) = match self
                 .send_sigs_init_next_hop(maker_refund_locktime, &funding_tx_infos)
-                .await?;
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    // Next swap hop initialization failed. Probably because suitable makers not found.
+                    // Abort the current swap and recover. Don't throw hard error.
+                    log::info!("Could not initiate next hop. Error : {:?}", e);
+                    log::info!("Starting recovery from existing swap");
+                    self.recover_from_swap()?;
+                    return Ok(());
+                }
+            };
 
             self.ongoing_swap_state
                 .peer_infos
@@ -611,12 +622,16 @@ impl Taker {
                     match ret {
                         Ok(return_value) => return Ok(return_value),
                         Err(e) => {
-                            log::warn!(
+                            log::error!(
                                 "Failed to exchange signatures with maker {}, \
                                 reattempting... error={:?}",
                                 &self.ongoing_swap_state.peer_infos.last().expect("at least one active maker expected").peer.address,
                                 e
                             );
+                            // If its a protocol error and not just connection error, scream hard.
+                            if let TeleportError::Protocol(_) = e {
+                                return Err(e)
+                            }
                             if ii <= self.config.reconnect_attempts {
                                 sleep(Duration::from_secs(
                                     if ii <= self.config.short_long_sleep_delay_transition {
@@ -1511,27 +1526,34 @@ impl Taker {
     pub fn recover_from_swap(&mut self) -> Result<(), TeleportError> {
         let (incomings, outgoings) = self.wallet.find_unfinished_swapcoins();
 
+        let incoming_contracts = incomings
+            .iter()
+            .map(|incoming| {
+                Ok((
+                    incoming.get_fully_signed_contract_tx()?,
+                    incoming.get_multisig_redeemscript(),
+                ))
+            })
+            .collect::<Result<Vec<_>, TeleportError>>()?;
+
         // Broadcasted incoming contracts and remove them from the wallet.
-        for incoming in incomings {
+        for (contract_tx, redeemscript) in &incoming_contracts {
             if let Ok(_) = self
                 .wallet
                 .rpc
-                .get_raw_transaction_info(&incoming.contract_tx.txid(), None)
+                .get_raw_transaction_info(&contract_tx.txid(), None)
             {
                 log::info!("Incoming Contract already broadacsted");
             } else {
-                self.wallet
-                    .rpc
-                    .send_raw_transaction(&incoming.contract_tx)?;
+                self.wallet.rpc.send_raw_transaction(contract_tx)?;
                 log::info!(
                     "Broadcasted Incoming Contract. Removing from wallet. Contract Txid {}",
-                    &incoming.contract_tx.txid()
+                    contract_tx.txid()
                 );
             }
-            let redeemscript = incoming.get_multisig_redeemscript();
             log::info!(
                 "Incoming Swapcoin removed from wallet, Contact Txid: {}",
-                incoming.contract_tx.txid()
+                contract_tx.txid()
             );
             self.wallet.remove_incoming_swapcoin(&redeemscript)?;
         }
@@ -1540,19 +1562,20 @@ impl Taker {
 
         // Broadcast the Outgoing Contracts
         for outgoing in outgoings {
+            let contract_tx = outgoing.get_fully_signed_contract_tx()?;
             if let Ok(_) = self
                 .wallet
                 .rpc
-                .get_raw_transaction_info(&outgoing.contract_tx.txid(), None)
+                .get_raw_transaction_info(&contract_tx.txid(), None)
             {
                 log::info!("Outgoing Contract already broadcasted");
             } else {
                 self.wallet
                     .rpc
-                    .send_raw_transaction(&outgoing.contract_tx)?;
+                    .send_raw_transaction(&contract_tx)?;
                 log::info!(
                     "Broadcasted Outgoing Contract, Contract txid : {}",
-                    &outgoing.contract_tx.txid()
+                    contract_tx.txid()
                 );
             }
             let reedemscript = outgoing.get_multisig_redeemscript();
@@ -1560,7 +1583,7 @@ impl Taker {
             let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
             let timelock_spend = outgoing.create_timelock_spend(next_internal);
             outgoing_infos.push((
-                (reedemscript, outgoing.contract_tx.clone()),
+                (reedemscript, contract_tx),
                 (timelock, timelock_spend),
             ));
         }
@@ -1568,8 +1591,9 @@ impl Taker {
         // Check for contract confirmations and broadcast timelocked transaction
         let mut timelock_boardcasted = Vec::new();
 
+        // Start the loop to keep checking for timelock maturity, and spend from the contract asap.
         loop {
-            for ((outgoing_reedemscript, contract), (timelock, timelocked_tx)) in
+            for ((reedemscript, contract), (timelock, timelocked_tx)) in
                 outgoing_infos.iter()
             {
                 // We have already broadcasted this tx, so skip
@@ -1603,7 +1627,7 @@ impl Taker {
 
                             let outgoing_removed = self
                                 .wallet
-                                .remove_outgoing_swapcoin(&outgoing_reedemscript)
+                                .remove_outgoing_swapcoin(&reedemscript)
                                 .unwrap()
                                 .expect("outgoing swapcoin expected");
                             log::info!(
@@ -1615,13 +1639,14 @@ impl Taker {
                 }
                 // Everything is broadcasted. Clear the connectionstate and break the loop
                 if timelock_boardcasted.len() == outgoing_infos.len() {
-                    self.clear_ongoing_swaps();
+                    self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
                     log::info!("All outgoing contracts reedemed. Cleared ongoing swap state",);
                     self.wallet.sync()?;
                     self.wallet.save_to_disk()?;
                     return Ok(());
                 }
             }
+            // Block wait time is varied between prod. and test builds.
             let block_wait_time = if cfg!(feature = "integration-test") {
                 Duration::from_secs(10)
             } else {
