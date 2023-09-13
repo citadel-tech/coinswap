@@ -1570,9 +1570,7 @@ impl Taker {
             {
                 log::info!("Outgoing Contract already broadcasted");
             } else {
-                self.wallet
-                    .rpc
-                    .send_raw_transaction(&contract_tx)?;
+                self.wallet.rpc.send_raw_transaction(&contract_tx)?;
                 log::info!(
                     "Broadcasted Outgoing Contract, Contract txid : {}",
                     contract_tx.txid()
@@ -1582,10 +1580,7 @@ impl Taker {
             let timelock = outgoing.get_timelock();
             let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
             let timelock_spend = outgoing.create_timelock_spend(next_internal);
-            outgoing_infos.push((
-                (reedemscript, contract_tx),
-                (timelock, timelock_spend),
-            ));
+            outgoing_infos.push(((reedemscript, contract_tx), (timelock, timelock_spend)));
         }
 
         // Check for contract confirmations and broadcast timelocked transaction
@@ -1593,9 +1588,7 @@ impl Taker {
 
         // Start the loop to keep checking for timelock maturity, and spend from the contract asap.
         loop {
-            for ((reedemscript, contract), (timelock, timelocked_tx)) in
-                outgoing_infos.iter()
-            {
+            for ((reedemscript, contract), (timelock, timelocked_tx)) in outgoing_infos.iter() {
                 // We have already broadcasted this tx, so skip
                 if timelock_boardcasted.contains(&timelocked_tx) {
                     continue;

@@ -352,10 +352,7 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
 
     // Assert that Taker burned the mining fees,
     // Maker is fine.
-    assert_eq!(
-        org_maker_2_balance - maker_2_balance,
-        Amount::from_sat(0)
-    );
+    assert_eq!(org_maker_2_balance - maker_2_balance, Amount::from_sat(0));
     assert_eq!(org_taker_balance - taker_balance, Amount::from_sat(4227));
 
     fs::remove_dir_all::<PathBuf>(TEMP_FILES_DIR.into()).unwrap();
