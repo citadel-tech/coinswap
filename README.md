@@ -74,12 +74,16 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [x] Basic protocol workflow with integration tests.
 - [x] Modularize protocol components.
 - [x] Refine logging information.
+- [x] Abort 1: Taker aborts after setup. Makers identify this, and gets their fund back via contract tx.
+- [x] Abort 2: One Maker aborts **before setup**. Taker retaliates by banning the maker, moving on with other makers, if it can't find enough makers, then recovering via contract transactions.
+  - [x] Case 1: Maker drops **before** sending sender's signature. Taker tries with another Maker and moves on.
+  - [x] Case 2: Maker drops **before** sending sender's signature. Taker doesn't have any new Maker. Recovers from swap.
+  - [x] Case 3: Maker drops **after** sending sender's signatures. Taker doesn't have any new Maker. Recovers from swap.
+- [ ] Finish building a flexible and robust Test-Framework with `bitcoind` backend.
+- [ ] Abort 3: Maker aborts **after setup**. Taker and other Makers identify this and recovers back via contract tx. Taker bans the aborting Maker's fidelity bond.
+- [ ] Malice 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
+- [ ] Malice 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
 - [ ] Fix all clippy warnings.
-- [x] Abort Case 1: Taker aborts after setup. Makers identify this, and gets their fund back via contract tx.
-- [ ] Abort Case 2: One Maker aborts **before setup**. Taker retaliates by banning the maker, moving on with other makers, if it can't find enough makers, then recovering via contract transactions.
-- [ ] Abort Case 3: Maker aborts **after setup**. Taker and other Makers identify this and recovers back via contract tx. Taker bans the aborting Maker's fidelity bond.
-- [ ] Malice Case 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
-- [ ] Malice Case 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
 - [ ] Achieve >80% test coverage, including bad and recovery paths in integration tests.
 - [ ] Switch to binary encoding for wallet data storage and network messages.
 - [ ] Implement configuration file support for Takers and Makers.
