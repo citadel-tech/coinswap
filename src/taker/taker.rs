@@ -611,6 +611,13 @@ impl Taker {
         funding_tx_infos: &Vec<FundingTxInfo>,
     ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TeleportError> {
         let reconnect_timeout_sec = self.config.reconnect_attempt_timeout_sec;
+        // Configurable reconnection attempts for testing
+        let reconnect_attempts = if cfg!(feature = "integration-test") {
+            10
+        } else {
+            self.config.reconnect_attempts
+        };
+
         let mut ii = 0;
         loop {
             ii += 1;
@@ -622,17 +629,18 @@ impl Taker {
                     match ret {
                         Ok(return_value) => return Ok(return_value),
                         Err(e) => {
+                            let maker = &self.ongoing_swap_state.peer_infos.last().expect("at least one active maker expected").peer;
                             log::error!(
                                 "Failed to exchange signatures with maker {}, \
                                 reattempting... error={:?}",
-                                &self.ongoing_swap_state.peer_infos.last().expect("at least one active maker expected").peer.address,
+                                &maker.address,
                                 e
                             );
                             // If its a protocol error and not just connection error, scream hard.
                             if let TeleportError::Protocol(_) = e {
                                 return Err(e)
                             }
-                            if ii <= self.config.reconnect_attempts {
+                            if ii <= reconnect_attempts {
                                 sleep(Duration::from_secs(
                                     if ii <= self.config.short_long_sleep_delay_transition {
                                         self.config.reconnect_short_sleep_delay
@@ -643,6 +651,9 @@ impl Taker {
                                 .await;
                                 continue;
                             } else {
+                                // Attempt count exceeded. Ban this maker.
+                                log::warn!("Connection attempt count exceeded with Maker:{}, Banning Maker.", maker.address);
+                                self.offerbook.add_bad_maker(&maker);
                                 return Err(e);
                             }
                         }
@@ -653,9 +664,13 @@ impl Taker {
                         "Timeout for exchange signatures with maker {}, reattempting...",
                         &self.ongoing_swap_state.peer_infos.last().expect("at least one active maker expected").peer.address
                     );
-                    if ii <= self.config.reconnect_attempts {
+                    if ii <= reconnect_attempts {
                         continue;
                     } else {
+                        // Timeout exceeded. Ban this maker.
+                        let maker = &self.ongoing_swap_state.peer_infos.last().expect("atleast one maker expected at this stage").peer;
+                        log::warn!("Connection timeout exceeded with Maker:{}, Banning Maker.", maker.address);
+                        self.offerbook.add_bad_maker(maker);
                         return Err(TeleportError::Protocol(
                             "Timed out of exchange_signatures_and_find_next_maker attempt"));
                     }
@@ -765,7 +780,7 @@ impl Taker {
                 )
                 .await?;
             log::info!(
-                "<=== Recieved SignSendersAndReceiversContractTxes from {}",
+                "<=== Recieved ContractSigsAsRecvrAndSender from {}",
                 this_maker.address
             );
 
