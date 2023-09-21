@@ -5,7 +5,7 @@ pub static MAKER2: &str = "tests/temp-files/maker-wallet-2";
 pub static MAKER3: &str = "tests/temp-files/maker-wallet-3";
 
 // Helper function to create new wallet
-pub fn create_wallet_and_import(filename: PathBuf, rpc_config: &RPCConfig) -> Wallet {
+pub fn create_wallet_and_import(filename: &PathBuf, rpc_config: &RPCConfig) -> Wallet {
     if filename.exists() {
         fs::remove_file(&filename).unwrap();
     }
@@ -24,6 +24,18 @@ pub fn create_wallet_and_import(filename: PathBuf, rpc_config: &RPCConfig) -> Wa
     wallet.sync().unwrap();
 
     wallet
+}
+
+use bitcoin::secp256k1::rand::{distributions::Alphanumeric, thread_rng, Rng}; // 0.8
+
+pub fn get_random_tmp_dir() -> PathBuf {
+    let s: String = thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(8)
+        .map(char::from)
+        .collect();
+    let path = "tests/temp-files/".to_string() + &s;
+    PathBuf::from(path)
 }
 
 use std::{fs, path::PathBuf};
