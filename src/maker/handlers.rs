@@ -185,7 +185,7 @@ impl Maker {
         &self,
         message: ReqContractSigsForSender,
     ) -> Result<MakerToTakerMessage, MakerError> {
-        if let MakerBehavior::CloseOnSignSendersContractTx = self.behavior {
+        if let MakerBehavior::CloseBeforeSendingSendersSigs = self.behavior {
             return Err(MakerError::General(
                 "closing connection early due to special maker behavior",
             ));
@@ -233,6 +233,12 @@ impl Maker {
         message: ProofOfFunding,
         ip: IpAddr,
     ) -> Result<MakerToTakerMessage, MakerError> {
+        if let MakerBehavior::CloseAfterSendingSendersSigs = self.behavior {
+            return Err(MakerError::General(
+                "Special Behavior: Closing connection after sending sender's signatures",
+            ));
+        }
+
         // Basic verification of ProofOfFunding Message.
         // Check function definition for all the checks performed.
         let hashvalue = self.verify_proof_of_funding(&message)?;

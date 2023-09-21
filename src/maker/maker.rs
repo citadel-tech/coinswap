@@ -37,7 +37,8 @@ use super::{config::MakerConfig, error::MakerError};
 #[derive(Debug, Clone, Copy)]
 pub enum MakerBehavior {
     Normal,
-    CloseOnSignSendersContractTx,
+    CloseBeforeSendingSendersSigs,
+    CloseAfterSendingSendersSigs,
 }
 /// A structure denoting expectation of type of taker message.
 /// Used in the [ConnectionState] structure.
@@ -314,8 +315,8 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                     // Something is broadcasted. Report, Recover and Abort.
                     log::error!(
                         "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
+                        maker.config.port,
                         txid,
-                        maker.config.port
                     );
                     // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
                     // fully signed.

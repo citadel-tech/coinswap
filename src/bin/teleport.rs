@@ -173,7 +173,7 @@ fn main() -> Result<(), TeleportError> {
             special_behavior,
         } => {
             let maker_special_behavior = match special_behavior.unwrap_or(String::new()).as_str() {
-                "closeonsignsenderscontracttx" => MakerBehavior::CloseOnSignSendersContractTx,
+                "closeonsignsenderscontracttx" => MakerBehavior::CloseBeforeSendingSendersSigs,
                 _ => MakerBehavior::Normal,
             };
             run_maker(
