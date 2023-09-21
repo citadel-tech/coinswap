@@ -15,6 +15,7 @@ use std::{
     time::Duration,
 };
 
+/// Abort 1: TAKER Drops After Full Setup.
 /// This test demonstrates the situation where the Taker drops connection after broadcasting all the
 /// funding transactions. The Makers identifies this and waits for a timeout (5mins in prod, 30 secs in test)
 /// for the Taker to come back. If the Taker doesn't come back within timeout, the Makers broadcasts the contract
@@ -39,19 +40,19 @@ async fn test_stop_taker_after_setup() {
     let mut maker2_rpc_config = rpc_config.clone();
     maker2_rpc_config.wallet_name = "maker_2".to_string();
 
-    // create temp dir to hold wallet and .dat files if not exists
-    if !std::path::Path::new(TEMP_FILES_DIR).exists() {
-        fs::create_dir::<PathBuf>(TEMP_FILES_DIR.into()).unwrap();
+    // Start from fresh temp dir
+    if PathBuf::from_str(TEMP_FILES_DIR).unwrap().exists() {
+        fs::remove_dir_all::<PathBuf>(TEMP_FILES_DIR.into()).unwrap();
     }
 
     // create taker wallet
-    let mut taker_wallet = create_wallet_and_import(TAKER.into(), &taker_rpc_config);
+    let mut taker_wallet = create_wallet_and_import(&TAKER.into(), &taker_rpc_config);
 
     // create maker1 wallet
-    let mut maker1_wallet = create_wallet_and_import(MAKER1.into(), &maker1_rpc_config);
+    let mut maker1_wallet = create_wallet_and_import(&MAKER1.into(), &maker1_rpc_config);
 
     // create maker2 wallet
-    let mut maker2_wallet = create_wallet_and_import(MAKER2.into(), &maker2_rpc_config);
+    let mut maker2_wallet = create_wallet_and_import(&MAKER2.into(), &maker2_rpc_config);
 
     // Check files are created
     assert!(std::path::Path::new(TAKER).exists());
