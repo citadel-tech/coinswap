@@ -36,6 +36,7 @@ use crate::{
 use crate::maker::error::MakerError;
 
 /// Start the Maker server loop
+#[tokio::main]
 pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::debug!("Running maker with special behavior = {:?}", maker.behavior);
     maker.wallet.write()?.refresh_offer_maxsize_cache()?;
@@ -111,7 +112,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             },
             _ = sleep(Duration::from_secs(maker.config.heart_beat_interval_secs)) => {
                 if *maker.shutdown.read()? {
-                    log::info!("Maker is shutting down");
+                    log::warn!("[{}] Maker is shutting down", maker.config.port);
                     break Ok(());
                 }
                 let mut rpc_ping_success = true;

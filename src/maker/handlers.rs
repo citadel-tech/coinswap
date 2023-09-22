@@ -302,16 +302,22 @@ impl Maker {
                 funding_output
             );
 
-            connection_state
+            // Taker can send same funding transactions twice. Happens when one maker in the
+            // path fails. Only add it if it din't already existed.
+            let incoming_swapcoin = IncomingSwapCoin::new(
+                multisig_privkey,
+                other_pubkey,
+                receiver_contract_tx.clone(),
+                funding_info.contract_redeemscript.clone(),
+                hashlock_privkey,
+                funding_output.value,
+            );
+            if !connection_state
                 .incoming_swapcoins
-                .push(IncomingSwapCoin::new(
-                    multisig_privkey,
-                    other_pubkey,
-                    receiver_contract_tx.clone(),
-                    funding_info.contract_redeemscript.clone(),
-                    hashlock_privkey,
-                    funding_output.value,
-                ));
+                .contains(&incoming_swapcoin)
+            {
+                connection_state.incoming_swapcoins.push(incoming_swapcoin);
+            }
         }
 
         // Calculate output amounts for the next hop

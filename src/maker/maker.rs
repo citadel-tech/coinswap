@@ -276,11 +276,6 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
             break;
         }
 
-        // Clear failed swap ip entry from connection state.
-        for ip in failed_swap_ip.iter() {
-            maker.connection_state.write()?.remove(&ip);
-        }
-
         for (ip, (connection_state, _)) in maker.connection_state.read()?.iter() {
             let txids_to_watch = connection_state
                 .incoming_swapcoins
@@ -319,21 +314,36 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                         .zip(connection_state.incoming_swapcoins.iter())
                     {
                         let contract_timelock = og_sc.get_timelock();
-                        let contract = og_sc.get_fully_signed_contract_tx().unwrap();
                         let next_internal_address = &maker
                             .wallet
                             .read()
                             .unwrap()
                             .get_next_internal_addresses(1)?[0];
                         let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
-                        outgoings.push((
-                            (og_sc.get_multisig_redeemscript(), contract),
-                            (contract_timelock, time_lock_spend),
-                        ));
-                        let incoming_contract = ic_sc.get_fully_signed_contract_tx().unwrap();
-                        incomings.push((ic_sc.get_multisig_redeemscript(), incoming_contract));
+
+                        // Sometimes we might not have other's contact signatures.
+                        if let Ok(tx) = og_sc.get_fully_signed_contract_tx() {
+                            outgoings.push((
+                                (og_sc.get_multisig_redeemscript(), tx),
+                                (contract_timelock, time_lock_spend),
+                            ))
+                        } else {
+                            log::warn!(
+                                "[{}] Outgoing contact signature not known. Not Broadcasting",
+                                maker.config.port
+                            );
+                        };
+                        if let Ok(tx) = ic_sc.get_fully_signed_contract_tx() {
+                            incomings.push((ic_sc.get_multisig_redeemscript(), tx));
+                        } else {
+                            log::warn!(
+                                "[{}] Incoming contact signature not known. Not Broadcasting",
+                                maker.config.port
+                            );
+                        }
                     }
                     failed_swap_ip.push(ip.clone());
+
                     // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
                     let maker_clone = maker.clone();
                     log::info!(
@@ -343,8 +353,14 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                     std::thread::spawn(move || {
                         broadcast_contracts_and_timelocks(maker_clone, outgoings, incomings);
                     });
+                    break;
                 }
             }
+        }
+
+        // Clear failed swap ip entry from connection state.
+        for ip in failed_swap_ip.iter() {
+            maker.connection_state.write()?.remove(&ip);
         }
         std::thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
     }
@@ -363,11 +379,6 @@ pub fn check_for_idle_states(maker: Arc<Maker>) {
         }
         let current_time = Instant::now();
 
-        // Clear previously known disconnected taker
-        for ip in bad_ip.iter() {
-            maker.connection_state.write().unwrap().remove(&ip);
-        }
-
         for (ip, (state, last_connected_time)) in maker.connection_state.read().unwrap().iter() {
             let mut outgoings = Vec::new();
             let mut incomings = Vec::new();
@@ -380,7 +391,7 @@ pub fn check_for_idle_states(maker: Arc<Maker>) {
                 no_response_since
             );
             if no_response_since > std::time::Duration::from_secs(30) {
-                log::info!(
+                log::error!(
                     "[{}] Potential Dropped Connection from {}",
                     maker.config.port,
                     ip
@@ -418,7 +429,12 @@ pub fn check_for_idle_states(maker: Arc<Maker>) {
                 std::thread::spawn(move || {
                     broadcast_contracts_and_timelocks(maker_clone, outgoings, incomings);
                 });
+                break;
             }
+        }
+        // Clear previously known disconnected taker
+        for ip in bad_ip.iter() {
+            maker.connection_state.write().unwrap().remove(&ip);
         }
         std::thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
     }
@@ -574,7 +590,6 @@ pub fn broadcast_contracts_and_timelocks(
                 );
             }
             maker.wallet.write().unwrap().sync().unwrap();
-            maker.wallet.read().unwrap().save_to_disk().unwrap();
             // For test, shutdown the maker at this stage.
             #[cfg(feature = "integration-test")]
             maker.shutdown().unwrap();
