@@ -97,7 +97,9 @@ macro_rules! impl_walletswapcoin {
 
             fn get_fully_signed_contract_tx(&self) -> Result<Transaction, WalletError> {
                 if self.others_contract_sig.is_none() {
-                    panic!("invalid state: others_contract_sig not known");
+                    return Err(WalletError::Protocol(
+                        "Other's contract signature not known".to_string(),
+                    ));
                 }
                 let my_pubkey = self.get_my_pubkey();
                 let multisig_redeemscript =

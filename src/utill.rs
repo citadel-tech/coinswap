@@ -1,6 +1,6 @@
 //! Various Utility and Helper functions used in both Taker and Maker protocols.
 
-use std::io::ErrorKind;
+use std::{io::ErrorKind, sync::Once};
 
 use bitcoin::{
     address::{WitnessProgram, WitnessVersion},
@@ -36,6 +36,18 @@ pub fn str_to_bitcoin_network(net_str: &str) -> Network {
         "regtest" => Network::Regtest,
         _ => panic!("unknown network: {}", net_str),
     }
+}
+
+/// Setup function that will only run once, even if called multiple times.
+pub fn setup_logger() {
+    Once::new().call_once(|| {
+        env_logger::Builder::from_env(
+            env_logger::Env::default()
+                .default_filter_or("coinswap=info")
+                .default_write_style_or("always"),
+        )
+        .init();
+    });
 }
 
 /// Can send both Taker and Maker messages

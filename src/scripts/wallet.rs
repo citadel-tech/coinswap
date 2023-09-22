@@ -10,7 +10,7 @@ use bip39::Mnemonic;
 
 use crate::wallet::{
     fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, RPCConfig, SendAmount,
-    WalletError, WalletMode, WalletSwapCoin,
+    WalletError, WalletSwapCoin,
 };
 
 use crate::protocol::contract::read_contract_locktime;
@@ -25,6 +25,8 @@ use std::iter::repeat;
 /// should be reachable before this call.
 ///
 /// This function can also be used to restore a wallet file with initial seed and passphrase.
+///
+// TODO: Remove these scripts. Remake them in actual wallet API if required.
 pub fn generate_wallet(
     wallet_file: &PathBuf,
     rpc_config: Option<RPCConfig>,
@@ -41,7 +43,6 @@ pub fn generate_wallet(
         &rpc_config,
         mnemonic.to_string(),
         passphrase.clone(),
-        Some(WalletMode::Normal),
     )?;
 
     println!("Importing addresses into Core. . .");
@@ -108,11 +109,7 @@ pub fn display_wallet_balance(
     rpc_config: Option<RPCConfig>,
     long_form: Option<bool>,
 ) -> Result<(), WalletError> {
-    let mut wallet = Wallet::load(
-        &rpc_config.unwrap_or_default(),
-        wallet_file,
-        None, /* Normal mode by default */
-    )?;
+    let mut wallet = Wallet::load(&rpc_config.unwrap_or_default(), wallet_file)?;
 
     wallet.sync()?;
 
@@ -337,13 +334,13 @@ pub fn display_wallet_addresses(
     wallet_file_name: &PathBuf,
     types: DisplayAddressType,
 ) -> Result<(), WalletError> {
-    let wallet = Wallet::load(&RPCConfig::default(), wallet_file_name, None)?;
+    let wallet = Wallet::load(&RPCConfig::default(), wallet_file_name)?;
     wallet.display_addresses(types)?;
     Ok(())
 }
 
 pub fn print_receive_invoice(wallet_file_name: &PathBuf) -> Result<(), WalletError> {
-    let mut wallet = Wallet::load(&RPCConfig::default(), wallet_file_name, None)?;
+    let mut wallet = Wallet::load(&RPCConfig::default(), wallet_file_name)?;
     wallet.sync()?;
 
     let addr = wallet.get_next_external_address()?;
@@ -357,7 +354,7 @@ pub fn print_fidelity_bond_address(
     wallet_file_name: &PathBuf,
     locktime: &YearAndMonth,
 ) -> Result<(), WalletError> {
-    let mut wallet = Wallet::load(&RPCConfig::default(), wallet_file_name, None)?;
+    let mut wallet = Wallet::load(&RPCConfig::default(), wallet_file_name)?;
     wallet.sync()?;
 
     let (addr, unix_locktime) = wallet.get_timelocked_address(locktime);
@@ -392,7 +389,7 @@ pub fn direct_send(
     coins_to_spend: &[CoinToSpend],
     dont_broadcast: bool,
 ) -> Result<(), WalletError> {
-    let mut wallet = Wallet::load(&RPCConfig::default(), wallet_file_name, None)?;
+    let mut wallet = Wallet::load(&RPCConfig::default(), wallet_file_name)?;
     wallet.sync()?;
     let tx = wallet
         .create_direct_send(fee_rate, send_amount, destination, coins_to_spend)

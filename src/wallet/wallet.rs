@@ -55,15 +55,7 @@ const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
 pub struct Wallet {
     pub(crate) rpc: Client,
     wallet_file_path: PathBuf,
-    mode: WalletMode,
     pub(crate) store: WalletStore,
-}
-
-#[derive(Default)]
-pub enum WalletMode {
-    #[default]
-    Normal,
-    Testing,
 }
 
 /// Speicfy the keychain derivation path from [`HARDENDED_DERIVATION`]
@@ -292,7 +284,6 @@ impl Wallet {
         rpc_config: &RPCConfig,
         seedphrase: String,
         passphrase: String,
-        mode: Option<WalletMode>,
     ) -> Result<Self, WalletError> {
         let store = WalletStore::init(
             rpc_config.wallet_name.clone(),
@@ -302,22 +293,16 @@ impl Wallet {
             passphrase,
         )?;
         let rpc = Client::try_from(rpc_config)?;
-        let mode = mode.unwrap_or_default();
         Ok(Self {
             rpc,
             wallet_file_path: path.clone(),
-            mode,
             store,
         })
     }
 
     /// Load wallet data from file and connects to a core RPC.
     /// The core rpc wallet name, and wallet_id field in the file should match.
-    pub fn load(
-        rpc_config: &RPCConfig,
-        path: &PathBuf,
-        mode: Option<WalletMode>,
-    ) -> Result<Wallet, WalletError> {
+    pub fn load(rpc_config: &RPCConfig, path: &PathBuf) -> Result<Wallet, WalletError> {
         let store = WalletStore::read_from_disk(path)?;
         if rpc_config.wallet_name != store.wallet_name.to_string() {
             return Err(WalletError::Protocol(
@@ -332,7 +317,6 @@ impl Wallet {
         let wallet = Self {
             rpc,
             wallet_file_path: path.clone(),
-            mode: mode.unwrap_or_default(),
             store,
         };
         Ok(wallet)
@@ -420,12 +404,15 @@ impl Wallet {
         self.store.incoming_swapcoins.len() + self.store.outgoing_swapcoins.len()
     }
 
-    pub fn get_wallet_balance(&self) -> Result<Amount, WalletError> {
+    pub fn balance(
+        &self,
+        live_contracts: bool,
+        fidelity_bonds: bool,
+    ) -> Result<Amount, WalletError> {
         Ok(self
-            .rpc
-            .list_unspent(None, None, None, None, None)?
+            .list_unspent_from_wallet(live_contracts, fidelity_bonds)?
             .iter()
-            .fold(Amount::ZERO, |a, x| a + x.amount))
+            .fold(Amount::ZERO, |a, (utxo, _)| a + utxo.amount))
     }
 
     //this function is used in two places
@@ -458,11 +445,12 @@ impl Wallet {
         })
     }
 
-    // TODO: Import address dynamically. Check for used address count, maintain gap limit of 20.
+    /// Dynamic address import count function. 10 for tests, 5000 for production.
     pub fn get_addrss_import_count(&self) -> u32 {
-        match self.mode {
-            WalletMode::Normal => 5000,
-            WalletMode::Testing => 6,
+        if cfg!(feature = "integration-test") {
+            10
+        } else {
+            5000
         }
     }
 

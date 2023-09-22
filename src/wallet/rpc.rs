@@ -78,6 +78,7 @@ fn list_wallet_dir(client: &Client) -> Result<Vec<String>, WalletError> {
 }
 
 impl Wallet {
+    /// Sync the wallet with bitcoind. Saves to disk.
     pub fn sync(&mut self) -> Result<(), WalletError> {
         // Create or load the watch-only bitcoin core wallet
         let wallet_name = &self.store.wallet_name;

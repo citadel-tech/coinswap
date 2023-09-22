@@ -1,28 +1,20 @@
-use bitcoin::hashes::hash160::Hash as Hash160;
 use clap::{Parser, Subcommand};
-use std::{
-    path::PathBuf,
-    sync::{Arc, RwLock},
-};
+use std::{path::PathBuf, sync::Arc};
 
 use coinswap::{
     error::TeleportError,
-    maker::MakerBehavior,
+    maker::{start_maker_server, Maker, MakerBehavior},
     scripts::{
-        maker::run_maker,
         market::download_and_display_offers,
-        recovery::recover_from_incomplete_coinswap,
-        setup_logger,
-        taker::run_taker,
         wallet::{
             direct_send, display_wallet_addresses, display_wallet_balance, generate_wallet,
             print_fidelity_bond_address, print_receive_invoice, recover_wallet,
         },
     },
-    taker::TakerBehavior,
+    taker::{SwapParams, Taker, TakerBehavior},
+    utill::setup_logger,
     wallet::{
-        fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, RPCConfig,
-        SendAmount, WalletMode,
+        fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, RPCConfig, SendAmount,
     },
 };
 
@@ -109,14 +101,6 @@ enum WalletArgsSubcommand {
         tx_count: u32,
     },
 
-    /// Broadcast contract transactions for incomplete coinswap. Locked up bitcoins are
-    /// returned to your wallet after the timeout
-    RecoverFromIncompleteCoinswap {
-        /// Hashvalue as hex string which uniquely identifies the coinswap
-        #[arg(long)]
-        hashvalue: Hash160,
-    },
-
     /// Download all offers from all makers out there. If bitcoin node not configured then
     /// provide the network as an argument, can also optionally download from one given maker
     DownloadOffers {
@@ -176,14 +160,26 @@ fn main() -> Result<(), TeleportError> {
                 "closeonsignsenderscontracttx" => MakerBehavior::CloseBeforeSendingSendersSigs,
                 _ => MakerBehavior::Normal,
             };
-            run_maker(
-                &args.wallet_file_name,
-                &RPCConfig::default(),
-                port,
-                Some(WalletMode::Testing),
-                maker_special_behavior,
-                Arc::new(RwLock::new(false)),
-            )?;
+            let maker_id = args.wallet_file_name.to_str().expect("bad file name");
+            let maker_path = dirs::home_dir()
+                .expect("expect home dir")
+                .join(".teleport")
+                .join(&maker_id); // ex: tests/temp-files/ghytredi/maker6102
+            let mut maker_rpc_config = RPCConfig::default();
+            maker_rpc_config.wallet_name = maker_id.to_string();
+            let onion_addrs = "myhiddenserviceaddress.onion:6102".to_string(); // A dummy addrs for now.
+            let maker = Arc::new(
+                Maker::init(
+                    &maker_path,
+                    &maker_rpc_config,
+                    port,
+                    onion_addrs,
+                    maker_special_behavior,
+                )
+                .unwrap(),
+            );
+
+            start_maker_server(maker).unwrap();
         }
         WalletArgsSubcommand::GetFidelityBondAddress { year_and_month } => {
             print_fidelity_bond_address(&args.wallet_file_name, &year_and_month)?;
@@ -193,23 +189,20 @@ fn main() -> Result<(), TeleportError> {
             maker_count,
             tx_count,
         } => {
-            run_taker(
-                &args.wallet_file_name,
-                Some(WalletMode::Testing),
-                None,
-                args.fee_rate,
+            let taker_path = dirs::home_dir().expect("home dir expected").join("taker");
+            let mut taker_rpc_config = RPCConfig::default();
+            taker_rpc_config.wallet_name = "taker".to_string();
+            let mut taker =
+                Taker::init(&taker_path, Some(taker_rpc_config), TakerBehavior::Normal).unwrap();
+
+            let swap_params = SwapParams {
                 send_amount,
                 maker_count,
                 tx_count,
-                TakerBehavior::Normal,
-            );
-        }
-        WalletArgsSubcommand::RecoverFromIncompleteCoinswap { hashvalue } => {
-            recover_from_incomplete_coinswap(
-                &args.wallet_file_name,
-                hashvalue,
-                args.dont_broadcast,
-            )?;
+                required_confirms: 1,
+                fee_rate: 1000,
+            };
+            taker.send_coinswap(swap_params).unwrap();
         }
         WalletArgsSubcommand::DownloadOffers {
             network,

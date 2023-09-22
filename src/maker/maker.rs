@@ -17,7 +17,7 @@ use std::time::Duration;
 use crate::{
     protocol::{contract::check_hashvalues_are_equal, messages::ReqContractSigsForSender, Hash160},
     utill::redeemscript_to_scriptpubkey,
-    wallet::{RPCConfig, SwapCoin, WalletMode, WalletSwapCoin},
+    wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
 };
 
 use crate::{
@@ -89,22 +89,15 @@ impl Maker {
         rpc_config: &RPCConfig,
         port: u16,
         onion_addrs: String,
-        wallet_mode: Option<WalletMode>,
         behavior: MakerBehavior,
     ) -> Result<Self, MakerError> {
         // Load if exists, else create new.
         let mut wallet = if wallet_file.exists() {
-            Wallet::load(&rpc_config, wallet_file, wallet_mode)?
+            Wallet::load(&rpc_config, wallet_file)?
         } else {
             let mnemonic = Mnemonic::generate(12).unwrap();
             let seedphrase = mnemonic.to_string();
-            Wallet::init(
-                wallet_file,
-                &rpc_config,
-                seedphrase,
-                "".to_string(),
-                wallet_mode,
-            )?
+            Wallet::init(wallet_file, &rpc_config, seedphrase, "".to_string())?
         };
         wallet.sync()?;
         Ok(Self {
@@ -116,7 +109,7 @@ impl Maker {
         })
     }
 
-    /// Strigger shutdown
+    /// Trigger shutdown
     pub fn shutdown(&self) -> Result<(), MakerError> {
         let mut flag = self.shutdown.write()?;
         *flag = true;

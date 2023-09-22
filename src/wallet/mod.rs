@@ -14,4 +14,4 @@ pub use storage::WalletStore;
 pub use swapcoin::{
     IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletSwapCoin, WatchOnlySwapCoin,
 };
-pub use wallet::{DisplayAddressType, UTXOSpendInfo, Wallet, WalletMode};
+pub use wallet::{DisplayAddressType, UTXOSpendInfo, Wallet};
