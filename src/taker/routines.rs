@@ -231,7 +231,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
         }),
     )
     .await?;
-    let maker_sign_sender_and_receiver_contracts =
+    let contract_sigs_as_recvr_and_sender =
         if let MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(m) =
             read_message(socket_reader).await?
         {
@@ -241,7 +241,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
                 "expected method signsendersandreceiverscontracttxes",
             ));
         };
-    if maker_sign_sender_and_receiver_contracts
+    if contract_sigs_as_recvr_and_sender
         .receivers_contract_txs
         .len()
         != funding_tx_infos.len()
@@ -250,7 +250,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
             "wrong number of receivers contracts tx from maker",
         ));
     }
-    if maker_sign_sender_and_receiver_contracts
+    if contract_sigs_as_recvr_and_sender
         .senders_contract_txs_info
         .len()
         != next_peer_multisig_pubkeys.len()
@@ -276,7 +276,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
 
     let this_amount = funding_tx_values.iter().sum::<u64>();
 
-    let next_amount = maker_sign_sender_and_receiver_contracts
+    let next_amount = contract_sigs_as_recvr_and_sender
         .senders_contract_txs_info
         .iter()
         .map(|i| i.funding_amount)
@@ -304,7 +304,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
     );
 
     for ((receivers_contract_tx, contract_tx), contract_redeemscript) in
-        maker_sign_sender_and_receiver_contracts
+        contract_sigs_as_recvr_and_sender
             .receivers_contract_txs
             .iter()
             .zip(this_maker_contract_txes.iter())
@@ -319,7 +319,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
     let next_swap_contract_redeemscripts = next_peer_hashlock_pubkeys
         .iter()
         .zip(
-            maker_sign_sender_and_receiver_contracts
+            contract_sigs_as_recvr_and_sender
                 .senders_contract_txs_info
                 .iter(),
         )
@@ -333,7 +333,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
         })
         .collect::<Vec<_>>();
     Ok((
-        maker_sign_sender_and_receiver_contracts,
+        contract_sigs_as_recvr_and_sender,
         next_swap_contract_redeemscripts,
     ))
 }

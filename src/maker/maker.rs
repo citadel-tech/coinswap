@@ -322,6 +322,10 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                         let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
 
                         // Sometimes we might not have other's contact signatures.
+                        // This means the protocol have been stopped abruptly.
+                        // This needs more careful consideration as this should not happen
+                        // after funding transactions have been broadcasted for outgoing contracts.
+                        // For incomings, its less lethal as thats mostly the other party's burden.
                         if let Ok(tx) = og_sc.get_fully_signed_contract_tx() {
                             outgoings.push((
                                 (og_sc.get_multisig_redeemscript(), tx),

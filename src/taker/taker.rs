@@ -28,7 +28,7 @@ use bitcoin::{
         rand::{rngs::OsRng, RngCore},
         SecretKey,
     },
-    Amount, BlockHash, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
+    BlockHash, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
 
 use crate::{
@@ -40,8 +40,8 @@ use crate::{
     },
     taker::{config::TakerConfig, offers::OfferBook},
     wallet::{
-        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletMode,
-        WalletSwapCoin, WatchOnlySwapCoin,
+        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletSwapCoin,
+        WatchOnlySwapCoin,
     },
 };
 
@@ -144,14 +144,13 @@ impl Taker {
     /// If RPC config isn't provide, default RPC configuration will be used.
     /// WalletMode is used to control wallet operation mode, Normal or Testing, Defaults to Normal.
     /// Errors if RPC connection fails.
-    pub async fn init(
+    pub fn init(
         wallet_file: &PathBuf,
         rpc_config: Option<RPCConfig>,
-        wallet_mode: Option<WalletMode>,
         behavior: TakerBehavior,
     ) -> Result<Taker, TeleportError> {
         let mut wallet = if wallet_file.exists() {
-            Wallet::load(&rpc_config.unwrap_or_default(), wallet_file, wallet_mode)?
+            Wallet::load(&rpc_config.unwrap_or_default(), wallet_file)?
         } else {
             let mnemonic = Mnemonic::generate(12).unwrap();
             let seedphrase = mnemonic.to_string();
@@ -160,7 +159,6 @@ impl Taker {
                 &rpc_config.unwrap_or_default(),
                 seedphrase,
                 "".to_string(),
-                wallet_mode,
             )?
         };
 
@@ -183,14 +181,11 @@ impl Taker {
         &mut self.wallet
     }
 
-    pub fn get_wallet_balance(&self) -> Result<Amount, TeleportError> {
-        Ok(self.wallet.get_wallet_balance()?)
-    }
-
     /// Perform a coinswap round with given [SwapParams]. The Taker will try to perform swap with makers
     /// in it's [OfferBook] sequentially as per the maker_count given in swap params.
     /// If [SwapParams] doesn't fit suitably with any available offers, or not enough makers
     /// respond back, the swap round will fail.
+    #[tokio::main]
     pub async fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TeleportError> {
         let got_offers = self
             .offerbook
@@ -285,7 +280,7 @@ impl Taker {
         } // Contract establishment completed.
 
         if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
-            log::info!("Dropping Swap Process after full setup");
+            log::error!("Dropping Swap Process after full setup");
             return Ok(());
         }
 
@@ -310,6 +305,13 @@ impl Taker {
 
         // Loop until we find a live maker who responded to our signature request.
         let funding_txs = loop {
+            // Fail early if not enough good makers in the list to satisfy swap requirements.
+            let untried_maker_count = self.offerbook.get_all_untried().len();
+            if untried_maker_count < self.ongoing_swap_state.swap_params.maker_count as usize {
+                return Err(TeleportError::Protocol(
+                    "Not enough makers in the address book to satisfy SwapParams.",
+                ));
+            }
             let maker = self.choose_next_maker()?.clone();
             let (multisig_pubkeys, multisig_nonces, hashlock_pubkeys, hashlock_nonces) =
                 generate_maker_keys(
@@ -378,7 +380,7 @@ impl Taker {
             for outgoing_swapcoin in &outgoing_swapcoins {
                 self.wallet.add_outgoing_swapcoin(outgoing_swapcoin);
             }
-            self.wallet.save_to_disk().unwrap();
+            self.wallet.save_to_disk()?;
 
             self.ongoing_swap_state.outgoing_swapcoins = outgoing_swapcoins;
 
@@ -618,6 +620,13 @@ impl Taker {
             self.config.reconnect_attempts
         };
 
+        // Custom sleep delay for testing.
+        let sleep_delay = if cfg!(feature = "integration-test") {
+            1
+        } else {
+            self.config.reconnect_short_sleep_delay
+        };
+
         let mut ii = 0;
         loop {
             ii += 1;
@@ -643,7 +652,7 @@ impl Taker {
                             if ii <= reconnect_attempts {
                                 sleep(Duration::from_secs(
                                     if ii <= self.config.short_long_sleep_delay_transition {
-                                        self.config.reconnect_short_sleep_delay
+                                        sleep_delay
                                     } else {
                                         self.config.reconnect_long_sleep_delay
                                     },
@@ -830,8 +839,8 @@ impl Taker {
                     }
                     Err(e) => {
                         self.offerbook.add_bad_maker(&next_maker);
-                        log::debug!(
-                            "Fail to obtain sender's contract tx signature from next_maker {}: {:?}",
+                        log::info!(
+                            "Failed to obtain sender's contract tx signature from next_maker {}, Banning Maker: {:?}",
                             next_maker.address,
                             e
                         );
@@ -1438,11 +1447,21 @@ impl Taker {
             return Err(TeleportError::Protocol("Coinswap send amount not set!!"));
         }
 
+        // Ensure that we don't select a maker we are already swaping with.
         Ok(self
             .offerbook
             .get_all_untried()
             .iter()
-            .find(|oa| send_amount > oa.offer.min_size && send_amount < oa.offer.max_size)
+            .find(|oa| {
+                send_amount > oa.offer.min_size
+                    && send_amount < oa.offer.max_size
+                    && !self
+                        .ongoing_swap_state
+                        .peer_infos
+                        .iter()
+                        .map(|pi| &pi.peer)
+                        .any(|noa| noa == **oa)
+            })
             .ok_or(TeleportError::Protocol(
                 "Could not find suitable maker matching requirements of swap parameters",
             ))?)
@@ -1650,7 +1669,6 @@ impl Taker {
                     self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
                     log::info!("All outgoing contracts reedemed. Cleared ongoing swap state",);
                     self.wallet.sync()?;
-                    self.wallet.save_to_disk()?;
                     return Ok(());
                 }
             }
