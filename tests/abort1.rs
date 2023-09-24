@@ -34,6 +34,8 @@ async fn test_stop_taker_after_setup() {
     )
     .await;
 
+    log::warn!("Taker Cheats on Everybody");
+
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
         let taker_address = taker

@@ -79,7 +79,7 @@ If you're interested in contributing to the project, explore the [open issues](h
   - [x] Case 1: Maker drops **before** sending sender's signature. Taker tries with another Maker and moves on.
   - [x] Case 2: Maker drops **before** sending sender's signature. Taker doesn't have any new Maker. Recovers from swap.
   - [x] Case 3: Maker drops **after** sending sender's signatures. Taker doesn't have any new Maker. Recovers from swap.
-- [ ] Finish building a flexible and robust Test-Framework with `bitcoind` backend.
+- [x] Finish building a flexible and robust Test-Framework with `bitcoind` backend.
 - [ ] Abort 3: Maker aborts **after setup**. Taker and other Makers identify this and recovers back via contract tx. Taker bans the aborting Maker's fidelity bond.
 - [ ] Malice 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
 - [ ] Malice 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.

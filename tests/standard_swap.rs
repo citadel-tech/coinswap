@@ -19,9 +19,12 @@ async fn test_standard_coinswap() {
         (6102, MakerBehavior::Normal),
         (16102, MakerBehavior::Normal),
     ];
+
     // Initiate test framework, Makers and a Taker with default behavior.
     let (test_framework, taker, makers) =
         TestFramework::init(None, makers_config_map.into(), None).await;
+
+    log::warn!("Standard Coinswap");
 
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {

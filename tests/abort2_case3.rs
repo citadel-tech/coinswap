@@ -29,6 +29,8 @@ async fn maker_drops_after_sending_senders_sigs() {
     let (test_framework, taker, makers) =
         TestFramework::init(None, makers_config_map.into(), None).await;
 
+    log::warn!("Maker 6102 Closes after sending sender's signature. This is really bad. Recovery is the only option.");
+
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
         let taker_address = taker

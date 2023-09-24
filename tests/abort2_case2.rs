@@ -24,10 +24,14 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
         (16102, MakerBehavior::Normal),
     ];
 
+    log::warn!("Maker 6102 Closes before sending sender's sigs. Taker recovers. Or Swap cancels");
+
     // Initiate test framework, Makers.
     // Taker has normal behavior.
     let (test_framework, taker, makers) =
         TestFramework::init(None, makers_config_map.into(), None).await;
+
+    log::warn!("Maker 6102 Closes before sending sender's sigs. Taker recovers. Or Swap cancels");
 
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
