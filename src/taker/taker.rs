@@ -190,7 +190,7 @@ impl Taker {
     /// If [SwapParams] doesn't fit suitably with any available offers, or not enough makers
     /// respond back, the swap round will fail.
     #[tokio::main]
-    pub async fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TeleportError> {
+    pub async fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         let got_offers = self
             .offerbook
             .sync_offerbook(self.wallet.store.network, &self.config)
@@ -225,14 +225,32 @@ impl Taker {
 
             let funding_tx_infos = self.funding_info_for_next_maker();
 
-            let (next_swap_info, contract_sigs_as_recvr_and_sender) = match self
+            // Attempt to initiate the next hop of the swap. If anything goes wrong, abort immediately.
+            // If succeeded, collect the funding_outpoints and multisig_reedemscripts of the next hop.
+            let (funding_outpoints, multisig_reedemscripts) = match self
                 .send_sigs_init_next_hop(maker_refund_locktime, &funding_tx_infos)
                 .await
             {
-                Ok(r) => r,
+                Ok((next_peer_info, contract_sigs)) => {
+                    self.ongoing_swap_state.peer_infos.push(next_peer_info);
+                    let multisig_reedemscripts = contract_sigs
+                        .senders_contract_txs_info
+                        .iter()
+                        .map(|senders_contract_tx_info| {
+                            senders_contract_tx_info.multisig_redeemscript.clone()
+                        })
+                        .collect::<Vec<_>>();
+                    let funding_outpoints = contract_sigs
+                        .senders_contract_txs_info
+                        .iter()
+                        .map(|senders_contract_tx_info| {
+                            senders_contract_tx_info.contract_tx.input[0].previous_output
+                        })
+                        .collect::<Vec<OutPoint>>();
+
+                    (funding_outpoints, multisig_reedemscripts)
+                }
                 Err(e) => {
-                    // Next swap hop initialization failed. Probably because suitable makers not found.
-                    // Abort the current swap and recover. Don't throw hard error.
                     log::info!("Could not initiate next hop. Error : {:?}", e);
                     log::info!("Starting recovery from existing swap");
                     self.recover_from_swap()?;
@@ -240,44 +258,25 @@ impl Taker {
                 }
             };
 
-            self.ongoing_swap_state
-                .peer_infos
-                .push(next_swap_info.clone());
-
-            // Watch for funding txs between the makers, as well as existing contract txs. If any maker publishes contract tx,
-            // thats a breach of the protocol. And the else block currently panics.
-            // TODO: Recovery script should be run automatically when this happens.
-            // With more logging information of which maker deviated, and banning their fidelity bond.
-            if let Some((next_funding_txes, next_funding_tx_merkleproofs)) = self
-                .watch_for_txs(
-                    &contract_sigs_as_recvr_and_sender
-                        .senders_contract_txs_info
-                        .iter()
-                        .map(|senders_contract_tx_info| {
-                            senders_contract_tx_info.contract_tx.input[0]
-                                .previous_output
-                                .txid
-                        })
-                        .collect::<Vec<Txid>>(),
-                )
-                .await?
-            {
-                self.ongoing_swap_state
-                    .funding_txs
-                    .push((next_funding_txes, next_funding_tx_merkleproofs));
-            } else {
-                log::info!(concat!(
-                    "Somebody deviated from the protocol by broadcasting one or more contract",
-                    " transactions! Use main method `recover-from-incomplete-coinswap` to recover",
-                    " coins"
-                ));
-                panic!("ending");
+            // Watch for both expected and unexpected transactions.
+            // If anything is seen in the mempool, abort from swap immediately.
+            let txids_to_watch = funding_outpoints.iter().map(|op| op.txid).collect();
+            match self.watch_for_txs(&txids_to_watch).await {
+                Ok(r) => self.ongoing_swap_state.funding_txs.push(r),
+                Err(e) => {
+                    if let TakerError::ContractsBroadcasted(braodcasted_contract_txs) = e {
+                        log::error!("Contract Txs Broadcasted: {:?}", braodcasted_contract_txs);
+                        log::warn!("Starting recovery from existing swap");
+                        self.recover_from_swap()?;
+                        return Ok(());
+                    }
+                }
             }
 
             // For the last hop, initiate the incoming swapcoins, and request the sigs for it.
             if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
                 let incoming_swapcoins =
-                    self.create_incoming_swapcoins(&contract_sigs_as_recvr_and_sender)?;
+                    self.create_incoming_swapcoins(multisig_reedemscripts, funding_outpoints)?;
                 self.ongoing_swap_state.incoming_swapcoins = incoming_swapcoins;
                 self.request_sigs_for_incoming_swap().await?;
             }
@@ -945,7 +944,7 @@ impl Taker {
         contract_sigs_as_recvr_and_sender: &ContractSigsAsRecvrAndSender,
         next_peer_multisig_pubkeys: &[PublicKey],
         next_swap_contract_redeemscripts: &[ScriptBuf],
-    ) -> Result<Vec<WatchOnlySwapCoin>, TeleportError> {
+    ) -> Result<Vec<WatchOnlySwapCoin>, TakerError> {
         let next_swapcoins = contract_sigs_as_recvr_and_sender
             .senders_contract_txs_info
             .iter()
@@ -976,21 +975,9 @@ impl Taker {
     /// and the sender side is the laste Maker in the route.
     fn create_incoming_swapcoins(
         &self,
-        maker_sign_sender_and_receiver_contracts: &ContractSigsAsRecvrAndSender,
-    ) -> Result<Vec<IncomingSwapCoin>, TeleportError> {
-        let next_swap_multisig_redeemscripts = maker_sign_sender_and_receiver_contracts
-            .senders_contract_txs_info
-            .iter()
-            .map(|senders_contract_tx_info| senders_contract_tx_info.multisig_redeemscript.clone())
-            .collect::<Vec<_>>();
-        let next_swap_funding_outpoints = maker_sign_sender_and_receiver_contracts
-            .senders_contract_txs_info
-            .iter()
-            .map(|senders_contract_tx_info| {
-                senders_contract_tx_info.contract_tx.input[0].previous_output
-            })
-            .collect::<Vec<OutPoint>>();
-
+        multisig_redeemscripts: Vec<ScriptBuf>,
+        funding_outpoints: Vec<OutPoint>,
+    ) -> Result<Vec<IncomingSwapCoin>, TakerError> {
         let (funding_txs, funding_txs_merkleproofs) = self
             .ongoing_swap_state
             .funding_txs
@@ -999,7 +986,7 @@ impl Taker {
 
         let last_makers_funding_tx_values = funding_txs
             .iter()
-            .zip(next_swap_multisig_redeemscripts.iter())
+            .zip(multisig_redeemscripts.iter())
             .map(|(makers_funding_tx, multisig_redeemscript)| {
                 let multisig_spk = redeemscript_to_scriptpubkey(&multisig_redeemscript);
                 let index = makers_funding_tx
@@ -1018,7 +1005,7 @@ impl Taker {
             })
             .collect::<Vec<_>>();
 
-        let my_receivers_contract_txes = next_swap_funding_outpoints
+        let my_receivers_contract_txes = funding_outpoints
             .iter()
             .zip(last_makers_funding_tx_values.iter())
             .zip(
@@ -1070,7 +1057,7 @@ impl Taker {
                 funding_tx,
             ),
             funding_tx_merkleproof,
-        ) in next_swap_multisig_redeemscripts
+        ) in multisig_redeemscripts
             .iter()
             .zip(next_swap_info.multisig_pubkeys.iter())
             .zip(next_swap_info.multisig_nonces.iter())
@@ -1084,15 +1071,17 @@ impl Taker {
             let (o_ms_pubkey1, o_ms_pubkey2) =
                 crate::protocol::contract::read_pubkeys_from_multisig_redeemscript(
                     multisig_redeemscript,
-                )?;
+                )
+                .map_err(ProtocolError::Contract)?;
             let maker_funded_other_multisig_pubkey = if o_ms_pubkey1 == maker_funded_multisig_pubkey
             {
                 o_ms_pubkey2
             } else {
                 if o_ms_pubkey2 != maker_funded_multisig_pubkey {
-                    return Err(TeleportError::Protocol(
+                    return Err(ProtocolError::Contract(ContractError::Protocol(
                         "maker-funded multisig doesnt match",
-                    ));
+                    ))
+                    .into());
                 }
                 o_ms_pubkey1
             };
