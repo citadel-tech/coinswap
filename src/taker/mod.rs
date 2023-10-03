@@ -1,4 +1,5 @@
 mod config;
+pub mod error;
 pub mod offers;
 mod routines;
 mod taker;

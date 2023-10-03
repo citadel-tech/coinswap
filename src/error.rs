@@ -1,75 +1,38 @@
-use std::{error, io};
+use crate::protocol::error::ContractError;
 
-use crate::{
-    maker::error::MakerError, market::directory::DirectoryServerError,
-    protocol::error::ContractError, wallet::WalletError,
-};
-
-// error enum for the whole project
-// try to make functions return this
+/// Includes all network related errors.
 #[derive(Debug)]
-pub enum TeleportError {
-    Network(Box<dyn error::Error + Send>),
-    Disk(io::Error),
-    Protocol(&'static str),
-    Rpc(bitcoind::bitcoincore_rpc::Error),
-    Socks(tokio_socks::Error),
-    Wallet(WalletError),
-    Market(DirectoryServerError),
+pub enum NetError {
+    IO(std::io::Error),
     Json(serde_json::Error),
-    Maker(MakerError),
-    Contract(ContractError),
+    ReachedEOF,
+    ConnectionTimedOut,
 }
 
-impl From<Box<dyn error::Error + Send>> for TeleportError {
-    fn from(e: Box<dyn error::Error + Send>) -> TeleportError {
-        TeleportError::Network(e)
+impl From<std::io::Error> for NetError {
+    fn from(value: std::io::Error) -> Self {
+        Self::IO(value)
     }
 }
 
-impl From<io::Error> for TeleportError {
-    fn from(e: io::Error) -> TeleportError {
-        TeleportError::Disk(e)
-    }
-}
-
-impl From<bitcoind::bitcoincore_rpc::Error> for TeleportError {
-    fn from(e: bitcoind::bitcoincore_rpc::Error) -> TeleportError {
-        TeleportError::Rpc(e)
-    }
-}
-
-impl From<tokio_socks::Error> for TeleportError {
-    fn from(e: tokio_socks::Error) -> TeleportError {
-        TeleportError::Socks(e)
-    }
-}
-
-impl From<WalletError> for TeleportError {
-    fn from(value: WalletError) -> Self {
-        Self::Wallet(value)
-    }
-}
-
-impl From<DirectoryServerError> for TeleportError {
-    fn from(value: DirectoryServerError) -> Self {
-        Self::Market(value)
-    }
-}
-
-impl From<serde_json::Error> for TeleportError {
+impl From<serde_json::Error> for NetError {
     fn from(value: serde_json::Error) -> Self {
         Self::Json(value)
     }
 }
 
-impl From<MakerError> for TeleportError {
-    fn from(value: MakerError) -> Self {
-        Self::Maker(value)
-    }
+/// Includes all Protocol level errors.
+#[derive(Debug)]
+pub enum ProtocolError {
+    WrongMessage { expected: String, received: String },
+    WrongNumOfSigs { expected: usize, received: usize },
+    WrongNumOfContractTxs { expected: usize, received: usize },
+    WrongNumOfPrivkeys { expected: usize, received: usize },
+    IncorrectFundingAmount { expected: u64, found: u64 },
+    Contract(ContractError),
 }
 
-impl From<ContractError> for TeleportError {
+impl From<ContractError> for ProtocolError {
     fn from(value: ContractError) -> Self {
         Self::Contract(value)
     }

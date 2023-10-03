@@ -31,7 +31,6 @@ use bitcoind::bitcoincore_rpc::{
 };
 
 use crate::{
-    error::TeleportError,
     protocol::messages::FidelityBondProof,
     utill::{generate_keypair, redeemscript_to_scriptpubkey},
     wallet::{UTXOSpendInfo, Wallet},
@@ -147,16 +146,12 @@ impl HotWalletFidelityBond {
         }
     }
 
-    pub fn create_proof(
-        &self,
-        rpc: &Client,
-        onion_hostname: &str,
-    ) -> Result<FidelityBondProof, TeleportError> {
+    pub fn create_proof(&self, rpc: &Client, onion_hostname: &str) -> FidelityBondProof {
         const BLOCK_COUNT_SAFETY: u64 = 2;
         const RETARGET_INTERVAL: u64 = 2016;
         const CERT_MAX_VALIDITY_TIME: u64 = 1;
 
-        let blocks = rpc.get_block_count()?;
+        let blocks = rpc.get_block_count().unwrap();
         let cert_expiry =
             ((blocks + BLOCK_COUNT_SAFETY) / RETARGET_INTERVAL) + CERT_MAX_VALIDITY_TIME;
         let cert_expiry = cert_expiry as u16;
@@ -172,7 +167,7 @@ impl HotWalletFidelityBond {
                 .unwrap();
         let onion_sig = secp.sign_ecdsa(&onion_msg_hash, &cert_privkey);
 
-        Ok(FidelityBondProof {
+        FidelityBondProof {
             utxo: self.utxo,
             utxo_key: self.utxo_key,
             locktime: self.locktime,
@@ -180,7 +175,7 @@ impl HotWalletFidelityBond {
             cert_expiry,
             cert_pubkey,
             onion_sig,
-        })
+        }
     }
 }
 
@@ -190,26 +185,26 @@ impl FidelityBondProof {
         rpc: &Client,
         block_count: u64,
         onion_hostname: &str,
-    ) -> Result<GetTxOutResult, TeleportError> {
+    ) -> GetTxOutResult {
         let secp = Secp256k1::new();
 
         let onion_msg_hash =
             Message::from_slice(sha256d::Hash::hash(onion_hostname.as_bytes()).as_byte_array())
                 .unwrap();
         secp.verify_ecdsa(&onion_msg_hash, &self.onion_sig, &self.cert_pubkey.inner)
-            .map_err(|_| TeleportError::Protocol("onion sig does not verify"))?;
-
+            .unwrap();
         let cert_msg_hash = create_cert_msg_hash(&self.cert_pubkey, self.cert_expiry);
         secp.verify_ecdsa(&cert_msg_hash, &self.cert_sig, &self.utxo_key.inner)
-            .map_err(|_| TeleportError::Protocol("cert sig does not verify"))?;
+            .unwrap();
 
         let txo_data = rpc
-            .get_tx_out(&self.utxo.txid, self.utxo.vout, None)?
-            .ok_or(TeleportError::Protocol("fidelity bond UTXO doesnt exist"))?;
+            .get_tx_out(&self.utxo.txid, self.utxo.vout, None)
+            .unwrap()
+            .unwrap();
 
         const RETARGET_INTERVAL: u64 = 2016;
         if block_count > self.cert_expiry as u64 * RETARGET_INTERVAL {
-            return Err(TeleportError::Protocol("cert has expired"));
+            panic!("cert has expired");
         }
 
         let implied_spk = redeemscript_to_scriptpubkey(&create_timelocked_redeemscript(
@@ -217,16 +212,14 @@ impl FidelityBondProof {
             &self.utxo_key,
         ));
         if txo_data.script_pub_key.hex != implied_spk.into_bytes() {
-            return Err(TeleportError::Protocol(
-                "UTXO script doesnt match given script",
-            ));
+            panic!("UTXO script doesnt match given script",);
         }
 
         //an important thing we cant verify in this function
         //is that a given fidelity bond UTXO was only used once in the offer book
         //that has to be checked elsewhere
 
-        Ok(txo_data)
+        txo_data
     }
 
     pub fn calculate_fidelity_bond_value(
@@ -235,14 +228,16 @@ impl FidelityBondProof {
         block_count: u64,
         txo_data: &GetTxOutResult,
         mediantime: u64,
-    ) -> Result<f64, TeleportError> {
-        let blockhash = rpc.get_block_hash(block_count - txo_data.confirmations as u64 + 1)?;
-        Ok(calculate_timelocked_fidelity_bond_value(
+    ) -> f64 {
+        let blockhash = rpc
+            .get_block_hash(block_count - txo_data.confirmations as u64 + 1)
+            .unwrap();
+        calculate_timelocked_fidelity_bond_value(
             txo_data.value.to_sat(),
             self.locktime,
-            rpc.get_block_header_info(&blockhash)?.time as i64,
+            rpc.get_block_header_info(&blockhash).unwrap().time as i64,
             mediantime,
-        ))
+        )
     }
 }
 
@@ -272,8 +267,8 @@ fn calculate_timelocked_fidelity_bond_value_from_utxo(
     utxo: &ListUnspentResultEntry,
     usi: &UTXOSpendInfo,
     rpc: &Client,
-) -> Result<f64, TeleportError> {
-    Ok(calculate_timelocked_fidelity_bond_value(
+) -> f64 {
+    calculate_timelocked_fidelity_bond_value(
         utxo.amount.to_sat(),
         get_locktime_from_index(
             if let UTXOSpendInfo::FidelityBondCoin {
@@ -286,12 +281,13 @@ fn calculate_timelocked_fidelity_bond_value_from_utxo(
                 panic!("bug, should be fidelity bond coin")
             },
         ),
-        rpc.get_transaction(&utxo.txid, Some(true))?
+        rpc.get_transaction(&utxo.txid, Some(true))
+            .unwrap()
             .info
             .blocktime
             .unwrap() as i64,
-        rpc.get_blockchain_info()?.median_time,
-    ))
+        rpc.get_blockchain_info().unwrap().median_time,
+    )
 }
 
 fn create_timelocked_redeemscript(locktime: i64, pubkey: &PublicKey) -> ScriptBuf {
@@ -401,11 +397,8 @@ impl Wallet {
     }
 
     //returns Ok(None) if no fidelity bonds in wallet
-    pub fn find_most_valuable_fidelity_bond(
-        &self,
-        rpc: &Client,
-    ) -> Result<Option<HotWalletFidelityBond>, TeleportError> {
-        let list_unspent_result = self.list_unspent_from_wallet(false, true)?;
+    pub fn find_most_valuable_fidelity_bond(&self, rpc: &Client) -> Option<HotWalletFidelityBond> {
+        let list_unspent_result = self.list_unspent_from_wallet(false, true).unwrap();
         let fidelity_bond_utxos = list_unspent_result
             .iter()
             .filter(|(utxo, _)| utxo.confirmations > 0)
@@ -420,8 +413,8 @@ impl Wallet {
         let fidelity_bond_values = fidelity_bond_utxos
             .iter()
             .map(|(utxo, usi)| calculate_timelocked_fidelity_bond_value_from_utxo(utxo, usi, rpc))
-            .collect::<Result<Vec<f64>, TeleportError>>()?;
-        Ok(fidelity_bond_utxos
+            .collect::<Vec<f64>>();
+        fidelity_bond_utxos
             .iter()
             .zip(fidelity_bond_values.iter())
             //partial_cmp fails if NaN value involved, which wont happen, so unwrap() is acceptable
@@ -432,7 +425,7 @@ impl Wallet {
                     &most_valuable_fidelity_bond.0 .0,
                     &most_valuable_fidelity_bond.0 .1,
                 )
-            }))
+            })
     }
 }
 

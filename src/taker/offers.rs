@@ -4,13 +4,13 @@ use tokio::sync::mpsc;
 
 use bitcoin::Network;
 
-use crate::{error::TeleportError, protocol::messages::Offer};
+use crate::protocol::messages::Offer;
 
 use crate::market::directory::{
     sync_maker_addresses_from_directory_servers, DirectoryServerError, TOR_ADDR,
 };
 
-use super::{config::TakerConfig, routines::download_maker_offer};
+use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OfferAndAddress {
@@ -99,7 +99,7 @@ impl OfferBook {
         &mut self,
         network: Network,
         config: &TakerConfig,
-    ) -> Result<Vec<OfferAndAddress>, TeleportError> {
+    ) -> Result<Vec<OfferAndAddress>, TakerError> {
         let offers =
             sync_offerbook_with_addresses(get_advertised_maker_addresses(network).await?, config)
                 .await;

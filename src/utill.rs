@@ -1,6 +1,6 @@
 //! Various Utility and Helper functions used in both Taker and Maker protocols.
 
-use std::{io::ErrorKind, sync::Once};
+use std::sync::Once;
 
 use bitcoin::{
     address::{WitnessProgram, WitnessVersion},
@@ -20,12 +20,12 @@ use tokio::{
 };
 
 use crate::{
-    error::TeleportError,
+    error::NetError,
     protocol::{
         contract::derive_maker_pubkey_and_nonce,
         messages::{MakerToTakerMessage, MultisigPrivkey},
     },
-    wallet::SwapCoin,
+    wallet::{SwapCoin, WalletError},
 };
 
 pub fn str_to_bitcoin_network(net_str: &str) -> Network {
@@ -54,7 +54,7 @@ pub fn setup_logger() {
 pub async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     message: &impl serde::Serialize,
-) -> Result<(), TeleportError> {
+) -> Result<(), NetError> {
     let mut message_bytes = serde_json::to_vec(message).map_err(|e| std::io::Error::from(e))?;
     message_bytes.push(b'\n');
     socket_writer.write_all(&message_bytes).await?;
@@ -64,19 +64,13 @@ pub async fn send_message(
 /// Read a Maker Message
 pub async fn read_message(
     reader: &mut BufReader<ReadHalf<'_>>,
-) -> Result<MakerToTakerMessage, TeleportError> {
+) -> Result<MakerToTakerMessage, NetError> {
     let mut line = String::new();
     let n = reader.read_line(&mut line).await?;
     if n == 0 {
-        return Err(TeleportError::Network(Box::new(std::io::Error::new(
-            ErrorKind::ConnectionReset,
-            "EOF",
-        ))));
+        return Err(NetError::ReachedEOF);
     }
-    let message: MakerToTakerMessage = match serde_json::from_str(&line) {
-        Ok(r) => r,
-        Err(_e) => return Err(TeleportError::Protocol("json parsing error")),
-    };
+    let message: MakerToTakerMessage = serde_json::from_str(&line)?;
     log::debug!("<== {:#?}", message);
     Ok(message)
 }
@@ -85,11 +79,9 @@ pub async fn read_message(
 pub fn check_and_apply_maker_private_keys<S: SwapCoin>(
     swapcoins: &mut Vec<S>,
     swapcoin_private_keys: &[MultisigPrivkey],
-) -> Result<(), TeleportError> {
+) -> Result<(), WalletError> {
     for (swapcoin, swapcoin_private_key) in swapcoins.iter_mut().zip(swapcoin_private_keys.iter()) {
-        swapcoin
-            .apply_privkey(swapcoin_private_key.key)
-            .map_err(|_| TeleportError::Protocol("wrong privkey"))?;
+        swapcoin.apply_privkey(swapcoin_private_key.key)?;
     }
     Ok(())
 }

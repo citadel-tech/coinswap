@@ -18,11 +18,12 @@ use bitcoin::{
 
 pub use bitcoin::hashes::hash160::Hash as Hash160;
 
-use crate::{
-    error::TeleportError, protocol::messages::FundingTxInfo, utill::redeemscript_to_scriptpubkey,
-};
+use crate::utill::redeemscript_to_scriptpubkey;
 
-use super::{error::ContractError, messages::ProofOfFunding};
+use super::{
+    error::ContractError,
+    messages::{FundingTxInfo, ProofOfFunding},
+};
 
 //relatively simple handling of miner fees for now, each funding transaction is considered
 // to have the same size, and taker will pay all the maker's miner fees based on that
@@ -415,21 +416,21 @@ pub fn validate_contract_tx(
     receivers_contract_tx: &Transaction,
     funding_outpoint: Option<&OutPoint>,
     contract_redeemscript: &ScriptBuf,
-) -> Result<(), TeleportError> {
+) -> Result<(), ContractError> {
     if receivers_contract_tx.input.len() != 1 || receivers_contract_tx.output.len() != 1 {
-        return Err(TeleportError::Protocol(
+        return Err(ContractError::Protocol(
             "invalid number of inputs or outputs",
         ));
     }
     if funding_outpoint.is_some()
         && receivers_contract_tx.input[0].previous_output != *funding_outpoint.unwrap()
     {
-        return Err(TeleportError::Protocol("not spending the funding outpoint"));
+        return Err(ContractError::Protocol("not spending the funding outpoint"));
     }
     if receivers_contract_tx.output[0].script_pubkey
         != redeemscript_to_scriptpubkey(&contract_redeemscript)
     {
-        return Err(TeleportError::Protocol("doesnt pay to requested contract"));
+        return Err(ContractError::Protocol("doesnt pay to requested contract"));
     }
     Ok(())
 }
@@ -696,7 +697,7 @@ mod test {
 
         // Error Cases---------------------------------------------
         // Check validation against wrong spending outpoint
-        if let TeleportError::Protocol(message) = validate_contract_tx(
+        if let ContractError::Protocol(message) = validate_contract_tx(
             &contract_tx,
             Some(
                 &OutPoint::from_str(
@@ -725,7 +726,7 @@ mod test {
             script_sig: ScriptBuf::new(),
         });
         // Verify validation fails
-        if let TeleportError::Protocol(message) =
+        if let ContractError::Protocol(message) =
             validate_contract_tx(&contract_tx_err1, Some(&spending_utxo), &contract_script)
                 .unwrap_err()
         {
@@ -743,7 +744,7 @@ mod test {
             value: 3000,
         };
         // Verify validation fails
-        if let TeleportError::Protocol(message) =
+        if let ContractError::Protocol(message) =
             validate_contract_tx(&contract_tx_err2, Some(&spending_utxo), &contract_script)
                 .unwrap_err()
         {

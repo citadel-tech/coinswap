@@ -2,7 +2,6 @@ use clap::{Parser, Subcommand};
 use std::{path::PathBuf, sync::Arc};
 
 use coinswap::{
-    error::TeleportError,
     maker::{start_maker_server, Maker, MakerBehavior},
     scripts::{
         market::download_and_display_offers,
@@ -14,7 +13,8 @@ use coinswap::{
     taker::{SwapParams, Taker, TakerBehavior},
     utill::setup_logger,
     wallet::{
-        fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, RPCConfig, SendAmount,
+        fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, RPCConfig,
+        SendAmount, WalletError,
     },
 };
 
@@ -131,7 +131,7 @@ enum WalletArgsSubcommand {
     },
 }
 
-fn main() -> Result<(), TeleportError> {
+fn main() -> Result<(), WalletError> {
     setup_logger();
     let args = ArgsWithWalletFile::parse();
     // let args = ArgsWithWalletFile::from_args();
