@@ -32,11 +32,14 @@ use bitcoin::{
 };
 
 use crate::{
-    error::TeleportError,
-    protocol::messages::{
-        ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
-        ContractSigsForSender, FundingTxInfo, MultisigPrivkey, Preimage, PrivKeyHandover,
-        TakerToMakerMessage,
+    error::{NetError, ProtocolError},
+    protocol::{
+        error::ContractError,
+        messages::{
+            ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
+            ContractSigsForSender, FundingTxInfo, MultisigPrivkey, Preimage, PrivKeyHandover,
+            TakerToMakerMessage,
+        },
     },
     taker::{config::TakerConfig, offers::OfferBook},
     wallet::{
@@ -46,6 +49,7 @@ use crate::{
 };
 
 use super::{
+    error::TakerError,
     offers::{MakerAddress, OfferAndAddress},
     routines::*,
 };
@@ -148,7 +152,7 @@ impl Taker {
         wallet_file: &PathBuf,
         rpc_config: Option<RPCConfig>,
         behavior: TakerBehavior,
-    ) -> Result<Taker, TeleportError> {
+    ) -> Result<Taker, TakerError> {
         let mut wallet = if wallet_file.exists() {
             Wallet::load(&rpc_config.unwrap_or_default(), wallet_file)?
         } else {
@@ -295,7 +299,7 @@ impl Taker {
     /// Initiate the first coinswap hop. Makers are selected from the [OfferBook], and round will
     /// fail if no suitable makers are found.
     /// Creates and stores the [OutgoingSwapCoin] into [OngoingSwapState], and also saves it into the [Wallet] file.
-    async fn init_first_hop(&mut self) -> Result<(), TeleportError> {
+    async fn init_first_hop(&mut self) -> Result<(), TakerError> {
         // Set the Taker Position state
         self.ongoing_swap_state.taker_position = TakerPosition::FirstPeer;
 
@@ -304,13 +308,11 @@ impl Taker {
             + self.config.refund_locktime_step * self.ongoing_swap_state.swap_params.maker_count;
 
         // Loop until we find a live maker who responded to our signature request.
-        let funding_txs = loop {
+        let (maker, funding_txs) = loop {
             // Fail early if not enough good makers in the list to satisfy swap requirements.
             let untried_maker_count = self.offerbook.get_all_untried().len();
             if untried_maker_count < self.ongoing_swap_state.swap_params.maker_count as usize {
-                return Err(TeleportError::Protocol(
-                    "Not enough makers in the address book to satisfy SwapParams.",
-                ));
+                return Err(TakerError::NotEnoughMakersInOfferBook);
             }
             let maker = self.choose_next_maker()?.clone();
             let (multisig_pubkeys, multisig_nonces, hashlock_pubkeys, hashlock_nonces) =
@@ -358,9 +360,8 @@ impl Taker {
                 }
             };
 
-            // Maker has returned a valid signature, save all the data in memory,
-            // and persist in disk.
-            self.offerbook.add_good_maker(&maker);
+            // // Maker has returned a valid signature, save all the data in memory,
+            // // and persist in disk.
             self.ongoing_swap_state.peer_infos.push(NextPeerInfo {
                 peer: maker.clone(),
                 multisig_pubkeys,
@@ -384,7 +385,7 @@ impl Taker {
 
             self.ongoing_swap_state.outgoing_swapcoins = outgoing_swapcoins;
 
-            break funding_txs;
+            break (maker, funding_txs);
         };
 
         // Boradcast amd wait for funding txs to confirm
@@ -402,27 +403,40 @@ impl Taker {
                 assert_eq!(txid, tx.txid());
                 Ok(txid)
             })
-            .collect::<Result<_, TeleportError>>()?;
+            .collect::<Result<_, TakerError>>()?;
 
-        //unwrap the option without checking for Option::None because we passed no contract txes
-        //to watch and therefore they cant be broadcast
-        let (funding_txs, funding_tx_merkleproofs) =
-            self.watch_for_txs(&funding_txids).await?.unwrap();
-
-        self.ongoing_swap_state
-            .funding_txs
-            .push((funding_txs, funding_tx_merkleproofs));
+        // Watch for the funding transactions to be confirmed.
+        // If everything goes good, register the functing txs with merkle proofs and
+        // add maker to good maker list.
+        // If the Maker broadcasts any of the contract txs, run the recovery script.
+        match self.watch_for_txs(&funding_txids).await {
+            Ok(r) => {
+                self.ongoing_swap_state.funding_txs.push(r);
+                self.offerbook.add_good_maker(&maker);
+            }
+            Err(e) => match e {
+                TakerError::ContractsBroadcasted(broadcated_contract_txs) => {
+                    log::error!("Contract Txs Broadcasted : {:?}", broadcated_contract_txs);
+                    log::warn!("Starting Recovery Script");
+                    self.recover_from_swap()?;
+                }
+                _ => {
+                    log::error!("Taker Error Occured: {:?}", e);
+                    return Err(e);
+                }
+            },
+        }
 
         Ok(())
     }
 
-    /// Return a list of confirmed funding txs with their corresponding merkel proofs.
-    /// Returns None, if any of the watching contract transactions has been broadcasted,
-    /// which indicates violation of the protocol by one of the Makers.
+    /// Return a list of confirmed funding txs with their corresponding merkle proofs.
+    /// Errors if any watching contract txs have been broadcasted during the time too.
+    /// The error contanis the list of broadcasted contract [Txid]s.
     async fn watch_for_txs(
-        &mut self,
+        &self,
         funding_txids: &Vec<Txid>,
-    ) -> Result<Option<(Vec<Transaction>, Vec<String>)>, TeleportError> {
+    ) -> Result<(Vec<Transaction>, Vec<String>), TakerError> {
         let mut txid_tx_map = HashMap::<Txid, Transaction>::new();
         let mut txid_blockhash_map = HashMap::<Txid, BlockHash>::new();
 
@@ -434,7 +448,7 @@ impl Taker {
                 self.ongoing_swap_state
                     .peer_infos
                     .last()
-                    .expect("Maker information excpected in swap state")
+                    .expect("Maker information expected in swap state")
                     .peer
                     .offer
                     .required_confirms
@@ -447,10 +461,13 @@ impl Taker {
         loop {
             // Abort if any of the contract transaction is broadcasted
             // TODO: Find the culprit Maker, and ban it's fidelity bond.
-            let contracts_broadcasted = self.check_for_broadcasted_contract_txes()?;
+            let contracts_broadcasted = self.check_for_broadcasted_contract_txes();
             if !contracts_broadcasted.is_empty() {
-                log::info!("Contract transactions were broadcasted! Aborting");
-                return Ok(None);
+                log::info!(
+                    "Contract transactions were broadcasted : {:?}",
+                    contracts_broadcasted
+                );
+                return Err(TakerError::ContractsBroadcasted(contracts_broadcasted));
             }
 
             // Check for funding transactions
@@ -503,7 +520,7 @@ impl Taker {
                             .map(|gettxoutproof_result| to_hex(&gettxoutproof_result))
                     })
                     .collect::<Result<Vec<String>, _>>()?;
-                return Ok(Some((txes, merkleproofs)));
+                return Ok((txes, merkleproofs));
             }
             sleep(Duration::from_millis(1000)).await;
         }
@@ -611,7 +628,7 @@ impl Taker {
         &mut self,
         maker_refund_locktime: u16,
         funding_tx_infos: &Vec<FundingTxInfo>,
-    ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TeleportError> {
+    ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TakerError> {
         let reconnect_timeout_sec = self.config.reconnect_attempt_timeout_sec;
         // Configurable reconnection attempts for testing
         let reconnect_attempts = if cfg!(feature = "integration-test") {
@@ -646,8 +663,8 @@ impl Taker {
                                 e
                             );
                             // If its a protocol error and not just connection error, scream hard.
-                            if let TeleportError::Protocol(_) = e {
-                                return Err(e)
+                            if let TakerError::Protocol(msg) = e {
+                                return Err(TakerError::Protocol(msg))
                             }
                             if ii <= reconnect_attempts {
                                 sleep(Duration::from_secs(
@@ -680,8 +697,7 @@ impl Taker {
                         let maker = &self.ongoing_swap_state.peer_infos.last().expect("atleast one maker expected at this stage").peer;
                         log::warn!("Connection timeout exceeded with Maker:{}, Banning Maker.", maker.address);
                         self.offerbook.add_bad_maker(maker);
-                        return Err(TeleportError::Protocol(
-                            "Timed out of exchange_signatures_and_find_next_maker attempt"));
+                        return Err(NetError::ConnectionTimedOut.into());
                     }
                 },
             }
@@ -693,7 +709,7 @@ impl Taker {
         &mut self,
         maker_refund_locktime: u16,
         funding_tx_infos: &Vec<FundingTxInfo>,
-    ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TeleportError> {
+    ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TakerError> {
         let this_maker = &self
             .ongoing_swap_state
             .peer_infos
@@ -815,7 +831,8 @@ impl Taker {
                             )
                         },
                     )
-                    .collect::<Result<Vec<_>, _>>()?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(ProtocolError::Contract)?
             } else {
                 // If Next Maker is the Receiver, and This Maker is The Sender, Request Sender's Contract Tx Sig to Next Maker.
                 let watchonly_swapcoins = self.create_watch_only_swapcoins(
@@ -1103,7 +1120,7 @@ impl Taker {
     }
 
     /// Request signatures for the [IncomingSwapCoin] from the last maker of the swap round.
-    async fn request_sigs_for_incoming_swap(&mut self) -> Result<(), TeleportError> {
+    async fn request_sigs_for_incoming_swap(&mut self) -> Result<(), TakerError> {
         // Intermediate hops completed. Perform the last receiving hop.
         let last_maker = self
             .ongoing_swap_state
@@ -1156,7 +1173,7 @@ impl Taker {
         maker_multisig_nonces: &[SecretKey],
         maker_hashlock_nonces: &[SecretKey],
         locktime: u16,
-    ) -> Result<ContractSigsForSender, TeleportError> {
+    ) -> Result<ContractSigsForSender, TakerError> {
         let mut ii = 0;
         loop {
             ii += 1;
@@ -1194,8 +1211,7 @@ impl Taker {
                     if ii <= self.config.first_connect_attempts {
                         continue;
                     } else {
-                        return Err(TeleportError::Protocol(
-                            "Timed out of request_senders_contract_tx_signatures attempt"));
+                        return Err(NetError::ConnectionTimedOut.into());
                     }
                 },
             }
@@ -1211,7 +1227,7 @@ impl Taker {
         maker_address: &MakerAddress,
         incoming_swapcoins: &[S],
         receivers_contract_txes: &[Transaction],
-    ) -> Result<ContractSigsForRecvr, TeleportError> {
+    ) -> Result<ContractSigsForRecvr, TakerError> {
         let mut ii = 0;
         loop {
             ii += 1;
@@ -1254,8 +1270,7 @@ impl Taker {
                     if ii <= self.config.reconnect_attempts {
                         continue;
                     } else {
-                        return Err(TeleportError::Protocol(
-                            "Timed out of request_receivers_contract_tx_signatures attempt"));
+                        return Err(NetError::ConnectionTimedOut.into());
                     }
                 },
             }
@@ -1265,7 +1280,7 @@ impl Taker {
     /// Settle all the ongoing swaps. This routine sends the hash preimage to all the makers.
     /// Pass around the Maker's multisig privatekeys. Saves all the data in wallet file. This marks
     /// the ends of swap round.
-    async fn settle_all_swaps(&mut self) -> Result<(), TeleportError> {
+    async fn settle_all_swaps(&mut self) -> Result<(), TakerError> {
         let mut outgoing_privkeys: Option<Vec<MultisigPrivkey>> = None;
 
         // Because the last peer info is the Taker, we take upto (0..n-1), where n = peer_info.len()
@@ -1361,8 +1376,7 @@ impl Taker {
                         if ii <= self.config.reconnect_attempts {
                             continue;
                         } else {
-                            return Err(TeleportError::Protocol(
-                                "Timed out of settle_one_coinswap attempt"));
+                            return Err(NetError::ConnectionTimedOut.into());
                         }
                     },
                 }
@@ -1379,7 +1393,7 @@ impl Taker {
         outgoing_privkeys: &mut Option<Vec<MultisigPrivkey>>,
         senders_multisig_redeemscripts: &Vec<ScriptBuf>,
         receivers_multisig_redeemscripts: &Vec<ScriptBuf>,
-    ) -> Result<(), TeleportError> {
+    ) -> Result<(), TakerError> {
         log::info!("Connecting to {}", maker_address);
         let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
         let (mut socket_reader, mut socket_writer) =
@@ -1441,10 +1455,10 @@ impl Taker {
     // ######## UTILITY AND HELPERS ############
 
     /// Choose a suitable **untried** maker address from the offerbook that fits the swap params.
-    fn choose_next_maker(&self) -> Result<&OfferAndAddress, TeleportError> {
+    fn choose_next_maker(&self) -> Result<&OfferAndAddress, TakerError> {
         let send_amount = self.ongoing_swap_state.swap_params.send_amount;
         if send_amount == 0 {
-            return Err(TeleportError::Protocol("Coinswap send amount not set!!"));
+            return Err(TakerError::SendAmountNotSet);
         }
 
         // Ensure that we don't select a maker we are already swaping with.
@@ -1462,9 +1476,7 @@ impl Taker {
                         .map(|pi| &pi.peer)
                         .any(|noa| noa == **oa)
             })
-            .ok_or(TeleportError::Protocol(
-                "Could not find suitable maker matching requirements of swap parameters",
-            ))?)
+            .ok_or(TakerError::NotEnoughMakersInOfferBook)?)
     }
 
     /// Get the [Preimage] of the ongoing swap. If no swap is in progress will return a `[0u8; 32]`.
@@ -1487,7 +1499,7 @@ impl Taker {
     }
 
     /// Save all the finalized swap data and reset the [OngoingSwapState].
-    fn save_and_reset_swap_round(&mut self) -> Result<(), TeleportError> {
+    fn save_and_reset_swap_round(&mut self) -> Result<(), TakerError> {
         for (index, watchonly_swapcoin) in self
             .ongoing_swap_state
             .watchonly_swapcoins
@@ -1525,7 +1537,10 @@ impl Taker {
         Ok(())
     }
 
-    pub fn check_for_broadcasted_contract_txes(&mut self) -> Result<Vec<Txid>, TeleportError> {
+    /// Checks if any contreact transactions have been broadcasted.
+    /// Returns the txid list of all the broadcasted contract transaction.
+    /// Empty vector if nothing is nothing is broadcasted. (usual case).
+    pub fn check_for_broadcasted_contract_txes(&self) -> Vec<Txid> {
         let contract_txids = self
             .ongoing_swap_state
             .incoming_swapcoins
@@ -1554,10 +1569,10 @@ impl Taker {
             .cloned()
             .collect::<Vec<Txid>>();
 
-        Ok(seen_txids)
+        seen_txids
     }
 
-    pub fn recover_from_swap(&mut self) -> Result<(), TeleportError> {
+    pub fn recover_from_swap(&mut self) -> Result<(), TakerError> {
         let (incomings, outgoings) = self.wallet.find_unfinished_swapcoins();
 
         let incoming_contracts = incomings
@@ -1568,7 +1583,7 @@ impl Taker {
                     incoming.get_multisig_redeemscript(),
                 ))
             })
-            .collect::<Result<Vec<_>, TeleportError>>()?;
+            .collect::<Result<Vec<_>, TakerError>>()?;
 
         // Broadcasted incoming contracts and remove them from the wallet.
         for (contract_tx, redeemscript) in &incoming_contracts {

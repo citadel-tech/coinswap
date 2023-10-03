@@ -71,13 +71,13 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             "[{}] Spawning Connection status check thread",
             maker_clone_1.config.port
         );
-        check_for_idle_states(maker_clone_1);
+        check_for_idle_states(maker_clone_1).unwrap();
     });
 
     let maker_clone_2 = maker.clone();
     std::thread::spawn(move || {
         log::info!(
-            "[{}] Spawning contract-wathcer thread",
+            "[{}] Spawning contract-watcher thread",
             maker_clone_2.config.port
         );
         check_for_broadcasted_contracts(maker_clone_2).unwrap();
@@ -103,12 +103,15 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                     },
                     _ => {
                         log::error!("[{}] Maker Handling Error : {:?}", maker.config.port, client_err.unwrap());
-                        // This will happen either in special Maker behavior, or via something in the inetrnal.
-                        // in any case, call shutdown instead of hard error.
+                        // Either in special Maker behavior, or something went worng.
+                        // Quitely shutdown.
+                        // TODO: Handle this behavior separately for prod/test.
                         maker.shutdown()?;
+                        // We continue, as the shutdown flag will be caught in the next iteration of the loop.
+                        // In the case below.
+                        continue;
                     }
                 }
-                break Ok(());
             },
             _ = sleep(Duration::from_secs(maker.config.heart_beat_interval_secs)) => {
                 if *maker.shutdown.read()? {

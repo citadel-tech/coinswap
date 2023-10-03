@@ -14,7 +14,7 @@ use tokio::{
 use tokio_socks::tcp::Socks5Stream;
 
 use crate::{
-    error::TeleportError,
+    error::ProtocolError,
     protocol::{
         contract::{
             calculate_coinswap_fee, create_contract_redeemscript, find_funding_output_index,
@@ -34,6 +34,7 @@ use crate::{
 
 use super::{
     config::TakerConfig,
+    error::TakerError,
     offers::{MakerAddress, OfferAndAddress},
 };
 
@@ -58,7 +59,7 @@ pub struct ContractsInfo {
 pub async fn handshake_maker<'a>(
     socket: &'a mut TcpStream,
     maker_address: &MakerAddress,
-) -> Result<(BufReader<ReadHalf<'a>>, WriteHalf<'a>), TeleportError> {
+) -> Result<(BufReader<ReadHalf<'a>>, WriteHalf<'a>), TakerError> {
     let socket = match maker_address {
         MakerAddress::Clearnet { address: _ } => socket,
         MakerAddress::Tor { address } => Socks5Stream::connect_with_socket(socket, address.clone())
@@ -75,12 +76,18 @@ pub async fn handshake_maker<'a>(
         }),
     )
     .await?;
-    let makerhello =
-        if let MakerToTakerMessage::MakerHello(m) = read_message(&mut socket_reader).await? {
-            m
-        } else {
-            return Err(TeleportError::Protocol("expected method makerhello"));
-        };
+    let makerhello = match read_message(&mut socket_reader).await {
+        Ok(MakerToTakerMessage::MakerHello(m)) => m,
+        Ok(any) => {
+            return Err(ProtocolError::WrongMessage {
+                expected: "MakerHello".to_string(),
+                received: format!("{}", any),
+            }
+            .into());
+        }
+        Err(e) => return Err(e.into()),
+    };
+
     log::debug!("{:#?}", makerhello);
     Ok((socket_reader, socket_writer))
 }
@@ -92,12 +99,14 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
     maker_multisig_nonces: &[SecretKey],
     maker_hashlock_nonces: &[SecretKey],
     locktime: u16,
-) -> Result<ContractSigsForSender, TeleportError> {
+) -> Result<ContractSigsForSender, TakerError> {
     log::info!("Connecting to {}", maker_address);
     let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
     let (mut socket_reader, mut socket_writer) =
         handshake_maker(&mut socket, maker_address).await?;
-    log::info!("===> Sending SignSendersContractTx to {}", maker_address);
+    log::info!("===> Sending ReqContractSigsForSender to {}", maker_address);
+
+    // TODO: Take this construction out of function body.
     let txs_info = maker_multisig_nonces
         .iter()
         .zip(maker_hashlock_nonces.iter())
@@ -115,6 +124,7 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
             },
         )
         .collect::<Vec<ContractTxInfoForSender>>();
+
     send_message(
         &mut socket_writer,
         &TakerToMakerMessage::ReqContractSigsForSender(ReqContractSigsForSender {
@@ -124,29 +134,37 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
         }),
     )
     .await?;
-    let maker_senders_contract_sig = if let MakerToTakerMessage::RespContractSigsForSender(m) =
-        read_message(&mut socket_reader).await?
-    {
-        m
-    } else {
-        return Err(TeleportError::Protocol(
-            "expected method senderscontractsig",
-        ));
+    let contract_sigs_for_sender = match read_message(&mut socket_reader).await {
+        Ok(MakerToTakerMessage::RespContractSigsForSender(m)) => {
+            if m.sigs.len() != outgoing_swapcoins.len() {
+                return Err(ProtocolError::WrongNumOfSigs {
+                    expected: outgoing_swapcoins.len(),
+                    received: m.sigs.len(),
+                }
+                .into());
+            } else {
+                m
+            }
+        }
+        Ok(any) => {
+            return Err(ProtocolError::WrongMessage {
+                expected: "RespContractSigsForSender".to_string(),
+                received: format!("{}", any),
+            }
+            .into());
+        }
+        Err(e) => return Err(e.into()),
     };
-    if maker_senders_contract_sig.sigs.len() != outgoing_swapcoins.len() {
-        return Err(TeleportError::Protocol(
-            "wrong number of signatures from maker",
-        ));
-    }
-    for (sig, outgoing_swapcoin) in maker_senders_contract_sig
+
+    for (sig, outgoing_swapcoin) in contract_sigs_for_sender
         .sigs
         .iter()
         .zip(outgoing_swapcoins.iter())
     {
         outgoing_swapcoin.verify_contract_tx_sender_sig(&sig)?;
     }
-    log::info!("<=== Received SendersContractSig from {}", maker_address);
-    Ok(maker_senders_contract_sig)
+    log::info!("<=== Received ContractSigsForSender from {}", maker_address);
+    Ok(contract_sigs_for_sender)
 }
 
 /// Request signatures for receiver side of the hop. Attempt once.
@@ -154,11 +172,13 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
     maker_address: &MakerAddress,
     incoming_swapcoins: &[S],
     receivers_contract_txes: &[Transaction],
-) -> Result<ContractSigsForRecvr, TeleportError> {
+) -> Result<ContractSigsForRecvr, TakerError> {
     log::info!("Connecting to {}", maker_address);
     let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
     let (mut socket_reader, mut socket_writer) =
         handshake_maker(&mut socket, maker_address).await?;
+
+    // TODO: Take the message construction out of function body.
     send_message(
         &mut socket_writer,
         &TakerToMakerMessage::ReqContractSigsForRecvr(ReqContractSigsForRecvr {
@@ -173,21 +193,29 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
         }),
     )
     .await?;
-    let maker_receiver_contract_sig = if let MakerToTakerMessage::RespContractSigsForRecvr(m) =
-        read_message(&mut socket_reader).await?
-    {
-        m
-    } else {
-        return Err(TeleportError::Protocol(
-            "expected method receiverscontractsig",
-        ));
+    let contract_sigs_for_recvr = match read_message(&mut socket_reader).await {
+        Ok(MakerToTakerMessage::RespContractSigsForRecvr(m)) => {
+            if m.sigs.len() != incoming_swapcoins.len() {
+                return Err(ProtocolError::WrongNumOfSigs {
+                    expected: incoming_swapcoins.len(),
+                    received: m.sigs.len(),
+                }
+                .into());
+            } else {
+                m
+            }
+        }
+        Ok(any) => {
+            return Err(ProtocolError::WrongMessage {
+                expected: "ContractSigsForRecvr".to_string(),
+                received: format!("{}", any),
+            }
+            .into());
+        }
+        Err(e) => return Err(e.into()),
     };
-    if maker_receiver_contract_sig.sigs.len() != incoming_swapcoins.len() {
-        return Err(TeleportError::Protocol(
-            "wrong number of signatures from maker",
-        ));
-    }
-    for (sig, swapcoin) in maker_receiver_contract_sig
+
+    for (sig, swapcoin) in contract_sigs_for_recvr
         .sigs
         .iter()
         .zip(incoming_swapcoins.iter())
@@ -195,8 +223,8 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
         swapcoin.verify_contract_tx_receiver_sig(&sig)?;
     }
 
-    log::info!("<=== Received ReceiversContractSig from {}", maker_address);
-    Ok(maker_receiver_contract_sig)
+    log::info!("<=== Received ContractSigsForRecvr from {}", maker_address);
+    Ok(contract_sigs_for_recvr)
 }
 
 /// [Internal] Send a Proof funding to the maker and init next hop.
@@ -211,7 +239,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
     next_maker_fee_rate: u64,
     this_maker_contract_txes: &Vec<Transaction>,
     hashvalue: Hash160,
-) -> Result<(ContractSigsAsRecvrAndSender, Vec<ScriptBuf>), TeleportError> {
+) -> Result<(ContractSigsAsRecvrAndSender, Vec<ScriptBuf>), TakerError> {
     send_message(
         socket_writer,
         &TakerToMakerMessage::RespProofOfFunding(ProofOfFunding {
@@ -231,39 +259,39 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
         }),
     )
     .await?;
-    let contract_sigs_as_recvr_and_sender =
-        if let MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(m) =
-            read_message(socket_reader).await?
-        {
-            m
-        } else {
-            return Err(TeleportError::Protocol(
-                "expected method signsendersandreceiverscontracttxes",
-            ));
-        };
-    if contract_sigs_as_recvr_and_sender
-        .receivers_contract_txs
-        .len()
-        != funding_tx_infos.len()
-    {
-        return Err(TeleportError::Protocol(
-            "wrong number of receivers contracts tx from maker",
-        ));
-    }
-    if contract_sigs_as_recvr_and_sender
-        .senders_contract_txs_info
-        .len()
-        != next_peer_multisig_pubkeys.len()
-    {
-        return Err(TeleportError::Protocol(
-            "wrong number of senders contract txes from maker",
-        ));
-    }
+    let contract_sigs_as_recvr_and_sender = match read_message(socket_reader).await {
+        Ok(MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(m)) => {
+            if m.receivers_contract_txs.len() != funding_tx_infos.len() {
+                return Err(ProtocolError::WrongNumOfContractTxs {
+                    expected: funding_tx_infos.len(),
+                    received: m.receivers_contract_txs.len(),
+                }
+                .into());
+            } else if m.senders_contract_txs_info.len() != next_peer_multisig_pubkeys.len() {
+                return Err(ProtocolError::WrongNumOfContractTxs {
+                    expected: m.senders_contract_txs_info.len(),
+                    received: next_peer_multisig_pubkeys.len(),
+                }
+                .into());
+            } else {
+                m
+            }
+        }
+        Ok(any) => {
+            return Err(ProtocolError::WrongMessage {
+                expected: "ContractSigsAsRecvrAndSender".to_string(),
+                received: format!("{}", any),
+            }
+            .into());
+        }
+        Err(e) => return Err(e.into()),
+    };
 
     let funding_tx_values = funding_tx_infos
         .iter()
         .map(|funding_info| {
-            let funding_output_index = find_funding_output_index(&funding_info)?;
+            let funding_output_index =
+                find_funding_output_index(&funding_info).map_err(ProtocolError::Contract)?;
             Ok(funding_info
                 .funding_tx
                 .output
@@ -272,7 +300,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
                 .expect("funding output expected")
                 .value)
         })
-        .collect::<Result<Vec<u64>, TeleportError>>()?;
+        .collect::<Result<Vec<u64>, TakerError>>()?;
 
     let this_amount = funding_tx_values.iter().sum::<u64>();
 
@@ -293,7 +321,11 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
             / 1000;
     let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
     if calculated_next_amount != next_amount {
-        return Err(TeleportError::Protocol("next_amount incorrect"));
+        return Err(ProtocolError::IncorrectFundingAmount {
+            expected: calculated_next_amount,
+            found: next_amount,
+        }
+        .into());
     }
     log::info!(
         "this_amount={} coinswap_fees={} miner_fees_paid_by_taker={} next_amount={}",
@@ -314,7 +346,8 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
             &receivers_contract_tx,
             Some(&contract_tx.input[0].previous_output),
             contract_redeemscript,
-        )?;
+        )
+        .map_err(ProtocolError::Contract)?;
     }
     let next_swap_contract_redeemscripts = next_peer_hashlock_pubkeys
         .iter()
@@ -345,8 +378,7 @@ pub(crate) async fn send_hash_preimage_and_get_private_keys(
     senders_multisig_redeemscripts: &Vec<ScriptBuf>,
     receivers_multisig_redeemscripts: &Vec<ScriptBuf>,
     preimage: &Preimage,
-) -> Result<PrivKeyHandover, TeleportError> {
-    let receivers_multisig_redeemscripts_len = receivers_multisig_redeemscripts.len();
+) -> Result<PrivKeyHandover, TakerError> {
     send_message(
         socket_writer,
         &TakerToMakerMessage::RespHashPreimage(HashPreimage {
@@ -356,23 +388,32 @@ pub(crate) async fn send_hash_preimage_and_get_private_keys(
         }),
     )
     .await?;
-    let maker_private_key_handover =
-        if let MakerToTakerMessage::RespPrivKeyHandover(m) = read_message(socket_reader).await? {
-            m
-        } else {
-            return Err(TeleportError::Protocol(
-                "expected method privatekeyhandover",
-            ));
-        };
-    if maker_private_key_handover.multisig_privkeys.len() != receivers_multisig_redeemscripts_len {
-        return Err(TeleportError::Protocol(
-            "wrong number of private keys from maker",
-        ));
-    }
-    Ok(maker_private_key_handover)
+    let privkey_handover = match read_message(socket_reader).await {
+        Ok(MakerToTakerMessage::RespPrivKeyHandover(m)) => {
+            if m.multisig_privkeys.len() != receivers_multisig_redeemscripts.len() {
+                return Err(ProtocolError::WrongNumOfPrivkeys {
+                    expected: receivers_multisig_redeemscripts.len(),
+                    received: m.multisig_privkeys.len(),
+                }
+                .into());
+            } else {
+                m
+            }
+        }
+        Ok(any) => {
+            return Err(ProtocolError::WrongMessage {
+                expected: "PrivkeyHandover".to_string(),
+                received: format!("{}", any),
+            }
+            .into());
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    Ok(privkey_handover)
 }
 
-async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer, TeleportError> {
+async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer, TakerError> {
     log::debug!(target: "offerbook", "Connecting to {}", addr);
     let mut socket = TcpStream::connect(addr.get_tcpstream_address()).await?;
     let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket, addr).await?;
@@ -383,10 +424,16 @@ async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer,
     )
     .await?;
 
-    let offer = if let MakerToTakerMessage::RespOffer(o) = read_message(&mut socket_reader).await? {
-        o
-    } else {
-        return Err(TeleportError::Protocol("expected method offer"));
+    let offer = match read_message(&mut socket_reader).await {
+        Ok(MakerToTakerMessage::RespOffer(m)) => m,
+        Ok(any) => {
+            return Err(ProtocolError::WrongMessage {
+                expected: "RespOffer".to_string(),
+                received: format!("{}", any),
+            }
+            .into());
+        }
+        Err(e) => return Err(e.into()),
     };
 
     log::debug!(target: "offerbook", "Obtained offer from {}", addr);

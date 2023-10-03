@@ -437,8 +437,7 @@ impl Maker {
 
         // Update the connection state.
         self.connection_state
-            .write()
-            .unwrap()
+            .lock()?
             .insert(ip, (connection_state.clone(), Instant::now()));
 
         Ok(MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(
@@ -456,6 +455,12 @@ impl Maker {
         message: ContractSigsForRecvrAndSender,
         ip: IpAddr,
     ) -> Result<(), MakerError> {
+        if let MakerBehavior::CloseAtSenersAndRecvrsContractSigs = self.behavior {
+            return Err(MakerError::General(
+                "Special Behavior: Closing connection Before Receving Sender's and Receiver's Contract Sigs",
+            ));
+        }
+
         if message.receivers_sigs.len() != connection_state.incoming_swapcoins.len() {
             return Err(MakerError::General(
                 "invalid number of reciever's signatures",
@@ -513,8 +518,7 @@ impl Maker {
 
         // Update the connection state.
         self.connection_state
-            .write()
-            .unwrap()
+            .lock()?
             .insert(ip, (connection_state.clone(), Instant::now()));
 
         Ok(())

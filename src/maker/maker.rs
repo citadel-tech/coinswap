@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     net::IpAddr,
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
     time::Instant,
 };
 
@@ -39,6 +39,7 @@ pub enum MakerBehavior {
     Normal,
     CloseBeforeSendingSendersSigs,
     CloseAfterSendingSendersSigs,
+    CloseAtSenersAndRecvrsContractSigs,
 }
 /// A structure denoting expectation of type of taker message.
 /// Used in the [ConnectionState] structure.
@@ -78,7 +79,7 @@ pub struct Maker {
     /// A flag to trigger shutdown event
     pub shutdown: RwLock<bool>,
     /// Map of IP address to Connection State + Last Connected isntant
-    pub connection_state: RwLock<HashMap<IpAddr, (ConnectionState, Instant)>>,
+    pub connection_state: Mutex<HashMap<IpAddr, (ConnectionState, Instant)>>,
 }
 
 impl Maker {
@@ -105,7 +106,7 @@ impl Maker {
             config: MakerConfig::init(port, onion_addrs),
             wallet: RwLock::new(wallet),
             shutdown: RwLock::new(false),
-            connection_state: RwLock::new(HashMap::new()),
+            connection_state: Mutex::new(HashMap::new()),
         })
     }
 
@@ -275,97 +276,104 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
         if *maker.shutdown.read()? {
             break;
         }
+        // An extra scope to release all locks when done.
+        {
+            let mut lock_onstate = maker.connection_state.lock()?;
+            for (ip, (connection_state, _)) in lock_onstate.iter_mut() {
+                let txids_to_watch = connection_state
+                    .incoming_swapcoins
+                    .iter()
+                    .map(|is| is.contract_tx.txid())
+                    .chain(
+                        connection_state
+                            .outgoing_swapcoins
+                            .iter()
+                            .map(|oc| oc.contract_tx.txid()),
+                    )
+                    .collect::<Vec<_>>();
 
-        for (ip, (connection_state, _)) in maker.connection_state.read()?.iter() {
-            let txids_to_watch = connection_state
-                .incoming_swapcoins
-                .iter()
-                .map(|is| is.contract_tx.txid())
-                .chain(
-                    connection_state
-                        .outgoing_swapcoins
-                        .iter()
-                        .map(|oc| oc.contract_tx.txid()),
-                )
-                .collect::<Vec<_>>();
-
-            // No need to check for other contracts in the connection state, if any one of them
-            // is ever observed in the mempool/block, run recovery routine.
-            for txid in txids_to_watch {
-                if let Ok(_) = maker
-                    .wallet
-                    .read()?
-                    .rpc
-                    .get_raw_transaction_info(&txid, None)
-                {
-                    let mut outgoings = Vec::new();
-                    let mut incomings = Vec::new();
-                    // Something is broadcasted. Report, Recover and Abort.
-                    log::error!(
-                        "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
-                        maker.config.port,
-                        txid,
-                    );
-                    // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
-                    // fully signed.
-                    for (og_sc, ic_sc) in connection_state
-                        .outgoing_swapcoins
-                        .iter()
-                        .zip(connection_state.incoming_swapcoins.iter())
+                // No need to check for other contracts in the connection state, if any one of them
+                // is ever observed in the mempool/block, run recovery routine.
+                for txid in txids_to_watch {
+                    if let Ok(_) = maker
+                        .wallet
+                        .read()?
+                        .rpc
+                        .get_raw_transaction_info(&txid, None)
                     {
-                        let contract_timelock = og_sc.get_timelock();
-                        let next_internal_address = &maker
-                            .wallet
-                            .read()
-                            .unwrap()
-                            .get_next_internal_addresses(1)?[0];
-                        let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
+                        let mut outgoings = Vec::new();
+                        let mut incomings = Vec::new();
+                        // Something is broadcasted. Report, Recover and Abort.
+                        log::error!(
+                            "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
+                            maker.config.port,
+                            txid,
+                        );
+                        // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
+                        // fully signed.
+                        for (og_sc, ic_sc) in connection_state
+                            .outgoing_swapcoins
+                            .iter()
+                            .zip(connection_state.incoming_swapcoins.iter())
+                        {
+                            let contract_timelock = og_sc.get_timelock();
+                            let next_internal_address = &maker
+                                .wallet
+                                .read()
+                                .unwrap()
+                                .get_next_internal_addresses(1)?[0];
+                            let time_lock_spend =
+                                og_sc.create_timelock_spend(next_internal_address);
 
-                        // Sometimes we might not have other's contact signatures.
-                        // This means the protocol have been stopped abruptly.
-                        // This needs more careful consideration as this should not happen
-                        // after funding transactions have been broadcasted for outgoing contracts.
-                        // For incomings, its less lethal as thats mostly the other party's burden.
-                        if let Ok(tx) = og_sc.get_fully_signed_contract_tx() {
-                            outgoings.push((
-                                (og_sc.get_multisig_redeemscript(), tx),
-                                (contract_timelock, time_lock_spend),
-                            ))
-                        } else {
-                            log::warn!(
-                                "[{}] Outgoing contact signature not known. Not Broadcasting",
-                                maker.config.port
-                            );
-                        };
-                        if let Ok(tx) = ic_sc.get_fully_signed_contract_tx() {
-                            incomings.push((ic_sc.get_multisig_redeemscript(), tx));
-                        } else {
-                            log::warn!(
-                                "[{}] Incoming contact signature not known. Not Broadcasting",
-                                maker.config.port
-                            );
+                            // Sometimes we might not have other's contact signatures.
+                            // This means the protocol have been stopped abruptly.
+                            // This needs more careful consideration as this should not happen
+                            // after funding transactions have been broadcasted for outgoing contracts.
+                            // For incomings, its less lethal as thats mostly the other party's burden.
+                            if let Ok(tx) = og_sc.get_fully_signed_contract_tx() {
+                                outgoings.push((
+                                    (og_sc.get_multisig_redeemscript(), tx),
+                                    (contract_timelock, time_lock_spend),
+                                ))
+                            } else {
+                                log::warn!(
+                                    "[{}] Outgoing contact signature not known. Not Broadcasting",
+                                    maker.config.port
+                                );
+                            };
+                            if let Ok(tx) = ic_sc.get_fully_signed_contract_tx() {
+                                incomings.push((ic_sc.get_multisig_redeemscript(), tx));
+                            } else {
+                                log::warn!(
+                                    "[{}] Incoming contact signature not known. Not Broadcasting",
+                                    maker.config.port
+                                );
+                            }
                         }
-                    }
-                    failed_swap_ip.push(ip.clone());
+                        failed_swap_ip.push(ip.clone());
 
-                    // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
-                    let maker_clone = maker.clone();
-                    log::info!(
-                        "[{}] Spawning Broadcast Contract and Timelock Thread",
-                        maker.config.port
-                    );
-                    std::thread::spawn(move || {
-                        broadcast_contracts_and_timelocks(maker_clone, outgoings, incomings);
-                    });
-                    break;
+                        // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
+                        let maker_clone = maker.clone();
+                        log::info!(
+                            "[{}] Spawning recovery thread after seeing contracts in mempool",
+                            maker.config.port
+                        );
+                        std::thread::spawn(move || {
+                            recover_from_swap(maker_clone, outgoings, incomings);
+                        });
+                        // Clear the state value here
+                        *connection_state = ConnectionState::default();
+                        break;
+                    }
                 }
             }
-        }
 
-        // Clear failed swap ip entry from connection state.
-        for ip in failed_swap_ip.iter() {
-            maker.connection_state.write()?.remove(&ip);
-        }
+            // Clear the state entry here
+            for ip in failed_swap_ip.iter() {
+                lock_onstate.remove(&ip);
+            }
+        } // All locks are cleared here.
+
         std::thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
     }
 
@@ -375,7 +383,7 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
 /// Check that if any Taker connection went idle.
 /// If a connection remains idle for more than idle timeout time, thats a potential DOS attack.
 /// Broadcast the contract transactions and claim funds via timelock.
-pub fn check_for_idle_states(maker: Arc<Maker>) {
+pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut bad_ip = Vec::new();
     loop {
         if *maker.shutdown.read().unwrap() {
@@ -383,70 +391,81 @@ pub fn check_for_idle_states(maker: Arc<Maker>) {
         }
         let current_time = Instant::now();
 
-        for (ip, (state, last_connected_time)) in maker.connection_state.read().unwrap().iter() {
-            let mut outgoings = Vec::new();
-            let mut incomings = Vec::new();
+        // Extra scope to release all locks when done.
+        {
+            let mut lock_on_state = maker.connection_state.lock()?;
+            for (ip, (state, last_connected_time)) in lock_on_state.iter_mut() {
+                let mut outgoings = Vec::new();
+                let mut incomings = Vec::new();
 
-            let no_response_since = current_time.saturating_duration_since(*last_connected_time);
-            log::info!(
-                "[{}] No response from {} in {:?}",
-                maker.config.port,
-                ip,
-                no_response_since
-            );
-            if no_response_since > std::time::Duration::from_secs(30) {
-                log::error!(
-                    "[{}] Potential Dropped Connection from {}",
-                    maker.config.port,
-                    ip
-                );
-                // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
-                // fully signed.
-                for (og_sc, ic_sc) in state
-                    .outgoing_swapcoins
-                    .iter()
-                    .zip(state.incoming_swapcoins.iter())
-                {
-                    let contract_timelock = og_sc.get_timelock();
-                    let contract = og_sc.get_fully_signed_contract_tx().unwrap();
-                    let next_internal_address = &maker
-                        .wallet
-                        .read()
-                        .unwrap()
-                        .get_next_internal_addresses(1)
-                        .unwrap()[0];
-                    let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
-                    outgoings.push((
-                        (og_sc.get_multisig_redeemscript(), contract),
-                        (contract_timelock, time_lock_spend),
-                    ));
-                    let incoming_contract = ic_sc.get_fully_signed_contract_tx().unwrap();
-                    incomings.push((ic_sc.get_multisig_redeemscript(), incoming_contract));
-                }
-                bad_ip.push(ip.clone());
-                // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
-                let maker_clone = maker.clone();
+                let no_response_since =
+                    current_time.saturating_duration_since(*last_connected_time);
                 log::info!(
-                    "[{}] Spawning Broadcast Contract and Timelock Thread",
-                    maker.config.port
+                    "[{}] No response from {} in {:?}",
+                    maker.config.port,
+                    ip,
+                    no_response_since
                 );
-                std::thread::spawn(move || {
-                    broadcast_contracts_and_timelocks(maker_clone, outgoings, incomings);
-                });
-                break;
+                if no_response_since > std::time::Duration::from_secs(30) {
+                    log::error!(
+                        "[{}] Potential Dropped Connection from {}",
+                        maker.config.port,
+                        ip
+                    );
+                    // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
+                    // fully signed.
+                    for (og_sc, ic_sc) in state
+                        .outgoing_swapcoins
+                        .iter()
+                        .zip(state.incoming_swapcoins.iter())
+                    {
+                        let contract_timelock = og_sc.get_timelock();
+                        let contract = og_sc.get_fully_signed_contract_tx().unwrap();
+                        let next_internal_address = &maker
+                            .wallet
+                            .read()
+                            .unwrap()
+                            .get_next_internal_addresses(1)
+                            .unwrap()[0];
+                        let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
+                        outgoings.push((
+                            (og_sc.get_multisig_redeemscript(), contract),
+                            (contract_timelock, time_lock_spend),
+                        ));
+                        let incoming_contract = ic_sc.get_fully_signed_contract_tx().unwrap();
+                        incomings.push((ic_sc.get_multisig_redeemscript(), incoming_contract));
+                    }
+                    bad_ip.push(ip.clone());
+                    // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
+                    let maker_clone = maker.clone();
+                    log::info!(
+                        "[{}] Spawning recovery thread after Taker dropped",
+                        maker.config.port
+                    );
+                    std::thread::spawn(move || {
+                        recover_from_swap(maker_clone, outgoings, incomings);
+                    });
+                    // Clear the state values here
+                    *state = ConnectionState::default();
+                    break;
+                }
             }
-        }
-        // Clear previously known disconnected taker
-        for ip in bad_ip.iter() {
-            maker.connection_state.write().unwrap().remove(&ip);
-        }
+
+            // Clear the state entry here
+            for ip in bad_ip.iter() {
+                lock_on_state.remove(&ip);
+            }
+        } // All locks are cleared here
+
         std::thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
     }
+
+    Ok(())
 }
 
 /// Broadcast Incoming and Outgoing Contract transactions. Broadcast timelock transactions after maturity.
 /// remove contract transactions from the wallet.
-pub fn broadcast_contracts_and_timelocks(
+pub fn recover_from_swap(
     maker: Arc<Maker>,
     // Tuple of ((Multisig_reedemscript, Contract Tx), (Timelock, Timelock Tx))
     outgoings: Vec<((ScriptBuf, Transaction), (u16, Transaction))>,

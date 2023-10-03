@@ -1,4 +1,4 @@
-use std::sync::{PoisonError, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{MutexGuard, PoisonError, RwLockReadGuard, RwLockWriteGuard};
 
 use bitcoin::secp256k1;
 
@@ -36,6 +36,12 @@ impl<'a, T> From<PoisonError<RwLockReadGuard<'a, T>>> for MakerError {
 
 impl<'a, T> From<PoisonError<RwLockWriteGuard<'a, T>>> for MakerError {
     fn from(_: PoisonError<RwLockWriteGuard<'a, T>>) -> Self {
+        Self::MutexPossion
+    }
+}
+
+impl<'a, T> From<PoisonError<MutexGuard<'a, T>>> for MakerError {
+    fn from(_: PoisonError<MutexGuard<'a, T>>) -> Self {
         Self::MutexPossion
     }
 }
