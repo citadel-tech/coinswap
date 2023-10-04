@@ -20,7 +20,7 @@ async fn test_abort_case_2_move_on_with_other_makers() {
 
     // 6102 is naughty. But theres enough good ones.
     let makers_config_map = [
-        (6102, MakerBehavior::CloseBeforeSendingSendersSigs),
+        (6102, MakerBehavior::CloseAtReqContractSigsForSender),
         (16102, MakerBehavior::Normal),
         (26102, MakerBehavior::Normal),
     ];

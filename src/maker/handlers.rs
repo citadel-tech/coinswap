@@ -86,7 +86,7 @@ pub async fn handle_message(
             }
             TakerToMakerMessage::ReqContractSigsForRecvr(message) => {
                 connection_state.allowed_message = ExpectedMessage::HashPreimage;
-                Some(maker.handle_sign_receivers_contract_tx(message)?)
+                Some(maker.handle_req_contract_sigs_for_recvr(message)?)
             }
             TakerToMakerMessage::RespHashPreimage(message) => {
                 connection_state.allowed_message = ExpectedMessage::PrivateKeyHandover;
@@ -133,7 +133,7 @@ pub async fn handle_message(
                     // Nothing to send. Maker now creates and broadcasts his funding Txs
                     connection_state.allowed_message = ExpectedMessage::ReqContractSigsForRecvr;
                     maker
-                        .handle_senders_and_receivers_contract_sigs(connection_state, message, ip)
+                        .handle_contract_sigs_for_recvr_and_sender(connection_state, message, ip)
                         .await?;
                     None
                 }
@@ -147,7 +147,7 @@ pub async fn handle_message(
         ExpectedMessage::ReqContractSigsForRecvr => {
             if let TakerToMakerMessage::ReqContractSigsForRecvr(message) = message {
                 connection_state.allowed_message = ExpectedMessage::HashPreimage;
-                Some(maker.handle_sign_receivers_contract_tx(message)?)
+                Some(maker.handle_req_contract_sigs_for_recvr(message)?)
             } else {
                 return Err(MakerError::General(
                     "Expected reciever's contract transaction",
@@ -185,9 +185,9 @@ impl Maker {
         &self,
         message: ReqContractSigsForSender,
     ) -> Result<MakerToTakerMessage, MakerError> {
-        if let MakerBehavior::CloseBeforeSendingSendersSigs = self.behavior {
+        if let MakerBehavior::CloseAtReqContractSigsForSender = self.behavior {
             return Err(MakerError::General(
-                "closing connection early due to special maker behavior",
+                "Special Behavior: CloseAtReqContractSigsForSender",
             ));
         }
 
@@ -233,9 +233,9 @@ impl Maker {
         message: ProofOfFunding,
         ip: IpAddr,
     ) -> Result<MakerToTakerMessage, MakerError> {
-        if let MakerBehavior::CloseAfterSendingSendersSigs = self.behavior {
+        if let MakerBehavior::CloseAtProofOfFunding = self.behavior {
             return Err(MakerError::General(
-                "Special Behavior: Closing connection after sending sender's signatures",
+                "Special Behavior: CloseAtProofOfFunding",
             ));
         }
 
@@ -449,15 +449,15 @@ impl Maker {
     }
 
     /// Handles [ContractSigsForRecvrAndSender] message and updates the wallet state
-    pub async fn handle_senders_and_receivers_contract_sigs(
+    pub async fn handle_contract_sigs_for_recvr_and_sender(
         &self,
         connection_state: &mut ConnectionState,
         message: ContractSigsForRecvrAndSender,
         ip: IpAddr,
     ) -> Result<(), MakerError> {
-        if let MakerBehavior::CloseAtSenersAndRecvrsContractSigs = self.behavior {
+        if let MakerBehavior::CloseAtContractSigsForRecvrAndSender = self.behavior {
             return Err(MakerError::General(
-                "Special Behavior: Closing connection Before Receving Sender's and Receiver's Contract Sigs",
+                "Special Behavior: CloseAtContractSigsForRecvrAndSender",
             ));
         }
 
@@ -525,7 +525,7 @@ impl Maker {
     }
 
     /// Handles [ReqContractSigsForRecvr] and returns a [MakerToTakerMessage::RespContractSigsForRecvr]
-    pub fn handle_sign_receivers_contract_tx(
+    pub fn handle_req_contract_sigs_for_recvr(
         &self,
         message: ReqContractSigsForRecvr,
     ) -> Result<MakerToTakerMessage, MakerError> {

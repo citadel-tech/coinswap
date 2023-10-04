@@ -20,7 +20,7 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
 
     // 6102 is naughty. And theres not enough makers.
     let makers_config_map = [
-        (6102, MakerBehavior::CloseBeforeSendingSendersSigs),
+        (6102, MakerBehavior::CloseAtReqContractSigsForSender),
         (16102, MakerBehavior::Normal),
     ];
 

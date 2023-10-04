@@ -37,9 +37,9 @@ use super::{config::MakerConfig, error::MakerError};
 #[derive(Debug, Clone, Copy)]
 pub enum MakerBehavior {
     Normal,
-    CloseBeforeSendingSendersSigs,
-    CloseAfterSendingSendersSigs,
-    CloseAtSenersAndRecvrsContractSigs,
+    CloseAtReqContractSigsForSender,
+    CloseAtProofOfFunding,
+    CloseAtContractSigsForRecvrAndSender,
 }
 /// A structure denoting expectation of type of taker message.
 /// Used in the [ConnectionState] structure.

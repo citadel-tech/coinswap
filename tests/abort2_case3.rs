@@ -20,7 +20,7 @@ async fn maker_drops_after_sending_senders_sigs() {
 
     // 6102 is naughty. And theres not enough makers.
     let makers_config_map = [
-        (6102, MakerBehavior::CloseAfterSendingSendersSigs),
+        (6102, MakerBehavior::CloseAtProofOfFunding),
         (16102, MakerBehavior::Normal),
     ];
 

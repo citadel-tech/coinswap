@@ -157,7 +157,7 @@ fn main() -> Result<(), WalletError> {
             special_behavior,
         } => {
             let maker_special_behavior = match special_behavior.unwrap_or(String::new()).as_str() {
-                "closeonsignsenderscontracttx" => MakerBehavior::CloseBeforeSendingSendersSigs,
+                "closeonsignsenderscontracttx" => MakerBehavior::CloseAtReqContractSigsForSender,
                 _ => MakerBehavior::Normal,
             };
             let maker_id = args.wallet_file_name.to_str().expect("bad file name");
