@@ -20,6 +20,7 @@ pub enum TakerError {
     Socks(tokio_socks::Error),
     Protocol(ProtocolError),
     SendAmountNotSet,
+    FundingTxWaitTimeOut,
 }
 
 impl From<RpcError> for TakerError {

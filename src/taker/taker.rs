@@ -14,7 +14,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use bip39::Mnemonic;
@@ -227,6 +227,7 @@ impl Taker {
 
             // Attempt to initiate the next hop of the swap. If anything goes wrong, abort immediately.
             // If succeeded, collect the funding_outpoints and multisig_reedemscripts of the next hop.
+            // If error then aborts from current swap. Ban the Peer.
             let (funding_outpoints, multisig_reedemscripts) = match self
                 .send_sigs_init_next_hop(maker_refund_locktime, &funding_tx_infos)
                 .await
@@ -251,25 +252,35 @@ impl Taker {
                     (funding_outpoints, multisig_reedemscripts)
                 }
                 Err(e) => {
-                    log::info!("Could not initiate next hop. Error : {:?}", e);
-                    log::info!("Starting recovery from existing swap");
+                    log::error!("Could not initiate next hop. Error : {:?}", e);
+                    log::warn!("Starting recovery from existing swap");
                     self.recover_from_swap()?;
                     return Ok(());
                 }
             };
 
             // Watch for both expected and unexpected transactions.
-            // If anything is seen in the mempool, abort from swap immediately.
+            // This errors in two cases.
+            // TakerError::ContractsBroadcasted and TakerError::FundingTxWaitTimeOut.
+            // For all cases, abort from swap immediately.
+            // For the timeout case also ban the Peer.
             let txids_to_watch = funding_outpoints.iter().map(|op| op.txid).collect();
             match self.watch_for_txs(&txids_to_watch).await {
                 Ok(r) => self.ongoing_swap_state.funding_txs.push(r),
                 Err(e) => {
-                    if let TakerError::ContractsBroadcasted(braodcasted_contract_txs) = e {
-                        log::error!("Contract Txs Broadcasted: {:?}", braodcasted_contract_txs);
-                        log::warn!("Starting recovery from existing swap");
-                        self.recover_from_swap()?;
-                        return Ok(());
+                    log::error!("Error: {:?}", e);
+                    log::warn!("Starting recovery from existing swap");
+                    if let TakerError::FundingTxWaitTimeOut = e {
+                        let bad_maker = self
+                            .ongoing_swap_state
+                            .peer_infos
+                            .pop()
+                            .expect("Peer must have been added already in the list")
+                            .peer;
+                        self.offerbook.add_bad_maker(&bad_maker);
                     }
+                    self.recover_from_swap()?;
+                    return Ok(());
                 }
             }
 
@@ -405,25 +416,23 @@ impl Taker {
             .collect::<Result<_, TakerError>>()?;
 
         // Watch for the funding transactions to be confirmed.
-        // If everything goes good, register the functing txs with merkle proofs and
-        // add maker to good maker list.
-        // If the Maker broadcasts any of the contract txs, run the recovery script.
+        // This errors in two cases.
+        // TakerError::ContractsBroadcasted and TakerError::FundingTxWaitTimeOut.
+        // For all cases, abort from swap immediately.
+        // For the timeout case also ban the Peer.
         match self.watch_for_txs(&funding_txids).await {
             Ok(r) => {
                 self.ongoing_swap_state.funding_txs.push(r);
                 self.offerbook.add_good_maker(&maker);
             }
-            Err(e) => match e {
-                TakerError::ContractsBroadcasted(broadcated_contract_txs) => {
-                    log::error!("Contract Txs Broadcasted : {:?}", broadcated_contract_txs);
-                    log::warn!("Starting Recovery Script");
-                    self.recover_from_swap()?;
+            Err(e) => {
+                log::error!("Error: {:?}", e);
+                log::warn!("Starting Recovery Script");
+                if let TakerError::FundingTxWaitTimeOut = e {
+                    self.offerbook.add_bad_maker(&maker);
                 }
-                _ => {
-                    log::error!("Taker Error Occured: {:?}", e);
-                    return Err(e);
-                }
-            },
+                self.recover_from_swap()?;
+            }
         }
 
         Ok(())
@@ -457,6 +466,16 @@ impl Taker {
             required_confirmations
         );
         let mut txids_seen_once = HashSet::<Txid>::new();
+
+        // Wait for this much time for txs to appear in mempool.
+        let wait_time = if cfg!(feature = "integration-test") {
+            10u64 // 10 secs for the tests
+        } else {
+            60 * 5 // 5mins for production
+        };
+
+        let start_time = Instant::now();
+
         loop {
             // Abort if any of the contract transaction is broadcasted
             // TODO: Find the culprit Maker, and ban it's fidelity bond.
@@ -477,7 +496,14 @@ impl Taker {
                 let gettx = match self.wallet.rpc.get_raw_transaction_info(txid, None) {
                     Ok(r) => r,
                     // Transaction haven't arrived in our mempool, keep looping.
-                    Err(_e) => continue,
+                    Err(_e) => {
+                        let elapsed = start_time.elapsed().as_secs();
+                        log::info!("Waiting for mempool transaction for {}secs", elapsed);
+                        if elapsed > wait_time {
+                            return Err(TakerError::FundingTxWaitTimeOut);
+                        }
+                        continue;
+                    }
                 };
                 if !txids_seen_once.contains(txid) {
                     txids_seen_once.insert(*txid);
