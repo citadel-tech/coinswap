@@ -210,7 +210,50 @@ pub enum TakerToMakerMessage {
 }
 ```
 
-A step-by-step communication sequence with the above messages is provided in `src/messages.rs` [docs](https://github.com/utxo-teleport/teleport-transactions/blob/30be708642cfdaa206d52e147ecb580af7db0bda/src/messages.rs#L20-L59).
+A step-by-step communication sequence for a typical 3-hop-swap with the above messages is provided in [`src/messages.rs`](https://github.com/utxo-teleport/teleport-transactions/blob/30be708642cfdaa206d52e147ecb580af7db0bda/src/messages.rs#L20-L59), as below.
+
+```
+//! The simplest 3 hop Coinswap communication, between a Taker and two Makers in a multi-hop coinswap is shown below.
+//!
+//! Taker -----> Maker1 -----> Maker2 ------> Taker
+//!
+//! ********* Initiate First Hop *********
+//! (Sender: Taker, Receiver: Maker1)
+//! Taker -> Maker1: [TakerToMakerMessage::ReqContractSigsForSender]
+//! Maker1 -> Taker: [MakerToTakerMessage::RespContractSigsForSender]
+//! Taker -> Maker1: [TakerToMakerMessage::RespProofOfFunding] (Funding Tx of the hop Taker-Maker1)
+//!
+//! ********* Initiate Second Hop *********
+//! Taker -> Maker1: Share details of next hop. (Sender: Maker1, Receiver: Maker2)
+//! Maker1 -> Taker: [MakerToTakerMessage::ReqContractSigsAsRecvrAndSender]
+//! Taker -> Maker2: [`TakerToMakerMessage::ReqContractSigsForSender`] (Request the Receiver for it's sigs)
+//! Maker2 -> Taker: [MakerToTakerMessage::RespContractSigsForSender] (Receiver sends the sigs)
+//! Taker puts his sigs as the Sender.
+//! Taker -> Maker1: [TakerToMakerMessage::RespContractSigsForRecvrAndSender] (send both the sigs)
+//! Maker1 Broadcasts the funding transaction.
+//! Taker -> Maker2: [TakerToMakerMessage::RespProofOfFunding] (Funding Tx of swap Maker1-Maker2)
+//!
+//! ********* Initiate Third Hop *********
+//! Taker -> Maker2: Shares details of next hop. (Sender: Maker2, Receiver: Taker)
+//! Maker2 -> Taker: [MakerToTakerMessage::ReqContractSigsAsRecvrAndSender]
+//! Taker -> Maker1: [TakerToMakerMessage::ReqContractSigsForRecvr] (Request the Sender for it's sigs)
+//! Maker1 -> Taker: [MakerToTakerMessage::RespContractSigsForRecvr] (Sender sends the the sigs)
+//! Taker puts his sigs as the Receiver.
+//! Taker -> Maker2: [TakerToMakerMessage::RespContractSigsForRecvrAndSender]
+//! Broadcast Maker2-Taker Funding Transaction.
+//! Taker -> Maker2: [TakerToMakerMessage::ReqContractSigsForRecvr]
+//! Maker2 -> Taker: [MakerToTakerMessage::RespContractSigsForRecvr]
+//! Maker2 Broadcasts the funding transaction.
+//!
+//! ********* Settlement *********
+//! Taker -> Maker1: [TakerToMakerMessage::RespHashPreimage] (For Taker-Maker1 HTLC)
+//! Maker1 -> Taker: [MakerToTakerMessage::RespPrivKeyHandover] (For Maker1-Maker2 funding multisig).
+//! Taker -> Maker1: [TakerToMakerMessage::RespPrivKeyHandover] (For Taker-Maker1 funding multisig).
+//! Taker -> Maker2:  [TakerToMakerMessage::RespHashPreimage] (for Maker1-Maker2 HTLC).
+//! Taker -> Maker2: [TakerToMakerMessage::RespPrivKeyHandover] (For Maker1-Maker2 funding multisig, received from Maker1 in Step 16)
+//! Taker -> Maker2: [`TakerToMakerMessage::RespHashPreimage`] (for Maker2-Taker HTLC).
+//! Maker2 -> Taker: [`MakerToTakerMessage::RespPrivKeyHandover`] (For Maker2-Taker funding multisig).
+```
 
 The `Taker` carries out all the heavy lifting of the protocol. `Maker`s work like simple state-machine responding to `TakerToMakerMessage`s.
 
