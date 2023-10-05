@@ -82,6 +82,7 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [x] Finish building a flexible and robust Test-Framework with `bitcoind` backend.
 - [ ] Abort 3: Maker aborts **after setup**. Taker and other Makers identify this and recovers back via contract tx. Taker bans the aborting Maker's fidelity bond.
   - [x] Case1: Maker Drops at `ContractSigsForRecvrAndSender`. Does not broadcasts the funding txs.
+  - [x] Case2: Maker drops at `ContractSigsForRecvr` after broadcasting funding txs. Taker and other Makers recover.
 - [ ] Malice 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
 - [ ] Malice 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
 - [ ] Fix all clippy warnings.
