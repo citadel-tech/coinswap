@@ -2,7 +2,7 @@ use std::{net::IpAddr, sync::Arc, time::Instant};
 
 use bitcoin::{
     hashes::Hash,
-    secp256k1::{self, ecdsa::Signature, Secp256k1},
+    secp256k1::{self, Secp256k1},
     Amount, OutPoint, PublicKey, Transaction, Txid,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
@@ -529,19 +529,25 @@ impl Maker {
         &self,
         message: ReqContractSigsForRecvr,
     ) -> Result<MakerToTakerMessage, MakerError> {
-        let mut sigs = Vec::<Signature>::new();
-        for receivers_contract_tx_info in &message.txs {
-            sigs.push(
-                //the fact that the peer knows the correct multisig_redeemscript is what ensures
-                //security here, a random peer out there who isnt involved in a coinswap wont know
-                //what the multisig_redeemscript is
-                self.wallet
+        if let MakerBehavior::CloseAtContractSigsForRecvr = self.behavior {
+            return Err(MakerError::General(
+                "Speacial Behavior: CloseAtContractSigsForRecvr",
+            ));
+        };
+
+        let sigs = message
+            .txs
+            .iter()
+            .map(|txinfo| {
+                Ok(self
+                    .wallet
                     .read()?
-                    .find_outgoing_swapcoin(&receivers_contract_tx_info.multisig_redeemscript)
-                    .expect("Outgoing swapcoin not found")
-                    .sign_contract_tx_with_my_privkey(&receivers_contract_tx_info.contract_tx)?,
-            );
-        }
+                    .find_outgoing_swapcoin(&txinfo.multisig_redeemscript)
+                    .expect("Outgoing Swapcoin expected")
+                    .sign_contract_tx_with_my_privkey(&txinfo.contract_tx)?)
+            })
+            .collect::<Result<Vec<_>, MakerError>>()?;
+
         Ok(MakerToTakerMessage::RespContractSigsForRecvr(
             ContractSigsForRecvr { sigs },
         ))

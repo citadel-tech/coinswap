@@ -40,6 +40,7 @@ pub enum MakerBehavior {
     CloseAtReqContractSigsForSender,
     CloseAtProofOfFunding,
     CloseAtContractSigsForRecvrAndSender,
+    CloseAtContractSigsForRecvr,
 }
 /// A structure denoting expectation of type of taker message.
 /// Used in the [ConnectionState] structure.
@@ -78,7 +79,7 @@ pub struct Maker {
     pub wallet: RwLock<Wallet>,
     /// A flag to trigger shutdown event
     pub shutdown: RwLock<bool>,
-    /// Map of IP address to Connection State + Last Connected isntant
+    /// Map of IP address to Connection State + last Connected instant
     pub connection_state: Mutex<HashMap<IpAddr, (ConnectionState, Instant)>>,
 }
 
@@ -92,6 +93,13 @@ impl Maker {
         onion_addrs: String,
         behavior: MakerBehavior,
     ) -> Result<Self, MakerError> {
+        // Only allow MakerBehavior in functional tests
+        let behavior = if cfg!(feature = "integration-test") {
+            behavior
+        } else {
+            MakerBehavior::Normal
+        };
+
         // Load if exists, else create new.
         let mut wallet = if wallet_file.exists() {
             Wallet::load(&rpc_config, wallet_file)?

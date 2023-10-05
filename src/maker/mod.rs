@@ -85,6 +85,10 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     // Loop to keep checking for new connections
     loop {
+        if *maker.shutdown.read()? {
+            log::warn!("[{}] Maker is shutting down", maker.config.port);
+            break Ok(());
+        }
         let (mut socket, addr) = select! {
             new_client = listener.accept() => new_client?,
             client_err = server_loop_comms_rx.recv() => {
@@ -114,10 +118,6 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 }
             },
             _ = sleep(Duration::from_secs(maker.config.heart_beat_interval_secs)) => {
-                if *maker.shutdown.read()? {
-                    log::warn!("[{}] Maker is shutting down", maker.config.port);
-                    break Ok(());
-                }
                 let mut rpc_ping_success = true;
 
                 let rpc_ping_interval = Duration::from_secs(maker.config.rpc_ping_interval_secs);
