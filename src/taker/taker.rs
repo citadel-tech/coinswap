@@ -271,12 +271,8 @@ impl Taker {
                     log::error!("Error: {:?}", e);
                     log::warn!("Starting recovery from existing swap");
                     if let TakerError::FundingTxWaitTimeOut = e {
-                        let bad_maker = self
-                            .ongoing_swap_state
-                            .peer_infos
-                            .pop()
-                            .expect("Peer must have been added already in the list")
-                            .peer;
+                        let bad_maker =
+                            &self.ongoing_swap_state.peer_infos[maker_index as usize].peer;
                         self.offerbook.add_bad_maker(&bad_maker);
                     }
                     self.recover_from_swap()?;
