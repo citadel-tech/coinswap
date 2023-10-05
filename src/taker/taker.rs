@@ -206,7 +206,12 @@ impl Taker {
         self.ongoing_swap_state.active_preimage = preimage;
         self.ongoing_swap_state.swap_params = swap_params;
 
-        self.init_first_hop().await?;
+        // Try first hop. Abort if error happens.
+        if let Err(e) = self.init_first_hop().await {
+            log::error!("Fatal Error: {:?}", e);
+            self.recover_from_swap()?;
+            return Err(e);
+        }
 
         // Iterate until `maker_count` numbers of Makers are found and initiate swap between them sequentially.
         for maker_index in 0..self.ongoing_swap_state.swap_params.maker_count {
@@ -285,7 +290,15 @@ impl Taker {
                 let incoming_swapcoins =
                     self.create_incoming_swapcoins(multisig_reedemscripts, funding_outpoints)?;
                 self.ongoing_swap_state.incoming_swapcoins = incoming_swapcoins;
-                self.request_sigs_for_incoming_swap().await?;
+                match self.request_sigs_for_incoming_swap().await {
+                    Ok(_) => (),
+                    Err(e) => {
+                        log::error!("Inoming SwapCoin Generation failed : {:?}", e);
+                        log::warn!("Starting recovery from existing swap");
+                        self.recover_from_swap()?;
+                        return Ok(());
+                    }
+                }
             }
         } // Contract establishment completed.
 
@@ -417,17 +430,16 @@ impl Taker {
         // For all cases, abort from swap immediately.
         // For the timeout case also ban the Peer.
         match self.watch_for_txs(&funding_txids).await {
-            Ok(r) => {
-                self.ongoing_swap_state.funding_txs.push(r);
+            Ok(stuffs) => {
+                self.ongoing_swap_state.funding_txs.push(stuffs);
                 self.offerbook.add_good_maker(&maker);
             }
             Err(e) => {
                 log::error!("Error: {:?}", e);
-                log::warn!("Starting Recovery Script");
                 if let TakerError::FundingTxWaitTimeOut = e {
                     self.offerbook.add_bad_maker(&maker);
                 }
-                self.recover_from_swap()?;
+                return Err(e);
             }
         }
 
@@ -914,8 +926,8 @@ impl Taker {
                 .collect::<Result<Vec<_>, _>>()?
         } else {
             // If Next Maker is the Receiver, and Previous Maker is the Sender, request Previous Maker to sign the Reciever's Contract Tx.
-            assert!(previous_maker.is_some());
-            let previous_maker_addr = &previous_maker.unwrap().peer.address;
+            let previous_maker = previous_maker.expect("Previous Maker should always exists");
+            let previous_maker_addr = &previous_maker.peer.address;
             log::info!(
                 "===> Sending SignReceiversContractTx, previous maker is {}",
                 previous_maker_addr,
@@ -928,13 +940,23 @@ impl Taker {
                     &self.ongoing_swap_state.watchonly_swapcoins
                         [self.ongoing_swap_state.watchonly_swapcoins.len() - 2]
                 };
-            self.req_sigs_for_recvr(
-                previous_maker_addr,
-                previous_maker_watchonly_swapcoins,
-                &contract_sigs_as_recvr_sender.receivers_contract_txs,
-            )
-            .await?
-            .sigs
+            let sigs = match self
+                .req_sigs_for_recvr(
+                    previous_maker_addr,
+                    previous_maker_watchonly_swapcoins,
+                    &contract_sigs_as_recvr_sender.receivers_contract_txs,
+                )
+                .await
+            {
+                Ok(s) => s.sigs,
+                Err(e) => {
+                    log::error!("Could not get Receiver's signatures : {:?}", e);
+                    log::warn!("Banning Maker : {}", previous_maker.peer.address);
+                    self.offerbook.add_bad_maker(&previous_maker.peer);
+                    return Err(e);
+                }
+            };
+            sigs
         };
         log::info!(
             "===> Sending ContractSigsAsReceiverAndSender to {}",
@@ -1146,7 +1168,7 @@ impl Taker {
             "===> Sending ReqContractSigsForRecvr to {}",
             last_maker.address
         );
-        let receiver_contract_sig = self
+        let receiver_contract_sig = match self
             .req_sigs_for_recvr(
                 &last_maker.address,
                 &self.ongoing_swap_state.incoming_swapcoins,
@@ -1157,7 +1179,15 @@ impl Taker {
                     .map(|swapcoin| swapcoin.contract_tx.clone())
                     .collect::<Vec<Transaction>>(),
             )
-            .await?;
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("Banning Maker : {}", last_maker.address);
+                self.offerbook.add_bad_maker(&last_maker);
+                return Err(e);
+            }
+        };
         for (incoming_swapcoin, &receiver_contract_sig) in self
             .ongoing_swap_state
             .incoming_swapcoins
@@ -1185,6 +1215,20 @@ impl Taker {
         maker_hashlock_nonces: &[SecretKey],
         locktime: u16,
     ) -> Result<ContractSigsForSender, TakerError> {
+        // Configurable reconnection attempts for testing
+        let first_connect_attempts = if cfg!(feature = "integration-test") {
+            10
+        } else {
+            self.config.first_connect_attempts
+        };
+
+        // Custom sleep delay for testing.
+        let sleep_delay = if cfg!(feature = "integration-test") {
+            1
+        } else {
+            self.config.first_connect_sleep_delay_sec
+        };
+
         let mut ii = 0;
         loop {
             ii += 1;
@@ -1205,8 +1249,8 @@ impl Taker {
                                 maker_address,
                                 e
                             );
-                            if ii <= self.config.first_connect_attempts {
-                                sleep(Duration::from_secs(self.config.first_connect_sleep_delay_sec)).await;
+                            if ii <= first_connect_attempts {
+                                sleep(Duration::from_secs(sleep_delay)).await;
                                 continue;
                             } else {
                                 return Err(e);
@@ -1239,6 +1283,20 @@ impl Taker {
         incoming_swapcoins: &[S],
         receivers_contract_txes: &[Transaction],
     ) -> Result<ContractSigsForRecvr, TakerError> {
+        // Configurable reconnection attempts for testing
+        let reconnect_attempts = if cfg!(feature = "integration-test") {
+            10
+        } else {
+            self.config.reconnect_attempts
+        };
+
+        // Custom sleep delay for testing.
+        let sleep_delay = if cfg!(feature = "integration-test") {
+            1
+        } else {
+            self.config.reconnect_short_sleep_delay
+        };
+
         let mut ii = 0;
         loop {
             ii += 1;
@@ -1257,10 +1315,10 @@ impl Taker {
                                 maker_address,
                                 e
                             );
-                            if ii <= self.config.reconnect_attempts {
+                            if ii <= reconnect_attempts {
                                 sleep(Duration::from_secs(
                                     if ii <= self.config.short_long_sleep_delay_transition {
-                                        self.config.reconnect_short_sleep_delay
+                                        sleep_delay
                                     } else {
                                         self.config.reconnect_long_sleep_delay
                                     },
