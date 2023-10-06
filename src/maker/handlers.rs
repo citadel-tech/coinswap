@@ -558,6 +558,10 @@ impl Maker {
         &self,
         message: HashPreimage,
     ) -> Result<MakerToTakerMessage, MakerError> {
+        if let MakerBehavior::CloseAtHashPreimage = self.behavior {
+            return Err(MakerError::General("Special Behavior: CloseAtHashPreimage"));
+        }
+
         let hashvalue = Hash160::hash(&message.preimage);
         for multisig_redeemscript in &message.senders_multisig_redeemscripts {
             let mut wallet_write = self.wallet.write()?;
@@ -570,9 +574,12 @@ impl Maker {
             }
             incoming_swapcoin.hash_preimage = Some(message.preimage);
         }
-        //TODO tell preimage to watchtowers
 
-        log::info!("received preimage for hashvalue={}", hashvalue);
+        log::info!(
+            "[{}] received preimage for hashvalue={}",
+            self.config.port,
+            hashvalue
+        );
         let mut swapcoin_private_keys = Vec::<MultisigPrivkey>::new();
 
         for multisig_redeemscript in &message.receivers_multisig_redeemscripts {

@@ -41,6 +41,7 @@ pub enum MakerBehavior {
     CloseAtProofOfFunding,
     CloseAtContractSigsForRecvrAndSender,
     CloseAtContractSigsForRecvr,
+    CloseAtHashPreimage,
 }
 /// A structure denoting expectation of type of taker message.
 /// Used in the [ConnectionState] structure.
@@ -312,7 +313,7 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                         let mut outgoings = Vec::new();
                         let mut incomings = Vec::new();
                         // Something is broadcasted. Report, Recover and Abort.
-                        log::error!(
+                        log::warn!(
                             "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
                             maker.config.port,
                             txid,
