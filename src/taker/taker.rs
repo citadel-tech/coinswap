@@ -208,7 +208,7 @@ impl Taker {
 
         // Try first hop. Abort if error happens.
         if let Err(e) = self.init_first_hop().await {
-            log::error!("Fatal Error: {:?}", e);
+            log::error!("Could not initiate first hop: {:?}", e);
             self.recover_from_swap()?;
             return Err(e);
         }
@@ -293,7 +293,7 @@ impl Taker {
                 match self.request_sigs_for_incoming_swap().await {
                     Ok(_) => (),
                     Err(e) => {
-                        log::error!("Inoming SwapCoin Generation failed : {:?}", e);
+                        log::error!("Incoming SwapCoin Generation failed : {:?}", e);
                         log::warn!("Starting recovery from existing swap");
                         self.recover_from_swap()?;
                         return Ok(());
@@ -307,7 +307,15 @@ impl Taker {
             return Ok(());
         }
 
-        self.settle_all_swaps().await?;
+        match self.settle_all_swaps().await {
+            Ok(_) => (),
+            Err(e) => {
+                log::error!("Swap Settlement Failed : {:?}", e);
+                log::warn!("Starting recovery from existing swap");
+                self.recover_from_swap()?;
+                return Ok(());
+            }
+        }
         self.save_and_reset_swap_round()?;
         log::info!("Successfully Completed Coinswap");
         Ok(())
@@ -1356,7 +1364,7 @@ impl Taker {
         let maker_addresses = self.ongoing_swap_state.peer_infos
             [0..self.ongoing_swap_state.peer_infos.len() - 1]
             .iter()
-            .map(|si| si.peer.address.clone())
+            .map(|si| si.peer.clone())
             .collect::<Vec<_>>();
 
         for (index, maker_address) in maker_addresses.iter().enumerate() {
@@ -1405,10 +1413,24 @@ impl Taker {
 
             let mut ii = 0;
             loop {
+                // Configurable reconnection attempts for testing
+                let reconnect_attempts = if cfg!(feature = "integration-test") {
+                    10
+                } else {
+                    self.config.reconnect_attempts
+                };
+
+                // Custom sleep delay for testing.
+                let sleep_delay = if cfg!(feature = "integration-test") {
+                    1
+                } else {
+                    self.config.reconnect_short_sleep_delay
+                };
+
                 ii += 1;
                 select! {
                     ret = self.settle_one_coinswap(
-                        maker_address,
+                        &maker_address.address,
                         index,
                         &mut outgoing_privkeys,
                         &senders_multisig_redeemscripts,
@@ -1418,13 +1440,13 @@ impl Taker {
                             log::warn!(
                                 "Failed to connect to maker {} to settle coinswap, \
                                 reattempting... error={:?}",
-                                maker_address,
+                                &maker_address.address,
                                 e
                             );
-                            if ii <= self.config.reconnect_attempts {
+                            if ii <= reconnect_attempts {
                                 sleep(Duration::from_secs(
                                     if ii <= self.config.short_long_sleep_delay_transition {
-                                        self.config.reconnect_short_sleep_delay
+                                        sleep_delay
                                     } else {
                                         self.config.reconnect_long_sleep_delay
                                     },
@@ -1432,6 +1454,7 @@ impl Taker {
                                 .await;
                                 continue;
                             } else {
+                                self.offerbook.add_bad_maker(&maker_address);
                                 return Err(e);
                             }
                         }
@@ -1440,11 +1463,12 @@ impl Taker {
                     _ = sleep(Duration::from_secs(reconnect_time_out)) => {
                         log::warn!(
                             "Timeout for settling coinswap with maker {}, reattempting...",
-                            maker_address
+                            maker_address.address
                         );
                         if ii <= self.config.reconnect_attempts {
                             continue;
                         } else {
+                            self.offerbook.add_bad_maker(&maker_address);
                             return Err(NetError::ConnectionTimedOut.into());
                         }
                     },
