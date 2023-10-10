@@ -1730,6 +1730,11 @@ impl Taker {
 
         // Start the loop to keep checking for timelock maturity, and spend from the contract asap.
         loop {
+            // Break early if nothing to broadcast.
+            // This happens only when init_first_hop() fails at `NotEnoughMakersInOfferBook`
+            if outgoing_infos.is_empty() {
+                return Ok(());
+            }
             for ((reedemscript, contract), (timelock, timelocked_tx)) in outgoing_infos.iter() {
                 // We have already broadcasted this tx, so skip
                 if timelock_boardcasted.contains(&timelocked_tx) {
