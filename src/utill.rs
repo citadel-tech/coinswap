@@ -204,6 +204,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_str_to_bitcoin_network_main() {
+        let net_str = "main";
+        let network = str_to_bitcoin_network(net_str);
+        assert_eq!(network, Network::Bitcoin);
+    }
+
+    #[test]
+    fn test_str_to_bitcoin_network_test() {
+        let net_str = "test";
+        let network = str_to_bitcoin_network(net_str);
+        assert_eq!(network, Network::Testnet);
+    }
+
+    #[test]
+    fn test_str_to_bitcoin_network_signet() {
+        let net_str = "signet";
+        let network = str_to_bitcoin_network(net_str);
+        assert_eq!(network, Network::Signet)
+    }
+
+    #[test]
+    fn test_str_to_bitcoin_network_regtest() {
+        let net_str = "regtest";
+        let network = str_to_bitcoin_network(net_str);
+        assert_eq!(network, Network::Regtest)
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_str_to_bitcoin_network_unknown() {
+        let net_str = "unknown_network";
+        str_to_bitcoin_network(net_str);
+    }
+
+    #[test]
     fn test_convert_json_rpc_bitcoin_to_satoshis() {
         // Test with an integer value
         let amount = json!(1);
