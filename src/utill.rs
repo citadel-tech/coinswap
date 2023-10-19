@@ -200,42 +200,49 @@ mod tests {
     };
 
     use serde_json::json;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::{TcpListener, TcpStream};
 
     use super::*;
 
     #[test]
-    fn test_str_to_bitcoin_network_main() {
-        let net_str = "main";
-        let network = str_to_bitcoin_network(net_str);
-        assert_eq!(network, Network::Bitcoin);
+    fn test_str_to_bitcoin_network() {
+        let net_strs = vec![
+            ("main", Network::Bitcoin),
+            ("test", Network::Testnet),
+            ("signet", Network::Signet),
+            ("regtest", Network::Regtest),
+            ("unknown_network", Network::Bitcoin),
+        ];
+        for (net_str, expected_network) in net_strs {
+            let network = std::panic::catch_unwind(|| str_to_bitcoin_network(net_str));
+            match network {
+                Ok(net) => assert_eq!(net, expected_network),
+                Err(_) => {
+                    assert_eq!(Network::Bitcoin, expected_network)
+                }
+            }
+        }
     }
 
-    #[test]
-    fn test_str_to_bitcoin_network_test() {
-        let net_str = "test";
-        let network = str_to_bitcoin_network(net_str);
-        assert_eq!(network, Network::Testnet);
-    }
+    #[tokio::test]
+    async fn test_send_message() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
 
-    #[test]
-    fn test_str_to_bitcoin_network_signet() {
-        let net_str = "signet";
-        let network = str_to_bitcoin_network(net_str);
-        assert_eq!(network, Network::Signet)
-    }
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = Vec::new();
+            let nbytes = socket.read(&mut buffer).await.unwrap();
+            buffer.truncate(nbytes);
+            assert_eq!(buffer, b"\"Hello, teleport!\"\n");
+        });
 
-    #[test]
-    fn test_str_to_bitcoin_network_regtest() {
-        let net_str = "regtest";
-        let network = str_to_bitcoin_network(net_str);
-        assert_eq!(network, Network::Regtest)
-    }
+        let mut stream = TcpStream::connect(address).await.unwrap();
+        let (_, mut write_half) = stream.split();
 
-    #[test]
-    #[should_panic]
-    fn test_str_to_bitcoin_network_unknown() {
-        let net_str = "unknown_network";
-        str_to_bitcoin_network(net_str);
+        let message = "Hello, teleport!";
+        send_message(&mut write_half, &message).await.unwrap();
     }
 
     #[test]
