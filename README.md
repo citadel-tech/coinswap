@@ -84,7 +84,7 @@ If you're interested in contributing to the project, explore the [open issues](h
   - [x] Case1: Maker Drops at `ContractSigsForRecvrAndSender`. Does not broadcasts the funding txs. Taker and Other Maker recovers. Maker gets banned.
   - [x] Case2: Maker drops at `ContractSigsForRecvr` after broadcasting funding txs. Taker and other Makers recover. Maker gets banned.
   - [x] Case3L Maker Drops at `HashPreimage` message and doesn't respond back with privkeys. Taker and other Maker recovers. Maker gets banned.
-- [ ] Malice 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
+- [x] Malice 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
 - [ ] Malice 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
 - [ ] Fix all clippy warnings.
 - [ ] Achieve >80% test coverage, including bad and recovery paths in integration tests.
