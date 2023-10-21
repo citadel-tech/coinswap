@@ -128,6 +128,7 @@ pub enum TakerBehavior {
     Normal,
     // This depicts the behavior when the taker drops connections after the full coinswap setup
     DropConnectionAfterFullSetup,
+    BroadcastContractAfterFullSetup,
 }
 
 /// The Taker structure that performs bulk of the coinswap protocol. Taker connects
@@ -153,6 +154,13 @@ impl Taker {
         rpc_config: Option<RPCConfig>,
         behavior: TakerBehavior,
     ) -> Result<Taker, TakerError> {
+        // Only allow Special Behavior in functional tests
+        let behavior = if cfg!(feature = "integration-test") {
+            behavior
+        } else {
+            TakerBehavior::Normal
+        };
+
         let mut wallet = if wallet_file.exists() {
             Wallet::load(&rpc_config.unwrap_or_default(), wallet_file)?
         } else {
@@ -304,6 +312,12 @@ impl Taker {
 
         if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
             log::error!("Dropping Swap Process after full setup");
+            return Ok(());
+        }
+
+        if self.behavior == TakerBehavior::BroadcastContractAfterFullSetup {
+            log::error!("Special Behavior BroadcastContractAfterFullSetup");
+            self.recover_from_swap()?;
             return Ok(());
         }
 
