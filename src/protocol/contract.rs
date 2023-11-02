@@ -836,4 +836,189 @@ mod test {
         )
         .is_ok());
     }
+
+    #[test]
+    fn test_check_multisig_has_pubkey() {
+        let secp = Secp256k1::new();
+
+        let privkey_1 =
+            PrivateKey::from_wif("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy").unwrap();
+        let privkey_2 =
+            PrivateKey::from_wif("cVbZ8ovhye9AoAHFsqobCf7LxbXDAECy9Kb8TZdfsDYMZGBUyCnm").unwrap();
+
+        let pubkey_1 = privkey_1.public_key(&secp);
+        let pubkey_2 = privkey_2.public_key(&secp);
+
+        let (pubkey_derived_1, nonce_1) = derive_maker_pubkey_and_nonce(&pubkey_1).unwrap();
+        let (pubkey_derived_2, nonce_2) = derive_maker_pubkey_and_nonce(&pubkey_2).unwrap();
+
+        let script_value = create_multisig_redeemscript(&pubkey_derived_1, &pubkey_derived_2);
+        let script = script_value.as_script();
+
+        let check_multisig_value_1 = check_multisig_has_pubkey(&script, &pubkey_1, &nonce_1);
+
+        assert_eq!(check_multisig_value_1.unwrap(), ());
+
+        let check_multisig_value_2 =
+            check_multisig_has_pubkey(&script, &pubkey_derived_2, &nonce_2);
+        let val = match check_multisig_value_2.unwrap_err() {
+            ContractError::Protocol(mess) => mess,
+            _ => "Not in path",
+        };
+        assert_eq!(val, "wrong pubkeys in multisig_redeemscript");
+    }
+
+    #[test]
+    fn test_check_hashlock_has_pubkey() {
+        let hash_value = Hash160::from_slice(&thread_rng().gen::<[u8; 20]>()).unwrap();
+
+        let secp = Secp256k1::new();
+        let private_key_1 =
+            PrivateKey::from_wif("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy").unwrap();
+        let public_key_1 = private_key_1.public_key(&secp);
+        let (pub_hashlock, nonce) = derive_maker_pubkey_and_nonce(&public_key_1).unwrap();
+
+        let pub_timelock = PublicKey::from_str(
+            "039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef",
+        )
+        .unwrap();
+
+        let locktime = random::<u16>();
+
+        let contract_script =
+            create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hash_value, &locktime);
+        let contract_redeemscript = contract_script.as_script();
+
+        let error_message =
+            check_hashlock_has_pubkey(&contract_redeemscript, &public_key_1, &nonce);
+        assert_eq!(error_message.unwrap(), ());
+
+        let error =
+            check_hashlock_has_pubkey(&contract_redeemscript, &pub_hashlock, &nonce).unwrap_err();
+
+        let error_description = match error {
+            ContractError::Protocol(message) => message,
+            _ => "Not the current Path",
+        };
+
+        assert_eq!(
+            error_description,
+            "contract hashlock pubkey doesnt match with key derived from nonce"
+        );
+    }
+
+    #[test]
+    fn test_read_hashlock_pubkey_from_contract() {
+        let hashvalue = Hash160::from_slice(&thread_rng().gen::<[u8; 20]>()).unwrap();
+
+        let pub_hashlock = PublicKey::from_str(
+            "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af",
+        )
+        .unwrap();
+
+        let pub_timelock = PublicKey::from_str(
+            "039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef",
+        )
+        .unwrap();
+
+        let locktime = random::<u16>();
+
+        let contract_script =
+            create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hashvalue, &locktime);
+
+        let test_hashlock_pubkey_1 = read_hashlock_pubkey_from_contract(&contract_script).unwrap();
+
+        assert_eq!(pub_hashlock, test_hashlock_pubkey_1);
+
+        let mut byte = contract_script.to_bytes();
+        while byte.len() > 60 {
+            byte.pop();
+        }
+
+        let altered_contract_script = ScriptBuf::from_bytes(byte);
+
+        let test_hashlock_pubkey_2 =
+            read_hashlock_pubkey_from_contract(&altered_contract_script).unwrap_err();
+        let error_message = match test_hashlock_pubkey_2 {
+            ContractError::Protocol(msg) => msg,
+            _ => "Not the correct Path",
+        };
+
+        assert_eq!(error_message, "contract reedemscript too short");
+    }
+
+    #[test]
+    fn test_read_timelock_pubkey_from_contract() {
+        let hashvalue = Hash160::from_slice(&thread_rng().gen::<[u8; 20]>()).unwrap();
+
+        let pub_hashlock = PublicKey::from_str(
+            "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af",
+        )
+        .unwrap();
+
+        let pub_timelock = PublicKey::from_str(
+            "039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef",
+        )
+        .unwrap();
+
+        let locktime = random::<u16>();
+
+        let contract_script =
+            create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hashvalue, &locktime);
+
+        let test_timelock_pubkey_1 = read_timelock_pubkey_from_contract(&contract_script).unwrap();
+
+        assert_eq!(pub_timelock, test_timelock_pubkey_1);
+
+        let mut byte = contract_script.to_bytes();
+        while byte.len() > 98 {
+            byte.pop();
+        }
+
+        let altered_contract_script = ScriptBuf::from_bytes(byte);
+
+        let test_timelock_pubkey_2 =
+            read_timelock_pubkey_from_contract(&altered_contract_script).unwrap_err();
+        let error_message = match test_timelock_pubkey_2 {
+            ContractError::Protocol(msg) => msg,
+            _ => "Not the correct Path",
+        };
+
+        assert_eq!(error_message, "contract reedemscript too short");
+    }
+    #[test]
+    fn test_check_reedemscript_is_multisig() {
+        let initial_redeem_script = ScriptBuf::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
+        let valid_multisig_script = initial_redeem_script.as_script();
+
+        let result_valid_multisig = check_reedemscript_is_multisig(&valid_multisig_script).unwrap();
+        assert_eq!(result_valid_multisig, ());
+
+        let multiscript_redeemscript_2 = initial_redeem_script.as_script();
+        let mut invalid_length_script = multiscript_redeemscript_2.to_bytes();
+        invalid_length_script.pop();
+
+        let result_invalid_length =
+            check_reedemscript_is_multisig(Script::from_bytes(&invalid_length_script)).unwrap_err();
+        let error_message_invalid_length = match result_invalid_length {
+            ContractError::Protocol(msg) => msg,
+            _ => "Not correct path",
+        };
+        assert_eq!(
+            error_message_invalid_length,
+            "wrong multisig_redeemscript length"
+        );
+        invalid_length_script.push(232);
+        let result_invalid_template =
+            check_reedemscript_is_multisig(Script::from_bytes(&invalid_length_script)).unwrap_err();
+
+        let error_message_invalid_template = match result_invalid_template {
+            ContractError::Protocol(msg) => msg,
+            _ => "Not correct path",
+        };
+        assert_eq!(
+            error_message_invalid_template,
+            "redeemscript not matching multisig template"
+        );
+    }
 }
