@@ -476,6 +476,8 @@ pub fn verify_contract_tx_sig(
 
 #[cfg(test)]
 mod test {
+    use crate::protocol::messages::NextHopInfo;
+
     use super::*;
     use bitcoin::{
         consensus::encode::deserialize,
@@ -486,6 +488,7 @@ mod test {
         },
         PrivateKey,
     };
+    use core::panic;
     use std::{str::FromStr, string::String};
 
     fn read_pubkeys_from_contract_reedimscript(
@@ -1019,6 +1022,239 @@ mod test {
         assert_eq!(
             error_message_invalid_template,
             "redeemscript not matching multisig template"
+        );
+    }
+
+    #[test]
+    fn calculate_coinswap_fee_normal() {
+        // Test with typical values
+        let absolute_fee_sat = 1000;
+        let amount_relative_fee_ppb = 500_000_000;
+        let time_relative_fee_ppb = 200_000_000;
+        let total_funding_amount = 1_000_000_000;
+        let time_in_blocks = 100;
+
+        let expected_fee = 1000
+            + (1_000_000_000 * 500_000_000 / 1_000_000_000)
+            + (100 * 200_000_000 / 1_000_000_000);
+
+        let calculated_fee = calculate_coinswap_fee(
+            absolute_fee_sat,
+            amount_relative_fee_ppb,
+            time_relative_fee_ppb,
+            total_funding_amount,
+            time_in_blocks,
+        );
+
+        assert_eq!(calculated_fee, expected_fee);
+
+        // Test with zero values
+        assert_eq!(calculate_coinswap_fee(0, 0, 0, 0, 0), 0);
+
+        // Test with only the absolute fee being non-zero
+        assert_eq!(calculate_coinswap_fee(1000, 0, 0, 0, 0), 1000);
+
+        // Test with only the relative fees being non-zero
+        assert_eq!(
+            calculate_coinswap_fee(0, 1_000_000_000, 1_000_000_000, 1000, 10),
+            1010
+        );
+    }
+
+    #[test]
+    fn test_apply_two_signatures_to_2of2_multisig_spend() {
+        let secp = Secp256k1::new();
+        let priv_1 =
+            PrivateKey::from_wif("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy").unwrap();
+        let priv_2 =
+            PrivateKey::from_wif("5JYkZjmN7PVMjJUfJWfRFwtuXTGB439XV6faajeHPAM9Z2PT2R3").unwrap();
+
+        let pub_1 = priv_1.public_key(&secp);
+        let pub_2 = priv_2.public_key(&secp);
+
+        let multisig_2_of_2_redeemscript_buf = create_multisig_redeemscript(&pub_1, &pub_2);
+        let mutlisig_2_of_2_redeemscript = multisig_2_of_2_redeemscript_buf.as_script();
+
+        let msg = b"0123456789abcdefghijklmnopqrstuv";
+        let sig_1 = secp.sign_ecdsa(&Message::from_slice(msg).unwrap(), &priv_1.inner);
+        let sig_2 = secp.sign_ecdsa(&Message::from_slice(msg).unwrap(), &priv_2.inner);
+
+        let mut tx_input_1 = TxIn::default();
+        let mut tx_input_2 = TxIn::default();
+        apply_two_signatures_to_2of2_multisig_spend(
+            &pub_1,
+            &pub_2,
+            &sig_1,
+            &sig_2,
+            &mut tx_input_1,
+            &mutlisig_2_of_2_redeemscript,
+        );
+
+        let (sig_first, sig_second) = (&sig_2, &sig_1);
+
+        let mut sig1_with_sighash = sig_first.serialize_der().to_vec();
+        sig1_with_sighash.push(EcdsaSighashType::All as u8);
+
+        let mut sig2_with_sighash = sig_second.serialize_der().to_vec();
+        sig2_with_sighash.push(EcdsaSighashType::All as u8);
+
+        tx_input_2.witness.push(Vec::new()); //first is multisig dummy
+        tx_input_2.witness.push(sig1_with_sighash);
+        tx_input_2.witness.push(sig2_with_sighash);
+        tx_input_2
+            .witness
+            .push(&mutlisig_2_of_2_redeemscript.to_bytes());
+
+        assert_eq!(tx_input_1, tx_input_2);
+
+        // opposite pubkey order
+
+        let mut tx_input_1 = TxIn::default();
+        let mut tx_input_2 = TxIn::default();
+        apply_two_signatures_to_2of2_multisig_spend(
+            &pub_2,
+            &pub_1,
+            &sig_1,
+            &sig_2,
+            &mut tx_input_1,
+            &mutlisig_2_of_2_redeemscript,
+        );
+
+        let (sig_first, sig_second) = (&sig_1, &sig_2);
+
+        let mut sig1_with_sighash = sig_first.serialize_der().to_vec();
+        sig1_with_sighash.push(EcdsaSighashType::All as u8);
+
+        let mut sig2_with_sighash = sig_second.serialize_der().to_vec();
+        sig2_with_sighash.push(EcdsaSighashType::All as u8);
+
+        tx_input_2.witness.push(Vec::new()); //first is multisig dummy
+        tx_input_2.witness.push(sig1_with_sighash);
+        tx_input_2.witness.push(sig2_with_sighash);
+        tx_input_2
+            .witness
+            .push(&mutlisig_2_of_2_redeemscript.to_bytes());
+
+        assert_eq!(tx_input_1, tx_input_2);
+    }
+
+    #[test]
+    fn test_check_hashvalues_are_equal() {
+        let secp = Secp256k1::new();
+        let priv_1 =
+            PrivateKey::from_wif("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy").unwrap();
+        let priv_2 =
+            PrivateKey::from_wif("5JYkZjmN7PVMjJUfJWfRFwtuXTGB439XV6faajeHPAM9Z2PT2R3").unwrap();
+
+        let pub_1 = priv_1.public_key(&secp);
+        let pub_2 = priv_2.public_key(&secp);
+        // Create a 20f2 multi + another random spk
+        let multisig_redeemscript = ScriptBuf::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
+        let another_script = ScriptBuf::from(Vec::from_hex("020000000156944c5d3f98413ef45cf54545538103cc9f298e0575820ad3591376e2e0f65d2a0000000000000000014871000000000000220020dad1b452caf4a0f26aecf1cc43aaae9b903a043c34f75ad9a36c86317b22236800000000").unwrap());
+
+        let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript);
+        let another_script_pubkey = redeemscript_to_scriptpubkey(&another_script);
+
+        // Create the funding transaction
+        let funding_tx = Transaction {
+            input: vec![TxIn {
+                previous_output: OutPoint::from_str(
+                    "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:42",
+                )
+                .unwrap(),
+                sequence: Sequence::ZERO,
+                witness: Witness::new(),
+                script_sig: ScriptBuf::new(),
+            }],
+            output: vec![
+                TxOut {
+                    script_pubkey: another_script_pubkey,
+                    value: 2000,
+                },
+                TxOut {
+                    script_pubkey: multi_script_pubkey,
+                    value: 3000,
+                },
+            ],
+            lock_time: LockTime::ZERO,
+            version: 2,
+        };
+
+        let hash_value_1 = Hash160::from_slice(&thread_rng().gen::<[u8; 20]>()).unwrap();
+
+        let pub_hashlock = PublicKey::from_str(
+            "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af",
+        )
+        .unwrap();
+
+        let pub_timelock = PublicKey::from_str(
+            "039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef",
+        )
+        .unwrap();
+
+        // Use an u16 to strictly positive 2 byte integer
+        let locktime = random::<u16>();
+
+        let contract_script_1 =
+            create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hash_value_1, &locktime);
+
+        let funding_info_1 = FundingTxInfo {
+            funding_tx: funding_tx.clone(),
+            multisig_redeemscript: multisig_redeemscript.clone(),
+            funding_tx_merkleproof: String::new(),
+            multisig_nonce: SecretKey::new(&mut thread_rng()),
+            contract_redeemscript: contract_script_1,
+            hashlock_nonce: SecretKey::new(&mut thread_rng()),
+        };
+
+        let funding_proof = ProofOfFunding {
+            confirmed_funding_txes: vec![funding_info_1.clone()],
+            next_coinswap_info: vec![NextHopInfo {
+                next_hashlock_pubkey: pub_1,
+                next_multisig_pubkey: pub_2,
+            }],
+            next_locktime: u16::default(),
+            next_fee_rate: u64::default(),
+        };
+
+        // case with same hash value
+        let hash_value_from_fn = check_hashvalues_are_equal(&funding_proof).unwrap();
+        assert_eq!(hash_value_from_fn, hash_value_1);
+
+        // case with different hash value
+        let hash_value_2 = Hash160::from_slice(&thread_rng().gen::<[u8; 20]>()).unwrap();
+
+        let contract_script_2 =
+            create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hash_value_2, &locktime);
+
+        let funding_info_2 = FundingTxInfo {
+            funding_tx,
+            multisig_redeemscript,
+            funding_tx_merkleproof: String::new(),
+            multisig_nonce: SecretKey::new(&mut thread_rng()),
+            contract_redeemscript: contract_script_2,
+            hashlock_nonce: SecretKey::new(&mut thread_rng()),
+        };
+
+        let funding_proof = ProofOfFunding {
+            confirmed_funding_txes: vec![funding_info_1, funding_info_2],
+            next_coinswap_info: vec![NextHopInfo {
+                next_hashlock_pubkey: pub_1,
+                next_multisig_pubkey: pub_2,
+            }],
+            next_locktime: u16::default(),
+            next_fee_rate: u64::default(),
+        };
+
+        let hash_value_from_fn = check_hashvalues_are_equal(&funding_proof).unwrap_err();
+
+        let error_message_invalid_length = match hash_value_from_fn {
+            ContractError::Protocol(msg) => msg,
+            _ => "Not correct path",
+        };
+        assert_eq!(
+            error_message_invalid_length,
+            "contract reedemscript doesn't have equal hashvalues"
         );
     }
 }
