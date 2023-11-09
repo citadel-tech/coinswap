@@ -9,8 +9,8 @@
   - [Build and Run](#build-and-run)
   - [Project Status](#project-status)
   - [Roadmap](#roadmap)
-    - [Beta Release](#beta-release)
-    - [Further Improvements](#further-improvements)
+    - [V 0.1.0](#v-010)
+    - [V 0.1.\*](#v-01)
   - [Community](#community)
 
 ## About
@@ -70,7 +70,7 @@ If you're interested in contributing to the project, explore the [open issues](h
 
 ## Roadmap
 
-### Beta Release
+### V 0.1.0
 - [x] Basic protocol workflow with integration tests.
 - [x] Modularize protocol components.
 - [x] Refine logging information.
@@ -97,7 +97,7 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [ ] Develop an example web Taker client.
 - [ ] Deploy Makers in Signet, and Demo coinswap via an example Taker client.
 
-### Further Improvements
+### V 0.1.*
 - [ ] Implement UTXO merging and branch-out via swap for improved UTXO management.
 - [ ] Describe contract and funding transactions via miniscript, using BDK for wallet management.
 - [ ] Enable wallet syncing via CBF (BIP157/158).
