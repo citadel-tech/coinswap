@@ -27,8 +27,20 @@ Run Demo: [here](/docs/run_teleport.md)
 
 ## Architecture
 
-The project is divided into distinct modules, each focused on specific functionalities:
-
+The project is divided into distinct modules, each focused on specific functionalities: Below is the folder structure:
+```bash
+docs/
+src/
+├─ bin/
+├─ maker/
+├─ market/
+├─ protocol/
+├─ scripts/
+├─ taker/
+├─ wallet/
+├─ watchtower/
+tests/
+```
 - `taker`: Contains Taker-related behaviors, with core logic in `src/taker/taker.rs`. Takers manage most protocol logic, while Makers play a relatively passive role.
 - `maker`: Encompasses Maker-specific logic.
 - `wallet`: Manages wallet-related operations, including storage and blockchain interaction.
