@@ -41,6 +41,8 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::debug!("Running maker with special behavior = {:?}", maker.behavior);
     maker.wallet.write()?.refresh_offer_maxsize_cache()?;
 
+    let network = maker.get_wallet().read()?.store.network;
+
     if maker.wallet.read()?.store.network != Network::Regtest {
         if maker.config.onion_addrs == "myhiddenserviceaddress.onion:6102" {
             panic!("You must set config variable MAKER_ONION_ADDR in file src/maker_protocol.rs");
@@ -49,12 +51,9 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             "Adding my address ({}) to the directory servers. . .",
             maker.config.onion_addrs
         );
-        post_maker_address_to_directory_servers(
-            maker.wallet.read()?.store.network,
-            &maker.config.onion_addrs,
-        )
-        .await
-        .expect("unable to add my address to the directory servers, is tor reachable?");
+        post_maker_address_to_directory_servers(network, &maker.config.onion_addrs)
+            .await
+            .expect("unable to add my address to the directory servers, is tor reachable?");
     }
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.port)).await?;
@@ -134,12 +133,13 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 let directory_servers_refresh_interval = Duration::from_secs(
                     maker.config.directory_servers_refresh_interval_secs
                 );
+                let network = maker.get_wallet().read()?.store.network;
                 if maker.wallet.read()?.store.network != Network::Regtest
                         && Instant::now().saturating_duration_since(last_directory_servers_refresh)
                         > directory_servers_refresh_interval {
                     last_directory_servers_refresh = Instant::now();
                     let result_expiry_time = post_maker_address_to_directory_servers(
-                        maker.wallet.read()?.store.network,
+                        network,
                         &maker.config.onion_addrs
                     ).await;
                     log::info!("Refreshing my address at the directory servers = {:?}",
