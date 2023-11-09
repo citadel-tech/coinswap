@@ -103,11 +103,11 @@ impl Maker {
 
         // Load if exists, else create new.
         let mut wallet = if wallet_file.exists() {
-            Wallet::load(&rpc_config, wallet_file)?
+            Wallet::load(rpc_config, wallet_file)?
         } else {
             let mnemonic = Mnemonic::generate(12).unwrap();
             let seedphrase = mnemonic.to_string();
-            Wallet::init(wallet_file, &rpc_config, seedphrase, "".to_string())?
+            Wallet::init(wallet_file, rpc_config, seedphrase, "".to_string())?
         };
         wallet.sync()?;
         Ok(Self {
@@ -133,7 +133,7 @@ impl Maker {
     /// Checks consistency of the [ProofOfFunding] message and return the Hashvalue
     /// used in hashlock transaction.
     pub fn verify_proof_of_funding(&self, message: &ProofOfFunding) -> Result<Hash160, MakerError> {
-        if message.confirmed_funding_txes.len() == 0 {
+        if message.confirmed_funding_txes.is_empty() {
             return Err(MakerError::General("No funding txs provided by Taker"));
         }
 
@@ -195,7 +195,7 @@ impl Maker {
             if !self.wallet.read()?.does_prevout_match_cached_contract(
                 &OutPoint {
                     txid: funding_info.funding_tx.txid(),
-                    vout: funding_output_index as u32,
+                    vout: funding_output_index,
                 },
                 &contract_spk,
             )? {
@@ -205,7 +205,7 @@ impl Maker {
             }
         }
 
-        Ok(check_hashvalues_are_equal(&message)?)
+        Ok(check_hashvalues_are_equal(message)?)
     }
 
     /// Verify the contract transaction for Sender and return the signatures.
@@ -304,11 +304,12 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                 // No need to check for other contracts in the connection state, if any one of them
                 // is ever observed in the mempool/block, run recovery routine.
                 for txid in txids_to_watch {
-                    if let Ok(_) = maker
+                    if maker
                         .wallet
                         .read()?
                         .rpc
                         .get_raw_transaction_info(&txid, None)
+                        .is_ok()
                     {
                         let mut outgoings = Vec::new();
                         let mut incomings = Vec::new();
@@ -359,7 +360,7 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                                 );
                             }
                         }
-                        failed_swap_ip.push(ip.clone());
+                        failed_swap_ip.push(*ip);
 
                         // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
                         let maker_clone = maker.clone();
@@ -379,7 +380,7 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
 
             // Clear the state entry here
             for ip in failed_swap_ip.iter() {
-                lock_onstate.remove(&ip);
+                lock_onstate.remove(ip);
             }
         } // All locks are cleared here.
 
@@ -444,7 +445,7 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
                         let incoming_contract = ic_sc.get_fully_signed_contract_tx().unwrap();
                         incomings.push((ic_sc.get_multisig_redeemscript(), incoming_contract));
                     }
-                    bad_ip.push(ip.clone());
+                    bad_ip.push(*ip);
                     // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
                     let maker_clone = maker.clone();
                     log::info!(
@@ -462,7 +463,7 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
 
             // Clear the state entry here
             for ip in bad_ip.iter() {
-                lock_on_state.remove(&ip);
+                lock_on_state.remove(ip);
             }
         } // All locks are cleared here
 
@@ -483,12 +484,13 @@ pub fn recover_from_swap(
 ) {
     // broadcast all the incoming contracts and remove them from the wallet.
     for (incoming_reedemscript, tx) in incomings {
-        if let Ok(_) = maker
+        if maker
             .wallet
             .read()
             .unwrap()
             .rpc
             .get_raw_transaction_info(&tx.txid(), None)
+            .is_ok()
         {
             log::info!(
                 "[{}] Incoming Contract Already Broadcasted",
@@ -527,12 +529,13 @@ pub fn recover_from_swap(
 
     //broadcast all the outgoing contracts
     for ((_, tx), _) in outgoings.iter() {
-        if let Ok(_) = maker
+        if maker
             .wallet
             .read()
             .unwrap()
             .rpc
             .get_raw_transaction_info(&tx.txid(), None)
+            .is_ok()
         {
             log::info!(
                 "[{}] Outgoing Contract already broadcasted",

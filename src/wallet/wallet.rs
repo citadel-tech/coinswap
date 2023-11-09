@@ -67,7 +67,7 @@ pub enum KeychainKind {
 }
 
 impl KeychainKind {
-    fn to_index(&self) -> u32 {
+    fn index_num(&self) -> u32 {
         match self {
             Self::External => 0,
             Self::Internal => 1,
@@ -170,7 +170,7 @@ impl Wallet {
                     let pubkey = PublicKey {
                         compressed: true,
                         inner: recv_or_change_branch
-                            .ckd_pub(&secp, ChildNumber::Normal { index: i as u32 })
+                            .ckd_pub(&secp, ChildNumber::Normal { index: i })
                             .unwrap()
                             .public_key,
                     };
@@ -227,7 +227,7 @@ impl Wallet {
                 "incoming swapcoin count = {}",
                 self.store.incoming_swapcoins.len()
             );
-            for (_multisig_redeemscript, swapcoin) in &self.store.incoming_swapcoins {
+            for swapcoin in self.store.incoming_swapcoins.values() {
                 println!(
                     "{} incoming_swapcoin_contract hashvalue={} locktime={} contract_txid={}",
                     Address::p2wsh(&swapcoin.contract_redeemscript, self.store.network),
@@ -246,7 +246,7 @@ impl Wallet {
                 "outgoing swapcoin count = {}",
                 self.store.outgoing_swapcoins.len()
             );
-            for (_multisig_redeemscript, swapcoin) in &self.store.outgoing_swapcoins {
+            for swapcoin in self.store.outgoing_swapcoins.values() {
                 println!(
                     "{} outgoing_swapcoin_contract hashvalue={} locktime={} contract_txid={}",
                     Address::p2wsh(&swapcoin.contract_redeemscript, self.store.network),
@@ -270,8 +270,7 @@ impl Wallet {
                     index,
                     NaiveDateTime::from_timestamp_opt(locktime, 0)
                         .expect("expected")
-                        .format("%Y-%m-%d")
-                        .to_string(),
+                        .format("%Y-%m-%d"),
                     locktime,
                 );
             }
@@ -304,7 +303,7 @@ impl Wallet {
     /// The core rpc wallet name, and wallet_id field in the file should match.
     pub fn load(rpc_config: &RPCConfig, path: &PathBuf) -> Result<Wallet, WalletError> {
         let store = WalletStore::read_from_disk(path)?;
-        if rpc_config.wallet_name != store.wallet_name.to_string() {
+        if rpc_config.wallet_name != store.wallet_name {
             return Err(WalletError::Protocol(
                 "Wallet name of database file and core missmatch".to_string(),
             ));
@@ -313,7 +312,7 @@ impl Wallet {
         log::debug!(target: "wallet",
             "loaded wallet file, external_index={} incoming_swapcoins={} outgoing_swapcoins={}",
             store.external_index,
-            store.incoming_swapcoins.iter().count(), store.outgoing_swapcoins.iter().count());
+            store.incoming_swapcoins.len(), store.outgoing_swapcoins.len());
         let wallet = Self {
             rpc,
             wallet_file_path: path.clone(),
@@ -499,7 +498,7 @@ impl Wallet {
                     .get_descriptor_info(&format!(
                         "wpkh({}/{}/*)",
                         wallet_xpub,
-                        keychain.to_index()
+                        keychain.index_num()
                     ))
                     .unwrap();
                 (*keychain, desc_info.descriptor)
@@ -552,7 +551,7 @@ impl Wallet {
     /// Checks if the first derived address from a swapcoin descriptor is imported.
     /// swapcoin descriptors are non-derivable.
     pub(super) fn is_swapcoin_descriptor_imported(&self, descriptor: &str) -> bool {
-        let addr = self.rpc.derive_addresses(&descriptor, None).unwrap()[0].clone();
+        let addr = self.rpc.derive_addresses(descriptor, None).unwrap()[0].clone();
         self.rpc
             .get_address_info(&addr.assume_checked())
             .unwrap()
@@ -598,7 +597,7 @@ impl Wallet {
             }))
             .chain(contract_scriptpubkeys.iter().map(|spk| ImportMultiRequest {
                 timestamp: Timestamp::Now,
-                script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(&spk)),
+                script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(spk)),
                 watchonly: Some(true),
                 label: Some(&address_label),
                 ..Default::default()
@@ -609,7 +608,7 @@ impl Wallet {
                     .keys()
                     .map(|spk| ImportMultiRequest {
                         timestamp: Timestamp::Now,
-                        script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(&spk)),
+                        script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(spk)),
                         watchonly: Some(true),
                         label: Some(&address_label),
                         ..Default::default()
@@ -687,11 +686,8 @@ impl Wallet {
         }
 
         if u.descriptor.is_none() {
-            if option_contract_scriptpubkeys_outgoing_swapcoins.is_some() {
-                if let Some(swapcoin) = option_contract_scriptpubkeys_outgoing_swapcoins
-                    .unwrap()
-                    .get(&u.script_pub_key)
-                {
+            if let Some(map) = option_contract_scriptpubkeys_outgoing_swapcoins {
+                if let Some(swapcoin) = map.get(&u.script_pub_key) {
                     let timelock = swapcoin.get_timelock();
                     if u.confirmations >= timelock.into() {
                         return Some(UTXOSpendInfo::TimelockContract {
@@ -701,11 +697,8 @@ impl Wallet {
                     }
                 }
             }
-            if option_contract_scriptpubkeys_incoming_swapcoins.is_some() {
-                if let Some(swapcoin) = option_contract_scriptpubkeys_incoming_swapcoins
-                    .unwrap()
-                    .get(&u.script_pub_key)
-                {
+            if let Some(map) = option_contract_scriptpubkeys_incoming_swapcoins {
+                if let Some(swapcoin) = map.get(&u.script_pub_key) {
                     if swapcoin.is_hash_preimage_known() && u.confirmations >= 1 {
                         return Some(UTXOSpendInfo::HashlockContract {
                             swapcoin_multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
@@ -717,7 +710,7 @@ impl Wallet {
             return None;
         }
         let descriptor = u.descriptor.as_ref().unwrap();
-        if let Some(ret) = get_hd_path_from_descriptor(&descriptor) {
+        if let Some(ret) = get_hd_path_from_descriptor(descriptor) {
             //utxo is in a hd wallet
             let (fingerprint, addr_type, index) = ret;
 
@@ -1001,7 +994,7 @@ impl Wallet {
                 continue;
             }
             let (_, addr_type, index) = ret.expect("its not none");
-            if addr_type != keychain.to_index() {
+            if addr_type != keychain.index_num() {
                 continue;
             }
             max_index = std::cmp::max(max_index, index);
@@ -1084,7 +1077,7 @@ impl Wallet {
             .unwrap();
         let tx_clone = tx.clone();
 
-        for (ix, (mut input, input_info)) in tx.input.iter_mut().zip(inputs_info).enumerate() {
+        for (ix, (input, input_info)) in tx.input.iter_mut().zip(inputs_info).enumerate() {
             log::debug!(target: "wallet", "signing with input_info = {:?}", input_info);
             match input_info {
                 UTXOSpendInfo::SwapCoin {
@@ -1092,7 +1085,7 @@ impl Wallet {
                 } => {
                     self.find_incoming_swapcoin(&multisig_redeemscript)
                         .unwrap()
-                        .sign_transaction_input(ix, &tx_clone, &mut input, &multisig_redeemscript)
+                        .sign_transaction_input(ix, &tx_clone, input, &multisig_redeemscript)
                         .unwrap();
                 }
                 UTXOSpendInfo::SeedCoin { path, input_value } => {
@@ -1125,7 +1118,7 @@ impl Wallet {
                 } => self
                     .find_outgoing_swapcoin(&swapcoin_multisig_redeemscript)
                     .unwrap()
-                    .sign_timelocked_transaction_input(ix, &tx_clone, &mut input, input_value)
+                    .sign_timelocked_transaction_input(ix, &tx_clone, input, input_value)
                     .unwrap(),
                 UTXOSpendInfo::HashlockContract {
                     swapcoin_multisig_redeemscript,
@@ -1133,7 +1126,7 @@ impl Wallet {
                 } => self
                     .find_incoming_swapcoin(&swapcoin_multisig_redeemscript)
                     .unwrap()
-                    .sign_hashlocked_transaction_input(ix, &tx_clone, &mut input, input_value)
+                    .sign_hashlocked_transaction_input(ix, &tx_clone, input, input_value)
                     .unwrap(),
                 UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
                     let privkey = self.get_timelocked_privkey_from_index(index);
@@ -1154,7 +1147,7 @@ impl Wallet {
                     let mut sig_serialised = sig.serialize_der().to_vec();
                     sig_serialised.push(EcdsaSighashType::All as u8);
                     input.witness.push(sig_serialised);
-                    input.witness.push(redeemscript.as_bytes().to_vec());
+                    input.witness.push(redeemscript.as_bytes());
                 }
             }
         }
@@ -1216,7 +1209,7 @@ impl Wallet {
                 if bip32_info.len() == 2 {
                     UTXOSpendInfo::SwapCoin {
                         multisig_redeemscript: Builder::from(
-                            Vec::from_hex(&input_info["witness_script"]["hex"].as_str().unwrap())
+                            Vec::from_hex(input_info["witness_script"]["hex"].as_str().unwrap())
                                 .unwrap(),
                         )
                         .into_script(),
@@ -1286,22 +1279,25 @@ impl Wallet {
         pubkey1: &PublicKey,
         pubkey2: &PublicKey,
     ) -> Result<(), WalletError> {
-        Ok(self.import_multisig_redeemscript_descriptor(
-            &pubkey1,
-            &pubkey2,
+        self.import_multisig_redeemscript_descriptor(
+            pubkey1,
+            pubkey2,
             &self.get_core_wallet_label(),
-        )?)
+        )
     }
 
     pub fn import_tx_with_merkleproof(
         &self,
         tx: &Transaction,
-        merkleproof: &String,
+        merkleproof: &str,
     ) -> Result<(), WalletError> {
         let rawtx_hex = serialize_hex(&tx);
         self.rpc.call(
             "importprunedfunds",
-            &[Value::String(rawtx_hex), Value::String(merkleproof.clone())],
+            &[
+                Value::String(rawtx_hex),
+                Value::String(merkleproof.to_owned()),
+            ],
         )?;
         log::debug!(target: "wallet", "import_tx_with_merkleproof txid={}", tx.txid());
         Ok(())
@@ -1413,7 +1409,7 @@ impl Wallet {
                     timestamp: Timestamp::Now,
                     descriptor: Some(&descriptor),
                     watchonly: Some(true),
-                    label: Some(&address_label),
+                    label: Some(address_label),
                     ..Default::default()
                 }],
                 Some(&ImportMultiOptions {
@@ -1437,14 +1433,14 @@ impl Wallet {
         redeemscript: &ScriptBuf,
         address_label: &String,
     ) -> Result<(), WalletError> {
-        let spk = redeemscript_to_scriptpubkey(&redeemscript);
+        let spk = redeemscript_to_scriptpubkey(redeemscript);
         let result = self.rpc.import_multi(
             &[ImportMultiRequest {
                 timestamp: Timestamp::Now,
                 script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(&spk)),
                 redeem_script: Some(redeemscript),
                 watchonly: Some(true),
-                label: Some(&address_label),
+                label: Some(address_label),
                 ..Default::default()
             }],
             Some(&ImportMultiOptions {

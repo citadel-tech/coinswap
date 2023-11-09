@@ -53,8 +53,8 @@ pub async fn sync_maker_addresses_from_directory_servers(
         return Err(DirectoryServerError::Other("status code not success"));
     }
     let mut maker_addresses = Vec::<MakerAddress>::new();
-    for makers in res.text().await?.split("\n") {
-        let csv_chunks = makers.split(",").collect::<Vec<&str>>();
+    for makers in res.text().await?.split('\n') {
+        let csv_chunks = makers.split(',').collect::<Vec<&str>>();
         if csv_chunks.len() < 2 {
             continue;
         }

@@ -250,12 +250,11 @@ impl Maker {
             let (pubkey1, pubkey2) =
                 read_pubkeys_from_multisig_redeemscript(&funding_info.multisig_redeemscript)?;
 
-            let funding_output_index = find_funding_output_index(&funding_info)?;
+            let funding_output_index = find_funding_output_index(funding_info)?;
             let funding_output = funding_info
                 .funding_tx
                 .output
-                .iter()
-                .nth(funding_output_index as usize)
+                .get(funding_output_index as usize)
                 .expect("funding output expected at this index");
 
             self.wallet
@@ -272,7 +271,7 @@ impl Maker {
             let receiver_contract_tx = create_receivers_contract_tx(
                 OutPoint {
                     txid: funding_info.funding_tx.txid(),
-                    vout: funding_output_index as u32,
+                    vout: funding_output_index,
                 },
                 funding_output.value,
                 &funding_info.contract_redeemscript,
@@ -326,8 +325,7 @@ impl Maker {
             let txout = fi
                 .funding_tx
                 .output
-                .iter()
-                .nth(index as usize)
+                .get(index as usize)
                 .expect("output at index expected");
             acc + txout.value
         });
@@ -472,7 +470,7 @@ impl Maker {
             .zip(connection_state.incoming_swapcoins.iter_mut())
         {
             incoming_swapcoin.verify_contract_tx_sig(receivers_sig)?;
-            incoming_swapcoin.others_contract_sig = Some(receivers_sig.clone());
+            incoming_swapcoin.others_contract_sig = Some(*receivers_sig);
         }
 
         if message.senders_sigs.len() != connection_state.outgoing_swapcoins.len() {
@@ -486,7 +484,7 @@ impl Maker {
         {
             outgoing_swapcoin.verify_contract_tx_sig(senders_sig)?;
 
-            outgoing_swapcoin.others_contract_sig = Some(senders_sig.clone());
+            outgoing_swapcoin.others_contract_sig = Some(*senders_sig);
         }
 
         let mut my_funding_txids = Vec::<Txid>::new();
@@ -566,7 +564,7 @@ impl Maker {
         for multisig_redeemscript in &message.senders_multisig_redeemscripts {
             let mut wallet_write = self.wallet.write()?;
             let incoming_swapcoin = wallet_write
-                .find_incoming_swapcoin_mut(&multisig_redeemscript)
+                .find_incoming_swapcoin_mut(multisig_redeemscript)
                 .expect("Incoming swampcoin expected");
             if read_hashvalue_from_contract(&incoming_swapcoin.contract_redeemscript)? != hashvalue
             {
@@ -585,7 +583,7 @@ impl Maker {
         for multisig_redeemscript in &message.receivers_multisig_redeemscripts {
             let wallet_read = self.wallet.read()?;
             let outgoing_swapcoin = wallet_read
-                .find_outgoing_swapcoin(&multisig_redeemscript)
+                .find_outgoing_swapcoin(multisig_redeemscript)
                 .expect("outgoing swapcoin expected");
             if read_hashvalue_from_contract(&outgoing_swapcoin.contract_redeemscript)? != hashvalue
             {

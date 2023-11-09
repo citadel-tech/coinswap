@@ -55,7 +55,7 @@ pub async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     message: &impl serde::Serialize,
 ) -> Result<(), NetError> {
-    let mut message_bytes = serde_json::to_vec(message).map_err(|e| std::io::Error::from(e))?;
+    let mut message_bytes = serde_json::to_vec(message).map_err(std::io::Error::from)?;
     message_bytes.push(b'\n');
     socket_writer.write_all(&message_bytes).await?;
     Ok(())
@@ -77,7 +77,7 @@ pub async fn read_message(
 
 /// Apply the maker's privatekey to swapcoins, and check it's the correct privkey for corresponding pubkey.
 pub fn check_and_apply_maker_private_keys<S: SwapCoin>(
-    swapcoins: &mut Vec<S>,
+    swapcoins: &mut [S],
     swapcoin_private_keys: &[MultisigPrivkey],
 ) -> Result<(), WalletError> {
     for (swapcoin, swapcoin_private_key) in swapcoins.iter_mut().zip(swapcoin_private_keys.iter()) {
@@ -200,8 +200,10 @@ mod tests {
     };
 
     use serde_json::json;
-    use tokio::io::AsyncReadExt;
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::{
+        io::AsyncReadExt,
+        net::{TcpListener, TcpStream},
+    };
 
     use super::*;
 

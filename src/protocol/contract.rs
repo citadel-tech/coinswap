@@ -143,9 +143,9 @@ pub fn check_reedemscript_is_multisig(redeemscript: &Script) -> Result<(), Contr
     ms_rs_bytes.splice(2..35, PUB_PLACEHOLDER.iter().cloned());
     ms_rs_bytes.splice(36..69, PUB_PLACEHOLDER.iter().cloned());
     if ms_rs_bytes != template_ms_rs {
-        return Err(ContractError::Protocol(
+        Err(ContractError::Protocol(
             "redeemscript not matching multisig template",
-        ));
+        ))
     } else {
         Ok(())
     }
@@ -159,9 +159,9 @@ pub fn check_multisig_has_pubkey(
     let (pubkey1, pubkey2) = read_pubkeys_from_multisig_redeemscript(redeemscript)?;
     let my_pubkey = calculate_pubkey_from_nonce(tweakable_point, nonce)?;
     if pubkey1 != my_pubkey && pubkey2 != my_pubkey {
-        return Err(ContractError::Protocol(
+        Err(ContractError::Protocol(
             "wrong pubkeys in multisig_redeemscript",
-        ));
+        ))
     } else {
         Ok(())
     }
@@ -175,9 +175,9 @@ pub fn check_hashlock_has_pubkey(
     let contract_hashlock_pubkey = read_hashlock_pubkey_from_contract(contract_redeemscript)?;
     let derived_hashlock_pubkey = calculate_pubkey_from_nonce(tweakable_point, nonce)?;
     if contract_hashlock_pubkey != derived_hashlock_pubkey {
-        return Err(ContractError::Protocol(
+        Err(ContractError::Protocol(
             "contract hashlock pubkey doesnt match with key derived from nonce",
-        ));
+        ))
     } else {
         Ok(())
     }
@@ -244,11 +244,11 @@ pub fn create_contract_redeemscript(
         .push_slice(hashvalue.to_byte_array())
         .push_opcode(opcodes::all::OP_EQUAL)
         .push_opcode(opcodes::all::OP_IF)
-            .push_key(&pub_hashlock)
+            .push_key(pub_hashlock)
             .push_int(32)
             .push_int(1)
         .push_opcode(opcodes::all::OP_ELSE)
-            .push_key(&pub_timelock)
+            .push_key(pub_timelock)
             .push_int(0)
             .push_int(*locktime as i64)
         .push_opcode(opcodes::all::OP_ENDIF)
@@ -278,11 +278,7 @@ pub fn check_hashvalues_are_equal(message: &ProofOfFunding) -> Result<Hash160, C
     let hashvalues = message
         .confirmed_funding_txes
         .iter()
-        .map(|funding_info| {
-            Ok(read_hashvalue_from_contract(
-                &funding_info.contract_redeemscript,
-            )?)
-        })
+        .map(|funding_info| read_hashvalue_from_contract(&funding_info.contract_redeemscript))
         .collect::<Result<Vec<_>, ContractError>>()?;
 
     if !hashvalues.iter().all(|value| value == &hashvalues[0]) {
@@ -370,7 +366,7 @@ pub fn create_senders_contract_tx(
             script_sig: ScriptBuf::new(),
         }],
         output: vec![TxOut {
-            script_pubkey: redeemscript_to_scriptpubkey(&contract_redeemscript),
+            script_pubkey: redeemscript_to_scriptpubkey(contract_redeemscript),
             // TODO: Mining fee for contract tx is hard coded here. Make it configurable.
             value: input_value - 1000,
         }],
@@ -428,7 +424,7 @@ pub fn validate_contract_tx(
         return Err(ContractError::Protocol("not spending the funding outpoint"));
     }
     if receivers_contract_tx.output[0].script_pubkey
-        != redeemscript_to_scriptpubkey(&contract_redeemscript)
+        != redeemscript_to_scriptpubkey(contract_redeemscript)
     {
         return Err(ContractError::Protocol("doesnt pay to requested contract"));
     }

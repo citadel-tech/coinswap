@@ -52,7 +52,7 @@ pub fn generate_wallet(
         return Err(e);
     }
 
-    println!("Write down this seed phrase =\n{}", mnemonic.to_string());
+    println!("Write down this seed phrase =\n{}", mnemonic);
     if !passphrase.trim().is_empty() {
         println!("And this passphrase =\n\"{}\"", passphrase);
     }
@@ -118,15 +118,13 @@ pub fn display_wallet_balance(
     let utxos_incl_fbonds = wallet.list_unspent_from_wallet(false, true)?;
     let (mut utxos, mut fidelity_bond_utxos): (Vec<_>, Vec<_>) =
         utxos_incl_fbonds.iter().partition(|(_, usi)| {
-            if let UTXOSpendInfo::FidelityBondCoin {
-                index: _,
-                input_value: _,
-            } = usi
-            {
-                false
-            } else {
-                true
-            }
+            !matches!(
+                usi,
+                UTXOSpendInfo::FidelityBondCoin {
+                    index: _,
+                    input_value: _,
+                }
+            )
         });
 
     utxos.sort_by(|(a, _), (b, _)| b.confirmations.cmp(&a.confirmations));
@@ -147,16 +145,14 @@ pub fn display_wallet_balance(
             "{}{}{}:{} {}{}{} {:^8} {:<7} {}",
             if long_form { &txid } else {&txid[0..6] },
             if long_form { "" } else { ".." },
-            if long_form { &"" } else { &txid[58..64] },
+            if long_form { "" } else { &txid[58..64] },
             utxo.vout,
             if long_form { &addr } else { &addr[0..10] },
             if long_form { "" } else { "...." },
-            if long_form { &"" } else { &addr[addr.len() - 10..addr.len()] },
+            if long_form { "" } else { &addr[addr.len() - 10..addr.len()] },
             if utxo.witness_script.is_some() {
                 "swapcoin"
-            } else {
-                if utxo.descriptor.is_some() { "seed" } else { "timelock" }
-            },
+            } else if utxo.descriptor.is_some() { "seed" } else { "timelock" },
             utxo.confirmations,
             utxo.amount
         );
@@ -197,7 +193,7 @@ pub fn display_wallet_balance(
                 println!("{}{}{}:{} {:8} {:8} {:^15} {:<7} {}",
                     if long_form { &txid } else {&txid[0..6] },
                     if long_form { "" } else { ".." },
-                    if long_form { &"" } else { &txid[58..64] },
+                    if long_form { "" } else { &txid[58..64] },
                     utxo.vout,
                     contract_type,
                     if swapcoin.is_hash_preimage_known() { "known" } else { "unknown" },
@@ -216,8 +212,7 @@ pub fn display_wallet_balance(
             }
             println!(
                 "outgoing balance = {}\nhashvalue = {}",
-                outgoing_swapcoins_balance,
-                hashvalue.to_string()
+                outgoing_swapcoins_balance, hashvalue
             );
         }
     }
@@ -240,7 +235,7 @@ pub fn display_wallet_balance(
             println!("{}{}{}:{} {}{} {:<8} {:<7} {:<8} {}",
                 if long_form { &txid } else {&txid[0..6] },
                 if long_form { "" } else { ".." },
-                if long_form { &"" } else { &txid[58..64] },
+                if long_form { "" } else { &txid[58..64] },
                 utxo.vout,
                 if long_form { &hashvalue } else { &hashvalue[..8] },
                 if long_form { "" } else { ".." },
@@ -272,7 +267,7 @@ pub fn display_wallet_balance(
             println!("{}{}{}:{} {}{} {:<8} {:<7} {:8} {}",
                 if long_form { &txid } else {&txid[0..6] },
                 if long_form { "" } else { ".." },
-                if long_form { &"" } else { &txid[58..64] },
+                if long_form { "" } else { &txid[58..64] },
                 utxo.vout,
                 if long_form { &hashvalue } else { &hashvalue[..8] },
                 if long_form { "" } else { ".." },
@@ -284,7 +279,7 @@ pub fn display_wallet_balance(
         }
     }
 
-    if fidelity_bond_utxos.len() > 0 {
+    if !fidelity_bond_utxos.is_empty() {
         println!("= fidelity bond coins =");
         println!(
             "{:16} {:24} {:<7} {:<11} {:<8} {:6}",
@@ -311,11 +306,11 @@ pub fn display_wallet_balance(
                 "{}{}{}:{} {}{}{} {:<7} {:<11} {:<8} {:6}",
                 if long_form { &txid } else {&txid[0..6] },
                 if long_form { "" } else { ".." },
-                if long_form { &"" } else { &txid[58..64] },
+                if long_form { "" } else { &txid[58..64] },
                 utxo.vout,
                 if long_form { &addr } else { &addr[0..10] },
                 if long_form { "" } else { "...." },
-                if long_form { &"" } else { &addr[addr.len() - 10..addr.len()] },
+                if long_form { "" } else { &addr[addr.len() - 10..addr.len()] },
                 utxo.confirmations,
                 NaiveDateTime::from_timestamp_opt(unix_locktime, 0).expect("expected")
                     .format("%Y-%m-%d")
@@ -374,7 +369,6 @@ pub fn print_fidelity_bond_address(
         NaiveDateTime::from_timestamp_opt(unix_locktime, 0)
             .expect("expected")
             .format("%Y-%m-%d")
-            .to_string()
     );
     println!("{}", addr);
     Ok(())

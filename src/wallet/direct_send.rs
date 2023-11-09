@@ -70,7 +70,7 @@ fn parse_short_form_coin(s: &str) -> Option<CoinToSpend> {
     }
     let prefix = String::from(&s[0..6]);
     let suffix = String::from(&s[8..14]);
-    let vout = *(&s[15..].parse::<u32>().ok()?);
+    let vout = s[15..].parse::<u32>().ok()?;
     Some(CoinToSpend::ShortForm {
         prefix,
         suffix,
@@ -83,12 +83,12 @@ impl FromStr for CoinToSpend {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let parsed_outpoint = OutPoint::from_str(s);
-        if parsed_outpoint.is_ok() {
-            Ok(CoinToSpend::LongForm(parsed_outpoint.unwrap()))
+        if let Ok(op) = parsed_outpoint {
+            Ok(CoinToSpend::LongForm(op))
         } else {
             let short_form = parse_short_form_coin(s);
-            if short_form.is_some() {
-                Ok(short_form.unwrap())
+            if let Some(cointospend) = short_form {
+                Ok(cointospend)
             } else {
                 Err(parsed_outpoint.err().unwrap())
             }

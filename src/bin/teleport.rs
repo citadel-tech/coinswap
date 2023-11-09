@@ -13,8 +13,8 @@ use coinswap::{
     taker::{SwapParams, Taker, TakerBehavior},
     utill::setup_logger,
     wallet::{
-        fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, RPCConfig,
-        SendAmount, WalletError,
+        fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, SendAmount,
+        WalletError,
     },
 };
 
@@ -164,9 +164,11 @@ fn main() -> Result<(), WalletError> {
             let maker_path = dirs::home_dir()
                 .expect("expect home dir")
                 .join(".teleport")
-                .join(&maker_id); // ex: tests/temp-files/ghytredi/maker6102
-            let mut maker_rpc_config = RPCConfig::default();
-            maker_rpc_config.wallet_name = maker_id.to_string();
+                .join(maker_id); // ex: tests/temp-files/ghytredi/maker6102
+            let maker_rpc_config = coinswap::wallet::RPCConfig {
+                wallet_name: maker_id.to_string(),
+                ..Default::default()
+            };
             let onion_addrs = "myhiddenserviceaddress.onion:6102".to_string(); // A dummy addrs for now.
             let maker = Arc::new(
                 Maker::init(
@@ -190,8 +192,10 @@ fn main() -> Result<(), WalletError> {
             tx_count,
         } => {
             let taker_path = dirs::home_dir().expect("home dir expected").join("taker");
-            let mut taker_rpc_config = RPCConfig::default();
-            taker_rpc_config.wallet_name = "taker".to_string();
+            let taker_rpc_config = coinswap::wallet::RPCConfig {
+                wallet_name: "taker".to_string(),
+                ..Default::default()
+            };
             let mut taker =
                 Taker::init(&taker_path, Some(taker_rpc_config), TakerBehavior::Normal).unwrap();
 

@@ -286,7 +286,7 @@ impl Taker {
                     if let TakerError::FundingTxWaitTimeOut = e {
                         let bad_maker =
                             &self.ongoing_swap_state.peer_infos[maker_index as usize].peer;
-                        self.offerbook.add_bad_maker(&bad_maker);
+                        self.offerbook.add_bad_maker(bad_maker);
                     }
                     self.recover_from_swap()?;
                     return Ok(());
@@ -537,7 +537,7 @@ impl Taker {
                 };
                 if !txids_seen_once.contains(txid) {
                     txids_seen_once.insert(*txid);
-                    if gettx.confirmations == None {
+                    if gettx.confirmations.is_none() {
                         let mempool_tx = match self.wallet.rpc.get_mempool_entry(txid) {
                             Ok(m) => m,
                             Err(_e) => continue,
@@ -734,7 +734,7 @@ impl Taker {
                             } else {
                                 // Attempt count exceeded. Ban this maker.
                                 log::warn!("Connection attempt count exceeded with Maker:{}, Banning Maker.", maker.address);
-                                self.offerbook.add_bad_maker(&maker);
+                                self.offerbook.add_bad_maker(maker);
                                 return Err(e);
                             }
                         }
@@ -825,7 +825,7 @@ impl Taker {
                         .outgoing_swapcoins
                         .iter()
                         .map(|os| os.get_contract_tx())
-                        .collect()
+                        .collect::<Vec<_>>()
                 } else {
                     self.ongoing_swap_state
                         .watchonly_swapcoins
@@ -962,7 +962,8 @@ impl Taker {
                     &self.ongoing_swap_state.watchonly_swapcoins
                         [self.ongoing_swap_state.watchonly_swapcoins.len() - 2]
                 };
-            let sigs = match self
+
+            match self
                 .req_sigs_for_recvr(
                     previous_maker_addr,
                     previous_maker_watchonly_swapcoins,
@@ -977,8 +978,7 @@ impl Taker {
                     self.offerbook.add_bad_maker(&previous_maker.peer);
                     return Err(e);
                 }
-            };
-            sigs
+            }
         };
         log::info!(
             "===> Sending ContractSigsAsReceiverAndSender to {}",
@@ -1054,7 +1054,7 @@ impl Taker {
             .iter()
             .zip(multisig_redeemscripts.iter())
             .map(|(makers_funding_tx, multisig_redeemscript)| {
-                let multisig_spk = redeemscript_to_scriptpubkey(&multisig_redeemscript);
+                let multisig_spk = redeemscript_to_scriptpubkey(multisig_redeemscript);
                 let index = makers_funding_tx
                     .output
                     .iter()
@@ -1064,8 +1064,7 @@ impl Taker {
                     .expect("funding txout output doesn't match with mutlsig scriptpubkey");
                 makers_funding_tx
                     .output
-                    .iter()
-                    .nth(index)
+                    .get(index)
                     .expect("output expected at that index")
                     .value
             })
@@ -1468,7 +1467,7 @@ impl Taker {
                                 .await;
                                 continue;
                             } else {
-                                self.offerbook.add_bad_maker(&maker_address);
+                                self.offerbook.add_bad_maker(maker_address);
                                 return Err(e);
                             }
                         }
@@ -1482,7 +1481,7 @@ impl Taker {
                         if ii <= self.config.reconnect_attempts {
                             continue;
                         } else {
-                            self.offerbook.add_bad_maker(&maker_address);
+                            self.offerbook.add_bad_maker(maker_address);
                             return Err(NetError::ConnectionTimedOut.into());
                         }
                     },
@@ -1498,8 +1497,8 @@ impl Taker {
         maker_address: &MakerAddress,
         index: usize,
         outgoing_privkeys: &mut Option<Vec<MultisigPrivkey>>,
-        senders_multisig_redeemscripts: &Vec<ScriptBuf>,
-        receivers_multisig_redeemscripts: &Vec<ScriptBuf>,
+        senders_multisig_redeemscripts: &[ScriptBuf],
+        receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {
         log::info!("Connecting to {}", maker_address);
         let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
@@ -1694,10 +1693,11 @@ impl Taker {
 
         // Broadcasted incoming contracts and remove them from the wallet.
         for (contract_tx, redeemscript) in &incoming_contracts {
-            if let Ok(_) = self
+            if self
                 .wallet
                 .rpc
                 .get_raw_transaction_info(&contract_tx.txid(), None)
+                .is_ok()
             {
                 log::info!("Incoming Contract already broadacsted");
             } else {
@@ -1711,7 +1711,7 @@ impl Taker {
                 "Incoming Swapcoin removed from wallet, Contact Txid: {}",
                 contract_tx.txid()
             );
-            self.wallet.remove_incoming_swapcoin(&redeemscript)?;
+            self.wallet.remove_incoming_swapcoin(redeemscript)?;
         }
 
         let mut outgoing_infos = Vec::new();
@@ -1719,10 +1719,11 @@ impl Taker {
         // Broadcast the Outgoing Contracts
         for outgoing in outgoings {
             let contract_tx = outgoing.get_fully_signed_contract_tx()?;
-            if let Ok(_) = self
+            if self
                 .wallet
                 .rpc
                 .get_raw_transaction_info(&contract_tx.txid(), None)
+                .is_ok()
             {
                 log::info!("Outgoing Contract already broadcasted");
             } else {
@@ -1781,7 +1782,7 @@ impl Taker {
 
                             let outgoing_removed = self
                                 .wallet
-                                .remove_outgoing_swapcoin(&reedemscript)
+                                .remove_outgoing_swapcoin(reedemscript)
                                 .unwrap()
                                 .expect("outgoing swapcoin expected");
                             log::info!(

@@ -82,16 +82,16 @@ impl Wallet {
     pub fn sync(&mut self) -> Result<(), WalletError> {
         // Create or load the watch-only bitcoin core wallet
         let wallet_name = &self.store.wallet_name;
-        if self.rpc.list_wallets()?.contains(&wallet_name) {
+        if self.rpc.list_wallets()?.contains(wallet_name) {
             log::info!("wallet already loaded: {}", wallet_name);
-        } else if list_wallet_dir(&self.rpc)?.contains(&wallet_name) {
-            self.rpc.load_wallet(&wallet_name)?;
+        } else if list_wallet_dir(&self.rpc)?.contains(wallet_name) {
+            self.rpc.load_wallet(wallet_name)?;
             log::info!("wallet loaded: {}", wallet_name);
         } else {
             // pre-0.21 use legacy wallets
             if self.rpc.version()? < 210_000 {
                 self.rpc
-                    .create_wallet(&wallet_name, Some(true), None, None, None)?;
+                    .create_wallet(wallet_name, Some(true), None, None, None)?;
             } else {
                 // TODO: move back to api call when https://github.com/rust-bitcoin/rust-bitcoincore-rpc/issues/225 is closed
                 let args = [
@@ -122,7 +122,7 @@ impl Wallet {
                 )
             })
             .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
-            .filter(|d| !self.is_swapcoin_descriptor_imported(&d))
+            .filter(|d| !self.is_swapcoin_descriptor_imported(d))
             .collect::<Vec<String>>();
 
         swapcoin_descriptors_to_import.extend(
@@ -137,7 +137,7 @@ impl Wallet {
                     )
                 })
                 .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
-                .filter(|d| !self.is_swapcoin_descriptor_imported(&d)),
+                .filter(|d| !self.is_swapcoin_descriptor_imported(d)),
         );
 
         let mut contract_scriptpubkeys_to_import = self

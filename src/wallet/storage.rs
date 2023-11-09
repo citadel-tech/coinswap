@@ -95,7 +95,7 @@ impl WalletStore {
     /// Load existing file, updates it, writes it back.
     /// errors if path does not exist.
     pub fn write_to_disk(&self, path: &PathBuf) -> Result<(), WalletError> {
-        let mut file_data = FileData::load_from_file(&path)?;
+        let mut file_data = FileData::load_from_file(path)?;
         file_data.incoming_swapcoins = self
             .incoming_swapcoins
             .iter()
@@ -108,13 +108,13 @@ impl WalletStore {
             .map(|os| os.1)
             .cloned()
             .collect();
-        Ok(file_data.save_to_file(&path)?)
+        file_data.save_to_file(path)
     }
 
     /// Reads from a path. Errors if path doesn't exist.
     pub fn read_from_disk(path: &PathBuf) -> Result<Self, WalletError> {
         let file_data = FileData::load_from_file(path)?;
-        Ok(Self::try_from(file_data)?)
+        Self::try_from(file_data)
     }
 }
 
@@ -138,7 +138,7 @@ impl FileData {
             outgoing_swapcoins: Vec::new(),
             prevout_to_contract_map: HashMap::new(),
         };
-        Ok(file_data.save_to_file(path)?)
+        file_data.save_to_file(path)
     }
 
     /// File path should exist.
@@ -152,7 +152,7 @@ impl FileData {
     // Overwrite existing file or create a new one.
     fn save_to_file(&self, path: &PathBuf) -> Result<(), WalletError> {
         std::fs::create_dir_all(path.parent().expect("path should not be root"))?;
-        let file = OpenOptions::new().write(true).create(true).open(&path)?;
+        let file = OpenOptions::new().write(true).create(true).open(path)?;
         serde_json::to_writer(file, &self)?;
         Ok(())
     }

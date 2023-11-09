@@ -161,7 +161,7 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
         .iter()
         .zip(outgoing_swapcoins.iter())
     {
-        outgoing_swapcoin.verify_contract_tx_sender_sig(&sig)?;
+        outgoing_swapcoin.verify_contract_tx_sender_sig(sig)?;
     }
     log::info!("<=== Received ContractSigsForSender from {}", maker_address);
     Ok(contract_sigs_for_sender)
@@ -220,7 +220,7 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
         .iter()
         .zip(incoming_swapcoins.iter())
     {
-        swapcoin.verify_contract_tx_receiver_sig(&sig)?;
+        swapcoin.verify_contract_tx_receiver_sig(sig)?;
     }
 
     log::info!("<=== Received ContractSigsForRecvr from {}", maker_address);
@@ -233,11 +233,11 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
     socket_writer: &mut WriteHalf<'_>,
     this_maker: &OfferAndAddress,
     funding_tx_infos: &Vec<FundingTxInfo>,
-    next_peer_multisig_pubkeys: &Vec<PublicKey>,
-    next_peer_hashlock_pubkeys: &Vec<PublicKey>,
+    next_peer_multisig_pubkeys: &[PublicKey],
+    next_peer_hashlock_pubkeys: &[PublicKey],
     next_maker_refund_locktime: u16,
     next_maker_fee_rate: u64,
-    this_maker_contract_txes: &Vec<Transaction>,
+    this_maker_contract_txes: &[Transaction],
     hashvalue: Hash160,
 ) -> Result<(ContractSigsAsRecvrAndSender, Vec<ScriptBuf>), TakerError> {
     send_message(
@@ -291,12 +291,11 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
         .iter()
         .map(|funding_info| {
             let funding_output_index =
-                find_funding_output_index(&funding_info).map_err(ProtocolError::Contract)?;
+                find_funding_output_index(funding_info).map_err(ProtocolError::Contract)?;
             Ok(funding_info
                 .funding_tx
                 .output
-                .iter()
-                .nth(funding_output_index as usize)
+                .get(funding_output_index as usize)
                 .expect("funding output expected")
                 .value)
         })
@@ -343,7 +342,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
             .zip(funding_tx_infos.iter().map(|fi| &fi.contract_redeemscript))
     {
         validate_contract_tx(
-            &receivers_contract_tx,
+            receivers_contract_tx,
             Some(&contract_tx.input[0].previous_output),
             contract_redeemscript,
         )
@@ -375,8 +374,8 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
 pub(crate) async fn send_hash_preimage_and_get_private_keys(
     socket_reader: &mut BufReader<ReadHalf<'_>>,
     socket_writer: &mut WriteHalf<'_>,
-    senders_multisig_redeemscripts: &Vec<ScriptBuf>,
-    receivers_multisig_redeemscripts: &Vec<ScriptBuf>,
+    senders_multisig_redeemscripts: &[ScriptBuf],
+    receivers_multisig_redeemscripts: &[ScriptBuf],
     preimage: &Preimage,
 ) -> Result<PrivKeyHandover, TakerError> {
     send_message(

@@ -67,7 +67,7 @@ impl FromStr for YearAndMonth {
         }
         let year = String::from(&s[..4]).parse::<u32>()?;
         let month = String::from(&s[5..]).parse::<u32>()?;
-        if 2020 <= year && year <= 2079 && 1 <= month && month <= 12 {
+        if (2020..=2079).contains(&year) && (1..=12).contains(&month) {
             Ok(YearAndMonth { year, month })
         } else {
             Err(YearAndMonthError::OutOfRange)
@@ -295,13 +295,13 @@ fn create_timelocked_redeemscript(locktime: i64, pubkey: &PublicKey) -> ScriptBu
         .push_int(locktime)
         .push_opcode(opcodes::all::OP_CLTV)
         .push_opcode(opcodes::all::OP_DROP)
-        .push_key(&pubkey)
+        .push_key(pubkey)
         .push_opcode(opcodes::all::OP_CHECKSIG)
         .into_script()
 }
 
 pub fn read_locktime_from_timelocked_redeemscript(redeemscript: &Script) -> Option<i64> {
-    if let Instruction::PushBytes(locktime_bytes) = redeemscript.instructions().nth(0)?.ok()? {
+    if let Instruction::PushBytes(locktime_bytes) = redeemscript.instructions().next()?.ok()? {
         let mut u8slice: [u8; 8] = [0; 8];
         u8slice[..locktime_bytes.len()].copy_from_slice(locktime_bytes.as_bytes());
         Some(i64::from_le_bytes(u8slice))
@@ -350,7 +350,7 @@ fn get_timelocked_redeemscript_from_index<C: Context + Signing>(
         .private_key;
     let pubkey = PublicKey {
         compressed: true,
-        inner: privkey.public_key(&secp),
+        inner: privkey.public_key(secp),
     };
     let locktime = get_locktime_from_index(index);
     create_timelocked_redeemscript(locktime, &pubkey)
@@ -402,12 +402,14 @@ impl Wallet {
         let fidelity_bond_utxos = list_unspent_result
             .iter()
             .filter(|(utxo, _)| utxo.confirmations > 0)
-            .filter(|(_, usi)| match usi {
-                UTXOSpendInfo::FidelityBondCoin {
-                    index: _,
-                    input_value: _,
-                } => true,
-                _ => false,
+            .filter(|(_, usi)| {
+                matches!(
+                    usi,
+                    UTXOSpendInfo::FidelityBondCoin {
+                        index: _,
+                        input_value: _,
+                    }
+                )
             })
             .collect::<Vec<&(ListUnspentResultEntry, UTXOSpendInfo)>>();
         let fidelity_bond_values = fidelity_bond_utxos

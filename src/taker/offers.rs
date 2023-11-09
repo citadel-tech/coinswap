@@ -18,7 +18,7 @@ pub struct OfferAndAddress {
     pub address: MakerAddress,
 }
 
-const REGTEST_MAKER_ADDRESSES: &'static [&'static str] = &[
+const REGTEST_MAKER_ADDRESSES: &[&str] = &[
     "localhost:6102",
     "localhost:16102",
     "localhost:26102",

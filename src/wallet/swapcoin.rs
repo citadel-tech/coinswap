@@ -267,7 +267,7 @@ impl IncomingSwapCoin {
         let mut sig_hashlock_bytes = sig_hashlock.serialize_der().to_vec();
         sig_hashlock_bytes.push(EcdsaSighashType::All as u8);
         input.witness.push(sig_hashlock_bytes);
-        input.witness.push(hash_preimage.to_vec());
+        input.witness.push(hash_preimage);
         input.witness.push(self.contract_redeemscript.to_bytes());
         Ok(())
     }
@@ -282,13 +282,13 @@ impl IncomingSwapCoin {
         if self.hash_preimage.is_none() {
             panic!("invalid state, unable to sign: preimage unknown");
         }
-        Ok(self.sign_hashlocked_transaction_input_given_preimage(
+        self.sign_hashlocked_transaction_input_given_preimage(
             index,
             tx,
             input,
             input_value,
             &self.hash_preimage.unwrap(),
-        )?)
+        )
     }
 
     pub fn create_hashlock_spend_without_preimage(
