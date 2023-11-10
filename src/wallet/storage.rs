@@ -27,6 +27,7 @@ struct FileData {
     prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct WalletStore {
     // Wallet store name should match the bitcoin core watch-only wallet name
     pub(crate) wallet_name: String,
@@ -155,5 +156,34 @@ impl FileData {
         let file = OpenOptions::new().write(true).create(true).open(path)?;
         serde_json::to_writer(file, &self)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bip39::Mnemonic;
+    use bitcoin::Network;
+    use bitcoind::tempfile::tempdir;
+
+    #[test]
+    fn test_write_and_read_wallet_to_disk() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("test_wallet.json");
+        let mnemonic = Mnemonic::generate(12).unwrap().to_string();
+
+        let original_wallet_store = WalletStore::init(
+            "test_wallet".to_string(),
+            &file_path,
+            Network::Bitcoin,
+            mnemonic.clone(),
+            "passphrase".to_string(),
+        )
+        .unwrap();
+
+        original_wallet_store.write_to_disk(&file_path).unwrap();
+
+        let read_wallet = WalletStore::read_from_disk(&file_path).unwrap();
+        assert_eq!(original_wallet_store, read_wallet);
     }
 }
