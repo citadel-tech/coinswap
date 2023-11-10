@@ -99,15 +99,16 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [x] Malice 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
 - [ ] Malice 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
 - [x] Fix all clippy warnings.
-- [ ] Achieve >80% test coverage, including bad and recovery paths in integration tests.
+- [ ] Complete all unit tests in modules.
+- [ ] Achieve >80% crate level test coverage ratio. (including integration tests)
+- [ ] Implement configuration file i/o support for Takers and Makers.
+- [ ] Clean up and integrate fidelity bonds with maker banning.
 - [ ] Switch to binary encoding for wallet data storage and network messages.
-- [ ] Implement configuration file support for Takers and Makers.
-- [ ] Deploy standalone binaries for Maker.
-- [ ] Secure wallet file storage through encryption.
-- [ ] Establish Maker marketplace via nostr relays.
-- [ ] Create FFIs for Taker library.
-- [ ] Develop an example web Taker client.
-- [ ] Deploy Makers in Signet, and Demo coinswap via an example Taker client.
+- [ ] Turn maker server into a `makerd` binary, and a `maker-cli` rpc controller app, with MVP API.
+- [ ] Finalize the Taker API for downstream wallet integration.
+- [ ] Develop an example web Taker client, with a downstream wallet.
+- [ ] Package `makerd` and `maker-cli` in a downstream node.
+- [ ] Release V 0.1.0 in Signet for beta testing.
 
 ### V 0.1.*
 - [ ] Implement UTXO merging and branch-out via swap for improved UTXO management.
