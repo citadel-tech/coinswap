@@ -12,6 +12,7 @@ use std::{thread, time::Duration};
 ///
 /// Maker closes connection after receiving a `ContractSigsForRecvrAndSender` and doesn't broadcasts it's funding txs.
 /// Taker wait until a timeout (10ses for test, 5mins for prod) and starts recovery after that.
+// This is problematic. Needs more detailed thought.
 #[tokio::test]
 async fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
     // ---- Setup ----

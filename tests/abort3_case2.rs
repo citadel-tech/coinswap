@@ -10,7 +10,7 @@ use std::{thread, time::Duration};
 /// ABORT 3: Maker Drops After Setup
 /// Case 2: CloseAtContractSigsForRecvr
 ///
-/// Maker closes connection after before sending a `ContractSigsForRecvr`. Funding txs are already broadcasted.
+/// Maker closes connection after sending a `ContractSigsForRecvr`. Funding txs are already broadcasted.
 /// The Maker will loose contract txs fees in that case, so it's not a malice.
 /// Taker waits for the response until timeout. Aborts if the Maker doesn't show up.
 #[tokio::test]
