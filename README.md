@@ -104,6 +104,8 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [ ] Implement configuration file i/o support for Takers and Makers.
 - [ ] Clean up and integrate fidelity bonds with maker banning.
 - [ ] Switch to binary encoding for wallet data storage and network messages.
+- [ ] Make tor detectable and connectable by default for Maker and Taker. And Tor configs to their config lists.
+- [ ] Sketch a simple `AddressBook` server. Tor must. This is  for MVP. Later on we will move to more decentralized address server architecture.
 - [ ] Turn maker server into a `makerd` binary, and a `maker-cli` rpc controller app, with MVP API.
 - [ ] Finalize the Taker API for downstream wallet integration.
 - [ ] Develop an example web Taker client, with a downstream wallet.
