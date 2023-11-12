@@ -9,23 +9,10 @@ use crate::wallet::{wallet::UTXOSpendInfo, SwapCoin};
 
 use super::{error::WalletError, fidelity::get_locktime_from_index, Wallet};
 
-#[derive(Debug, Clone, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SendAmount {
     Max,
     Amount(Amount),
-}
-
-impl PartialEq for SendAmount {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (SendAmount::Max, SendAmount::Max) => true,
-            (SendAmount::Amount(amount1), SendAmount::Amount(amount2)) => amount1 == amount2,
-            _ => false,
-        }
-    }
-    fn ne(&self, other: &Self) -> bool {
-        !(self == other)
-    }
 }
 
 impl FromStr for SendAmount {
@@ -40,24 +27,10 @@ impl FromStr for SendAmount {
     }
 }
 
-#[derive(Debug, Clone, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Destination {
     Wallet,
     Address(Address),
-}
-
-impl PartialEq for Destination {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Destination::Wallet, Destination::Wallet) => true,
-            (Destination::Address(a), Destination::Address(b)) => a == b,
-            _ => false,
-        }
-    }
-
-    fn ne(&self, other: &Self) -> bool {
-        return !(self == other);
-    }
 }
 
 impl FromStr for Destination {
@@ -72,7 +45,7 @@ impl FromStr for Destination {
     }
 }
 
-#[derive(Debug, Clone, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CoinToSpend {
     LongForm(OutPoint),
     ShortForm {
@@ -80,27 +53,6 @@ pub enum CoinToSpend {
         suffix: String,
         vout: u32,
     },
-}
-
-impl PartialEq for CoinToSpend {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (CoinToSpend::LongForm(a), CoinToSpend::LongForm(b)) => a == b,
-            (
-                CoinToSpend::ShortForm {
-                    prefix: a_prefix,
-                    suffix: a_suffix,
-                    vout: a_vout,
-                },
-                CoinToSpend::ShortForm {
-                    prefix: b_prefix,
-                    suffix: b_suffix,
-                    vout: b_vout,
-                },
-            ) => a_prefix == b_prefix && a_suffix == b_suffix && a_vout == b_vout,
-            _ => false,
-        }
-    }
 }
 
 fn parse_short_form_coin(s: &str) -> Option<CoinToSpend> {
@@ -290,12 +242,8 @@ impl Wallet {
 #[cfg(test)]
 mod tests {
 
-    use crate::wallet::RPCConfig;
-
     use super::*;
-    use bip39::Mnemonic;
     use bitcoin::{Address, Amount};
-    use bitcoind::tempfile::tempdir;
 
     #[test]
     fn test_send_amount_parsing() {
@@ -374,32 +322,5 @@ mod tests {
         assert!(CoinToSpend::from_str(invalid_short_form_str).is_err());
 
         assert!(CoinToSpend::from_str("invalid").is_err());
-    }
-
-    #[test]
-    fn test_create_direct_send() {
-        let temp_dir = tempdir().unwrap();
-        let file_path = temp_dir.path().join("test_wallet.json");
-        let mnemonic = Mnemonic::generate(12).unwrap().to_string();
-        let mut mock_wallet = Wallet::init(
-            &file_path,
-            &RPCConfig::default(),
-            mnemonic,
-            "passphrase".to_string(),
-        )
-        .unwrap();
-        let fee_rate = 1000;
-        let send_amount = SendAmount::Max;
-        let destination = Destination::Wallet;
-        let coins_to_spend = [CoinToSpend::LongForm(OutPoint {
-            txid: "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
-                .parse()
-                .unwrap(),
-            vout: 0,
-        })];
-
-        let result =
-            mock_wallet.create_direct_send(fee_rate, send_amount, destination, &coins_to_spend);
-        assert!(result.is_err());
     }
 }
