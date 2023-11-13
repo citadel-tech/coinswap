@@ -5,7 +5,7 @@ use bitcoin::{
     TxOut, Witness,
 };
 
-use crate::wallet::{wallet::UTXOSpendInfo, SwapCoin};
+use crate::wallet::{api::UTXOSpendInfo, SwapCoin};
 
 use super::{error::WalletError, fidelity::get_locktime_from_index, Wallet};
 

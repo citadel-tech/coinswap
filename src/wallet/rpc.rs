@@ -9,7 +9,7 @@ use crate::{
         convert_json_rpc_bitcoin_to_satoshis, redeemscript_to_scriptpubkey, str_to_bitcoin_network,
         to_hex,
     },
-    wallet::{wallet::KeychainKind, WalletSwapCoin},
+    wallet::{api::KeychainKind, WalletSwapCoin},
 };
 
 use serde::Deserialize;
