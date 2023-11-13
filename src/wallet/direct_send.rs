@@ -9,7 +9,7 @@ use crate::wallet::{api::UTXOSpendInfo, SwapCoin};
 
 use super::{error::WalletError, fidelity::get_locktime_from_index, Wallet};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SendAmount {
     Max,
     Amount(Amount),
@@ -27,7 +27,7 @@ impl FromStr for SendAmount {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Destination {
     Wallet,
     Address(Address),
@@ -45,7 +45,7 @@ impl FromStr for Destination {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CoinToSpend {
     LongForm(OutPoint),
     ShortForm {
@@ -106,6 +106,7 @@ impl Wallet {
     ) -> Result<Transaction, WalletError> {
         let mut tx_inputs = Vec::<TxIn>::new();
         let mut unspent_inputs = Vec::new();
+
         //TODO this search within a search could get very slow
         let list_unspent_result = self.list_unspent_from_wallet(true, true)?;
         for (list_unspent_entry, spend_info) in list_unspent_result {
@@ -235,5 +236,91 @@ impl Wallet {
             &mut unspent_inputs.iter().map(|(_u, usi)| usi.clone()),
         );
         Ok(tx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use bitcoin::{Address, Amount};
+
+    #[test]
+    fn test_send_amount_parsing() {
+        assert_eq!(SendAmount::from_str("max").unwrap(), SendAmount::Max);
+        assert_eq!(
+            SendAmount::from_str("1000").unwrap(),
+            SendAmount::Amount(Amount::from_sat(1000))
+        );
+        assert_ne!(
+            SendAmount::from_str("1000").unwrap(),
+            SendAmount::from_str("100").unwrap()
+        );
+        assert!(SendAmount::from_str("not a number").is_err());
+    }
+
+    #[test]
+    fn test_destination_parsing() {
+        assert_eq!(
+            Destination::from_str("wallet").unwrap(),
+            Destination::Wallet
+        );
+        let address1 = "32iVBEu4dxkUQk9dJbZUiBiQdmypcEyJRf";
+        assert!(matches!(
+            Destination::from_str(address1),
+            Ok(Destination::Address(_))
+        ));
+
+        let address1 = Destination::Address(
+            Address::from_str("32iVBEu4dxkUQk9dJbZUiBiQdmypcEyJRf")
+                .unwrap()
+                .assume_checked(),
+        );
+
+        let address2 = Destination::Address(
+            Address::from_str("132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM")
+                .unwrap()
+                .assume_checked(),
+        );
+        assert_ne!(address1, address2);
+        assert!(Destination::from_str("invalid address").is_err());
+    }
+
+    #[test]
+    fn test_coin_to_spend_long_form_and_short_form_parsing() {
+        let valid_outpoint_str =
+            "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:0";
+        let coin_to_spend_long_form = CoinToSpend::LongForm(OutPoint {
+            txid: "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
+                .parse()
+                .unwrap(),
+            vout: 0,
+        });
+        assert_eq!(
+            CoinToSpend::from_str(valid_outpoint_str).unwrap(),
+            coin_to_spend_long_form
+        );
+        let valid_outpoint_str =
+            "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:1";
+        assert_ne!(
+            CoinToSpend::from_str(valid_outpoint_str).unwrap(),
+            coin_to_spend_long_form
+        );
+
+        let valid_short_form_str = "123abc..def456:0";
+        assert!(matches!(
+            CoinToSpend::from_str(valid_short_form_str),
+            Ok(CoinToSpend::ShortForm { .. })
+        ));
+        let mut invalid_short_form_str = "123ab..def456:0";
+        assert!(CoinToSpend::from_str(invalid_short_form_str).is_err());
+
+        invalid_short_form_str = "123abc.def456:0";
+        assert!(CoinToSpend::from_str(invalid_short_form_str).is_err());
+
+        invalid_short_form_str = "123abc..def4560";
+        assert!(CoinToSpend::from_str(invalid_short_form_str).is_err());
+
+        assert!(CoinToSpend::from_str("invalid").is_err());
     }
 }
