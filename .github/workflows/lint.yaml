@@ -12,7 +12,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
       - name: Set default toolchain
-        run: rustup default stable
+        run: rustup default nightly
       - name: Set profile
         run: rustup set profile minimal
       - name: Add rustfmt
