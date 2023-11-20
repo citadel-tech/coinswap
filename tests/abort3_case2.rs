@@ -5,6 +5,7 @@ use coinswap::{
     taker::SwapParams,
     test_framework::*,
 };
+use log::{info, warn};
 use std::{thread, time::Duration};
 
 /// ABORT 3: Maker Drops After Setup
@@ -28,6 +29,9 @@ async fn abort3_case2_close_at_contract_sigs_for_recvr() {
     let (test_framework, taker, makers) =
         TestFramework::init(None, makers_config_map.into(), None).await;
 
+    warn!("Running Test: Maker closes connection after sending a ContractSigsForRecvr");
+
+    info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
         let taker_address = taker
@@ -53,6 +57,7 @@ async fn abort3_case2_close_at_contract_sigs_for_recvr() {
 
     // ---- Start Servers and attempt Swap ----
 
+    info!("Initiating Maker...");
     // Start the Maker server threads
     let maker_threads = makers
         .iter()
@@ -64,6 +69,7 @@ async fn abort3_case2_close_at_contract_sigs_for_recvr() {
         })
         .collect::<Vec<_>>();
 
+    info!("Initiating coinswap protocol");
     // Start swap
     thread::sleep(Duration::from_secs(20)); // Take a delay because Makers take time to fully setup.
     let swap_params = SwapParams {

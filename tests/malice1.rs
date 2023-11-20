@@ -5,6 +5,7 @@ use coinswap::{
     taker::{SwapParams, TakerBehavior},
     test_framework::*,
 };
+use log::{info, warn};
 use std::{collections::BTreeSet, thread, time::Duration};
 
 /// Malice 1: Taker Broadcasts contract transactions prematurely.
@@ -29,6 +30,9 @@ async fn malice1_taker_broadcast_contract_prematurely() {
     )
     .await;
 
+    warn!("Running Test: Taker broadcasts contract transaction prematurely");
+
+    info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
         let taker_address = taker
@@ -73,6 +77,7 @@ async fn malice1_taker_broadcast_contract_prematurely() {
 
     // ---- Start Servers and attempt Swap ----
 
+    info!("Initiating Maker...");
     // Start the Maker server threads
     let maker_threads = makers
         .iter()
@@ -84,6 +89,7 @@ async fn malice1_taker_broadcast_contract_prematurely() {
         })
         .collect::<Vec<_>>();
 
+    info!("Initiating coinswap protocol");
     // Start swap
     thread::sleep(Duration::from_secs(20)); // Take a delay because Makers take time to fully setup.
     let swap_params = SwapParams {

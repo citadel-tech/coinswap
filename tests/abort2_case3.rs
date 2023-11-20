@@ -5,6 +5,7 @@ use coinswap::{
     taker::SwapParams,
     test_framework::*,
 };
+use log::{info, warn};
 use std::{thread, time::Duration};
 
 /// ABORT 2: Maker Drops Before Setup
@@ -29,8 +30,9 @@ async fn maker_drops_after_sending_senders_sigs() {
     let (test_framework, taker, makers) =
         TestFramework::init(None, makers_config_map.into(), None).await;
 
-    log::warn!("Maker 6102 Closes after sending sender's signature. This is really bad. Recovery is the only option.");
+    warn!("Running Test: Maker 6102 Closes after sending sender's signature. This is really bad. Recovery is the only option.");
 
+    info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
         let taker_address = taker
@@ -56,6 +58,7 @@ async fn maker_drops_after_sending_senders_sigs() {
 
     // ---- Start Servers and attempt Swap ----
 
+    info!("Initiating Maker...");
     // Start the Maker server threads
     let maker_threads = makers
         .iter()
@@ -77,6 +80,7 @@ async fn maker_drops_after_sending_senders_sigs() {
         fee_rate: 1000,
     };
 
+    info!("Initiating coinswap protocol");
     // Spawn a Taker coinswap thread.
     let taker_clone = taker.clone();
     let taker_thread = thread::spawn(move || {

@@ -6,6 +6,7 @@ use coinswap::{
     test_framework::*,
 };
 
+use log::{info, warn};
 use std::{thread, time::Duration};
 
 /// This test demonstrates a standard coinswap round between a Taker and 2 Makers. Nothing goes wrong
@@ -24,8 +25,9 @@ async fn test_standard_coinswap() {
     let (test_framework, taker, makers) =
         TestFramework::init(None, makers_config_map.into(), None).await;
 
-    log::warn!("Standard Coinswap");
+    warn!("Running Test: Standard Coinswap Procedure");
 
+    info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
         let taker_address = taker
@@ -99,6 +101,7 @@ async fn test_standard_coinswap() {
 
     // ---- Start Servers and attempt Swap ----
 
+    info!("Initiating Maker...");
     // Start the Maker server threads
     let maker_threads = makers
         .iter()
@@ -120,6 +123,7 @@ async fn test_standard_coinswap() {
         fee_rate: 1000,
     };
 
+    info!("Initiating coinswap protocol");
     // Spawn a Taker coinswap thread.
     let taker_clone = taker.clone();
     let taker_thread = thread::spawn(move || {
@@ -139,8 +143,11 @@ async fn test_standard_coinswap() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
+    info!("All coinswaps processed successfully. Transaction complete.");
+
     // ---- After Swap Asserts ----
 
+    warn!("Final Balance Checks for process");
     // Check everybody hash 6 swapcoins.
     assert_eq!(taker.read().unwrap().get_wallet().get_swapcoins_count(), 6);
     makers.iter().for_each(|maker| {
@@ -149,7 +156,7 @@ async fn test_standard_coinswap() {
     });
 
     // Check balances makes sense
-    println!(
+    warn!(
         "Taker balance : {}",
         taker
             .read()
@@ -176,6 +183,8 @@ async fn test_standard_coinswap() {
             .unwrap();
         assert!(balance > Amount::from_btc(0.15).unwrap());
     });
+
+    info!("All checks successful. Terminating integration test case");
 
     // Stop test and clean everything.
     // comment this line if you want the wallet directory and bitcoind to live. Can be useful for

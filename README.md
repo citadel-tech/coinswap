@@ -69,6 +69,7 @@ To run the integration tests, `--features integration-test` must be enabled. Run
 ```sh
 cargo test --features integration-test
 ```
+To print out logs on the tests, set the `RUST_LOG` env variable to either `info`, `warn`, `error`
 
 For manual swaps using the `teleport` app, follow the instructions in [run_coinswap](./docs/run_teleport.md).
 

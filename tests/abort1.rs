@@ -5,6 +5,7 @@ use coinswap::{
     taker::{SwapParams, TakerBehavior},
     test_framework::*,
 };
+use log::{info, warn};
 use std::{thread, time::Duration};
 
 /// Abort 1: TAKER Drops After Full Setup.
@@ -34,8 +35,9 @@ async fn test_stop_taker_after_setup() {
     )
     .await;
 
-    log::warn!("Taker Cheats on Everybody");
+    warn!("Running Test: Taker Cheats on Everybody.");
 
+    info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
         let taker_address = taker
@@ -80,6 +82,7 @@ async fn test_stop_taker_after_setup() {
 
     // ---- Start Servers and attempt Swap ----
 
+    info!("Initiating Maker...");
     // Start the Maker server threads
     let maker_threads = makers
         .iter()
@@ -101,6 +104,7 @@ async fn test_stop_taker_after_setup() {
         fee_rate: 1000,
     };
 
+    info!("Initiating coinswap protocol");
     // Spawn a Taker coinswap thread.
     let taker_clone = taker.clone();
     let taker_thread = thread::spawn(move || {
@@ -126,7 +130,7 @@ async fn test_stop_taker_after_setup() {
     assert_eq!(taker.read().unwrap().get_wallet().get_swapcoins_count(), 6);
 
     //Run Recovery script
-    log::info!("Starting Taker recovery process");
+    warn!("Starting Taker recovery process");
     taker.write().unwrap().recover_from_swap().unwrap();
 
     // All pending swapcoins are cleared now.
@@ -153,6 +157,8 @@ async fn test_stop_taker_after_setup() {
                 .unwrap();
             assert_eq!(*org_balance - new_balance, Amount::from_sat(4227));
         });
+
+    info!("All checks successful. Terminating integration test case");
 
     // Stop test and clean everything.
     // comment this line if you want the wallet directory and bitcoind to live. Can be useful for

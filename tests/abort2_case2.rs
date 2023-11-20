@@ -5,6 +5,7 @@ use coinswap::{
     taker::SwapParams,
     test_framework::*,
 };
+use log::{info, warn};
 use std::{thread, time::Duration};
 
 /// ABORT 2: Maker Drops Before Setup
@@ -24,14 +25,12 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
         (16102, MakerBehavior::Normal),
     ];
 
-    log::warn!("Maker 6102 Closes before sending sender's sigs. Taker recovers. Or Swap cancels");
+    warn!("Running test: Maker 6102 Closes before sending sender's sigs. Taker recovers. Or Swap cancels");
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
     let (test_framework, taker, makers) =
         TestFramework::init(None, makers_config_map.into(), None).await;
-
-    log::warn!("Maker 6102 Closes before sending sender's sigs. Taker recovers. Or Swap cancels");
 
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
@@ -108,7 +107,7 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
     // In that the swap isn't feasible, and user should modify SwapParams::maker_count.
     if let Err(e) = taker_thread.join().unwrap() {
         assert_eq!(format!("{:?}", e), "NotEnoughMakersInOfferBook".to_string());
-        log::info!("Coinswap failed because the first maker rejected for signature");
+        info!("Coinswap failed because the first maker rejected for signature");
         return;
     }
 
