@@ -169,13 +169,11 @@ fn main() -> Result<(), WalletError> {
                 wallet_name: maker_id.to_string(),
                 ..Default::default()
             };
-            let onion_addrs = "myhiddenserviceaddress.onion:6102".to_string(); // A dummy addrs for now.
             let maker = Arc::new(
                 Maker::init(
                     &maker_path,
                     &maker_rpc_config,
-                    port,
-                    onion_addrs,
+                    Some(port),
                     maker_special_behavior,
                 )
                 .unwrap(),

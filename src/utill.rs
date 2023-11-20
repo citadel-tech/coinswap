@@ -1,6 +1,6 @@
 //! Various Utility and Helper functions used in both Taker and Maker protocols.
 
-use std::sync::Once;
+use std::{io::ErrorKind, path::PathBuf, sync::Once};
 
 use bitcoin::{
     address::{WitnessProgram, WitnessVersion},
@@ -11,6 +11,12 @@ use bitcoin::{
         Secp256k1, SecretKey,
     },
     Network, PublicKey, ScriptBuf,
+};
+
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{self, BufRead},
 };
 
 use serde_json::Value;
@@ -187,6 +193,46 @@ pub fn to_hex(bytes: &Vec<u8>) -> String {
     }
 
     hex_string
+}
+
+/// Function to parse toml file into key-value pair
+pub fn parse_toml(file_path: &PathBuf) -> io::Result<HashMap<String, HashMap<String, String>>> {
+    let file = File::open(file_path)?;
+    let reader = io::BufReader::new(file);
+
+    let mut sections = HashMap::new();
+    let mut current_section = String::new();
+
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().starts_with('[') {
+            current_section = line
+                .trim()
+                .trim_matches(|p| p == '[' || p == ']')
+                .to_string();
+            sections.insert(current_section.clone(), HashMap::new());
+        } else if line.trim().starts_with('#') {
+            continue;
+        } else if let Some(pos) = line.find('=') {
+            let key = line[..pos].trim().to_string();
+            let value = line[pos + 1..].trim().to_string();
+            if let Some(section) = sections.get_mut(&current_section) {
+                section.insert(key, value);
+            }
+        }
+    }
+
+    Ok(sections)
+}
+
+/// Function to parse and log errors for each field
+pub fn parse_field<T: std::str::FromStr>(value: Option<&String>, default: T) -> io::Result<T> {
+    match value {
+        Some(value) => value
+            .parse()
+            .map_err(|_e| io::Error::new(ErrorKind::InvalidData, "parsing failed")),
+        None => Ok(default),
+    }
 }
 
 #[cfg(test)]

@@ -176,7 +176,7 @@ mod tests {
             "test_wallet".to_string(),
             &file_path,
             Network::Bitcoin,
-            mnemonic.clone(),
+            mnemonic,
             "passphrase".to_string(),
         )
         .unwrap();

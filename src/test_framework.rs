@@ -115,17 +115,9 @@ impl TestFramework {
                 let maker_path = temp_dir.join(&maker_id); // ex: tests/temp-files/ghytredi/maker6102
                 let mut maker_rpc_config = rpc_config.clone();
                 maker_rpc_config.wallet_name = maker_id;
-                let onion_addrs = "myhiddenserviceaddress.onion:6102".to_string(); // A dummy addrs for now.
                 thread::sleep(Duration::from_secs(5)); // Sleep for some time avoid resource unavailable error.
                 Arc::new(
-                    Maker::init(
-                        &maker_path,
-                        &maker_rpc_config,
-                        *port,
-                        onion_addrs,
-                        *behavior,
-                    )
-                    .unwrap(),
+                    Maker::init(&maker_path, &maker_rpc_config, Some(*port), *behavior).unwrap(),
                 )
             })
             .collect::<Vec<_>>();
