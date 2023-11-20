@@ -7,9 +7,13 @@ use bitcoin::{
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 
-use crate::protocol::{
-    messages::{MultisigPrivkey, PrivKeyHandover},
-    Hash160,
+use crate::{
+    maker::api::recover_from_swap,
+    protocol::{
+        messages::{MultisigPrivkey, PrivKeyHandover},
+        Hash160,
+    },
+    wallet::WalletSwapCoin,
 };
 
 use crate::{
@@ -133,7 +137,14 @@ pub async fn handle_message(
                     maker
                         .handle_contract_sigs_for_recvr_and_sender(connection_state, message, ip)
                         .await?;
-                    None
+                    if let MakerBehavior::BroadcastContractAfterSetup = maker.behavior {
+                        unexpected_recovery(maker.clone())?;
+                        return Err(MakerError::General(
+                            "Special Maker Behavior BroadcastContractAfterSetup",
+                        ));
+                    } else {
+                        None
+                    }
                 }
                 _ => {
                     return Err(MakerError::General(
@@ -614,4 +625,41 @@ impl Maker {
         log::info!("Successfully Completed Coinswap");
         Ok(())
     }
+}
+
+fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
+    let mut lock_on_state = maker.connection_state.lock()?;
+    for (_, (state, _)) in lock_on_state.iter_mut() {
+        let mut outgoings = Vec::new();
+        let mut incomings = Vec::new();
+        // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
+        // fully signed.
+        for (og_sc, ic_sc) in state
+            .outgoing_swapcoins
+            .iter()
+            .zip(state.incoming_swapcoins.iter())
+        {
+            let contract_timelock = og_sc.get_timelock();
+            let contract = og_sc.get_fully_signed_contract_tx()?;
+            let next_internal_address = &maker
+                .wallet
+                .read()
+                .unwrap()
+                .get_next_internal_addresses(1)
+                .unwrap()[0];
+            let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
+            outgoings.push((
+                (og_sc.get_multisig_redeemscript(), contract),
+                (contract_timelock, time_lock_spend),
+            ));
+            let incoming_contract = ic_sc.get_fully_signed_contract_tx().unwrap();
+            incomings.push((ic_sc.get_multisig_redeemscript(), incoming_contract));
+        }
+        // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
+        let maker_clone = maker.clone();
+        std::thread::spawn(move || {
+            recover_from_swap(maker_clone, outgoings, incomings);
+        });
+    }
+    Ok(())
 }

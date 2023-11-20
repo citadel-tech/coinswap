@@ -42,6 +42,7 @@ pub enum MakerBehavior {
     CloseAtContractSigsForRecvrAndSender,
     CloseAtContractSigsForRecvr,
     CloseAtHashPreimage,
+    BroadcastContractAfterSetup,
 }
 /// A structure denoting expectation of type of taker message.
 /// Used in the [ConnectionState] structure.
