@@ -227,26 +227,40 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
     Ok(contract_sigs_for_recvr)
 }
 
+// Type for information related to `this maker` consisting of:
+// `this_maker`, `funding_txs_infos`, `this_maker_contract_txs`
+#[derive(Clone)]
+pub struct ThisMakerInfo {
+    pub this_maker: OfferAndAddress,
+    pub funding_tx_infos: Vec<FundingTxInfo>,
+    pub this_maker_contract_txs: Vec<Transaction>,
+}
+
+// Type for information related to the next peer
+#[derive(Clone)]
+pub struct NextPeerInfoArgs {
+    pub next_peer_multisig_pubkeys: Vec<PublicKey>,
+    pub next_peer_hashlock_pubkeys: Vec<PublicKey>,
+    pub next_maker_refund_locktime: u16,
+    pub next_maker_fee_rate: u64,
+}
+
 /// [Internal] Send a Proof funding to the maker and init next hop.
 pub(crate) async fn send_proof_of_funding_and_init_next_hop(
     socket_reader: &mut BufReader<ReadHalf<'_>>,
     socket_writer: &mut WriteHalf<'_>,
-    this_maker: &OfferAndAddress,
-    funding_tx_infos: &Vec<FundingTxInfo>,
-    next_peer_multisig_pubkeys: &[PublicKey],
-    next_peer_hashlock_pubkeys: &[PublicKey],
-    next_maker_refund_locktime: u16,
-    next_maker_fee_rate: u64,
-    this_maker_contract_txes: &[Transaction],
+    tmi: ThisMakerInfo,
+    npi: NextPeerInfoArgs,
     hashvalue: Hash160,
 ) -> Result<(ContractSigsAsRecvrAndSender, Vec<ScriptBuf>), TakerError> {
     send_message(
         socket_writer,
         &TakerToMakerMessage::RespProofOfFunding(ProofOfFunding {
-            confirmed_funding_txes: funding_tx_infos.clone(),
-            next_coinswap_info: next_peer_multisig_pubkeys
+            confirmed_funding_txes: tmi.funding_tx_infos.clone(),
+            next_coinswap_info: npi
+                .next_peer_multisig_pubkeys
                 .iter()
-                .zip(next_peer_hashlock_pubkeys.iter())
+                .zip(npi.next_peer_hashlock_pubkeys.iter())
                 .map(
                     |(&next_coinswap_multisig_pubkey, &next_hashlock_pubkey)| NextHopInfo {
                         next_multisig_pubkey: next_coinswap_multisig_pubkey,
@@ -254,23 +268,23 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
                     },
                 )
                 .collect::<Vec<NextHopInfo>>(),
-            next_locktime: next_maker_refund_locktime,
-            next_fee_rate: next_maker_fee_rate,
+            next_locktime: npi.next_maker_refund_locktime,
+            next_fee_rate: npi.next_maker_fee_rate,
         }),
     )
     .await?;
     let contract_sigs_as_recvr_and_sender = match read_message(socket_reader).await {
         Ok(MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(m)) => {
-            if m.receivers_contract_txs.len() != funding_tx_infos.len() {
+            if m.receivers_contract_txs.len() != tmi.funding_tx_infos.len() {
                 return Err(ProtocolError::WrongNumOfContractTxs {
-                    expected: funding_tx_infos.len(),
+                    expected: tmi.funding_tx_infos.len(),
                     received: m.receivers_contract_txs.len(),
                 }
                 .into());
-            } else if m.senders_contract_txs_info.len() != next_peer_multisig_pubkeys.len() {
+            } else if m.senders_contract_txs_info.len() != npi.next_peer_multisig_pubkeys.len() {
                 return Err(ProtocolError::WrongNumOfContractTxs {
                     expected: m.senders_contract_txs_info.len(),
-                    received: next_peer_multisig_pubkeys.len(),
+                    received: npi.next_peer_multisig_pubkeys.len(),
                 }
                 .into());
             } else {
@@ -287,7 +301,8 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
         Err(e) => return Err(e.into()),
     };
 
-    let funding_tx_values = funding_tx_infos
+    let funding_tx_values = tmi
+        .funding_tx_infos
         .iter()
         .map(|funding_info| {
             let funding_output_index =
@@ -309,15 +324,16 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
         .map(|i| i.funding_amount)
         .sum::<u64>();
     let coinswap_fees = calculate_coinswap_fee(
-        this_maker.offer.absolute_fee_sat,
-        this_maker.offer.amount_relative_fee_ppb,
-        this_maker.offer.time_relative_fee_ppb,
+        tmi.this_maker.offer.absolute_fee_sat,
+        tmi.this_maker.offer.amount_relative_fee_ppb,
+        tmi.this_maker.offer.time_relative_fee_ppb,
         this_amount,
         1, //time_in_blocks just 1 for now
     );
-    let miner_fees_paid_by_taker =
-        FUNDING_TX_VBYTE_SIZE * next_maker_fee_rate * (next_peer_multisig_pubkeys.len() as u64)
-            / 1000;
+    let miner_fees_paid_by_taker = FUNDING_TX_VBYTE_SIZE
+        * npi.next_maker_fee_rate
+        * (npi.next_peer_multisig_pubkeys.len() as u64)
+        / 1000;
     let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
     if calculated_next_amount != next_amount {
         return Err(ProtocolError::IncorrectFundingAmount {
@@ -338,8 +354,12 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
         contract_sigs_as_recvr_and_sender
             .receivers_contract_txs
             .iter()
-            .zip(this_maker_contract_txes.iter())
-            .zip(funding_tx_infos.iter().map(|fi| &fi.contract_redeemscript))
+            .zip(tmi.this_maker_contract_txs.iter())
+            .zip(
+                tmi.funding_tx_infos
+                    .iter()
+                    .map(|fi| &fi.contract_redeemscript),
+            )
     {
         validate_contract_tx(
             receivers_contract_tx,
@@ -348,7 +368,8 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
         )
         .map_err(ProtocolError::Contract)?;
     }
-    let next_swap_contract_redeemscripts = next_peer_hashlock_pubkeys
+    let next_swap_contract_redeemscripts = npi
+        .next_peer_hashlock_pubkeys
         .iter()
         .zip(
             contract_sigs_as_recvr_and_sender
@@ -360,7 +381,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
                 hashlock_pubkey,
                 &senders_contract_tx_info.timelock_pubkey,
                 &hashvalue,
-                &next_maker_refund_locktime,
+                &npi.next_maker_refund_locktime,
             )
         })
         .collect::<Vec<_>>();

@@ -14,6 +14,7 @@ jobs:
           - nightly 
         features:
           - default
+          - integration-test
     steps:
       - name: checkout
         uses: actions/checkout@v2
@@ -36,7 +37,6 @@ jobs:
       - name: Update toolchain
         run: rustup update
       - name: Build
-        run: cargo build --features ${{ matrix.features }} --no-default-features
-        # Uncomment clippy check after failures are removed
-      # - name: Clippy
-      #   run: cargo clippy --all-targets --features ${{ matrix.features }} --no-default-features -- -D warnings
+        run: cargo build --features ${{ matrix.features }}
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings

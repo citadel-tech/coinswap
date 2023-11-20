@@ -167,10 +167,10 @@ pub fn display_wallet_balance(
         {
             let incoming_swapcoins_balance: Amount = utxo_incoming_swapcoins
                 .iter()
-                .fold(Amount::ZERO, |acc, us| acc + us.0.amount);
+                .fold(Amount::ZERO, |acc, us| acc + us.1.amount);
             let outgoing_swapcoins_balance: Amount = utxo_outgoing_swapcoins
                 .iter()
-                .fold(Amount::ZERO, |acc, us| acc + us.0.amount);
+                .fold(Amount::ZERO, |acc, us| acc + us.1.amount);
 
             println!(
                 "{:16} {:8} {:8} {:<15} {:<7} value",
@@ -178,12 +178,12 @@ pub fn display_wallet_balance(
             );
             for ((utxo, swapcoin), contract_type) in utxo_incoming_swapcoins
                 .iter()
-                .map(|(l, i)| (l, (*i as &dyn WalletSwapCoin)))
+                .map(|(i, l)| (l, (*i as &dyn WalletSwapCoin)))
                 .zip(repeat("hashlock"))
                 .chain(
                     utxo_outgoing_swapcoins
                         .iter()
-                        .map(|(l, o)| (l, (*o as &dyn WalletSwapCoin)))
+                        .map(|(o, l)| (l, (*o as &dyn WalletSwapCoin)))
                         .zip(repeat("timelock")),
                 )
             {

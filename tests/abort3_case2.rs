@@ -58,10 +58,9 @@ async fn abort3_case2_close_at_contract_sigs_for_recvr() {
         .iter()
         .map(|maker| {
             let maker_clone = maker.clone();
-            let thread = thread::spawn(move || {
+            thread::spawn(move || {
                 start_maker_server(maker_clone).unwrap();
-            });
-            thread
+            })
         })
         .collect::<Vec<_>>();
 

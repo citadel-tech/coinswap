@@ -227,6 +227,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::read_zero_byte_vec)]
     #[tokio::test]
     async fn test_send_message() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -735,7 +735,7 @@ mod test {
         }
 
         // Change contract transaction to pay into wrong output
-        let mut contract_tx_err2 = contract_tx.clone();
+        let mut contract_tx_err2 = contract_tx;
         let multisig_redeemscript = ScriptBuf::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
         let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript);
         contract_tx_err2.output[0] = TxOut {
@@ -854,12 +854,11 @@ mod test {
         let script_value = create_multisig_redeemscript(&pubkey_derived_1, &pubkey_derived_2);
         let script = script_value.as_script();
 
-        let check_multisig_value_1 = check_multisig_has_pubkey(&script, &pubkey_1, &nonce_1);
+        let check_multisig_value_1 = check_multisig_has_pubkey(script, &pubkey_1, &nonce_1);
 
-        assert_eq!(check_multisig_value_1.unwrap(), ());
+        assert!(check_multisig_value_1.is_ok());
 
-        let check_multisig_value_2 =
-            check_multisig_has_pubkey(&script, &pubkey_derived_2, &nonce_2);
+        let check_multisig_value_2 = check_multisig_has_pubkey(script, &pubkey_derived_2, &nonce_2);
         let val = match check_multisig_value_2.unwrap_err() {
             ContractError::Protocol(mess) => mess,
             _ => "Not in path",
@@ -888,12 +887,11 @@ mod test {
             create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hash_value, &locktime);
         let contract_redeemscript = contract_script.as_script();
 
-        let error_message =
-            check_hashlock_has_pubkey(&contract_redeemscript, &public_key_1, &nonce);
-        assert_eq!(error_message.unwrap(), ());
+        let error_message = check_hashlock_has_pubkey(contract_redeemscript, &public_key_1, &nonce);
+        assert!(error_message.is_ok());
 
         let error =
-            check_hashlock_has_pubkey(&contract_redeemscript, &pub_hashlock, &nonce).unwrap_err();
+            check_hashlock_has_pubkey(contract_redeemscript, &pub_hashlock, &nonce).unwrap_err();
 
         let error_description = match error {
             ContractError::Protocol(message) => message,
@@ -990,8 +988,7 @@ mod test {
         let initial_redeem_script = ScriptBuf::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
         let valid_multisig_script = initial_redeem_script.as_script();
 
-        let result_valid_multisig = check_reedemscript_is_multisig(&valid_multisig_script).unwrap();
-        assert_eq!(result_valid_multisig, ());
+        assert!(check_reedemscript_is_multisig(valid_multisig_script).is_ok());
 
         let multiscript_redeemscript_2 = initial_redeem_script.as_script();
         let mut invalid_length_script = multiscript_redeemscript_2.to_bytes();
@@ -1083,7 +1080,7 @@ mod test {
             &sig_1,
             &sig_2,
             &mut tx_input_1,
-            &mutlisig_2_of_2_redeemscript,
+            mutlisig_2_of_2_redeemscript,
         );
 
         let (sig_first, sig_second) = (&sig_2, &sig_1);
@@ -1113,7 +1110,7 @@ mod test {
             &sig_1,
             &sig_2,
             &mut tx_input_1,
-            &mutlisig_2_of_2_redeemscript,
+            mutlisig_2_of_2_redeemscript,
         );
 
         let (sig_first, sig_second) = (&sig_1, &sig_2);

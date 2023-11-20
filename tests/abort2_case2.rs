@@ -82,10 +82,9 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
         .iter()
         .map(|maker| {
             let maker_clone = maker.clone();
-            let thread = thread::spawn(move || {
+            thread::spawn(move || {
                 start_maker_server(maker_clone).unwrap();
-            });
-            thread
+            })
         })
         .collect::<Vec<_>>();
 

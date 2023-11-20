@@ -98,7 +98,7 @@ If you're interested in contributing to the project, explore the [open issues](h
   - [x] Case3L Maker Drops at `HashPreimage` message and doesn't respond back with privkeys. Taker and other Maker recovers. Maker gets banned.
 - [x] Malice 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
 - [ ] Malice 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
-- [ ] Fix all clippy warnings.
+- [x] Fix all clippy warnings.
 - [ ] Achieve >80% test coverage, including bad and recovery paths in integration tests.
 - [ ] Switch to binary encoding for wallet data storage and network messages.
 - [ ] Implement configuration file support for Takers and Makers.

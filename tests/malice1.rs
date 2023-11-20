@@ -78,10 +78,9 @@ async fn malice1_taker_broadcast_contract_prematurely() {
         .iter()
         .map(|maker| {
             let maker_clone = maker.clone();
-            let thread = thread::spawn(move || {
+            thread::spawn(move || {
                 start_maker_server(maker_clone).unwrap();
-            });
-            thread
+            })
         })
         .collect::<Vec<_>>();
 

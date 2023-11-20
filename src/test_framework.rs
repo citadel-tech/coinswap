@@ -66,7 +66,7 @@ impl TestFramework {
         // Initiate the bitcoind backend.
         let mut conf = bitcoind_conf.unwrap_or_default();
         conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
-        conf.staticdir = Some(temp_dir.clone().join(".bitcoin"));
+        conf.staticdir = Some(temp_dir.join(".bitcoin"));
         log::info!("bitcoind configuration: {:?}", conf.args);
         let bitcoind = BitcoinD::from_downloaded_with_conf(&conf).unwrap();
 
@@ -174,7 +174,7 @@ impl TestFramework {
         // stop bitcoind
         let _ = self.bitcoind.client.stop().unwrap();
         // Remove test temp dir, ignore error.
-        if let Err(_) = fs::remove_dir_all::<PathBuf>(self.temp_dir.clone()) {
+        if fs::remove_dir_all::<PathBuf>(self.temp_dir.clone()).is_err() {
             // Do Nothing
         }
     }
