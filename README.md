@@ -40,7 +40,7 @@ src/
 tests/
 ```
 
-- `taker`: Contains Taker-related behaviors, with core logic in `src/taker/api.rs`. **Takers** manage most protocol logic, while **Makers** play a relatively passive role.
+- `taker`: Contains Taker-related behaviors, with core logic in `src/taker/api.rs`. Takers manage most protocol logic, while Makers play a relatively passive role.
 - `maker`: Encompasses Maker-specific logic.
 - `wallet`: Manages wallet-related operations, including storage and blockchain interaction.
 - `market`: Handles market-related logic, where Makers post their offers.
