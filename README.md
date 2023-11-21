@@ -15,20 +15,18 @@
 
 ## About
 
-Teleport Transactions is a rust implementation of a variant of atomic-swap protocol, using HTLCs on Bitcoin.
+Teleport Transactions is a rust implementation of a variant of atomic-swap protocol, using HTLCs on Bitcoin. Read more at:
 
-Mailing list post: [here](https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-October/018221.html)
-
-Detailed design, [here](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964)
-
-Developer's Doc: [here](/docs/developer_resources.md)
-
-Run Demo: [here](/docs/run_teleport.md)
+* [Mailing list post](https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-October/018221.html)
+* [Detailed design](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964)
+* [Developer's resources](/docs/developer_resources.md)
+* [Run demo](/docs/run_teleport.md)
 
 ## Architecture
 
-The project is divided into distinct modules, each focused on specific functionalities: Below is the folder structure:
-```bash
+The project is divided into distinct modules, each focused on specific functionalities. The project directory-tree is given below:
+
+```console
 docs/
 src/
 ├─ bin/
@@ -41,7 +39,8 @@ src/
 ├─ watchtower/
 tests/
 ```
-- `taker`: Contains Taker-related behaviors, with core logic in `src/taker/taker.rs`. Takers manage most protocol logic, while Makers play a relatively passive role.
+
+- `taker`: Contains Taker-related behaviors, with core logic in `src/taker/api.rs`. **Takers** manage most protocol logic, while **Makers** play a relatively passive role.
 - `maker`: Encompasses Maker-specific logic.
 - `wallet`: Manages wallet-related operations, including storage and blockchain interaction.
 - `market`: Handles market-related logic, where Makers post their offers.
@@ -53,27 +52,29 @@ tests/
 
 The project follows the standard Rust build workflow and generates a CLI app named `teleport`.
 
-```sh
-cargo build
+```console
+$ cargo build
 ```
 
 The project includes both unit and integration tests. The integration tests simulates various edge cases of the coinswap protocol.
 
 To run the unit tests:
-```sh
-cargo test
+
+```console
+$ cargo test
 ```
 
-To run the integration tests, `--features integration-test` must be enabled. Run integration tests with:
+To run the integration tests, `--features integration-test` flag must be enabled. Run integration tests with:
 
-```sh
-cargo test --features integration-test
+```console
+$ cargo test --features integration-test
 ```
-To print out logs on the tests, set the `RUST_LOG` env variable to either `info`, `warn`, `error`
 
-For manual swaps using the `teleport` app, follow the instructions in [run_coinswap](./docs/run_teleport.md).
+To print out logs on the tests, set the `RUST_LOG` env variable to either `info`, `warn` or `error`.
 
-For in-depth developer documentation on protocol workflow and implementation, consult [developer_resources](./docs/developer_resources.md).
+For manual swaps using the `teleport` app, follow the instructions in [Run Teleport](./docs/run_teleport.md).
+
+For in-depth developer documentation on protocol workflow and implementation, consult [Developer's Resources](./docs/developer_resources.md).
 
 ## Project Status
 
@@ -84,29 +85,30 @@ If you're interested in contributing to the project, explore the [open issues](h
 ## Roadmap
 
 ### V 0.1.0
-- [x] Basic protocol workflow with integration tests.
-- [x] Modularize protocol components.
-- [x] Refine logging information.
-- [x] Abort 1: Taker aborts after setup. Makers identify this, and gets their fund back via contract tx.
-- [x] Abort 2: One Maker aborts **before setup**. Taker retaliates by banning the maker, moving on with other makers, if it can't find enough makers, then recovering via contract transactions.
-  - [x] Case 1: Maker drops **before** sending sender's signature. Taker tries with another Maker and moves on.
-  - [x] Case 2: Maker drops **before** sending sender's signature. Taker doesn't have any new Maker. Recovers from swap.
-  - [x] Case 3: Maker drops **after** sending sender's signatures. Taker doesn't have any new Maker. Recovers from swap.
-- [x] Build a flexible Test-Framework with `bitcoind` backend.
-- [x] Abort 3: Maker aborts **after setup**. Taker and other Makers identify this and recovers back via contract tx. Taker bans the aborting Maker's fidelity bond.
-  - [x] Case1: Maker Drops at `ContractSigsForRecvrAndSender`. Does not broadcasts the funding txs. Taker and Other Maker recovers. Maker gets banned.
-  - [x] Case2: Maker drops at `ContractSigsForRecvr` after broadcasting funding txs. Taker and other Makers recover. Maker gets banned.
-  - [x] Case3L Maker Drops at `HashPreimage` message and doesn't respond back with privkeys. Taker and other Maker recovers. Maker gets banned.
-- [x] Malice 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
-- [x] Malice 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
-- [x] Fix all clippy warnings.
-- [x] Implement configuration file i/o support for Takers and Makers.
+
+- [X] Basic protocol workflow with integration tests.
+- [X] Modularize protocol components.
+- [X] Refine logging information.
+- [X] Abort 1: Taker aborts after setup. Makers identify this, and gets their fund back via contract tx.
+- [X] Abort 2: One Maker aborts **before setup**. Taker retaliates by banning the maker, moving on with other makers, if it can't find enough makers, then recovering via contract transactions.
+  - [X] Case 1: Maker drops **before** sending sender's signature. Taker tries with another Maker and moves on.
+  - [X] Case 2: Maker drops **before** sending sender's signature. Taker doesn't have any new Maker. Recovers from swap.
+  - [X] Case 3: Maker drops **after** sending sender's signatures. Taker doesn't have any new Maker. Recovers from swap.
+- [X] Build a flexible Test-Framework with `bitcoind` backend.
+- [X] Abort 3: Maker aborts **after setup**. Taker and other Makers identify this and recovers back via contract tx. Taker bans the aborting Maker's fidelity bond.
+  - [X] Case 1: Maker Drops at `ContractSigsForRecvrAndSender`. Does not broadcasts the funding txs. Taker and Other Maker recovers. Maker gets banned.
+  - [X] Case 2: Maker drops at `ContractSigsForRecvr` after broadcasting funding txs. Taker and other Makers recover. Maker gets banned.
+  - [X] Case 3: Maker Drops at `HashPreimage` message and doesn't respond back with privkeys. Taker and other Maker recovers. Maker gets banned.
+- [X] Malice 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
+- [X] Malice 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
+- [X] Fix all clippy warnings.
 - [ ] Complete all unit tests in modules.
-- [ ] Achieve >80% crate level test coverage ratio. (including integration tests)
+- [ ] Achieve >80% crate level test coverage ratio (including integration tests).
+- [ ] Implement configuration file i/o support for Takers and Makers.
 - [ ] Clean up and integrate fidelity bonds with maker banning.
 - [ ] Switch to binary encoding for wallet data storage and network messages.
 - [ ] Make tor detectable and connectable by default for Maker and Taker. And Tor configs to their config lists.
-- [ ] Sketch a simple `AddressBook` server. Tor must. This is  for MVP. Later on we will move to more decentralized address server architecture.
+- [ ] Sketch a simple `AddressBook` server. Tor must. This is for MVP. Later on we will move to more decentralized address server architecture.
 - [ ] Turn maker server into a `makerd` binary, and a `maker-cli` rpc controller app, with MVP API.
 - [ ] Finalize the Taker API for downstream wallet integration.
 - [ ] Develop an example web Taker client, with a downstream wallet.
@@ -114,11 +116,12 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [ ] Release V 0.1.0 in Signet for beta testing.
 
 ### V 0.1.*
+
 - [ ] Implement UTXO merging and branch-out via swap for improved UTXO management.
 - [ ] Describe contract and funding transactions via miniscript, using BDK for wallet management.
 - [ ] Enable wallet syncing via CBF (BIP157/158).
 - [ ] Transition to taproot outputs for the entire protocol, enhancing anonymity and obfuscating contract transactions.
-- [ ] Optional Payjoin integration via coinswap.
+- [ ] Optional: Payjoin integration via coinswap.
 - [ ] Implement customizable wallet data storage (SQLite, Postgres).
 
 ## Community
