@@ -102,9 +102,9 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [X] Malice 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
 - [X] Malice 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
 - [X] Fix all clippy warnings.
+- [x] Implement configuration file i/o support for Takers and Makers.
 - [ ] Complete all unit tests in modules.
 - [ ] Achieve >80% crate level test coverage ratio (including integration tests).
-- [ ] Implement configuration file i/o support for Takers and Makers.
 - [ ] Clean up and integrate fidelity bonds with maker banning.
 - [ ] Switch to binary encoding for wallet data storage and network messages.
 - [ ] Make tor detectable and connectable by default for Maker and Taker. And Tor configs to their config lists.
