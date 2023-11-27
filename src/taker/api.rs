@@ -4,7 +4,7 @@
 //! The Taker handles all the necessary communications between one or many makers to route the swap across various makers.
 //!
 //! This module describes the main [Taker] structure and all other associated data sets related to a coinswap round.
-//!OngoingSwapState
+//!
 //! [TakerConfig]: Set of configuration parameters defining [Taker]'s behavior.
 //! [SwapParams]: Set of parameters defining a specific Swap round.
 //! [OngoingSwapState]: Represents the State of an ongoing swap round. All swap related data are stored in this state.
