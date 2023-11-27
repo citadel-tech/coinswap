@@ -1,4 +1,9 @@
-/// Main server runtime for the Maker module.
+//! The `maker` module contains the main server runtime for the Maker module in the Teleport
+//! application. It handles connections, communication with takers, and various aspects of the
+//! Maker's behavior in the coin swapping protocol. The server is built using the `tokio` runtime
+//! and includes functionalities such as checking for new connections, handling messages from takers,
+//! refreshing offer caches, and interacting with the Bitcoin node.
+//!
 pub mod api;
 pub mod config;
 pub mod error;

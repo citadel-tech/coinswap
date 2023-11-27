@@ -13,6 +13,6 @@ pub mod taker;
 pub mod test_framework;
 pub mod utill;
 pub mod wallet;
-// Diasable watchtower for now. Handle contract watching
+// Disable watchtower for now. Handle contract watching
 // individually for maker and Taker.
 //pub mod watchtower;

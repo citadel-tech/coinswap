@@ -1,3 +1,11 @@
+//! Module containing functions to handle messages in a Bitcoin coinswap protocol for a Maker.
+//! Implements the logic for message handling based on the current connection state.
+//! Exposes the main function `handle_message` to process incoming messages and generate outgoing messages.
+//! Also includes handlers for specific messages such as contract signatures, proof of funding, hash preimage, and private key handover.
+//! Manages wallet state, incoming and outgoing swap coins, and special behaviors defined for the Maker.
+//! The file includes functions to validate and sign contract transactions, verify proof of funding, and handle unexpected recovery scenarios.
+//! Implements the core functionality for a Maker in a Bitcoin coinswap protocol.
+
 use std::{net::IpAddr, sync::Arc, time::Instant};
 
 use bitcoin::{

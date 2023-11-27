@@ -1,3 +1,11 @@
+//! CoinSwap Maker Protocol
+//!
+//! This module defines the core functionality of the Maker in a swap protocol implementation.
+//! It includes structures for managing maker behavior, connection states, and recovery from swap events.
+//! The module provides methods for initializing a Maker, verifying swap messages, and monitoring
+//! contract broadcasts and idle Taker connections. Additionally, it handles recovery by broadcasting
+//! contract transactions and claiming funds after swap events.
+
 use std::{
     collections::HashMap,
     net::IpAddr,
@@ -33,7 +41,7 @@ use crate::{
 
 use super::{config::MakerConfig, error::MakerError};
 
-//used to configure the maker do weird things for testing
+// MakerBehavior enum is used to configure the maker for testing purposes.
 #[derive(Debug, Clone, Copy)]
 pub enum MakerBehavior {
     Normal,
@@ -62,7 +70,8 @@ pub enum ExpectedMessage {
     PrivateKeyHandover,
 }
 
-/// Per connection state maintaining list of swapcoins and next [ExpectedMessage]
+/// ConnectionState structure maintains the state of a connection,
+/// including the list of swapcoins and the next expected message.
 #[derive(Debug, Default, Clone)]
 pub struct ConnectionState {
     pub allowed_message: ExpectedMessage,
@@ -71,7 +80,7 @@ pub struct ConnectionState {
     pub pending_funding_txes: Vec<Transaction>,
 }
 
-/// The Maker Structure
+/// The Maker structure represents the maker in the swap protocol.
 pub struct Maker {
     /// Defines special maker behavior, only applicable for testing
     pub behavior: MakerBehavior,
@@ -122,7 +131,7 @@ impl Maker {
         })
     }
 
-    /// Trigger shutdown
+    /// Triggers a shutdown event for the Maker.
     pub fn shutdown(&self) -> Result<(), MakerError> {
         let mut flag = self.shutdown.write()?;
         *flag = true;

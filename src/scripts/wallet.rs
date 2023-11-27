@@ -1,3 +1,9 @@
+//! This file contains top-level wrapper functions for interacting with the Wallet API in the teleport-cli app.
+//! These include generating or recovering a wallet, displaying wallet balances and addresses,
+//! printing receive invoices, and performing direct send operations. The functions handle
+//! wallet initialization, synchronization with a backend node, and various display and transaction operations.
+//! The module provides a convenient interface for users interacting with the teleport wallet.
+
 use crate::wallet::{
     fidelity::get_locktime_from_index, SwapCoin, UTXOSpendInfo, Wallet, WalletStore,
 };
