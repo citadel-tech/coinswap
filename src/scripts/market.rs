@@ -1,4 +1,5 @@
 //! Asynchronous function for downloading and displaying offers from makers in the Teleport network.
+//!
 //! The function takes optional parameters for specifying the network and a specific maker address.
 //! It retrieves advertised maker addresses, synchronizes the offer book with these addresses,
 //! and displays relevant offer details like size limits, fees, and locktime information.

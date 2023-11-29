@@ -1,3 +1,5 @@
+//! Handles various taker-related errors.
+
 use bitcoin::Txid;
 
 use bitcoind::bitcoincore_rpc::Error as RpcError;
