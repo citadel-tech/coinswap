@@ -26,15 +26,14 @@ pub async fn download_and_display_offers(
     let offers_addresses =
         sync_offerbook_with_addresses(maker_addresses.clone(), &TakerConfig::default()).await;
 
-    // TODO: This is too verbose to just print stuffs. Shorten it in a single `iter().for_each()`.
     let mut addresses_offers_map = HashMap::new();
-    for offer_address in offers_addresses.iter() {
-        let address_str = match &offer_address.address {
-            MakerAddress::Clearnet { address } => address,
-            MakerAddress::Tor { address } => address,
-        };
-        addresses_offers_map.insert(address_str, offer_address);
-    }
+    offers_addresses
+        .iter()
+        .for_each(|offer_address| match &offer_address.address {
+            MakerAddress::Clearnet { address } | MakerAddress::Tor { address } => {
+                addresses_offers_map.insert(address, offer_address);
+            }
+        });
 
     println!(
         "{:<3} {:<70} {:<12} {:<12} {:<12} {:<12} {:<12} {:<12} {:<19}",
