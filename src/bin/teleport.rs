@@ -131,7 +131,7 @@ enum WalletArgsSubcommand {
         #[arg(long, short, value_enum, default_value = "wallet")]
         destination: Destination,
 
-        /// Coins to spend as inputs, either in long form "<txid>:vout" or short
+        /// Coins to spend as inputs, either in long form `<txid>:vout` or short
         /// form "txid-prefix..txid-suffix:vout"
         #[arg(long, short, value_enum)]
         coins_to_spend: Vec<CoinToSpend>,
