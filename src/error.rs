@@ -1,6 +1,8 @@
+//! Includes all network-related and protocol-level errors.
+
 use crate::protocol::error::ContractError;
 
-/// Includes all network related errors.
+/// Includes all network-related errors.
 #[derive(Debug)]
 pub enum NetError {
     IO(std::io::Error),
@@ -21,7 +23,7 @@ impl From<serde_json::Error> for NetError {
     }
 }
 
-/// Includes all Protocol level errors.
+/// Includes all Protocol-level errors.
 #[derive(Debug)]
 pub enum ProtocolError {
     WrongMessage { expected: String, received: String },

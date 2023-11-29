@@ -243,7 +243,7 @@ impl Maker {
     }
 
     /// Validates the [ProofOfFunding] message, initiate the next hop,
-    /// and create the `[ReqContractSigsAsRecvrAndSender]` message.
+    /// and create the `[ReqContractSigsAsRecvrAndSender`\] message.
     pub fn handle_proof_of_funding(
         &self,
         connection_state: &mut ConnectionState,

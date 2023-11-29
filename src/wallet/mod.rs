@@ -1,3 +1,5 @@
+//! Manages wallet-related operations, including storage and blockchain interaction.
+
 mod api;
 mod direct_send;
 mod error;
