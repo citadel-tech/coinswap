@@ -47,6 +47,7 @@ tests/
 - `watchtower`: Provides a Taker-offloadable watchtower implementation for monitoring contract transactions.
 - `scripts`: Offers simple scripts to utilize library APIs in the `teleport` app.
 - `bin`: Houses deployed project binaries.
+- `protocol`: Contains utility functions, error handling, and messages for protocol communication.
 
 ## Build and Run
 
