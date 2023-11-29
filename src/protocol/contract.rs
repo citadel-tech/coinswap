@@ -113,18 +113,16 @@ pub fn calculate_pubkey_from_nonce(
     })
 }
 
-// TODO: Just return the index, TxOut can be found from there.
 pub fn find_funding_output_index(funding_tx_info: &FundingTxInfo) -> Result<u32, ContractError> {
     let multisig_spk = redeemscript_to_scriptpubkey(&funding_tx_info.multisig_redeemscript);
     funding_tx_info
         .funding_tx
         .output
         .iter()
-        .enumerate()
-        .find(|(_i, o)| o.script_pubkey == multisig_spk)
-        .map(|(index, _)| index as u32)
+        .position(|o| o.script_pubkey == multisig_spk)
+        .map(|index| index as u32)
         .ok_or(ContractError::Protocol(
-            "Funding output doesn't match with multisig reedimscript",
+            "Funding output doesn't match with multisig redeem script",
         ))
 }
 
