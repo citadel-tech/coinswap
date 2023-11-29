@@ -1,5 +1,5 @@
 //! Contains utility functions for handling Bitcoin contract-related operations
-//! 
+//!
 //! Examples includes creating contract transactions, applying signatures to 2-of-2 multisig spends,
 //! calculating fees, checking various conditions related to contract redeem scripts, etc.
 
