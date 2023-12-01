@@ -1,5 +1,6 @@
-//! Configuration module for the Teleport Market, handling market-related logic
-//! where Makers post their offers. This module provides functions to synchronize
+//! Configuration module for the Teleport Market.
+//!
+//! Handles market-related logic where Makers post their offers. Also provides functions to synchronize
 //! maker addresses from directory servers, post maker addresses to directory servers,
 //! and defines constants such as Tor addresses and directory server addresses.
 

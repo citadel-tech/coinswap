@@ -1,7 +1,8 @@
-//! Command-line interface for the Teleport Wallet, handling various commands related
-//! to wallet management, coin swapping, and market interactions. The CLI is built using
-//! the `clap` library and includes subcommands for tasks like generating a new wallet,
-//! recovering an existing wallet, displaying wallet information, running the yield generator,
+//! CLI for the Teleport Wallet, handling various commands.
+//!
+//! Commands are related to wallet management, coin swapping, and market interactions.
+//! Subcommands for tasks like generating a new wallet, recovering an existing wallet,
+//! displaying wallet information, running the yield generator,
 //! and performing coin swaps. It also supports direct sending of transactions and downloading
 //! offers from makers in the market.
 

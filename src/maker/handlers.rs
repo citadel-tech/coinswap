@@ -1,6 +1,7 @@
 //! Module containing functions to handle messages in a Bitcoin coinswap protocol for a Maker.
+//!
 //! Implements the logic for message handling based on the current connection state.
-//! Exposes the main function `handle_message` to process incoming messages and generate outgoing messages.
+//! Exposes the main function [handle_message] to process incoming messages and generate outgoing messages.
 //! Also includes handlers for specific messages such as contract signatures, proof of funding, hash preimage, and private key handover.
 //! Manages wallet state, incoming and outgoing swap coins, and special behaviors defined for the Maker.
 //! The file includes functions to validate and sign contract transactions, verify proof of funding, and handle unexpected recovery scenarios.
@@ -45,7 +46,7 @@ use crate::{
     wallet::{IncomingSwapCoin, SwapCoin},
 };
 
-/// The Global Handle Message function. Takes in a [Arc<Maker>] and handle messages
+/// The Global Handle Message function. Takes in a [`Arc<Maker>`] and handle messages
 /// according to a [ConnectionState].
 pub async fn handle_message(
     maker: &Arc<Maker>,

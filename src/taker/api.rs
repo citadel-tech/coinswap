@@ -1,4 +1,4 @@
-//! CoinSwap Taker Protocol
+//! CoinSwap Taker Protocol.
 //!
 //! This module describes the main [Taker] structure and all other associated data sets related to a coinswap round.
 //!
