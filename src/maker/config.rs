@@ -1,4 +1,4 @@
-//! Maker Configuration, controlling various maker behavior.
+//! Maker Configuration. Controlling various behaviors.
 
 use std::{collections::HashMap, io, path::PathBuf};
 

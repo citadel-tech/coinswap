@@ -1,4 +1,4 @@
-//! CoinSwap Taker Protocol.
+//! The Taker API.
 //!
 //! This module describes the main [Taker] structure and all other associated data sets related to a coinswap round.
 //!

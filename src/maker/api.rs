@@ -1,10 +1,10 @@
-//! CoinSwap Maker Protocol
+//! The Maker API.
 //!
 //! This module defines the core functionality of the Maker in a swap protocol implementation.
 //! It includes structures for managing maker behavior, connection states, and recovery from swap events.
 //! The module provides methods for initializing a Maker, verifying swap messages, and monitoring
-//! contract broadcasts and idle Taker connections. Additionally, it handles recovery by broadcasting
-//! contract transactions and claiming funds after swap events.
+//! contract broadcasts and handle idle Taker connections. Additionally, it handles recovery by broadcasting
+//! contract transactions and claiming funds after an unsuccessful swap event.
 
 use std::{
     collections::HashMap,

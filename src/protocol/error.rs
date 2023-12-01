@@ -1,4 +1,4 @@
-//! Handles various contract-related errors.
+//! All Contract related errors.
 
 use bitcoin::secp256k1;
 

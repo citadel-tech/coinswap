@@ -1,3 +1,3 @@
-//! Handles market-related logic, where Makers post their offers.
+//! (dummy) Current toy implementation of a directory-server.
 
 pub mod directory;

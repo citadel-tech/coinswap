@@ -1,4 +1,4 @@
-//! Contains top-level wrapper functions for interacting with the Wallet API in the teleport-cli app.
+//! Some Wallet application scripts made with the Wallet API.
 //!
 //! These include generating or recovering a wallet, displaying wallet balances and addresses,
 //! printing receive invoices, and performing direct send operations. The functions handle

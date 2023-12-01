@@ -1,7 +1,6 @@
-//! Contains utility functions for handling Bitcoin contract-related operations.
+//! Definition of the Coinswap Contract Transaction.
 //!
-//! Examples includes creating contract transactions, applying signatures to 2-of-2 multisig spends,
-//! calculating fees, checking various conditions related to contract redeem scripts, etc.
+//! This module includes most of the fundamental functions defining the coinswap protocol.
 
 use std::convert::TryInto;
 

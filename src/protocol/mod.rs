@@ -1,4 +1,4 @@
-//! Contains utility functions, error handling, and messages for protocol communication
+//! Defines the Contract Transaction and Protocol Messages
 
 pub mod contract;
 pub mod error;

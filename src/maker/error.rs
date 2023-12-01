@@ -1,4 +1,4 @@
-//! Handles various maker-related errors.
+//! All Maker related errors.
 
 use std::sync::{MutexGuard, PoisonError, RwLockReadGuard, RwLockWriteGuard};
 

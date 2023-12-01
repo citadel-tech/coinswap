@@ -1,4 +1,4 @@
-//! Module containing functions to handle messages in a Bitcoin coinswap protocol for a Maker.
+//! Collection of all message handlers for a Maker.
 //!
 //! Implements the logic for message handling based on the current connection state.
 //! Exposes the main function [handle_message] to process incoming messages and generate outgoing messages.

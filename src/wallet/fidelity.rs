@@ -1,8 +1,7 @@
-//! Implements "protocol" module that includes functionality for handling various aspects of the Coinswap Protocol.
+//! Defines Fidelity Bonds.
 //!
-//! It encompasses features such as utility functions for Bitcoin contract operations, error handling for contract-related issues, and messages related to the Coinswap Protocol.
-//! Additionally, the file defines constants, data structures, and functions related to fidelity bonds, including calculations of bond values based on time and interest rates, creation of fidelity bond proofs, and verification processes.
-//! The implementation is designed for use in a cryptocurrency wallet system
+//! Fidelity bonds are used in Coinswap as a sybil-resistance mechanism to protect against cheap DOS attacks.
+//! Mostly made by malicious Makers on other Takers and Makers.
 
 // To (strongly) disincentivize Sybil behaviour, the value assessment of the bond
 // is based on the (time value of the bond)^x here x is the bond_value_exponent,

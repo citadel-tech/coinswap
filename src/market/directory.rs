@@ -1,4 +1,4 @@
-//! Configuration module for the Teleport Market.
+//! A simple directory-server
 //!
 //! Handles market-related logic where Makers post their offers. Also provides functions to synchronize
 //! maker addresses from directory servers, post maker addresses to directory servers,

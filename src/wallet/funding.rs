@@ -1,4 +1,4 @@
-//! Wallet Funding Transaction Creation.
+//! Various mechanisms of creating the swap funding transactions.
 //!
 //! This module contains routines for creating funding transactions within a wallet. It leverages
 //! Bitcoin Core's RPC methods for wallet interactions, including `walletcreatefundedpsbt`

@@ -1,4 +1,4 @@
-//! Asynchronous function for downloading and displaying offers from makers in the Teleport network.
+//! Download stuffs from the toy directory-server.
 //!
 //! The function takes optional parameters for specifying the network and a specific maker address.
 //! It retrieves advertised maker addresses, synchronizes the offer book with these addresses,

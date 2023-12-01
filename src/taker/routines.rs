@@ -1,4 +1,4 @@
-//! This module provides routines for a taker to interact with a maker in a coin-swap protocol.
+//! Various operational routines/functions.
 //!
 //! It includes functions for handshaking, requesting contract signatures, sending proofs of funding, and downloading maker offers.
 //! It also defines structs for contract transactions and contract information.

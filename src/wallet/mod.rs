@@ -1,4 +1,4 @@
-//! Manages wallet-related operations, including storage and blockchain interaction.
+//! The Coinswap Wallet (unsecured). Used by both the Taker and Maker.
 
 mod api;
 mod direct_send;

@@ -1,4 +1,4 @@
-//! Includes all network-related and protocol-level errors.
+//! High-level network and protocol errors.
 
 use crate::protocol::error::ContractError;
 

@@ -1,4 +1,4 @@
-//! Manages the interaction with maker offers, including address handling, OfferBook tracking, and synchronization.
+//! Download, process and store Maker offers from the directory-server.
 //!
 //! It defines structures like [OfferAndAddress] and [MakerAddress] for representing maker offers and addresses.
 //! The [OfferBook] struct keeps track of good and bad makers, and it provides methods for managing offers.

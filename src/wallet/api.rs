@@ -1,4 +1,4 @@
-//! Manages the synchronization of the wallet using Bitcoin Core's RPC.
+//! The Wallet API.
 //!
 //! Currently, wallet synchronization is exclusively performed through RPC for makers.
 //! In the future, takers might adopt alternative synchronization methods, such as lightweight wallet solutions.

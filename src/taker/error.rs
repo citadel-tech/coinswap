@@ -1,4 +1,4 @@
-//! Handles various taker-related errors.
+//! All Taker-related errors.
 
 use bitcoin::Txid;
 

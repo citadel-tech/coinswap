@@ -1,4 +1,4 @@
-//! Various global configurations defining the Taker behavior.
+//! Taker configuration. Controlling various behavior.
 
 use std::{collections::HashMap, io, path::PathBuf};
 
