@@ -1,7 +1,6 @@
 # Developer resources
 
 <!-- TOC -->
-- [Developer resources](#developer-resources)
   - [What it is](#what-it-is)
   - [How CoinSwap works](#how-coinswap-works)
   - [Notes on architecture](#notes-on-architecture)
@@ -257,9 +256,9 @@ A step-by-step communication sequence for a typical 3-hop-swap with the above me
 
 The `Taker` carries out all the heavy lifting of the protocol. `Maker`s work like simple state-machine responding to `TakerToMakerMessage`s.
 
-`src/taker.rs` : describes the Taker protocol, which is the workflow defined in the [section above](#protocol-between-takers-and-makers). This is the core of the protocol implementation and the most security-critical section of the library.
+`src/taker/api.rs` : describes the Taker protocol, which is the workflow defined in the [section above](#protocol-between-takers-and-makers). This is the core of the protocol implementation and the most security-critical section of the library.
 
-`src/maker.rs` : describes the Maker state-machine. This is a simple server responding to various `TakerToMakerMessage`s depending on a `ConnectionState`. Each `ConnectionState` will have specific messages as "allowed". The Maker will terminate the protocol if a received message doesn't match the allowed messages of a specific state.
+`src/maker/api.rs` : describes the Maker state-machine. This is a simple server responding to various `TakerToMakerMessage`s depending on a `ConnectionState`. Each `ConnectionState` will have specific messages as "allowed". The Maker will terminate the protocol if a received message doesn't match the allowed messages of a specific state.
 
 ## Further reading
 

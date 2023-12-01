@@ -12,11 +12,11 @@
 
 * Create three teleport wallets by running `cargo run -- --wallet-file-name=<wallet-name> generate-wallet` thrice. Instead of `<wallet-name>`, use something like `maker1.teleport`, `maker2.teleport` and `taker.teleport`.
 
-* Use `cargo run -- --wallet-file-name=maker1.teleport get-receive-invoice` to obtain 3 addresses of the maker1 wallet, and send `regtest` bitcoin to each of them (amount 5000000 satoshi or 0.05 BTC in this example). Also do this for the `maker2.teleport` and `taker.teleport` wallets. Get the transactions confirmed.
+* Use `cargo run -- --wallet-file-name=maker1.teleport get-receive-invoice` to obtain 3 addresses of the `maker1` wallet, and send `regtest` bitcoin to each of them (amount 5000000 satoshi or 0.05 BTC in this example). Also do this for the `maker2.teleport` and `taker.teleport` wallets. Get the transactions confirmed.
 
 * Check the wallet balances with `cargo run -- --wallet-file-name=maker1.teleport wallet-balance`. Example:
 
-```
+```console
 $ cargo run -- --wallet-file-name=maker1.teleport wallet-balance
 coin             address                    type   conf    value
 8f6ee5..74e813:0 bcrt1q0vn5....nrjdqljtaq   seed   1       0.05000000 BTC
@@ -26,7 +26,7 @@ coin count = 3
 total balance = 0.15000000 BTC
 ```
 
-```
+```console
 $ cargo run -- --wallet-file-name=maker2.teleport wallet-balance
 coin             address                    type   conf    value
 d33f06..30dd07:0 bcrt1qh6kq....e0tlfrzgxa   seed   1       0.05000000 BTC
@@ -36,7 +36,7 @@ coin count = 3
 total balance = 0.15000000 BTC
 ```
 
-```
+```console
 $ cargo run -- --wallet-file-name=taker.teleport wallet-balance
 coin             address                    type   conf    value
 5f4331..d53f14:0 bcrt1qmflt....q2ucgf2teu   seed   1       0.05000000 BTC
@@ -46,17 +46,17 @@ coin count = 3
 total balance = 0.15000000 BTC
 ```
 
-* On another terminal run a watchtower with `cargo run -- run-watchtower`. You should see the message `Starting teleport watchtower`. In the teleport project, contracts are enforced with one or more watchtowers which are required for the coinswap protocol to be secure against the maker's coins being stolen.
+* On another terminal, run a watchtower with `cargo run -- run-watchtower`. You should see the message `Starting teleport watchtower`. In the teleport project, contracts are enforced with one or more watchtowers which are required for the coinswap protocol to be secured against the maker's coins being stolen.
 
-* On one terminal run a maker server with `cargo run -- --wallet-file-name=maker1.teleport run-yield-generator 6102`. You should see the message `Listening on port 6102`.
+* On one terminal, run a maker server with `cargo run -- --wallet-file-name=maker1.teleport run-yield-generator 6102`. You should see the message `Listening on port 6102`.
 
-* On another terminal run another maker server with `cargo run -- --wallet-file-name=maker2.teleport run-yield-generator 16102`. You should see the message `Listening on port 16102`.
+* On another terminal, run another maker server with `cargo run -- --wallet-file-name=maker2.teleport run-yield-generator 16102`. You should see the message `Listening on port 16102`.
 
 * On another terminal start a coinswap with `cargo run -- --wallet-file-name=taker.teleport do-coinswap 500000`. When you see the terminal messages `waiting for funding transaction to confirm` and `waiting for maker's funding transaction to confirm` then tell `regtest` to generate another block (or just wait if you're using testnet).
 
 * Once you see the message `successfully completed coinswap` on all terminals then check the wallet balance again to see the result of the coinswap. Example:
 
-```
+```console
 $ cargo run -- --wallet-file-name=maker1.teleport wallet-balance
 coin             address                    type   conf    value
 9bfeec..0cc468:0 bcrt1qx49k....9cqqrp3kt0 swapcoin 2       0.00134344 BTC
@@ -69,7 +69,7 @@ coin count = 6
 total balance = 0.15004828 BTC
 ```
 
-```
+```console
 $ cargo run -- --wallet-file-name=maker2.teleport wallet-balance
 coin             address                    type   conf    value
 9d8895..e32645:1 bcrt1qm73u....3h6swyege3 swapcoin 3       0.00046942 BTC
@@ -82,7 +82,7 @@ coin count = 6
 total balance = 0.15004828 BTC
 ```
 
-```
+```console
 $ cargo run -- --wallet-file-name=taker.teleport wallet-balance
 coin             address                    type   conf    value
 9d8895..e32645:0 bcrt1qevgn....6nhl2yswa7   seed   3       0.04951334 BTC
@@ -103,9 +103,9 @@ total balance = 0.14974828 BTC
 
 * You will need Tor running on the same machine, then open the file `src/directory_servers.rs` and make sure the const `TOR_ADDR` has the correct Tor port.
 
-* To see all the advertised offers out there, use the `download-offers` subroutine: `cargo run -- download-offers`:
+* To see all the advertised offers out there, use the `download-offers` subroutine like `cargo run -- download-offers`:
 
-```
+```console
 $ cargo run -- download-offers
 n   maker address                                                          max size     min size     abs fee      amt rel fee  time rel fee minlocktime
 0   5wlgs4tmkc7vmzsqetpjyuz2qbhzydq6d7dotuvbven2cuqjbd2e2oyd.onion:6102    348541       10000        1000         10000000     100000       48
@@ -118,13 +118,14 @@ n   maker address                                                          max s
 
 ## How to recover from a failed coinswap
 
-* CoinSwaps can sometimes fail. Nobody will lose their funds, but they can have their time wasted and have spent miner fees without achieving any privacy gain (or even making their privacy worse, at least until scriptless script contracts are implemented). Everybody is incentivized so that this doesnt happen, and takers are coded to be very persistent in reestablishing a connection with makers before giving up, but sometimes failures will still happen.
+* CoinSwaps can sometimes fail. Nobody will lose their funds, but they can have their time wasted and have spent miner fees without achieving any privacy gain (or even making their privacy worse, at least until scriptless script contracts are implemented). Everybody is incentivized so that this doesn't happen, and takers are coded to be very persistent in re-establishing a connection with makers before giving up, but sometimes failures will still happen.
 
 * The major way that CoinSwaps can fail is if a taker locks up funds in a 2-of-2 multisig with a maker, but then that maker becomes non-responsive and so the CoinSwap doesn't complete. The taker is left with their money in a multisig and has to use their pre-signed contract transaction to get their money back after a timeout. This section explains how to do that.
 
 * Failed or incomplete coinswaps will show up in wallet display in another section: `cargo run -- --wallet-file-name=taker.teleport wallet-balance`. Example:
 
-```
+```console
+$ cargo run -- --wallet-file-name=taker.teleport wallet-balance
 = spendable wallet balance =
 coin             address                    type   conf    value
 9cd867..f80d57:1 bcrt1qgscq....xkxg68mq02   seed   212     0.11103591 BTC
@@ -144,9 +145,10 @@ hashvalue = a4c2fe816bf18afb8b1861138e57a51bd70e29d4
 
 * In this example there is an incomplete coinswap involving three funding transactions, we must take the hashvalue `a4c2fe816bf18afb8b1861138e57a51bd70e29d4` and pass it to the main subroutine: `cargo run -- --wallet-file-name=taker.teleport recover-from-incomplete-coinswap a4c2fe816bf18afb8b1861138e57a51bd70e29d4`.
 
-* Displaying the wallet balance again (`cargo run -- --wallet-file-name=taker.teleport wallet-balance`) after the transactions are broadcast will show the coins in the timelocked contracts section:
+* Displaying the wallet balance again (`cargo run -- --wallet-file-name=taker.teleport wallet-balance`) after the transactions are broadcast will show the coins in the timelocked contracts section. Example:
 
-```
+```console
+$ cargo run -- --wallet-file-name=taker.teleport wallet-balance
 = spendable wallet balance =
 coin             address                    type   conf    value
 9cd867..f80d57:1 bcrt1qgscq....xkxg68mq02   seed   212     0.11103591 BTC
