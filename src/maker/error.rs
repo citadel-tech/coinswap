@@ -1,3 +1,5 @@
+//! All Maker related errors.
+
 use std::sync::{MutexGuard, PoisonError, RwLockReadGuard, RwLockWriteGuard};
 
 use bitcoin::secp256k1;

@@ -1,7 +1,4 @@
-//! CoinSwap Taker Protocol
-//!
-//! Implementation of coinswap Taker protocol described in https://github.com/utxo-teleport/teleport-transactions#protocol-between-takers-and-makers
-//! The Taker handles all the necessary communications between one or many makers to route the swap across various makers.
+//! The Taker API.
 //!
 //! This module describes the main [Taker] structure and all other associated data sets related to a coinswap round.
 //!

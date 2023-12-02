@@ -1,3 +1,9 @@
+//! Download stuffs from the toy directory-server.
+//!
+//! The function takes optional parameters for specifying the network and a specific maker address.
+//! It retrieves advertised maker addresses, synchronizes the offer book with these addresses,
+//! and displays relevant offer details like size limits, fees, and locktime information.
+
 use std::collections::HashMap;
 
 use bitcoin::Network;

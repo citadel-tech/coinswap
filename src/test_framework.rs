@@ -1,3 +1,17 @@
+//! A Framework to write functional tests for the Coinswap Protocol.
+//!
+//! This framework uses [bitcoind] to automatically spawn regtest node in the background.
+//!
+//! Spawns one Taker and multiple Makers, with/without special behavior, connect them to bitcoind regtest node,
+//! and initializes the database.
+//!
+//! The tests data are stored in the `tests/temp-files` directory, which is auto-removed after each successful test.
+//! Do not invoke [TestFramework::stop] function at the end of the test, to persis this data for debugging.
+//!
+//! The test data also includes the backend bitcoind data-directory, which is useful for observing the blockchain states after a swap.
+//!
+//! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
+
 use bitcoin::secp256k1::rand::{distributions::Alphanumeric, thread_rng, Rng}; // 0.8
 
 use std::{
@@ -32,6 +46,9 @@ fn get_random_tmp_dir() -> PathBuf {
     PathBuf::from(path)
 }
 
+/// The Test Framework.
+///
+/// Handles initializing, operating and cleaning up of all backend processes. Bitcoind, Taker and Makers.
 pub struct TestFramework {
     bitcoind: BitcoinD,
     temp_dir: PathBuf,
@@ -45,7 +62,7 @@ impl TestFramework {
     /// - a map of [port, [MakerBehavior]]
     /// - optional taker behavior.
     ///
-    /// Returns ([TestFramework], [Taker], [Vec<Maker>]).
+    /// Returns ([TestFramework], [Taker], [`Vec<Maker>`]).
     /// Maker's config will follow the pattern given the input HashMap.
     /// If no bitcoind conf is provide a default value will be used.
     pub async fn init(
@@ -137,6 +154,7 @@ impl TestFramework {
         (test_framework, taker, makers)
     }
 
+    /// Generate 1 block in the backend bitcoind.
     pub fn generate_1_block(&self) {
         let mining_address = self
             .bitcoind
@@ -151,6 +169,7 @@ impl TestFramework {
             .unwrap();
     }
 
+    /// Send coins to a bitcoin address.
     pub fn send_to_address(&self, addrs: &Address, amount: Amount) {
         self.bitcoind
             .client
@@ -158,7 +177,7 @@ impl TestFramework {
             .unwrap();
     }
 
-    // Clean up all test artifacts everything.
+    /// Stop bitcoind and clean up all test data.
     pub fn stop(&self) {
         log::info!("Stopping Test Framework");
         // stop all framework threads.
@@ -176,6 +195,7 @@ impl TestFramework {
     }
 }
 
+/// Initializes a [TestFramework] given a [RPCConfig].
 impl From<&TestFramework> for RPCConfig {
     fn from(value: &TestFramework) -> Self {
         let url = value.bitcoind.rpc_url().split_at(7).1.to_string();

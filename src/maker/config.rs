@@ -1,3 +1,5 @@
+//! Maker Configuration. Controlling various behaviors.
+
 use std::{collections::HashMap, io, path::PathBuf};
 
 use crate::utill::{parse_field, parse_toml};

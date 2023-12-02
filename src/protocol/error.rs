@@ -1,3 +1,5 @@
+//! All Contract related errors.
+
 use bitcoin::secp256k1;
 
 #[derive(Debug)]

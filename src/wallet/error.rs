@@ -1,3 +1,5 @@
+//! All Wallet-related errors.
+
 use crate::protocol::error::ContractError;
 
 #[derive(Debug)]

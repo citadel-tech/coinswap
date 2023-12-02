@@ -1,4 +1,4 @@
-//! Various Utility and Helper functions used in both Taker and Maker protocols.
+//! Various utility and helper functions for both Taker and Maker.
 
 use std::{io::ErrorKind, path::PathBuf, sync::Once};
 

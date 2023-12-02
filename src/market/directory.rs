@@ -1,4 +1,10 @@
-//configure this with your own tor port
+//! A simple directory-server
+//!
+//! Handles market-related logic where Makers post their offers. Also provides functions to synchronize
+//! maker addresses from directory servers, post maker addresses to directory servers,
+//! and defines constants such as Tor addresses and directory server addresses.
+
+// configure this with your own TOR port
 pub const TOR_ADDR: &str = "127.0.0.1:9050";
 
 use bitcoin::Network;

@@ -6,7 +6,7 @@
 
 //! Coinswap Protocol Messages.
 //!
-//! Messages are Communicated between Taker and one or many Makers.
+//! Messages are communicated between one Taker and one or many Makers.
 //! Makers don't communicate with each other. One Maker will only know the Identity of the Maker, in previous and next hop.
 //!
 //! Messages are named in  terms of `Sender` and `Receiver` as identification of their context.  They refer to sender and receiver sides of each hop.
@@ -22,6 +22,7 @@
 //!
 //! Taker -----> Maker1 -----> Maker2 ------> Taker
 //!
+//! ```shell
 //! ********* Initiate First Hop *********
 //! (Sender: Taker, Receiver: Maker1)
 //! Taker -> Maker1: [TakerToMakerMessage::ReqContractSigsForSender]
@@ -58,6 +59,7 @@
 //! Taker -> Maker2: [TakerToMakerMessage::RespPrivKeyHandover] (For Maker1-Maker2 funding multisig, received from Maker1 in Step 16)
 //! Taker -> Maker2: [`TakerToMakerMessage::RespHashPreimage`] (for Maker2-Taker HTLC).
 //! Maker2 -> Taker: [`MakerToTakerMessage::RespPrivKeyHandover`] (For Maker2-Taker funding multisig).
+//! ```
 
 use std::fmt::Display;
 

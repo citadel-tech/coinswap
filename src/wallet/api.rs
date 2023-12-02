@@ -1,7 +1,7 @@
-// this file contains code handling the wallet and sync'ing the wallet
-// for now the wallet is only sync'd via bitcoin core's RPC
-// makers will only ever sync this way, but one day takers may sync in other
-// ways too such as a lightweight wallet method
+//! The Wallet API.
+//!
+//! Currently, wallet synchronization is exclusively performed through RPC for makers.
+//! In the future, takers might adopt alternative synchronization methods, such as lightweight wallet solutions.
 
 use std::{convert::TryFrom, fs, path::PathBuf, str::FromStr};
 

@@ -1,5 +1,10 @@
+//! Defines Fidelity Bonds.
+//!
+//! Fidelity bonds are used in Coinswap as a sybil-resistance mechanism to protect against cheap DOS attacks.
+//! Mostly made by malicious Makers on other Takers and Makers.
+
 // To (strongly) disincentivize Sybil behaviour, the value assessment of the bond
-// is based on the (time value of the bond)^x where x is the bond_value_exponent here,
+// is based on the (time value of the bond)^x here x is the bond_value_exponent,
 // where x > 1.
 const BOND_VALUE_EXPONENT: f64 = 1.3;
 

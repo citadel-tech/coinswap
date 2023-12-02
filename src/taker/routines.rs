@@ -1,3 +1,11 @@
+//! Various operational routines/functions.
+//!
+//! It includes functions for handshaking, requesting contract signatures, sending proofs of funding, and downloading maker offers.
+//! It also defines structs for contract transactions and contract information.
+//! Notable types include [ContractTransaction], [ContractsInfo], [ThisMakerInfo], and [NextPeerInfoArgs].
+//! It also handles downloading maker offers with retry mechanisms and implements the necessary message structures
+//! for communication between taker and maker.
+
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 

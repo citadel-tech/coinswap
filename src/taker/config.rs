@@ -1,7 +1,8 @@
+//! Taker configuration. Controlling various behavior.
+
 use std::{collections::HashMap, io, path::PathBuf};
 
 use crate::utill::{parse_field, parse_toml};
-/// Various global configurations defining the Taker behavior.
 /// TODO: Optionally read this from a config file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {

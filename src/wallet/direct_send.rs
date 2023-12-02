@@ -1,3 +1,9 @@
+//! Send regular Bitcoin payments.
+//!
+//! This module provides functionality for managing wallet transactions, including the creation of
+//! direct sends. It leverages Bitcoin Core's RPC for wallet synchronization and implements various
+//! parsing mechanisms for transaction inputs and outputs.
+
 use std::{num::ParseIntError, str::FromStr};
 
 use bitcoin::{

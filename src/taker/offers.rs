@@ -1,3 +1,10 @@
+//! Download, process and store Maker offers from the directory-server.
+//!
+//! It defines structures like [OfferAndAddress] and [MakerAddress] for representing maker offers and addresses.
+//! The [OfferBook] struct keeps track of good and bad makers, and it provides methods for managing offers.
+//! The module handles the syncing of the offer book with addresses obtained from directory servers and local configurations.
+//! It uses asynchronous channels for concurrent processing of maker offers.
+
 use std::fmt;
 
 use tokio::sync::mpsc;

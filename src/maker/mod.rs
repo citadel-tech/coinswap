@@ -1,4 +1,9 @@
-/// Main server runtime for the Maker module.
+//! Defines a Coinswap Maker Server.
+//!
+//! Handles connections, communication with takers, various aspects of the
+//! Maker's behavior, includes functionalities such as checking for new connections, handling messages from takers,
+//! refreshing offer caches, and interacting with the Bitcoin node.
+
 pub mod api;
 pub mod config;
 pub mod error;

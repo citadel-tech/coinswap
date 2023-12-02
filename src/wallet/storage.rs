@@ -1,4 +1,6 @@
-//TODO the wallet file format is probably best handled with sqlite
+//! The Wallet Storage Interface.
+//!
+//! Wallet data are currently written in a readable, unencrypted json file.
 
 use std::{collections::HashMap, convert::TryFrom, io::Read, path::PathBuf};
 
