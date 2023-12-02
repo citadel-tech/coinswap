@@ -1,8 +1,8 @@
 //! Defines a Coinswap Maker Server.
 //!
 //! Handles connections, communication with takers, various aspects of the
-//! Maker's behavior, includes functionalities such as checking for new connections, handling messages from takers,
-//! refreshing offer caches, and interacting with the Bitcoin node.
+//! Maker's behavior, includes functionalities such as checking for new connections,
+//! handling messages from takers, refreshing offer caches, and interacting with the Bitcoin node.
 
 pub mod api;
 pub mod config;
@@ -40,9 +40,8 @@ use crate::{
 
 use crate::maker::error::MakerError;
 
-/// This function initializes and starts the Maker server, handling connections and various
+/// Initializes and starts the Maker server, handling connections and various
 /// aspects of the Maker's behavior.
-
 #[tokio::main]
 pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::debug!("Running maker with special behavior = {:?}", maker.behavior);
