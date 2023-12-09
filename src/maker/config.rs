@@ -1,8 +1,8 @@
 //! Maker Configuration. Controlling various behaviors.
 
-use std::{collections::HashMap, io, path::PathBuf};
+use std::{io, path::PathBuf};
 
-use crate::utill::{parse_field, parse_toml};
+use crate::utill::{get_config_dir, parse_field, parse_toml, write_default_config};
 
 /// Maker Configuration, controlling various maker behavior.
 #[derive(Debug, Clone, PartialEq)]
@@ -61,22 +61,30 @@ impl MakerConfig {
             if path.exists() {
                 parse_toml(path)?
             } else {
+                let default_maker_config_path = get_config_dir().join("maker.toml");
+                if !default_maker_config_path.exists() {
+                    create_default_maker_dirs(&default_maker_config_path);
+                }
                 log::warn!(
                     "Maker config file not found at path : {}, using default config",
                     path.display()
                 );
-                HashMap::new()
+                parse_toml(&default_maker_config_path)?
             }
         } else {
             let default_path = PathBuf::from("maker.toml");
             if default_path.exists() {
                 parse_toml(&default_path)?
             } else {
+                let default_maker_config_path = get_config_dir().join("maker.toml");
+                if !default_maker_config_path.exists() {
+                    create_default_maker_dirs(&default_maker_config_path);
+                }
                 log::warn!(
                     "Maker config file not found in default path: {}, using default config",
                     default_path.display()
                 );
-                HashMap::new()
+                parse_toml(&default_maker_config_path)?
             }
         };
 
@@ -141,6 +149,27 @@ impl MakerConfig {
             .unwrap_or(default_config.min_size),
         })
     }
+}
+
+fn create_default_maker_dirs(default_maker_config_path: &PathBuf) {
+    let config_string = String::from(
+        "\
+            [maker_config]\n\
+            port = 6102\n\
+            heart_beat_interval_secs = 3\n\
+            rpc_ping_interval_secs = 60\n\
+            directory_servers_refresh_interval_secs = 43200\n\
+            idle_connection_timeout = 300\n\
+            onion_addrs = myhiddenserviceaddress.onion\n\
+            absolute_fee_sats = 1000\n\
+            amount_relative_fee_ppb = 10000000\n\
+            time_relative_fee_ppb = 100000\n\
+            required_confirms = 1\n\
+            min_contract_reaction_time = 48\n\
+            min_size = 10000\n",
+    );
+
+    write_default_config(default_maker_config_path, config_string).unwrap();
 }
 
 #[cfg(test)]
