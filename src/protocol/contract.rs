@@ -289,9 +289,7 @@ pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<Hash160, Co
         return Err(ContractError::Protocol("Invalid script!"));
     };
 
-    Ok(Hash160::from_slice(hash_b.as_bytes().try_into().map_err(
-        |_| ContractError::Protocol("hash value is not 20 bytes slice"),
-    )?)?)
+    Ok(Hash160::from_slice(hash_b.as_bytes())?)
 }
 
 /// Check that all the contract redeemscripts involve the same hashvalue.
