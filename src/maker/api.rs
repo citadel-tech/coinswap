@@ -56,7 +56,7 @@ pub enum MakerBehavior {
 }
 
 /// Expected messages for the taker in the context of [ConnectionState] structure.
-/// 
+///
 /// If the received message doesn't match expected message,
 /// a protocol error will be returned.
 #[derive(Debug, Default, PartialEq, Clone)]
@@ -187,6 +187,7 @@ impl Maker {
         Ok(())
     }
 
+    /// Returns a reference to the Maker's wallet.
     pub fn get_wallet(&self) -> &RwLock<Wallet> {
         &self.wallet
     }
@@ -340,7 +341,7 @@ impl Maker {
 
 /// Constantly checks for contract transactions in the bitcoin network for all
 /// unsettled swap.
-/// 
+///
 /// If any one of the is ever observed, run the recovery routine.
 pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut failed_swap_ip = Vec::new();
@@ -454,7 +455,7 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
 }
 
 /// Check that if any Taker connection went idle.
-/// 
+///
 /// If a connection remains idle for more than idle timeout time, thats a potential DOS attack.
 /// Broadcast the contract transactions and claim funds via timelock.
 pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
@@ -537,8 +538,8 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
     Ok(())
 }
 
-/// Broadcast Incoming and Outgoing Contract transactions. Broadcast timelock transactions after maturity.
-/// remove contract transactions from the wallet.
+/// Broadcast Incoming and Outgoing Contract transactions & timelock transactions after maturity.
+/// Remove contract transactions from the wallet.
 pub fn recover_from_swap(
     maker: Arc<Maker>,
     // Tuple of ((Multisig_reedemscript, Contract Tx), (Timelock, Timelock Tx))

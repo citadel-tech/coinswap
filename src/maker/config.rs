@@ -162,7 +162,7 @@ mod tests {
     fn remove_temp_config(path: &PathBuf) {
         fs::remove_file(path).unwrap();
     }
-    
+
     #[test]
     fn test_valid_config() {
         let contents = r#"

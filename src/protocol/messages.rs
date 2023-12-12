@@ -72,7 +72,10 @@ use serde::{Deserialize, Serialize};
 
 use bitcoin::hashes::hash160::Hash as Hash160;
 
+/// Defines the length of the Preimage.
 pub const PREIMAGE_LEN: usize = 32;
+
+/// Type for Preimage.
 pub type Preimage = [u8; PREIMAGE_LEN];
 
 /// Represents the initial handshake message sent from Taker to Maker.

@@ -117,13 +117,15 @@ struct NextPeerInfo {
     contract_reedemscripts: Vec<ScriptBuf>,
 }
 
+/// Enum representing different behaviors of the Taker in a coinswap protocol.
 #[derive(Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TakerBehavior {
-    // No special behavior
+    /// No special behavior.
     #[default]
     Normal,
-    // This depicts the behavior when the taker drops connections after the full coinswap setup
+    /// This depicts the behavior when the taker drops connections after the full coinswap setup.
     DropConnectionAfterFullSetup,
+    /// Behavior to broadcast the contract after the full coinswap setup.
     BroadcastContractAfterFullSetup,
 }
 

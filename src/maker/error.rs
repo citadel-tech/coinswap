@@ -6,6 +6,7 @@ use bitcoin::secp256k1;
 
 use crate::{protocol::error::ContractError, wallet::WalletError};
 
+/// Enum to handle Maker related errors.
 #[derive(Debug)]
 pub enum MakerError {
     IO(std::io::Error),

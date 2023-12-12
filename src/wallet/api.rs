@@ -47,9 +47,9 @@ use super::{
     swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletSwapCoin},
 };
 
-//these subroutines are coded so that as much as possible they keep all their
-//data in the bitcoin core wallet
-//for example which privkey corresponds to a scriptpubkey is stored in hd paths
+// these subroutines are coded so that as much as possible they keep all their
+// data in the bitcoin core wallet
+// for example which privkey corresponds to a scriptpubkey is stored in hd paths
 
 const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
 pub struct Wallet {

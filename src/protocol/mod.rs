@@ -1,4 +1,4 @@
-//! Defines the Contract Transaction and Protocol Messages
+//! Defines the Contract Transaction and Protocol Messages.
 
 pub mod contract;
 pub mod error;

@@ -14,7 +14,7 @@ use crate::taker::{
 };
 
 #[tokio::main]
-/// App function to download offers
+/// App function to download offers.
 pub async fn download_and_display_offers(
     _network_str: Option<String>,
     maker_address: Option<String>,
