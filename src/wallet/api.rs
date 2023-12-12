@@ -77,17 +77,28 @@ impl KeychainKind {
 
 const WATCH_ONLY_SWAPCOIN_LABEL: &str = "watchonly_swapcoin_label";
 
+/// Enum representing different types of addresses to display.
 #[derive(Clone, PartialEq, Debug)]
 pub enum DisplayAddressType {
+    /// Display all types of addresses.
     All,
+    /// Display information related to the master key.
     MasterKey,
+    /// Display addresses derived from the seed.
     Seed,
+    /// Display information related to incoming swap transactions.
     IncomingSwap,
+    /// Display information related to outgoing swap transactions.
     OutgoingSwap,
+    /// Display information related to swap transactions (both incoming and outgoing).
     Swap,
+    /// Display information related to incoming contract transactions.
     IncomingContract,
+    /// Display information related to outgoing contract transactions.
     OutgoingContract,
+    /// Display information related to contract transactions (both incoming and outgoing).
     Contract,
+    /// Display information related to fidelity bonds.
     FidelityBond,
 }
 
@@ -111,8 +122,9 @@ impl FromStr for DisplayAddressType {
     }
 }
 
-//data needed to find information  in addition to ListUnspentResultEntry
-//about a UTXO required to spend it
+/// Enum representing additional data needed to spend a UTXO, in addition to `ListUnspentResultEntry`.
+// data needed to find information  in addition to ListUnspentResultEntry
+// about a UTXO required to spend it
 #[derive(Debug, Clone)]
 pub enum UTXOSpendInfo {
     SeedCoin {
@@ -143,6 +155,7 @@ type SwapCoinsInfo<'a> = (
 );
 
 impl Wallet {
+    /// Displays addresses based on the specified `DisplayAddressType`.
     pub fn display_addresses(&self, types: DisplayAddressType) -> Result<(), WalletError> {
         if types == DisplayAddressType::All || types == DisplayAddressType::MasterKey {
             println!(
@@ -328,10 +341,12 @@ impl Wallet {
         Ok(wallet)
     }
 
+    /// Deletes the wallet file and returns the result as `Ok(())` on success.
     pub fn delete_wallet_file(&self) -> Result<(), WalletError> {
         Ok(fs::remove_file(&self.wallet_file_path)?)
     }
 
+    /// Returns a reference to the file path of the wallet.
     pub fn get_file_path(&self) -> &PathBuf {
         &self.wallet_file_path
     }
@@ -351,6 +366,7 @@ impl Wallet {
         self.store.write_to_disk(&self.wallet_file_path)
     }
 
+    /// Finds an incoming swap coin with the specified multisig redeem script.
     pub fn find_incoming_swapcoin(
         &self,
         multisig_redeemscript: &ScriptBuf,
@@ -358,6 +374,7 @@ impl Wallet {
         self.store.incoming_swapcoins.get(multisig_redeemscript)
     }
 
+    /// Finds an outgoing swap coin with the specified multisig redeem script.
     pub fn find_outgoing_swapcoin(
         &self,
         multisig_redeemscript: &ScriptBuf,
@@ -365,6 +382,7 @@ impl Wallet {
         self.store.outgoing_swapcoins.get(multisig_redeemscript)
     }
 
+    /// Finds a mutable reference to an incoming swap coin with the specified multisig redeem script.
     pub fn find_incoming_swapcoin_mut(
         &mut self,
         multisig_redeemscript: &ScriptBuf,
@@ -372,18 +390,21 @@ impl Wallet {
         self.store.incoming_swapcoins.get_mut(multisig_redeemscript)
     }
 
+    /// Adds an incoming swap coin to the wallet.
     pub fn add_incoming_swapcoin(&mut self, coin: &IncomingSwapCoin) {
         self.store
             .incoming_swapcoins
             .insert(coin.get_multisig_redeemscript(), coin.clone());
     }
 
+    /// Adds an outgoing swap coin to the wallet.
     pub fn add_outgoing_swapcoin(&mut self, coin: &OutgoingSwapCoin) {
         self.store
             .outgoing_swapcoins
             .insert(coin.get_multisig_redeemscript(), coin.clone());
     }
 
+    /// Removes an incoming swap coin with the specified multisig redeem script from the wallet.
     pub fn remove_incoming_swapcoin(
         &mut self,
         multisig_redeemscript: &ScriptBuf,
@@ -391,6 +412,7 @@ impl Wallet {
         Ok(self.store.incoming_swapcoins.remove(multisig_redeemscript))
     }
 
+    /// Removes an outgoing swap coin with the specified multisig redeem script from the wallet.
     pub fn remove_outgoing_swapcoin(
         &mut self,
         multisig_redeemscript: &ScriptBuf,
@@ -398,22 +420,26 @@ impl Wallet {
         Ok(self.store.outgoing_swapcoins.remove(multisig_redeemscript))
     }
 
+    /// Gets a reference to the list of incoming swap coins in the wallet.
     pub fn get_incoming_swapcoin_list(
         &self,
     ) -> Result<&HashMap<ScriptBuf, IncomingSwapCoin>, WalletError> {
         Ok(&self.store.incoming_swapcoins)
     }
 
+    /// Gets a reference to the list of outgoing swap coins in the wallet.
     pub fn get_outgoing_swapcoin_list(
         &self,
     ) -> Result<&HashMap<ScriptBuf, OutgoingSwapCoin>, WalletError> {
         Ok(&self.store.outgoing_swapcoins)
     }
 
+    /// Gets the total count of swap coins in the wallet.
     pub fn get_swapcoins_count(&self) -> usize {
         self.store.incoming_swapcoins.len() + self.store.outgoing_swapcoins.len()
     }
 
+    /// Calculates the total balance of the wallet, considering live contracts and fidelity bonds.
     pub fn balance(
         &self,
         live_contracts: bool,
@@ -425,24 +451,23 @@ impl Wallet {
             .fold(Amount::ZERO, |a, (utxo, _)| a + utxo.amount))
     }
 
-    //this function is used in two places
-    //once when maker has received message signsendercontracttx
-    //again when maker receives message proofoffunding
-    //
-    //cases when receiving signsendercontracttx
-    //case 1: prevout in cache doesnt have any contract => ok
-    //case 2: prevout has a contract and it matches given contract => ok
-    //case 3: prevout has a contract and it doesnt match contract => reject
-    //
-    //cases when receiving proofoffunding
-    //case 1: prevout doesnt have an entry => weird, how did they get a sig
-    //case 2: prevout has an entry which matches contract => ok
-    //case 3: prevout has an entry which doesnt match contract => reject
-    //
-    //so the two cases are the same except for case 1 for proofoffunding which
-    //shouldnt happen at all
-    //
-    //only time it returns false is when prevout doesnt match cached contract
+    /// Checks if the previous output (prevout) matches the cached contract in the wallet.
+    ///
+    /// This function is used in two scenarios:
+    /// 1. When the maker has received the message `signsendercontracttx`.
+    /// 2. When the maker receives the message `proofoffunding`.
+    ///
+    /// ## Cases when receiving `signsendercontracttx`:
+    /// - Case 1: Previous output in cache doesn't have any contract => Ok
+    /// - Case 2: Previous output has a contract, and it matches the given contract => Ok
+    /// - Case 3: Previous output has a contract, but it doesn't match the given contract => Reject
+    ///
+    /// ## Cases when receiving `proofoffunding`:
+    /// - Case 1: Previous output doesn't have an entry => Weird, how did they get a signature?
+    /// - Case 2: Previous output has an entry that matches the contract => Ok
+    /// - Case 3: Previous output has an entry that doesn't match the contract => Reject
+    ///
+    /// The two cases are mostly the same, except for Case 1 in `proofoffunding`, which shouldn't happen.
     pub fn does_prevout_match_cached_contract(
         &self,
         prevout: &OutPoint,
@@ -555,6 +580,7 @@ impl Wallet {
         Ok(unimported)
     }
 
+    /// Gets the external index from the wallet.
     pub fn get_external_index(&self) -> &u32 {
         &self.store.external_index
     }
@@ -570,7 +596,7 @@ impl Wallet {
             .unwrap_or(false)
     }
 
-    /// Core wallet label is the master XPub fingerint
+    /// Core wallet label is the master XPub fingerint.
     pub fn get_core_wallet_label(&self) -> String {
         let secp = Secp256k1::new();
         let m_xpub = ExtendedPubKey::from_priv(&secp, &self.store.master_key);
@@ -768,6 +794,8 @@ impl Wallet {
         }
     }
 
+    /// Locks all non-wallet unspent transaction outputs (UTXOs) & returns a `WalletError`
+    /// if there is an issue with the RPC call or locking the UTXOs.
     pub fn lock_all_nonwallet_unspents(&self) -> Result<(), WalletError> {
         //rpc.unlock_unspent(&[])?;
         //https://github.com/rust-bitcoin/rust-bitcoincore-rpc/issues/148
@@ -792,6 +820,7 @@ impl Wallet {
         Ok(())
     }
 
+    /// Lists UTXOs from the wallet, optionally including live contracts and fidelity bonds.
     pub fn list_unspent_from_wallet(
         &self,
         include_live_contracts: bool,
@@ -836,6 +865,7 @@ impl Wallet {
             .collect::<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>())
     }
 
+    /// Finds incomplete coin swaps in the wallet.
     pub fn find_incomplete_coinswaps(
         &self,
     ) -> Result<HashMap<Hash160, SwapCoinsInfo>, WalletError> {
@@ -899,7 +929,7 @@ impl Wallet {
         Ok(incomplete_swapcoin_groups)
     }
 
-    // A simplification of the above function
+    /// A simplification of `find_incomplete_coinswaps` function
     pub fn find_unfinished_swapcoins(&self) -> (Vec<IncomingSwapCoin>, Vec<OutgoingSwapCoin>) {
         let unfinished_incomins = self
             .store
@@ -929,6 +959,7 @@ impl Wallet {
         (unfinished_incomins, unfinished_outgoings)
     }
 
+    /// Finds live contract unspent outputs in the wallet.
     // live contract refers to a contract tx which has been broadcast
     // i.e. where there are UTXOs protected by contract_redeemscript's that we know about
     pub fn find_live_contract_unspents(&self) -> Result<SwapCoinsInfo, WalletError> {
@@ -968,6 +999,7 @@ impl Wallet {
         ))
     }
 
+    /// Finds the next unused index in the HD keychain.
     pub(super) fn find_hd_next_index(&self, keychain: KeychainKind) -> Result<u32, WalletError> {
         let mut max_index: i32 = -1;
         //TODO error handling
@@ -990,6 +1022,7 @@ impl Wallet {
         Ok((max_index + 1) as u32)
     }
 
+    /// Gets the next external address from the HD keychain.
     pub fn get_next_external_address(&mut self) -> Result<Address, WalletError> {
         let descriptors = self.get_wallet_descriptors()?;
         let receive_branch_descriptor = descriptors
@@ -1004,6 +1037,7 @@ impl Wallet {
         Ok(receive_address.assume_checked())
     }
 
+    /// Gets the next internal addresses from the HD keychain.
     pub fn get_next_internal_addresses(&self, count: u32) -> Result<Vec<Address>, WalletError> {
         let next_change_addr_index = self.find_hd_next_index(KeychainKind::Internal)?;
         let descriptors = self.get_wallet_descriptors()?;
@@ -1021,6 +1055,7 @@ impl Wallet {
             .collect())
     }
 
+    /// Refreshes the offer maximum size cache based on the current wallet's unspent transaction outputs (UTXOs).
     pub fn refresh_offer_maxsize_cache(&mut self) -> Result<(), WalletError> {
         let utxos = self.list_unspent_from_wallet(false, false)?;
         let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.0.amount);
@@ -1028,10 +1063,12 @@ impl Wallet {
         Ok(())
     }
 
+    /// Gets the offer maximum size from the cached value.
     pub fn get_offer_maxsize(&self) -> u64 {
         self.store.offer_maxsize
     }
 
+    /// Gets a tweakable key pair from the master key of the wallet.
     pub fn get_tweakable_keypair(&self) -> (SecretKey, PublicKey) {
         let secp = Secp256k1::new();
         let privkey = self
@@ -1048,6 +1085,7 @@ impl Wallet {
         (privkey, public_key)
     }
 
+    /// Signs a transaction corresponding to the provided UTXO spend information.
     // TODO: Result the unwraps
     pub fn sign_transaction(
         &self,
@@ -1141,6 +1179,8 @@ impl Wallet {
         }
     }
 
+    /// Converts a PSBT (Partially Signed Bitcoin Transaction) created by the wallet
+    /// into a fully signed transaction.
     pub fn from_walletcreatefundedpsbt_to_tx(
         &self,
         psbt: &String,
@@ -1255,6 +1295,7 @@ impl Wallet {
         )
     }
 
+    /// Imports a contract redeem script into the wallet.
     pub fn import_wallet_contract_redeemscript(
         &self,
         redeemscript: &ScriptBuf,
@@ -1262,6 +1303,7 @@ impl Wallet {
         self.import_redeemscript(redeemscript, &self.get_core_wallet_label())
     }
 
+    /// Imports a multisig redeem script into the wallet using two public keys.
     pub fn import_wallet_multisig_redeemscript(
         &self,
         pubkey1: &PublicKey,
@@ -1274,6 +1316,7 @@ impl Wallet {
         )
     }
 
+    /// Imports a transaction along with its merkle proof into the wallet.
     pub fn import_tx_with_merkleproof(
         &self,
         tx: &Transaction,
@@ -1373,6 +1416,7 @@ impl Wallet {
         ))
     }
 
+    /// Imports a watch-only redeem script into the wallet.
     pub fn import_watchonly_redeemscript(
         &self,
         redeemscript: &ScriptBuf,
@@ -1380,6 +1424,7 @@ impl Wallet {
         self.import_redeemscript(redeemscript, &WATCH_ONLY_SWAPCOIN_LABEL.to_string())
     }
 
+    /// Imports a multisig redeem script with a descriptor into the wallet.
     fn import_multisig_redeemscript_descriptor(
         &self,
         pubkey1: &PublicKey,
@@ -1416,6 +1461,7 @@ impl Wallet {
         Ok(())
     }
 
+    /// Imports a redeem script into the wallet.
     pub fn import_redeemscript(
         &self,
         redeemscript: &ScriptBuf,
