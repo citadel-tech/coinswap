@@ -290,13 +290,13 @@ impl Wallet {
         seedphrase: String,
         passphrase: String,
     ) -> Result<Self, WalletError> {
-        let store = WalletStore::init(
-            rpc_config.wallet_name.clone(),
-            path,
-            rpc_config.network,
-            seedphrase,
-            passphrase,
-        )?;
+        let file_name = path
+            .file_name()
+            .expect("file name expected")
+            .to_str()
+            .expect("expected")
+            .to_string();
+        let store = WalletStore::init(file_name, path, rpc_config.network, seedphrase, passphrase)?;
         let rpc = Client::try_from(rpc_config)?;
         Ok(Self {
             rpc,
@@ -309,10 +309,11 @@ impl Wallet {
     /// The core rpc wallet name, and wallet_id field in the file should match.
     pub fn load(rpc_config: &RPCConfig, path: &PathBuf) -> Result<Wallet, WalletError> {
         let store = WalletStore::read_from_disk(path)?;
-        if rpc_config.wallet_name != store.wallet_name {
-            return Err(WalletError::Protocol(
-                "Wallet name of database file and core missmatch".to_string(),
-            ));
+        if rpc_config.wallet_name != store.file_name {
+            return Err(WalletError::Protocol(format!(
+                "Wallet name of database file and core missmatch, expected {}, found {}",
+                rpc_config.wallet_name, store.file_name
+            )));
         }
         let rpc = Client::try_from(rpc_config)?;
         log::debug!(target: "wallet",
@@ -329,6 +330,10 @@ impl Wallet {
 
     pub fn delete_wallet_file(&self) -> Result<(), WalletError> {
         Ok(fs::remove_file(&self.wallet_file_path)?)
+    }
+
+    pub fn get_file_path(&self) -> &PathBuf {
+        &self.wallet_file_path
     }
 
     /// Update external index and saves to disk.

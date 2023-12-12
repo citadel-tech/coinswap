@@ -18,7 +18,7 @@ const WALLET_FILE_VERSION: u32 = 0;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct FileData {
-    wallet_name: String,
+    file_name: String,
     version: u32,
     network: Network,
     seedphrase: String,
@@ -32,7 +32,7 @@ struct FileData {
 #[derive(Debug, PartialEq)]
 pub struct WalletStore {
     // Wallet store name should match the bitcoin core watch-only wallet name
-    pub(crate) wallet_name: String,
+    pub(crate) file_name: String,
     pub(crate) network: Network,
     pub(super) master_key: ExtendedPrivKey,
     pub(super) external_index: u32,
@@ -68,7 +68,7 @@ impl TryFrom<FileData> for WalletStore {
         let timelocked_script_index_map = generate_fidelity_scripts(&xprv);
 
         Ok(Self {
-            wallet_name: file_data.wallet_name,
+            file_name: file_data.file_name,
             network: file_data.network,
             master_key: xprv,
             external_index: file_data.external_index,
@@ -84,13 +84,13 @@ impl TryFrom<FileData> for WalletStore {
 impl WalletStore {
     /// Initialize a store at a path. if path already exists, it will overwrite it.
     pub fn init(
-        wallet_name: String,
+        file_name: String,
         path: &PathBuf,
         network: Network,
         seedphrase: String,
         passphrase: String,
     ) -> Result<Self, WalletError> {
-        FileData::init_new_file(path, wallet_name, network, seedphrase, passphrase)?;
+        FileData::init_new_file(path, file_name, network, seedphrase, passphrase)?;
         let store = WalletStore::read_from_disk(path)?;
         Ok(store)
     }
@@ -125,13 +125,13 @@ impl FileData {
     /// Overwrites existing file or create a new one.
     fn init_new_file(
         path: &PathBuf,
-        wallet_name: String,
+        file_name: String,
         network: Network,
         seedphrase: String,
         passphrase: String,
     ) -> Result<(), WalletError> {
         let file_data = Self {
-            wallet_name,
+            file_name,
             version: WALLET_FILE_VERSION,
             network,
             seedphrase,

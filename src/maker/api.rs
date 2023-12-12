@@ -24,7 +24,9 @@ use std::time::Duration;
 
 use crate::{
     protocol::{contract::check_hashvalues_are_equal, messages::ReqContractSigsForSender, Hash160},
-    utill::redeemscript_to_scriptpubkey,
+    utill::{
+        get_config_dir, get_wallet_dir, redeemscript_to_scriptpubkey, seed_phrase_to_unique_id,
+    },
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
 };
 
@@ -94,11 +96,21 @@ pub struct Maker {
 }
 
 impl Maker {
-    /// Initialize a Maker structure, with a given wallet file path, rpc configuration,
-    /// listening ort, onion address, wallet and special maker behavior.
+    /// Initializes a Maker structure.
+    ///
+    /// The `data_dir` and `wallet_name_path` can be selectively provided to perform wallet load/creation.
+    /// data_dir: Some(value) = Create data directory at given value.
+    /// data_dir: None = Create default data directory. For linux "~/.coinswap"
+    /// wallet_file_name: Some(value) = Try loading wallet file with name "value". If doesn't exist create a new wallet with the given name.
+    /// wallet_file_name: None = Create a new default wallet file. Ex: "9d317f933-maker".
+    ///
+    /// rpc_conf: None = Use the default [RPCConfig].
+    ///
+    /// behavior: Defines special Maker behavior. Only applicable in integration-tests.
     pub fn init(
-        wallet_file: &PathBuf,
-        rpc_config: &RPCConfig,
+        data_dir: Option<&PathBuf>,
+        wallet_file_name: Option<String>,
+        rpc_config: Option<RPCConfig>,
         port: Option<u16>,
         behavior: MakerBehavior,
     ) -> Result<Self, MakerError> {
@@ -109,21 +121,59 @@ impl Maker {
             MakerBehavior::Normal
         };
 
-        // Load if exists, else create new.
-        let mut wallet = if wallet_file.exists() {
-            Wallet::load(rpc_config, wallet_file)?
+        // Get provided data directory or the default data directory.
+        let (wallets_dir, config_dir) = data_dir
+            .map_or((get_wallet_dir(), get_config_dir()), |d| {
+                (d.join("wallets"), d.join("configs"))
+            });
+
+        let mut rpc_config = rpc_config.unwrap_or_default();
+
+        // Load/Create wallet depending on if a wallet with wallet_file_name exists.
+        let mut wallet = if let Some(file_name) = wallet_file_name {
+            let wallet_path = wallets_dir.join(&file_name);
+            rpc_config.wallet_name = file_name;
+            if wallet_path.exists() {
+                // Try loading wallet
+                let wallet = Wallet::load(&rpc_config, &wallet_path)?;
+                log::info!("Wallet file at {:?} successfully loaded.", wallet_path);
+                wallet
+            } else {
+                // Create wallet with the given name.
+                let mnemonic = Mnemonic::generate(12).unwrap();
+                let seedphrase = mnemonic.to_string();
+
+                let wallet = Wallet::init(&wallet_path, &rpc_config, seedphrase, "".to_string())?;
+                log::info!("New Wallet created at : {:?}", wallet_path);
+                wallet
+            }
         } else {
+            // Create default wallet
             let mnemonic = Mnemonic::generate(12).unwrap();
             let seedphrase = mnemonic.to_string();
-            Wallet::init(wallet_file, rpc_config, seedphrase, "".to_string())?
+
+            // File names are unique for default wallets
+            let unique_id = seed_phrase_to_unique_id(&seedphrase);
+            let file_name = unique_id + "-maker";
+            let wallet_path = wallets_dir.join(&file_name);
+            rpc_config.wallet_name = file_name;
+
+            let wallet = Wallet::init(&wallet_path, &rpc_config, seedphrase, "".to_string())?;
+            log::info!("New Wallet created at : {:?}", wallet_path);
+            wallet
         };
+
+        // If config file doesn't exist, default config will be loaded.
+        let mut config = MakerConfig::new(Some(&config_dir.join("maker.toml")))?;
+
+        if let Some(port) = port {
+            config.port = port;
+        }
+
         wallet.sync()?;
         Ok(Self {
             behavior,
-            config: MakerConfig {
-                port: port.unwrap_or_default(),
-                ..MakerConfig::new(None)?
-            },
+            config,
             wallet: RwLock::new(wallet),
             shutdown: RwLock::new(false),
             connection_state: Mutex::new(HashMap::new()),
