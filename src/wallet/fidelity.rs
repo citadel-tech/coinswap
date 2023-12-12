@@ -41,11 +41,16 @@ use crate::{
     wallet::{UTXOSpendInfo, Wallet},
 };
 
+/// Constant representing the derivation path for timelocked addresses.
 pub const TIMELOCKED_MPK_PATH: &str = "m/84'/0'/0'/2";
+
+/// Constant representing the number of timelocked addresses.
 pub const TIMELOCKED_ADDRESS_COUNT: u32 = 960;
 
+/// Constant representing a dummy Onion hostname for regtest.
 pub const REGTEST_DUMMY_ONION_HOSTNAME: &str = "regtest-dummy-onion-hostname.onion";
 
+/// Represents the year & month for the Fidelity Bonds.
 #[derive(Debug, Clone)]
 pub struct YearAndMonth {
     year: u32,
@@ -53,10 +58,12 @@ pub struct YearAndMonth {
 }
 
 impl YearAndMonth {
+    /// Creates a new `YearAndMonth` instance.
     pub fn new(year: u32, month: u32) -> YearAndMonth {
         YearAndMonth { year, month }
     }
 
+    /// Converts the `YearAndMonth` to an index.
     pub fn to_index(&self) -> u32 {
         (self.year - 2020) * 12 + (self.month - 1)
     }
@@ -65,7 +72,7 @@ impl YearAndMonth {
 impl FromStr for YearAndMonth {
     type Err = YearAndMonthError;
 
-    // yyyy-mm
+    /// Parses a string into a `YearAndMonth` in yyyy-mm format.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.len() != 7 {
             return Err(YearAndMonthError::WrongLength);
@@ -81,11 +88,13 @@ impl FromStr for YearAndMonth {
 }
 
 impl From<std::ffi::OsString> for YearAndMonth {
+    /// Converts an `OsString` into a `YearAndMonth`.
     fn from(value: std::ffi::OsString) -> Self {
         YearAndMonth::from_str(&value.into_string().unwrap()).unwrap()
     }
 }
 
+/// Possible errors when parsing `YearAndMonth`.
 #[derive(Debug)]
 pub enum YearAndMonthError {
     WrongLength,
@@ -111,6 +120,7 @@ impl Display for YearAndMonthError {
     }
 }
 
+/// Creates a hash for the fidelity bond certificate message.
 fn create_cert_msg_hash(cert_pubkey: &PublicKey, cert_expiry: u16) -> Message {
     let cert_msg_str = format!("fidelity-bond-cert|{}|{}", cert_pubkey, cert_expiry);
     let cert_msg = cert_msg_str.as_bytes();
@@ -121,6 +131,7 @@ fn create_cert_msg_hash(cert_pubkey: &PublicKey, cert_expiry: u16) -> Message {
     Message::from_slice(sha256d::Hash::hash(&btc_signed_msg).as_byte_array()).unwrap()
 }
 
+/// Represents a hot wallet fidelity bond.
 pub struct HotWalletFidelityBond {
     pub utxo: OutPoint,
     utxo_key: PublicKey,
@@ -129,6 +140,7 @@ pub struct HotWalletFidelityBond {
 }
 
 impl HotWalletFidelityBond {
+    /// Creates a new `HotWalletFidelityBond`.
     pub fn new(wallet: &Wallet, utxo: &ListUnspentResultEntry, spend_info: &UTXOSpendInfo) -> Self {
         let index = if let UTXOSpendInfo::FidelityBondCoin {
             index,
@@ -151,6 +163,7 @@ impl HotWalletFidelityBond {
         }
     }
 
+    /// Creates a fidelity bond proof.
     pub fn create_proof(&self, rpc: &Client, onion_hostname: &str) -> FidelityBondProof {
         const BLOCK_COUNT_SAFETY: u64 = 2;
         const RETARGET_INTERVAL: u64 = 2016;
@@ -185,6 +198,7 @@ impl HotWalletFidelityBond {
 }
 
 impl FidelityBondProof {
+    /// Verifies the fidelity bond proof and gets the transaction output.
     pub fn verify_and_get_txo(
         &self,
         rpc: &Client,
@@ -220,13 +234,14 @@ impl FidelityBondProof {
             panic!("UTXO script doesnt match given script",);
         }
 
-        //an important thing we cant verify in this function
-        //is that a given fidelity bond UTXO was only used once in the offer book
-        //that has to be checked elsewhere
+        // an important thing we cant verify in this function
+        // is that a given fidelity bond UTXO was only used once in the offer book
+        // that has to be checked elsewhere
 
         txo_data
     }
 
+    /// Calculates the fidelity bond value.
     pub fn calculate_fidelity_bond_value(
         &self,
         rpc: &Client,
@@ -246,6 +261,7 @@ impl FidelityBondProof {
     }
 }
 
+/// Calculates the timelocked fidelity bond value from UTXO information.
 #[allow(non_snake_case)]
 fn calculate_timelocked_fidelity_bond_value(
     value_sats: u64,
@@ -253,7 +269,7 @@ fn calculate_timelocked_fidelity_bond_value(
     confirmation_time: i64,
     current_time: u64,
 ) -> f64 {
-    const YEAR: f64 = 60.0 * 60.0 * 24.0 * 365.2425; //gregorian calender year length
+    const YEAR: f64 = 60.0 * 60.0 * 24.0 * 365.2425; // Gregorian calender year length
 
     let r = BOND_VALUE_INTEREST_RATE;
     let T = (locktime - confirmation_time) as f64 / YEAR;
@@ -305,6 +321,7 @@ fn create_timelocked_redeemscript(locktime: i64, pubkey: &PublicKey) -> ScriptBu
         .into_script()
 }
 
+/// Reads the locktime from a timelocked redeem script.
 pub fn read_locktime_from_timelocked_redeemscript(redeemscript: &Script) -> Option<i64> {
     if let Instruction::PushBytes(locktime_bytes) = redeemscript.instructions().next()?.ok()? {
         let mut u8slice: [u8; 8] = [0; 8];
@@ -315,6 +332,7 @@ pub fn read_locktime_from_timelocked_redeemscript(redeemscript: &Script) -> Opti
     }
 }
 
+/// Reads the public key from a timelocked redeem script.
 fn read_pubkey_from_timelocked_redeemscript(redeemscript: &Script) -> Option<PublicKey> {
     if let Instruction::PushBytes(pubkey_bytes) = redeemscript.instructions().nth(3)?.ok()? {
         PublicKey::from_slice(pubkey_bytes.as_bytes()).ok()
@@ -323,6 +341,7 @@ fn read_pubkey_from_timelocked_redeemscript(redeemscript: &Script) -> Option<Pub
     }
 }
 
+/// Gets the timelocked master key from the root master key.
 fn get_timelocked_master_key_from_root_master_key(master_key: &ExtendedPrivKey) -> ExtendedPrivKey {
     let secp = Secp256k1::new();
 
@@ -334,6 +353,7 @@ fn get_timelocked_master_key_from_root_master_key(master_key: &ExtendedPrivKey) 
         .unwrap()
 }
 
+/// Gets the locktime from an index.
 pub fn get_locktime_from_index(index: u32) -> i64 {
     let year_off = index as i32 / 12;
     let month = index % 12;
@@ -344,6 +364,7 @@ pub fn get_locktime_from_index(index: u32) -> i64 {
         .timestamp()
 }
 
+/// Gets the timelocked redeem script from an index.
 fn get_timelocked_redeemscript_from_index<C: Context + Signing>(
     secp: &Secp256k1<C>,
     timelocked_master_private_key: &ExtendedPrivKey,
@@ -361,6 +382,7 @@ fn get_timelocked_redeemscript_from_index<C: Context + Signing>(
     create_timelocked_redeemscript(locktime, &pubkey)
 }
 
+/// Generates fidelity scripts for a master key.
 pub fn generate_fidelity_scripts(master_key: &ExtendedPrivKey) -> HashMap<ScriptBuf, u32> {
     let timelocked_master_private_key = get_timelocked_master_key_from_root_master_key(master_key);
     let mut timelocked_script_index_map = HashMap::new();
@@ -378,6 +400,7 @@ pub fn generate_fidelity_scripts(master_key: &ExtendedPrivKey) -> HashMap<Script
 }
 
 impl Wallet {
+    /// Gets the timelocked redeem script from an index.
     pub fn get_timelocked_redeemscript_from_index(&self, index: u32) -> ScriptBuf {
         get_timelocked_redeemscript_from_index(
             &Secp256k1::new(),
@@ -386,6 +409,7 @@ impl Wallet {
         )
     }
 
+    /// Gets the timelocked private key from an index.
     pub fn get_timelocked_privkey_from_index(&self, index: u32) -> SecretKey {
         get_timelocked_master_key_from_root_master_key(&self.store.master_key)
             .ckd_priv(&Secp256k1::new(), ChildNumber::Normal { index })
@@ -393,6 +417,7 @@ impl Wallet {
             .private_key
     }
 
+    /// Gets the timelocked address and locktime for a given YearAndMonth.
     pub fn get_timelocked_address(&self, locktime: &YearAndMonth) -> (Address, i64) {
         let redeemscript = self.get_timelocked_redeemscript_from_index(locktime.to_index());
         let addr = Address::p2wsh(&redeemscript, self.store.network);
@@ -401,7 +426,8 @@ impl Wallet {
         (addr, unix_locktime)
     }
 
-    //returns Ok(None) if no fidelity bonds in wallet
+    /// Finds the most valuable fidelity bond in the wallet.
+    // Returns Ok(None) if no fidelity bonds in wallet.
     pub fn find_most_valuable_fidelity_bond(&self, rpc: &Client) -> Option<HotWalletFidelityBond> {
         let list_unspent_result = self.list_unspent_from_wallet(false, true).unwrap();
         let fidelity_bond_utxos = list_unspent_result
