@@ -19,7 +19,7 @@ use coinswap::{
         },
     },
     taker::{SwapParams, Taker, TakerBehavior},
-    utill::setup_logger,
+    utill::{get_data_dir, setup_logger},
     wallet::{
         fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, SendAmount,
         WalletError,
@@ -169,18 +169,17 @@ fn main() -> Result<(), WalletError> {
                 _ => MakerBehavior::Normal,
             };
             let maker_id = args.wallet_file_name.to_str().expect("bad file name");
-            let maker_path = dirs::home_dir()
-                .expect("expect home dir")
-                .join(".teleport")
-                .join(maker_id); // ex: tests/temp-files/ghytredi/maker6102
+            let data_dir = get_data_dir();
+
             let maker_rpc_config = coinswap::wallet::RPCConfig {
                 wallet_name: maker_id.to_string(),
                 ..Default::default()
             };
             let maker = Arc::new(
                 Maker::init(
-                    &maker_path,
-                    &maker_rpc_config,
+                    Some(&data_dir),
+                    Some(maker_id.into()),
+                    Some(maker_rpc_config),
                     Some(port),
                     maker_special_behavior,
                 )
@@ -197,13 +196,18 @@ fn main() -> Result<(), WalletError> {
             maker_count,
             tx_count,
         } => {
-            let taker_path = dirs::home_dir().expect("home dir expected").join("taker");
+            let data_dir = get_data_dir();
             let taker_rpc_config = coinswap::wallet::RPCConfig {
                 wallet_name: "taker".to_string(),
                 ..Default::default()
             };
-            let mut taker =
-                Taker::init(&taker_path, Some(taker_rpc_config), TakerBehavior::Normal).unwrap();
+            let mut taker = Taker::init(
+                Some(&data_dir),
+                Some("taker".to_string()),
+                Some(taker_rpc_config),
+                TakerBehavior::Normal,
+            )
+            .unwrap();
 
             let swap_params = SwapParams {
                 send_amount,

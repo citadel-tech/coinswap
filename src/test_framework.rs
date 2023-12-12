@@ -112,12 +112,11 @@ impl TestFramework {
         let rpc_config = RPCConfig::from(test_framework.as_ref());
 
         // Create the Taker.
-        let taker_path = temp_dir.join("taker");
-        let mut taker_rpc_config = rpc_config.clone();
-        taker_rpc_config.wallet_name = "taker".to_string();
+        let taker_rpc_config = rpc_config.clone();
         let taker = Arc::new(RwLock::new(
             Taker::init(
-                &taker_path,
+                Some(&temp_dir),
+                None,
                 Some(taker_rpc_config),
                 taker_behavior.unwrap_or_default(),
             )
@@ -129,12 +128,17 @@ impl TestFramework {
             .iter()
             .map(|(port, behavior)| {
                 let maker_id = "maker".to_string() + &port.to_string(); // ex: "maker6102"
-                let maker_path = temp_dir.join(&maker_id); // ex: tests/temp-files/ghytredi/maker6102
-                let mut maker_rpc_config = rpc_config.clone();
-                maker_rpc_config.wallet_name = maker_id;
+                let maker_rpc_config = rpc_config.clone();
                 thread::sleep(Duration::from_secs(5)); // Sleep for some time avoid resource unavailable error.
                 Arc::new(
-                    Maker::init(&maker_path, &maker_rpc_config, Some(*port), *behavior).unwrap(),
+                    Maker::init(
+                        Some(&temp_dir),
+                        Some(maker_id),
+                        Some(maker_rpc_config),
+                        Some(*port),
+                        *behavior,
+                    )
+                    .unwrap(),
                 )
             })
             .collect::<Vec<_>>();

@@ -4,7 +4,7 @@ use std::{io::ErrorKind, path::PathBuf, sync::Once};
 
 use bitcoin::{
     address::{WitnessProgram, WitnessVersion},
-    hashes::Hash,
+    hashes::{sha256, Hash},
     script::PushBytesBuf,
     secp256k1::{
         rand::{rngs::OsRng, RngCore},
@@ -42,6 +42,33 @@ pub fn str_to_bitcoin_network(net_str: &str) -> Network {
         "regtest" => Network::Regtest,
         _ => panic!("unknown network: {}", net_str),
     }
+}
+
+/// Get the system specific home directory.
+pub fn get_home_dir() -> PathBuf {
+    dirs::home_dir().expect("home directory expected")
+}
+
+/// Get the default data directory. `~/.coinswap`.
+pub fn get_data_dir() -> PathBuf {
+    get_home_dir().join(".coinswap")
+}
+
+/// Get the default wallets directory. `~/.coinswap/wallets`
+pub fn get_wallet_dir() -> PathBuf {
+    get_data_dir().join("wallets")
+}
+
+/// Get the default configs directory. `~/.coinswap/configs`
+pub fn get_config_dir() -> PathBuf {
+    get_data_dir().join("configs")
+}
+
+/// Generate an unique identifier from the seedphrase.
+pub fn seed_phrase_to_unique_id(seed: &str) -> String {
+    let mut hash = sha256::Hash::hash(seed.as_bytes()).to_string();
+    let _ = hash.split_off(9);
+    hash
 }
 
 /// Setup function that will only run once, even if called multiple times.

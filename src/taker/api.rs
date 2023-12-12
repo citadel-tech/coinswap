@@ -141,12 +141,21 @@ pub struct Taker {
 impl Taker {
     // ######## MAIN PUBLIC INTERFACE ############
 
-    /// Initialize a Taker with a wallet, optional RPC and Wallet Mode.
-    /// If RPC config isn't provide, default RPC configuration will be used.
-    /// WalletMode is used to control wallet operation mode, Normal or Testing, Defaults to Normal.
-    /// Errors if RPC connection fails.
+    /// Initializes a Taker structure.
+    ///
+    /// The `data_dir` and `wallet_name_path` can be selectively provided to perform wallet load/creation.
+    ///
+    /// data_dir: Some(value) = Create data directory at given value.
+    /// data_dir: None = Create default data directory. For linux "~/.coinswap"
+    /// wallet_file_name: Some(value) = Try loading wallet file with name "value". If doesn't exist create a new wallet with the given name.
+    /// wallet_file_name: None = Create a new default wallet file. Ex: "9d317f933-taker".
+    ///
+    /// rpc_conf: None = Use the default [RPCConfig].
+    ///
+    /// behavior: Defines special Maker behavior. Only applicable in integration-tests.
     pub fn init(
-        wallet_file: &PathBuf,
+        data_dir: Option<&PathBuf>,
+        wallet_file_name: Option<String>,
         rpc_config: Option<RPCConfig>,
         behavior: TakerBehavior,
     ) -> Result<Taker, TakerError> {
@@ -157,24 +166,56 @@ impl Taker {
             TakerBehavior::Normal
         };
 
-        let mut wallet = if wallet_file.exists() {
-            Wallet::load(&rpc_config.unwrap_or_default(), wallet_file)?
+        // Get provided data directory or the default data directory.
+        let (wallets_dir, config_dir) = data_dir
+            .map_or((get_wallet_dir(), get_config_dir()), |d| {
+                (d.join("wallets"), d.join("configs"))
+            });
+
+        let mut rpc_config = rpc_config.unwrap_or_default();
+
+        // Load/Create wallet depending on if a wallet with wallet_file_name exists.
+        let mut wallet = if let Some(file_name) = wallet_file_name {
+            let wallet_path = wallets_dir.join(&file_name);
+            rpc_config.wallet_name = file_name;
+            if wallet_path.exists() {
+                // Try loading wallet
+                let wallet = Wallet::load(&rpc_config, &wallet_path)?;
+                log::info!("Wallet file at {:?} successfully loaded.", wallet_path);
+                wallet
+            } else {
+                // Create wallet with the given name.
+                let mnemonic = Mnemonic::generate(12).unwrap();
+                let seedphrase = mnemonic.to_string();
+
+                let wallet = Wallet::init(&wallet_path, &rpc_config, seedphrase, "".to_string())?;
+                log::info!("New Wallet created at : {:?}", wallet_path);
+                wallet
+            }
         } else {
+            // Create default wallet
             let mnemonic = Mnemonic::generate(12).unwrap();
             let seedphrase = mnemonic.to_string();
-            Wallet::init(
-                wallet_file,
-                &rpc_config.unwrap_or_default(),
-                seedphrase,
-                "".to_string(),
-            )?
+
+            // File names are unique for default wallets
+            let unique_id = seed_phrase_to_unique_id(&seedphrase);
+            let file_name = unique_id + "-taker";
+            let wallet_path = wallets_dir.join(&file_name);
+            rpc_config.wallet_name = file_name;
+
+            let wallet = Wallet::init(&wallet_path, &rpc_config, seedphrase, "".to_string())?;
+            log::info!("New Wallet created at : {:?}", wallet_path);
+            wallet
         };
+
+        // If config file doesn't exist, default config will be loaded.
+        let config = TakerConfig::new(Some(&config_dir.join("taker.toml")))?;
 
         wallet.sync()?;
 
         Ok(Self {
             wallet,
-            config: TakerConfig::default(),
+            config,
             offerbook: OfferBook::default(),
             ongoing_swap_state: OngoingSwapState::default(),
             behavior,
