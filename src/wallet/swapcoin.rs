@@ -27,8 +27,10 @@ use crate::protocol::{
 
 use super::WalletError;
 
-//swapcoins are UTXOs + metadata which are not from the deterministic wallet
-//they are made in the process of a coinswap
+// SwapCoins are UTXOs + metadata which are not from the deterministic wallet.
+// They are made in the process of a coinswap
+
+/// Represents an incoming swapcoin.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct IncomingSwapCoin {
     pub my_privkey: SecretKey,
@@ -42,8 +44,7 @@ pub struct IncomingSwapCoin {
     pub hash_preimage: Option<Preimage>,
 }
 
-//swapcoins are UTXOs + metadata which are not from the deterministic wallet
-//they are made in the process of a coinswap
+/// Represents an outgoing swapcoin.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct OutgoingSwapCoin {
     pub my_privkey: SecretKey,
@@ -56,31 +57,50 @@ pub struct OutgoingSwapCoin {
     pub hash_preimage: Option<Preimage>,
 }
 
+/// Represents a watch-only view of a coinswap between two makers.
 //like the Incoming/OutgoingSwapCoin structs but no privkey or signature information
 //used by the taker to monitor coinswaps between two makers
 #[derive(Debug, Clone)]
 pub struct WatchOnlySwapCoin {
+    /// Public key of the sender (maker).
     pub sender_pubkey: PublicKey,
+    /// Public key of the receiver (maker).
     pub receiver_pubkey: PublicKey,
+    /// Transaction representing the coinswap contract.
     pub contract_tx: Transaction,
+    /// Redeem script associated with the coinswap contract.
     pub contract_redeemscript: ScriptBuf,
+    /// The funding amount of the coinswap.
     pub funding_amount: u64,
 }
 
+/// Trait representing common functionality for swap coins.
 pub trait SwapCoin {
+    /// Get the multisig redeem script.
     fn get_multisig_redeemscript(&self) -> ScriptBuf;
+    /// Get the contract transaction.
     fn get_contract_tx(&self) -> Transaction;
+    /// Get the contract redeem script.
     fn get_contract_redeemscript(&self) -> ScriptBuf;
+    /// Get the timelock public key.
     fn get_timelock_pubkey(&self) -> PublicKey;
+    /// Get the timelock value.
     fn get_timelock(&self) -> u16;
+    /// Get the hashlock public key.
     fn get_hashlock_pubkey(&self) -> PublicKey;
+    /// Get the hash value.
     fn get_hashvalue(&self) -> Hash160;
+    /// Get the funding amount.
     fn get_funding_amount(&self) -> u64;
+    /// Verify the receiver's signature on the contract transaction.
     fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> Result<(), WalletError>;
+    /// Verify the sender's signature on the contract transaction.
     fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> Result<(), WalletError>;
+    /// Apply a private key to the swap coin.
     fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), WalletError>;
 }
 
+/// Trait representing swap coin functionality specific to a wallet.
 pub trait WalletSwapCoin: SwapCoin {
     fn get_my_pubkey(&self) -> PublicKey;
     fn get_other_pubkey(&self) -> &PublicKey;

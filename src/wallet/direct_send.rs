@@ -15,6 +15,7 @@ use crate::wallet::{api::UTXOSpendInfo, SwapCoin};
 
 use super::{error::WalletError, fidelity::get_locktime_from_index, Wallet};
 
+/// Enum representing different options for the amount to be sent in a transaction.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SendAmount {
     Max,
@@ -33,6 +34,7 @@ impl FromStr for SendAmount {
     }
 }
 
+/// Enum representing different destination options for a transaction.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Destination {
     Wallet,
@@ -51,6 +53,7 @@ impl FromStr for Destination {
     }
 }
 
+/// Enum representing different ways to identify a coin to spend.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CoinToSpend {
     LongForm(OutPoint),

@@ -52,6 +52,8 @@ use super::{
 // for example which privkey corresponds to a scriptpubkey is stored in hd paths
 
 const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
+
+/// Represents a Bitcoin wallet with associated functionality and data.
 pub struct Wallet {
     pub(crate) rpc: Client,
     wallet_file_path: PathBuf,

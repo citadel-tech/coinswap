@@ -29,19 +29,26 @@ struct FileData {
     prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
 }
 
+/// Represents the internal data store for a Bitcoin wallet.
 #[derive(Debug, PartialEq)]
 pub struct WalletStore {
-    // Wallet store name should match the bitcoin core watch-only wallet name
+    /// The file name associated with the wallet store.
     pub(crate) file_name: String,
+    /// The network the wallet operates on.
     pub(crate) network: Network,
+    /// The master key for the wallet.
     pub(super) master_key: ExtendedPrivKey,
+    /// The external index for the wallet.
     pub(super) external_index: u32,
+    /// The maximum size for an offer in the wallet.
     pub(crate) offer_maxsize: u64,
-    /// Map of multisig reedemscript to incoming swapcoins.
+    /// Map of multisig redeemscript to incoming swapcoins.
     pub(super) incoming_swapcoins: HashMap<ScriptBuf, IncomingSwapCoin>,
-    /// Map of multisig reedemscript to outgoing swapcoins.
+    /// Map of multisig redeemscript to outgoing swapcoins.
     pub(super) outgoing_swapcoins: HashMap<ScriptBuf, OutgoingSwapCoin>,
+    /// Map of prevout to contract redeemscript.
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
+    /// Map of fidelity bond scripts to index.
     pub(super) fidelity_scripts: HashMap<ScriptBuf, u32>,
     //TODO: Add last synced height and Wallet birthday.
 }

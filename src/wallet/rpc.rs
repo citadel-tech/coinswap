@@ -18,6 +18,7 @@ use serde::Deserialize;
 
 use super::{error::WalletError, Wallet};
 
+/// Configuration parameters for connecting to a Bitcoin node via RPC.
 #[derive(Debug, Clone)]
 pub struct RPCConfig {
     /// The bitcoin node url
