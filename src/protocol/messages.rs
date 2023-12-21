@@ -72,15 +72,20 @@ use serde::{Deserialize, Serialize};
 
 use bitcoin::hashes::hash160::Hash as Hash160;
 
+/// Defines the length of the Preimage.
 pub const PREIMAGE_LEN: usize = 32;
+
+/// Type for Preimage.
 pub type Preimage = [u8; PREIMAGE_LEN];
 
+/// Represents the initial handshake message sent from Taker to Maker.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TakerHello {
     pub protocol_version_min: u32,
     pub protocol_version_max: u32,
 }
 
+/// Represents a request to give an offer.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GiveOffer;
 
@@ -160,7 +165,7 @@ pub struct ContractSigsForRecvrAndSender {
     pub senders_sigs: Vec<Signature>,
 }
 
-/// Message to Transfer `HashPreimage` from Taker to Makers.
+/// Message to Transfer [`HashPreimage`] from Taker to Makers.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HashPreimage {
     pub senders_multisig_redeemscripts: Vec<ScriptBuf>,
@@ -220,12 +225,14 @@ impl Display for TakerToMakerMessage {
     }
 }
 
+/// Represents the initial handshake message sent from Maker to Taker.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MakerHello {
     pub protocol_version_min: u32,
     pub protocol_version_max: u32,
 }
 
+/// Contains proof data related to fidelity bond.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FidelityBondProof {
     pub utxo: OutPoint,
@@ -237,6 +244,7 @@ pub struct FidelityBondProof {
     pub onion_sig: Signature,
 }
 
+/// Represents an offer in the context of the Coinswap protocol.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Offer {
     pub absolute_fee_sat: u64,
@@ -264,7 +272,7 @@ pub struct SenderContractTxInfo {
     pub funding_amount: u64,
 }
 
-/// This message is sent by a Maker to a Taker. Which is a request to the Taker for gathering signatures for the Maker as both Sender and Receiver of Coinswaps.
+/// This message is sent by a Maker to a Taker, which is a request to the Taker for gathering signatures for the Maker as both Sender and Receiver of Coinswaps.
 /// This message is sent by a Maker after a [`ProofOfFunding`] has been received.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ContractSigsAsRecvrAndSender {
@@ -274,12 +282,13 @@ pub struct ContractSigsAsRecvrAndSender {
     pub senders_contract_txs_info: Vec<SenderContractTxInfo>,
 }
 
-/// Contract Tx signatures a Maker sends as a Receiver of coinswap.
+/// Contract Tx signatures a Maker sends as a Receiver of CoinSwap.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ContractSigsForRecvr {
     pub sigs: Vec<Signature>,
 }
 
+/// All messages sent from Maker to Taker.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "method", rename_all = "lowercase")]
 pub enum MakerToTakerMessage {

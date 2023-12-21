@@ -4,7 +4,8 @@
 //! maker addresses from directory servers, post maker addresses to directory servers,
 //! and defines constants such as Tor addresses and directory server addresses.
 
-// configure this with your own TOR port
+/// Represents the Tor address and port configuration.
+// It should be set to your specific Tor address and port.
 pub const TOR_ADDR: &str = "127.0.0.1:9050";
 
 use bitcoin::Network;
@@ -15,6 +16,7 @@ use crate::taker::offers::MakerAddress;
 const DIRECTORY_SERVER_ADDR: &str =
     "zfwo4t5yfuf6epu7rhjbmkr6kiysi6v7kibta4i55zlp4y6xirpcr7qd.onion:8080";
 
+/// Represents errors that can occur during directory server operations.
 #[derive(Debug)]
 pub enum DirectoryServerError {
     Reqwest(reqwest::Error),
@@ -27,6 +29,7 @@ impl From<reqwest::Error> for DirectoryServerError {
     }
 }
 
+/// Converts a `Network` enum variant to its corresponding string representation.
 fn network_enum_to_string(network: Network) -> &'static str {
     match network {
         Network::Bitcoin => "mainnet",
@@ -36,7 +39,7 @@ fn network_enum_to_string(network: Network) -> &'static str {
         _ => todo!(),
     }
 }
-
+/// Asynchronously Synchronize Maker Addresses from Directory Servers.
 pub async fn sync_maker_addresses_from_directory_servers(
     network: Network,
 ) -> Result<Vec<MakerAddress>, DirectoryServerError> {
@@ -73,6 +76,7 @@ pub async fn sync_maker_addresses_from_directory_servers(
     Ok(maker_addresses)
 }
 
+/// Posts a maker's address to directory servers based on the specified network.
 pub async fn post_maker_address_to_directory_servers(
     network: Network,
     address: &str,

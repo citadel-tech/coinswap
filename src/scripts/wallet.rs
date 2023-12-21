@@ -341,6 +341,7 @@ pub fn display_wallet_addresses(
     Ok(())
 }
 
+/// Prints the receive invoice for the wallet.
 pub fn print_receive_invoice(wallet_file_name: &PathBuf) -> Result<(), WalletError> {
     let mut wallet = Wallet::load(&RPCConfig::default(), wallet_file_name)?;
     wallet.sync()?;

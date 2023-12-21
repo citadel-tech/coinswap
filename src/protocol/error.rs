@@ -2,6 +2,7 @@
 
 use bitcoin::secp256k1;
 
+/// Enum for handling contract-related errors.
 #[derive(Debug)]
 pub enum ContractError {
     Secp(secp256k1::Error),

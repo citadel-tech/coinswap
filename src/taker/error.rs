@@ -10,6 +10,7 @@ use crate::{
     wallet::WalletError,
 };
 
+/// Enum for handling taker-related errors.
 #[derive(Debug)]
 pub enum TakerError {
     IO(std::io::Error),

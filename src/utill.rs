@@ -34,6 +34,7 @@ use crate::{
     wallet::{SwapCoin, WalletError},
 };
 
+/// Converts a string representation of a network to a `Network` enum variant.
 pub fn str_to_bitcoin_network(net_str: &str) -> Network {
     match net_str {
         "main" => Network::Bitcoin,
@@ -84,7 +85,7 @@ pub fn setup_logger() {
     });
 }
 
-/// Can send both Taker and Maker messages
+/// Can send both Taker and Maker messages.
 pub async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     message: &impl serde::Serialize,
@@ -95,7 +96,7 @@ pub async fn send_message(
     Ok(())
 }
 
-/// Read a Maker Message
+/// Read a Maker Message.
 pub async fn read_message(
     reader: &mut BufReader<ReadHalf<'_>>,
 ) -> Result<MakerToTakerMessage, NetError> {
@@ -122,7 +123,7 @@ pub fn check_and_apply_maker_private_keys<S: SwapCoin>(
 
 /// Generate The Maker's Multisig and HashLock keys and respective nonce values.
 /// Nonce values are random integers and resulting Pubkeys are derived by tweaking the
-/// Make's advertised Pubkey with these two nonces.
+/// Maker's advertised Pubkey with these two nonces.
 pub fn generate_maker_keys(
     tweakable_point: &PublicKey,
     count: u32,
@@ -146,6 +147,7 @@ pub fn generate_maker_keys(
     )
 }
 
+/// Converts a Bitcoin amount from JSON-RPC representation to satoshis.
 pub fn convert_json_rpc_bitcoin_to_satoshis(amount: &Value) -> u64 {
     //to avoid floating point arithmetic, convert the bitcoin amount to
     //string with 8 decimal places, then remove the decimal point to
@@ -157,7 +159,11 @@ pub fn convert_json_rpc_bitcoin_to_satoshis(amount: &Value) -> u64 {
         .parse::<u64>()
         .unwrap()
 }
-// returns None if not a hd descriptor (but possibly a swapcoin (multisig) descriptor instead)
+
+/// Extracts hierarchical deterministic (HD) path components from a descriptor.
+///
+/// Parses an input descriptor string and returns `Some` with a tuple containing the HD path
+/// components if it's an HD descriptor. If it's not an HD descriptor, it returns `None`.
 pub fn get_hd_path_from_descriptor(descriptor: &str) -> Option<(&str, u32, i32)> {
     //e.g
     //"desc": "wpkh([a945b5ca/1/1]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9",
@@ -186,6 +192,7 @@ pub fn get_hd_path_from_descriptor(descriptor: &str) -> Option<(&str, u32, i32)>
     Some((path_chunks[0], addr_type.unwrap(), index.unwrap()))
 }
 
+/// Generates a keypair using the secp256k1 elliptic curve.
 pub fn generate_keypair() -> (PublicKey, SecretKey) {
     let mut privkey = [0u8; 32];
     OsRng.fill_bytes(&mut privkey);
@@ -209,6 +216,7 @@ pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> ScriptBuf {
     ScriptBuf::new_witness_program(&witness_program)
 }
 
+/// Converts a byte vector to a hexadecimal string representation.
 pub fn to_hex(bytes: &Vec<u8>) -> String {
     let hex_chars: Vec<char> = "0123456789abcdef".chars().collect();
     let mut hex_string = String::new();
@@ -223,7 +231,7 @@ pub fn to_hex(bytes: &Vec<u8>) -> String {
     hex_string
 }
 
-/// Function to parse toml file into key-value pair
+/// Parse TOML file into key-value pair.
 pub fn parse_toml(file_path: &PathBuf) -> io::Result<HashMap<String, HashMap<String, String>>> {
     let file = File::open(file_path)?;
     let reader = io::BufReader::new(file);
@@ -253,7 +261,7 @@ pub fn parse_toml(file_path: &PathBuf) -> io::Result<HashMap<String, HashMap<Str
     Ok(sections)
 }
 
-/// Function to parse and log errors for each field
+/// Parse and log errors for each field.
 pub fn parse_field<T: std::str::FromStr>(value: Option<&String>, default: T) -> io::Result<T> {
     match value {
         Some(value) => value

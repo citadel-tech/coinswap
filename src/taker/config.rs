@@ -1,9 +1,13 @@
 //! Taker configuration. Controlling various behavior.
+//!
+//!  Represents the configuration options for the Taker module, controlling behaviors
+//! such as refund locktime, connection attempts, sleep delays, and timeouts.
 
 use std::{collections::HashMap, io, path::PathBuf};
 
 use crate::utill::{parse_field, parse_toml};
-/// TODO: Optionally read this from a config file.
+// TODO: Optionally read this from a config file.
+/// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
     pub refund_locktime: u16,

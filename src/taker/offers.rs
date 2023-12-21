@@ -19,6 +19,7 @@ use crate::market::directory::{
 
 use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
 
+/// Represents an offer along with the corresponding maker address.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OfferAndAddress {
     pub offer: Offer,
@@ -33,6 +34,7 @@ const REGTEST_MAKER_ADDRESSES: &[&str] = &[
     "localhost:46102",
 ];
 
+/// Enum representing maker addresses (clearnet and TOR).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MakerAddress {
     Clearnet { address: String },
@@ -40,6 +42,7 @@ pub enum MakerAddress {
 }
 
 impl MakerAddress {
+    /// Returns the TCP stream address as a string.
     pub fn get_tcpstream_address(&self) -> String {
         match &self {
             MakerAddress::Clearnet { address } => address.to_string(),
@@ -68,6 +71,7 @@ pub struct OfferBook {
 }
 
 impl OfferBook {
+    /// Gets all untried offers.
     pub fn get_all_untried(&self) -> Vec<&OfferAndAddress> {
         self.all_makers
             .iter()
@@ -75,6 +79,7 @@ impl OfferBook {
             .collect()
     }
 
+    /// Adds a new offer to the offer book.
     pub fn add_new_offer(&mut self, offer: &OfferAndAddress) -> bool {
         if !self.all_makers.contains(offer) {
             self.all_makers.push(offer.clone());
@@ -84,6 +89,7 @@ impl OfferBook {
         }
     }
 
+    /// Adds a good maker to the offer book.
     pub fn add_good_maker(&mut self, good_maker: &OfferAndAddress) -> bool {
         if !self.good_makers.contains(good_maker) {
             self.good_makers.push(good_maker.clone());
@@ -93,6 +99,7 @@ impl OfferBook {
         }
     }
 
+    /// Adds a bad maker to the offer book.
     pub fn add_bad_maker(&mut self, bad_maker: &OfferAndAddress) -> bool {
         if !self.bad_makers.contains(bad_maker) {
             self.bad_makers.push(bad_maker.clone());
@@ -102,6 +109,7 @@ impl OfferBook {
         }
     }
 
+    /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
     pub async fn sync_offerbook(
         &mut self,
         network: Network,
@@ -123,6 +131,7 @@ impl OfferBook {
         Ok(new_offers)
     }
 
+    /// Gets the list of bad makers.
     pub fn get_bad_makers(&self) -> Vec<&OfferAndAddress> {
         self.bad_makers.iter().collect()
     }
@@ -137,6 +146,7 @@ fn get_regtest_maker_addresses() -> Vec<MakerAddress> {
         .collect::<Vec<MakerAddress>>()
 }
 
+/// Synchronizes the offer book with specific maker addresses.
 pub async fn sync_offerbook_with_addresses(
     maker_addresses: Vec<MakerAddress>,
     config: &TakerConfig,
@@ -167,6 +177,7 @@ pub async fn sync_offerbook_with_addresses(
     result
 }
 
+/// Retrieves advertised maker addresses from directory servers based on the specified network.
 pub async fn get_advertised_maker_addresses(
     network: Network,
 ) -> Result<Vec<MakerAddress>, DirectoryServerError> {

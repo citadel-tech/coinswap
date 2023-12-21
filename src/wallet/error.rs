@@ -2,6 +2,7 @@
 
 use crate::protocol::error::ContractError;
 
+/// Enum for handling wallet-related errors.
 #[derive(Debug)]
 pub enum WalletError {
     File(std::io::Error),

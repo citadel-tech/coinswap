@@ -29,21 +29,24 @@ use super::{
     messages::{FundingTxInfo, ProofOfFunding},
 };
 
-//relatively simple handling of miner fees for now, each funding transaction is considered
+// relatively simple handling of miner fees for now, each funding transaction is considered
 // to have the same size, and taker will pay all the maker's miner fees based on that
-//taker will choose what fee rate they will use, and how many funding transactions they want
+// taker will choose what fee rate they will use, and how many funding transactions they want
 // the makers to create
-//this doesnt take into account the different sizes of single-sig, 2of2 multisig or htlc contracts
+// this doesnt take into account the different sizes of single-sig, 2of2 multisig or htlc contracts
 // but all those complications will go away when we move to ecdsa2p and scriptless scripts
 // so theres no point adding complications for something that we'll hopefully get rid of soon
-//this size here is for a tx with 2 p2wpkh outputs, 3 singlesig inputs and 1 2of2 multisig input
+// this size here is for a tx with 2 p2wpkh outputs, 3 singlesig inputs and 1 2of2 multisig input
 // if the maker can get stuff confirmed cheaper than this then they can keep that money
 // if the maker ends up paying more then thats their problem
 // we could avoid this guessing by adding one more round trip to the protocol where the maker
 // calculates exactly how big the transactions will be and then taker knows exactly the miner fee
 // to pay for
+
+/// Constant representing the virtual byte size of a funding transaction.
 pub const FUNDING_TX_VBYTE_SIZE: u64 = 372;
 
+/// Calculate the coin swap fee based on various parameters.
 pub fn calculate_coinswap_fee(
     absolute_fee_sat: u64,
     amount_relative_fee_ppb: u64,
@@ -56,6 +59,7 @@ pub fn calculate_coinswap_fee(
         + (time_in_blocks * time_relative_fee_ppb / 1_000_000_000)
 }
 
+/// Apply two signatures to a 2-of-2 multisig spend.
 pub fn apply_two_signatures_to_2of2_multisig_spend(
     key1: &PublicKey,
     key2: &PublicKey,
@@ -82,6 +86,7 @@ pub fn apply_two_signatures_to_2of2_multisig_spend(
     input.witness.push(redeemscript.to_bytes());
 }
 
+/// Create a multisig redeem script for a 2-of-2 setup.
 pub fn create_multisig_redeemscript(key1: &PublicKey, key2: &PublicKey) -> ScriptBuf {
     let builder = Builder::new().push_opcode(all::OP_PUSHNUM_2);
     if key1.inner.serialize()[..] < key2.inner.serialize()[..] {
@@ -94,6 +99,7 @@ pub fn create_multisig_redeemscript(key1: &PublicKey, key2: &PublicKey) -> Scrip
     .into_script()
 }
 
+/// Derive the maker's public key and nonce from a tweakable point.
 pub fn derive_maker_pubkey_and_nonce(
     tweakable_point: &PublicKey,
 ) -> Result<(PublicKey, SecretKey), ContractError> {
@@ -104,6 +110,7 @@ pub fn derive_maker_pubkey_and_nonce(
     Ok((maker_pubkey, nonce))
 }
 
+/// Calculate the public key from a tweakable point and a nonce.
 pub fn calculate_pubkey_from_nonce(
     tweakable_point: &PublicKey,
     nonce: &SecretKey,
@@ -117,6 +124,7 @@ pub fn calculate_pubkey_from_nonce(
     })
 }
 
+/// Find the index of the funding output in the funding transaction.
 pub fn find_funding_output_index(funding_tx_info: &FundingTxInfo) -> Result<u32, ContractError> {
     let multisig_spk = redeemscript_to_scriptpubkey(&funding_tx_info.multisig_redeemscript);
     funding_tx_info
@@ -130,6 +138,7 @@ pub fn find_funding_output_index(funding_tx_info: &FundingTxInfo) -> Result<u32,
         ))
 }
 
+/// Check if the given redeem script is a multisig script.
 pub fn check_reedemscript_is_multisig(redeemscript: &Script) -> Result<(), ContractError> {
     //pattern match to check redeemscript is really a 2of2 multisig
     let mut ms_rs_bytes = redeemscript.to_bytes();
@@ -153,6 +162,7 @@ pub fn check_reedemscript_is_multisig(redeemscript: &Script) -> Result<(), Contr
     }
 }
 
+/// Check if the given multisig redeem script contains the provided public key.
 pub fn check_multisig_has_pubkey(
     redeemscript: &Script,
     tweakable_point: &PublicKey,
@@ -169,6 +179,7 @@ pub fn check_multisig_has_pubkey(
     }
 }
 
+/// Check if the given hashlock redeem script contains the provided public key and nonce.
 pub fn check_hashlock_has_pubkey(
     contract_redeemscript: &Script,
     tweakable_point: &PublicKey,
@@ -185,6 +196,7 @@ pub fn check_hashlock_has_pubkey(
     }
 }
 
+/// Create a contract redeem script for a coinswap transaction.
 #[rustfmt::skip]
 pub fn create_contract_redeemscript(
     pub_hashlock: &PublicKey,
@@ -264,6 +276,7 @@ pub fn create_contract_redeemscript(
 
 //TODO put all these magic numbers in a const or something
 //a better way is to use redeemscript.instructions() like read_locktime_from_contract()
+/// Read the hash value from a contract redeem script.
 pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<Hash160, ContractError> {
     if redeemscript.to_bytes().len() < 25 {
         return Err(ContractError::Protocol("contract reedemscript too short"));
@@ -275,7 +288,7 @@ pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<Hash160, Co
     )?)
 }
 
-//check that all the contract redeemscripts involve the same hashvalue
+/// Check that all the contract redeemscripts involve the same hashvalue.
 pub fn check_hashvalues_are_equal(message: &ProofOfFunding) -> Result<Hash160, ContractError> {
     let hashvalues = message
         .confirmed_funding_txes
@@ -292,6 +305,7 @@ pub fn check_hashvalues_are_equal(message: &ProofOfFunding) -> Result<Hash160, C
     Ok(hashvalues[0])
 }
 
+/// Read the locktime from a contract redeem script.
 pub fn read_contract_locktime(redeemscript: &Script) -> Result<u16, ContractError> {
     match redeemscript
         .instructions()
@@ -324,6 +338,7 @@ pub fn read_contract_locktime(redeemscript: &Script) -> Result<u16, ContractErro
     }
 }
 
+/// Read the hashlock pubkey from a contract redeem script.
 pub fn read_hashlock_pubkey_from_contract(
     redeemscript: &Script,
 ) -> Result<PublicKey, ContractError> {
@@ -333,6 +348,7 @@ pub fn read_hashlock_pubkey_from_contract(
     Ok(PublicKey::from_slice(&redeemscript.to_bytes()[27..60])?)
 }
 
+/// Read the timelock pubkey from a contract redeem script.
 pub fn read_timelock_pubkey_from_contract(
     redeemscript: &Script,
 ) -> Result<PublicKey, ContractError> {
@@ -342,6 +358,7 @@ pub fn read_timelock_pubkey_from_contract(
     Ok(PublicKey::from_slice(&redeemscript.to_bytes()[65..98])?)
 }
 
+/// Read the pubkeys from a multisig redeem script.
 pub fn read_pubkeys_from_multisig_redeemscript(
     redeemscript: &Script,
 ) -> Result<(PublicKey, PublicKey), ContractError> {
@@ -377,6 +394,7 @@ pub fn create_senders_contract_tx(
     }
 }
 
+/// Create the receiver's contract transaction.
 pub fn create_receivers_contract_tx(
     input: OutPoint,
     input_value: u64,
@@ -387,6 +405,7 @@ pub fn create_receivers_contract_tx(
     create_senders_contract_tx(input, input_value, contract_redeemscript)
 }
 
+/// Check if a contract output is valid.
 pub fn is_contract_out_valid(
     contract_output: &TxOut,
     hashlock_pubkey: &PublicKey,
@@ -410,6 +429,7 @@ pub fn is_contract_out_valid(
     Ok(())
 }
 
+/// Validate a contract transaction.
 pub fn validate_contract_tx(
     receivers_contract_tx: &Transaction,
     funding_outpoint: Option<&OutPoint>,
@@ -433,6 +453,7 @@ pub fn validate_contract_tx(
     Ok(())
 }
 
+/// Sign a contract transaction.
 pub fn sign_contract_tx(
     contract_tx: &Transaction,
     multisig_redeemscript: &Script,
@@ -452,6 +473,7 @@ pub fn sign_contract_tx(
     Ok(secp.sign_ecdsa(&sighash, privkey))
 }
 
+/// Verify a signature on a contract transaction.
 pub fn verify_contract_tx_sig(
     contract_tx: &Transaction,
     multisig_redeemscript: &Script,

@@ -1,6 +1,6 @@
 //! The Maker API.
 //!
-//! This module defines the core functionality of the Maker in a swap protocol implementation.
+//! Defines the core functionality of the Maker in a swap protocol implementation.
 //! It includes structures for managing maker behavior, connection states, and recovery from swap events.
 //! The module provides methods for initializing a Maker, verifying swap messages, and monitoring
 //! contract broadcasts and handle idle Taker connections. Additionally, it handles recovery by broadcasting
@@ -43,7 +43,7 @@ use crate::{
 
 use super::{config::MakerConfig, error::MakerError};
 
-// MakerBehavior enum is used to configure the maker for testing purposes.
+/// Used to configure the maker for testing purposes.
 #[derive(Debug, Clone, Copy)]
 pub enum MakerBehavior {
     Normal,
@@ -54,8 +54,8 @@ pub enum MakerBehavior {
     CloseAtHashPreimage,
     BroadcastContractAfterSetup,
 }
-/// A structure denoting expectation of type of taker message.
-/// Used in the [ConnectionState] structure.
+
+/// Expected messages for the taker in the context of [ConnectionState] structure.
 ///
 /// If the received message doesn't match expected message,
 /// a protocol error will be returned.
@@ -72,8 +72,7 @@ pub enum ExpectedMessage {
     PrivateKeyHandover,
 }
 
-/// ConnectionState structure maintains the state of a connection,
-/// including the list of swapcoins and the next expected message.
+/// Maintains the state of a connection, including the list of swapcoins and the next expected message.
 #[derive(Debug, Default, Clone)]
 pub struct ConnectionState {
     pub allowed_message: ExpectedMessage,
@@ -82,7 +81,7 @@ pub struct ConnectionState {
     pub pending_funding_txes: Vec<Transaction>,
 }
 
-/// The Maker structure represents the maker in the swap protocol.
+/// Represents the maker in the swap protocol.
 pub struct Maker {
     /// Defines special maker behavior, only applicable for testing
     pub behavior: MakerBehavior,
@@ -188,6 +187,7 @@ impl Maker {
         Ok(())
     }
 
+    /// Returns a reference to the Maker's wallet.
     pub fn get_wallet(&self) -> &RwLock<Wallet> {
         &self.wallet
     }
@@ -339,8 +339,10 @@ impl Maker {
     }
 }
 
-/// Constantly keep checking for contract transactions in the bitcoin network for all
-/// unsettled swap. If any one of the is ever observed, run the recovery routine.
+/// Constantly checks for contract transactions in the bitcoin network for all
+/// unsettled swap.
+///
+/// If any one of the is ever observed, run the recovery routine.
 pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut failed_swap_ip = Vec::new();
     loop {
@@ -453,6 +455,7 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
 }
 
 /// Check that if any Taker connection went idle.
+///
 /// If a connection remains idle for more than idle timeout time, thats a potential DOS attack.
 /// Broadcast the contract transactions and claim funds via timelock.
 pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
@@ -535,8 +538,8 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
     Ok(())
 }
 
-/// Broadcast Incoming and Outgoing Contract transactions. Broadcast timelock transactions after maturity.
-/// remove contract transactions from the wallet.
+/// Broadcast Incoming and Outgoing Contract transactions & timelock transactions after maturity.
+/// Remove contract transactions from the wallet.
 pub fn recover_from_swap(
     maker: Arc<Maker>,
     // Tuple of ((Multisig_reedemscript, Contract Tx), (Timelock, Timelock Tx))
