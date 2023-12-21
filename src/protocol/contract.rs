@@ -45,6 +45,7 @@ use super::{
 
 /// Constant representing the virtual byte size of a funding transaction.
 pub const FUNDING_TX_VBYTE_SIZE: u64 = 372;
+const MIN_HASHV_LEN: usize = 25;
 
 /// Calculate the coin swap fee based on various parameters.
 pub fn calculate_coinswap_fee(
@@ -274,18 +275,21 @@ pub fn create_contract_redeemscript(
         .into_script()
 }
 
-//TODO put all these magic numbers in a const or something
-//a better way is to use redeemscript.instructions() like read_locktime_from_contract()
 /// Read the hash value from a contract redeem script.
 pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<Hash160, ContractError> {
-    if redeemscript.to_bytes().len() < 25 {
-        return Err(ContractError::Protocol("contract reedemscript too short"));
+    if redeemscript.to_bytes().len() < MIN_HASHV_LEN {
+        return Err(ContractError::Protocol("Contract reedemscript too short!"));
     }
-    Ok(Hash160::from_slice(
-        redeemscript.to_bytes()[4..24]
-            .try_into()
-            .map_err(|_| ContractError::Protocol("hash value is not 20 bytes slice"))?,
-    )?)
+    let mut instrs = redeemscript.instructions().skip(2);
+    // Unwrap Safety: length is checked
+    let Instruction::Op(opcodes::all::OP_HASH160) = instrs.next().unwrap()? else {
+        return Err(ContractError::Protocol("Hash is not present!"));
+    };
+    let Instruction::PushBytes(hash_b) = instrs.next().unwrap()? else {
+        return Err(ContractError::Protocol("Invalid script!"));
+    };
+
+    Ok(Hash160::from_slice(hash_b.as_bytes())?)
 }
 
 /// Check that all the contract redeemscripts involve the same hashvalue.
