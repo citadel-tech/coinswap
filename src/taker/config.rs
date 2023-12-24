@@ -48,15 +48,12 @@ impl TakerConfig {
             if path.exists() {
                 parse_toml(path)?
             } else {
-                let default_taker_config_path = get_config_dir().join("taker.toml");
-                if !default_taker_config_path.exists() {
-                    create_default_taker_dirs(&default_taker_config_path);
-                }
                 log::warn!(
-                    "Taker config file not found at path : {}, using default config",
+                    "Taker config file not found, creating default config file at path: {}",
                     path.display()
                 );
-                parse_toml(&default_taker_config_path)?
+                create_default_taker_dirs(&path);
+                parse_toml(&path)?
             }
         } else {
             let default_path = PathBuf::from("taker.toml");
@@ -68,7 +65,7 @@ impl TakerConfig {
                     create_default_taker_dirs(&default_taker_config_path);
                 }
                 log::warn!(
-                    "Taker config file not found in default path: {}, using default config",
+                    "Taker config file not found, creating a default config file at path: {}",
                     default_path.display()
                 );
                 parse_toml(&default_taker_config_path)?
@@ -132,7 +129,7 @@ impl TakerConfig {
     }
 }
 
-fn create_default_taker_dirs(default_taker_config_path: &PathBuf) {
+fn create_default_taker_dirs(target_path: &PathBuf) {
     let config_string = String::from(
         "\
                         [taker_config]\n\
@@ -148,11 +145,13 @@ fn create_default_taker_dirs(default_taker_config_path: &PathBuf) {
                         reconnect_attempt_timeout_sec = 300\n\
                         ",
     );
-    write_default_config(default_taker_config_path, config_string).unwrap();
+    write_default_config(target_path, config_string).unwrap();
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::utill::get_home_dir;
+
     use super::*;
     use std::{
         fs::{self, File},
@@ -242,7 +241,9 @@ mod tests {
 
     #[test]
     fn test_missing_file() {
-        let config = TakerConfig::new(Some(&PathBuf::from("take.toml"))).unwrap();
+        let config_path = get_home_dir().join("taker.toml");
+        let config = TakerConfig::new(Some(&config_path)).unwrap();
+        remove_temp_config(&config_path);
         assert_eq!(config, TakerConfig::default());
     }
 }

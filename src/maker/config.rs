@@ -61,15 +61,12 @@ impl MakerConfig {
             if path.exists() {
                 parse_toml(path)?
             } else {
-                let default_maker_config_path = get_config_dir().join("maker.toml");
-                if !default_maker_config_path.exists() {
-                    create_default_maker_dirs(&default_maker_config_path);
-                }
+                create_default_maker_dirs(&path);
                 log::warn!(
-                    "Maker config file not found at path : {}, using default config",
+                    "Maker config file not found, creating a default file at path : {}, ",
                     path.display()
                 );
-                parse_toml(&default_maker_config_path)?
+                parse_toml(&path)?
             }
         } else {
             let default_path = PathBuf::from("maker.toml");
@@ -81,7 +78,7 @@ impl MakerConfig {
                     create_default_maker_dirs(&default_maker_config_path);
                 }
                 log::warn!(
-                    "Maker config file not found in default path: {}, using default config",
+                    "Maker config file not found, creating a default file at path: {}",
                     default_path.display()
                 );
                 parse_toml(&default_maker_config_path)?
@@ -151,7 +148,7 @@ impl MakerConfig {
     }
 }
 
-fn create_default_maker_dirs(default_maker_config_path: &PathBuf) {
+fn create_default_maker_dirs(target_path: &PathBuf) {
     let config_string = String::from(
         "\
             [maker_config]\n\
@@ -169,11 +166,13 @@ fn create_default_maker_dirs(default_maker_config_path: &PathBuf) {
             min_size = 10000\n",
     );
 
-    write_default_config(default_maker_config_path, config_string).unwrap();
+    write_default_config(target_path, config_string).unwrap();
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::utill::get_home_dir;
+
     use super::*;
     use std::{
         fs::{self, File},
@@ -252,7 +251,9 @@ mod tests {
 
     #[test]
     fn test_missing_file() {
-        let config = MakerConfig::new(Some(&PathBuf::from("make.toml"))).unwrap();
+        let config_path = get_home_dir().join("maker.toml");
+        let config = MakerConfig::new(Some(&config_path)).unwrap();
+        remove_temp_config(&config_path);
         assert_eq!(config, MakerConfig::default());
     }
 }
