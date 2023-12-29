@@ -5,7 +5,7 @@
 
 use std::{io, path::PathBuf};
 
-use crate::utill::{parse_field, parse_toml};
+use crate::utill::{get_config_dir, parse_field, parse_toml, write_default_config};
 /// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
@@ -41,23 +41,35 @@ impl Default for TakerConfig {
 }
 
 impl TakerConfig {
-
-    /// Constructs a `TakerConfig` from a specified TOML file or the default path.
-    pub fn new(file_path: Option<&PathBuf>) -> io::Result<Self> {
+    /// Constructs a [TakerConfig] from a specified data directory. Or create default configs and load them.
+    ///
+    /// The maker(/taker).toml file should exist at the provided data-dir location.
+    /// Or else, a new default-config will be loaded and created at given data-dir location.
+    /// If no data-dir is provided, a default config will be created at default data-dir location.
+    ///
+    /// For reference of default config checkout `./taker.toml` in repo folder.
+    ///
+    /// Default data-dir for linux: `~/.coinswap/`
+    /// Default config locations: `~/.coinswap/configs/taker.toml`.
+    pub fn new(config_path: Option<&PathBuf>) -> io::Result<Self> {
         let default_config = Self::default();
 
-        let default_file_path = get_config_dir().join("taker.toml");
-        let file_path = file_path.unwrap_or_else(|| &default_file_path);
+        let default_config_path = get_config_dir().join("taker.toml");
+        let config_path = config_path.unwrap_or(&default_config_path);
 
-        if !file_path.exists() {
-            create_default_taker_dirs(&file_path);
+        if !config_path.exists() {
+            write_default_taker_config(config_path);
             log::warn!(
                 "Taker config file not found, creating default config file at path: {}",
-                file_path.display()
+                config_path.display()
             );
         }
 
-        let section = parse_toml(file_path)?;
+        let section = parse_toml(config_path)?;
+        log::info!(
+            "Successfully loaded config file from : {}",
+            config_path.display()
+        );
 
         let taker_config_section = section.get("taker_config").cloned().unwrap_or_default();
 
@@ -116,7 +128,7 @@ impl TakerConfig {
     }
 }
 
-fn create_default_taker_dirs(target_path: &PathBuf) {
+fn write_default_taker_config(config_path: &PathBuf) {
     let config_string = String::from(
         "\
                         [taker_config]\n\
@@ -132,7 +144,7 @@ fn create_default_taker_dirs(target_path: &PathBuf) {
                         reconnect_attempt_timeout_sec = 300\n\
                         ",
     );
-    write_default_config(target_path, config_string).unwrap();
+    write_default_config(config_path, config_string).unwrap();
 }
 
 #[cfg(test)]
