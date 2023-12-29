@@ -41,36 +41,23 @@ impl Default for TakerConfig {
 }
 
 impl TakerConfig {
+
+    /// Constructs a `TakerConfig` from a specified TOML file or the default path.
     pub fn new(file_path: Option<&PathBuf>) -> io::Result<Self> {
         let default_config = Self::default();
 
-        let section = if let Some(path) = file_path {
-            if path.exists() {
-                parse_toml(path)?
-            } else {
-                log::warn!(
-                    "Taker config file not found, creating default config file at path: {}",
-                    path.display()
-                );
-                create_default_taker_dirs(&path);
-                parse_toml(&path)?
-            }
-        } else {
-            let default_path = PathBuf::from("taker.toml");
-            if default_path.exists() {
-                parse_toml(&default_path)?
-            } else {
-                let default_taker_config_path = get_config_dir().join("taker.toml");
-                if !default_taker_config_path.exists() {
-                    create_default_taker_dirs(&default_taker_config_path);
-                }
-                log::warn!(
-                    "Taker config file not found, creating a default config file at path: {}",
-                    default_path.display()
-                );
-                parse_toml(&default_taker_config_path)?
-            }
-        };
+        let default_file_path = get_config_dir().join("taker.toml");
+        let file_path = file_path.unwrap_or_else(|| &default_file_path);
+
+        if !file_path.exists() {
+            create_default_taker_dirs(&file_path);
+            log::warn!(
+                "Taker config file not found, creating default config file at path: {}",
+                file_path.display()
+            );
+        }
+
+        let section = parse_toml(file_path)?;
 
         let taker_config_section = section.get("taker_config").cloned().unwrap_or_default();
 

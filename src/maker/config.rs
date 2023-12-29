@@ -53,37 +53,23 @@ impl Default for MakerConfig {
 }
 
 impl MakerConfig {
-    /// new a default configuration with given port and address
+    
+    /// Constructs a `MakerConfig` from a specified TOML file or the default path.
     pub fn new(file_path: Option<&PathBuf>) -> io::Result<Self> {
         let default_config = Self::default();
 
-        let section = if let Some(path) = file_path {
-            if path.exists() {
-                parse_toml(path)?
-            } else {
-                create_default_maker_dirs(&path);
-                log::warn!(
-                    "Maker config file not found, creating a default file at path : {}, ",
-                    path.display()
-                );
-                parse_toml(&path)?
-            }
-        } else {
-            let default_path = PathBuf::from("maker.toml");
-            if default_path.exists() {
-                parse_toml(&default_path)?
-            } else {
-                let default_maker_config_path = get_config_dir().join("maker.toml");
-                if !default_maker_config_path.exists() {
-                    create_default_maker_dirs(&default_maker_config_path);
-                }
-                log::warn!(
-                    "Maker config file not found, creating a default file at path: {}",
-                    default_path.display()
-                );
-                parse_toml(&default_maker_config_path)?
-            }
-        };
+        let default_file_path = get_config_dir().join("maker.toml");
+        let file_path = file_path.unwrap_or_else(|| &default_file_path);
+        
+        if !file_path.exists() {
+            create_default_maker_dirs(&file_path);
+            log::warn!(
+                "Maker config file not found, creating default config file at path: {}",
+                file_path.display()
+            );
+        }
+
+        let section = parse_toml(file_path)?;
 
         let maker_config_section = section.get("maker_config").cloned().unwrap_or_default();
 
