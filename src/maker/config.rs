@@ -1,8 +1,8 @@
 //! Maker Configuration. Controlling various behaviors.
 
-use std::{collections::HashMap, io, path::PathBuf};
+use std::{io, path::PathBuf};
 
-use crate::utill::{parse_field, parse_toml};
+use crate::utill::{get_config_dir, parse_field, parse_toml, write_default_config};
 
 /// Maker Configuration, controlling various maker behavior.
 #[derive(Debug, Clone, PartialEq)]
@@ -53,32 +53,35 @@ impl Default for MakerConfig {
 }
 
 impl MakerConfig {
-    /// new a default configuration with given port and address
-    pub fn new(file_path: Option<&PathBuf>) -> io::Result<Self> {
+    /// Constructs a [MakerConfig] from a specified data directory. Or create default configs and load them.
+    ///
+    /// The maker(/taker).toml file should exist at the provided data-dir location.
+    /// Or else, a new default-config will be loaded and created at given data-dir location.
+    /// If no data-dir is provided, a default config will be created at default data-dir location.
+    ///
+    /// For reference of default config checkout `./maker.toml` in repo folder.
+    ///
+    /// Default data-dir for linux: `~/.coinswap/`
+    /// Default config locations: `~/.coinswap/configs/maker.toml`.
+    pub fn new(config_path: Option<&PathBuf>) -> io::Result<Self> {
         let default_config = Self::default();
 
-        let section = if let Some(path) = file_path {
-            if path.exists() {
-                parse_toml(path)?
-            } else {
-                log::warn!(
-                    "Maker config file not found at path : {}, using default config",
-                    path.display()
-                );
-                HashMap::new()
-            }
-        } else {
-            let default_path = PathBuf::from("maker.toml");
-            if default_path.exists() {
-                parse_toml(&default_path)?
-            } else {
-                log::warn!(
-                    "Maker config file not found in default path: {}, using default config",
-                    default_path.display()
-                );
-                HashMap::new()
-            }
-        };
+        let default_config_path = get_config_dir().join("maker.toml");
+        let config_path = config_path.unwrap_or(&default_config_path);
+
+        if !config_path.exists() {
+            write_default_maker_config(config_path);
+            log::warn!(
+                "Maker config file not found, creating default config file at path: {}",
+                config_path.display()
+            );
+        }
+
+        let section = parse_toml(config_path)?;
+        log::info!(
+            "Successfully loaded config file from : {}",
+            config_path.display()
+        );
 
         let maker_config_section = section.get("maker_config").cloned().unwrap_or_default();
 
@@ -143,8 +146,31 @@ impl MakerConfig {
     }
 }
 
+fn write_default_maker_config(config_path: &PathBuf) {
+    let config_string = String::from(
+        "\
+            [maker_config]\n\
+            port = 6102\n\
+            heart_beat_interval_secs = 3\n\
+            rpc_ping_interval_secs = 60\n\
+            directory_servers_refresh_interval_secs = 43200\n\
+            idle_connection_timeout = 300\n\
+            onion_addrs = myhiddenserviceaddress.onion\n\
+            absolute_fee_sats = 1000\n\
+            amount_relative_fee_ppb = 10000000\n\
+            time_relative_fee_ppb = 100000\n\
+            required_confirms = 1\n\
+            min_contract_reaction_time = 48\n\
+            min_size = 10000\n",
+    );
+
+    write_default_config(config_path, config_string).unwrap();
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::utill::get_home_dir;
+
     use super::*;
     use std::{
         fs::{self, File},
@@ -223,7 +249,9 @@ mod tests {
 
     #[test]
     fn test_missing_file() {
-        let config = MakerConfig::new(Some(&PathBuf::from("make.toml"))).unwrap();
+        let config_path = get_home_dir().join("maker.toml");
+        let config = MakerConfig::new(Some(&config_path)).unwrap();
+        remove_temp_config(&config_path);
         assert_eq!(config, MakerConfig::default());
     }
 }

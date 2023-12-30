@@ -15,8 +15,8 @@ use bitcoin::{
 
 use std::{
     collections::HashMap,
-    fs::File,
-    io::{self, BufRead},
+    fs::{self, File},
+    io::{self, BufRead, Write},
 };
 
 use serde_json::Value;
@@ -269,6 +269,17 @@ pub fn parse_field<T: std::str::FromStr>(value: Option<&String>, default: T) -> 
             .map_err(|_e| io::Error::new(ErrorKind::InvalidData, "parsing failed")),
         None => Ok(default),
     }
+}
+
+/// Function to write data to default toml files
+pub fn write_default_config(path: &PathBuf, toml_data: String) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = File::create(path)?;
+    file.write_all(toml_data.as_bytes())?;
+    file.flush()?;
+    Ok(())
 }
 
 #[cfg(test)]
