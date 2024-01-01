@@ -9,6 +9,7 @@ pub enum NetError {
     Json(serde_json::Error),
     ReachedEOF,
     ConnectionTimedOut,
+    Cbor(serde_cbor::Error),
 }
 
 impl From<std::io::Error> for NetError {
@@ -20,6 +21,12 @@ impl From<std::io::Error> for NetError {
 impl From<serde_json::Error> for NetError {
     fn from(value: serde_json::Error) -> Self {
         Self::Json(value)
+    }
+}
+
+impl From<serde_cbor::Error> for NetError {
+    fn from(value: serde_cbor::Error) -> Self {
+        Self::Cbor(value)
     }
 }
 

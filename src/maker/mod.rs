@@ -1,8 +1,8 @@
 //! Defines a Coinswap Maker Server.
 //!
 //! Handles connections, communication with takers, various aspects of the
-//! Maker's behavior, includes functionalities such as checking for new connections,
-//! handling messages from takers, refreshing offer caches, and interacting with the Bitcoin node.
+//! Maker's behavior, includes functionalities such as checking for new connections, handling messages from takers,
+//! refreshing offer caches, and interacting with the Bitcoin node.
 
 pub mod api;
 pub mod config;
@@ -40,8 +40,9 @@ use crate::{
 
 use crate::maker::error::MakerError;
 
-/// Initializes and starts the Maker server, handling connections and various
+/// This function initializes and starts the Maker server, handling connections and various
 /// aspects of the Maker's behavior.
+
 #[tokio::main]
 pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::debug!("Running maker with special behavior = {:?}", maker.behavior);
@@ -213,7 +214,8 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 };
 
                 line = line.trim_end().to_string();
-                let message: TakerToMakerMessage = serde_json::from_str(&line).unwrap();
+                let message: TakerToMakerMessage =
+                    serde_cbor::from_slice(&line.as_bytes()).unwrap();
                 log::info!("[{}] <=== {} ", maker_clone.config.port, message);
 
                 let message_result: Result<Option<MakerToTakerMessage>, MakerError> =
@@ -224,6 +226,10 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                         if let Some(message) = reply {
                             log::info!("[{}] ===> {} ", maker_clone.config.port, message);
                             log::debug!("{:#?}", message);
+
+                            // let cbor_bytes = serde_cbor::to_vec(&message)?;
+                            // send_message(&mut socket_writer, &cbor_bytes).await?;
+                            
                             if let Err(e) = send_message(&mut socket_writer, &message).await {
                                 log::error!("closing due to io error sending message: {:?}", e);
                                 break;
