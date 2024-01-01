@@ -8,21 +8,22 @@
 
   <p>
     <!--
-    <a href="https://crates.io/crates/bitcoin"><img alt="Crate Info" src="https://img.shields.io/crates/v/bitcoin.svg"/></a>
+    <a href="https://crates.io/crates/coinswap"><img alt="Crate Info" src="https://img.shields.io/crates/v/coinswap.svg"/></a>
+    <a href="https://docs.rs/coinswap"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-coinswap-green"/></a>
     -->
-      <a href="https://github.com/utxo-teleport/teleport-transactions/blob/master/LICENSE.md"><img alt="CC0 1.0 Universal Licensed" src="https://img.shields.io/badge/license-CC0--1.0-blue.svg"/></a>
-      <a href="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/build.yaml"><img alt="CI Status" src="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/build.yaml/badge.svg"></a>
-      <a href="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/lint.yaml"><img alt="CI Status" src="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/lint.yaml/badge.svg"></a>
-      <a href="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/test.yaml"><img alt="CI Status" src="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/test.yaml/badge.svg"></a>
-    <!--
-    <a href="https://docs.rs/bitcoin"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-bitcoin-green"/></a>
-    -->
+    <a href="https://github.com/utxo-teleport/teleport-transactions/blob/master/LICENSE.md"><img alt="CC0 1.0 Universal Licensed" src="https://img.shields.io/badge/license-CC0--1.0-blue.svg"/></a>
+    <a href="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/build.yaml"><img alt="CI Status" src="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/build.yaml/badge.svg"></a>
+    <a href="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/lint.yaml"><img alt="CI Status" src="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/lint.yaml/badge.svg"></a>
+    <a href="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/test.yaml"><img alt="CI Status" src="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/test.yaml/badge.svg"></a>
+    <a href="https://codecov.io/github/utxo-teleport/teleport-transactions?branch=master">
+    <img alt="Coverage" src="https://codecov.io/github/utxo-teleport/teleport-transactions/coverage.svg?branch=master">
+    </a>
     <a href="https://blog.rust-lang.org/2023/12/28/Rust-1.75.0.html"><img alt="Rustc Version 1.75.0+" src="https://img.shields.io/badge/rustc-1.75.0%2B-lightgrey.svg"/></a>
   </p>
 </div>
 
 > [!WARNING]
-> This library is currently in beta development and at an experimental stage. There are known and unknown bugs. Mainnet use is strictly not recommended.
+> This library is currently under beta development and at an experimental stage. There are known and unknown bugs. Mainnet use is strictly not recommended.
 
 
 ## Table of Contents
