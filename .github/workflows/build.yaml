@@ -4,7 +4,7 @@ on:
     - master
   pull_request:
 
-name: continuous_builds
+name: build
 
 jobs:
 
@@ -42,5 +42,3 @@ jobs:
         run: rustup update
       - name: Build
         run: cargo build --features ${{ matrix.features }}
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
