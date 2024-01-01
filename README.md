@@ -21,8 +21,15 @@
   </p>
 </div>
 
+## Experimental Warning
+
+> [!WARNING]
+> This library is currently in beta development and at an experimental stage. There are known and unknown bugs. Mainnet use is strictly not recommended.
+
+
 ## Table of Contents
 
+- [Experimental Warning](#experimental-warning)
 - [Table of Contents](#table-of-contents)
 - [About](#about)
 - [Architecture](#architecture)
