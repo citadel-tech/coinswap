@@ -36,8 +36,6 @@ jobs:
         run: rustup default ${{ matrix.rust }}
       - name: Set profile
         run: rustup set profile minimal
-      - name: Add clippy
-        run: rustup component add clippy
       - name: Update toolchain
         run: rustup update
       - name: Build

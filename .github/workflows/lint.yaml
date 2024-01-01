@@ -20,6 +20,8 @@ jobs:
         run: rustup set profile minimal
       - name: Add rustfmt
         run: rustup component add rustfmt
+      - name: Add clippy
+        run: rustup component add clippy
       - name: Update toolchain
         run: rustup update
       - name: Check fmt
