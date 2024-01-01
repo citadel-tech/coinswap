@@ -21,7 +21,7 @@ jobs:
           - integration-test
     steps:
       - name: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Generate cache key
         run: echo "${{ matrix.rust }} ${{ matrix.features }}" | tee .cache_key
       - name: cache

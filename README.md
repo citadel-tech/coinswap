@@ -1,17 +1,37 @@
-# Teleport Transactions - Technical Readme
+<div align="center">
+
+<h1><img alt="/logo" src="./assets/logo.png" width="25" />Teleport Transactions</h1>
+
+  <p>
+    A Taker library with minimal API for performing coinswaps. A Maker binary with minimal config to deploy swap-service demons.
+  </p>
+
+  <p>
+    <!--
+    <a href="https://crates.io/crates/bitcoin"><img alt="Crate Info" src="https://img.shields.io/crates/v/bitcoin.svg"/></a>
+    -->
+      <a href="https://github.com/utxo-teleport/teleport-transactions/blob/master/LICENSE.md"><img alt="CC0 1.0 Universal Licensed" src="https://img.shields.io/badge/license-CC0--1.0-blue.svg"/></a>
+      <a href="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/build.yaml"><img alt="CI Status" src="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/build.yaml/badge.svg"></a>
+      <a href="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/lint.yaml"><img alt="CI Status" src="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/lint.yaml/badge.svg"></a>
+      <a href="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/test.yaml"><img alt="CI Status" src="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/test.yaml/badge.svg"></a>
+    <!--
+    <a href="https://docs.rs/bitcoin"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-bitcoin-green"/></a>
+    -->
+    <a href="https://blog.rust-lang.org/2023/12/28/Rust-1.75.0.html"><img alt="Rustc Version 1.75.0+" src="https://img.shields.io/badge/rustc-1.75.0%2B-lightgrey.svg"/></a>
+  </p>
+</div>
 
 ## Table of Contents
 
-- [Teleport Transactions - Technical Readme](#teleport-transactions---technical-readme)
-  - [Table of Contents](#table-of-contents)
-  - [About](#about)
-  - [Architecture](#architecture)
-  - [Build and Run](#build-and-run)
-  - [Project Status](#project-status)
-  - [Roadmap](#roadmap)
-    - [V 0.1.0](#v-010)
-    - [V 0.1.\*](#v-01)
-  - [Community](#community)
+- [Table of Contents](#table-of-contents)
+- [About](#about)
+- [Architecture](#architecture)
+- [Build and Run](#build-and-run)
+- [Project Status](#project-status)
+- [Roadmap](#roadmap)
+  - [V 0.1.0](#v-010)
+  - [V 0.1.\*](#v-01)
+- [Community](#community)
 
 ## About
 
