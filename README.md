@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1><img alt="/logo" src="./assets/logo.png" width="25" />Teleport Transactions</h1>
+<h1><img alt="/logo" src="https://raw.githubusercontent.com/utxo-teleport/teleport-transactions/master/assets/logo.png" width="25" />Teleport Transactions</h1>
 
   <p>
     A Taker library with minimal API for performing coinswaps. A Maker binary with minimal config to deploy swap-service demons.
