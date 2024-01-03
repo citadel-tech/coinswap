@@ -1,12 +1,12 @@
 <div align="center">
 
-<h1><img alt="/logo" src="https://raw.githubusercontent.com/utxo-teleport/teleport-transactions/master/assets/logo.png" width="25" />Teleport Transactions</h1>
+<h1><img alt="/logo" src="https://raw.githubusercontent.com/utxo-teleport/teleport-transactions/master/assets/logo.png" width="25" style="margin:-4px 4px" />Teleport Transactions</h1>
 
-  <p>
+<p>
     A Taker library with minimal API for performing coinswaps. A Maker binary with minimal config to deploy swap-service demons.
   </p>
 
-  <p>
+<p>
     <!--
     <a href="https://crates.io/crates/coinswap"><img alt="Crate Info" src="https://img.shields.io/crates/v/coinswap.svg"/></a>
     <a href="https://docs.rs/coinswap"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-coinswap-green"/></a>
@@ -24,7 +24,6 @@
 
 > \[!WARNING\]
 > This library is currently under beta development and at an experimental stage. There are known and unknown bugs. Mainnet use is strictly not recommended.
-
 
 ## Table of Contents
 
@@ -64,16 +63,18 @@ src/
 ├─ watchtower/
 tests/
 ```
-| Module | Function |
-| :---: | --- |
-| **`taker`** | Contains Taker-related behaviors, with core logic in `src/taker/api.rs`. Takers manage most protocol logic, while Makers play a relatively passive role.|
-| **`maker`** | Encompasses Maker-specific logic. |
-| **`wallet`** | Manages wallet-related operations, including storage and blockchain interaction. |
-| **`market`** | Handles market-related logic, where Makers post their offers. |
-| **`watchtower`** | Provides a Taker-offloadable watchtower implementation for monitoring contract transactions. |
-| **`scripts`** | Offers simple scripts to utilize library APIs in the `teleport` app. |
-| **`bin`** | Houses deployed project binaries. |
-| **`protocol`** | Contains utility functions, error handling, and messages for protocol communication. |
+
+
+|      Module      | Function                                                                                                                                                |
+| :----------------: | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|   **`taker`**   | Contains Taker-related behaviors, with core logic in`src/taker/api.rs`. Takers manage most protocol logic, while Makers play a relatively passive role. |
+|   **`maker`**   | Encompasses Maker-specific logic.                                                                                                                       |
+|   **`wallet`**   | Manages wallet-related operations, including storage and blockchain interaction.                                                                        |
+|   **`market`**   | Handles market-related logic, where Makers post their offers.                                                                                           |
+| **`watchtower`** | Provides a Taker-offloadable watchtower implementation for monitoring contract transactions.                                                            |
+|  **`scripts`**  | Offers simple scripts to utilize library APIs in the`teleport` app.                                                                                     |
+|    **`bin`**    | Houses deployed project binaries.                                                                                                                       |
+|  **`protocol`**  | Contains utility functions, error handling, and messages for protocol communication.                                                                    |
 
 ## Build and Run
 
@@ -129,7 +130,7 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [X] Malice 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
 - [X] Malice 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
 - [X] Fix all clippy warnings.
-- [x] Implement configuration file i/o support for Takers and Makers.
+- [X] Implement configuration file i/o support for Takers and Makers.
 - [ ] Complete all unit tests in modules.
 - [ ] Achieve >80% crate level test coverage ratio (including integration tests).
 - [ ] Clean up and integrate fidelity bonds with maker banning.
