@@ -22,7 +22,7 @@
   </p>
 </div>
 
-> [!WARNING]
+> \[!WARNING\]
 > This library is currently under beta development and at an experimental stage. There are known and unknown bugs. Mainnet use is strictly not recommended.
 
 
