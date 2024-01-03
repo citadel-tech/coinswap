@@ -63,18 +63,16 @@ src/
 ├─ watchtower/
 tests/
 ```
-
-
-|      Module      | Function                                                                                                                                                |
-| :----------------: | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-|   **`taker`**   | Contains Taker-related behaviors, with core logic in`src/taker/api.rs`. Takers manage most protocol logic, while Makers play a relatively passive role. |
-|   **`maker`**   | Encompasses Maker-specific logic.                                                                                                                       |
-|   **`wallet`**   | Manages wallet-related operations, including storage and blockchain interaction.                                                                        |
-|   **`market`**   | Handles market-related logic, where Makers post their offers.                                                                                           |
-| **`watchtower`** | Provides a Taker-offloadable watchtower implementation for monitoring contract transactions.                                                            |
-|  **`scripts`**  | Offers simple scripts to utilize library APIs in the`teleport` app.                                                                                     |
-|    **`bin`**    | Houses deployed project binaries.                                                                                                                       |
-|  **`protocol`**  | Contains utility functions, error handling, and messages for protocol communication.                                                                    |
+| Module | Function |
+| :---: | --- |
+| **`taker`** | Contains Taker-related behaviors, with core logic in `src/taker/api.rs`. Takers manage most protocol logic, while Makers play a relatively passive role.|
+| **`maker`** | Encompasses Maker-specific logic. |
+| **`wallet`** | Manages wallet-related operations, including storage and blockchain interaction. |
+| **`market`** | Handles market-related logic, where Makers post their offers. |
+| **`watchtower`** | Provides a Taker-offloadable watchtower implementation for monitoring contract transactions. |
+| **`scripts`** | Offers simple scripts to utilize library APIs in the `teleport` app. |
+| **`bin`** | Houses deployed project binaries. |
+| **`protocol`** | Contains utility functions, error handling, and messages for protocol communication. |
 
 ## Build and Run
 
@@ -130,7 +128,7 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [X] Malice 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
 - [X] Malice 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
 - [X] Fix all clippy warnings.
-- [X] Implement configuration file i/o support for Takers and Makers.
+- [x] Implement configuration file i/o support for Takers and Makers.
 - [ ] Complete all unit tests in modules.
 - [ ] Achieve >80% crate level test coverage ratio (including integration tests).
 - [ ] Clean up and integrate fidelity bonds with maker banning.
