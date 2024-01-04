@@ -65,7 +65,7 @@ tests/
 ```
 | Directory           | Description |
 |---------------------|-------------|
-| **`doc`**           | Contains all the project-related docs. The [dev-book](/docs/dev-book.md) includes major developer salient points. The [demo doc](/docs/demo.md) describes how to run the `teleport` binary and perform a swap in regtest.|
+| **`doc`**           | Contains all the project-related docs. The [dev-book](https://github.com/utxo-teleport/teleport-transactions/blob/master/docs/dev-book.md) includes major developer salient points. The [demo doc](https://github.com/utxo-teleport/teleport-transactions/blob/master/docs/demo.md) describes how to run the `teleport` binary and perform a swap in regtest.|
 | **`tests`**         | Contains integration tests. Describes behavior of various abort/malice cases.|
 | **`src/taker`**     | Contains Taker-related behaviors, with core logic in `src/taker/api.rs`. Takers manage most protocol logic, while Makers play a relatively passive role.|
 | **`src/maker`**     | Encompasses Maker-specific logic. |
