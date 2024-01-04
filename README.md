@@ -63,16 +63,19 @@ src/
 ├─ watchtower/
 tests/
 ```
-| Module | Function |
-| :---: | --- |
-| **`taker`** | Contains Taker-related behaviors, with core logic in `src/taker/api.rs`. Takers manage most protocol logic, while Makers play a relatively passive role.|
-| **`maker`** | Encompasses Maker-specific logic. |
-| **`wallet`** | Manages wallet-related operations, including storage and blockchain interaction. |
-| **`market`** | Handles market-related logic, where Makers post their offers. |
-| **`watchtower`** | Provides a Taker-offloadable watchtower implementation for monitoring contract transactions. |
-| **`scripts`** | Offers simple scripts to utilize library APIs in the `teleport` app. |
-| **`bin`** | Houses deployed project binaries. |
-| **`protocol`** | Contains utility functions, error handling, and messages for protocol communication. |
+| Directory           | Description |
+|---------------------|-------------|
+| **`doc`**           | Contains all the project-related docs. The [dev-book](/docs/dev-book.md) includes major developer salient points. The [demo doc](/docs/demo.md) describes how to run the `teleport` binary and perform a swap in regtest.|
+| **`tests`**         | Contains integration tests. Describes behavior of various abort/malice cases.|
+| **`src/taker`**     | Contains Taker-related behaviors, with core logic in `src/taker/api.rs`. Takers manage most protocol logic, while Makers play a relatively passive role.|
+| **`src/maker`**     | Encompasses Maker-specific logic. |
+| **`src/wallet`**    | Manages wallet-related operations, including storage and blockchain interaction. |
+| **`src/market`**    | Handles market-related logic, where Makers post their offers. |
+| **`src/watchtower`**| Provides a Taker-offloadable watchtower implementation for monitoring contract transactions. |
+| **`src/scripts`**   | Offers simple scripts to utilize library APIs in the `teleport` app. |
+| **`src/bin`**       | Houses deployed project binaries. |
+| **`src/protocol`**  | Contains utility functions, error handling, and messages for protocol communication. |
+
 
 ## Build and Run
 
