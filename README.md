@@ -1,12 +1,12 @@
 <div align="center">
 
-<h1><img alt="/logo" src="./assets/logo.png" width="25" />Teleport Transactions</h1>
+<h1><img alt="/logo" src="https://raw.githubusercontent.com/utxo-teleport/teleport-transactions/master/assets/logo.png" width="25" style="margin:-4px 4px" />Teleport Transactions</h1>
 
-  <p>
+<p>
     A Taker library with minimal API for performing coinswaps. A Maker binary with minimal config to deploy swap-service demons.
   </p>
 
-  <p>
+<p>
     <!--
     <a href="https://crates.io/crates/coinswap"><img alt="Crate Info" src="https://img.shields.io/crates/v/coinswap.svg"/></a>
     <a href="https://docs.rs/coinswap"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-coinswap-green"/></a>
@@ -22,9 +22,8 @@
   </p>
 </div>
 
-> [!WARNING]
+> \[!WARNING\]
 > This library is currently under beta development and at an experimental stage. There are known and unknown bugs. Mainnet use is strictly not recommended.
-
 
 ## Table of Contents
 
