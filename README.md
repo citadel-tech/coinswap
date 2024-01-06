@@ -161,7 +161,7 @@ Few directions for new contributors:
 
 - The list of [issues](https://github.com/utxo-teleport/teleport-transactions/issues) are good place to look for contributable tasks and open problems.
 
-- Issues marked with [`good first issue`](https://github.com/utxo-teleport/teleport-transactions/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) are good places to get started for newbie rust/bitcoin devs.
+- Issues marked with [`good first issue`](https://github.com/utxo-teleport/teleport-transactions/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) are good places to get started for newbie Rust/Bitcoin devs.
 
 - The [docs](https://github.com/utxo-teleport/teleport-transactions/tree/master/docs) are a good place to start reading up on the protocol.
 
@@ -171,7 +171,7 @@ Few directions for new contributors:
 
 ## Community
 
-The dev community lurks in a small corner of Disord [here](https://discord.gg/TSSAB3g4Zf) (say holla, if you drop there from this readme).
+The dev community lurks in a small corner of Discord [here](https://discord.gg/TSSAB3g4Zf) (say holla, if you drop there from this readme).
 
 Dev discussions predominantly happen via FOSS best practices, and by using Github as the Community Forum.
 
