@@ -1,12 +1,12 @@
 <div align="center">
 
-<h1><img alt="/logo" src="./assets/logo.png" width="25" />Teleport Transactions</h1>
+<h1><img alt="/logo" src="https://raw.githubusercontent.com/utxo-teleport/teleport-transactions/master/assets/logo.png" width="25" style="margin:-4px 4px" />Teleport Transactions</h1>
 
-  <p>
+<p>
     A Taker library with minimal API for performing coinswaps. A Maker binary with minimal config to deploy swap-service demons.
   </p>
 
-  <p>
+<p>
     <!--
     <a href="https://crates.io/crates/coinswap"><img alt="Crate Info" src="https://img.shields.io/crates/v/coinswap.svg"/></a>
     <a href="https://docs.rs/coinswap"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-coinswap-green"/></a>
@@ -22,9 +22,8 @@
   </p>
 </div>
 
-> [!WARNING]
+> \[!WARNING\]
 > This library is currently under beta development and at an experimental stage. There are known and unknown bugs. Mainnet use is strictly not recommended.
-
 
 ## Table of Contents
 
@@ -64,16 +63,19 @@ src/
 ├─ watchtower/
 tests/
 ```
-| Module | Function |
-| :---: | --- |
-| **`taker`** | Contains Taker-related behaviors, with core logic in `src/taker/api.rs`. Takers manage most protocol logic, while Makers play a relatively passive role.|
-| **`maker`** | Encompasses Maker-specific logic. |
-| **`wallet`** | Manages wallet-related operations, including storage and blockchain interaction. |
-| **`market`** | Handles market-related logic, where Makers post their offers. |
-| **`watchtower`** | Provides a Taker-offloadable watchtower implementation for monitoring contract transactions. |
-| **`scripts`** | Offers simple scripts to utilize library APIs in the `teleport` app. |
-| **`bin`** | Houses deployed project binaries. |
-| **`protocol`** | Contains utility functions, error handling, and messages for protocol communication. |
+| Directory           | Description |
+|---------------------|-------------|
+| **`doc`**           | Contains all the project-related docs. The [dev-book](https://github.com/utxo-teleport/teleport-transactions/blob/master/docs/dev-book.md) includes major developer salient points. The [demo doc](https://github.com/utxo-teleport/teleport-transactions/blob/master/docs/demo.md) describes how to run the `teleport` binary and perform a swap in regtest.|
+| **`tests`**         | Contains integration tests. Describes behavior of various abort/malice cases.|
+| **`src/taker`**     | Contains Taker-related behaviors, with core logic in `src/taker/api.rs`. Takers manage most protocol logic, while Makers play a relatively passive role.|
+| **`src/maker`**     | Encompasses Maker-specific logic. |
+| **`src/wallet`**    | Manages wallet-related operations, including storage and blockchain interaction. |
+| **`src/market`**    | Handles market-related logic, where Makers post their offers. |
+| **`src/watchtower`**| Provides a Taker-offloadable watchtower implementation for monitoring contract transactions. |
+| **`src/scripts`**   | Offers simple scripts to utilize library APIs in the `teleport` app. |
+| **`src/bin`**       | Houses deployed project binaries. |
+| **`src/protocol`**  | Contains utility functions, error handling, and messages for protocol communication. |
+
 
 ## Build and Run
 
@@ -151,6 +153,26 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [ ] Optional: Payjoin integration via coinswap.
 - [ ] Implement customizable wallet data storage (SQLite, Postgres).
 
+# Contributing
+
+The project is under active development by a few motivated rusty bitcoin devs. Any contribution for features, tests, docs and other fixes/upgrades is encouraged and welcomed. The maintainers will use the PR thread to provide quick reviews and suggestions and are generally proactive at merging good contributions.
+
+Few directions for new contributors:
+
+- The list of [issues](https://github.com/utxo-teleport/teleport-transactions/issues) are good place to look for contributable tasks and open problems.
+
+- Issues marked with [`good first issue`](https://github.com/utxo-teleport/teleport-transactions/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) are good places to get started for newbie Rust/Bitcoin devs.
+
+- The [docs](https://github.com/utxo-teleport/teleport-transactions/tree/master/docs) are a good place to start reading up on the protocol.
+
+- Reviewing [open PRs](https://github.com/utxo-teleport/teleport-transactions/pulls) are a good place to start gathering a contextual understanding of the codebase.
+
+- Search for `TODO`s in the codebase to find in-line marked code todos and smaller improvements.
+
 ## Community
 
-* Join the IRC channel: `#coinswap` on Libera IRC network. Accessible via [webchat client](https://web.libera.chat/#coinswap) or through Tor on the [Hackint network](https://www.hackint.org/transport/tor) at `ncwkrwxpq2ikcngxq3dy2xctuheniggtqeibvgofixpzvrwpa77tozqd.onion:6667`. Logs are available [here](http://gnusha.org/coinswap/).
+The dev community lurks in a small corner of Discord [here](https://discord.gg/TSSAB3g4Zf) (say holla, if you drop there from this readme).
+
+Dev discussions predominantly happen via FOSS best practices, and by using Github as the Community Forum.
+
+The Issues, PRs and Discussions are where all the hard lifting happening.
