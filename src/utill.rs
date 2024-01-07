@@ -90,8 +90,7 @@ pub async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     message: &impl serde::Serialize,
 ) -> Result<(), NetError> {
-    let mut message_bytes = serde_cbor::to_vec(message).map_err(|err| NetError::Cbor(err))?;
-
+    let mut message_bytes = serde_json::to_vec(message).map_err(std::io::Error::from)?;
     message_bytes.push(b'\n');
     socket_writer.write_all(&message_bytes).await?;
     Ok(())
@@ -106,7 +105,7 @@ pub async fn read_message(
     if n == 0 {
         return Err(NetError::ReachedEOF);
     }
-    let message: MakerToTakerMessage = serde_cbor::from_slice(line.trim().as_bytes())?;
+    let message: MakerToTakerMessage = serde_json::from_str(&line)?;
     log::debug!("<== {:#?}", message);
     Ok(message)
 }
