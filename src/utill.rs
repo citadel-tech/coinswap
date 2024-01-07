@@ -21,7 +21,7 @@ use std::{
 
 use serde_json::Value;
 use tokio::{
-    io::{AsyncWriteExt, BufReader, AsyncReadExt},
+    io::{AsyncReadExt, AsyncWriteExt, BufReader},
     net::tcp::{ReadHalf, WriteHalf},
 };
 

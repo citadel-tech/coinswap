@@ -9,7 +9,7 @@ pub enum NetError {
     Json(serde_json::Error),
     ReachedEOF,
     ConnectionTimedOut,
-    Cbor(serde_cbor::Error)
+    Cbor(serde_cbor::Error),
 }
 
 impl From<std::io::Error> for NetError {

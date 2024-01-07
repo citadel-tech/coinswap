@@ -18,7 +18,7 @@ use std::{
 use bitcoin::Network;
 use bitcoind::bitcoincore_rpc::RpcApi;
 use tokio::{
-    io::{BufReader, AsyncReadExt},
+    io::{AsyncReadExt, BufReader},
     net::TcpListener,
     select,
     sync::mpsc,
@@ -191,7 +191,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             log::info!("[{}] ===> MakerHello", maker_clone.config.port);
 
             loop {
-                let mut line : Vec<u8> = Vec::new();
+                let mut line: Vec<u8> = Vec::new();
                 select! {
                     readline_ret = reader.read_to_end(&mut line) => {
                         match readline_ret {
