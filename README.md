@@ -153,6 +153,26 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [ ] Optional: Payjoin integration via coinswap.
 - [ ] Implement customizable wallet data storage (SQLite, Postgres).
 
+# Contributing
+
+The project is under active development by a few motivated rusty bitcoin devs. Any contribution for features, tests, docs and other fixes/upgrades is encouraged and welcomed. The maintainers will use the PR thread to provide quick reviews and suggestions and are generally proactive at merging good contributions.
+
+Few directions for new contributors:
+
+- The list of [issues](https://github.com/utxo-teleport/teleport-transactions/issues) are good place to look for contributable tasks and open problems.
+
+- Issues marked with [`good first issue`](https://github.com/utxo-teleport/teleport-transactions/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) are good places to get started for newbie Rust/Bitcoin devs.
+
+- The [docs](https://github.com/utxo-teleport/teleport-transactions/tree/master/docs) are a good place to start reading up on the protocol.
+
+- Reviewing [open PRs](https://github.com/utxo-teleport/teleport-transactions/pulls) are a good place to start gathering a contextual understanding of the codebase.
+
+- Search for `TODO`s in the codebase to find in-line marked code todos and smaller improvements.
+
 ## Community
 
-* Join the IRC channel: `#coinswap` on Libera IRC network. Accessible via [webchat client](https://web.libera.chat/#coinswap) or through Tor on the [Hackint network](https://www.hackint.org/transport/tor) at `ncwkrwxpq2ikcngxq3dy2xctuheniggtqeibvgofixpzvrwpa77tozqd.onion:6667`. Logs are available [here](http://gnusha.org/coinswap/).
+The dev community lurks in a small corner of Discord [here](https://discord.gg/TSSAB3g4Zf) (say holla, if you drop there from this readme).
+
+Dev discussions predominantly happen via FOSS best practices, and by using Github as the Community Forum.
+
+The Issues, PRs and Discussions are where all the hard lifting happening.
