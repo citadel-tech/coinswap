@@ -18,7 +18,7 @@ use std::{
 use bitcoin::Network;
 use bitcoind::bitcoincore_rpc::RpcApi;
 use tokio::{
-    io::{AsyncBufReadExt, BufReader},
+    io::{BufReader, AsyncReadExt},
     net::TcpListener,
     select,
     sync::mpsc,
@@ -191,9 +191,9 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             log::info!("[{}] ===> MakerHello", maker_clone.config.port);
 
             loop {
-                let mut line = String::new();
+                let mut line : Vec<u8> = Vec::new();
                 select! {
-                    readline_ret = reader.read_line(&mut line) => {
+                    readline_ret = reader.read_to_end(&mut line) => {
                         match readline_ret {
                             Ok(0) => {
                                 log::info!("[{}] Connection closed by peer", maker_clone.config.port);
@@ -212,8 +212,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                     },
                 };
 
-                line = line.trim_end().to_string();
-                let message: TakerToMakerMessage = serde_json::from_str(&line).unwrap();
+                let message: TakerToMakerMessage = serde_cbor::from_slice(&line).unwrap();
                 log::info!("[{}] <=== {} ", maker_clone.config.port, message);
 
                 let message_result: Result<Option<MakerToTakerMessage>, MakerError> =

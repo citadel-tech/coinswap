@@ -21,7 +21,7 @@ use std::{
 
 use serde_json::Value;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncWriteExt, BufReader, AsyncReadExt},
     net::tcp::{ReadHalf, WriteHalf},
 };
 
@@ -80,7 +80,7 @@ pub fn setup_logger() {
                 .default_filter_or("coinswap=info")
                 .default_write_style_or("always"),
         )
-        .is_test(true)
+        //.is_test(true)
         .init();
     });
 }
@@ -90,8 +90,7 @@ pub async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     message: &impl serde::Serialize,
 ) -> Result<(), NetError> {
-    let mut message_bytes = serde_json::to_vec(message).map_err(std::io::Error::from)?;
-    message_bytes.push(b'\n');
+    let message_bytes = serde_cbor::to_vec(message).map_err(NetError::Cbor)?;
     socket_writer.write_all(&message_bytes).await?;
     Ok(())
 }
@@ -100,12 +99,12 @@ pub async fn send_message(
 pub async fn read_message(
     reader: &mut BufReader<ReadHalf<'_>>,
 ) -> Result<MakerToTakerMessage, NetError> {
-    let mut line = String::new();
-    let n = reader.read_line(&mut line).await?;
+    let mut line: Vec<u8> = Vec::new();
+    let n = reader.read_to_end(&mut line).await?;
     if n == 0 {
         return Err(NetError::ReachedEOF);
     }
-    let message: MakerToTakerMessage = serde_json::from_str(&line)?;
+    let message: MakerToTakerMessage = serde_cbor::from_slice(&line)?;
     log::debug!("<== {:#?}", message);
     Ok(message)
 }
