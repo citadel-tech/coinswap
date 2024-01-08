@@ -18,12 +18,13 @@ use std::{
 use bitcoin::{absolute::LockTime, Amount, Network};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use tokio::{
-    io::{AsyncReadExt, BufReader},
-    net::{tcp::ReadHalf, TcpListener},
+    io::{AsyncBufReadExt, BufReader},
+    net::{TcpListener, TcpStream},
     select,
     sync::mpsc,
     time::sleep,
 };
+use tokio_socks::tcp::Socks5Stream;
 
 pub use api::{Maker, MakerBehavior};
 
@@ -48,6 +49,9 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     maker.wallet.write()?.refresh_offer_maxsize_cache()?;
 
     let network = maker.get_wallet().read()?.store.network;
+    log::info!("Network: {:?}", network);
+
+    let onion_addr = maker.config.onion_addrs.clone();
 
     if maker.wallet.read()?.store.network != Network::Regtest {
         if maker.config.onion_addrs == "myhiddenserviceaddress.onion:6102" {
@@ -137,7 +141,23 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             break Ok(());
         }
         let (mut socket, addr) = select! {
-            new_client = listener.accept() => new_client?,
+
+            new_client = listener.accept() => {
+                if onion_addr == "myhiddenserviceaddress.onion".to_string() {
+                    new_client?
+                } else {
+                    let (_,addr) = new_client?;
+                    let proxy_address = "socks5://127.0.0.1:9050";
+                    let proxy_stream = TcpStream::connect(proxy_address).await?;
+                    match Socks5Stream::connect_with_socket(proxy_stream,addr).await {
+                        Ok(proxy_socket) => (proxy_socket.into_inner(),addr),
+                        Err(e)=>{
+                            println!("{:?}",e);
+                            panic!("Something went wrong with proxy stuff")
+                        }
+                    }
+                }
+            },
             client_err = server_loop_comms_rx.recv() => {
                 //unwrap the option here because we'll never close the mscp so it will always work
                 match client_err.as_ref().unwrap() {

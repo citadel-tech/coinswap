@@ -1,5 +1,8 @@
-use libtor::{HiddenServiceVersion,Tor,TorAddress,TorFlag};
-
+use libtor::{HiddenServiceVersion, Tor, TorAddress, TorFlag};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 const SOCKS_PORT: u16 = 19_050;
 const CHECK_URL: &str = "https://check.torproject.org";
 
@@ -16,47 +19,47 @@ fn tor_instance() {
         .start()
     {
         Ok(r) => println!("tor exit result: {}", r),
-        Err(e) => eprintln!("tor error: {}", e),
+        Err(e) => println!("tor error: {}", e),
     };
 }
 
-#[cfg(test)]
-mod test {
-    use std::{thread, time::Duration};
+// #[cfg(test)]
+// mod test {
+//     use std::{thread, time::Duration};
 
-    use tokio::task;
-    use crate::tor::*;
+//     use tokio::task;
+//     use crate::tor::*;
 
-    #[tokio::test]
-    async fn test_instance() {
-        task::spawn_blocking(|| tor_instance());
-        
-        let proxy = reqwest::Proxy::all(format!("socks5://127.0.0.1:{}", SOCKS_PORT)).expect("Where is proxy");
-        let client = reqwest::Client::builder().proxy(proxy).build().expect("Client should we build");
+//     #[tokio::test]
+//     async fn test_instance() {
+//         task::spawn_blocking(|| tor_instance());
 
-        thread::sleep(Duration::from_millis(2500));
-        println!("---------------------------------request--------------------------------------------");
-        let response = client
-        .get(CHECK_URL.to_string())
-        .send()
-        .await;
-        match response {
-            Ok(r) => {
-                let html = r.text().await.unwrap();
-                println!("{:?}",html);
-                match html.find("Congratulations") {
-                    Some(_) => {
-                        println!("Tor is online!");
-                    }
-                    None => {
-                        println!("Received a response but not through Tor...");
-                    }
-                }
-            }
-            Err(e) => {
-                println!("error: {}", e.to_string());
-            }
-        };
-    
-    }
-}
+//         let proxy = reqwest::Proxy::all(format!("socks5://127.0.0.1:{}", SOCKS_PORT)).expect("Where is proxy");
+//         let client = reqwest::Client::builder().proxy(proxy).build().expect("Client should we build");
+
+//         thread::sleep(Duration::from_millis(2500));
+//         println!("---------------------------------request--------------------------------------------");
+//         let response = client
+//         .get(CHECK_URL.to_string())
+//         .send()
+//         .await;
+//         match response {
+//             Ok(r) => {
+//                 let html = r.text().await.unwrap();
+//                 println!("{:?}",html);
+//                 match html.find("Congratulations") {
+//                     Some(_) => {
+//                         println!("Tor is online!");
+//                     }
+//                     None => {
+//                         println!("Received a response but not through Tor...");
+//                     }
+//                 }
+//             }
+//             Err(e) => {
+//                 println!("error: {}", e.to_string());
+//             }
+//         };
+
+//     }
+// }

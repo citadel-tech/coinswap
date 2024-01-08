@@ -11,9 +11,9 @@ pub mod scripts;
 pub mod taker;
 #[cfg(feature = "integration-test")]
 pub mod test_framework;
+pub mod tor;
 pub mod utill;
 pub mod wallet;
-pub mod tor;
 // Disable watchtower for now. Handle contract watching
 // individually for maker and Taker.
 //pub mod watchtower;
