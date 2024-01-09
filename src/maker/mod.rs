@@ -8,8 +8,8 @@ pub mod api;
 pub mod config;
 pub mod error;
 mod handlers;
-
 use std::{
+    convert::TryInto,
     net::Ipv4Addr,
     sync::Arc,
     time::{Duration, Instant},
@@ -191,15 +191,15 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             log::info!("[{}] ===> MakerHello", maker_clone.config.port);
 
             loop {
-                let mut line: Vec<u8> = Vec::new();
+                let mut buf: Vec<u8> = Vec::new();
                 select! {
-                    readline_ret = reader.read_to_end(&mut line) => {
-                        match readline_ret {
+                    readbuf_ret = reader.read_to_end(&mut buf) => {
+                        match readbuf_ret {
                             Ok(0) => {
                                 log::info!("[{}] Connection closed by peer", maker_clone.config.port);
                                 break;
                             }
-                            Ok(_) => (),
+                            Ok(_) => log::info!("{:?} Bytes were read successfully!", buf.len()),
                             Err(e) => {
                                 log::error!("error reading from socket: {:?}", e);
                                 break;
@@ -212,29 +212,59 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                     },
                 };
 
-                let message: TakerToMakerMessage = serde_cbor::from_slice(&line).unwrap();
-                log::info!("[{}] <=== {} ", maker_clone.config.port, message);
+                if !buf.is_empty() {
+                    // Read the length prefix (assuming it's a u32)
+                    let len = u32::from_be_bytes(buf[0..4].try_into().unwrap()) as usize;
 
-                let message_result: Result<Option<MakerToTakerMessage>, MakerError> =
-                    handle_message(&maker_clone, &mut connection_state, message, addr.ip()).await;
-
-                match message_result {
-                    Ok(reply) => {
-                        if let Some(message) = reply {
-                            log::info!("[{}] ===> {} ", maker_clone.config.port, message);
-                            log::debug!("{:#?}", message);
-                            if let Err(e) = send_message(&mut socket_writer, &message).await {
-                                log::error!("closing due to io error sending message: {:?}", e);
-                                break;
-                            }
-                        }
-                        //if reply is None then dont send anything to client
-                    }
-                    Err(err) => {
-                        server_loop_comms_tx.send(err).await.unwrap();
+                    // Ensure the buffer has enough data
+                    if buf.len() < len + 4 {
                         break;
                     }
-                };
+
+                    // Get the message data
+                    let message_data = &buf[4..4 + len];
+
+                    // Deserialize the message
+                    let message: TakerToMakerMessage = match serde_cbor::from_slice(message_data) {
+                        Ok(message) => message,
+                        Err(e) => {
+                            log::error!("Error deserializing message: {:?}", e);
+                            continue;
+                        }
+                    };
+
+                    // Log the message
+                    log::info!("[{}] <=== {} ", maker_clone.config.port, message);
+                    log::info!("Message deserialised successfuly: {:?}", message);
+
+                    // Remove the processed data from the buffer
+                    // buf.drain(0..4 + len);
+
+                    let message_result: Result<Option<MakerToTakerMessage>, MakerError> =
+                        handle_message(&maker_clone, &mut connection_state, message, addr.ip())
+                            .await;
+
+                    match message_result {
+                        Ok(reply) => {
+                            if let Some(message) = reply {
+                                log::info!("[{}] ===> {} ", maker_clone.config.port, message);
+                                log::debug!("{:#?}", message);
+                                if let Err(e) = send_message(&mut socket_writer, &message).await {
+                                    log::error!(
+                                        "Closing due to IO error in sending message: {:?}",
+                                        e
+                                    );
+                                    continue;
+                                }
+                            }
+                            // if reply is None then dont send anything to client
+                        }
+                        Err(err) => {
+                            server_loop_comms_tx.send(err).await.unwrap();
+                            break;
+                        }
+                    }
+                }
             }
         });
     }

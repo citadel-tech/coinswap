@@ -80,7 +80,7 @@ pub fn setup_logger() {
                 .default_filter_or("coinswap=info")
                 .default_write_style_or("always"),
         )
-        //.is_test(true)
+        // .is_test(true)
         .init();
     });
 }
@@ -90,8 +90,9 @@ pub async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     message: &impl serde::Serialize,
 ) -> Result<(), NetError> {
-    let message_bytes = serde_cbor::to_vec(message).map_err(NetError::Cbor)?;
-    socket_writer.write_all(&message_bytes).await?;
+    let message_cbor = serde_cbor::to_vec(message).map_err(NetError::Cbor)?;
+    socket_writer.write_u32(message_cbor.len() as u32).await?;
+    socket_writer.write_all(&message_cbor).await?;
     Ok(())
 }
 
@@ -99,12 +100,11 @@ pub async fn send_message(
 pub async fn read_message(
     reader: &mut BufReader<ReadHalf<'_>>,
 ) -> Result<MakerToTakerMessage, NetError> {
-    let mut line: Vec<u8> = Vec::new();
-    let n = reader.read_to_end(&mut line).await?;
-    if n == 0 {
-        return Err(NetError::ReachedEOF);
-    }
-    let message: MakerToTakerMessage = serde_cbor::from_slice(&line)?;
+    let length = reader.read_u32().await?;
+    let mut buffer = vec![0; length as usize];
+    reader.read_exact(&mut buffer).await?;
+    let message: MakerToTakerMessage = serde_cbor::from_reader(&*buffer).map_err(NetError::Cbor)?;
+    log::info!("-----Here is message: {:#?}", message);
     log::debug!("<== {:#?}", message);
     Ok(message)
 }

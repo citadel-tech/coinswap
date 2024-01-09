@@ -387,11 +387,17 @@ impl Taker {
         let swap_locktime = self.config.refund_locktime
             + self.config.refund_locktime_step * self.ongoing_swap_state.swap_params.maker_count;
 
+        log::info!("---Swap Locktime: {}", swap_locktime);
+
         // Loop until we find a live maker who responded to our signature request.
         let (maker, funding_txs) = loop {
             // Fail early if not enough good makers in the list to satisfy swap requirements.
             let untried_maker_count = self.offerbook.get_all_untried().len();
+
+            log::info!("----Untried Makers Count: {}", untried_maker_count);
+
             if untried_maker_count < self.ongoing_swap_state.swap_params.maker_count as usize {
+                log::info!("We don't have enough makers to satisfy the swap requirements!");
                 return Err(TakerError::NotEnoughMakersInOfferBook);
             }
             let maker = self.choose_next_maker()?.clone();
