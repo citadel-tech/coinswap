@@ -17,6 +17,7 @@ use std::{
 
 use bitcoin::{absolute::LockTime, Amount, Network};
 use bitcoind::bitcoincore_rpc::RpcApi;
+use libtor::{Tor, TorFlag, HiddenServiceVersion, TorAddress};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     net::{TcpListener, TcpStream},
@@ -45,6 +46,24 @@ use crate::maker::error::MakerError;
 /// aspects of the Maker's behavior.
 #[tokio::main]
 pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
+
+    let maker_port = maker.config.port;
+    tokio::task::spawn_blocking(move || {
+        match Tor::new().flag(TorFlag::DataDirectory("../maker/tmp/tor-rust".into()))
+            .flag(TorFlag::SocksPort(19050)).flag(TorFlag::HiddenServiceDir("../maker/tmp/tor-rust/hs-dir".into()))
+            .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
+            .flag(TorFlag::HiddenServicePort(
+                TorAddress::Port(maker_port),
+                None.into(),
+            ))
+            .start() {
+                Ok(result )=> println!("Tor exit result {:?}",result),
+                Err(e) => println!("Something went wrong with tor instance : {:?}",e)
+            };
+    });
+
+    std::thread::sleep(Duration::from_millis(10000));
+
     log::debug!("Running maker with special behavior = {:?}", maker.behavior);
     maker.wallet.write()?.refresh_offer_maxsize_cache()?;
 
@@ -142,22 +161,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         }
         let (mut socket, addr) = select! {
 
-            new_client = listener.accept() => {
-                if onion_addr == "myhiddenserviceaddress.onion".to_string() {
-                    new_client?
-                } else {
-                    let (_,addr) = new_client?;
-                    let proxy_address = "socks5://127.0.0.1:9050";
-                    let proxy_stream = TcpStream::connect(proxy_address).await?;
-                    match Socks5Stream::connect_with_socket(proxy_stream,addr).await {
-                        Ok(proxy_socket) => (proxy_socket.into_inner(),addr),
-                        Err(e)=>{
-                            println!("{:?}",e);
-                            panic!("Something went wrong with proxy stuff")
-                        }
-                    }
-                }
-            },
+            new_client = listener.accept() => new_client?,
             client_err = server_loop_comms_rx.recv() => {
                 //unwrap the option here because we'll never close the mscp so it will always work
                 match client_err.as_ref().unwrap() {

@@ -6,7 +6,7 @@
 
 /// Represents the Tor address and port configuration.
 // It should be set to your specific Tor address and port.
-pub const TOR_ADDR: &str = "127.0.0.1:9050";
+pub const TOR_ADDR: &str = "127.0.0.1:19050";
 
 use bitcoin::Network;
 
@@ -14,7 +14,7 @@ use crate::taker::offers::MakerAddress;
 
 //for now just one of these, but later we'll need multiple for good decentralization
 const DIRECTORY_SERVER_ADDR: &str =
-    "zfwo4t5yfuf6epu7rhjbmkr6kiysi6v7kibta4i55zlp4y6xirpcr7qd.onion:8080";
+    "pl62q4gupqgzkyunif5kudjwyt2oelikpt5pkw5bnvy2wrm6luog2dad.onion:8000";
 
 /// Represents errors that can occur during directory server operations.
 #[derive(Debug)]
