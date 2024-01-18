@@ -80,7 +80,6 @@ pub fn setup_logger() {
                 .default_filter_or("coinswap=info")
                 .default_write_style_or("always"),
         )
-        .is_test(true)
         .init();
     });
 }

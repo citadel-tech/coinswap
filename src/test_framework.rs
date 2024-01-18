@@ -188,10 +188,6 @@ impl TestFramework {
         *self.shutdown.write().unwrap() = true;
         // stop bitcoind
         let _ = self.bitcoind.client.stop().unwrap();
-        // Remove test temp dir, ignore error.
-        if fs::remove_dir_all::<PathBuf>(self.temp_dir.clone()).is_err() {
-            // Do Nothing
-        }
     }
 
     pub fn get_block_count(&self) -> u64 {
