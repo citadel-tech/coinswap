@@ -63,16 +63,22 @@ The project includes both unit and integration tests. The integration tests simu
 To run the unit tests:
 
 ```console
+# without logs
 $ cargo test
+
+# with logs
+$ cargo test -- --nocapture
 ```
 
 To run the integration tests, `--features integration-test` flag must be enabled. Run integration tests with:
 
 ```console
+# without logs
 $ cargo test --features integration-test
-```
 
-To print out logs on the tests, set the `RUST_LOG` env variable to either `info`, `warn` or `error`.
+# with logs
+$ cargo test --features integration-test -- --nocapture
+```
 
 For manual swaps using the `teleport` app, follow the instructions in [Run Teleport](./docs/run_teleport.md).
 

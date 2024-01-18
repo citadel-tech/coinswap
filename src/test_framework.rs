@@ -49,6 +49,7 @@ fn get_random_tmp_dir() -> PathBuf {
 /// The Test Framework.
 ///
 /// Handles initializing, operating and cleaning up of all backend processes. Bitcoind, Taker and Makers.
+#[allow(dead_code)]
 pub struct TestFramework {
     bitcoind: BitcoinD,
     temp_dir: PathBuf,
