@@ -42,7 +42,7 @@ fn get_random_tmp_dir() -> PathBuf {
         .take(8)
         .map(char::from)
         .collect();
-    let path = "tests/temp-files/".to_string() + &s;
+    let path = "/tmp/teleport/tests/temp-files/".to_string() + &s;
     PathBuf::from(path)
 }
 
