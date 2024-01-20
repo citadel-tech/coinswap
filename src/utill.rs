@@ -1,6 +1,6 @@
 //! Various utility and helper functions for both Taker and Maker.
 
-use std::{io::ErrorKind, path::PathBuf, sync::Once};
+use std::{env, io::ErrorKind, path::PathBuf, sync::Once};
 
 use bitcoin::{
     address::{WitnessProgram, WitnessVersion},
@@ -75,6 +75,7 @@ pub fn seed_phrase_to_unique_id(seed: &str) -> String {
 /// Setup function that will only run once, even if called multiple times.
 pub fn setup_logger() {
     Once::new().call_once(|| {
+        env::set_var("RUST_LOG", "info");
         env_logger::Builder::from_env(
             env_logger::Env::default()
                 .default_filter_or("coinswap=info")

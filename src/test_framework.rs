@@ -42,13 +42,14 @@ fn get_random_tmp_dir() -> PathBuf {
         .take(8)
         .map(char::from)
         .collect();
-    let path = "tests/temp-files/".to_string() + &s;
+    let path = "/tmp/teleport/tests/temp-files/".to_string() + &s;
     PathBuf::from(path)
 }
 
 /// The Test Framework.
 ///
 /// Handles initializing, operating and cleaning up of all backend processes. Bitcoind, Taker and Makers.
+#[allow(dead_code)]
 pub struct TestFramework {
     bitcoind: BitcoinD,
     temp_dir: PathBuf,
@@ -188,10 +189,6 @@ impl TestFramework {
         *self.shutdown.write().unwrap() = true;
         // stop bitcoind
         let _ = self.bitcoind.client.stop().unwrap();
-        // Remove test temp dir, ignore error.
-        if fs::remove_dir_all::<PathBuf>(self.temp_dir.clone()).is_err() {
-            // Do Nothing
-        }
     }
 
     pub fn get_block_count(&self) -> u64 {

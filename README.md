@@ -87,19 +87,11 @@ $ cargo build
 
 The project includes both unit and integration tests. The integration tests simulates various edge cases of the coinswap protocol.
 
-To run the unit tests:
+To run the tests:
 
 ```console
-$ cargo test
+$ cargo test -- --nocapture
 ```
-
-To run the integration tests, `--features integration-test` flag must be enabled. Run integration tests with:
-
-```console
-$ cargo test --features integration-test
-```
-
-To print out logs on the tests, set the `RUST_LOG` env variable to either `info`, `warn` or `error`.
 
 For manual swaps using the `teleport` app, follow the instructions in [Run Teleport](./docs/run_teleport.md).
 
