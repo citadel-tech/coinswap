@@ -1,6 +1,10 @@
-on: [push, pull_request]
+on:
+  push:
+    branches:
+    - master
+  pull_request:
 
-name: continuous_builds
+name: build
 
 jobs:
 
@@ -17,7 +21,7 @@ jobs:
           - integration-test
     steps:
       - name: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Generate cache key
         run: echo "${{ matrix.rust }} ${{ matrix.features }}" | tee .cache_key
       - name: cache
@@ -32,11 +36,7 @@ jobs:
         run: rustup default ${{ matrix.rust }}
       - name: Set profile
         run: rustup set profile minimal
-      - name: Add clippy
-        run: rustup component add clippy
       - name: Update toolchain
         run: rustup update
       - name: Build
         run: cargo build --features ${{ matrix.features }}
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings

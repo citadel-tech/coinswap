@@ -1,6 +1,10 @@
-on: [push, pull_request]
+on:
+  push:
+    branches:
+    - master
+  pull_request:
 
-name: test_codecov
+name: test
 
 jobs:
   test_with_codecov:
@@ -8,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Set default toolchain
         run: rustup default nightly
