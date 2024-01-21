@@ -246,8 +246,14 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                                 log::info!(" --- this time got \"NONE\" hence not sending anything to client ---");
                             }
                             Err(message_result_error) => {
-                                log::error!(" ---- 257 mod Error handling message: {:#?}", message_result_error);
-                                server_loop_comms_tx.send(message_result_error).await.unwrap();
+                                log::error!(
+                                    " ---- 257 mod Error handling message: {:#?}",
+                                    message_result_error
+                                );
+                                server_loop_comms_tx
+                                    .send(message_result_error)
+                                    .await
+                                    .unwrap();
                                 break;
                             }
                         }
