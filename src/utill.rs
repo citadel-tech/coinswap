@@ -91,10 +91,9 @@ pub async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     message: &impl serde::Serialize,
 ) -> Result<(), NetError> {
-    let message_cbor = serde_cbor::to_vec(message).map_err(NetError::Cbor)?;
+    let message_cbor = serde_cbor::ser::to_vec(message).map_err(NetError::Cbor)?;
     socket_writer.write_u32(message_cbor.len() as u32).await?;
     socket_writer.write_all(&message_cbor).await?;
-    log::info!(" --- send_message ka socketwriter = {:#?}", socket_writer);
     Ok(())
 }
 
@@ -105,10 +104,8 @@ pub async fn read_message(
     let length = reader.read_u32().await?;
     let mut buffer = vec![0; length as usize];
     reader.read_exact(&mut buffer).await?;
-    let message: MakerToTakerMessage = serde_cbor::from_slice(&buffer).map_err(NetError::Cbor)?;
-    log::info!("----- read_message ka message = {:#?}", message);
-    log::info!("-----read_message ka reader = {:#?}", reader);
-    log::debug!("<== {:#?}", message);
+    let message: MakerToTakerMessage =
+        serde_cbor::de::from_slice(&buffer).map_err(NetError::Cbor)?;
     Ok(message)
 }
 

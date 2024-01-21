@@ -15,7 +15,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-// use crate::error::NetError;
 use bitcoin::Network;
 use bitcoind::bitcoincore_rpc::RpcApi;
 use tokio::{
@@ -186,37 +185,34 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             )
             .await
             {
-                log::error!("io error sending first message: {:?}", e);
+                log::error!("IO error sending first message: {:?}", e);
                 return;
             }
             log::info!("[{}] ===> MakerHello", maker_clone.config.port);
 
             loop {
                 let mut length_buf = [0; 4];
-                match reader.read_exact(&mut length_buf).await {
+                let message_reader = reader.read_exact(&mut length_buf).await;
+                match message_reader {
                     Ok(0) => {
-                        log::info!(" --- got 0 while reading --- Connection closed gracefully");
                         log::info!("[{}] Connection closed by peer", maker_clone.config.port);
                         break;
                     }
                     Ok(_) => {
                         let message_len = u32::from_be_bytes(length_buf) as usize;
-                        log::info!("--- message length = {}", message_len);
                         if message_len == 0 {
-                            log::error!("Received message with length 0");
+                            log::error!("Received empty message!");
                             break;
                         }
 
                         let mut message_buf = vec![0; message_len];
-                        log::info!(" --- message buf length = {}", message_len);
                         if reader.read_exact(&mut message_buf).await.is_err() {
-                            log::error!(" ---Failed to read message from socket");
+                            log::error!("Failed to read message from socket!");
                             break;
                         }
 
-                        // Deserialize the message using serde_cbor
-                        let message: TakerToMakerMessage = serde_cbor::from_slice(&message_buf)
-                            .expect(" --- msg deserialization failed mod 214");
+                        let message: TakerToMakerMessage = serde_cbor::de::from_slice(&message_buf)
+                            .expect("Message deserialization failed!");
 
                         log::info!("[{}] <=== {} ", maker_clone.config.port, message);
 
@@ -224,32 +220,24 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                             handle_message(&maker_clone, &mut connection_state, message, addr.ip())
                                 .await;
 
-                        log::info!(" ---- message result 221 = {:#?}", message_result);
-
                         match message_result {
                             Ok(Some(reply)) => {
-                                log::info!(" --- entered mod 223");
-
-                                log::info!(" --- yay! got some reply = {:#?}", reply);
                                 log::info!("[{}] ===> {} ", maker_clone.config.port, reply);
                                 log::debug!("{:#?}", reply);
 
                                 match send_message(&mut socket_writer, &reply).await {
                                     Ok(_) => {}
                                     Err(e) => {
-                                        log::error!(" --- error sending message: {:#?}", e);
+                                        log::error!("Error sending message: {:?}", e);
                                         break;
                                     }
                                 }
                             }
                             Ok(None) => {
-                                log::info!(" --- this time got \"NONE\" hence not sending anything to client ---");
+                                log::info!("Sending nothing to the client!");
                             }
                             Err(message_result_error) => {
-                                log::error!(
-                                    " ---- 257 mod Error handling message: {:#?}",
-                                    message_result_error
-                                );
+                                log::error!("Error handling message: {:?}", message_result_error);
                                 server_loop_comms_tx
                                     .send(message_result_error)
                                     .await
@@ -258,13 +246,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                             }
                         }
                     }
-                    Err(reader_error) => {
-                        log::error!(
-                            " --- hmmm err reading message length from socket i wonder why = {:#?}",
-                            reader_error
-                        );
-                        break;
-                    }
+                    Err(_) => break,
                 }
             }
         });
