@@ -19,7 +19,7 @@ use bitcoin::Network;
 use bitcoind::bitcoincore_rpc::RpcApi;
 use tokio::{
     io::{AsyncReadExt, BufReader},
-    net::TcpListener,
+    net::{tcp::ReadHalf, TcpListener},
     select,
     sync::mpsc,
     time::sleep,
@@ -191,64 +191,71 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             log::info!("[{}] ===> MakerHello", maker_clone.config.port);
 
             loop {
-                let mut length_buf = [0; 4];
-                let message_reader = reader.read_exact(&mut length_buf).await;
-                match message_reader {
-                    Ok(0) => {
-                        log::info!("[{}] Connection closed by peer", maker_clone.config.port);
-                        break;
-                    }
-                    Ok(_) => {
-                        let message_len = u32::from_be_bytes(length_buf) as usize;
-                        if message_len == 0 {
-                            log::error!("Received empty message!");
-                            break;
-                        }
-
-                        let mut message_buf = vec![0; message_len];
-                        if reader.read_exact(&mut message_buf).await.is_err() {
-                            log::error!("Failed to read message from socket!");
-                            break;
-                        }
-
-                        let message: TakerToMakerMessage = serde_cbor::de::from_slice(&message_buf)
-                            .expect("Message deserialization failed!");
-
-                        log::info!("[{}] <=== {} ", maker_clone.config.port, message);
-
-                        let message_result: Result<Option<MakerToTakerMessage>, MakerError> =
-                            handle_message(&maker_clone, &mut connection_state, message, addr.ip())
-                                .await;
-
-                        match message_result {
-                            Ok(Some(reply)) => {
-                                log::info!("[{}] ===> {} ", maker_clone.config.port, reply);
-                                log::debug!("{:#?}", reply);
-
-                                match send_message(&mut socket_writer, &reply).await {
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        log::error!("Error sending message: {:?}", e);
-                                        break;
-                                    }
-                                }
-                            }
+                let message = select! {
+                    read_result = read_message(&mut reader) => {
+                        match read_result {
                             Ok(None) => {
-                                log::info!("Sending nothing to the client!");
-                            }
-                            Err(message_result_error) => {
-                                log::error!("Error handling message: {:?}", message_result_error);
-                                server_loop_comms_tx
-                                    .send(message_result_error)
-                                    .await
-                                    .unwrap();
+                                log::info!("[{}] Connection closed by peer", maker_clone.config.port);
+                                break;
+                            },
+                            Ok(Some(msg)) => msg,
+                            Err(e) => {
+                                log::error!("error reading from socket: {:?}", e);
                                 break;
                             }
                         }
+                    },
+                    _ = sleep(Duration::from_secs(maker_clone.config.idle_connection_timeout)) => {
+                        log::info!("[{}] Idle connection closed", addr.port());
+                        break;
+                    },
+                };
+
+                log::info!("[{}] <=== {} ", maker_clone.config.port, message);
+
+                let reply: Result<Option<MakerToTakerMessage>, MakerError> =
+                    handle_message(&maker_clone, &mut connection_state, message, addr.ip()).await;
+
+                match reply {
+                    Ok(reply) => {
+                        if let Some(message) = reply {
+                            log::info!("[{}] ===> {} ", maker_clone.config.port, message);
+                            log::debug!("{:#?}", message);
+                            if let Err(e) = send_message(&mut socket_writer, &message).await {
+                                log::error!("Closing due to IO error in sending message: {:?}", e);
+                                continue;
+                            }
+                        }
+                        // if reply is None then don't send anything to client
                     }
-                    Err(_) => break,
+                    Err(err) => {
+                        server_loop_comms_tx.send(err).await.unwrap();
+                        break;
+                    }
                 }
             }
         });
     }
+}
+
+/// Read a Taker Message.
+async fn read_message(
+    reader: &mut BufReader<ReadHalf<'_>>,
+) -> Result<Option<TakerToMakerMessage>, MakerError> {
+    let read_result = reader.read_u32().await;
+    // If its EOF, return None
+    if read_result
+        .as_ref()
+        .is_err_and(|e| e.kind() == std::io::ErrorKind::UnexpectedEof)
+    {
+        return Ok(None);
+    }
+    let length = read_result?;
+    if length == 0 {
+        return Ok(None);
+    }
+    let mut buffer = vec![0; length as usize];
+    reader.read_exact(&mut buffer).await?;
+    let message: TakerToMakerMessage = serde_cbor::from_slice(&buffer)?;
+    Ok(Some(message))
 }
