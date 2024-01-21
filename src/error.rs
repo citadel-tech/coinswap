@@ -6,7 +6,6 @@ use crate::protocol::error::ContractError;
 #[derive(Debug)]
 pub enum NetError {
     IO(std::io::Error),
-    Json(serde_json::Error),
     ReachedEOF,
     ConnectionTimedOut,
     Cbor(serde_cbor::Error),
@@ -15,12 +14,6 @@ pub enum NetError {
 impl From<std::io::Error> for NetError {
     fn from(value: std::io::Error) -> Self {
         Self::IO(value)
-    }
-}
-
-impl From<serde_json::Error> for NetError {
-    fn from(value: serde_json::Error) -> Self {
-        Self::Json(value)
     }
 }
 
