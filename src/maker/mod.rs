@@ -8,13 +8,14 @@ pub mod api;
 pub mod config;
 pub mod error;
 mod handlers;
+
 use std::{
-    convert::TryInto,
     net::Ipv4Addr,
     sync::Arc,
     time::{Duration, Instant},
 };
 
+// use crate::error::NetError;
 use bitcoin::Network;
 use bitcoind::bitcoincore_rpc::RpcApi;
 use tokio::{
@@ -191,78 +192,72 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             log::info!("[{}] ===> MakerHello", maker_clone.config.port);
 
             loop {
-                let mut buf: Vec<u8> = Vec::new();
-                select! {
-                    readbuf_ret = reader.read_to_end(&mut buf) => {
-                        match readbuf_ret {
-                            Ok(0) => {
-                                log::info!("[{}] Connection closed by peer", maker_clone.config.port);
-                                break;
-                            }
-                            Ok(_) => log::info!("{:?} Bytes were read successfully!", buf.len()),
-                            Err(e) => {
-                                log::error!("error reading from socket: {:?}", e);
-                                break;
-                            }
-                        }
-                    },
-                    _ = sleep(Duration::from_secs(maker_clone.config.idle_connection_timeout)) => {
-                        log::info!("[{}] Idle connection closed", addr.port());
-                        break;
-                    },
-                };
-
-                if !buf.is_empty() {
-                    // Read the length prefix (assuming it's a u32)
-                    let len = u32::from_be_bytes(buf[0..4].try_into().unwrap()) as usize;
-
-                    // Ensure the buffer has enough data
-                    if buf.len() < len + 4 {
+                let mut length_buf = [0; 4];
+                match reader.read_exact(&mut length_buf).await {
+                    Ok(0) => {
+                        log::info!(" --- got 0 while reading --- Connection closed gracefully");
+                        log::info!("[{}] Connection closed by peer", maker_clone.config.port);
                         break;
                     }
-
-                    // Get the message data
-                    let message_data = &buf[4..4 + len];
-
-                    // Deserialize the message
-                    let message: TakerToMakerMessage = match serde_cbor::from_slice(message_data) {
-                        Ok(message) => message,
-                        Err(e) => {
-                            log::error!("Error deserializing message: {:?}", e);
-                            continue;
-                        }
-                    };
-
-                    // Log the message
-                    log::info!("[{}] <=== {} ", maker_clone.config.port, message);
-                    log::info!("Message deserialised successfuly: {:?}", message);
-
-                    // Remove the processed data from the buffer
-                    // buf.drain(0..4 + len);
-
-                    let message_result: Result<Option<MakerToTakerMessage>, MakerError> =
-                        handle_message(&maker_clone, &mut connection_state, message, addr.ip())
-                            .await;
-
-                    match message_result {
-                        Ok(reply) => {
-                            if let Some(message) = reply {
-                                log::info!("[{}] ===> {} ", maker_clone.config.port, message);
-                                log::debug!("{:#?}", message);
-                                if let Err(e) = send_message(&mut socket_writer, &message).await {
-                                    log::error!(
-                                        "Closing due to IO error in sending message: {:?}",
-                                        e
-                                    );
-                                    continue;
-                                }
-                            }
-                            // if reply is None then dont send anything to client
-                        }
-                        Err(err) => {
-                            server_loop_comms_tx.send(err).await.unwrap();
+                    Ok(_) => {
+                        let message_len = u32::from_be_bytes(length_buf) as usize;
+                        log::info!("--- message length = {}", message_len);
+                        if message_len == 0 {
+                            log::error!("Received message with length 0");
                             break;
                         }
+
+                        let mut message_buf = vec![0; message_len];
+                        log::info!(" --- message buf length = {}", message_len);
+                        if reader.read_exact(&mut message_buf).await.is_err() {
+                            log::error!(" ---Failed to read message from socket");
+                            break;
+                        }
+
+                        // Deserialize the message using serde_cbor
+                        let message: TakerToMakerMessage = serde_cbor::from_slice(&message_buf)
+                            .expect(" --- msg deserialization failed mod 214");
+
+                        log::info!("[{}] <=== {} ", maker_clone.config.port, message);
+
+                        let message_result: Result<Option<MakerToTakerMessage>, MakerError> =
+                            handle_message(&maker_clone, &mut connection_state, message, addr.ip())
+                                .await;
+
+                        log::info!(" ---- message result 221 = {:#?}", message_result);
+
+                        match message_result {
+                            Ok(Some(reply)) => {
+                                log::info!(" --- entered mod 223");
+
+                                log::info!(" --- yay! got some reply = {:#?}", reply);
+                                log::info!("[{}] ===> {} ", maker_clone.config.port, reply);
+                                log::debug!("{:#?}", reply);
+
+                                match send_message(&mut socket_writer, &reply).await {
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        log::error!(" --- error sending message: {:#?}", e);
+                                        break;
+                                    }
+                                }
+                            }
+                            Ok(None) => {
+                                log::info!(" --- this time got \"NONE\" hence not sending anything to client ---");
+                            }
+                            Err(message_result_error) => {
+                                log::error!(" ---- 257 mod Error handling message: {:#?}", message_result_error);
+                                server_loop_comms_tx.send(message_result_error).await.unwrap();
+                                break;
+                            }
+                        }
+                    }
+                    Err(reader_error) => {
+                        log::error!(
+                            " --- hmmm err reading message length from socket i wonder why = {:#?}",
+                            reader_error
+                        );
+                        break;
                     }
                 }
             }

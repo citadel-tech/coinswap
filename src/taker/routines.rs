@@ -84,8 +84,12 @@ pub async fn handshake_maker<'a>(
         }),
     )
     .await?;
+    log::info!(" --- Takerhello routines success 1");
     let makerhello = match read_message(&mut socket_reader).await {
-        Ok(MakerToTakerMessage::MakerHello(m)) => m,
+        Ok(MakerToTakerMessage::MakerHello(m)) => {
+            log::info!(" --- Takerhello routines success 2");
+            m
+        }
         Ok(any) => {
             return Err(ProtocolError::WrongMessage {
                 expected: "MakerHello".to_string(),
@@ -142,8 +146,10 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
         }),
     )
     .await?;
+    log::info!(" --- ReqContractSigsForSender routines success 1");
     let contract_sigs_for_sender = match read_message(&mut socket_reader).await {
         Ok(MakerToTakerMessage::RespContractSigsForSender(m)) => {
+            log::info!(" --- ReqContractSigsForSender routines success 2");
             if m.sigs.len() != outgoing_swapcoins.len() {
                 return Err(ProtocolError::WrongNumOfSigs {
                     expected: outgoing_swapcoins.len(),
@@ -201,8 +207,10 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
         }),
     )
     .await?;
+    log::info!(" --- ReqContractSigsFor Rec routines success 1");
     let contract_sigs_for_recvr = match read_message(&mut socket_reader).await {
         Ok(MakerToTakerMessage::RespContractSigsForRecvr(m)) => {
+            log::info!(" --- ReqContractSigsFor Rec routines success 2");
             if m.sigs.len() != incoming_swapcoins.len() {
                 return Err(ProtocolError::WrongNumOfSigs {
                     expected: incoming_swapcoins.len(),
@@ -281,8 +289,10 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
         }),
     )
     .await?;
+    log::info!(" --- send_proof_of_funding_and_init_next_hop success 1");
     let contract_sigs_as_recvr_and_sender = match read_message(socket_reader).await {
         Ok(MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(m)) => {
+            log::info!(" --- send_proof_of_funding_and_init_next_hop success 2");
             if m.receivers_contract_txs.len() != tmi.funding_tx_infos.len() {
                 return Err(ProtocolError::WrongNumOfContractTxs {
                     expected: tmi.funding_tx_infos.len(),
@@ -416,8 +426,10 @@ pub(crate) async fn send_hash_preimage_and_get_private_keys(
         }),
     )
     .await?;
+    log::info!("send_hash_preimage_and_get_private_keys success 1");
     let privkey_handover = match read_message(socket_reader).await {
         Ok(MakerToTakerMessage::RespPrivKeyHandover(m)) => {
+            log::info!("send_hash_preimage_and_get_private_keys success 1");
             if m.multisig_privkeys.len() != receivers_multisig_redeemscripts.len() {
                 return Err(ProtocolError::WrongNumOfPrivkeys {
                     expected: receivers_multisig_redeemscripts.len(),
@@ -451,9 +463,12 @@ async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer,
         &TakerToMakerMessage::ReqGiveOffer(GiveOffer),
     )
     .await?;
-
+    log::info!(" --- download maker once success 1 --- ");
     let offer = match read_message(&mut socket_reader).await {
-        Ok(MakerToTakerMessage::RespOffer(m)) => m,
+        Ok(MakerToTakerMessage::RespOffer(m)) => {
+            log::info!("download maker once success 2");
+            m
+        }
         Ok(any) => {
             return Err(ProtocolError::WrongMessage {
                 expected: "RespOffer".to_string(),
