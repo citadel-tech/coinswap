@@ -10,7 +10,6 @@ use crate::{protocol::error::ContractError, wallet::WalletError};
 #[derive(Debug)]
 pub enum MakerError {
     IO(std::io::Error),
-    Json(serde_json::Error),
     UnexpectedMessage { expected: String, got: String },
     General(&'static str),
     MutexPossion,
@@ -29,12 +28,6 @@ impl From<std::io::Error> for MakerError {
 impl From<serde_cbor::Error> for MakerError {
     fn from(value: serde_cbor::Error) -> Self {
         Self::Deserialize(value)
-    }
-}
-
-impl From<serde_json::Error> for MakerError {
-    fn from(value: serde_json::Error) -> Self {
-        Self::Json(value)
     }
 }
 
