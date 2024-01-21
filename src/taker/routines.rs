@@ -37,7 +37,7 @@ use crate::{
         },
         Hash160,
     },
-    utill::{read_message, send_message},
+    utill::{read_maker_message, send_message},
 };
 
 use super::{
@@ -84,7 +84,7 @@ pub async fn handshake_maker<'a>(
         }),
     )
     .await?;
-    let makerhello = match read_message(&mut socket_reader).await {
+    let makerhello = match read_maker_message(&mut socket_reader).await {
         Ok(MakerToTakerMessage::MakerHello(m)) => m,
         Ok(any) => {
             return Err(ProtocolError::WrongMessage {
@@ -142,7 +142,7 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
         }),
     )
     .await?;
-    let contract_sigs_for_sender = match read_message(&mut socket_reader).await {
+    let contract_sigs_for_sender = match read_maker_message(&mut socket_reader).await {
         Ok(MakerToTakerMessage::RespContractSigsForSender(m)) => {
             if m.sigs.len() != outgoing_swapcoins.len() {
                 return Err(ProtocolError::WrongNumOfSigs {
@@ -201,7 +201,7 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
         }),
     )
     .await?;
-    let contract_sigs_for_recvr = match read_message(&mut socket_reader).await {
+    let contract_sigs_for_recvr = match read_maker_message(&mut socket_reader).await {
         Ok(MakerToTakerMessage::RespContractSigsForRecvr(m)) => {
             if m.sigs.len() != incoming_swapcoins.len() {
                 return Err(ProtocolError::WrongNumOfSigs {
@@ -281,7 +281,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
         }),
     )
     .await?;
-    let contract_sigs_as_recvr_and_sender = match read_message(socket_reader).await {
+    let contract_sigs_as_recvr_and_sender = match read_maker_message(socket_reader).await {
         Ok(MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(m)) => {
             if m.receivers_contract_txs.len() != tmi.funding_tx_infos.len() {
                 return Err(ProtocolError::WrongNumOfContractTxs {
@@ -416,7 +416,7 @@ pub(crate) async fn send_hash_preimage_and_get_private_keys(
         }),
     )
     .await?;
-    let privkey_handover = match read_message(socket_reader).await {
+    let privkey_handover = match read_maker_message(socket_reader).await {
         Ok(MakerToTakerMessage::RespPrivKeyHandover(m)) => {
             if m.multisig_privkeys.len() != receivers_multisig_redeemscripts.len() {
                 return Err(ProtocolError::WrongNumOfPrivkeys {
@@ -452,7 +452,7 @@ async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer,
     )
     .await?;
 
-    let msg = read_message(&mut socket_reader).await?;
+    let msg = read_maker_message(&mut socket_reader).await?;
     let offer = match msg {
         MakerToTakerMessage::RespOffer(offer) => offer,
         msg => {

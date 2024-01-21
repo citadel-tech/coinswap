@@ -192,7 +192,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
             loop {
                 let message = select! {
-                    read_result = read_message(&mut reader) => {
+                    read_result = read_taker_message(&mut reader) => {
                         match read_result {
                             Ok(None) => {
                                 log::info!("[{}] Connection closed by peer", maker_clone.config.port);
@@ -238,8 +238,8 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     }
 }
 
-/// Read a Taker Message.
-async fn read_message(
+/// Reads a Taker Message.
+async fn read_taker_message(
     reader: &mut BufReader<ReadHalf<'_>>,
 ) -> Result<Option<TakerToMakerMessage>, MakerError> {
     let read_result = reader.read_u32().await;

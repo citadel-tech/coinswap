@@ -98,7 +98,7 @@ pub async fn send_message(
 }
 
 /// Read a Maker Message.
-pub async fn read_message(
+pub async fn read_maker_message(
     reader: &mut BufReader<ReadHalf<'_>>,
 ) -> Result<MakerToTakerMessage, NetError> {
     let length = reader.read_u32().await?;
