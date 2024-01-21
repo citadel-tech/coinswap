@@ -160,12 +160,9 @@ pub async fn sync_offerbook_with_addresses(
         let offers_writer = offers_writer_m.clone();
         let taker_config: TakerConfig = config.clone();
         tokio::spawn(async move {
-            if let Err(_e) = offers_writer
-                .send(download_maker_offer(addr, taker_config).await)
-                .await
-            {
-                panic!("mpsc failed");
-            }
+            let offer = download_maker_offer(addr, taker_config).await;
+            log::info!("Received Maker Offer: {:?}", offer);
+            offers_writer.send(offer).await.unwrap();
         });
     }
     let mut result = Vec::<OfferAndAddress>::new();

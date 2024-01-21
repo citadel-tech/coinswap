@@ -451,16 +451,16 @@ async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer,
         &TakerToMakerMessage::ReqGiveOffer(GiveOffer),
     )
     .await?;
-    let offer = match read_message(&mut socket_reader).await {
-        Ok(MakerToTakerMessage::RespOffer(m)) => m,
-        Ok(any) => {
-            return Err(ProtocolError::WrongMessage {
+
+    let msg = read_message(&mut socket_reader).await?;
+    let offer = match msg {
+        MakerToTakerMessage::RespOffer(offer) => offer,
+        msg => {
+            return Err(TakerError::Protocol(ProtocolError::WrongMessage {
                 expected: "RespOffer".to_string(),
-                received: format!("{}", any),
-            }
-            .into());
+                received: format!("{}", msg),
+            }))
         }
-        Err(e) => return Err(e.into()),
     };
 
     log::debug!(target: "offerbook", "Obtained offer from {}", addr);
@@ -479,7 +479,7 @@ pub async fn download_maker_offer(
                 match ret {
                     Ok(offer) => return Some(OfferAndAddress { offer, address }),
                     Err(e) => {
-                        log::debug!(target: "offerbook",
+                        log::warn!(
                             "Failed to request offer from maker {}, \
                             reattempting... error={:?}",
                             address,
@@ -495,7 +495,7 @@ pub async fn download_maker_offer(
                 }
             },
             _ = sleep(Duration::from_secs(config.first_connect_attempt_timeout_sec)) => {
-                log::debug!(target: "offerbook",
+                log::warn!(
                     "Timeout for request offer from maker {}, reattempting...",
                     address
                 );

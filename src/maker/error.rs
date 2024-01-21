@@ -17,11 +17,18 @@ pub enum MakerError {
     Secp(secp256k1::Error),
     ContractError(ContractError),
     Wallet(WalletError),
+    Deserialize(serde_cbor::Error),
 }
 
 impl From<std::io::Error> for MakerError {
     fn from(value: std::io::Error) -> Self {
         Self::IO(value)
+    }
+}
+
+impl From<serde_cbor::Error> for MakerError {
+    fn from(value: serde_cbor::Error) -> Self {
+        Self::Deserialize(value)
     }
 }
 

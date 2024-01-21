@@ -104,8 +104,7 @@ pub async fn read_message(
     let length = reader.read_u32().await?;
     let mut buffer = vec![0; length as usize];
     reader.read_exact(&mut buffer).await?;
-    let message: MakerToTakerMessage =
-        serde_cbor::de::from_slice(&buffer).map_err(NetError::Cbor)?;
+    let message: MakerToTakerMessage = serde_cbor::from_slice(&buffer)?;
     Ok(message)
 }
 
