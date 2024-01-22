@@ -18,8 +18,8 @@ use std::{
 use bitcoin::Network;
 use bitcoind::bitcoincore_rpc::RpcApi;
 use tokio::{
-    io::{AsyncBufReadExt, BufReader},
-    net::TcpListener,
+    io::{AsyncReadExt, BufReader},
+    net::{tcp::ReadHalf, TcpListener},
     select,
     sync::mpsc,
     time::sleep,
@@ -185,21 +185,20 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             )
             .await
             {
-                log::error!("io error sending first message: {:?}", e);
+                log::error!("IO error sending first message: {:?}", e);
                 return;
             }
             log::info!("[{}] ===> MakerHello", maker_clone.config.port);
 
             loop {
-                let mut line = String::new();
-                select! {
-                    readline_ret = reader.read_line(&mut line) => {
-                        match readline_ret {
-                            Ok(0) => {
+                let message = select! {
+                    read_result = read_taker_message(&mut reader) => {
+                        match read_result {
+                            Ok(None) => {
                                 log::info!("[{}] Connection closed by peer", maker_clone.config.port);
                                 break;
-                            }
-                            Ok(_) => (),
+                            },
+                            Ok(Some(msg)) => msg,
                             Err(e) => {
                                 log::error!("error reading from socket: {:?}", e);
                                 break;
@@ -212,31 +211,51 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                     },
                 };
 
-                line = line.trim_end().to_string();
-                let message: TakerToMakerMessage = serde_json::from_str(&line).unwrap();
                 log::info!("[{}] <=== {} ", maker_clone.config.port, message);
 
-                let message_result: Result<Option<MakerToTakerMessage>, MakerError> =
+                let reply: Result<Option<MakerToTakerMessage>, MakerError> =
                     handle_message(&maker_clone, &mut connection_state, message, addr.ip()).await;
 
-                match message_result {
+                match reply {
                     Ok(reply) => {
                         if let Some(message) = reply {
                             log::info!("[{}] ===> {} ", maker_clone.config.port, message);
                             log::debug!("{:#?}", message);
                             if let Err(e) = send_message(&mut socket_writer, &message).await {
-                                log::error!("closing due to io error sending message: {:?}", e);
-                                break;
+                                log::error!("Closing due to IO error in sending message: {:?}", e);
+                                continue;
                             }
                         }
-                        //if reply is None then dont send anything to client
+                        // if reply is None then don't send anything to client
                     }
                     Err(err) => {
                         server_loop_comms_tx.send(err).await.unwrap();
                         break;
                     }
-                };
+                }
             }
         });
     }
+}
+
+/// Reads a Taker Message.
+async fn read_taker_message(
+    reader: &mut BufReader<ReadHalf<'_>>,
+) -> Result<Option<TakerToMakerMessage>, MakerError> {
+    let read_result = reader.read_u32().await;
+    // If its EOF, return None
+    if read_result
+        .as_ref()
+        .is_err_and(|e| e.kind() == std::io::ErrorKind::UnexpectedEof)
+    {
+        return Ok(None);
+    }
+    let length = read_result?;
+    if length == 0 {
+        return Ok(None);
+    }
+    let mut buffer = vec![0; length as usize];
+    reader.read_exact(&mut buffer).await?;
+    let message: TakerToMakerMessage = serde_cbor::from_slice(&buffer)?;
+    Ok(Some(message))
 }

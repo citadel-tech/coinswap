@@ -21,7 +21,7 @@ use std::{
 
 use serde_json::Value;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncReadExt, AsyncWriteExt, BufReader},
     net::tcp::{ReadHalf, WriteHalf},
 };
 
@@ -91,23 +91,20 @@ pub async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
     message: &impl serde::Serialize,
 ) -> Result<(), NetError> {
-    let mut message_bytes = serde_json::to_vec(message).map_err(std::io::Error::from)?;
-    message_bytes.push(b'\n');
-    socket_writer.write_all(&message_bytes).await?;
+    let message_cbor = serde_cbor::ser::to_vec(message).map_err(NetError::Cbor)?;
+    socket_writer.write_u32(message_cbor.len() as u32).await?;
+    socket_writer.write_all(&message_cbor).await?;
     Ok(())
 }
 
 /// Read a Maker Message.
-pub async fn read_message(
+pub async fn read_maker_message(
     reader: &mut BufReader<ReadHalf<'_>>,
 ) -> Result<MakerToTakerMessage, NetError> {
-    let mut line = String::new();
-    let n = reader.read_line(&mut line).await?;
-    if n == 0 {
-        return Err(NetError::ReachedEOF);
-    }
-    let message: MakerToTakerMessage = serde_json::from_str(&line)?;
-    log::debug!("<== {:#?}", message);
+    let length = reader.read_u32().await?;
+    let mut buffer = vec![0; length as usize];
+    reader.read_exact(&mut buffer).await?;
+    let message: MakerToTakerMessage = serde_cbor::from_slice(&buffer)?;
     Ok(message)
 }
 

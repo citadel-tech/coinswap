@@ -188,7 +188,6 @@ pub struct PrivKeyHandover {
 
 /// All messages sent from Taker to Maker.
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "method", rename_all = "lowercase")]
 pub enum TakerToMakerMessage {
     /// Protocol Handshake.
     TakerHello(TakerHello),
@@ -290,7 +289,6 @@ pub struct ContractSigsForRecvr {
 
 /// All messages sent from Maker to Taker.
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "method", rename_all = "lowercase")]
 pub enum MakerToTakerMessage {
     /// Protocol Handshake.
     MakerHello(MakerHello),

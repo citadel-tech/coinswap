@@ -391,7 +391,9 @@ impl Taker {
         let (maker, funding_txs) = loop {
             // Fail early if not enough good makers in the list to satisfy swap requirements.
             let untried_maker_count = self.offerbook.get_all_untried().len();
+
             if untried_maker_count < self.ongoing_swap_state.swap_params.maker_count as usize {
+                log::info!("We don't have enough makers to satisfy the swap requirements!");
                 return Err(TakerError::NotEnoughMakersInOfferBook);
             }
             let maker = self.choose_next_maker()?.clone();
