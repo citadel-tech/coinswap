@@ -1,12 +1,16 @@
 //! The Wallet Storage Interface.
 //!
-//! Wallet data are currently written in a readable, unencrypted json file.
+//! Wallet data is currently written in unencrypted CBOR files which are not directly human readable.
 
-use std::{collections::HashMap, convert::TryFrom, io::Read, path::PathBuf};
+use std::{collections::HashMap, convert::TryFrom, path::PathBuf};
 
 use bip39::Mnemonic;
 use bitcoin::{bip32::ExtendedPrivKey, Network, OutPoint, ScriptBuf};
-use std::fs::{File, OpenOptions};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs::{File, OpenOptions},
+    io::{BufReader, BufWriter},
+};
 
 use super::{error::WalletError, SwapCoin};
 
@@ -16,7 +20,7 @@ use super::fidelity::generate_fidelity_scripts;
 
 const WALLET_FILE_VERSION: u32 = 0;
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct FileData {
     file_name: String,
     version: u32,
@@ -34,7 +38,7 @@ struct FileData {
 pub struct WalletStore {
     /// The file name associated with the wallet store.
     pub(crate) file_name: String,
-    /// The network the wallet operates on.
+    /// Network the wallet operates on.
     pub(crate) network: Network,
     /// The master key for the wallet.
     pub(super) master_key: ExtendedPrivKey,
@@ -153,17 +157,17 @@ impl FileData {
 
     /// File path should exist.
     fn load_from_file(path: &PathBuf) -> Result<Self, WalletError> {
-        let mut wallet_file = File::open(path)?;
-        let mut wallet_file_str = String::new();
-        wallet_file.read_to_string(&mut wallet_file_str)?;
-        Ok(serde_json::from_str::<FileData>(&wallet_file_str)?)
+        let wallet_file = File::open(path)?;
+        let reader = BufReader::new(wallet_file);
+        Ok(serde_cbor::from_reader(reader)?)
     }
 
     // Overwrite existing file or create a new one.
     fn save_to_file(&self, path: &PathBuf) -> Result<(), WalletError> {
-        std::fs::create_dir_all(path.parent().expect("path should not be root"))?;
+        std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let file = OpenOptions::new().write(true).create(true).open(path)?;
-        serde_json::to_writer(file, &self)?;
+        let writer = BufWriter::new(file);
+        serde_cbor::to_writer(writer, &self)?;
         Ok(())
     }
 }
@@ -178,7 +182,7 @@ mod tests {
     #[test]
     fn test_write_and_read_wallet_to_disk() {
         let temp_dir = tempdir().unwrap();
-        let file_path = temp_dir.path().join("test_wallet.json");
+        let file_path = temp_dir.path().join("test_wallet.cbor");
         let mnemonic = Mnemonic::generate(12).unwrap().to_string();
 
         let original_wallet_store = WalletStore::init(

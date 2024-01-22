@@ -7,6 +7,7 @@ use crate::protocol::error::ContractError;
 pub enum WalletError {
     File(std::io::Error),
     Json(serde_json::Error),
+    Cbor(serde_cbor::Error),
     Rpc(bitcoind::bitcoincore_rpc::Error),
     Protocol(String),
     BIP32(bitcoin::bip32::Error),
@@ -47,5 +48,11 @@ impl From<bip39::Error> for WalletError {
 impl From<ContractError> for WalletError {
     fn from(value: ContractError) -> Self {
         Self::Contract(value)
+    }
+}
+
+impl From<serde_cbor::Error> for WalletError {
+    fn from(value: serde_cbor::Error) -> Self {
+        Self::Cbor(value)
     }
 }
