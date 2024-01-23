@@ -498,14 +498,8 @@ impl Wallet {
         prevout: OutPoint,
         contract: ScriptBuf,
     ) -> Result<(), WalletError> {
-        // let mut wallet_file_data = Wallet::load_wallet_file_data(&self.wallet_file_path[..])?;
-        // wallet_file_data
-        //     .prevout_to_contract_map
-        //     .insert(prevout, contract);
-        // let wallet_file = File::create(&self.wallet_file_path[..])?;
-        // serde_json::to_writer(wallet_file, &wallet_file_data).map_err(|e| io::Error::from(e))?;
         if let Some(contract) = self.store.prevout_to_contract_map.insert(prevout, contract) {
-            log::debug!(target: "Wallet:cache_prevout_to_contract", "prevout-contract map updated. existing contract: {}", contract);
+            log::debug!(target: "Wallet:cache_prevout_to_contract", "prevout-contract map updated.\nExisting contract: {}", contract);
         }
         Ok(())
     }
