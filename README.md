@@ -124,11 +124,11 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [X] Malice 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
 - [X] Fix all clippy warnings.
 - [x] Implement configuration file i/o support for Takers and Makers.
+- [x] Switch to binary encoding for network messages.
+- [x] Switch to binary encoding for wallet data.
 - [ ] Complete all unit tests in modules.
 - [ ] Achieve >80% crate level test coverage ratio (including integration tests).
 - [ ] Clean up and integrate fidelity bonds with maker banning.
-- [x] Switch to binary encoding for network messages.
-- [ ] Switch to binary encoding for wallet data.
 - [ ] Make tor detectable and connectable by default for Maker and Taker. And Tor configs to their config lists.
 - [ ] Sketch a simple `AddressBook` server. Tor must. This is for MVP. Later on we will move to more decentralized address server architecture.
 - [ ] Turn maker server into a `makerd` binary, and a `maker-cli` rpc controller app, with MVP API.
