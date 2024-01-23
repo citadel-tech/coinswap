@@ -93,7 +93,7 @@ impl TryFrom<FileData> for WalletStore {
 }
 
 impl WalletStore {
-    /// Initialize a store at a path. if path already exists, it will overwrite it.
+    /// Initialize a store at a path (if path already exists, it will overwrite it).
     pub fn init(
         file_name: String,
         path: &PathBuf,
@@ -106,8 +106,7 @@ impl WalletStore {
         Ok(store)
     }
 
-    /// Load existing file, updates it, writes it back.
-    /// errors if path does not exist.
+    /// Load existing file, updates it, writes it back (errors if path doesn't exist).
     pub fn write_to_disk(&self, path: &PathBuf) -> Result<(), WalletError> {
         let mut file_data = FileData::load_from_file(path)?;
         file_data.incoming_swapcoins = self
@@ -125,7 +124,7 @@ impl WalletStore {
         file_data.save_to_file(path)
     }
 
-    /// Reads from a path. Errors if path doesn't exist.
+    /// Reads from a path (errors if path doesn't exist).
     pub fn read_from_disk(path: &PathBuf) -> Result<Self, WalletError> {
         let file_data = FileData::load_from_file(path)?;
         Self::try_from(file_data)
