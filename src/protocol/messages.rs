@@ -1,9 +1,3 @@
-//we make heavy use of serde_json's de/serialization for the benefits of
-//having the compiler check for us, extra type checking and readability
-
-//this works because of enum representations in serde
-//see https://serde.rs/enum-representations.html
-
 //! Coinswap Protocol Messages.
 //!
 //! Messages are communicated between one Taker and one or many Makers.
