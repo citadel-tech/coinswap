@@ -6,7 +6,6 @@ use crate::protocol::error::ContractError;
 #[derive(Debug)]
 pub enum WalletError {
     File(std::io::Error),
-    Json(serde_json::Error),
     Cbor(serde_cbor::Error),
     Rpc(bitcoind::bitcoincore_rpc::Error),
     Protocol(String),
@@ -18,12 +17,6 @@ pub enum WalletError {
 impl From<std::io::Error> for WalletError {
     fn from(e: std::io::Error) -> Self {
         Self::File(e)
-    }
-}
-
-impl From<serde_json::Error> for WalletError {
-    fn from(e: serde_json::Error) -> Self {
-        Self::File(e.into())
     }
 }
 
