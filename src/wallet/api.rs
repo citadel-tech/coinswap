@@ -1082,12 +1082,11 @@ impl Wallet {
     }
 
     /// Signs a transaction corresponding to the provided UTXO spend information.
-    // TODO: Result the unwraps
     pub fn sign_transaction(
         &self,
         tx: &mut Transaction,
         inputs_info: &mut dyn Iterator<Item = UTXOSpendInfo>,
-    ) {
+    ) -> Result<(), WalletError> {
         let secp = Secp256k1::new();
         let master_private_key = self
             .store
@@ -1173,6 +1172,7 @@ impl Wallet {
                 }
             }
         }
+        Ok(())
     }
 
     /// Converts a PSBT (Partially Signed Bitcoin Transaction) created by the wallet
@@ -1248,7 +1248,7 @@ impl Wallet {
                 }
             });
         log::debug!(target: "wallet", "inputs_info = {:?}", inputs_info);
-        self.sign_transaction(&mut tx, &mut inputs_info);
+        self.sign_transaction(&mut tx, &mut inputs_info)?;
 
         log::debug!(target: "wallet",
             "txhex = {}",
