@@ -23,7 +23,7 @@
 </div>
 
 > \[!WARNING\]
-> This library is currently under beta development and at an experimental stage. There are known and unknown bugs. Mainnet use is strictly not recommended.
+> This library is currently under beta development and at an experimental stage. There are known and unknown bugs. Mainnet use is strictly NOT recommended.
 
 ## Table of Contents
 
@@ -43,12 +43,12 @@ Teleport Transactions is a rust implementation of a variant of atomic-swap proto
 
 * [Mailing list post](https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-October/018221.html)
 * [Detailed design](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964)
-* [Developer's resources](/docs/developer_resources.md)
-* [Run demo](/docs/run_teleport.md)
+* [Developer's resources](/docs/dev-book.md)
+* [Run demo](/docs/demo.md)
 
 ## Architecture
 
-The project is divided into distinct modules, each focused on specific functionalities. The project directory-tree is given below:
+The project is divided into distinct modules, each focused on specific functionalities.
 
 ```console
 docs/
@@ -65,10 +65,10 @@ tests/
 ```
 | Directory           | Description |
 |---------------------|-------------|
-| **`doc`**           | Contains all the project-related docs. The [dev-book](https://github.com/utxo-teleport/teleport-transactions/blob/master/docs/dev-book.md) includes major developer salient points. The [demo doc](https://github.com/utxo-teleport/teleport-transactions/blob/master/docs/demo.md) describes how to run the `teleport` binary and perform a swap in regtest.|
+| **`doc`**           | Contains all the project-related docs. The [dev-book](./docs/dev-book.md) includes major developer salient points and the [demo doc](./docs/demo.md) describes how to run the `teleport` binary and perform a swap in regtest.|
 | **`tests`**         | Contains integration tests. Describes behavior of various abort/malice cases.|
-| **`src/taker`**     | Contains Taker-related behaviors, with core logic in `src/taker/api.rs`. Takers manage most protocol logic, while Makers play a relatively passive role.|
-| **`src/maker`**     | Encompasses Maker-specific logic. |
+| **`src/taker`**     | Taker module houses its core logic in `src/taker/api.rs` and handles both Taker-related behaviors and most of the protocol-related logic. |
+| **`src/maker`**     | Encompasses Maker-specific logic and plays a relatively passive role compared to Taker. |
 | **`src/wallet`**    | Manages wallet-related operations, including storage and blockchain interaction. |
 | **`src/market`**    | Handles market-related logic, where Makers post their offers. |
 | **`src/watchtower`**| Provides a Taker-offloadable watchtower implementation for monitoring contract transactions. |
@@ -85,7 +85,7 @@ The project follows the standard Rust build workflow and generates a CLI app nam
 $ cargo build
 ```
 
-The project includes both unit and integration tests. The integration tests simulates various edge cases of the coinswap protocol.
+The project includes both integration and unit tests. The integration tests simulates various edge cases of the coinswap protocol.
 
 To run the tests:
 
@@ -93,9 +93,9 @@ To run the tests:
 $ cargo test -- --nocapture
 ```
 
-For manual swaps using the `teleport` app, follow the instructions in [Run Teleport](./docs/run_teleport.md).
+For manual swaps using the `teleport` app, follow the instructions in [demo](/docs/demo.md).
 
-For in-depth developer documentation on protocol workflow and implementation, consult [Developer's Resources](./docs/developer_resources.md).
+For in-depth developer documentation on protocol workflow and implementation, consult the [dev book](/docs/dev-book.md).
 
 ## Project Status
 
@@ -124,18 +124,18 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [X] Malice 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
 - [X] Fix all clippy warnings.
 - [x] Implement configuration file i/o support for Takers and Makers.
+- [x] Switch to binary encoding for network messages.
+- [x] Switch to binary encoding for wallet data.
+- [ ] Make tor detectable and connectable by default for Maker and Taker. And Tor configs to their config lists.
 - [ ] Complete all unit tests in modules.
 - [ ] Achieve >80% crate level test coverage ratio (including integration tests).
 - [ ] Clean up and integrate fidelity bonds with maker banning.
-- [x] Switch to binary encoding for network messages.
-- [ ] Switch to binary encoding for wallet data.
-- [ ] Make tor detectable and connectable by default for Maker and Taker. And Tor configs to their config lists.
 - [ ] Sketch a simple `AddressBook` server. Tor must. This is for MVP. Later on we will move to more decentralized address server architecture.
 - [ ] Turn maker server into a `makerd` binary, and a `maker-cli` rpc controller app, with MVP API.
 - [ ] Finalize the Taker API for downstream wallet integration.
-- [ ] Develop an example web Taker client, with a downstream wallet.
+- [ ] Develop an example web Taker client with a downstream wallet.
 - [ ] Package `makerd` and `maker-cli` in a downstream node.
-- [ ] Release V 0.1.0 in Signet for beta testing.
+- [ ] Release v0.1.0 in Signet for beta testing.
 
 ### V 0.1.*
 
@@ -143,20 +143,20 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [ ] Describe contract and funding transactions via miniscript, using BDK for wallet management.
 - [ ] Enable wallet syncing via CBF (BIP157/158).
 - [ ] Transition to taproot outputs for the entire protocol, enhancing anonymity and obfuscating contract transactions.
-- [ ] Optional: Payjoin integration via coinswap.
 - [ ] Implement customizable wallet data storage (SQLite, Postgres).
+- [ ] Optional: Payjoin integration via coinswap.
 
 # Contributing
 
-The project is under active development by a few motivated rusty bitcoin devs. Any contribution for features, tests, docs and other fixes/upgrades is encouraged and welcomed. The maintainers will use the PR thread to provide quick reviews and suggestions and are generally proactive at merging good contributions.
+The project is under active development by a few motivated Rusty Bitcoin devs. Any contribution for features, tests, docs and other fixes/upgrades is encouraged and welcomed. The maintainers will use the PR thread to provide quick reviews and suggestions and are generally proactive at merging good contributions.
 
 Few directions for new contributors:
 
-- The list of [issues](https://github.com/utxo-teleport/teleport-transactions/issues) are good place to look for contributable tasks and open problems.
+- The list of [issues](https://github.com/utxo-teleport/teleport-transactions/issues) is a good place to look for contributable tasks and open problems.
 
 - Issues marked with [`good first issue`](https://github.com/utxo-teleport/teleport-transactions/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) are good places to get started for newbie Rust/Bitcoin devs.
 
-- The [docs](https://github.com/utxo-teleport/teleport-transactions/tree/master/docs) are a good place to start reading up on the protocol.
+- The [docs](./docs) are a good place to start reading up on the protocol.
 
 - Reviewing [open PRs](https://github.com/utxo-teleport/teleport-transactions/pulls) are a good place to start gathering a contextual understanding of the codebase.
 

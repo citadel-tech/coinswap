@@ -90,7 +90,7 @@ impl Wallet {
             }
         }
         Err(WalletError::Protocol(
-            "unable to generate amount fractions, probably amount too small".to_string(),
+            "Unable to generate amount fractions, probably amount too small".to_string(),
         ))
     }
 
@@ -460,8 +460,8 @@ impl Wallet {
 
             //not implemented yet!
             log::debug!(target: "wallet",
-                concat!("failed to create funding txes with the biggest-utxos method, this ",
-                    "branch not implemented"));
+                concat!("Failed to create funding txes with the biggest-utxos method, this ",
+                    "branch not implemented yet!"));
             Ok(None)
         } else {
             //at most one utxo bigger than the coinswap amount

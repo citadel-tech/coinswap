@@ -40,7 +40,7 @@ pub fn generate_wallet(
 ) -> Result<(), WalletError> {
     let rpc_config = rpc_config.unwrap_or_default();
 
-    println!("input an optional passphrase (or leave blank for none): ");
+    println!("Input an optional passphrase (or leave blank for none): ");
     let mut passphrase = String::new();
     std::io::stdin().read_line(&mut passphrase)?;
     passphrase = passphrase.trim().to_string();
@@ -59,12 +59,12 @@ pub fn generate_wallet(
         return Err(e);
     }
 
-    println!("Write down this seed phrase =\n{}", mnemonic);
+    println!("Write down this seed phrase:\n{}", mnemonic);
     if !passphrase.trim().is_empty() {
-        println!("And this passphrase =\n\"{}\"", passphrase);
+        println!("And this passphrase:\n\"{}\"", passphrase);
     }
     println!(
-        "\nThis seed phrase is NOT enough to backup all coins in your wallet\n\
+        "\nThis seed phrase is NOT enough to backup all coins in your wallet.\n\
         The teleport wallet file is needed to backup swapcoins"
     );
     println!("\nSaved to file `{}`", wallet_file.to_string_lossy());
@@ -74,24 +74,24 @@ pub fn generate_wallet(
 
 /// Reset a wallet file with a given menmomic and passphrase
 pub fn recover_wallet(wallet_file: &PathBuf) -> Result<(), WalletError> {
-    println!("input seed phrase: ");
+    println!("Input seed phrase: ");
     let mut seed_phrase = String::new();
     std::io::stdin().read_line(&mut seed_phrase)?;
     seed_phrase = seed_phrase.trim().to_string();
 
     if let Err(e) = Mnemonic::parse(&seed_phrase) {
-        println!("invalid seed phrase: {:?}", e);
+        println!("Invalid seed phrase: {:?}", e);
         return Ok(());
     }
 
-    println!("input seed phrase extension (or leave blank for none): ");
+    println!("Input seed phrase extension (or leave blank for none): ");
     let mut passphrase = String::new();
     std::io::stdin().read_line(&mut passphrase)?;
     passphrase = passphrase.trim().to_string();
 
     let wallet_name = wallet_file
         .file_name()
-        .expect("filename expected")
+        .expect("Filename expected!")
         .to_str()
         .unwrap()
         .to_string();
@@ -139,7 +139,7 @@ pub fn display_wallet_balance(
     let balance: Amount = utxos
         .iter()
         .fold(Amount::ZERO, |acc, (u, _)| acc + u.amount);
-    println!("= spendable wallet balance =");
+    println!("= Spendable wallet balance =");
     println!(
         "{:16} {:24} {:^8} {:<7} value",
         "coin", "address", "type", "conf",
@@ -164,12 +164,12 @@ pub fn display_wallet_balance(
             utxo.amount
         );
     }
-    println!("coin count = {}", utxo_count);
-    println!("total balance = {}", balance);
+    println!("Coin count = {}", utxo_count);
+    println!("Total balance = {}", balance);
 
     let incomplete_coinswaps = wallet.find_incomplete_coinswaps()?;
     if !incomplete_coinswaps.is_empty() {
-        println!("= incomplete coinswaps =");
+        println!("= Incomplete coinswaps =");
         for (hashvalue, (utxo_incoming_swapcoins, utxo_outgoing_swapcoins)) in incomplete_coinswaps
         {
             let incoming_swapcoins_balance: Amount = utxo_incoming_swapcoins
@@ -212,13 +212,13 @@ pub fn display_wallet_balance(
             }
             if incoming_swapcoins_balance != Amount::ZERO {
                 println!(
-                    "amount earned if coinswap successful = {}",
+                    "Amount earned if coinswap is successful = {}",
                     (incoming_swapcoins_balance.to_signed().unwrap()
                         - outgoing_swapcoins_balance.to_signed().unwrap()),
                 );
             }
             println!(
-                "outgoing balance = {}\nhashvalue = {}",
+                "Outgoing balance = {}\nhashvalue = {}",
                 outgoing_swapcoins_balance, hashvalue
             );
         }
@@ -228,7 +228,7 @@ pub fn display_wallet_balance(
         wallet.find_live_contract_unspents()?;
     if !outgoing_contract_utxos.is_empty() {
         outgoing_contract_utxos.sort_by(|a, b| b.1.confirmations.cmp(&a.1.confirmations));
-        println!("= live timelocked contracts =");
+        println!("= Live timelocked contracts =");
         println!(
             "{:16} {:10} {:8} {:<7} {:<8} {:6}",
             "coin", "hashvalue", "timelock", "conf", "locked?", "value"
@@ -260,7 +260,7 @@ pub fn display_wallet_balance(
     let expert_mode = true;
     if expert_mode && !incoming_contract_utxos.is_empty() {
         incoming_contract_utxos.sort_by(|a, b| b.1.confirmations.cmp(&a.1.confirmations));
-        println!("= live hashlocked contracts =");
+        println!("= Live hashlocked contracts =");
         println!(
             "{:16} {:10} {:8} {:<7} {:8} {:6}",
             "coin", "hashvalue", "timelock", "conf", "preimage", "value"
@@ -287,7 +287,7 @@ pub fn display_wallet_balance(
     }
 
     if !fidelity_bond_utxos.is_empty() {
-        println!("= fidelity bond coins =");
+        println!("= Fidelity bond coins =");
         println!(
             "{:16} {:24} {:<7} {:<11} {:<8} {:6}",
             "coin", "address", "conf", "locktime", "locked?", "value"
@@ -303,7 +303,7 @@ pub fn display_wallet_balance(
             {
                 index
             } else {
-                panic!("logic error, all these utxos should be fidelity bonds");
+                panic!("Logic error, all these UTXOs should be fidelity bonds!");
             };
             let unix_locktime = get_locktime_from_index(*index);
             let txid = utxo.txid.to_string();
@@ -363,17 +363,17 @@ pub fn print_fidelity_bond_address(
     let (addr, unix_locktime) = wallet.get_timelocked_address(locktime);
     println!(concat!(
         "WARNING: You should send coins to this address only once.",
-        " Only single biggest value UTXO will be announced as a fidelity bond.",
-        " Sending coins to this address multiple times will not increase",
-        " fidelity bond value."
+        " Only single, largest value UTXO will be announced as a fidelity bond.",
+        " Sending coins to this address multiple times will NOT increase",
+        " the fidelity bond value."
     ));
     println!(concat!(
         "WARNING: Only send coins here which are from coinjoins, coinswaps or",
         " otherwise not linked to your identity. Also, use a sweep transaction when funding the",
-        " timelocked address, i.e. Don't create a change address."
+        " timelocked address, i.e., don't create a change address."
     ));
     println!(
-        "Coins sent to this address will not be spendable until {}",
+        "Coins sent to this address will NOT be spendable until {}",
         NaiveDateTime::from_timestamp_opt(unix_locktime, 0)
             .expect("expected")
             .format("%Y-%m-%d")
@@ -397,16 +397,16 @@ pub fn direct_send(
         .create_direct_send(fee_rate, send_amount, destination, coins_to_spend)
         .unwrap();
     let txhex = bitcoin::consensus::encode::serialize_hex(&tx);
-    log::debug!("fully signed tx hex = {}", txhex);
+    log::debug!("Fully signed tx hex = {}", txhex);
     let test_mempool_accept_result = &wallet.rpc.test_mempool_accept(&[txhex.clone()]).unwrap()[0];
     if !test_mempool_accept_result.allowed {
         panic!(
-            "created invalid transaction, reason = {:#?}",
+            "Created invalid transaction, reason = {:#?}",
             test_mempool_accept_result
         );
     }
     println!(
-        "actual fee rate = {:.3} sat/vb",
+        "Actual fee rate = {:.3} sat/vb",
         test_mempool_accept_result
             .fees
             .as_ref()
@@ -416,10 +416,10 @@ pub fn direct_send(
             / test_mempool_accept_result.vsize.unwrap() as f64
     );
     if dont_broadcast {
-        println!("tx = \n{}", txhex);
+        println!("Tx = \n{}", txhex);
     } else {
         let txid = wallet.rpc.send_raw_transaction(&tx).unwrap();
-        println!("broadcasted {}", txid);
+        println!("Broadcasted {}", txid);
     }
     Ok(())
 }

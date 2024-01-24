@@ -47,6 +47,11 @@ use super::{
 pub const FUNDING_TX_VBYTE_SIZE: u64 = 372;
 const MIN_HASHV_LEN: usize = 25;
 
+// Used in read_pubkeys_from_multisig_redeemscript() function.
+const PUBKEY_LENGTH: usize = 33;
+const PUBKEY1_OFFSET: usize = 2;
+const PUBKEY2_OFFSET: usize = PUBKEY1_OFFSET + PUBKEY_LENGTH + 1;
+
 /// Calculate the coin swap fee based on various parameters.
 pub fn calculate_coinswap_fee(
     absolute_fee_sat: u64,
@@ -367,9 +372,10 @@ pub fn read_pubkeys_from_multisig_redeemscript(
     redeemscript: &Script,
 ) -> Result<(PublicKey, PublicKey), ContractError> {
     let ms_rs_bytes = redeemscript.to_bytes();
-    //TODO put these magic numbers in consts, PUBKEY1_OFFSET maybe
-    let pubkey1 = PublicKey::from_slice(&ms_rs_bytes[2..35])?;
-    let pubkey2 = PublicKey::from_slice(&ms_rs_bytes[36..69])?;
+    let pubkey1 =
+        PublicKey::from_slice(&ms_rs_bytes[PUBKEY1_OFFSET..PUBKEY1_OFFSET + PUBKEY_LENGTH])?;
+    let pubkey2 =
+        PublicKey::from_slice(&ms_rs_bytes[PUBKEY2_OFFSET..PUBKEY2_OFFSET + PUBKEY_LENGTH])?;
     Ok((pubkey1, pubkey2))
 }
 

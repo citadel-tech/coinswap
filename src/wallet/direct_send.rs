@@ -243,7 +243,7 @@ impl Wallet {
         self.sign_transaction(
             &mut tx,
             &mut unspent_inputs.iter().map(|(_u, usi)| usi.clone()),
-        );
+        )?;
         Ok(tx)
     }
 }

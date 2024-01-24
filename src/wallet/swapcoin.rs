@@ -1,4 +1,6 @@
 //! SwapCoins are structures defining an ongoing swap operations.
+//! They are UTXOs + metadata which are not from the deterministic wallet
+//! and made in the process of a CoinSwap.
 //!
 //! There are three types of SwapCoins:
 //! [IncomingSwapCoin]: The contract data defining an **incoming** swap.
@@ -26,9 +28,6 @@ use crate::protocol::{
 };
 
 use super::WalletError;
-
-// SwapCoins are UTXOs + metadata which are not from the deterministic wallet.
-// They are made in the process of a coinswap
 
 /// Represents an incoming swapcoin.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -238,7 +237,7 @@ impl IncomingSwapCoin {
     ) -> Result<(), WalletError> {
         if self.other_privkey.is_none() {
             return Err(WalletError::Protocol(
-                "unable to sign: incomplete coinswap for this input".to_string(),
+                "Unable to sign: incomplete coinswap for this input".to_string(),
             ));
         }
         let secp = Secp256k1::new();
@@ -603,9 +602,11 @@ impl SwapCoin for WatchOnlySwapCoin {
         create_multisig_redeemscript(&self.sender_pubkey, &self.receiver_pubkey)
     }
 
-    //potential confusion here:
-    //verify sender sig uses the receiver_pubkey
-    //verify receiver sig uses the sender_pubkey
+    /*
+    Potential confusion here:
+        verify sender sig uses the receiver_pubkey
+        verify receiver sig uses the sender_pubkey
+    */
     fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> Result<(), WalletError> {
         Ok(verify_contract_tx_sig(
             &self.contract_tx,
