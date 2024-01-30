@@ -20,9 +20,7 @@ pub async fn download_and_display_offers(
     maker_address: Option<String>,
 ) {
     let maker_addresses = if let Some(maker_addr) = maker_address {
-        vec![MakerAddress::Tor {
-            address: maker_addr,
-        }]
+        vec![MakerAddress::Address(maker_addr)]
     } else {
         let network = Network::Regtest; // Default netwrok
         get_advertised_maker_addresses(network)
@@ -36,7 +34,7 @@ pub async fn download_and_display_offers(
     offers_addresses
         .iter()
         .for_each(|offer_address| match &offer_address.address {
-            MakerAddress::Clearnet { address } | MakerAddress::Tor { address } => {
+            MakerAddress::Address ( address ) => {
                 addresses_offers_map.insert(address, offer_address);
             }
         });
@@ -56,8 +54,7 @@ pub async fn download_and_display_offers(
 
     for (ii, address) in maker_addresses.iter().enumerate() {
         let address_str = match &address {
-            MakerAddress::Clearnet { address } => address,
-            MakerAddress::Tor { address } => address,
+            MakerAddress::Address ( address ) => address,
         };
         if let Some(offer_address) = addresses_offers_map.get(&address_str) {
             let o = &offer_address.offer;

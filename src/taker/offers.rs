@@ -6,6 +6,9 @@
 //! It uses asynchronous channels for concurrent processing of maker offers.
 
 use std::fmt;
+use std::path::PathBuf;
+use std::fs::File;
+use std::io::Read;
 
 use tokio::sync::mpsc;
 
@@ -14,7 +17,7 @@ use bitcoin::Network;
 use crate::protocol::messages::Offer;
 
 use crate::market::directory::{
-    sync_maker_addresses_from_directory_servers, DirectoryServerError, TOR_ADDR,
+    sync_maker_addresses_from_directory_servers, DirectoryServerError
 };
 
 use super::{config::TakerConfig, routines::download_maker_offer};
@@ -26,27 +29,25 @@ pub struct OfferAndAddress {
     pub address: MakerAddress,
 }
 
-const REGTEST_MAKER_ADDRESSES: &[&str] = &[
-    "localhost:6102",
-    "localhost:16102",
-    "localhost:26102",
-    "localhost:36102",
-    "localhost:46102",
+const REGTEST_MAKER_ADDRESSES_PORT: &[&str] = &[
+    "6102",
+    "16102",
+    "26102",
+    "36102",
+    "46102",
 ];
 
-/// Enum representing maker addresses (clearnet and TOR).
+/// Enum representing maker addresses.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MakerAddress {
-    Clearnet { address: String },
-    Tor { address: String },
+    Address(String)
 }
 
 impl MakerAddress {
     /// Returns the TCP stream address as a string.
     pub fn get_tcpstream_address(&self) -> String {
         match &self {
-            MakerAddress::Clearnet { address } => address.to_string(),
-            MakerAddress::Tor { address: _ } => String::from(TOR_ADDR),
+            MakerAddress::Address (address) => address.to_string(),
         }
     }
 }
@@ -54,8 +55,7 @@ impl MakerAddress {
 impl fmt::Display for MakerAddress {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self {
-            MakerAddress::Clearnet { address } => write!(f, "{}", address),
-            MakerAddress::Tor { address } => write!(f, "{}", address),
+            MakerAddress::Address(address)=> write!(f, "{}", address),
         }
     }
 }
@@ -115,12 +115,15 @@ impl OfferBook {
     }
 }
 
-fn get_regtest_maker_addresses() -> Vec<MakerAddress> {
-    REGTEST_MAKER_ADDRESSES
+async fn get_regtest_maker_addresses() -> Vec<MakerAddress> {
+    let onion_addr_path = PathBuf::from("/tmp/tor-rust/maker/hs-dir/hostname");
+    let mut file = File::open(&onion_addr_path).unwrap();
+    let mut onion_addr: String = String::new();
+    file.read_to_string(&mut onion_addr).unwrap();
+    onion_addr.pop(); 
+    REGTEST_MAKER_ADDRESSES_PORT
         .iter()
-        .map(|h| MakerAddress::Clearnet {
-            address: h.to_string(),
-        })
+        .map(|h| MakerAddress::Address (format!("{}:{}",onion_addr,h)))
         .collect::<Vec<MakerAddress>>()
 }
 
@@ -132,7 +135,6 @@ pub async fn sync_offerbook_with_addresses(
     let (offers_writer_m, mut offers_reader) = mpsc::channel::<Option<OfferAndAddress>>(100);
     //unbounded_channel makes more sense here, but results in a compile
     //error i cant figure out
-
     let maker_addresses_len = maker_addresses.len();
     for addr in maker_addresses {
         let offers_writer = offers_writer_m.clone();
@@ -157,7 +159,7 @@ pub async fn get_advertised_maker_addresses(
     network: Network,
 ) -> Result<Vec<MakerAddress>, DirectoryServerError> {
     Ok(if network == Network::Regtest {
-        get_regtest_maker_addresses()
+        get_regtest_maker_addresses().await
     } else {
         sync_maker_addresses_from_directory_servers(network).await?
     })

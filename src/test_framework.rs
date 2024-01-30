@@ -12,8 +12,7 @@
 //!
 //! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
 
-use bitcoin::secp256k1::rand::{distributions::Alphanumeric, thread_rng, Rng}; // 0.8
-
+use bitcoin::secp256k1::rand::{distributions::Alphanumeric, thread_rng, Rng};
 use std::{
     collections::HashMap,
     fs,
@@ -28,7 +27,7 @@ use bitcoin::{Address, Amount};
 use crate::{
     maker::{Maker, MakerBehavior},
     taker::{Taker, TakerBehavior},
-    utill::{setup_logger, str_to_bitcoin_network},
+    utill::{setup_logger, str_to_bitcoin_network, tor_instance_setup},
     wallet::RPCConfig,
 };
 use bitcoind::{
@@ -71,8 +70,9 @@ impl TestFramework {
         makers_config_map: HashMap<u16, MakerBehavior>,
         taker_behavior: Option<TakerBehavior>,
     ) -> (Arc<Self>, Arc<RwLock<Taker>>, Vec<Arc<Maker>>) {
+        tor_instance_setup();
         setup_logger();
-
+        thread::sleep(Duration::from_secs(30));
         // Setup directory
         let temp_dir = get_random_tmp_dir();
         // Remove if previously existing

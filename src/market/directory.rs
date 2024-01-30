@@ -6,7 +6,7 @@
 
 /// Represents the Tor address and port configuration.
 // It should be set to your specific Tor address and port.
-pub const TOR_ADDR: &str = "127.0.0.1:19050";
+pub const TOR_SOCKS_ADDR: &str = "127.0.0.1:19050";
 
 use bitcoin::Network;
 
@@ -45,7 +45,7 @@ pub async fn sync_maker_addresses_from_directory_servers(
 ) -> Result<Vec<MakerAddress>, DirectoryServerError> {
     // https://github.com/seanmonstar/reqwest/blob/master/examples/tor_socks.rs
     let proxy =
-        reqwest::Proxy::all(format!("socks5h://{}", TOR_ADDR)).expect("tor proxy should be there");
+        reqwest::Proxy::all(format!("socks5h://{}", TOR_SOCKS_ADDR)).expect("tor proxy should be there");
     let client = reqwest::Client::builder()
         .proxy(proxy)
         .build()
@@ -67,9 +67,7 @@ pub async fn sync_maker_addresses_from_directory_servers(
         if csv_chunks.len() < 2 {
             continue;
         }
-        maker_addresses.push(MakerAddress::Tor {
-            address: String::from(csv_chunks[1]),
-        });
+        maker_addresses.push(MakerAddress::Address (String::from(csv_chunks[1])));
         log::debug!(target:"directory_servers", "expiry timestamp = {} address = {}",
             csv_chunks[0], csv_chunks[1]);
     }
@@ -82,7 +80,7 @@ pub async fn post_maker_address_to_directory_servers(
     address: &str,
 ) -> Result<u64, DirectoryServerError> {
     let proxy =
-        reqwest::Proxy::all(format!("socks5h://{}", TOR_ADDR)).expect("tor proxy should be there");
+        reqwest::Proxy::all(format!("socks5h://{}", TOR_SOCKS_ADDR)).expect("tor proxy should be there");
     let client = reqwest::Client::builder()
         .proxy(proxy)
         .build()

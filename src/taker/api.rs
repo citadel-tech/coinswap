@@ -16,7 +16,7 @@ use std::{
 
 use bip39::Mnemonic;
 use bitcoind::bitcoincore_rpc::RpcApi;
-use tokio::{net::TcpStream, select, time::sleep};
+use tokio::{select, time::sleep};
 
 use bitcoin::{
     consensus::encode::deserialize,
@@ -27,6 +27,7 @@ use bitcoin::{
     },
     BlockHash, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
+use tokio_socks::tcp::Socks5Stream;
 
 use super::{
     error::TakerError,
@@ -53,6 +54,7 @@ use crate::{
         WatchOnlySwapCoin,
     },
 };
+
 
 /// Swap specific parameters. These are user's policy and can differ among swaps.
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
@@ -816,9 +818,13 @@ impl Taker {
         let previous_maker = self.ongoing_swap_state.peer_infos.iter().rev().nth(1);
 
         log::info!("Connecting to {}", this_maker.address);
-        let mut socket = TcpStream::connect(this_maker.address.get_tcpstream_address()).await?;
+        let address = match &this_maker.address {
+            MakerAddress::Address ( address ) => address,
+        }.as_str();
+        let mut socket = Socks5Stream::connect("127.0.0.1:19050",address).await?.into_inner();
+        // let mut socket = TcpStream::connect(this_maker.address.get_tcpstream_address()).await?;
         let (mut socket_reader, mut socket_writer) =
-            handshake_maker(&mut socket, &this_maker.address).await?;
+            handshake_maker(&mut socket).await?;
         let mut next_maker = this_maker.clone();
         let (
             next_peer_multisig_pubkeys,
@@ -1550,9 +1556,12 @@ impl Taker {
         receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {
         log::info!("Connecting to {}", maker_address);
-        let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
+        let address = match &maker_address {
+            MakerAddress::Address ( address ) => address,
+        }.as_str();
+        let mut socket = Socks5Stream::connect("127.0.0.1:19050",address).await?.into_inner();
         let (mut socket_reader, mut socket_writer) =
-            handshake_maker(&mut socket, maker_address).await?;
+            handshake_maker(&mut socket).await?;
 
         log::info!("===> Sending HashPreimage to {}", maker_address);
         let maker_private_key_handover = send_hash_preimage_and_get_private_keys(

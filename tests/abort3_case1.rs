@@ -6,7 +6,7 @@ use coinswap::{
     test_framework::*,
 };
 use log::{info, warn};
-use std::{thread, time::Duration};
+use std::{fs::File, path::PathBuf, thread, time::Duration,io::Read};
 
 /// ABORT 3: Maker Drops After Setup
 /// Case 1: CloseAtContractSigsForRecvrAndSender
@@ -113,8 +113,13 @@ async fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
     // ---- After Swap checks ----
     // TODO: Do balance asserts
     // Maker gets banned for being naughty.
+    let onion_addr_path = PathBuf::from("/tmp/tor-rust/maker/hs-dir/hostname");
+    let mut file = File::open(&onion_addr_path).unwrap();
+    let mut onion_addr: String = String::new();
+    file.read_to_string(&mut onion_addr).unwrap();
+    onion_addr.pop();
     assert_eq!(
-        "localhost:6102",
+        format!("{}:{}",onion_addr,6102),
         taker.read().unwrap().get_bad_makers()[0]
             .address
             .to_string()

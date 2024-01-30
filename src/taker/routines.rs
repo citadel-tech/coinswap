@@ -48,6 +48,8 @@ use super::{
 
 use crate::wallet::SwapCoin;
 
+
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ContractTransaction {
     pub tx: Transaction,
@@ -65,15 +67,8 @@ pub struct ContractsInfo {
 
 /// Performs a handshake with a Maker and returns and Reader and Writer halves.
 pub async fn handshake_maker<'a>(
-    socket: &'a mut TcpStream,
-    maker_address: &MakerAddress,
+    socket: &'a mut TcpStream
 ) -> Result<(BufReader<ReadHalf<'a>>, WriteHalf<'a>), TakerError> {
-    let socket = match maker_address {
-        MakerAddress::Clearnet { address: _ } => socket,
-        MakerAddress::Tor { address } => Socks5Stream::connect_with_socket(socket, address.clone())
-            .await?
-            .into_inner(),
-    };
     let (reader, mut socket_writer) = socket.split();
     let mut socket_reader = BufReader::new(reader);
     send_message(
@@ -109,9 +104,13 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
     locktime: u16,
 ) -> Result<ContractSigsForSender, TakerError> {
     log::info!("Connecting to {}", maker_address);
-    let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
+    let address = match maker_address {
+        MakerAddress::Address ( address ) => address,
+    }.as_str();
+    // let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
+    let mut socket = Socks5Stream::connect("127.0.0.1:19050", address).await?.into_inner();
     let (mut socket_reader, mut socket_writer) =
-        handshake_maker(&mut socket, maker_address).await?;
+        handshake_maker(&mut socket).await?;
     log::info!("===> Sending ReqContractSigsForSender to {}", maker_address);
 
     // TODO: Take this construction out of function body.
@@ -182,9 +181,13 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
     receivers_contract_txes: &[Transaction],
 ) -> Result<ContractSigsForRecvr, TakerError> {
     log::info!("Connecting to {}", maker_address);
-    let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
+    let address = match maker_address {
+        MakerAddress::Address ( address ) => address,
+    }.as_str();
+    let mut socket = Socks5Stream::connect("127.0.0.1:19050",address).await?.into_inner();
+    // let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
     let (mut socket_reader, mut socket_writer) =
-        handshake_maker(&mut socket, maker_address).await?;
+        handshake_maker(&mut socket).await?;
 
     // TODO: Take the message construction out of function body.
     send_message(
@@ -443,8 +446,11 @@ pub(crate) async fn send_hash_preimage_and_get_private_keys(
 
 async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer, TakerError> {
     log::debug!(target: "offerbook", "Connecting to {}", addr);
-    let mut socket = TcpStream::connect(addr.get_tcpstream_address()).await?;
-    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket, addr).await?;
+    let address = match addr {
+        MakerAddress::Address(address ) => address,
+    }.as_str();
+    let mut socket = Socks5Stream::connect("127.0.0.1:19050",address).await?.into_inner();
+    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
 
     send_message(
         &mut socket_writer,

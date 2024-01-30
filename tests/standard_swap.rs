@@ -192,6 +192,7 @@ async fn test_standard_coinswap() {
             .unwrap()
             .balance(false, false)
             .unwrap();
+        log::info!("Lets see the amount {:?}",balance);
         assert!(balance > Amount::from_btc(0.15).unwrap());
     });
 

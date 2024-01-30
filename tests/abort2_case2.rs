@@ -6,7 +6,7 @@ use coinswap::{
     test_framework::*,
 };
 use log::{info, warn};
-use std::{thread, time::Duration};
+use std::{fs::File, path::PathBuf, thread, time::Duration,io::Read};
 
 /// ABORT 2: Maker Drops Before Setup
 /// This test demonstrates the situation where a Maker prematurely drops connections after doing
@@ -134,8 +134,13 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
     // ---- After Swap checks ----
 
     // Maker gets banned for being naughty.
+    let onion_addr_path = PathBuf::from("/tmp/tor-rust/maker/hs-dir/hostname");
+    let mut file = File::open(&onion_addr_path).unwrap();
+    let mut onion_addr: String = String::new();
+    file.read_to_string(&mut onion_addr).unwrap();
+    onion_addr.pop();
     assert_eq!(
-        "localhost:6102",
+        format!("{}:{}",onion_addr,6102),
         taker.read().unwrap().get_bad_makers()[0]
             .address
             .to_string()
