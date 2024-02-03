@@ -101,8 +101,6 @@ total balance = 0.14974828 BTC
 
 * Teleport detects which network it's on by asking the Bitcoin node it's connected to via json-rpc. So to switch between networks like `regtest`, signet, testnet or mainnet (for the brave), make sure the RPC host and port are correct in `src/lib.rs`.
 
-* You will need Tor running on the same machine, then open the file `src/directory_servers.rs` and make sure the const `TOR_SOCKS_ADDR` has the correct Tor port.
-
 * To see all the advertised offers out there, use the `download-offers` subroutine like `cargo run -- download-offers`:
 
 ```console

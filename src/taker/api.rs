@@ -38,8 +38,7 @@ use super::{
     routines::*,
 };
 use crate::{
-    error::{NetError, ProtocolError},
-    protocol::{
+    error::{NetError, ProtocolError}, protocol::{
         error::ContractError,
         messages::{
             ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
@@ -52,7 +51,7 @@ use crate::{
     wallet::{
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletSwapCoin,
         WatchOnlySwapCoin,
-    },
+    }
 };
 
 
@@ -818,9 +817,7 @@ impl Taker {
         let previous_maker = self.ongoing_swap_state.peer_infos.iter().rev().nth(1);
 
         log::info!("Connecting to {}", this_maker.address);
-        let address = match &this_maker.address {
-            MakerAddress::Address ( address ) => address,
-        }.as_str();
+        let address = this_maker.address.as_str();
         let mut socket = Socks5Stream::connect("127.0.0.1:19050",address).await?.into_inner();
         // let mut socket = TcpStream::connect(this_maker.address.get_tcpstream_address()).await?;
         let (mut socket_reader, mut socket_writer) =
@@ -1556,9 +1553,7 @@ impl Taker {
         receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {
         log::info!("Connecting to {}", maker_address);
-        let address = match &maker_address {
-            MakerAddress::Address ( address ) => address,
-        }.as_str();
+        let address = maker_address.as_str();
         let mut socket = Socks5Stream::connect("127.0.0.1:19050",address).await?.into_inner();
         let (mut socket_reader, mut socket_writer) =
             handshake_maker(&mut socket).await?;

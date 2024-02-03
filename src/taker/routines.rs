@@ -104,9 +104,7 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
     locktime: u16,
 ) -> Result<ContractSigsForSender, TakerError> {
     log::info!("Connecting to {}", maker_address);
-    let address = match maker_address {
-        MakerAddress::Address ( address ) => address,
-    }.as_str();
+    let address = maker_address.as_str();
     // let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
     let mut socket = Socks5Stream::connect("127.0.0.1:19050", address).await?.into_inner();
     let (mut socket_reader, mut socket_writer) =
@@ -181,9 +179,7 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
     receivers_contract_txes: &[Transaction],
 ) -> Result<ContractSigsForRecvr, TakerError> {
     log::info!("Connecting to {}", maker_address);
-    let address = match maker_address {
-        MakerAddress::Address ( address ) => address,
-    }.as_str();
+    let address = maker_address.as_str();
     let mut socket = Socks5Stream::connect("127.0.0.1:19050",address).await?.into_inner();
     // let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
     let (mut socket_reader, mut socket_writer) =
@@ -446,9 +442,7 @@ pub(crate) async fn send_hash_preimage_and_get_private_keys(
 
 async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer, TakerError> {
     log::debug!(target: "offerbook", "Connecting to {}", addr);
-    let address = match addr {
-        MakerAddress::Address(address ) => address,
-    }.as_str();
+    let address = addr.as_str();
     let mut socket = Socks5Stream::connect("127.0.0.1:19050",address).await?.into_inner();
     let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
 

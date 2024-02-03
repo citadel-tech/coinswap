@@ -67,7 +67,7 @@ pub async fn sync_maker_addresses_from_directory_servers(
         if csv_chunks.len() < 2 {
             continue;
         }
-        maker_addresses.push(MakerAddress::Address (String::from(csv_chunks[1])));
+        maker_addresses.push(MakerAddress::new(String::from(csv_chunks[1])) );
         log::debug!(target:"directory_servers", "expiry timestamp = {} address = {}",
             csv_chunks[0], csv_chunks[1]);
     }

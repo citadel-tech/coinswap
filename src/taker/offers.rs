@@ -37,26 +37,29 @@ const REGTEST_MAKER_ADDRESSES_PORT: &[&str] = &[
     "46102",
 ];
 
+type OnionAddress = String;
 /// Enum representing maker addresses.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum MakerAddress {
-    Address(String)
-}
+pub struct MakerAddress(OnionAddress);
 
 impl MakerAddress {
     /// Returns the TCP stream address as a string.
     pub fn get_tcpstream_address(&self) -> String {
-        match &self {
-            MakerAddress::Address (address) => address.to_string(),
-        }
+        format!("{}",self.0)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn new(address: String) -> Self {
+        MakerAddress(address)
     }
 }
 
 impl fmt::Display for MakerAddress {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match &self {
-            MakerAddress::Address(address)=> write!(f, "{}", address),
-        }
+         write!(f, "{}", self.0)
     }
 }
 
@@ -130,7 +133,7 @@ async fn get_regtest_maker_addresses() -> Vec<MakerAddress> {
             let mut onion_addr: String = String::new();
             file.read_to_string(&mut onion_addr).unwrap();
             onion_addr.pop(); 
-            MakerAddress::Address (format!("{}:{}",onion_addr,h))
+            MakerAddress(format!("{}:{}",onion_addr,h))
            
         })
         .collect::<Vec<MakerAddress>>()
