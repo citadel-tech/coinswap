@@ -22,7 +22,7 @@ reqwest = { version = "0.11", features = ["socks"] }
 clap = { version = "4.3.19", features = ["derive"] }
 bitcoind = {version = "0.32", features = ["25_0"] }
 libtor = "47.13.0"
-socks = "0.3.4"
+mitosis = "0.1.1"
 
 
 #Empty default feature set, (helpful to generalise in github actions)

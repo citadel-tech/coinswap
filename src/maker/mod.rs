@@ -17,11 +17,7 @@ use bitcoin::{absolute::LockTime, Amount, Network};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Serialize,Deserialize};
 use tokio::{
-    io::{AsyncReadExt,BufReader},
-    net::{tcp::ReadHalf, TcpListener},
-    select,
-    sync::mpsc,
-    time::sleep,
+    io::{AsyncReadExt,BufReader}, net::{tcp::ReadHalf, TcpListener}, select, sync::mpsc,time::sleep
 };
 
 pub use api::{Maker, MakerBehavior};
@@ -51,34 +47,8 @@ use crate::maker::error::MakerError;
 /// aspects of the Maker's behavior.
 #[tokio::main]
 pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
-
-    // let onion_addr_path = PathBuf::from("/tmp/tor-rust/maker/hs-dir/hostname");
-    // let mut file = File::open(&onion_addr_path).unwrap();
-    // let mut onion_addr: String = String::new();
-    // file.read_to_string(&mut onion_addr).unwrap();
-    // onion_addr.pop();
-    // let directory_onion_addr = "ygvwpptpzfja4rvixhsmevwvtrsmzcw7nkwk7ps5wguxry2rvyc56pid.onion:8001";
-    // let maker_port = maker.config.port.to_string();
-
-    // let request_string = format!("Onion_addr:{}\nPort:{}\n",onion_addr,maker_port);
-
-    // let mut connection: TcpStream = Socks5Stream::connect("127.0.0.1:19050", directory_onion_addr).await.unwrap().into_inner();
-
-    // let (mut reader,mut writer) = connection.split();
-
-    // writer.write_all(request_string.as_bytes()).await.unwrap();
-    // let mut buf = vec![0;1024];
-    // let byte_read = reader.read(&mut buf).await.unwrap();
-    // buf.truncate(byte_read);
-    // match serde_cbor::from_slice::<Vec<OnionAddress>>(&buf) {
-    //     Ok(deserialized_data) => {
-    //         log::info!("Deserialized data: {:?}", deserialized_data);
-    //     },
-    //     Err(e) => {
-    //         log::warn!("Failed to deserialize CBOR data: {:?}", e);
-    //     }
-    // }
-
+   
+   
     log::debug!("Running maker with special behavior = {:?}", maker.behavior);
     maker.wallet.write()?.refresh_offer_maxsize_cache()?;
 

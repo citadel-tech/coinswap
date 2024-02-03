@@ -19,7 +19,7 @@ use coinswap::{
         },
     },
     taker::{SwapParams, Taker, TakerBehavior},
-    utill::{get_data_dir, setup_logger,tor_instance_setup},
+    utill::{get_data_dir, setup_logger},
     wallet::{CoinToSpend, Destination, DisplayAddressType, SendAmount, WalletError},
 };
 
@@ -129,7 +129,6 @@ enum WalletArgsSubcommand {
 }
 
 fn main() -> Result<(), WalletError> {
-    tor_instance_setup();
     setup_logger();
     let args = ArgsWithWalletFile::parse();
     // let args = ArgsWithWalletFile::from_args();

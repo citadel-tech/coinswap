@@ -116,14 +116,23 @@ impl OfferBook {
 }
 
 async fn get_regtest_maker_addresses() -> Vec<MakerAddress> {
-    let onion_addr_path = PathBuf::from("/tmp/tor-rust/maker/hs-dir/hostname");
-    let mut file = File::open(&onion_addr_path).unwrap();
-    let mut onion_addr: String = String::new();
-    file.read_to_string(&mut onion_addr).unwrap();
-    onion_addr.pop(); 
     REGTEST_MAKER_ADDRESSES_PORT
         .iter()
-        .map(|h| MakerAddress::Address (format!("{}:{}",onion_addr,h)))
+        .filter(|port| {
+            let hs_path_str = format!("/tmp/tor-rust{}/maker/hs-dir/hostname",port);
+            let hs_path = PathBuf::from(hs_path_str);
+            hs_path.exists()
+        })
+        .map(|h| {
+            let hs_path_str = format!("/tmp/tor-rust{}/maker/hs-dir/hostname",h);
+            let hs_path = PathBuf::from(hs_path_str);
+            let mut file = File::open(&hs_path).unwrap();
+            let mut onion_addr: String = String::new();
+            file.read_to_string(&mut onion_addr).unwrap();
+            onion_addr.pop(); 
+            MakerAddress::Address (format!("{}:{}",onion_addr,h))
+           
+        })
         .collect::<Vec<MakerAddress>>()
 }
 

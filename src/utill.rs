@@ -1,6 +1,6 @@
 //! Various utility and helper functions for both Taker and Maker.
 
-use std::{env, io::ErrorKind, path::PathBuf, sync::Once, thread};
+use std::{env, io::ErrorKind, path::PathBuf, sync::Once};
 
 use bitcoin::{
     address::{WitnessProgram, WitnessVersion},
@@ -12,7 +12,6 @@ use bitcoin::{
     },
     Network, PublicKey, ScriptBuf,
 };
-use libtor::{HiddenServiceVersion, Tor, TorAddress, TorFlag};
 
 use std::{
     collections::HashMap,
@@ -87,40 +86,9 @@ pub fn setup_logger() {
     });
 }
 
-pub fn tor_instance_setup() {
+pub fn setup_mitosis() {
     Once::new().call_once(|| {
-        thread::spawn(|| {
-            let maker_file_path = PathBuf::from("/tmp/tor-rust/maker");
-            if !maker_file_path.exists() {
-                fs::create_dir_all(maker_file_path).unwrap();
-            }
-            let taker_file_path = PathBuf::from("/tmp/tor-rust/taker");
-            if !taker_file_path.exists() {
-                fs::create_dir_all(taker_file_path).unwrap();
-            }
-            let directory_file_path = PathBuf::from("/tmp/tor-rust/directory");
-            if !directory_file_path.exists() {
-                fs::create_dir_all(directory_file_path).unwrap();
-            }
-            
-            Tor::new()
-            .flag(TorFlag::DataDirectory("/tmp/tor-rust/".into()))
-            .flag(TorFlag::SocksPort(19050))
-            .flag(TorFlag::HiddenServiceDir("/tmp/tor-rust/maker/hs-dir".into()))
-            .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
-            .flag(TorFlag::HiddenServicePort(TorAddress::Port(6102),None.into(),))
-            .flag(TorFlag::HiddenServicePort(TorAddress::Port(16102),None.into(),))
-            .flag(TorFlag::HiddenServicePort(TorAddress::Port(26102),None.into(),))
-            .flag(TorFlag::HiddenServicePort(TorAddress::Port(36102),None.into(),))
-            .flag(TorFlag::HiddenServicePort(TorAddress::Port(46102),None.into(),))
-            .flag(TorFlag::HiddenServiceDir("/tmp/tor-rust/taker/hs-dir".into()))
-            .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
-            .flag(TorFlag::HiddenServicePort(TorAddress::Port(8000), None.into()))
-            .flag(TorFlag::HiddenServiceDir("/tmp/tor-rust/directory/hs-dir".into()))
-            .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
-            .flag(TorFlag::HiddenServicePort(TorAddress::Port(8001), None.into()))
-            .start_background();
-        });
+        mitosis::init()
     });
 }
 
