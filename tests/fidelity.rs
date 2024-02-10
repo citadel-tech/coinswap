@@ -29,7 +29,7 @@ async fn test_fidelity() {
     let (test_framework, _, makers) =
         TestFramework::init(None, makers_config_map.into(), None).await;
 
-    let maker = makers.iter().next().unwrap();
+    let maker = makers.first().unwrap();
 
     // ----- Test -----
 

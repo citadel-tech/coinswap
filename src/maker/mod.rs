@@ -72,10 +72,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         } else {
             // No bond in the wallet. Lets attempt to create one.
             let amount = Amount::from_sat(maker.config.fidelity_value);
-            let current_height = wallet
-                .rpc
-                .get_block_count()
-                .map_err(WalletError::Rpc)? as u32;
+            let current_height = wallet.rpc.get_block_count().map_err(WalletError::Rpc)? as u32;
 
             // Set 100 blocks locktime for test
             let locktime = if cfg!(feature = "integration-test") {
