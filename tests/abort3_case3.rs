@@ -52,6 +52,17 @@ async fn abort3_case2_close_at_contract_sigs_for_recvr() {
         })
     }
 
+    // Coins for fidelity creation
+    makers.iter().for_each(|maker| {
+        let maker_addrs = maker
+            .get_wallet()
+            .write()
+            .unwrap()
+            .get_next_external_address()
+            .unwrap();
+        test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
+    });
+
     // confirm balances
     test_framework.generate_1_block();
 
