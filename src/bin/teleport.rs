@@ -15,15 +15,12 @@ use coinswap::{
         market::download_and_display_offers,
         wallet::{
             direct_send, display_wallet_addresses, display_wallet_balance, generate_wallet,
-            print_fidelity_bond_address, print_receive_invoice, recover_wallet,
+            print_receive_invoice, recover_wallet,
         },
     },
     taker::{SwapParams, Taker, TakerBehavior},
     utill::{get_data_dir, setup_logger},
-    wallet::{
-        fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, SendAmount,
-        WalletError,
-    },
+    wallet::{CoinToSpend, Destination, DisplayAddressType, SendAmount, WalletError},
 };
 
 #[derive(Parser, Debug)]
@@ -84,14 +81,6 @@ enum WalletArgsSubcommand {
         /// TODO more information on usefulness
         #[arg(long, short)]
         special_behavior: Option<String>,
-    },
-
-    /// Prints a fidelity bond timelocked address
-    GetFidelityBondAddress {
-        /// Locktime value of timelocked address as yyyy-mm year and month, for example "2025-03"
-        #[arg( long, short, value_parser = clap::value_parser!(YearAndMonth),
-    )]
-        year_and_month: YearAndMonth,
     },
 
     /// Runs Taker.
@@ -187,9 +176,6 @@ fn main() -> Result<(), WalletError> {
             );
 
             start_maker_server(maker).unwrap();
-        }
-        WalletArgsSubcommand::GetFidelityBondAddress { year_and_month } => {
-            print_fidelity_bond_address(&args.wallet_file_name, &year_and_month)?;
         }
         WalletArgsSubcommand::DoCoinswap {
             send_amount,

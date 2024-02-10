@@ -10,9 +10,9 @@ use bitcoin::{
         opcodes::{self, all},
         script::{Builder, Instruction, Script},
     },
+    ecdsa::Signature,
     hashes::Hash,
     secp256k1::{
-        ecdsa::Signature,
         rand::{rngs::OsRng, RngCore},
         Message, Secp256k1, SecretKey,
     },
@@ -69,8 +69,8 @@ pub fn calculate_coinswap_fee(
 pub fn apply_two_signatures_to_2of2_multisig_spend(
     key1: &PublicKey,
     key2: &PublicKey,
-    sig1: &Signature,
-    sig2: &Signature,
+    sig1: &bitcoin::secp256k1::ecdsa::Signature,
+    sig2: &bitcoin::secp256k1::ecdsa::Signature,
     input: &mut TxIn,
     redeemscript: &Script,
 ) {
@@ -480,7 +480,11 @@ pub fn sign_contract_tx(
         )?[..],
     )?;
     let secp = Secp256k1::new();
-    Ok(secp.sign_ecdsa(&sighash, privkey))
+    let sig = secp.sign_ecdsa(&sighash, privkey);
+    Ok(Signature {
+        sig,
+        hash_ty: EcdsaSighashType::All,
+    })
 }
 
 /// Verify a signature on a contract transaction.
@@ -489,7 +493,7 @@ pub fn verify_contract_tx_sig(
     multisig_redeemscript: &Script,
     funding_amount: u64,
     pubkey: &PublicKey,
-    sig: &Signature,
+    sig: &bitcoin::secp256k1::ecdsa::Signature,
 ) -> Result<(), ContractError> {
     let input_index = 0;
     let sighash = Message::from_slice(
@@ -847,7 +851,7 @@ mod test {
             &funding_outpoint_script,
             funding_tx.output[0].value,
             &pub1,
-            &sig1
+            &sig1.sig
         )
         .is_ok());
 
@@ -865,7 +869,7 @@ mod test {
             &funding_outpoint_script,
             funding_tx.output[0].value,
             &pub2,
-            &sig2
+            &sig2.sig
         )
         .is_ok());
     }

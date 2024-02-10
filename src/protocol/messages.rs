@@ -58,8 +58,8 @@
 use std::fmt::Display;
 
 use bitcoin::{
-    secp256k1::{ecdsa::Signature, SecretKey},
-    OutPoint, PublicKey, ScriptBuf, Transaction,
+    ecdsa::Signature, hashes::sha256d::Hash, secp256k1::SecretKey, PublicKey, ScriptBuf,
+    Transaction,
 };
 
 use serde::{Deserialize, Serialize};

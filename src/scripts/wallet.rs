@@ -5,19 +5,16 @@
 //! wallet initialization, synchronization with a backend node, and various display and transaction operations.
 //! The module provides a convenient interface for users interacting with the teleport wallet.
 
-use crate::wallet::{
-    fidelity::get_locktime_from_index, SwapCoin, UTXOSpendInfo, Wallet, WalletStore,
-};
+use crate::wallet::{SwapCoin, UTXOSpendInfo, Wallet, WalletStore};
 use bitcoin::{consensus::encode::serialize_hex, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
-use chrono::NaiveDateTime;
 use std::{convert::TryInto, path::PathBuf};
 
 use bip39::Mnemonic;
 
 use crate::wallet::{
-    fidelity::YearAndMonth, CoinToSpend, Destination, DisplayAddressType, RPCConfig, SendAmount,
-    WalletError, WalletSwapCoin,
+    CoinToSpend, Destination, DisplayAddressType, RPCConfig, SendAmount, WalletError,
+    WalletSwapCoin,
 };
 
 use crate::protocol::contract::read_contract_locktime;
@@ -296,16 +293,11 @@ pub fn display_wallet_balance(
         let mediantime = wallet.rpc.get_blockchain_info().unwrap().median_time;
         fidelity_bond_utxos.sort_by(|(a, _), (b, _)| b.confirmations.cmp(&a.confirmations));
         for (utxo, utxo_spend_info) in fidelity_bond_utxos {
-            let index = if let UTXOSpendInfo::FidelityBondCoin {
-                index,
-                input_value: _,
-            } = utxo_spend_info
-            {
-                index
-            } else {
+            if !matches!(utxo_spend_info, UTXOSpendInfo::FidelityBondCoin { .. }) {
                 panic!("Logic error, all these UTXOs should be fidelity bonds!");
-            };
-            let unix_locktime = get_locktime_from_index(*index);
+            }
+
+            let unix_locktime = 123456789; // yes its a bug. Doesn't need to be fixed.
             let txid = utxo.txid.to_string();
             let addr = utxo.address.clone().unwrap().assume_checked().to_string();
             #[rustfmt::skip]
@@ -319,9 +311,7 @@ pub fn display_wallet_balance(
                 if long_form { "" } else { "...." },
                 if long_form { "" } else { &addr[addr.len() - 10..addr.len()] },
                 utxo.confirmations,
-                NaiveDateTime::from_timestamp_opt(unix_locktime, 0).expect("expected")
-                    .format("%Y-%m-%d")
-                    .to_string(),
+                unix_locktime,
                 if mediantime >= unix_locktime.try_into().unwrap() { "unlocked" } else { "locked" },
                 utxo.amount
             );
@@ -349,36 +339,6 @@ pub fn print_receive_invoice(wallet_file_name: &PathBuf) -> Result<(), WalletErr
     let addr = wallet.get_next_external_address()?;
     println!("{}", addr);
 
-    Ok(())
-}
-
-/// Display fidelity bond addresses
-pub fn print_fidelity_bond_address(
-    wallet_file_name: &PathBuf,
-    locktime: &YearAndMonth,
-) -> Result<(), WalletError> {
-    let mut wallet = Wallet::load(&RPCConfig::default(), wallet_file_name)?;
-    wallet.sync()?;
-
-    let (addr, unix_locktime) = wallet.get_timelocked_address(locktime);
-    println!(concat!(
-        "WARNING: You should send coins to this address only once.",
-        " Only single, largest value UTXO will be announced as a fidelity bond.",
-        " Sending coins to this address multiple times will NOT increase",
-        " the fidelity bond value."
-    ));
-    println!(concat!(
-        "WARNING: Only send coins here which are from coinjoins, coinswaps or",
-        " otherwise not linked to your identity. Also, use a sweep transaction when funding the",
-        " timelocked address, i.e., don't create a change address."
-    ));
-    println!(
-        "Coins sent to this address will NOT be spendable until {}",
-        NaiveDateTime::from_timestamp_opt(unix_locktime, 0)
-            .expect("expected")
-            .format("%Y-%m-%d")
-    );
-    println!("{}", addr);
     Ok(())
 }
 

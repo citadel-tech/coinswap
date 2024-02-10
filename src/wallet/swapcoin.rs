@@ -10,7 +10,8 @@
 
 use bitcoin::{
     absolute::LockTime,
-    secp256k1::{self, ecdsa::Signature, Secp256k1, SecretKey},
+    ecdsa::Signature,
+    secp256k1::{self, Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
     Address, OutPoint, PublicKey, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
@@ -151,7 +152,7 @@ macro_rules! impl_walletswapcoin {
                     &my_pubkey,
                     &self.other_pubkey,
                     &sig_mine,
-                    &self.others_contract_sig.unwrap(),
+                    &self.others_contract_sig.unwrap().sig,
                     &mut signed_contract_tx.input[index],
                     &multisig_redeemscript,
                 );
@@ -359,7 +360,7 @@ impl IncomingSwapCoin {
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.other_pubkey,
-            sig,
+            &sig.sig,
         )?)
     }
 }
@@ -473,7 +474,7 @@ impl OutgoingSwapCoin {
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.other_pubkey,
-            sig,
+            &sig.sig,
         )?)
     }
 }
@@ -613,7 +614,7 @@ impl SwapCoin for WatchOnlySwapCoin {
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.receiver_pubkey,
-            sig,
+            &sig.sig,
         )?)
     }
 
@@ -623,7 +624,7 @@ impl SwapCoin for WatchOnlySwapCoin {
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.sender_pubkey,
-            sig,
+            &sig.sig,
         )?)
     }
 }
