@@ -185,40 +185,43 @@ impl Wallet {
                 .collect::<Vec<_>>(),
         );
 
-        //get first and last timelocked script, check if both are imported
-        let first_timelocked_addr = Address::p2wsh(
-            &self.get_timelocked_redeemscript_from_index(0),
-            self.store.network,
-        );
-        let last_timelocked_addr = Address::p2wsh(
-            &self.get_timelocked_redeemscript_from_index(
-                super::fidelity::TIMELOCKED_ADDRESS_COUNT - 1,
-            ),
-            self.store.network,
-        );
-        log::debug!(target: "wallet", "first_timelocked_addr={} last_timelocked_addr={}",
-            first_timelocked_addr, last_timelocked_addr);
-        let is_timelock_branch_imported = self
-            .rpc
-            .get_address_info(&first_timelocked_addr)?
-            .is_watchonly
-            .unwrap_or(false)
-            && self
-                .rpc
-                .get_address_info(&last_timelocked_addr)?
-                .is_watchonly
-                .unwrap_or(false);
+        let is_fidelity_addrs_imported = {
+            let mut spks = self
+                .store
+                .fidelity_bond
+                .iter()
+                .map(|(_, (b, _, _))| b.script_pub_key());
+            let (first_addr, last_addr) = (spks.next(), spks.last());
 
-        log::debug!(target: "wallet",
-            concat!("hd_descriptors_to_import.len = {} swapcoin_descriptors_to_import.len = {}",
-                " contract_scriptpubkeys_to_import = {} is_timelock_branch_imported = {}"),
-            hd_descriptors_to_import.len(), swapcoin_descriptors_to_import.len(),
-            contract_scriptpubkeys_to_import.len(),
-            is_timelock_branch_imported);
+            let is_first_imported = if let Some(spk) = first_addr {
+                let ad = Address::from_script(&spk, self.store.network)?;
+                log::debug!("First Fidelity Addrs: {}", ad);
+                self.rpc
+                    .get_address_info(&ad)?
+                    .is_watchonly
+                    .unwrap_or(false)
+            } else {
+                true // mark true if theres no spk to import
+            };
+
+            let is_last_imported = if let Some(spk) = last_addr {
+                let ad = Address::from_script(&spk, self.store.network)?;
+                log::debug!("Last Fidelity Addr: {}", ad);
+                self.rpc
+                    .get_address_info(&ad)?
+                    .is_watchonly
+                    .unwrap_or(false)
+            } else {
+                true // mark true if theres no spks to import
+            };
+
+            is_first_imported && is_last_imported
+        };
+
         if hd_descriptors_to_import.is_empty()
             && swapcoin_descriptors_to_import.is_empty()
             && contract_scriptpubkeys_to_import.is_empty()
-            && is_timelock_branch_imported
+            && is_fidelity_addrs_imported
         {
             return Ok(());
         }
@@ -230,7 +233,10 @@ impl Wallet {
             &contract_scriptpubkeys_to_import,
         )?;
 
+        // Abort a previous scan, if any
         self.rpc.call::<Value>("scantxoutset", &[json!("abort")])?;
+
+        // The final descriptor list to import
         let desc_list = hd_descriptors_to_import
             .iter()
             .map(|d| {
@@ -244,14 +250,13 @@ impl Wallet {
                     .iter()
                     .map(|spk| json!({ "desc": format!("raw({:x})", spk) })),
             )
-            .chain(
-                self.store
-                    .fidelity_scripts
-                    .keys()
-                    .map(|spk| json!({ "desc": format!("raw({:x})", spk) })),
-            )
+            .chain(self.store.fidelity_bond.iter().map(|(_, (bond, _, _))| {
+                let spk = bond.script_pub_key();
+                json!({ "desc": format!("raw({:x})", spk) })
+            }))
             .collect::<Vec<Value>>();
 
+        // Now run the scan
         let scantxoutset_result: Value = self
             .rpc
             .call("scantxoutset", &[json!("start"), json!(desc_list)])?;
