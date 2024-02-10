@@ -50,7 +50,7 @@ impl WalletStore {
         seedphrase: String,
         passphrase: String,
     ) -> Result<Self, WalletError> {
-        let mnemonic = Mnemonic::parse(&seedphrase)?;
+        let mnemonic = Mnemonic::parse(seedphrase)?;
         let seed = mnemonic.to_seed(passphrase);
         let master_key = ExtendedPrivKey::new_master(network, &seed)?;
 

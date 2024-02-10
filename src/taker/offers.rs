@@ -17,10 +17,10 @@ use crate::market::directory::{
     sync_maker_addresses_from_directory_servers, DirectoryServerError, TOR_ADDR,
 };
 
-use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
+use super::{config::TakerConfig, routines::download_maker_offer};
 
 /// Represents an offer along with the corresponding maker address.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct OfferAndAddress {
     pub offer: Offer,
     pub address: MakerAddress,
@@ -65,9 +65,9 @@ impl fmt::Display for MakerAddress {
 // TODO: Persist the offerbook in disk.
 #[derive(Debug, Default)]
 pub struct OfferBook {
-    all_makers: Vec<OfferAndAddress>,
-    good_makers: Vec<OfferAndAddress>,
-    bad_makers: Vec<OfferAndAddress>,
+    pub(super) all_makers: Vec<OfferAndAddress>,
+    pub(super) good_makers: Vec<OfferAndAddress>,
+    pub(super) bad_makers: Vec<OfferAndAddress>,
 }
 
 impl OfferBook {
@@ -109,28 +109,6 @@ impl OfferBook {
         }
     }
 
-    /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
-    pub async fn sync_offerbook(
-        &mut self,
-        network: Network,
-        config: &TakerConfig,
-    ) -> Result<Vec<OfferAndAddress>, TakerError> {
-        let offers =
-            sync_offerbook_with_addresses(get_advertised_maker_addresses(network).await?, config)
-                .await;
-
-        let new_offers = offers
-            .into_iter()
-            .filter(|offer| !self.bad_makers.contains(offer))
-            .collect::<Vec<_>>();
-
-        new_offers.iter().for_each(|offer| {
-            self.add_new_offer(offer);
-        });
-
-        Ok(new_offers)
-    }
-
     /// Gets the list of bad makers.
     pub fn get_bad_makers(&self) -> Vec<&OfferAndAddress> {
         self.bad_makers.iter().collect()
@@ -161,7 +139,7 @@ pub async fn sync_offerbook_with_addresses(
         let taker_config: TakerConfig = config.clone();
         tokio::spawn(async move {
             let offer = download_maker_offer(addr, taker_config).await;
-            log::info!("Received Maker Offer: {:?}", offer);
+            log::debug!("Received Maker Offer: {:?}", offer);
             offers_writer.send(offer).await.unwrap();
         });
     }

@@ -25,12 +25,15 @@ use bitcoin::{
         rand::{rngs::OsRng, RngCore},
         SecretKey,
     },
-    BlockHash, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
+    BlockHash, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
 
 use super::{
     error::TakerError,
-    offers::{MakerAddress, OfferAndAddress},
+    offers::{
+        get_advertised_maker_addresses, sync_offerbook_with_addresses, MakerAddress,
+        OfferAndAddress,
+    },
     routines::*,
 };
 use crate::{
@@ -238,13 +241,10 @@ impl Taker {
     /// respond back, the swap round will fail.
     #[tokio::main]
     pub async fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
-        let got_offers = self
-            .offerbook
-            .sync_offerbook(self.wallet.store.network, &self.config)
-            .await?;
-
-        log::info!("<=== Got Offers ({} offers)", got_offers.len());
-        log::debug!("Offers : {:#?}", got_offers);
+        log::info!("Syncing Offerbook");
+        let network = self.wallet.store.network;
+        let config = self.config.clone();
+        self.sync_offerbook(network, &config).await?;
 
         // Generate new random preimage and initiate the first hop.
         let mut preimage = [0u8; 32];
@@ -1857,5 +1857,38 @@ impl Taker {
             };
             std::thread::sleep(block_wait_time);
         }
+    }
+
+    /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
+    pub async fn sync_offerbook(
+        &mut self,
+        network: Network,
+        config: &TakerConfig,
+    ) -> Result<(), TakerError> {
+        let offers =
+            sync_offerbook_with_addresses(get_advertised_maker_addresses(network).await?, config)
+                .await;
+
+        let new_offers = offers
+            .into_iter()
+            .filter(|offer| !self.offerbook.bad_makers.contains(offer))
+            .collect::<Vec<_>>();
+
+        for offer in new_offers {
+            log::info!(
+                "Found New Offer from {}. Verifying Fidelity Proof",
+                offer.address.to_string()
+            );
+            if let Err(e) = self
+                .wallet
+                .verify_fidelity_proof(&offer.offer.fidelity, offer.address.to_string())
+            {
+                log::warn!("Fidelity Proof Verification failed with error: {:?}. Rejecting Offer from Maker : {}", e, offer.address.to_string());
+            } else {
+                log::info!("Fideity Bond verification succes. Adding offer to our OfferBook");
+                self.offerbook.add_new_offer(&offer);
+            }
+        }
+        Ok(())
     }
 }

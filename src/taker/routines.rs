@@ -464,7 +464,7 @@ async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer,
     };
 
     log::debug!(target: "offerbook", "Obtained offer from {}", addr);
-    Ok(offer)
+    Ok(*offer)
 }
 
 pub async fn download_maker_offer(
