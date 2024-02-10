@@ -31,6 +31,10 @@ pub struct MakerConfig {
     pub min_contract_reaction_time: u16,
     /// Minimum coinswap amount size in sats
     pub min_size: u64,
+    /// Fidelity Bond Value
+    pub fidelity_value: u64,
+    /// Fidelity Bond timelock in Block heights.
+    pub fidelity_timelock: u32,
 }
 
 impl Default for MakerConfig {
@@ -48,6 +52,8 @@ impl Default for MakerConfig {
             required_confirms: 1,
             min_contract_reaction_time: 48,
             min_size: 10_000,
+            fidelity_value: 5_000_000, // 50 million  sats
+            fidelity_timelock: 26_000, // Approx 6 months of blocks
         }
     }
 }
@@ -142,6 +148,16 @@ impl MakerConfig {
                 default_config.min_size,
             )
             .unwrap_or(default_config.min_size),
+            fidelity_value: parse_field(
+                maker_config_section.get("fidelity_value"),
+                default_config.fidelity_value,
+            )
+            .unwrap_or(default_config.fidelity_value),
+            fidelity_timelock: parse_field(
+                maker_config_section.get("fidelity_timelock"),
+                default_config.fidelity_timelock,
+            )
+            .unwrap_or(default_config.fidelity_timelock),
         })
     }
 }

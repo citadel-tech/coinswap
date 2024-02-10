@@ -16,14 +16,20 @@ use std::{
 
 use bip39::Mnemonic;
 use bitcoin::{
-    secp256k1::{self, ecdsa::Signature, Secp256k1},
-    OutPoint, PublicKey, ScriptBuf, Transaction,
+    absolute::LockTime,
+    ecdsa::Signature,
+    secp256k1::{self, Secp256k1},
+    Amount, OutPoint, PublicKey, ScriptBuf, Transaction,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use std::time::Duration;
 
 use crate::{
-    protocol::{contract::check_hashvalues_are_equal, messages::ReqContractSigsForSender, Hash160},
+    protocol::{
+        contract::check_hashvalues_are_equal,
+        messages::{FidelityProof, ReqContractSigsForSender},
+        Hash160,
+    },
     utill::{
         get_config_dir, get_wallet_dir, redeemscript_to_scriptpubkey, seed_phrase_to_unique_id,
     },
@@ -93,6 +99,8 @@ pub struct Maker {
     pub shutdown: RwLock<bool>,
     /// Map of IP address to Connection State + last Connected instant
     pub connection_state: Mutex<HashMap<IpAddr, (ConnectionState, Instant)>>,
+    /// Highest Value Fidelity Proof
+    pub highest_fidelity_proof: RwLock<Option<FidelityProof>>,
 }
 
 impl Maker {
@@ -177,6 +185,7 @@ impl Maker {
             wallet: RwLock::new(wallet),
             shutdown: RwLock::new(false),
             connection_state: Mutex::new(HashMap::new()),
+            highest_fidelity_proof: RwLock::new(None),
         })
     }
 
@@ -190,6 +199,25 @@ impl Maker {
     /// Returns a reference to the Maker's wallet.
     pub fn get_wallet(&self) -> &RwLock<Wallet> {
         &self.wallet
+    }
+
+    /// Generates Fidelity bond from existing utxos
+    /// Errors if not enough balance
+    pub fn create_fidelity_bond(&self) -> Result<(), MakerError> {
+        let mut wallet = self.wallet.write()?;
+        log::info!("Creating Fidelity Bond.");
+        let fidelity_index = wallet.create_fidelity(
+            Amount::from_sat(self.config.fidelity_value),
+            LockTime::from_height(self.config.fidelity_timelock).unwrap(),
+        )?;
+
+        log::info!("Created new fidelity bond at index: {} ", fidelity_index);
+        let bond = wallet
+            .get_fidelity_bonds()
+            .get(&fidelity_index)
+            .expect("bond expected");
+        log::info!("Bond: {:?}", bond);
+        Ok(())
     }
 
     /// Checks consistency of the [ProofOfFunding] message and return the Hashvalue
