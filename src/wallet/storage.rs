@@ -69,7 +69,11 @@ impl WalletStore {
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         // write: overwrites existing file.
         // create: creates new file if doesn't exist.
-        let file = OpenOptions::new().write(true).create(true).open(path)?;
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
         let writer = BufWriter::new(file);
         serde_cbor::to_writer(writer, &store)?;
         // let store_read = WalletStore::read_from_disk(path)?;
