@@ -145,14 +145,17 @@ macro_rules! impl_walletswapcoin {
                         .map_err(ContractError::Sighash)?[..],
                 )
                 .map_err(ContractError::Secp)?;
-                let sig_mine = secp.sign_ecdsa(&sighash, &self.my_privkey);
+                let sig_mine = Signature {
+                    sig: secp.sign_ecdsa(&sighash, &self.my_privkey),
+                    hash_ty: EcdsaSighashType::All,
+                };
 
                 let mut signed_contract_tx = self.contract_tx.clone();
                 apply_two_signatures_to_2of2_multisig_spend(
                     &my_pubkey,
                     &self.other_pubkey,
                     &sig_mine,
-                    &self.others_contract_sig.unwrap().sig,
+                    &self.others_contract_sig.unwrap(),
                     &mut signed_contract_tx.input[index],
                     &multisig_redeemscript,
                 );
@@ -256,8 +259,14 @@ impl IncomingSwapCoin {
         )
         .map_err(ContractError::Secp)?;
 
-        let sig_mine = secp.sign_ecdsa(&sighash, &self.my_privkey);
-        let sig_other = secp.sign_ecdsa(&sighash, &self.other_privkey.unwrap());
+        let sig_mine = Signature {
+            sig: secp.sign_ecdsa(&sighash, &self.my_privkey),
+            hash_ty: EcdsaSighashType::All,
+        };
+        let sig_other = Signature {
+            sig: secp.sign_ecdsa(&sighash, &self.other_privkey.unwrap()),
+            hash_ty: EcdsaSighashType::All,
+        };
 
         apply_two_signatures_to_2of2_multisig_spend(
             &my_pubkey,
