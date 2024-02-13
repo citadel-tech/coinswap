@@ -125,6 +125,8 @@ async fn malice2_maker_broadcast_contract_prematurely() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
+    test_framework.stop_tor();
+
     // ---- After Swap checks ----
     let maker_balances = makers
         .iter()

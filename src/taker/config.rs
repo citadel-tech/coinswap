@@ -30,7 +30,7 @@ impl Default for TakerConfig {
             refund_locktime_step: 48,
             first_connect_attempts: 5,
             first_connect_sleep_delay_sec: 1,
-            first_connect_attempt_timeout_sec: 20,
+            first_connect_attempt_timeout_sec: 60,
             reconnect_attempts: 3200,
             reconnect_short_sleep_delay: 10,
             reconnect_long_sleep_delay: 60,
@@ -136,7 +136,7 @@ fn write_default_taker_config(config_path: &PathBuf) {
                         refund_locktime_step = 48\n\
                         first_connect_attempts = 5\n\
                         first_connect_sleep_delay_sec = 1\n\
-                        first_connect_attempt_timeout_sec = 20\n\
+                        first_connect_attempt_timeout_sec = 60\n\
                         reconnect_attempts = 3200\n\
                         reconnect_short_sleep_delay = 10\n\
                         reconnect_long_sleep_delay = 60\n\
@@ -176,7 +176,7 @@ mod tests {
         refund_locktime_step = 48
         first_connect_attempts = 5
         first_connect_sleep_delay_sec = 1
-        first_connect_attempt_timeout_sec = 20
+        first_connect_attempt_timeout_sec = 60
         reconnect_attempts = 3200
         reconnect_short_sleep_delay = 10
         reconnect_long_sleep_delay = 60

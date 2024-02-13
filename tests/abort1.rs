@@ -141,6 +141,7 @@ async fn test_stop_taker_after_setup() {
 
     // ---- After Swap checks ----
 
+    test_framework.stop_tor();
     // Taker still has 6 swapcoins in its list
     assert_eq!(taker.read().unwrap().get_wallet().get_swapcoins_count(), 6);
 

@@ -117,6 +117,7 @@ async fn test_abort_case_2_move_on_with_other_makers() {
 
     // TODO: Do balance assertions.
 
+    test_framework.stop_tor();
     // Maker might not get banned as Taker may not try 6102 for swap. If it does then check its 6102.
     if !taker.read().unwrap().get_bad_makers().is_empty() {
         let onion_addr_path = PathBuf::from(format!("/tmp/tor-rust{}/maker/hs-dir/hostname",6102));

@@ -111,6 +111,7 @@ async fn maker_drops_after_sending_senders_sigs() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
+    test_framework.stop_tor();
     // ---- After Swap checks ----
     // TODO: Do balance asserts
     // Maker gets banned for being naughty.

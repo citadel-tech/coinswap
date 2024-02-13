@@ -116,6 +116,7 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
     let taker_thread =
         thread::spawn(move || taker_clone.write().unwrap().send_coinswap(swap_params));
 
+    test_framework.stop_tor();
     // Wait for Taker swap thread to conclude.
     // The whole swap can fail if 6102 happens to be the first peer.
     // In that the swap isn't feasible, and user should modify SwapParams::maker_count.

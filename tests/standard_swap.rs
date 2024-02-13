@@ -155,6 +155,7 @@ async fn test_standard_coinswap() {
         .for_each(|thread| thread.join().unwrap());
 
     info!("All coinswaps processed successfully. Transaction complete.");
+    test_framework.stop_tor();
 
     // ---- After Swap Asserts ----
 

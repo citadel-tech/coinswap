@@ -72,19 +72,19 @@ impl TestFramework {
         makers_config_map: HashMap<u16, MakerBehavior>,
         taker_behavior: Option<TakerBehavior>,
     ) -> (Arc<Self>, Arc<RwLock<Taker>>, Vec<Arc<Maker>>) {
-        // tor_instance_setup();
+        
         setup_mitosis();
         setup_logger();
+
         let tor_handles:Arc<RwLock<Vec<Arc<Mutex<Option<JoinHandle<()>>>>>>> = Arc::new(RwLock::new(Vec::new()));
         let socks_port = [19051,19052,19053,19054,19055,19056];
         for (index,config) in makers_config_map.clone().iter().enumerate() {
             let maker_port = config.0.clone();
             let socks_port_value = socks_port[index];
             let handle = mitosis::spawn((socks_port_value,maker_port), |(socks_port_value,maker_port)| {
-                let path_string = format!("/tmp/tor-rust{}/maker",maker_port);
                 let hs_string = format!("/tmp/tor-rust{}/maker/hs-dir",maker_port);
-                let data_dir = format!("/tmp/tor-rust{}/",maker_port);
-                let maker_file_path = PathBuf::from(path_string.as_str());
+                let data_dir = format!("/tmp/tor-rust{}/maker",maker_port);
+                let maker_file_path = PathBuf::from(data_dir.as_str());
                 if !maker_file_path.exists() {
                     fs::create_dir_all(maker_file_path).unwrap();
                 }
@@ -232,7 +232,11 @@ impl TestFramework {
         log::info!("Stopping Test Framework");
         // stop all framework threads.
         *self.shutdown.write().unwrap() = true;
+        // stop bitcoind
+        let _ = self.bitcoind.client.stop().unwrap();
+    }
 
+    pub fn stop_tor(&self) {
         let mut handles = self.tor_handles.write().unwrap();
 
         for handle_arc in handles.iter() {
@@ -245,8 +249,6 @@ impl TestFramework {
             }
         }
         handles.clear();
-        // stop bitcoind
-        let _ = self.bitcoind.client.stop().unwrap();
     }
 
     pub fn get_block_count(&self) -> u64 {

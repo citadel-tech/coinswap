@@ -15,7 +15,7 @@ refund_locktime_step = 48
 
 first_connect_attempts = 5
 first_connect_sleep_delay_sec = 1
-first_connect_attempt_timeout_sec = 20
+first_connect_attempt_timeout_sec = 60
 
 # reconnect means when connecting to a maker again after having already gotten txes confirmed
 # as it would be a waste of miner fees to give up, the taker is coded to be very persistent
