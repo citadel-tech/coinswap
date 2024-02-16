@@ -2,11 +2,15 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
+    market::directory::start_directory_server,
     taker::SwapParams,
     test_framework::*,
 };
+
+use tokio::sync::oneshot;
+
 use log::{info, warn};
-use std::{fs::File, path::PathBuf, thread, time::Duration,io::Read};
+use std::{fs::File, io::Read, path::PathBuf, thread, time::Duration};
 
 /// ABORT 2: Maker Drops Before Setup
 /// This test demonstrates the situation where a Maker prematurely drops connections after doing
@@ -31,6 +35,14 @@ async fn maker_drops_after_sending_senders_sigs() {
         TestFramework::init(None, makers_config_map.into(), None).await;
 
     warn!("Running Test: Maker 6102 Closes after sending sender's signature. This is really bad. Recovery is the only option.");
+
+    info!("Initiating Directory Server .....");
+
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+    thread::spawn(|| {
+        start_directory_server(shutdown_rx);
+    });
 
     info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
@@ -111,17 +123,20 @@ async fn maker_drops_after_sending_senders_sigs() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    test_framework.stop_tor();
     // ---- After Swap checks ----
+
+    let _ = shutdown_tx.send(());
+    thread::sleep(Duration::from_secs(10));
+
     // TODO: Do balance asserts
     // Maker gets banned for being naughty.
-    let onion_addr_path = PathBuf::from(format!("/tmp/tor-rust{}/maker/hs-dir/hostname",6102));
+    let onion_addr_path = PathBuf::from(format!("/tmp/tor-rust{}/maker/hs-dir/hostname", 6102));
     let mut file = File::open(&onion_addr_path).unwrap();
     let mut onion_addr: String = String::new();
     file.read_to_string(&mut onion_addr).unwrap();
     onion_addr.pop();
     assert_eq!(
-        format!("{}:{}",onion_addr,6102),
+        format!("{}:{}", onion_addr, 6102),
         taker.read().unwrap().get_bad_makers()[0]
             .address
             .to_string()

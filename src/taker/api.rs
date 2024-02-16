@@ -11,6 +11,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -38,7 +39,8 @@ use super::{
     routines::*,
 };
 use crate::{
-    error::{NetError, ProtocolError}, protocol::{
+    error::{NetError, ProtocolError},
+    protocol::{
         error::ContractError,
         messages::{
             ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
@@ -51,9 +53,10 @@ use crate::{
     wallet::{
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletSwapCoin,
         WatchOnlySwapCoin,
-    }
+    },
 };
 
+use libtor::{HiddenServiceVersion, Tor, TorAddress, TorFlag};
 
 /// Swap specific parameters. These are user's policy and can differ among swaps.
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
@@ -242,6 +245,21 @@ impl Taker {
     /// respond back, the swap round will fail.
     #[tokio::main]
     pub async fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
+        let handle = mitosis::spawn(19050, |_data| {
+            let _handler = Tor::new()
+                .flag(TorFlag::DataDirectory("/tmp/tor-rust/".into()))
+                .flag(TorFlag::SocksPort(19050))
+                .flag(TorFlag::HiddenServiceDir("/tmp/tor-rust/hs-dir".into()))
+                .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
+                .flag(TorFlag::HiddenServicePort(
+                    TorAddress::Port(8000),
+                    None.into(),
+                ))
+                .start();
+        });
+
+        thread::sleep(Duration::from_secs(60));
+
         log::info!("Syncing Offerbook");
         let network = self.wallet.store.network;
         let config = self.config.clone();
@@ -258,6 +276,10 @@ impl Taker {
         if let Err(e) = self.init_first_hop().await {
             log::error!("Could not initiate first hop: {:?}", e);
             self.recover_from_swap()?;
+            match handle.kill() {
+                Ok(_) => log::info!("Tor instance terminated successfully"),
+                Err(_) => log::error!("Error occured while terminating tor instance"),
+            };
             return Err(e);
         }
 
@@ -308,6 +330,10 @@ impl Taker {
                     log::error!("Could not initiate next hop. Error : {:?}", e);
                     log::warn!("Starting recovery from existing swap");
                     self.recover_from_swap()?;
+                    match handle.kill() {
+                        Ok(_) => log::info!("Tor instance terminated successfully"),
+                        Err(_) => log::error!("Error occured while terminating tor instance"),
+                    };
                     return Ok(());
                 }
             };
@@ -329,6 +355,10 @@ impl Taker {
                         self.offerbook.add_bad_maker(bad_maker);
                     }
                     self.recover_from_swap()?;
+                    match handle.kill() {
+                        Ok(_) => log::info!("Tor instance terminated successfully"),
+                        Err(_) => log::error!("Error occured while terminating tor instance"),
+                    };
                     return Ok(());
                 }
             }
@@ -344,6 +374,10 @@ impl Taker {
                         log::error!("Incoming SwapCoin Generation failed : {:?}", e);
                         log::warn!("Starting recovery from existing swap");
                         self.recover_from_swap()?;
+                        match handle.kill() {
+                            Ok(_) => log::info!("Tor instance terminated successfully"),
+                            Err(_) => log::error!("Error occured while terminating tor instance"),
+                        };
                         return Ok(());
                     }
                 }
@@ -352,12 +386,20 @@ impl Taker {
 
         if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
             log::error!("Dropping Swap Process after full setup");
+            match handle.kill() {
+                Ok(_) => log::info!("Tor instance terminated successfully"),
+                Err(_) => log::error!("Error occured while terminating tor instance"),
+            };
             return Ok(());
         }
 
         if self.behavior == TakerBehavior::BroadcastContractAfterFullSetup {
             log::error!("Special Behavior BroadcastContractAfterFullSetup");
             self.recover_from_swap()?;
+            match handle.kill() {
+                Ok(_) => log::info!("Tor instance terminated successfully"),
+                Err(_) => log::error!("Error occured while terminating tor instance"),
+            };
             return Ok(());
         }
 
@@ -367,11 +409,19 @@ impl Taker {
                 log::error!("Swap Settlement Failed : {:?}", e);
                 log::warn!("Starting recovery from existing swap");
                 self.recover_from_swap()?;
+                match handle.kill() {
+                    Ok(_) => log::info!("Tor instance terminated successfully"),
+                    Err(_) => log::error!("Error occured while terminating tor instance"),
+                };
                 return Ok(());
             }
         }
         self.save_and_reset_swap_round()?;
         log::info!("Successfully Completed Coinswap");
+        match handle.kill() {
+            Ok(_) => log::info!("Tor instance terminated successfully"),
+            Err(_) => log::error!("Error occured while terminating tor instance"),
+        };
         Ok(())
     }
 
@@ -818,10 +868,11 @@ impl Taker {
 
         log::info!("Connecting to {}", this_maker.address);
         let address = this_maker.address.as_str();
-        let mut socket = Socks5Stream::connect("127.0.0.1:19050",address).await?.into_inner();
+        let mut socket = Socks5Stream::connect("127.0.0.1:19050", address)
+            .await?
+            .into_inner();
         // let mut socket = TcpStream::connect(this_maker.address.get_tcpstream_address()).await?;
-        let (mut socket_reader, mut socket_writer) =
-            handshake_maker(&mut socket).await?;
+        let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
         let mut next_maker = this_maker.clone();
         let (
             next_peer_multisig_pubkeys,
@@ -1554,9 +1605,10 @@ impl Taker {
     ) -> Result<(), TakerError> {
         log::info!("Connecting to {}", maker_address);
         let address = maker_address.as_str();
-        let mut socket = Socks5Stream::connect("127.0.0.1:19050",address).await?.into_inner();
-        let (mut socket_reader, mut socket_writer) =
-            handshake_maker(&mut socket).await?;
+        let mut socket = Socks5Stream::connect("127.0.0.1:19050", address)
+            .await?
+            .into_inner();
+        let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
 
         log::info!("===> Sending HashPreimage to {}", maker_address);
         let maker_private_key_handover = send_hash_preimage_and_get_private_keys(

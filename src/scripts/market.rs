@@ -31,13 +31,10 @@ pub async fn download_and_display_offers(
         sync_offerbook_with_addresses(maker_addresses.clone(), &TakerConfig::default()).await;
 
     let mut addresses_offers_map = HashMap::new();
-    offers_addresses
-        .iter()
-        .for_each(|offer_address| {
-            let address = offer_address.address.as_str();
-            addresses_offers_map.insert(address, offer_address);
-            
-        });
+    offers_addresses.iter().for_each(|offer_address| {
+        let address = offer_address.address.as_str();
+        addresses_offers_map.insert(address, offer_address);
+    });
 
     println!(
         "{:<3} {:<70} {:<12} {:<12} {:<12} {:<12} {:<12} {:<12} {:<19}",

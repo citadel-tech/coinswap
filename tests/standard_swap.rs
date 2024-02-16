@@ -2,9 +2,12 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
+    market::directory::start_directory_server,
     taker::SwapParams,
     test_framework::*,
 };
+
+use tokio::sync::oneshot;
 
 use log::{info, warn};
 use std::{thread, time::Duration};
@@ -26,6 +29,14 @@ async fn test_standard_coinswap() {
         TestFramework::init(None, makers_config_map.into(), None).await;
 
     warn!("Running Test: Standard Coinswap Procedure");
+
+    info!("Initiating Directory Server .....");
+
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+    thread::spawn(|| {
+        start_directory_server(shutdown_rx);
+    });
 
     info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
@@ -155,7 +166,9 @@ async fn test_standard_coinswap() {
         .for_each(|thread| thread.join().unwrap());
 
     info!("All coinswaps processed successfully. Transaction complete.");
-    test_framework.stop_tor();
+
+    let _ = shutdown_tx.send(());
+    thread::sleep(Duration::from_secs(10));
 
     // ---- After Swap Asserts ----
 
@@ -193,7 +206,7 @@ async fn test_standard_coinswap() {
             .unwrap()
             .balance(false, false)
             .unwrap();
-        log::info!("Lets see the amount {:?}",balance);
+        log::info!("Lets see the amount {:?}", balance);
         assert!(balance > Amount::from_btc(0.15).unwrap());
     });
 

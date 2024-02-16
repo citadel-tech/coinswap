@@ -10,22 +10,37 @@ pub mod error;
 mod handlers;
 
 use std::{
-    net::Ipv4Addr, sync::Arc, time::{Duration, Instant}
+    collections::HashMap,
+    fs,
+    net::Ipv4Addr,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    thread,
+    time::{Duration, Instant},
 };
 
 use bitcoin::{absolute::LockTime, Amount, Network};
 use bitcoind::bitcoincore_rpc::RpcApi;
-use serde::{Serialize,Deserialize};
+use libtor::{HiddenServiceVersion, Tor, TorAddress, TorFlag};
+use serde::{Deserialize, Serialize};
 use tokio::{
-    io::{AsyncReadExt,BufReader}, net::{tcp::ReadHalf, TcpListener}, select, sync::mpsc,time::sleep
+    io::{AsyncReadExt, BufReader},
+    net::{tcp::ReadHalf, TcpListener},
+    select,
+    sync::mpsc,
+    time::sleep,
 };
 
 pub use api::{Maker, MakerBehavior};
 
-#[derive(Clone,Debug,Serialize,Deserialize)]
+use std::io::Read;
+use tokio::io::AsyncWriteExt;
+use tokio_socks::tcp::Socks5Stream;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct OnionAddress {
     port: String,
-    onion_addr: String
+    onion_addr: String,
 }
 
 use crate::{
@@ -41,14 +56,43 @@ use crate::{
 
 use crate::maker::error::MakerError;
 
-
-
 /// Initializes and starts the Maker server, handling connections and various
 /// aspects of the Maker's behavior.
 #[tokio::main]
 pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
-   
-   
+    let mut socks_port: HashMap<_, _> = HashMap::new();
+    socks_port.insert(6102, 19051);
+    socks_port.insert(16102, 19052);
+    socks_port.insert(26102, 19053);
+    socks_port.insert(36102, 19054);
+    socks_port.insert(46102, 19055);
+
+    let maker_port = maker.config.port;
+    let socks_port_value: u16 = *socks_port.get(&maker_port).unwrap() as u16;
+    let handle1 = mitosis::spawn(
+        (socks_port_value, maker_port),
+        |(socks_port_value, maker_port)| {
+            let hs_string = format!("/tmp/tor-rust{}/maker/hs-dir", maker_port);
+            let data_dir = format!("/tmp/tor-rust{}/maker", maker_port);
+            let maker_file_path = PathBuf::from(data_dir.as_str());
+            if !maker_file_path.exists() {
+                fs::create_dir_all(maker_file_path).unwrap();
+            }
+            let _handler = Tor::new()
+                .flag(TorFlag::DataDirectory(data_dir))
+                .flag(TorFlag::SocksPort(socks_port_value))
+                .flag(TorFlag::HiddenServiceDir(hs_string))
+                .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
+                .flag(TorFlag::HiddenServicePort(
+                    TorAddress::Port(maker_port),
+                    None.into(),
+                ))
+                .start();
+        },
+    );
+
+    let handle = Arc::new(Mutex::new(Some(handle1)));
+
     log::debug!("Running maker with special behavior = {:?}", maker.behavior);
     maker.wallet.write()?.refresh_offer_maxsize_cache()?;
 
@@ -138,8 +182,39 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         check_for_broadcasted_contracts(maker_clone_2).unwrap();
     });
 
+    thread::sleep(Duration::from_secs(60));
+
+    let maker_hs_path_str = format!("/tmp/tor-rust{}/maker/hs-dir/hostname", maker.config.port);
+    let maker_hs_path = PathBuf::from(maker_hs_path_str);
+    let mut maker_file = fs::File::open(&maker_hs_path).unwrap();
+    let mut maker_onion_addr: String = String::new();
+    maker_file.read_to_string(&mut maker_onion_addr).unwrap();
+    maker_onion_addr.pop();
+    let maker_onion_address = format!("{}:{}", maker_onion_addr, maker.config.port);
+
+    let directory_hs_path_str = format!("/tmp/tor-rust-directory/hs-dir/hostname");
+    let directory_hs_path = PathBuf::from(directory_hs_path_str);
+    let mut directory_file = fs::File::open(&directory_hs_path).unwrap();
+    let mut directory_onion_addr: String = String::new();
+    directory_file
+        .read_to_string(&mut directory_onion_addr)
+        .unwrap();
+    directory_onion_addr.pop();
+    let directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
+
+    let address = directory_onion_address.as_str();
+    let mut stream =
+        Socks5Stream::connect(format!("127.0.0.1:{}", socks_port_value).as_str(), address)
+            .await
+            .map_err(|_e| MakerError::General("Error with socks"))?
+            .into_inner();
+
+    let request_line = format!("POST {}\n", maker_onion_address);
+    stream.write_all(request_line.as_bytes()).await?;
+
     // Loop to keep checking for new connections
-    loop {
+    let value = loop {
+        let handle_clone = Arc::clone(&handle);
         if *maker.shutdown.read()? {
             log::warn!("[{}] Maker is shutting down", maker.config.port);
             break Ok(());
@@ -237,6 +312,12 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             .await
             {
                 log::error!("IO error sending first message: {:?}", e);
+                if let Some(handle) = handle_clone.lock().unwrap().take() {
+                    match handle.kill() {
+                        Ok(_) => log::info!("Tor instance terminated successfully"),
+                        Err(_) => log::error!("Error occurred while terminating tor instance"),
+                    }
+                }
                 return;
             }
             log::info!("[{}] ===> MakerHello", maker_clone.config.port);
@@ -286,7 +367,14 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 }
             }
         });
+    };
+    if let Some(handle) = handle.lock().unwrap().take() {
+        match handle.kill() {
+            Ok(_) => log::info!("Tor instance terminated successfully"),
+            Err(_) => log::error!("Error occurred while terminating tor instance"),
+        }
     }
+    value
 }
 
 /// Reads a Taker Message.

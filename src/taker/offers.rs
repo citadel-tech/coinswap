@@ -6,21 +6,22 @@
 //! It uses asynchronous channels for concurrent processing of maker offers.
 
 use std::fmt;
-use std::path::PathBuf;
 use std::fs::File;
 use std::io::Read;
+use std::path::PathBuf;
 
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
 use bitcoin::Network;
 
 use crate::protocol::messages::Offer;
 
-use crate::market::directory::{
-    sync_maker_addresses_from_directory_servers, DirectoryServerError
-};
+use crate::market::directory::DirectoryServerError;
 
-use super::{config::TakerConfig, routines::download_maker_offer};
+use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
+use tokio_socks::tcp::Socks5Stream;
 
 /// Represents an offer along with the corresponding maker address.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
@@ -29,13 +30,7 @@ pub struct OfferAndAddress {
     pub address: MakerAddress,
 }
 
-const REGTEST_MAKER_ADDRESSES_PORT: &[&str] = &[
-    "6102",
-    "16102",
-    "26102",
-    "36102",
-    "46102",
-];
+const _REGTEST_MAKER_ADDRESSES_PORT: &[&str] = &["6102", "16102", "26102", "36102", "46102"];
 
 type OnionAddress = String;
 /// Enum representing maker addresses.
@@ -45,7 +40,7 @@ pub struct MakerAddress(OnionAddress);
 impl MakerAddress {
     /// Returns the TCP stream address as a string.
     pub fn get_tcpstream_address(&self) -> String {
-        format!("{}",self.0)
+        format!("{}", self.0)
     }
 
     pub fn as_str(&self) -> &str {
@@ -59,7 +54,7 @@ impl MakerAddress {
 
 impl fmt::Display for MakerAddress {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-         write!(f, "{}", self.0)
+        write!(f, "{}", self.0)
     }
 }
 
@@ -118,23 +113,22 @@ impl OfferBook {
     }
 }
 
-async fn get_regtest_maker_addresses() -> Vec<MakerAddress> {
-    REGTEST_MAKER_ADDRESSES_PORT
+async fn _get_regtest_maker_addresses() -> Vec<MakerAddress> {
+    _REGTEST_MAKER_ADDRESSES_PORT
         .iter()
         .filter(|port| {
-            let hs_path_str = format!("/tmp/tor-rust{}/maker/hs-dir/hostname",port);
+            let hs_path_str = format!("/tmp/tor-rust{}/maker/hs-dir/hostname", port);
             let hs_path = PathBuf::from(hs_path_str);
             hs_path.exists()
         })
         .map(|h| {
-            let hs_path_str = format!("/tmp/tor-rust{}/maker/hs-dir/hostname",h);
+            let hs_path_str = format!("/tmp/tor-rust{}/maker/hs-dir/hostname", h);
             let hs_path = PathBuf::from(hs_path_str);
             let mut file = File::open(&hs_path).unwrap();
             let mut onion_addr: String = String::new();
             file.read_to_string(&mut onion_addr).unwrap();
-            onion_addr.pop(); 
-            MakerAddress(format!("{}:{}",onion_addr,h))
-           
+            onion_addr.pop();
+            MakerAddress(format!("{}:{}", onion_addr, h))
         })
         .collect::<Vec<MakerAddress>>()
 }
@@ -168,11 +162,44 @@ pub async fn sync_offerbook_with_addresses(
 
 /// Retrieves advertised maker addresses from directory servers based on the specified network.
 pub async fn get_advertised_maker_addresses(
-    network: Network,
+    _network: Network,
 ) -> Result<Vec<MakerAddress>, DirectoryServerError> {
-    Ok(if network == Network::Regtest {
-        get_regtest_maker_addresses().await
-    } else {
-        sync_maker_addresses_from_directory_servers(network).await?
-    })
+    let directory_hs_path_str = format!("/tmp/tor-rust-directory/hs-dir/hostname");
+    let directory_hs_path = PathBuf::from(directory_hs_path_str);
+    let mut directory_file = tokio::fs::File::open(&directory_hs_path)
+        .await
+        .map_err(|_e| DirectoryServerError::Other("Directory hidden service path not found"))?;
+    let mut directory_onion_addr = String::new();
+    directory_file
+        .read_to_string(&mut directory_onion_addr)
+        .await
+        .map_err(|_e| DirectoryServerError::Other("Reading onion address failed"))?;
+    directory_onion_addr.pop();
+    let directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
+    let mut stream: TcpStream =
+        Socks5Stream::connect("127.0.0.1:19050", directory_onion_address.as_str())
+            .await
+            .map_err(|_e| {
+                DirectoryServerError::Other(
+                    "Issue with fetching maker address from directory server",
+                )
+            })?
+            .into_inner();
+    let request_line = "GET\n";
+    stream
+        .write_all(request_line.as_bytes())
+        .await
+        .map_err(|_e| DirectoryServerError::Other("Error sending the request"))?;
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .await
+        .map_err(|_e| DirectoryServerError::Other("Error receiving the response"))?;
+    log::warn!("Received: {}", response);
+    let addresses: Vec<MakerAddress> = response
+        .lines()
+        .map(|addr| MakerAddress::new(addr.to_string()))
+        .collect();
+
+    Ok(addresses)
 }

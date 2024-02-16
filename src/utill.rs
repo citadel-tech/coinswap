@@ -87,9 +87,7 @@ pub fn setup_logger() {
 }
 
 pub fn setup_mitosis() {
-    Once::new().call_once(|| {
-        mitosis::init()
-    });
+    Once::new().call_once(|| mitosis::init());
 }
 
 /// Can send both Taker and Maker messages.

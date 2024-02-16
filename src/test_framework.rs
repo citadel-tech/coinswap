@@ -12,13 +12,11 @@
 //!
 //! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
 use bitcoin::secp256k1::rand::{distributions::Alphanumeric, thread_rng, Rng};
-use libtor::{HiddenServiceVersion, Tor, TorAddress, TorFlag};
-use mitosis::JoinHandle;
 use std::{
     collections::HashMap,
     fs,
     path::PathBuf,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
     thread,
     time::Duration,
 };
@@ -54,7 +52,6 @@ pub struct TestFramework {
     bitcoind: BitcoinD,
     temp_dir: PathBuf,
     shutdown: Arc<RwLock<bool>>,
-    tor_handles:  Arc<RwLock<Vec<Arc<Mutex<Option<JoinHandle<()>>>>>>>
 }
 
 impl TestFramework {
@@ -72,43 +69,8 @@ impl TestFramework {
         makers_config_map: HashMap<u16, MakerBehavior>,
         taker_behavior: Option<TakerBehavior>,
     ) -> (Arc<Self>, Arc<RwLock<Taker>>, Vec<Arc<Maker>>) {
-        
         setup_mitosis();
         setup_logger();
-
-        let tor_handles:Arc<RwLock<Vec<Arc<Mutex<Option<JoinHandle<()>>>>>>> = Arc::new(RwLock::new(Vec::new()));
-        let socks_port = [19051,19052,19053,19054,19055,19056];
-        for (index,config) in makers_config_map.clone().iter().enumerate() {
-            let maker_port = config.0.clone();
-            let socks_port_value = socks_port[index];
-            let handle = mitosis::spawn((socks_port_value,maker_port), |(socks_port_value,maker_port)| {
-                let hs_string = format!("/tmp/tor-rust{}/maker/hs-dir",maker_port);
-                let data_dir = format!("/tmp/tor-rust{}/maker",maker_port);
-                let maker_file_path = PathBuf::from(data_dir.as_str());
-                if !maker_file_path.exists() {
-                    fs::create_dir_all(maker_file_path).unwrap();
-                }
-                let _handler =  Tor::new()
-                .flag(TorFlag::DataDirectory(data_dir))
-                .flag(TorFlag::SocksPort(socks_port_value))
-                .flag(TorFlag::HiddenServiceDir(hs_string))
-                .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
-                .flag(TorFlag::HiddenServicePort(TorAddress::Port(maker_port),None.into(),))
-                .start();
-            });
-            tor_handles.write().unwrap().push(Arc::new(Mutex::new(Some(handle))));
-        }
-        let directory_handle =mitosis::spawn(19050, |_data| {
-            let _handler =  Tor::new()
-                .flag(TorFlag::DataDirectory("/tmp/tor-rust/".into()))
-                .flag(TorFlag::SocksPort(19050))
-                .flag(TorFlag::HiddenServiceDir("/tmp/tor-rust/hs-dir".into()))
-                .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
-                .flag(TorFlag::HiddenServicePort(TorAddress::Port(8000),None.into(),))
-                .start();
-            });
-        tor_handles.write().unwrap().push(Arc::new(Mutex::new(Some(directory_handle))));
-        thread::sleep(Duration::from_secs(360));
         // Setup directory
         let temp_dir = get_random_tmp_dir();
         // Remove if previously existing
@@ -150,7 +112,6 @@ impl TestFramework {
             bitcoind,
             temp_dir: temp_dir.clone(),
             shutdown,
-            tor_handles
         });
 
         // Translate a RpcConfig from the test framework.
@@ -234,21 +195,6 @@ impl TestFramework {
         *self.shutdown.write().unwrap() = true;
         // stop bitcoind
         let _ = self.bitcoind.client.stop().unwrap();
-    }
-
-    pub fn stop_tor(&self) {
-        let mut handles = self.tor_handles.write().unwrap();
-
-        for handle_arc in handles.iter() {
-            let mut handle_option = handle_arc.lock().unwrap();
-            if let Some(handle) =  handle_option.take() {
-               match handle.kill() {
-                Ok(_) => log::info!("Tor instance terminated successfully"),
-                Err(_) => log::error!("Error occured while terminating tor instance")
-               }
-            }
-        }
-        handles.clear();
     }
 
     pub fn get_block_count(&self) -> u64 {

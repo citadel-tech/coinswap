@@ -2,9 +2,13 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
+    market::directory::start_directory_server,
     taker::{SwapParams, TakerBehavior},
     test_framework::*,
 };
+
+use tokio::sync::oneshot;
+
 use log::{info, warn};
 use std::{thread, time::Duration};
 
@@ -36,6 +40,14 @@ async fn test_stop_taker_after_setup() {
     .await;
 
     warn!("Running Test: Taker Cheats on Everybody.");
+
+    info!("Initiating Directory Server .....");
+
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+    thread::spawn(|| {
+        start_directory_server(shutdown_rx);
+    });
 
     info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
@@ -141,7 +153,9 @@ async fn test_stop_taker_after_setup() {
 
     // ---- After Swap checks ----
 
-    test_framework.stop_tor();
+    let _ = shutdown_tx.send(());
+    thread::sleep(Duration::from_secs(10));
+
     // Taker still has 6 swapcoins in its list
     assert_eq!(taker.read().unwrap().get_wallet().get_swapcoins_count(), 6);
 

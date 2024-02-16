@@ -2,9 +2,13 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
+    market::directory::start_directory_server,
     taker::{SwapParams, TakerBehavior},
     test_framework::*,
 };
+
+use tokio::sync::oneshot;
+
 use log::{info, warn};
 use std::{collections::BTreeSet, thread, time::Duration};
 
@@ -31,6 +35,14 @@ async fn malice1_taker_broadcast_contract_prematurely() {
     .await;
 
     warn!("Running Test: Taker broadcasts contract transaction prematurely");
+
+    info!("Initiating Directory Server .....");
+
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+    thread::spawn(|| {
+        start_directory_server(shutdown_rx);
+    });
 
     info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
@@ -132,9 +144,11 @@ async fn malice1_taker_broadcast_contract_prematurely() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    test_framework.stop_tor();
-
     // ---- After Swap checks ----
+
+    let _ = shutdown_tx.send(());
+    thread::sleep(Duration::from_secs(10));
+
     let maker_balances = makers
         .iter()
         .map(|maker| {
