@@ -329,7 +329,6 @@ impl Wallet {
             } else {
                 remaining -= unspent.0.amount;
                 selected_utxo.push(unspent);
-                continue;
             }
         }
 

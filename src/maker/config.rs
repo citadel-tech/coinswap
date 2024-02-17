@@ -52,7 +52,7 @@ impl Default for MakerConfig {
             required_confirms: 1,
             min_contract_reaction_time: 48,
             min_size: 10_000,
-            fidelity_value: 5_000_000, // 50 million  sats
+            fidelity_value: 5_000_000, // 5 million  sats
             fidelity_timelock: 26_000, // Approx 6 months of blocks
         }
     }
