@@ -627,3 +627,328 @@ impl SwapCoin for WatchOnlySwapCoin {
         )?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+    use secp256k1::Secp256k1;
+
+    #[test]
+    fn test_apply_privkey_watchonly_swapcoin() {
+        let secp = Secp256k1::new();
+
+        let privkey_sender = bitcoin::PrivateKey {
+            compressed: true,
+            network: bitcoin::Network::Testnet,
+            inner: secp256k1::SecretKey::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000001",
+            )
+            .unwrap(),
+        };
+
+        let privkey_receiver = bitcoin::PrivateKey {
+            compressed: true,
+            network: bitcoin::Network::Testnet,
+            inner: secp256k1::SecretKey::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000002",
+            )
+            .unwrap(),
+        };
+
+        let mut swapcoin = WatchOnlySwapCoin {
+            sender_pubkey: PublicKey::from_private_key(&secp, &privkey_sender),
+            receiver_pubkey: PublicKey::from_private_key(&secp, &privkey_receiver),
+            funding_amount: 100,
+            contract_tx: Transaction {
+                input: vec![],
+                output: vec![],
+                lock_time: LockTime::ZERO,
+                version: 2,
+            },
+            contract_redeemscript: ScriptBuf::default(),
+        };
+
+        let secret_key =
+            SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000002")
+                .unwrap();
+        assert!(swapcoin.apply_privkey(secret_key).is_ok());
+    }
+
+    #[test]
+    fn test_apply_privkey_incoming_swapcoin() {
+        let secp = Secp256k1::new();
+        let other_privkey = bitcoin::PrivateKey {
+            compressed: true,
+            network: bitcoin::Network::Testnet,
+            inner: secp256k1::SecretKey::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000002",
+            )
+            .unwrap(),
+        };
+
+        let mut incoming_swapcoin = IncomingSwapCoin {
+            my_privkey: secp256k1::SecretKey::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000003",
+            )
+            .unwrap(),
+            other_privkey: Some(
+                secp256k1::SecretKey::from_str(
+                    "0000000000000000000000000000000000000000000000000000000000000005",
+                )
+                .unwrap(),
+            ),
+            other_pubkey: PublicKey::from_private_key(&secp, &other_privkey),
+            contract_tx: Transaction {
+                input: vec![],
+                output: vec![],
+                lock_time: LockTime::ZERO,
+                version: 2,
+            },
+            contract_redeemscript: ScriptBuf::default(),
+            hashlock_privkey: secp256k1::SecretKey::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000004",
+            )
+            .unwrap(),
+            funding_amount: 0,
+            others_contract_sig: None,
+            hash_preimage: None,
+        };
+
+        let secret_key =
+            SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000002")
+                .unwrap();
+        assert!(incoming_swapcoin.apply_privkey(secret_key).is_ok());
+    }
+
+    #[test]
+
+    fn test_apply_privkey_outgoing_swapcoin() {
+        let secp = Secp256k1::new();
+        let other_privkey = bitcoin::PrivateKey {
+            compressed: true,
+            network: bitcoin::Network::Testnet,
+            inner: secp256k1::SecretKey::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000001",
+            )
+            .unwrap(),
+        };
+        let mut outgoing_swapcoin = OutgoingSwapCoin {
+            my_privkey: secp256k1::SecretKey::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000002",
+            )
+            .unwrap(),
+            other_pubkey: PublicKey::from_private_key(&secp, &other_privkey),
+            contract_tx: Transaction {
+                input: vec![],
+                output: vec![],
+                lock_time: LockTime::ZERO,
+                version: 2,
+            },
+            contract_redeemscript: ScriptBuf::default(),
+            timelock_privkey: secp256k1::SecretKey::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000003",
+            )
+            .unwrap(),
+            funding_amount: 0,
+            others_contract_sig: None,
+            hash_preimage: None,
+        };
+        let secret_key =
+            SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000001")
+                .unwrap();
+        assert!(outgoing_swapcoin.apply_privkey(secret_key).is_ok());
+    }
+}
+/*
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+    use secp256k1::SecretKey;
+
+    // Mock implementation of WatchOnlySwapCoin for testing
+    struct MockWatchOnlySwapCoin {
+        sender_pubkey: PublicKey,
+        receiver_pubkey: PublicKey,
+        funding_amount: u64,
+        contract_tx: Transaction,
+    }
+
+    impl SwapCoin for MockWatchOnlySwapCoin {
+        fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), WalletError> {
+            // Implement logic to test apply_privkey function
+            // For example, you can check if the privkey matches sender_pubkey or receiver_pubkey
+            Ok(())
+        }
+
+        fn get_multisig_redeemscript(&self) -> ScriptBuf {
+            // Implement logic to test get_multisig_redeemscript function
+            // Return a dummy ScriptBuf for testing purposes
+            ScriptBuf::new()
+        }
+
+        fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> Result<(), WalletError> {
+            // Implement logic to test verify_contract_tx_sender_sig function
+            // Return Ok(()) if the signature is valid; otherwise, return an error
+            Ok(())
+        }
+
+        fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> Result<(), WalletError> {
+            // Implement logic to test verify_contract_tx_receiver_sig function
+            // Return Ok(()) if the signature is valid; otherwise, return an error
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_apply_privkey() {
+        // Create a MockWatchOnlySwapCoin instance for testing
+        let mut swapcoin = MockWatchOnlySwapCoin {
+            sender_pubkey: PublicKey::default(),
+            receiver_pubkey: PublicKey::default(),
+            funding_amount: 0,
+            contract_tx: Transaction::default(),
+        };
+
+        // Call apply_privkey function with a valid privkey
+        let result = swapcoin.apply_privkey(SecretKey::default());
+
+        // Assert that the function returns Ok(())
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_get_multisig_redeemscript() {
+        // Create a MockWatchOnlySwapCoin instance for testing
+        let swapcoin = MockWatchOnlySwapCoin {
+            sender_pubkey: PublicKey::default(),
+            receiver_pubkey: PublicKey::default(),
+            funding_amount: 0,
+            contract_tx: Transaction::default(),
+        };
+
+        // Call get_multisig_redeemscript function
+        let redeem_script = swapcoin.get_multisig_redeemscript();
+
+        // Assert that the redeem_script is valid
+        // Add assertions here to validate the redeem_script
+    }
+
+    #[test]
+    fn test_verify_contract_tx_sender_sig() {
+        // Create a MockWatchOnlySwapCoin instance for testing
+        let swapcoin = MockWatchOnlySwapCoin {
+            sender_pubkey: PublicKey::default(),
+            receiver_pubkey: PublicKey::default(),
+            funding_amount: 0,
+            contract_tx: Transaction::default(),
+        };
+
+        // Call verify_contract_tx_sender_sig function with a valid signature
+        let result = swapcoin.verify_contract_tx_sender_sig(&Signature::default());
+
+        // Assert that the function returns Ok(())
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_contract_tx_receiver_sig() {
+        // Create a MockWatchOnlySwapCoin instance for testing
+        let swapcoin = MockWatchOnlySwapCoin {
+            sender_pubkey: PublicKey::default(),
+            receiver_pubkey: PublicKey::default(),
+            funding_amount: 0,
+            contract_tx: Transaction::default(),
+        };
+
+        // Call verify_contract_tx_receiver_sig function with a valid signature
+        let result = swapcoin.verify_contract_tx_receiver_sig(&Signature::default());
+
+        // Assert that the function returns Ok(())
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_sign_transaction_input() {
+        let secp = Secp256k1::new();
+        // using testnet keys
+        let my_privkey = bitcoin::PrivateKey::from_str("5032554e9d661af4e3fe58ef485231358925d39996830dac9eace8cadfbea9cd").unwrap();
+        let my_pubkey = bitcoin::PublicKey::from_private_key(&secp, &my_privkey);
+        let other_privkey = bitcoin::PrivateKey::from_str("5032554e9d661af4e3fe58ef485231358925d39996830dac9eace8cadfbea9ce").unwrap();
+        let other_pubkey = bitcoin::PublicKey::from_private_key(&secp, &other_privkey);
+        let funding_amount = 100_000;
+        let index : usize = 0;
+        let tx = Transaction {
+            input: vec![],
+            output: vec![],
+            lock_time: LockTime::ZERO,
+            version: 2,
+
+        };
+        // let redeemscript : &Script = bitcoin::blockdata::script::Builder::new().as_script();
+        let redeemscript = ScriptBuf::default().as_script();
+        let sighash = secp256k1::Message::from_slice(
+            &SighashCache::new(tx)
+                .segwit_signature_hash(
+                    index,
+                    redeemscript,
+                    funding_amount,
+                    EcdsaSighashType::All,
+                )
+                .map_err(ContractError::Sighash)[..],
+        )
+        .map_err(ContractError::Secp)?;
+        let contract_redeemscript = ScriptBuf::default(); // Example redeem script
+        let mut input = TxIn::default();
+
+        let assert = sign_transaction_input();
+
+        // Create an instance of IncomingSwapCoin
+        let mut incoming_swap_coin = IncomingSwapCoin {
+            my_privkey,
+            other_pubkey,
+            other_privkey: Some(other_privkey),
+            contract_tx,
+            contract_redeemscript,
+            hashlock_privkey: SecretKey::default(), // Example hashlock private key
+            funding_amount,
+            others_contract_sig: None,
+            hash_preimage: None,
+        };
+
+        // Perform signing
+        let result = incoming_swap_coin.sign_transaction_input(
+            index,
+            &contract_tx,
+            &mut input,
+            &redeemscript,
+        );
+
+        // Check if signing is successful
+        assert!(result.is_ok());
+
+    // Verify the resulting transaction input contains the expected signatures
+    let expected_my_pubkey = incoming_swap_coin.get_my_pubkey();
+    let expected_other_pubkey = incoming_swap_coin.other_pubkey;
+    let expected_sig_mine = Secp256k1::new().sign_ecdsa(&secp256k1::Message::from_slice(&[0; 32]).unwrap(), &my_privkey);
+    let expected_sig_other = Secp256k1::new().sign_ecdsa(&secp256k1::Message::from_slice(&[0; 32]).unwrap(), &other_privkey);
+
+    // Assuming apply_two_signatures_to_2of2_multisig_spend modifies the input in place
+    let expected_input = TxIn {
+        witness: vec![
+            expected_sig_mine.serialize_der().to_vec(),
+            expected_sig_other.serialize_der().to_vec(),
+            vec![EcdsaSighashType::All as u8],
+            redeemscript.to_bytes(),
+        ],
+        ..Default::default()
+    };
+
+    assert_eq!(input, expected_input);
+    }
+
+}
+*/
