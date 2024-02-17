@@ -670,10 +670,12 @@ mod tests {
             contract_redeemscript: ScriptBuf::default(),
         };
 
-        let secret_key =
+        let secret_key_1 =
             SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000002")
                 .unwrap();
-        assert!(swapcoin.apply_privkey(secret_key).is_ok());
+        let secret_key_2 = SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000069").unwrap();
+        assert!(swapcoin.apply_privkey(secret_key_1).is_ok());
+        assert!(swapcoin.apply_privkey(secret_key_2).is_err());
     }
 
     #[test]
@@ -716,10 +718,12 @@ mod tests {
             hash_preimage: None,
         };
 
-        let secret_key =
+        let secret_key_1 =
             SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000002")
                 .unwrap();
-        assert!(incoming_swapcoin.apply_privkey(secret_key).is_ok());
+        let secret_key_2 = SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000069").unwrap();
+        assert!(incoming_swapcoin.apply_privkey(secret_key_1).is_ok());
+        assert!(incoming_swapcoin.apply_privkey(secret_key_2).is_err());
     }
 
     #[test]
@@ -755,10 +759,12 @@ mod tests {
             others_contract_sig: None,
             hash_preimage: None,
         };
-        let secret_key =
+        let secret_key_1 =
             SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000001")
                 .unwrap();
-        assert!(outgoing_swapcoin.apply_privkey(secret_key).is_ok());
+        let secret_key_2 = SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000069").unwrap();
+        assert!(outgoing_swapcoin.apply_privkey(secret_key_1).is_ok());
+        assert!(outgoing_swapcoin.apply_privkey(secret_key_2).is_err());
     }
 }
 /*
@@ -801,23 +807,6 @@ mod tests {
             // Return Ok(()) if the signature is valid; otherwise, return an error
             Ok(())
         }
-    }
-
-    #[test]
-    fn test_apply_privkey() {
-        // Create a MockWatchOnlySwapCoin instance for testing
-        let mut swapcoin = MockWatchOnlySwapCoin {
-            sender_pubkey: PublicKey::default(),
-            receiver_pubkey: PublicKey::default(),
-            funding_amount: 0,
-            contract_tx: Transaction::default(),
-        };
-
-        // Call apply_privkey function with a valid privkey
-        let result = swapcoin.apply_privkey(SecretKey::default());
-
-        // Assert that the function returns Ok(())
-        assert!(result.is_ok());
     }
 
     #[test]
