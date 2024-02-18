@@ -863,7 +863,7 @@ mod tests {
             )
             .unwrap(),
         };
-        let mut input = TxIn::default();
+        let input = TxIn::default();
         let output = TxOut::default();
         let incoming_swapcoin = IncomingSwapCoin {
             my_privkey: secp256k1::SecretKey::from_str(
@@ -916,7 +916,6 @@ mod tests {
             version: 2,
         };
         let index = 0;
-        let input_value = 100;
         let preimage = Vec::new();
         incoming_swapcoin
             .sign_hashlocked_transaction_input_given_preimage(
@@ -929,13 +928,6 @@ mod tests {
             .unwrap();
         // If the tx is succesful, check some field like:
         assert!(tx.input[0].witness.len() == 3);
-        let test2 = incoming_swapcoin.sign_hashlocked_transaction_input(
-            index,
-            &tx,
-            &mut input,
-            input_value,
-        );
-        println!(" test 2 {:?}", test2);
     }
 
     #[test]
