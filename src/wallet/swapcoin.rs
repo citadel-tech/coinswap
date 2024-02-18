@@ -735,7 +735,7 @@ mod tests {
         let other_pubkey_from_method = incoming_swapcoin.get_other_pubkey();
         assert_eq!(other_pubkey_from_method, &incoming_swapcoin.other_pubkey);
         // Test is_hash_preimage_known for empty hash_preimage
-        assert_eq!(incoming_swapcoin.is_hash_preimage_known(), false);
+        assert!(!incoming_swapcoin.is_hash_preimage_known());
     }
 
     #[test]
@@ -788,7 +788,7 @@ mod tests {
             &outgoing_swapcoin.other_pubkey
         );
         // Test is_hash_preimage_known
-        assert_eq!(outgoing_swapcoin.is_hash_preimage_known(), false);
+        assert!(!outgoing_swapcoin.is_hash_preimage_known());
     }
 
     #[test]
@@ -917,15 +917,16 @@ mod tests {
         };
         let index = 0;
         let preimage = Vec::new();
-        incoming_swapcoin.sign_hashlocked_transaction_input_given_preimage(
-            index,
-            &tx.clone(),
-            &mut tx.input[0],
-            incoming_swapcoin.contract_tx.output[0].value,
-            &preimage,
-        )
-        .unwrap();
-    // If the tx is succesful, check some field like:
-    assert!(tx.input[0].witness.len() == 3);
+        incoming_swapcoin
+            .sign_hashlocked_transaction_input_given_preimage(
+                index,
+                &tx.clone(),
+                &mut tx.input[0],
+                incoming_swapcoin.contract_tx.output[0].value,
+                &preimage,
+            )
+            .unwrap();
+        // If the tx is succesful, check some field like:
+        assert!(tx.input[0].witness.len() == 3);
     }
 }
