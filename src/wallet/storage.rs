@@ -164,7 +164,11 @@ impl FileData {
     // Overwrite existing file or create a new one.
     fn save_to_file(&self, path: &PathBuf) -> Result<(), WalletError> {
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
-        let file = OpenOptions::new().write(true).create(true).open(path)?;
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
         let writer = BufWriter::new(file);
         serde_cbor::to_writer(writer, &self)?;
         Ok(())
