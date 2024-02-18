@@ -863,7 +863,7 @@ mod tests {
             )
             .unwrap(),
         };
-        let input = TxIn::default();
+        let mut input = TxIn::default();
         let output = TxOut::default();
         let incoming_swapcoin = IncomingSwapCoin {
             my_privkey: secp256k1::SecretKey::from_str(
@@ -890,7 +890,7 @@ mod tests {
             .unwrap(),
             funding_amount: 100_000,
             others_contract_sig: None,
-            hash_preimage: None,
+            hash_preimage: Some(Preimage::from([0; 32])),
         };
         let destination_address: Address = Address::from_str("32iVBEu4dxkUQk9dJbZUiBiQdmypcEyJRf")
             .unwrap()
@@ -916,6 +916,7 @@ mod tests {
             version: 2,
         };
         let index = 0;
+        let input_value = 100;
         let preimage = Vec::new();
         incoming_swapcoin
             .sign_hashlocked_transaction_input_given_preimage(
@@ -928,5 +929,97 @@ mod tests {
             .unwrap();
         // If the tx is succesful, check some field like:
         assert!(tx.input[0].witness.len() == 3);
+        let test2 = incoming_swapcoin.sign_hashlocked_transaction_input(
+            index,
+            &tx,
+            &mut input,
+            input_value,
+        );
+        println!(" test 2 {:?}", test2);
+    }
+
+    #[test]
+    fn test_sign_hashlocked_transaction_input() {
+        let secp = Secp256k1::new();
+        let other_privkey = PrivateKey {
+            compressed: true,
+            network: bitcoin::Network::Bitcoin,
+            inner: secp256k1::SecretKey::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000001",
+            )
+            .unwrap(),
+        };
+        let mut input = TxIn::default();
+        let output = TxOut::default();
+        let incoming_swapcoin = IncomingSwapCoin {
+            my_privkey: secp256k1::SecretKey::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000003",
+            )
+            .unwrap(),
+            other_privkey: Some(
+                secp256k1::SecretKey::from_str(
+                    "0000000000000000000000000000000000000000000000000000000000000005",
+                )
+                .unwrap(),
+            ),
+            other_pubkey: PublicKey::from_private_key(&secp, &other_privkey),
+            contract_tx: Transaction {
+                input: vec![input.clone()],
+                output: vec![output.clone()],
+                lock_time: LockTime::ZERO,
+                version: 2,
+            },
+            contract_redeemscript: ScriptBuf::default(),
+            hashlock_privkey: secp256k1::SecretKey::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000004",
+            )
+            .unwrap(),
+            funding_amount: 100_000,
+            others_contract_sig: None,
+            hash_preimage: Some(Preimage::from([0; 32])),
+        };
+        let destination_address: Address = Address::from_str("32iVBEu4dxkUQk9dJbZUiBiQdmypcEyJRf")
+            .unwrap()
+            .require_network(bitcoin::Network::Bitcoin)
+            .unwrap();
+
+        let miner_fee = 136 * 10;
+        let mut tx = Transaction {
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: incoming_swapcoin.contract_tx.txid(),
+                    vout: 0, //contract_tx is one-input-one-output
+                },
+                sequence: Sequence(1), //hashlock spends must have 1 because of the `OP_CSV 1`
+                witness: Witness::new(),
+                script_sig: ScriptBuf::new(),
+            }],
+            output: vec![TxOut {
+                script_pubkey: destination_address.script_pubkey(),
+                value: incoming_swapcoin.contract_tx.output[0].value - miner_fee,
+            }],
+            lock_time: LockTime::ZERO,
+            version: 2,
+        };
+        let index = 0;
+        let input_value = 100;
+        let preimage = Vec::new();
+        incoming_swapcoin
+            .sign_hashlocked_transaction_input_given_preimage(
+                index,
+                &tx.clone(),
+                &mut tx.input[0],
+                incoming_swapcoin.contract_tx.output[0].value,
+                &preimage,
+            )
+            .unwrap();
+        // Check if the hashlocked transaction input is successful
+        let final_return = incoming_swapcoin.sign_hashlocked_transaction_input(
+            index,
+            &tx,
+            &mut input,
+            input_value,
+        );
+        assert!(final_return.is_ok());
     }
 }
