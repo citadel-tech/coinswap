@@ -215,7 +215,7 @@ pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> ScriptBuf {
 }
 
 /// Converts a byte vector to a hexadecimal string representation.
-pub fn to_hex(bytes: &Vec<u8>) -> String {
+pub fn to_hex(bytes: &[u8]) -> String {
     let hex_chars: Vec<char> = "0123456789abcdef".chars().collect();
     let mut hex_string = String::new();
 

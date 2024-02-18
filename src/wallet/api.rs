@@ -29,15 +29,12 @@ use bitcoind::bitcoincore_rpc::{
 };
 use serde_json::Value;
 
-use chrono::NaiveDateTime;
-
 use crate::{
     protocol::contract,
     utill::{
         convert_json_rpc_bitcoin_to_satoshis, generate_keypair, get_hd_path_from_descriptor,
         redeemscript_to_scriptpubkey,
     },
-    wallet::fidelity,
 };
 
 use super::{
@@ -279,19 +276,11 @@ impl Wallet {
         }
 
         if types == DisplayAddressType::All || types == DisplayAddressType::FidelityBond {
-            let mut timelocked_scripts_list =
-                self.store.fidelity_scripts.iter().collect::<Vec<_>>();
-            timelocked_scripts_list.sort_by(|a, b| a.1.cmp(b.1));
-            for (timelocked_scriptpubkey, index) in &timelocked_scripts_list {
-                let locktime = fidelity::get_locktime_from_index(**index);
+            for (bond, _, _) in self.store.fidelity_bond.values() {
+                let locktime = bond.lock_time;
                 println!(
-                    "{} {}/{} [{}] locktime={}",
-                    Address::from_script(timelocked_scriptpubkey, self.store.network).unwrap(),
-                    fidelity::TIMELOCKED_MPK_PATH,
-                    index,
-                    NaiveDateTime::from_timestamp_opt(locktime, 0)
-                        .expect("expected")
-                        .format("%Y-%m-%d"),
+                    "[{}] locktime={}",
+                    Address::from_script(&bond.script_pub_key(), self.store.network).unwrap(),
                     locktime,
                 );
             }
@@ -637,9 +626,9 @@ impl Wallet {
             }))
             .chain(
                 self.store
-                    .fidelity_scripts
-                    .keys()
-                    .map(|spk| ImportMultiRequest {
+                    .fidelity_bond
+                    .iter()
+                    .map(|(_, (_, spk, _))| ImportMultiRequest {
                         timestamp: Timestamp::Now,
                         script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(spk)),
                         watchonly: Some(true),
@@ -710,10 +699,12 @@ impl Wallet {
         include_all_fidelity_bonds: bool,
     ) -> Option<UTXOSpendInfo> {
         if include_all_fidelity_bonds {
-            if let Some(index) = self.store.fidelity_scripts.get(&u.script_pub_key) {
+            if let Some((i, (b, _, _))) = self.store.fidelity_bond.iter().find(|(_, (b, _, _))| {
+                b.script_pub_key() == u.script_pub_key && b.amount == u.amount.to_sat()
+            }) {
                 return Some(UTXOSpendInfo::FidelityBondCoin {
-                    index: *index,
-                    input_value: u.amount.to_sat(),
+                    index: *i,
+                    input_value: b.amount,
                 });
             }
         }
@@ -1085,7 +1076,7 @@ impl Wallet {
     pub fn sign_transaction(
         &self,
         tx: &mut Transaction,
-        inputs_info: &mut dyn Iterator<Item = UTXOSpendInfo>,
+        inputs_info: impl Iterator<Item = UTXOSpendInfo>,
     ) -> Result<(), WalletError> {
         let secp = Secp256k1::new();
         let master_private_key = self
@@ -1150,8 +1141,8 @@ impl Wallet {
                     .sign_hashlocked_transaction_input(ix, &tx_clone, input, input_value)
                     .unwrap(),
                 UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
-                    let privkey = self.get_timelocked_privkey_from_index(index);
-                    let redeemscript = self.get_timelocked_redeemscript_from_index(index);
+                    let privkey = self.get_fidelity_keypair(index)?.secret_key();
+                    let redeemscript = self.get_fidelity_reedemscript(index)?;
                     let sighash = SighashCache::new(&tx_clone)
                         .segwit_signature_hash(
                             ix,

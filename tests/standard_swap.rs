@@ -48,16 +48,27 @@ async fn test_standard_coinswap() {
         })
     }
 
+    // Coins for fidelity creation
+    makers.iter().for_each(|maker| {
+        let maker_addrs = maker
+            .get_wallet()
+            .write()
+            .unwrap()
+            .get_next_external_address()
+            .unwrap();
+        test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
+    });
+
     // confirm balances
     test_framework.generate_1_block();
 
     // --- Basic Checks ----
 
-    // Assert external address index reached to 3.
+    // Assert external address index reached to 4.
     assert_eq!(taker.read().unwrap().get_wallet().get_external_index(), &3);
     makers.iter().for_each(|maker| {
         let next_external_index = *maker.get_wallet().read().unwrap().get_external_index();
-        assert_eq!(next_external_index, 3);
+        assert_eq!(next_external_index, 4);
     });
 
     // Check if utxo list looks good.
@@ -80,7 +91,7 @@ async fn test_standard_coinswap() {
             .list_unspent_from_wallet(false, false)
             .unwrap();
 
-        assert_eq!(utxo_count.len(), 3);
+        assert_eq!(utxo_count.len(), 4);
     });
 
     // Check locking non-wallet utxos worked.

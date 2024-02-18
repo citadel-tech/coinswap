@@ -10,7 +10,8 @@
 
 use bitcoin::{
     absolute::LockTime,
-    secp256k1::{self, ecdsa::Signature, Secp256k1, SecretKey},
+    ecdsa::Signature,
+    secp256k1::{self, Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
     Address, OutPoint, PublicKey, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
@@ -144,7 +145,10 @@ macro_rules! impl_walletswapcoin {
                         .map_err(ContractError::Sighash)?[..],
                 )
                 .map_err(ContractError::Secp)?;
-                let sig_mine = secp.sign_ecdsa(&sighash, &self.my_privkey);
+                let sig_mine = Signature {
+                    sig: secp.sign_ecdsa(&sighash, &self.my_privkey),
+                    hash_ty: EcdsaSighashType::All,
+                };
 
                 let mut signed_contract_tx = self.contract_tx.clone();
                 apply_two_signatures_to_2of2_multisig_spend(
@@ -255,8 +259,14 @@ impl IncomingSwapCoin {
         )
         .map_err(ContractError::Secp)?;
 
-        let sig_mine = secp.sign_ecdsa(&sighash, &self.my_privkey);
-        let sig_other = secp.sign_ecdsa(&sighash, &self.other_privkey.unwrap());
+        let sig_mine = Signature {
+            sig: secp.sign_ecdsa(&sighash, &self.my_privkey),
+            hash_ty: EcdsaSighashType::All,
+        };
+        let sig_other = Signature {
+            sig: secp.sign_ecdsa(&sighash, &self.other_privkey.unwrap()),
+            hash_ty: EcdsaSighashType::All,
+        };
 
         apply_two_signatures_to_2of2_multisig_spend(
             &my_pubkey,
@@ -359,7 +369,7 @@ impl IncomingSwapCoin {
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.other_pubkey,
-            sig,
+            &sig.sig,
         )?)
     }
 }
@@ -473,7 +483,7 @@ impl OutgoingSwapCoin {
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.other_pubkey,
-            sig,
+            &sig.sig,
         )?)
     }
 }
@@ -613,7 +623,7 @@ impl SwapCoin for WatchOnlySwapCoin {
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.receiver_pubkey,
-            sig,
+            &sig.sig,
         )?)
     }
 
@@ -623,7 +633,7 @@ impl SwapCoin for WatchOnlySwapCoin {
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.sender_pubkey,
-            sig,
+            &sig.sig,
         )?)
     }
 }

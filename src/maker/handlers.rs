@@ -75,7 +75,9 @@ pub async fn handle_message(
                     (tweakable_point, max_size)
                 };
                 connection_state.allowed_message = ExpectedMessage::ReqContractSigsForSender;
-                Some(MakerToTakerMessage::RespOffer(Offer {
+                let fidelity = maker.highest_fidelity_proof.read()?;
+                let fidelity = fidelity.as_ref().expect("proof expected");
+                Some(MakerToTakerMessage::RespOffer(Box::new(Offer {
                     absolute_fee_sat: maker.config.absolute_fee_sats,
                     amount_relative_fee_ppb: maker.config.amount_relative_fee_ppb,
                     time_relative_fee_ppb: maker.config.time_relative_fee_ppb,
@@ -84,7 +86,8 @@ pub async fn handle_message(
                     max_size,
                     min_size: maker.config.min_size,
                     tweakable_point,
-                }))
+                    fidelity: fidelity.clone(),
+                })))
             }
             TakerToMakerMessage::ReqContractSigsForSender(message) => {
                 connection_state.allowed_message = ExpectedMessage::ProofOfFunding;
