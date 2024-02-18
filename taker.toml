@@ -30,3 +30,9 @@ reconnect_long_sleep_delay = 60
 # after this many attempts, switch to sleeping longer
 short_long_sleep_delay_transition = 60 
 reconnect_attempt_timeout_sec = 300
+
+# tor configuration
+tor_port = 8000
+socks_port = 19050
+# Directory server onion address
+directory_server_onion_address = "directoryhiddenserviceaddress.onion:8080"

@@ -22,3 +22,7 @@ required_confirms = 1
 min_contract_reaction_time = 48
 # Minimum coinswap amount size in sats
 min_size = 10000
+# Socks port
+socks_part = 19050
+# Directory server onion address
+directory_server_onion_address = "directoryhiddenserviceaddress.onion:8080"

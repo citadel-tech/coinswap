@@ -21,6 +21,10 @@ pub struct TakerConfig {
     pub reconnect_long_sleep_delay: u64,
     pub short_long_sleep_delay_transition: u32,
     pub reconnect_attempt_timeout_sec: u64,
+
+    pub port: u16,
+    pub socks_port: u16,
+    pub directory_server_onion_address: String,
 }
 
 impl Default for TakerConfig {
@@ -36,6 +40,9 @@ impl Default for TakerConfig {
             reconnect_long_sleep_delay: 60,
             short_long_sleep_delay_transition: 60,
             reconnect_attempt_timeout_sec: 300,
+            port: 8000,
+            socks_port: 19050,
+            directory_server_onion_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
         }
     }
 }
@@ -124,6 +131,17 @@ impl TakerConfig {
                 default_config.reconnect_attempt_timeout_sec,
             )
             .unwrap_or(default_config.reconnect_attempt_timeout_sec),
+            port: parse_field(taker_config_section.get("port"), default_config.port)
+                .unwrap_or(default_config.port),
+            socks_port: parse_field(
+                taker_config_section.get("socks_port"),
+                default_config.socks_port,
+            )
+            .unwrap_or(default_config.socks_port),
+            directory_server_onion_address: taker_config_section
+                .get("directory_server_onion_address")
+                .map(|s| s.to_string())
+                .unwrap_or(default_config.directory_server_onion_address),
         })
     }
 }
@@ -142,6 +160,9 @@ fn write_default_taker_config(config_path: &PathBuf) {
                         reconnect_long_sleep_delay = 60\n\
                         short_long_sleep_delay_transition = 60\n\
                         reconnect_attempt_timeout_sec = 300\n\
+                        port = 8000\n\
+                        socks_port = 19050\n\
+                        directory_server_onion_address = directoryhiddenserviceaddress.onion:8080\n
                         ",
     );
     write_default_config(config_path, config_string).unwrap();
@@ -182,6 +203,8 @@ mod tests {
         reconnect_long_sleep_delay = 60
         short_long_sleep_delay_transition = 60
         reconnect_attempt_timeout_sec = 300
+        port = 8000
+        socks_port = 19050
         "#;
         let config_path = create_temp_config(contents, "valid_taker_config.toml");
         let config = TakerConfig::new(Some(&config_path)).unwrap();

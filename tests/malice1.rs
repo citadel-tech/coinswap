@@ -2,15 +2,13 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
-    market::directory::start_directory_server,
+    market::directory::{start_directory_server, DirectoryServer},
     taker::{SwapParams, TakerBehavior},
     test_framework::*,
 };
 
-use tokio::sync::oneshot;
-
 use log::{info, warn};
-use std::{collections::BTreeSet, thread, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, thread, time::Duration};
 
 /// Malice 1: Taker Broadcasts contract transactions prematurely.
 ///
@@ -21,8 +19,8 @@ async fn malice1_taker_broadcast_contract_prematurely() {
     // ---- Setup ----
 
     let makers_config_map = [
-        (6102, MakerBehavior::Normal),
-        (16102, MakerBehavior::Normal),
+        ((6102, 19051), MakerBehavior::Normal),
+        ((16102, 19052), MakerBehavior::Normal),
     ];
 
     // Initiate test framework, Makers.
@@ -38,10 +36,11 @@ async fn malice1_taker_broadcast_contract_prematurely() {
 
     info!("Initiating Directory Server .....");
 
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
-
-    thread::spawn(|| {
-        start_directory_server(shutdown_rx);
+    let directory_server_instance =
+        Arc::new(DirectoryServer::init(Some(8080), Some(19060)).unwrap());
+    let directory_server_instance_clone = directory_server_instance.clone();
+    thread::spawn(move || {
+        start_directory_server(directory_server_instance_clone);
     });
 
     info!("Initiating Takers...");
@@ -62,7 +61,7 @@ async fn malice1_taker_broadcast_contract_prematurely() {
                 .get_next_external_address()
                 .unwrap();
             test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
-        })
+        });
     }
 
     // Coins for fidelity creation
@@ -146,7 +145,8 @@ async fn malice1_taker_broadcast_contract_prematurely() {
 
     // ---- After Swap checks ----
 
-    let _ = shutdown_tx.send(());
+    let _ = directory_server_instance.shutdown();
+
     thread::sleep(Duration::from_secs(10));
 
     let maker_balances = makers

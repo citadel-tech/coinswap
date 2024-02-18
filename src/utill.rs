@@ -17,11 +17,14 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io::{self, BufRead, Write},
+    thread,
+    time::Duration,
 };
 
 use serde_json::Value;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, BufReader},
+    fs::File as FS,
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::tcp::{ReadHalf, WriteHalf},
 };
 
@@ -282,6 +285,34 @@ pub fn write_default_config(path: &PathBuf, toml_data: String) -> std::io::Resul
     file.write_all(toml_data.as_bytes())?;
     file.flush()?;
     Ok(())
+}
+
+/// Function to check if tor log contains a pattern
+pub async fn monitor_log_for_completion(log_dir: PathBuf, pattern: &str) -> io::Result<()> {
+    let mut last_size = 0;
+
+    loop {
+        let file = FS::open(&log_dir).await?;
+        let metadata = file.metadata().await?;
+        let current_size = metadata.len();
+
+        if current_size != last_size {
+            let reader = BufReader::new(file);
+            let mut lines = reader.lines();
+
+            while let Some(line) = lines.next_line().await? {
+                if line.contains(pattern) {
+                    log::warn!("Tor instance bootstrapped");
+                    return Ok(());
+                }
+            }
+
+            last_size = current_size;
+        }
+
+        // Polling interval: adjust as needed for your use case
+        thread::sleep(Duration::from_secs(10));
+    }
 }
 
 #[cfg(test)]

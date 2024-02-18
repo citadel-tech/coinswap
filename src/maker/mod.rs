@@ -10,28 +10,27 @@ pub mod error;
 mod handlers;
 
 use std::{
-    collections::HashMap,
     fs,
     net::Ipv4Addr,
-    path::PathBuf,
-    sync::{Arc, Mutex},
+    path::{ Path, PathBuf },
+    sync::{ Arc, Mutex },
     thread,
-    time::{Duration, Instant},
+    time::{ Duration, Instant },
 };
 
 use bitcoin::{absolute::LockTime, Amount, Network};
 use bitcoind::bitcoincore_rpc::RpcApi;
-use libtor::{HiddenServiceVersion, Tor, TorAddress, TorFlag};
-use serde::{Deserialize, Serialize};
+use libtor::{ HiddenServiceVersion, LogDestination, LogLevel, Tor, TorAddress, TorFlag };
+use serde::{ Deserialize, Serialize };
 use tokio::{
-    io::{AsyncReadExt, BufReader},
-    net::{tcp::ReadHalf, TcpListener},
+    io::{ AsyncReadExt, BufReader },
+    net::{ tcp::ReadHalf, TcpListener },
     select,
     sync::mpsc,
     time::sleep,
 };
 
-pub use api::{Maker, MakerBehavior};
+pub use api::{ Maker, MakerBehavior };
 
 use std::io::Read;
 use tokio::io::AsyncWriteExt;
@@ -45,12 +44,12 @@ struct OnionAddress {
 
 use crate::{
     maker::{
-        api::{check_for_broadcasted_contracts, check_for_idle_states, ConnectionState},
+        api::{ check_for_broadcasted_contracts, check_for_idle_states, ConnectionState },
         handlers::handle_message,
     },
     market::directory::post_maker_address_to_directory_servers,
-    protocol::messages::{MakerHello, MakerToTakerMessage, TakerToMakerMessage},
-    utill::send_message,
+    protocol::messages::{ MakerHello, MakerToTakerMessage, TakerToMakerMessage },
+    utill::{ monitor_log_for_completion, send_message },
     wallet::WalletError,
 };
 
@@ -60,36 +59,37 @@ use crate::maker::error::MakerError;
 /// aspects of the Maker's behavior.
 #[tokio::main]
 pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
-    let mut socks_port: HashMap<_, _> = HashMap::new();
-    socks_port.insert(6102, 19051);
-    socks_port.insert(16102, 19052);
-    socks_port.insert(26102, 19053);
-    socks_port.insert(36102, 19054);
-    socks_port.insert(46102, 19055);
-
     let maker_port = maker.config.port;
-    let socks_port_value: u16 = *socks_port.get(&maker_port).unwrap() as u16;
-    let handle1 = mitosis::spawn(
-        (socks_port_value, maker_port),
-        |(socks_port_value, maker_port)| {
-            let hs_string = format!("/tmp/tor-rust{}/maker/hs-dir", maker_port);
-            let data_dir = format!("/tmp/tor-rust{}/maker", maker_port);
-            let maker_file_path = PathBuf::from(data_dir.as_str());
-            if !maker_file_path.exists() {
-                fs::create_dir_all(maker_file_path).unwrap();
-            }
-            let _handler = Tor::new()
-                .flag(TorFlag::DataDirectory(data_dir))
-                .flag(TorFlag::SocksPort(socks_port_value))
-                .flag(TorFlag::HiddenServiceDir(hs_string))
-                .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
-                .flag(TorFlag::HiddenServicePort(
-                    TorAddress::Port(maker_port),
-                    None.into(),
-                ))
-                .start();
-        },
-    );
+    let maker_socks_port = maker.config.socks_port;
+
+    let tor_log_dir = format!("/tmp/tor-rust-maker{}/log", maker_port);
+
+    if Path::new(tor_log_dir.as_str()).exists() {
+        match fs::remove_file(Path::new(tor_log_dir.as_str())) {
+            Ok(_) => log::info!("Previous Maker log file deleted successfully"),
+            Err(_) => log::error!("Error deleting Maker log file "),
+        }
+    }
+
+    thread::sleep(Duration::from_secs(10));
+
+    let handle1 = mitosis::spawn((maker_socks_port, maker_port), |(maker_socks_port, maker_port)| {
+        let hs_string = format!("/tmp/tor-rust-maker{}/hs-dir", maker_port);
+        let data_dir = format!("/tmp/tor-rust-maker{}", maker_port);
+        let log_dir = format!("/tmp/tor-rust-maker{}/log", maker_port);
+        let maker_file_path = PathBuf::from(data_dir.as_str());
+        if !maker_file_path.exists() {
+            fs::create_dir_all(maker_file_path).unwrap();
+        }
+        let _handler = Tor::new()
+            .flag(TorFlag::DataDirectory(data_dir))
+            .flag(TorFlag::LogTo(LogLevel::Notice, LogDestination::File(log_dir)))
+            .flag(TorFlag::SocksPort(maker_socks_port))
+            .flag(TorFlag::HiddenServiceDir(hs_string))
+            .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
+            .flag(TorFlag::HiddenServicePort(TorAddress::Port(maker_port), None.into()))
+            .start();
+    });
 
     let handle = Arc::new(Mutex::new(Some(handle1)));
 
@@ -109,9 +109,9 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             "Adding my address ({}) to the directory servers. . .",
             maker.config.onion_addrs
         );
-        post_maker_address_to_directory_servers(network, &maker.config.onion_addrs)
-            .await
-            .expect("unable to add my address to the directory servers, is tor reachable?");
+        post_maker_address_to_directory_servers(network, &maker.config.onion_addrs).await.expect(
+            "unable to add my address to the directory servers, is tor reachable?"
+        );
     }
 
     // Get the highest value fidelity bond from the wallet.
@@ -166,25 +166,25 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     let maker_clone_1 = maker.clone();
     std::thread::spawn(move || {
-        log::info!(
-            "[{}] Spawning Connection status check thread",
-            maker_clone_1.config.port
-        );
+        log::info!("[{}] Spawning Connection status check thread", maker_clone_1.config.port);
         check_for_idle_states(maker_clone_1).unwrap();
     });
 
     let maker_clone_2 = maker.clone();
     std::thread::spawn(move || {
-        log::info!(
-            "[{}] Spawning contract-watcher thread",
-            maker_clone_2.config.port
-        );
+        log::info!("[{}] Spawning contract-watcher thread", maker_clone_2.config.port);
         check_for_broadcasted_contracts(maker_clone_2).unwrap();
     });
 
-    thread::sleep(Duration::from_secs(60));
+    thread::sleep(Duration::from_secs(10));
 
-    let maker_hs_path_str = format!("/tmp/tor-rust{}/maker/hs-dir/hostname", maker.config.port);
+    if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%").await {
+        log::error!("Error monitoring log file: {}", e);
+    }
+
+    log::info!("Maker tor is instantiated");
+
+    let maker_hs_path_str = format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
     let maker_hs_path = PathBuf::from(maker_hs_path_str);
     let mut maker_file = fs::File::open(&maker_hs_path).unwrap();
     let mut maker_onion_addr: String = String::new();
@@ -192,34 +192,49 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     maker_onion_addr.pop();
     let maker_onion_address = format!("{}:{}", maker_onion_addr, maker.config.port);
 
-    let directory_hs_path_str = format!("/tmp/tor-rust-directory/hs-dir/hostname");
-    let directory_hs_path = PathBuf::from(directory_hs_path_str);
-    let mut directory_file = fs::File::open(&directory_hs_path).unwrap();
-    let mut directory_onion_addr: String = String::new();
-    directory_file
-        .read_to_string(&mut directory_onion_addr)
-        .unwrap();
-    directory_onion_addr.pop();
-    let directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
+    log::warn!("Maker onion address : {}", maker_onion_address);
+
+    let mut directory_onion_address = maker.config.directory_server_onion_address.clone();
+
+    if cfg!(feature = "integration-test") {
+        let directory_hs_path_str = "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
+        let directory_hs_path = PathBuf::from(directory_hs_path_str);
+        let mut directory_file = fs::File::open(directory_hs_path).unwrap();
+        let mut directory_onion_addr: String = String::new();
+        directory_file.read_to_string(&mut directory_onion_addr).unwrap();
+        directory_onion_addr.pop();
+        directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
+    }
 
     let address = directory_onion_address.as_str();
-    let mut stream =
-        Socks5Stream::connect(format!("127.0.0.1:{}", socks_port_value).as_str(), address)
-            .await
-            .map_err(|_e| MakerError::General("Error with socks"))?
-            .into_inner();
+
+    log::warn!("Directory onion address : {}", directory_onion_address);
+
+    let mut stream = Socks5Stream::connect(
+        format!("127.0.0.1:{}", maker_socks_port).as_str(),
+        address
+    ).await
+        .map_err(|_e| MakerError::General("Error with socks "))?
+        .into_inner();
 
     let request_line = format!("POST {}\n", maker_onion_address);
     stream.write_all(request_line.as_bytes()).await?;
 
     // Loop to keep checking for new connections
-    let value = loop {
-        let handle_clone = Arc::clone(&handle);
+    loop {
+        let handle_clone: Arc<Mutex<Option<mitosis::JoinHandle<()>>>> = Arc::clone(&handle);
         if *maker.shutdown.read()? {
             log::warn!("[{}] Maker is shutting down", maker.config.port);
+            if let Some(handle) = handle.lock().unwrap().take() {
+                match handle.kill() {
+                    Ok(_) => log::info!("Tor instance terminated successfully"),
+                    Err(_) => log::error!("Error occurred while terminating tor instance"),
+                }
+            }
             break Ok(());
         }
-        let (mut socket, addr) = select! {
+        let (mut socket, addr) =
+            select! {
 
             new_client = listener.accept() => new_client?,
             client_err = server_loop_comms_rx.recv() => {
@@ -286,11 +301,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             continue;
         }
 
-        log::info!(
-            "[{}] <=== Accepted Connection on port={}",
-            maker.config.port,
-            addr.port()
-        );
+        log::info!("[{}] <=== Accepted Connection on port={}", maker.config.port, addr.port());
         let server_loop_comms_tx = server_loop_comms_tx.clone();
         let maker_clone = maker.clone();
 
@@ -302,14 +313,14 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
             let mut connection_state = ConnectionState::default();
 
-            if let Err(e) = send_message(
-                &mut socket_writer,
-                &MakerToTakerMessage::MakerHello(MakerHello {
-                    protocol_version_min: 0,
-                    protocol_version_max: 0,
-                }),
-            )
-            .await
+            if
+                let Err(e) = send_message(
+                    &mut socket_writer,
+                    &MakerToTakerMessage::MakerHello(MakerHello {
+                        protocol_version_min: 0,
+                        protocol_version_max: 0,
+                    })
+                ).await
             {
                 log::error!("IO error sending first message: {:?}", e);
                 if let Some(handle) = handle_clone.lock().unwrap().take() {
@@ -323,7 +334,8 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             log::info!("[{}] ===> MakerHello", maker_clone.config.port);
 
             loop {
-                let message = select! {
+                let message =
+                    select! {
                     read_result = read_taker_message(&mut reader) => {
                         match read_result {
                             Ok(None) => {
@@ -345,8 +357,12 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
                 log::info!("[{}] <=== {} ", maker_clone.config.port, message);
 
-                let reply: Result<Option<MakerToTakerMessage>, MakerError> =
-                    handle_message(&maker_clone, &mut connection_state, message, addr.ip()).await;
+                let reply: Result<Option<MakerToTakerMessage>, MakerError> = handle_message(
+                    &maker_clone,
+                    &mut connection_state,
+                    message,
+                    addr.ip()
+                ).await;
 
                 match reply {
                     Ok(reply) => {
@@ -367,26 +383,16 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 }
             }
         });
-    };
-    if let Some(handle) = handle.lock().unwrap().take() {
-        match handle.kill() {
-            Ok(_) => log::info!("Tor instance terminated successfully"),
-            Err(_) => log::error!("Error occurred while terminating tor instance"),
-        }
     }
-    value
 }
 
 /// Reads a Taker Message.
 async fn read_taker_message(
-    reader: &mut BufReader<ReadHalf<'_>>,
+    reader: &mut BufReader<ReadHalf<'_>>
 ) -> Result<Option<TakerToMakerMessage>, MakerError> {
     let read_result = reader.read_u32().await;
     // If its EOF, return None
-    if read_result
-        .as_ref()
-        .is_err_and(|e| e.kind() == std::io::ErrorKind::UnexpectedEof)
-    {
+    if read_result.as_ref().is_err_and(|e| e.kind() == std::io::ErrorKind::UnexpectedEof) {
         return Ok(None);
     }
     let length = read_result?;

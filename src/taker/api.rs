@@ -10,7 +10,8 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    fs,
+    path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
 };
@@ -56,7 +57,7 @@ use crate::{
     },
 };
 
-use libtor::{HiddenServiceVersion, Tor, TorAddress, TorFlag};
+use libtor::{HiddenServiceVersion, LogDestination, LogLevel, Tor, TorAddress, TorFlag};
 
 /// Swap specific parameters. These are user's policy and can differ among swaps.
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
@@ -245,18 +246,49 @@ impl Taker {
     /// respond back, the swap round will fail.
     #[tokio::main]
     pub async fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
-        let handle = mitosis::spawn(19050, |_data| {
-            let _handler = Tor::new()
-                .flag(TorFlag::DataDirectory("/tmp/tor-rust/".into()))
-                .flag(TorFlag::SocksPort(19050))
-                .flag(TorFlag::HiddenServiceDir("/tmp/tor-rust/hs-dir".into()))
-                .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
-                .flag(TorFlag::HiddenServicePort(
-                    TorAddress::Port(8000),
-                    None.into(),
-                ))
-                .start();
-        });
+        let tor_log_dir = "/tmp/tor-rust-taker/log".to_string();
+
+        let taker_port = self.config.port;
+        let taker_socks_port = self.config.socks_port;
+
+        if Path::new(tor_log_dir.as_str()).exists() {
+            match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
+                Ok(_) => log::info!("Previous taker log file deleted successfully"),
+                Err(_) => log::error!("Error deleting taker log file "),
+            }
+        }
+
+        thread::sleep(Duration::from_secs(10));
+
+        let handle = mitosis::spawn(
+            (taker_socks_port, taker_port),
+            |(taker_socks_port, taker_port)| {
+                let _handler = Tor::new()
+                    .flag(TorFlag::DataDirectory("/tmp/tor-rust-taker/".into()))
+                    .flag(TorFlag::LogTo(
+                        LogLevel::Notice,
+                        LogDestination::File("/tmp/tor-rust-taker/log".to_string()),
+                    ))
+                    .flag(TorFlag::SocksPort(taker_socks_port))
+                    .flag(TorFlag::HiddenServiceDir(
+                        "/tmp/tor-rust-taker/hs-dir".into(),
+                    ))
+                    .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
+                    .flag(TorFlag::HiddenServicePort(
+                        TorAddress::Port(taker_port),
+                        None.into(),
+                    ))
+                    .start();
+            },
+        );
+
+        thread::sleep(Duration::from_secs(10));
+
+        if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%").await {
+            log::error!("Error monitoring taker log file: {}", e);
+        }
+
+        log::info!("Taker tor is instantiated");
 
         thread::sleep(Duration::from_secs(60));
 

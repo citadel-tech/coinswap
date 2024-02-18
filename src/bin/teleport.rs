@@ -77,9 +77,11 @@ enum WalletArgsSubcommand {
         /// Port to listen on, default is 6102
         #[arg(long, short, default_value_t = 6102)]
         port: u16,
+        #[arg(long, short = 's', default_value_t = 19050)]
+        socks_port: u16,
         /// Special behavior used for testing e.g. "closeonsignsenderscontracttx"
         /// TODO more information on usefulness
-        #[arg(long, short)]
+        #[arg(long, short = 'b')]
         special_behavior: Option<String>,
     },
 
@@ -151,6 +153,7 @@ fn main() -> Result<(), WalletError> {
         }
         WalletArgsSubcommand::RunYieldGenerator {
             port,
+            socks_port,
             special_behavior,
         } => {
             let maker_special_behavior = match special_behavior.unwrap_or(String::new()).as_str() {
@@ -170,6 +173,7 @@ fn main() -> Result<(), WalletError> {
                     Some(maker_id.into()),
                     Some(maker_rpc_config),
                     Some(port),
+                    Some(socks_port),
                     maker_special_behavior,
                 )
                 .unwrap(),

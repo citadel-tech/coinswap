@@ -120,6 +120,7 @@ impl Maker {
         wallet_file_name: Option<String>,
         rpc_config: Option<RPCConfig>,
         port: Option<u16>,
+        socks_port: Option<u16>,
         behavior: MakerBehavior,
     ) -> Result<Self, MakerError> {
         // Only allow MakerBehavior in functional tests
@@ -176,6 +177,10 @@ impl Maker {
 
         if let Some(port) = port {
             config.port = port;
+        }
+
+        if let Some(socks_port) = socks_port {
+            config.socks_port = socks_port;
         }
 
         wallet.sync()?;

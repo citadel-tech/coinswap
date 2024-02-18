@@ -2,15 +2,13 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
-    market::directory::start_directory_server,
+    market::directory::{start_directory_server, DirectoryServer},
     taker::SwapParams,
     test_framework::*,
 };
 
-use tokio::sync::oneshot;
-
 use log::{info, warn};
-use std::{fs::File, io::Read, path::PathBuf, thread, time::Duration};
+use std::{fs::File, io::Read, path::PathBuf, sync::Arc, thread, time::Duration};
 
 /// ABORT 3: Maker Drops After Setup
 /// Case 3: CloseAtHashPreimage
@@ -24,8 +22,8 @@ async fn abort3_case2_close_at_contract_sigs_for_recvr() {
 
     // 6102 is naughty. And theres not enough makers.
     let makers_config_map = [
-        (6102, MakerBehavior::CloseAtHashPreimage),
-        (16102, MakerBehavior::Normal),
+        ((6102, 19051), MakerBehavior::CloseAtHashPreimage),
+        ((16102, 19052), MakerBehavior::Normal),
     ];
 
     // Initiate test framework, Makers.
@@ -37,10 +35,11 @@ async fn abort3_case2_close_at_contract_sigs_for_recvr() {
 
     info!("Initiating Directory Server .....");
 
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
-
-    thread::spawn(|| {
-        start_directory_server(shutdown_rx);
+    let directory_server_instance =
+        Arc::new(DirectoryServer::init(Some(8080), Some(19060)).unwrap());
+    let directory_server_instance_clone = directory_server_instance.clone();
+    thread::spawn(move || {
+        start_directory_server(directory_server_instance_clone);
     });
 
     info!("Initiating Takers...");
@@ -61,7 +60,7 @@ async fn abort3_case2_close_at_contract_sigs_for_recvr() {
                 .get_next_external_address()
                 .unwrap();
             test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
-        })
+        });
     }
 
     // Coins for fidelity creation
@@ -124,12 +123,13 @@ async fn abort3_case2_close_at_contract_sigs_for_recvr() {
 
     // ---- After Swap checks ----
 
-    let _ = shutdown_tx.send(());
+    let _ = directory_server_instance.shutdown();
+
     thread::sleep(Duration::from_secs(10));
 
     // TODO: Do balance asserts
     // Maker gets banned for being naughty.
-    let onion_addr_path = PathBuf::from(format!("/tmp/tor-rust{}/maker/hs-dir/hostname", 6102));
+    let onion_addr_path = PathBuf::from(format!("/tmp/tor-rust-maker{}/hs-dir/hostname", 6102));
     let mut file = File::open(&onion_addr_path).unwrap();
     let mut onion_addr: String = String::new();
     file.read_to_string(&mut onion_addr).unwrap();
