@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bitcoin::Network;
+use bitcoin::{absolute::LockTime, Amount, Network};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use tokio::{
     io::{AsyncReadExt, BufReader},
@@ -60,6 +60,48 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         post_maker_address_to_directory_servers(network, &maker.config.onion_addrs)
             .await
             .expect("unable to add my address to the directory servers, is tor reachable?");
+    }
+
+    // Get the highest value fidelity bond from the wallet.
+    {
+        let mut wallet = maker.wallet.write()?;
+        if let Some(i) = wallet.get_highest_fidelity_index()? {
+            let highest_proof = wallet.generate_fidelity_proof(i, maker.config.port.to_string())?;
+            let mut proof = maker.highest_fidelity_proof.write()?;
+            *proof = Some(highest_proof);
+        } else {
+            // No bond in the wallet. Lets attempt to create one.
+            let amount = Amount::from_sat(maker.config.fidelity_value);
+            let current_height = wallet.rpc.get_block_count().map_err(WalletError::Rpc)? as u32;
+
+            // Set 100 blocks locktime for test
+            let locktime = if cfg!(feature = "integration-test") {
+                LockTime::from_height(current_height + 100).unwrap()
+            } else {
+                LockTime::from_height(maker.config.fidelity_timelock + current_height).unwrap()
+            };
+
+            match wallet.create_fidelity(amount, locktime) {
+                // Hard error if we cant create fidelity. As without this Maker can't send a valid
+                // Offer to taker.
+                Err(e) => {
+                    log::error!(
+                        "[{}] Fidelity Bond Creation failed: {:?}. Shutting Down Maker server",
+                        maker.config.port,
+                        e
+                    );
+                    return Err(e.into());
+                }
+                Ok(i) => {
+                    log::info!("[{}] Successfully created fidelity bond", maker.config.port);
+                    // FIXME: Hack to get the tests running. This should be the actual onion address.
+                    let onion_string = "localhost:".to_string() + &maker.config.port.to_string();
+                    let highest_proof = wallet.generate_fidelity_proof(i, onion_string)?;
+                    let mut proof = maker.highest_fidelity_proof.write()?;
+                    *proof = Some(highest_proof);
+                }
+            }
+        }
     }
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.port)).await?;

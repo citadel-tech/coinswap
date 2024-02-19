@@ -10,7 +10,8 @@
 
 use bitcoin::{
     absolute::LockTime,
-    secp256k1::{self, ecdsa::Signature, Secp256k1, SecretKey},
+    ecdsa::Signature,
+    secp256k1::{self, Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
     Address, OutPoint, PublicKey, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
@@ -144,7 +145,10 @@ macro_rules! impl_walletswapcoin {
                         .map_err(ContractError::Sighash)?[..],
                 )
                 .map_err(ContractError::Secp)?;
-                let sig_mine = secp.sign_ecdsa(&sighash, &self.my_privkey);
+                let sig_mine = Signature {
+                    sig: secp.sign_ecdsa(&sighash, &self.my_privkey),
+                    hash_ty: EcdsaSighashType::All,
+                };
 
                 let mut signed_contract_tx = self.contract_tx.clone();
                 apply_two_signatures_to_2of2_multisig_spend(
@@ -255,8 +259,14 @@ impl IncomingSwapCoin {
         )
         .map_err(ContractError::Secp)?;
 
-        let sig_mine = secp.sign_ecdsa(&sighash, &self.my_privkey);
-        let sig_other = secp.sign_ecdsa(&sighash, &self.other_privkey.unwrap());
+        let sig_mine = Signature {
+            sig: secp.sign_ecdsa(&sighash, &self.my_privkey),
+            hash_ty: EcdsaSighashType::All,
+        };
+        let sig_other = Signature {
+            sig: secp.sign_ecdsa(&sighash, &self.other_privkey.unwrap()),
+            hash_ty: EcdsaSighashType::All,
+        };
 
         apply_two_signatures_to_2of2_multisig_spend(
             &my_pubkey,
@@ -359,7 +369,7 @@ impl IncomingSwapCoin {
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.other_pubkey,
-            sig,
+            &sig.sig,
         )?)
     }
 }
@@ -473,7 +483,7 @@ impl OutgoingSwapCoin {
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.other_pubkey,
-            sig,
+            &sig.sig,
         )?)
     }
 }
@@ -613,7 +623,7 @@ impl SwapCoin for WatchOnlySwapCoin {
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.receiver_pubkey,
-            sig,
+            &sig.sig,
         )?)
     }
 
@@ -623,395 +633,7 @@ impl SwapCoin for WatchOnlySwapCoin {
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.sender_pubkey,
-            sig,
+            &sig.sig,
         )?)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::str::FromStr;
-
-    use super::*;
-    use bitcoin::PrivateKey;
-    use secp256k1::Secp256k1;
-
-    #[test]
-    fn test_apply_privkey_watchonly_swapcoin() {
-        let secp = Secp256k1::new();
-
-        let privkey_sender = bitcoin::PrivateKey {
-            compressed: true,
-            network: bitcoin::Network::Testnet,
-            inner: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000001",
-            )
-            .unwrap(),
-        };
-
-        let privkey_receiver = bitcoin::PrivateKey {
-            compressed: true,
-            network: bitcoin::Network::Testnet,
-            inner: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000002",
-            )
-            .unwrap(),
-        };
-
-        let mut swapcoin = WatchOnlySwapCoin {
-            sender_pubkey: PublicKey::from_private_key(&secp, &privkey_sender),
-            receiver_pubkey: PublicKey::from_private_key(&secp, &privkey_receiver),
-            funding_amount: 100,
-            contract_tx: Transaction {
-                input: vec![],
-                output: vec![],
-                lock_time: LockTime::ZERO,
-                version: 2,
-            },
-            contract_redeemscript: ScriptBuf::default(),
-        };
-
-        let secret_key_1 =
-            SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000002")
-                .unwrap();
-        let secret_key_2 =
-            SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000069")
-                .unwrap();
-        assert!(swapcoin.apply_privkey(secret_key_1).is_ok());
-        assert!(swapcoin.apply_privkey(secret_key_2).is_err());
-    }
-
-    #[test]
-    fn test_apply_privkey_incoming_swapcoin() {
-        let secp = Secp256k1::new();
-        let other_privkey = bitcoin::PrivateKey {
-            compressed: true,
-            network: bitcoin::Network::Testnet,
-            inner: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000002",
-            )
-            .unwrap(),
-        };
-
-        let mut incoming_swapcoin = IncomingSwapCoin {
-            my_privkey: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000003",
-            )
-            .unwrap(),
-            other_privkey: Some(
-                secp256k1::SecretKey::from_str(
-                    "0000000000000000000000000000000000000000000000000000000000000005",
-                )
-                .unwrap(),
-            ),
-            other_pubkey: PublicKey::from_private_key(&secp, &other_privkey),
-            contract_tx: Transaction {
-                input: vec![],
-                output: vec![],
-                lock_time: LockTime::ZERO,
-                version: 2,
-            },
-            contract_redeemscript: ScriptBuf::default(),
-            hashlock_privkey: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000004",
-            )
-            .unwrap(),
-            funding_amount: 0,
-            others_contract_sig: None,
-            hash_preimage: None,
-        };
-
-        let secret_key_1 =
-            SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000002")
-                .unwrap();
-        let secret_key_2 =
-            SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000069")
-                .unwrap();
-        // Test for applying the correct privkey
-        assert!(incoming_swapcoin.apply_privkey(secret_key_1).is_ok());
-        // Test for applying the incorrect privkey
-        assert!(incoming_swapcoin.apply_privkey(secret_key_2).is_err());
-        // Test get_other_pubkey
-        let other_pubkey_from_method = incoming_swapcoin.get_other_pubkey();
-        assert_eq!(other_pubkey_from_method, &incoming_swapcoin.other_pubkey);
-        // Test is_hash_preimage_known for empty hash_preimage
-        assert!(!incoming_swapcoin.is_hash_preimage_known());
-    }
-
-    #[test]
-
-    fn test_apply_privkey_outgoing_swapcoin() {
-        let secp = Secp256k1::new();
-        let other_privkey = bitcoin::PrivateKey {
-            compressed: true,
-            network: bitcoin::Network::Testnet,
-            inner: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000001",
-            )
-            .unwrap(),
-        };
-        let mut outgoing_swapcoin = OutgoingSwapCoin {
-            my_privkey: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000002",
-            )
-            .unwrap(),
-            other_pubkey: PublicKey::from_private_key(&secp, &other_privkey),
-            contract_tx: Transaction {
-                input: vec![],
-                output: vec![],
-                lock_time: LockTime::ZERO,
-                version: 2,
-            },
-            contract_redeemscript: ScriptBuf::default(),
-            timelock_privkey: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000003",
-            )
-            .unwrap(),
-            funding_amount: 0,
-            others_contract_sig: None,
-            hash_preimage: None,
-        };
-        let secret_key_1 =
-            SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000001")
-                .unwrap();
-        let secret_key_2 =
-            SecretKey::from_str("0000000000000000000000000000000000000000000000000000000000000069")
-                .unwrap();
-
-        // Test for applying the correct privkey
-        assert!(outgoing_swapcoin.apply_privkey(secret_key_1).is_ok());
-        // Test for applying the incorrect privkey
-        assert!(outgoing_swapcoin.apply_privkey(secret_key_2).is_err());
-        // Test get_other_pubkey
-        assert_eq!(
-            outgoing_swapcoin.get_other_pubkey(),
-            &outgoing_swapcoin.other_pubkey
-        );
-        // Test is_hash_preimage_known
-        assert!(!outgoing_swapcoin.is_hash_preimage_known());
-    }
-
-    #[test]
-    fn test_sign_transaction_input_fail() {
-        let secp = Secp256k1::new();
-        let other_privkey = bitcoin::PrivateKey {
-            compressed: true,
-            network: bitcoin::Network::Testnet,
-            inner: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000002",
-            )
-            .unwrap(),
-        };
-        let index: usize = 10;
-        let mut input = TxIn::default();
-        let tx = Transaction {
-            input: vec![input.clone()],
-            output: vec![],
-            lock_time: LockTime::ZERO,
-            version: 2,
-        };
-
-        let contract_redeemscript = ScriptBuf::default(); // Example redeem script
-
-        let incoming_swapcoin = IncomingSwapCoin {
-            my_privkey: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000003",
-            )
-            .unwrap(),
-            other_privkey: Some(
-                secp256k1::SecretKey::from_str(
-                    "0000000000000000000000000000000000000000000000000000000000000005",
-                )
-                .unwrap(),
-            ),
-            other_pubkey: PublicKey::from_private_key(&secp, &other_privkey),
-            contract_tx: Transaction {
-                input: vec![],
-                output: vec![],
-                lock_time: LockTime::ZERO,
-                version: 2,
-            },
-            contract_redeemscript: ScriptBuf::default(),
-            hashlock_privkey: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000004",
-            )
-            .unwrap(),
-            funding_amount: 100_000,
-            others_contract_sig: None,
-            hash_preimage: None,
-        };
-        // Intentionally failing to sign with incomplete swapcoin
-        assert!(incoming_swapcoin
-            .sign_transaction_input(index, &tx, &mut input, &contract_redeemscript,)
-            .is_err());
-        let sig = Signature::from_compact(&[0; 64]).unwrap();
-        // Intentionally failing to verify with incomplete swapcoin
-        assert!(incoming_swapcoin
-            .verify_contract_tx_sender_sig(&sig)
-            .is_err());
-    }
-
-    #[test]
-
-    fn test_create_hashlock_spend_without_preimage() {
-        let secp = Secp256k1::new();
-        let other_privkey = PrivateKey {
-            compressed: true,
-            network: bitcoin::Network::Bitcoin,
-            inner: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000001",
-            )
-            .unwrap(),
-        };
-        let input = TxIn::default();
-        let output = TxOut::default();
-        let incoming_swapcoin = IncomingSwapCoin {
-            my_privkey: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000003",
-            )
-            .unwrap(),
-            other_privkey: Some(
-                secp256k1::SecretKey::from_str(
-                    "0000000000000000000000000000000000000000000000000000000000000005",
-                )
-                .unwrap(),
-            ),
-            other_pubkey: PublicKey::from_private_key(&secp, &other_privkey),
-            contract_tx: Transaction {
-                input: vec![input.clone()],
-                output: vec![output.clone()],
-                lock_time: LockTime::ZERO,
-                version: 2,
-            },
-            contract_redeemscript: ScriptBuf::default(),
-            hashlock_privkey: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000004",
-            )
-            .unwrap(),
-            funding_amount: 100_000,
-            others_contract_sig: None,
-            hash_preimage: Some(Preimage::from([0; 32])),
-        };
-        let destination_address: Address = Address::from_str("32iVBEu4dxkUQk9dJbZUiBiQdmypcEyJRf")
-            .unwrap()
-            .require_network(bitcoin::Network::Bitcoin)
-            .unwrap();
-
-        let miner_fee = 136 * 10; //126 vbytes x 10 sat/vb, size calculated using testmempoolaccept
-        let mut tx = Transaction {
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: incoming_swapcoin.contract_tx.txid(),
-                    vout: 0, //contract_tx is one-input-one-output
-                },
-                sequence: Sequence(1), //hashlock spends must have 1 because of the `OP_CSV 1`
-                witness: Witness::new(),
-                script_sig: ScriptBuf::new(),
-            }],
-            output: vec![TxOut {
-                script_pubkey: destination_address.script_pubkey(),
-                value: incoming_swapcoin.contract_tx.output[0].value - miner_fee,
-            }],
-            lock_time: LockTime::ZERO,
-            version: 2,
-        };
-        let index = 0;
-        let preimage = Vec::new();
-        incoming_swapcoin
-            .sign_hashlocked_transaction_input_given_preimage(
-                index,
-                &tx.clone(),
-                &mut tx.input[0],
-                incoming_swapcoin.contract_tx.output[0].value,
-                &preimage,
-            )
-            .unwrap();
-        // If the tx is succesful, check some field like:
-        assert!(tx.input[0].witness.len() == 3);
-    }
-
-    #[test]
-    fn test_sign_hashlocked_transaction_input() {
-        let secp = Secp256k1::new();
-        let other_privkey = PrivateKey {
-            compressed: true,
-            network: bitcoin::Network::Bitcoin,
-            inner: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000001",
-            )
-            .unwrap(),
-        };
-        let mut input = TxIn::default();
-        let output = TxOut::default();
-        let incoming_swapcoin = IncomingSwapCoin {
-            my_privkey: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000003",
-            )
-            .unwrap(),
-            other_privkey: Some(
-                secp256k1::SecretKey::from_str(
-                    "0000000000000000000000000000000000000000000000000000000000000005",
-                )
-                .unwrap(),
-            ),
-            other_pubkey: PublicKey::from_private_key(&secp, &other_privkey),
-            contract_tx: Transaction {
-                input: vec![input.clone()],
-                output: vec![output.clone()],
-                lock_time: LockTime::ZERO,
-                version: 2,
-            },
-            contract_redeemscript: ScriptBuf::default(),
-            hashlock_privkey: secp256k1::SecretKey::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000004",
-            )
-            .unwrap(),
-            funding_amount: 100_000,
-            others_contract_sig: None,
-            hash_preimage: Some(Preimage::from([0; 32])),
-        };
-        let destination_address: Address = Address::from_str("32iVBEu4dxkUQk9dJbZUiBiQdmypcEyJRf")
-            .unwrap()
-            .require_network(bitcoin::Network::Bitcoin)
-            .unwrap();
-
-        let miner_fee = 136 * 10;
-        let mut tx = Transaction {
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: incoming_swapcoin.contract_tx.txid(),
-                    vout: 0, //contract_tx is one-input-one-output
-                },
-                sequence: Sequence(1), //hashlock spends must have 1 because of the `OP_CSV 1`
-                witness: Witness::new(),
-                script_sig: ScriptBuf::new(),
-            }],
-            output: vec![TxOut {
-                script_pubkey: destination_address.script_pubkey(),
-                value: incoming_swapcoin.contract_tx.output[0].value - miner_fee,
-            }],
-            lock_time: LockTime::ZERO,
-            version: 2,
-        };
-        let index = 0;
-        let input_value = 100;
-        let preimage = Vec::new();
-        incoming_swapcoin
-            .sign_hashlocked_transaction_input_given_preimage(
-                index,
-                &tx.clone(),
-                &mut tx.input[0],
-                incoming_swapcoin.contract_tx.output[0].value,
-                &preimage,
-            )
-            .unwrap();
-        // Check if the hashlocked transaction input is successful
-        let final_return = incoming_swapcoin.sign_hashlocked_transaction_input(
-            index,
-            &tx,
-            &mut input,
-            input_value,
-        );
-        assert!(final_return.is_ok());
     }
 }

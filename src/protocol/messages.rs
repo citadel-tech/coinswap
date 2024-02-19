@@ -58,13 +58,15 @@
 use std::fmt::Display;
 
 use bitcoin::{
-    secp256k1::{ecdsa::Signature, SecretKey},
-    OutPoint, PublicKey, ScriptBuf, Transaction,
+    ecdsa::Signature, hashes::sha256d::Hash, secp256k1::SecretKey, PublicKey, ScriptBuf,
+    Transaction,
 };
 
 use serde::{Deserialize, Serialize};
 
 use bitcoin::hashes::hash160::Hash as Hash160;
+
+use crate::wallet::FidelityBond;
 
 /// Defines the length of the Preimage.
 pub const PREIMAGE_LEN: usize = 32;
@@ -226,19 +228,15 @@ pub struct MakerHello {
 }
 
 /// Contains proof data related to fidelity bond.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct FidelityBondProof {
-    pub utxo: OutPoint,
-    pub utxo_key: PublicKey,
-    pub locktime: i64,
-    pub cert_sig: Signature,
-    pub cert_expiry: u16,
-    pub cert_pubkey: PublicKey,
-    pub onion_sig: Signature,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash)]
+pub struct FidelityProof {
+    pub bond: FidelityBond,
+    pub cert_hash: Hash,
+    pub cert_sig: bitcoin::secp256k1::ecdsa::Signature,
 }
 
 /// Represents an offer in the context of the Coinswap protocol.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Offer {
     pub absolute_fee_sat: u64,
     pub amount_relative_fee_ppb: u64,
@@ -248,6 +246,7 @@ pub struct Offer {
     pub max_size: u64,
     pub min_size: u64,
     pub tweakable_point: PublicKey,
+    pub fidelity: FidelityProof,
 }
 
 /// Contract Tx signatures provided by a Sender of a Coinswap.
@@ -287,7 +286,7 @@ pub enum MakerToTakerMessage {
     /// Protocol Handshake.
     MakerHello(MakerHello),
     /// Send the Maker's offer advertisement.
-    RespOffer(Offer),
+    RespOffer(Box<Offer>), // Add box as Offer has large size due to fidelity bond
     /// Send Contract Sigs **for** the Sender side of the hop. The Maker sending this message is the Receiver of the hop.
     RespContractSigsForSender(ContractSigsForSender),
     /// Request Contract Sigs, **as** both the Sending and Receiving side of the hop.

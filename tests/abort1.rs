@@ -58,6 +58,17 @@ async fn test_stop_taker_after_setup() {
         })
     }
 
+    // Coins for fidelity creation
+    makers.iter().for_each(|maker| {
+        let maker_addrs = maker
+            .get_wallet()
+            .write()
+            .unwrap()
+            .get_next_external_address()
+            .unwrap();
+        test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
+    });
+
     // confirm balances
     test_framework.generate_1_block();
 
@@ -68,17 +79,6 @@ async fn test_stop_taker_after_setup() {
         .get_wallet()
         .balance(false, false)
         .unwrap();
-    let org_maker_balances = makers
-        .iter()
-        .map(|maker| {
-            maker
-                .get_wallet()
-                .read()
-                .unwrap()
-                .balance(false, false)
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
 
     // ---- Start Servers and attempt Swap ----
 
@@ -105,6 +105,21 @@ async fn test_stop_taker_after_setup() {
     };
 
     info!("Initiating coinswap protocol");
+
+    // Calculate Original balance excluding fidelity bonds.
+    // Bonds are created automatically after spawning the maker server.
+    let org_maker_balances = makers
+        .iter()
+        .map(|maker| {
+            maker
+                .get_wallet()
+                .read()
+                .unwrap()
+                .balance(false, false)
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+
     // Spawn a Taker coinswap thread.
     let taker_clone = taker.clone();
     let taker_thread = thread::spawn(move || {

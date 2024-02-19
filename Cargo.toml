@@ -19,7 +19,6 @@ futures = "0.3"
 dirs = "3.0.1"
 tokio-socks = "0.5"
 reqwest = { version = "0.11", default-features = false, features = ["socks"] }
-chrono = "0.4"
 clap = { version = "4.3.19", features = ["derive"] }
 bitcoind = {version = "0.32", features = ["25_0"] }
 

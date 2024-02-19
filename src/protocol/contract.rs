@@ -10,9 +10,9 @@ use bitcoin::{
         opcodes::{self, all},
         script::{Builder, Instruction, Script},
     },
+    ecdsa::Signature,
     hashes::Hash,
     secp256k1::{
-        ecdsa::Signature,
         rand::{rngs::OsRng, RngCore},
         Message, Secp256k1, SecretKey,
     },
@@ -80,15 +80,9 @@ pub fn apply_two_signatures_to_2of2_multisig_spend(
         (sig2, sig1)
     };
 
-    let mut sig1_with_sighash = sig_first.serialize_der().to_vec();
-    sig1_with_sighash.push(EcdsaSighashType::All as u8);
-
-    let mut sig2_with_sighash = sig_second.serialize_der().to_vec();
-    sig2_with_sighash.push(EcdsaSighashType::All as u8);
-
     input.witness.push(Vec::new()); //first is multisig dummy
-    input.witness.push(sig1_with_sighash);
-    input.witness.push(sig2_with_sighash);
+    input.witness.push(sig_first.to_vec());
+    input.witness.push(sig_second.to_vec());
     input.witness.push(redeemscript.to_bytes());
 }
 
@@ -480,7 +474,11 @@ pub fn sign_contract_tx(
         )?[..],
     )?;
     let secp = Secp256k1::new();
-    Ok(secp.sign_ecdsa(&sighash, privkey))
+    let sig = secp.sign_ecdsa(&sighash, privkey);
+    Ok(Signature {
+        sig,
+        hash_ty: EcdsaSighashType::All,
+    })
 }
 
 /// Verify a signature on a contract transaction.
@@ -489,7 +487,7 @@ pub fn verify_contract_tx_sig(
     multisig_redeemscript: &Script,
     funding_amount: u64,
     pubkey: &PublicKey,
-    sig: &Signature,
+    sig: &bitcoin::secp256k1::ecdsa::Signature,
 ) -> Result<(), ContractError> {
     let input_index = 0;
     let sighash = Message::from_slice(
@@ -847,7 +845,7 @@ mod test {
             &funding_outpoint_script,
             funding_tx.output[0].value,
             &pub1,
-            &sig1
+            &sig1.sig
         )
         .is_ok());
 
@@ -865,7 +863,7 @@ mod test {
             &funding_outpoint_script,
             funding_tx.output[0].value,
             &pub2,
-            &sig2
+            &sig2.sig
         )
         .is_ok());
     }
@@ -1103,9 +1101,14 @@ mod test {
         let mutlisig_2_of_2_redeemscript = multisig_2_of_2_redeemscript_buf.as_script();
 
         let msg = b"0123456789abcdefghijklmnopqrstuv";
-        let sig_1 = secp.sign_ecdsa(&Message::from_slice(msg).unwrap(), &priv_1.inner);
-        let sig_2 = secp.sign_ecdsa(&Message::from_slice(msg).unwrap(), &priv_2.inner);
-
+        let sig_1 = Signature {
+            sig: secp.sign_ecdsa(&Message::from_slice(msg).unwrap(), &priv_1.inner),
+            hash_ty: EcdsaSighashType::All,
+        };
+        let sig_2 = Signature {
+            sig: secp.sign_ecdsa(&Message::from_slice(msg).unwrap(), &priv_2.inner),
+            hash_ty: EcdsaSighashType::All,
+        };
         let mut tx_input_1 = TxIn::default();
         let mut tx_input_2 = TxIn::default();
         apply_two_signatures_to_2of2_multisig_spend(
@@ -1117,17 +1120,9 @@ mod test {
             mutlisig_2_of_2_redeemscript,
         );
 
-        let (sig_first, sig_second) = (&sig_2, &sig_1);
-
-        let mut sig1_with_sighash = sig_first.serialize_der().to_vec();
-        sig1_with_sighash.push(EcdsaSighashType::All as u8);
-
-        let mut sig2_with_sighash = sig_second.serialize_der().to_vec();
-        sig2_with_sighash.push(EcdsaSighashType::All as u8);
-
         tx_input_2.witness.push(Vec::new()); //first is multisig dummy
-        tx_input_2.witness.push(sig1_with_sighash);
-        tx_input_2.witness.push(sig2_with_sighash);
+        tx_input_2.witness.push(sig_2.to_vec());
+        tx_input_2.witness.push(sig_1.to_vec());
         tx_input_2
             .witness
             .push(&mutlisig_2_of_2_redeemscript.to_bytes());
@@ -1141,23 +1136,15 @@ mod test {
         apply_two_signatures_to_2of2_multisig_spend(
             &pub_2,
             &pub_1,
-            &sig_1,
             &sig_2,
+            &sig_1,
             &mut tx_input_1,
             mutlisig_2_of_2_redeemscript,
         );
 
-        let (sig_first, sig_second) = (&sig_1, &sig_2);
-
-        let mut sig1_with_sighash = sig_first.serialize_der().to_vec();
-        sig1_with_sighash.push(EcdsaSighashType::All as u8);
-
-        let mut sig2_with_sighash = sig_second.serialize_der().to_vec();
-        sig2_with_sighash.push(EcdsaSighashType::All as u8);
-
         tx_input_2.witness.push(Vec::new()); //first is multisig dummy
-        tx_input_2.witness.push(sig1_with_sighash);
-        tx_input_2.witness.push(sig2_with_sighash);
+        tx_input_2.witness.push(sig_2.to_vec());
+        tx_input_2.witness.push(sig_1.to_vec());
         tx_input_2
             .witness
             .push(&mutlisig_2_of_2_redeemscript.to_bytes());

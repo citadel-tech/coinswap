@@ -10,10 +10,11 @@ use bitcoin::{
     absolute::LockTime, Address, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn,
     TxOut, Witness,
 };
+use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::wallet::{api::UTXOSpendInfo, SwapCoin};
 
-use super::{error::WalletError, fidelity::get_locktime_from_index, Wallet};
+use super::{error::WalletError, Wallet};
 
 /// Enum representing different options for the amount to be sent in a transaction.
 #[derive(Debug, Clone, PartialEq)]
@@ -117,7 +118,13 @@ impl Wallet {
         let mut unspent_inputs = Vec::new();
 
         //TODO this search within a search could get very slow
-        let list_unspent_result = self.list_unspent_from_wallet(true, true)?;
+        // Filter out fidelity bonds. Use `wallet.redeem_fidelity()` function to spend fidelity bond coins.
+        let list_unspent_result = self
+            .list_unspent_from_wallet(true, true)?
+            .into_iter()
+            .filter(|(_, info)| !matches!(info, UTXOSpendInfo::FidelityBondCoin { .. }))
+            .collect::<Vec<_>>();
+
         for (list_unspent_entry, spend_info) in list_unspent_result {
             for cts in coins_to_spend {
                 let previous_output = match cts {
@@ -217,26 +224,13 @@ impl Wallet {
             });
         }
 
-        let lock_time = unspent_inputs
-            .iter()
-            .map(|(_, spend_info)| {
-                if let UTXOSpendInfo::FidelityBondCoin {
-                    index,
-                    input_value: _,
-                } = spend_info
-                {
-                    get_locktime_from_index(*index) as u32 + 1
-                } else {
-                    0 //TODO add anti-fee-sniping here
-                }
-            })
-            .max()
-            .unwrap();
+        // Anti fee snipping locktime
+        let lock_time = LockTime::from_height(self.rpc.get_block_count().unwrap() as u32).unwrap();
 
         let mut tx = Transaction {
             input: tx_inputs,
             output,
-            lock_time: LockTime::from_time(lock_time).unwrap(),
+            lock_time,
             version: 2,
         };
         log::debug!("unsigned transaction = {:#?}", tx);

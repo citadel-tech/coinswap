@@ -53,20 +53,19 @@ async fn malice1_taker_broadcast_contract_prematurely() {
         })
     }
 
+    // Coins for fidelity creation
+    makers.iter().for_each(|maker| {
+        let maker_addrs = maker
+            .get_wallet()
+            .write()
+            .unwrap()
+            .get_next_external_address()
+            .unwrap();
+        test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
+    });
+
     // confirm balances
     test_framework.generate_1_block();
-
-    let org_maker_balances = makers
-        .iter()
-        .map(|maker| {
-            maker
-                .get_wallet()
-                .read()
-                .unwrap()
-                .balance(false, false)
-                .unwrap()
-        })
-        .collect::<BTreeSet<_>>();
 
     let org_take_balance = taker
         .read()
@@ -99,6 +98,20 @@ async fn malice1_taker_broadcast_contract_prematurely() {
         required_confirms: 1,
         fee_rate: 1000,
     };
+
+    // Calculate Original balance excluding fidelity bonds.
+    // Bonds are created automatically after spawning the maker server.
+    let org_maker_balances = makers
+        .iter()
+        .map(|maker| {
+            maker
+                .get_wallet()
+                .read()
+                .unwrap()
+                .balance(false, false)
+                .unwrap()
+        })
+        .collect::<BTreeSet<_>>();
 
     // Spawn a Taker coinswap thread.
     let taker_clone = taker.clone();
@@ -140,7 +153,7 @@ async fn malice1_taker_broadcast_contract_prematurely() {
         .unwrap();
 
     assert!(maker_balances.len() == 1); // The set only contains one element,
-    assert_eq!(maker_balances.first().unwrap(), &Amount::from_sat(14995773));
+    assert_eq!(maker_balances.first().unwrap(), &Amount::from_sat(14994773));
 
     // Everybody looses 4227 sats for contract transactions.
     assert_eq!(
