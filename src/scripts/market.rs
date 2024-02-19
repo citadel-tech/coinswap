@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use bitcoin::Network;
 
 use crate::taker::{
-    offers::{ get_advertised_maker_addresses, sync_offerbook_with_addresses, MakerAddress },
+    offers::{get_advertised_maker_addresses, sync_offerbook_with_addresses, MakerAddress},
     TakerConfig,
 };
 
@@ -17,20 +17,18 @@ use crate::taker::{
 /// App function to download offers.
 pub async fn download_and_display_offers(
     _network_str: Option<String>,
-    maker_address: Option<String>
+    maker_address: Option<String>,
 ) {
     let maker_addresses = if let Some(maker_addr) = maker_address {
         vec![MakerAddress::new(maker_addr)]
     } else {
         let network = Network::Regtest; // Default netwrok
-        get_advertised_maker_addresses(None, None, network).await.expect(
-            "unable to sync maker addresses from directory servers"
-        )
+        get_advertised_maker_addresses(None, None, network)
+            .await
+            .expect("unable to sync maker addresses from directory servers")
     };
-    let offers_addresses = sync_offerbook_with_addresses(
-        maker_addresses.clone(),
-        &TakerConfig::default()
-    ).await;
+    let offers_addresses =
+        sync_offerbook_with_addresses(maker_addresses.clone(), &TakerConfig::default()).await;
 
     let mut addresses_offers_map = HashMap::new();
     offers_addresses.iter().for_each(|offer_address| {

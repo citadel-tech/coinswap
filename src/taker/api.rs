@@ -290,7 +290,7 @@ impl Taker {
 
         log::info!("Taker tor is instantiated");
 
-        thread::sleep(Duration::from_secs(60));
+        thread::sleep(Duration::from_secs(3600));
 
         log::info!("Syncing Offerbook");
         let network = self.wallet.store.network;
@@ -900,9 +900,12 @@ impl Taker {
 
         log::info!("Connecting to {}", this_maker.address);
         let address = this_maker.address.as_str();
-        let mut socket = Socks5Stream::connect("127.0.0.1:19050", address)
-            .await?
-            .into_inner();
+        let mut socket = Socks5Stream::connect(
+            format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+            address,
+        )
+        .await?
+        .into_inner();
         // let mut socket = TcpStream::connect(this_maker.address.get_tcpstream_address()).await?;
         let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
         let mut next_maker = this_maker.clone();
@@ -1637,9 +1640,12 @@ impl Taker {
     ) -> Result<(), TakerError> {
         log::info!("Connecting to {}", maker_address);
         let address = maker_address.as_str();
-        let mut socket = Socks5Stream::connect("127.0.0.1:19050", address)
-            .await?
-            .into_inner();
+        let mut socket = Socks5Stream::connect(
+            format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+            address,
+        )
+        .await?
+        .into_inner();
         let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
 
         log::info!("===> Sending HashPreimage to {}", maker_address);
@@ -1953,9 +1959,11 @@ impl Taker {
         network: Network,
         config: &TakerConfig,
     ) -> Result<(), TakerError> {
-        let offers =
-            sync_offerbook_with_addresses(get_advertised_maker_addresses(network).await?, config)
-                .await;
+        let offers = sync_offerbook_with_addresses(
+            get_advertised_maker_addresses(None, None, network).await?,
+            config,
+        )
+        .await;
 
         let new_offers = offers
             .into_iter()

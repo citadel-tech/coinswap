@@ -8,15 +8,25 @@
 // It should be set to your specific Tor address and port.
 pub const TOR_SOCKS_ADDR: &str = "127.0.0.1:19050";
 
-use std::{ collections::HashSet, fs, sync::{ Arc, RwLock }, thread, time::Duration };
+use std::{
+    collections::HashSet,
+    fs,
+    sync::{Arc, RwLock},
+    thread,
+    time::Duration,
+};
 
 use bitcoin::Network;
-use std::path::{ Path, PathBuf };
+use std::path::{Path, PathBuf};
 
-use crate::{ taker::offers::MakerAddress, utill::monitor_log_for_completion };
-use libtor::{ HiddenServiceVersion, LogDestination, LogLevel, Tor, TorAddress, TorFlag };
+use crate::{taker::offers::MakerAddress, utill::monitor_log_for_completion};
+use libtor::{HiddenServiceVersion, LogDestination, LogLevel, Tor, TorAddress, TorFlag};
 
-use tokio::{ fs::OpenOptions, io::{ AsyncBufReadExt, AsyncWriteExt }, net::TcpListener };
+use tokio::{
+    fs::OpenOptions,
+    io::{AsyncBufReadExt, AsyncWriteExt},
+    net::TcpListener,
+};
 
 //for now just one of these, but later we'll need multiple for good decentralization
 const DIRECTORY_SERVER_ADDR: &str =
@@ -47,7 +57,8 @@ impl DirectoryServer {
     }
 
     pub fn shutdown(&self) -> Result<(), DirectoryServerError> {
-        let mut flag = self.shutdown
+        let mut flag = self
+            .shutdown
             .write()
             .map_err(|_| DirectoryServerError::Other("Rwlock write error!"))?;
         *flag = true;
@@ -73,26 +84,23 @@ fn network_enum_to_string(network: Network) -> &'static str {
 }
 /// Asynchronously Synchronize Maker Addresses from Directory Servers.
 pub async fn sync_maker_addresses_from_directory_servers(
-    network: Network
+    network: Network,
 ) -> Result<Vec<MakerAddress>, DirectoryServerError> {
     // https://github.com/seanmonstar/reqwest/blob/master/examples/tor_socks.rs
-    let proxy = reqwest::Proxy
-        ::all(format!("socks5h://{}", TOR_SOCKS_ADDR))
+    let proxy = reqwest::Proxy::all(format!("socks5h://{}", TOR_SOCKS_ADDR))
         .expect("tor proxy should be there");
-    let client = reqwest::Client
-        ::builder()
+    let client = reqwest::Client::builder()
         .proxy(proxy)
         .build()
         .expect("should be able to build reqwest client");
     let res = client
-        .get(
-            format!(
-                "http://{}/makers-{}.txt",
-                DIRECTORY_SERVER_ADDR,
-                network_enum_to_string(network)
-            )
-        )
-        .send().await?;
+        .get(format!(
+            "http://{}/makers-{}.txt",
+            DIRECTORY_SERVER_ADDR,
+            network_enum_to_string(network)
+        ))
+        .send()
+        .await?;
     if res.status().as_u16() != 200 {
         return Err(DirectoryServerError::Other("status code not success"));
     }
@@ -112,13 +120,11 @@ pub async fn sync_maker_addresses_from_directory_servers(
 /// Posts a maker's address to directory servers based on the specified network.
 pub async fn post_maker_address_to_directory_servers(
     network: Network,
-    address: &str
+    address: &str,
 ) -> Result<u64, DirectoryServerError> {
-    let proxy = reqwest::Proxy
-        ::all(format!("socks5h://{}", TOR_SOCKS_ADDR))
+    let proxy = reqwest::Proxy::all(format!("socks5h://{}", TOR_SOCKS_ADDR))
         .expect("tor proxy should be there");
-    let client = reqwest::Client
-        ::builder()
+    let client = reqwest::Client::builder()
         .proxy(proxy)
         .build()
         .expect("should be able to build reqwest client");
@@ -129,13 +135,16 @@ pub async fn post_maker_address_to_directory_servers(
     let res = client
         .post(format!("http://{}/directoryserver", DIRECTORY_SERVER_ADDR))
         .form(&params)
-        .send().await?;
+        .send()
+        .await?;
     if res.status().as_u16() != 200 {
         return Err(DirectoryServerError::Other("status code not success"));
     }
     let body = res.text().await?;
-    let start_bytes =
-        body.find("<b>").ok_or(DirectoryServerError::Other("expiry time not parsable1"))? + 3;
+    let start_bytes = body
+        .find("<b>")
+        .ok_or(DirectoryServerError::Other("expiry time not parsable1"))?
+        + 3;
     let end_bytes = body
         .find("</b>")
         .ok_or(DirectoryServerError::Other("expiry time not parsable2"))?;
@@ -171,11 +180,17 @@ pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
         }
         let _handler = Tor::new()
             .flag(TorFlag::DataDirectory(data_dir))
-            .flag(TorFlag::LogTo(LogLevel::Notice, LogDestination::File(log_dir)))
+            .flag(TorFlag::LogTo(
+                LogLevel::Notice,
+                LogDestination::File(log_dir),
+            ))
             .flag(TorFlag::SocksPort(socks_port))
             .flag(TorFlag::HiddenServiceDir(hs_string))
             .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
-            .flag(TorFlag::HiddenServicePort(TorAddress::Port(tor_port), None.into()))
+            .flag(TorFlag::HiddenServicePort(
+                TorAddress::Port(tor_port),
+                None.into(),
+            ))
             .start();
     });
 
@@ -233,13 +248,16 @@ async fn handle_client(mut stream: tokio::net::TcpStream, addresses: &mut HashSe
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(ADDRESS_FILE).await
+            .open(ADDRESS_FILE)
+            .await
             .unwrap();
         let content = format!("{}\n", onion_address);
         file.write_all(content.as_bytes()).await.unwrap();
     } else if request_line.starts_with("GET") {
         log::warn!("Taker pinged the directory server");
-        let response = addresses.iter().fold(String::new(), |acc, addr| acc + addr + "\n");
+        let response = addresses
+            .iter()
+            .fold(String::new(), |acc, addr| acc + addr + "\n");
         stream.write_all(response.as_bytes()).await.unwrap();
     }
 }

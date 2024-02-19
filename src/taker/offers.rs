@@ -5,9 +5,13 @@
 //! The module handles the syncing of the offer book with addresses obtained from directory servers and local configurations.
 //! It uses asynchronous channels for concurrent processing of maker offers.
 
-use std::{ fmt, fs::File, io::Read, path::PathBuf };
+use std::{fmt, fs::File, io::Read, path::PathBuf};
 
-use tokio::{ io::{ AsyncReadExt, AsyncWriteExt }, net::TcpStream, sync::mpsc };
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+    sync::mpsc,
+};
 
 use bitcoin::Network;
 
@@ -15,7 +19,7 @@ use crate::protocol::messages::Offer;
 
 use crate::market::directory::DirectoryServerError;
 
-use super::{ config::TakerConfig, error::TakerError, routines::download_maker_offer };
+use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
 use tokio_socks::tcp::Socks5Stream;
 
 /// Represents an offer along with the corresponding maker address.
@@ -106,16 +110,18 @@ impl OfferBook {
     pub async fn sync_offerbook(
         &mut self,
         network: Network,
-        config: &TakerConfig
+        config: &TakerConfig,
     ) -> Result<Vec<OfferAndAddress>, TakerError> {
         let offers = sync_offerbook_with_addresses(
             get_advertised_maker_addresses(
                 Some(config.socks_port),
                 Some(config.directory_server_onion_address.clone()),
-                network
-            ).await?,
-            config
-        ).await;
+                network,
+            )
+            .await?,
+            config,
+        )
+        .await;
 
         let new_offers = offers
             .into_iter()
@@ -158,7 +164,7 @@ async fn _get_regtest_maker_addresses() -> Vec<MakerAddress> {
 /// Synchronizes the offer book with specific maker addresses.
 pub async fn sync_offerbook_with_addresses(
     maker_addresses: Vec<MakerAddress>,
-    config: &TakerConfig
+    config: &TakerConfig,
 ) -> Vec<OfferAndAddress> {
     let (offers_writer_m, mut offers_reader) = mpsc::channel::<Option<OfferAndAddress>>(100);
     //unbounded_channel makes more sense here, but results in a compile
@@ -186,7 +192,7 @@ pub async fn sync_offerbook_with_addresses(
 pub async fn get_advertised_maker_addresses(
     socks_port: Option<u16>,
     directory_server_address: Option<String>,
-    _network: Network
+    _network: Network,
 ) -> Result<Vec<MakerAddress>, DirectoryServerError> {
     let mut directory_onion_address = match directory_server_address {
         Some(address) => address,
@@ -195,31 +201,35 @@ pub async fn get_advertised_maker_addresses(
     if cfg!(feature = "integration-test") {
         let directory_hs_path_str = "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
         let directory_hs_path = PathBuf::from(directory_hs_path_str);
-        let mut directory_file = tokio::fs::File
-            ::open(&directory_hs_path).await
+        let mut directory_file = tokio::fs::File::open(&directory_hs_path)
+            .await
             .map_err(|_e| DirectoryServerError::Other("Directory hidden service path not found"))?;
         let mut directory_onion_addr = String::new();
         directory_file
-            .read_to_string(&mut directory_onion_addr).await
+            .read_to_string(&mut directory_onion_addr)
+            .await
             .map_err(|_e| DirectoryServerError::Other("Reading onion address failed"))?;
         directory_onion_addr.pop();
         directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
     }
     let mut stream: TcpStream = Socks5Stream::connect(
         format!("127.0.0.1:{}", socks_port.unwrap_or(19050)).as_str(),
-        directory_onion_address.as_str()
-    ).await
-        .map_err(|_e| {
-            DirectoryServerError::Other("Issue with fetching maker address from directory server")
-        })?
-        .into_inner();
+        directory_onion_address.as_str(),
+    )
+    .await
+    .map_err(|_e| {
+        DirectoryServerError::Other("Issue with fetching maker address from directory server")
+    })?
+    .into_inner();
     let request_line = "GET\n";
     stream
-        .write_all(request_line.as_bytes()).await
+        .write_all(request_line.as_bytes())
+        .await
         .map_err(|_e| DirectoryServerError::Other("Error sending the request"))?;
     let mut response = String::new();
     stream
-        .read_to_string(&mut response).await
+        .read_to_string(&mut response)
+        .await
         .map_err(|_e| DirectoryServerError::Other("Error receiving the response"))?;
     log::warn!("Received: {}", response);
     let addresses: Vec<MakerAddress> = response
