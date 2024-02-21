@@ -203,7 +203,7 @@ impl Wallet {
                 a
             }
         };
-        let miner_fee = 500 * fee_rate / 1000; //TODO this is just a rough estimate now
+        let miner_fee = (500 * fee_rate) / 1000; //TODO this is just a rough estimate now
 
         let mut output = Vec::<TxOut>::new();
         let total_input_value = unspent_inputs

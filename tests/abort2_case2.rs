@@ -155,7 +155,7 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
 
     // Maker gets banned for being naughty.
     let onion_addr_path = PathBuf::from(format!("/tmp/tor-rust-maker{}/hs-dir/hostname", 6102));
-    let mut file = File::open(&onion_addr_path).unwrap();
+    let mut file = File::open(onion_addr_path).unwrap();
     let mut onion_addr: String = String::new();
     file.read_to_string(&mut onion_addr).unwrap();
     onion_addr.pop();

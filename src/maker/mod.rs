@@ -76,13 +76,9 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let handle1 = mitosis::spawn(
         (maker_socks_port, maker_port),
         |(maker_socks_port, maker_port)| {
-            let hs_string = format!("/tmp/tor-rust-maker{}/hs-dir", maker_port);
-            let data_dir = format!("/tmp/tor-rust-maker{}", maker_port);
+            let hs_string = format!("/tmp/tor-rust-maker{}/hs-dir/", maker_port);
+            let data_dir = format!("/tmp/tor-rust-maker{}/", maker_port);
             let log_dir = format!("/tmp/tor-rust-maker{}/log", maker_port);
-            let maker_file_path = PathBuf::from(data_dir.as_str());
-            if !maker_file_path.exists() {
-                fs::create_dir_all(maker_file_path).unwrap();
-            }
             let _handler = Tor::new()
                 .flag(TorFlag::DataDirectory(data_dir))
                 .flag(TorFlag::LogTo(

@@ -171,13 +171,10 @@ pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
     let socks_port = directory.socks_port;
     let tor_port = directory.port;
     let handle = mitosis::spawn((tor_port, socks_port), |(tor_port, socks_port)| {
-        let hs_string = "/tmp/tor-rust-directory/hs-dir".to_string();
-        let data_dir = "/tmp/tor-rust-directory".to_string();
+        let hs_string = "/tmp/tor-rust-directory/hs-dir/".to_string();
+        let data_dir = "/tmp/tor-rust-directory/".to_string();
         let log_dir = "/tmp/tor-rust-directory/log".to_string();
-        let directory_file_path = PathBuf::from(data_dir.as_str());
-        if !directory_file_path.exists() {
-            std::fs::create_dir_all(directory_file_path).unwrap();
-        }
+
         let _handler = Tor::new()
             .flag(TorFlag::DataDirectory(data_dir))
             .flag(TorFlag::LogTo(
