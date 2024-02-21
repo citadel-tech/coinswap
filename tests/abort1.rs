@@ -119,7 +119,7 @@ async fn test_stop_taker_after_setup() {
 
     // Calculate Original balance excluding fidelity bonds.
     // Bonds are created automatically after spawning the maker server.
-    let org_maker_balances = makers
+    let _org_maker_balances = makers
         .iter()
         .map(|maker| {
             maker
