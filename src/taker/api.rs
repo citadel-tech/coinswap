@@ -282,7 +282,7 @@ impl Taker {
             },
         );
 
-        thread::sleep(Duration::from_secs(3600));
+        thread::sleep(Duration::from_secs(10));
 
         if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%").await {
             log::error!("Error monitoring taker log file: {}", e);

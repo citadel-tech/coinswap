@@ -222,16 +222,27 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let address = directory_onion_address.as_str();
 
     log::warn!("Directory onion address : {}", directory_onion_address);
-
-    let mut stream =
-        Socks5Stream::connect(format!("127.0.0.1:{}", maker_socks_port).as_str(), address)
+    loop {
+        match Socks5Stream::connect(format!("127.0.0.1:{}", maker_socks_port).as_str(), address)
             .await
-            .map_err(|_e| MakerError::General("Error with socks "))?
-            .into_inner();
-
-    let request_line = format!("POST {}\n", maker_onion_address);
-    stream.write_all(request_line.as_bytes()).await?;
-
+        {
+            Ok(socks_stream) => {
+                let mut stream = socks_stream.into_inner();
+                let request_line = format!("POST {}\n", maker_onion_address);
+                if let Err(e) = stream.write_all(request_line.as_bytes()).await {
+                    log::error!("Failed to send request line: {}", e);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+                break;
+            }
+            Err(e) => {
+                log::error!("Error with socks connection: {}", e);
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                continue;
+            }
+        }
+    }
     // Loop to keep checking for new connections
     loop {
         let handle_clone: Arc<Mutex<Option<mitosis::JoinHandle<()>>>> = Arc::clone(&handle);

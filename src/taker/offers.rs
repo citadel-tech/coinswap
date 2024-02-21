@@ -5,7 +5,7 @@
 //! The module handles the syncing of the offer book with addresses obtained from directory servers and local configurations.
 //! It uses asynchronous channels for concurrent processing of maker offers.
 
-use std::{fmt, fs::File, io::Read, path::PathBuf};
+use std::{fmt, fs::File, io::Read, path::PathBuf, thread, time::Duration};
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -212,30 +212,64 @@ pub async fn get_advertised_maker_addresses(
         directory_onion_addr.pop();
         directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
     }
-    let mut stream: TcpStream = Socks5Stream::connect(
-        format!("127.0.0.1:{}", socks_port.unwrap_or(19050)).as_str(),
-        directory_onion_address.as_str(),
-    )
-    .await
-    .map_err(|_e| {
-        DirectoryServerError::Other("Issue with fetching maker address from directory server")
-    })?
-    .into_inner();
-    let request_line = "GET\n";
-    stream
-        .write_all(request_line.as_bytes())
-        .await
-        .map_err(|_e| DirectoryServerError::Other("Error sending the request"))?;
-    let mut response = String::new();
-    stream
-        .read_to_string(&mut response)
-        .await
-        .map_err(|_e| DirectoryServerError::Other("Error receiving the response"))?;
-    log::warn!("Received: {}", response);
-    let addresses: Vec<MakerAddress> = response
-        .lines()
-        .map(|addr| MakerAddress::new(addr.to_string()))
-        .collect();
+    let max_retries = 3;
+    let mut retries = 0;
+    loop {
+        let result: Result<Vec<MakerAddress>, DirectoryServerError> = (async {
+            let mut stream: TcpStream = Socks5Stream::connect(
+                format!("127.0.0.1:{}", socks_port.unwrap_or(19050)).as_str(),
+                directory_onion_address.as_str(),
+            )
+            .await
+            .map_err(|_e| {
+                DirectoryServerError::Other(
+                    "Issue with fetching maker address from directory server",
+                )
+            })?
+            .into_inner();
 
-    Ok(addresses)
+            let request_line = "GET\n";
+            stream
+                .write_all(request_line.as_bytes())
+                .await
+                .map_err(|_e| DirectoryServerError::Other("Error sending the request"))?;
+
+            let mut response = String::new();
+            stream
+                .read_to_string(&mut response)
+                .await
+                .map_err(|_e| DirectoryServerError::Other("Error receiving the response"))?;
+
+            log::warn!("Received: {}", response);
+
+            let addresses: Vec<MakerAddress> = response
+                .lines()
+                .map(|addr| MakerAddress::new(addr.to_string()))
+                .collect();
+
+            Ok(addresses)
+        })
+        .await;
+
+        match result {
+            Ok(addresses) => {
+                if cfg!(feature = "integration-test") && addresses.len() < 2 {
+                    thread::sleep(Duration::from_secs(10));
+                    continue;
+                }
+                if retries < max_retries {
+                    retries += 1;
+                    thread::sleep(Duration::from_secs(10));
+                    continue;
+                }
+
+                return Ok(addresses);
+            }
+            Err(e) => {
+                log::error!("An error occurred: {:?}", e);
+                thread::sleep(Duration::from_secs(10));
+                continue;
+            }
+        }
+    }
 }

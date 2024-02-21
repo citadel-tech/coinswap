@@ -514,7 +514,7 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
                     ip,
                     no_response_since
                 );
-                if no_response_since > std::time::Duration::from_secs(30) {
+                if no_response_since > std::time::Duration::from_secs(60) {
                     log::error!(
                         "[{}] Potential Dropped Connection from {}",
                         maker.config.port,
