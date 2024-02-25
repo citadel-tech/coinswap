@@ -137,7 +137,7 @@ async fn test_stop_taker_after_setup() {
         taker_clone
             .write()
             .unwrap()
-            .send_coinswap(swap_params)
+            .do_coinswap(swap_params)
             .unwrap();
     });
 

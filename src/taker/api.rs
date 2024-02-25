@@ -6,11 +6,12 @@
 //! [SwapParams]: Set of parameters defining a specific Swap round.
 //! [OngoingSwapState]: Represents the State of an ongoing swap round. All swap related data are stored in this state.
 //!
-//! [Taker::send_coinswap]: The routine running all other protocol subroutines.
+//! [Taker::do_coinswap]: The routine running all other protocol subroutines.
 
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    io::Read,
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
@@ -33,10 +34,7 @@ use tokio_socks::tcp::Socks5Stream;
 
 use super::{
     error::TakerError,
-    offers::{
-        get_advertised_maker_addresses, sync_offerbook_with_addresses, MakerAddress,
-        OfferAndAddress,
-    },
+    offers::{fetch_addresses_from_dns, fetch_offer_from_makers, MakerAddress, OfferAndAddress},
     routines::*,
 };
 use crate::{
@@ -56,8 +54,6 @@ use crate::{
         WatchOnlySwapCoin,
     },
 };
-
-use libtor::{HiddenServiceVersion, LogDestination, LogLevel, Tor, TorAddress, TorFlag};
 
 /// Swap specific parameters. These are user's policy and can differ among swaps.
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
@@ -240,12 +236,8 @@ impl Taker {
         &mut self.wallet
     }
 
-    /// Perform a coinswap round with given [SwapParams]. The Taker will try to perform swap with makers
-    /// in it's [OfferBook] sequentially as per the maker_count given in swap params.
-    /// If [SwapParams] doesn't fit suitably with any available offers, or not enough makers
-    /// respond back, the swap round will fail.
     #[tokio::main]
-    pub async fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
+    pub async fn do_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         let tor_log_dir = "/tmp/tor-rust-taker/log".to_string();
 
         let taker_port = self.config.port;
@@ -258,40 +250,31 @@ impl Taker {
             }
         }
 
-        thread::sleep(Duration::from_secs(10));
-
-        let handle = mitosis::spawn(
-            (taker_socks_port, taker_port),
-            |(taker_socks_port, taker_port)| {
-                let _handler = Tor::new()
-                    .flag(TorFlag::DataDirectory("/tmp/tor-rust-taker/".into()))
-                    .flag(TorFlag::LogTo(
-                        LogLevel::Notice,
-                        LogDestination::File("/tmp/tor-rust-taker/log".to_string()),
-                    ))
-                    .flag(TorFlag::SocksPort(taker_socks_port))
-                    .flag(TorFlag::HiddenServiceDir(
-                        "/tmp/tor-rust-taker/hs-dir/".into(),
-                    ))
-                    .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
-                    .flag(TorFlag::HiddenServicePort(
-                        TorAddress::Port(taker_port),
-                        None.into(),
-                    ))
-                    .start();
-            },
+        let handle = spawn_tor(
+            taker_socks_port,
+            taker_port,
+            "/tmp/tor-rust-taker".to_string(),
         );
 
         thread::sleep(Duration::from_secs(10));
 
-        if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%").await {
+        if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
             log::error!("Error monitoring taker log file: {}", e);
         }
 
         log::info!("Taker tor is instantiated");
 
-        thread::sleep(Duration::from_secs(10));
+        self.send_coinswap(swap_params).await?;
 
+        kill_tor_handles(handle);
+
+        Ok(())
+    }
+    /// Perform a coinswap round with given [SwapParams]. The Taker will try to perform swap with makers
+    /// in it's [OfferBook] sequentially as per the maker_count given in swap params.
+    /// If [SwapParams] doesn't fit suitably with any available offers, or not enough makers
+    /// respond back, the swap round will fail.
+    pub async fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         log::info!("Syncing Offerbook");
         let network = self.wallet.store.network;
         let config = self.config.clone();
@@ -308,10 +291,6 @@ impl Taker {
         if let Err(e) = self.init_first_hop().await {
             log::error!("Could not initiate first hop: {:?}", e);
             self.recover_from_swap()?;
-            match handle.kill() {
-                Ok(_) => log::info!("Tor instance terminated successfully"),
-                Err(_) => log::error!("Error occured while terminating tor instance"),
-            }
             return Err(e);
         }
 
@@ -362,10 +341,6 @@ impl Taker {
                     log::error!("Could not initiate next hop. Error : {:?}", e);
                     log::warn!("Starting recovery from existing swap");
                     self.recover_from_swap()?;
-                    match handle.kill() {
-                        Ok(_) => log::info!("Tor instance terminated successfully"),
-                        Err(_) => log::error!("Error occured while terminating tor instance"),
-                    }
                     return Ok(());
                 }
             };
@@ -387,10 +362,6 @@ impl Taker {
                         self.offerbook.add_bad_maker(bad_maker);
                     }
                     self.recover_from_swap()?;
-                    match handle.kill() {
-                        Ok(_) => log::info!("Tor instance terminated successfully"),
-                        Err(_) => log::error!("Error occured while terminating tor instance"),
-                    }
                     return Ok(());
                 }
             }
@@ -406,10 +377,6 @@ impl Taker {
                         log::error!("Incoming SwapCoin Generation failed : {:?}", e);
                         log::warn!("Starting recovery from existing swap");
                         self.recover_from_swap()?;
-                        match handle.kill() {
-                            Ok(_) => log::info!("Tor instance terminated successfully"),
-                            Err(_) => log::error!("Error occured while terminating tor instance"),
-                        }
                         return Ok(());
                     }
                 }
@@ -418,20 +385,12 @@ impl Taker {
 
         if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
             log::error!("Dropping Swap Process after full setup");
-            match handle.kill() {
-                Ok(_) => log::info!("Tor instance terminated successfully"),
-                Err(_) => log::error!("Error occured while terminating tor instance"),
-            }
             return Ok(());
         }
 
         if self.behavior == TakerBehavior::BroadcastContractAfterFullSetup {
             log::error!("Special Behavior BroadcastContractAfterFullSetup");
             self.recover_from_swap()?;
-            match handle.kill() {
-                Ok(_) => log::info!("Tor instance terminated successfully"),
-                Err(_) => log::error!("Error occured while terminating tor instance"),
-            }
             return Ok(());
         }
 
@@ -441,19 +400,11 @@ impl Taker {
                 log::error!("Swap Settlement Failed : {:?}", e);
                 log::warn!("Starting recovery from existing swap");
                 self.recover_from_swap()?;
-                match handle.kill() {
-                    Ok(_) => log::info!("Tor instance terminated successfully"),
-                    Err(_) => log::error!("Error occured while terminating tor instance"),
-                }
                 return Ok(());
             }
         }
         self.save_and_reset_swap_round()?;
         log::info!("Successfully Completed Coinswap");
-        match handle.kill() {
-            Ok(_) => log::info!("Tor instance terminated successfully"),
-            Err(_) => log::error!("Error occured while terminating tor instance"),
-        }
         Ok(())
     }
 
@@ -1961,11 +1912,21 @@ impl Taker {
         network: Network,
         config: &TakerConfig,
     ) -> Result<(), TakerError> {
-        let offers = sync_offerbook_with_addresses(
-            get_advertised_maker_addresses(None, None, network).await?,
-            config,
-        )
-        .await;
+        let mut directory_onion_address = config.directory_server_onion_address.clone();
+        if cfg!(feature = "integration-test") {
+            let directory_hs_path_str = "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
+            let directory_hs_path = PathBuf::from(directory_hs_path_str);
+            let mut directory_file = fs::File::open(directory_hs_path).map_err(TakerError::IO)?;
+            let mut directory_onion_addr = String::new();
+            directory_file
+                .read_to_string(&mut directory_onion_addr)
+                .map_err(TakerError::IO)?;
+            directory_onion_addr.pop();
+            directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
+        }
+        let addresses_from_dns =
+            fetch_addresses_from_dns(None, directory_onion_address, network).await?;
+        let offers = fetch_offer_from_makers(addresses_from_dns, config).await;
 
         let new_offers = offers
             .into_iter()

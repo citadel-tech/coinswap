@@ -115,7 +115,7 @@ async fn test_abort_case_2_move_on_with_other_makers() {
         taker_clone
             .write()
             .unwrap()
-            .send_coinswap(swap_params)
+            .do_coinswap(swap_params)
             .unwrap();
     });
 

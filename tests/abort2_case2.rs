@@ -129,8 +129,7 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
 
     // Spawn a Taker coinswap thread.
     let taker_clone = taker.clone();
-    let taker_thread =
-        thread::spawn(move || taker_clone.write().unwrap().send_coinswap(swap_params));
+    let taker_thread = thread::spawn(move || taker_clone.write().unwrap().do_coinswap(swap_params));
 
     // Wait for Taker swap thread to conclude.
     // The whole swap can fail if 6102 happens to be the first peer.

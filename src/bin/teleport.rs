@@ -11,12 +11,9 @@ use std::{path::PathBuf, sync::Arc};
 
 use coinswap::{
     maker::{start_maker_server, Maker, MakerBehavior},
-    scripts::{
-        market::download_and_display_offers,
-        wallet::{
-            direct_send, display_wallet_addresses, display_wallet_balance, generate_wallet,
-            print_receive_invoice, recover_wallet,
-        },
+    scripts::wallet::{
+        direct_send, display_wallet_addresses, display_wallet_balance, generate_wallet,
+        print_receive_invoice, recover_wallet,
     },
     taker::{SwapParams, Taker, TakerBehavior},
     utill::{get_data_dir, setup_logger},
@@ -28,7 +25,12 @@ use coinswap::{
 #[command(next_line_help = true)]
 struct ArgsWithWalletFile {
     /// Wallet file Name
-    #[arg(long, short, default_value = "wallet.teleport", value_parser = clap::value_parser!(PathBuf))]
+    #[arg(
+        long,
+        short,
+        default_value = "wallet.teleport",
+        value_parser = clap::value_parser!(PathBuf)
+    )]
     wallet_file_name: PathBuf,
 
     /// Dont broadcast transactions, only output their transaction hex string
@@ -37,7 +39,7 @@ struct ArgsWithWalletFile {
     dont_broadcast: bool,
 
     /// Miner fee rate, in satoshis per thousand vbytes, i.e. 1000 = 1 sat/vb
-    #[arg( long, short, default_value_t = 1000, value_parser = clap::value_parser!(u64).range(1..))]
+    #[arg(long, short, default_value_t = 1000, value_parser = clap::value_parser!(u64).range(1..))]
     fee_rate: u64,
 
     /// Subcommand
@@ -84,7 +86,6 @@ enum WalletArgsSubcommand {
         #[arg(long, short = 'b')]
         special_behavior: Option<String>,
     },
-
     /// Runs Taker.
     DoCoinswap {
         /// Amount to send (in sats)
@@ -96,21 +97,8 @@ enum WalletArgsSubcommand {
         maker_count: u16,
 
         /// How many transactions per hop, default 3
-        #[arg(long, short, default_value_t = 3, value_parser = clap::value_parser!(u16).range(1..) )]
+        #[arg(long, short, default_value_t = 3, value_parser = clap::value_parser!(u16).range(1..))]
         tx_count: u32,
-    },
-
-    /// Download all offers from all makers out there. If bitcoin node not configured then
-    /// provide the network as an argument, can also optionally download from one given maker
-    DownloadOffers {
-        /// Network in question, options are "main", "test", "signet". Only used if configured
-        /// bitcoin node RPC is unreachable
-        #[arg(long, short)]
-        network: Option<String>,
-        /// Optional single maker address to only download from. Useful if testing if your own
-        /// maker is reachable
-        #[arg(long, short)]
-        maker_address: Option<String>,
     },
 
     /// Send a transaction from the wallet
@@ -206,14 +194,9 @@ fn main() -> Result<(), WalletError> {
                 required_confirms: 1,
                 fee_rate: 1000,
             };
-            taker.send_coinswap(swap_params).unwrap();
+            taker.do_coinswap(swap_params).unwrap();
         }
-        WalletArgsSubcommand::DownloadOffers {
-            network,
-            maker_address,
-        } => {
-            download_and_display_offers(network, maker_address);
-        }
+
         WalletArgsSubcommand::DirectSend {
             send_amount,
             destination,

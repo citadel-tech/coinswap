@@ -12,6 +12,8 @@ use bitcoin::{
     },
     Network, PublicKey, ScriptBuf,
 };
+use libtor::{HiddenServiceVersion, LogDestination, LogLevel, Tor, TorAddress, TorFlag};
+use mitosis::JoinHandle;
 
 use std::{
     collections::HashMap,
@@ -23,8 +25,7 @@ use std::{
 
 use serde_json::Value;
 use tokio::{
-    fs::File as FS,
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncReadExt, AsyncWriteExt, BufReader},
     net::tcp::{ReadHalf, WriteHalf},
 };
 
@@ -288,31 +289,67 @@ pub fn write_default_config(path: &PathBuf, toml_data: String) -> std::io::Resul
 }
 
 /// Function to check if tor log contains a pattern
-pub async fn monitor_log_for_completion(log_dir: PathBuf, pattern: &str) -> io::Result<()> {
+pub fn monitor_log_for_completion(log_dir: PathBuf, pattern: &str) -> io::Result<()> {
     let mut last_size = 0;
 
     loop {
-        let file = FS::open(&log_dir).await?;
-        let metadata = file.metadata().await?;
+        let file = fs::File::open(&log_dir)?;
+        let metadata = file.metadata()?;
         let current_size = metadata.len();
 
         if current_size != last_size {
-            let reader = BufReader::new(file);
-            let mut lines = reader.lines();
+            let reader = io::BufReader::new(file);
+            let lines = reader.lines();
 
-            while let Some(line) = lines.next_line().await? {
-                if line.contains(pattern) {
-                    log::warn!("Tor instance bootstrapped");
-                    return Ok(());
+            for line in lines {
+                if let Ok(line) = line {
+                    if line.contains(pattern) {
+                        log::warn!("Tor instance bootstrapped");
+                        return Ok(());
+                    }
+                } else {
+                    return Err(io::Error::new(io::ErrorKind::Other, "Error reading line"));
                 }
             }
 
             last_size = current_size;
         }
-
-        // Polling interval: adjust as needed for your use case
-        thread::sleep(Duration::from_secs(10));
+        thread::sleep(Duration::from_secs(3));
     }
+}
+
+pub fn spawn_tor(socks_port: u16, port: u16, base_dir: String) -> JoinHandle<()> {
+    let handle = mitosis::spawn(
+        (socks_port, port, base_dir),
+        |(socks_port, port, base_dir)| {
+            let hs_string = format!("{}/hs-dir/", base_dir);
+            let data_dir = format!("{}/", base_dir);
+            let log_dir = format!("{}/log", base_dir);
+            let _handler = Tor::new()
+                .flag(TorFlag::DataDirectory(data_dir))
+                .flag(TorFlag::LogTo(
+                    LogLevel::Notice,
+                    LogDestination::File(log_dir),
+                ))
+                .flag(TorFlag::SocksPort(socks_port))
+                .flag(TorFlag::HiddenServiceDir(hs_string))
+                .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
+                .flag(TorFlag::HiddenServicePort(
+                    TorAddress::Port(port),
+                    None.into(),
+                ))
+                .start();
+        },
+    );
+
+    handle
+}
+
+pub fn kill_tor_handles(handle: JoinHandle<()>) {
+    match handle.kill() {
+        Ok(_) => log::info!("Tor instance terminated successfully"),
+        Err(_) => log::error!("Error occurred while terminating tor instance"),
+    };
 }
 
 #[cfg(test)]

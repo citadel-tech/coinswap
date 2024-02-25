@@ -108,7 +108,7 @@ async fn abort3_case2_close_at_contract_sigs_for_recvr() {
         taker_clone
             .write()
             .unwrap()
-            .send_coinswap(swap_params)
+            .do_coinswap(swap_params)
             .unwrap();
     });
 

@@ -111,7 +111,7 @@ async fn maker_drops_after_sending_senders_sigs() {
         taker_clone
             .write()
             .unwrap()
-            .send_coinswap(swap_params)
+            .do_coinswap(swap_params)
             .unwrap();
     });
 
