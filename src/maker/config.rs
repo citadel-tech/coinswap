@@ -191,7 +191,6 @@ mod tests {
     use std::{
         fs::{self, File},
         io::Write,
-        path::PathBuf,
     };
 
     fn create_temp_config(contents: &str, file_name: &str) -> PathBuf {

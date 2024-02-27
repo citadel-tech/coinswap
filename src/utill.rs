@@ -286,15 +286,12 @@ mod tests {
 
     use bitcoin::{
         blockdata::{opcodes::all, script::Builder},
-        secp256k1::{Scalar, Secp256k1},
+        secp256k1::Scalar,
         PubkeyHash, Txid,
     };
 
     use serde_json::json;
-    use tokio::{
-        io::AsyncReadExt,
-        net::{TcpListener, TcpStream},
-    };
+    use tokio::net::{TcpListener, TcpStream};
 
     use super::*;
 
