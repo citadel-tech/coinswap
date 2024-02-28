@@ -65,8 +65,11 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     if Path::new(tor_log_dir.as_str()).exists() {
         match fs::remove_file(Path::new(tor_log_dir.as_str())) {
-            Ok(_) => log::info!("Previous Maker log file deleted successfully"),
-            Err(_) => log::error!("Error deleting Maker log file "),
+            Ok(_) => log::info!(
+                "[{}] Previous Maker log file deleted successfully",
+                maker_port
+            ),
+            Err(_) => log::error!("[{}] Error deleting Maker log file", maker_port),
         }
     }
 
@@ -78,7 +81,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     thread::sleep(Duration::from_secs(10));
 
     if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
-        log::error!("Error monitoring log file: {}", e);
+        log::error!("[{}] Error monitoring log file: {}", maker_port, e);
     }
 
     log::info!("Maker tor is instantiated");
@@ -107,7 +110,11 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     let address = directory_onion_address.as_str();
 
-    log::warn!("Directory onion address : {}", directory_onion_address);
+    log::warn!(
+        "[{}] Directory onion address : {}",
+        maker_port,
+        directory_onion_address
+    );
     loop {
         match Socks5Stream::connect(format!("127.0.0.1:{}", maker_socks_port).as_str(), address)
             .await
@@ -116,14 +123,14 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 let mut stream = socks_stream.into_inner();
                 let request_line = format!("POST {}\n", maker_onion_address);
                 if let Err(e) = stream.write_all(request_line.as_bytes()).await {
-                    log::error!("Failed to send request line: {}", e);
+                    log::error!("[{}] Failed to send request line: {}", maker_port, e);
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                     continue;
                 }
                 break;
             }
             Err(e) => {
-                log::error!("Error with socks connection: {}", e);
+                log::error!("[{}] Error with socks connection: {}", maker_port, e);
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 continue;
             }

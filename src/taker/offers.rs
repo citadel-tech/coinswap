@@ -145,7 +145,7 @@ pub async fn fetch_addresses_from_dns(
     directory_server_address: String,
     _network: Network,
 ) -> Result<Vec<MakerAddress>, DirectoryServerError> {
-    let max_retries = 3;
+    let max_retries = 10;
     let mut retries = 0;
     loop {
         let result: Result<Vec<MakerAddress>, DirectoryServerError> = (async {
