@@ -644,7 +644,6 @@ mod tests {
 
     use super::*;
     use bitcoin::PrivateKey;
-    use secp256k1::Secp256k1;
 
     #[test]
     fn test_apply_privkey_watchonly_swapcoin() {
