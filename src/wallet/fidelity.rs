@@ -612,7 +612,6 @@ impl Wallet {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::str::FromStr;
 
     #[test]
     fn test_fidelity_bond_value_function_behavior() {

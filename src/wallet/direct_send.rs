@@ -244,9 +244,7 @@ impl Wallet {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use bitcoin::{Address, Amount};
 
     #[test]
     fn test_send_amount_parsing() {

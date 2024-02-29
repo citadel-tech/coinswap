@@ -126,16 +126,16 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [x] Implement configuration file i/o support for Takers and Makers.
 - [x] Switch to binary encoding for network messages.
 - [x] Switch to binary encoding for wallet data.
-- [ ] Make tor detectable and connectable by default for Maker and Taker. And Tor configs to their config lists.
-- [ ] Complete all unit tests in modules.
-- [ ] Achieve >80% crate level test coverage ratio (including integration tests).
 - [x] Clean up and integrate fidelity bonds with maker banning.
-- [ ] Sketch a simple `AddressBook` server. Tor must. This is for MVP. Later on we will move to more decentralized address server architecture.
-- [ ] Turn maker server into a `makerd` binary, and a `maker-cli` rpc controller app, with MVP API.
-- [ ] Finalize the Taker API for downstream wallet integration.
-- [ ] Develop an example web Taker client with a downstream wallet.
-- [ ] Package `makerd` and `maker-cli` in a downstream node.
-- [ ] Release v0.1.0 in Signet for beta testing.
+- [ ] Make tor detectable and connectable by default for Maker and Taker. And Tor configs to their config lists.
+- [ ] Sketch a simple `Directory Server`. Tor must. This will act as the MVP DNS server.
+- [ ] Complete all unit tests in modules.
+- [ ] Achieve >80% crate-level test coverage ratio (including integration tests).
+- [ ] Turn maker server into a `maker` cli app, that spawns the server in the background, and exposes a basic maker wallet API.
+- [ ] Turn the taker into a `taker` cli app. This also has basic taker wallet API + `do_coinswap()` which spawns a swap process in the background.
+- [ ] Create `swap_dns_server` as a stand-alone directory server binary.
+- [ ] A fresh `demo.md` doc to demonstrate a swap process with `maker` and `taker` and `swap_dns_server` in Signet.
+- [ ] Release v0.1.0 in crates.io.
 
 ### V 0.1.*
 

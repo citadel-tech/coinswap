@@ -46,7 +46,7 @@ use crate::{
             TakerToMakerMessage,
         },
     },
-    taker::{config::TakerConfig, offers::OfferBook, routines::NextPeerInfoArgs},
+    taker::{config::TakerConfig, offers::OfferBook},
     utill::*,
     wallet::{
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletSwapCoin,

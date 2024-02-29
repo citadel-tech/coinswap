@@ -99,8 +99,6 @@ impl WalletStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bip39::Mnemonic;
-    use bitcoin::Network;
     use bitcoind::tempfile::tempdir;
 
     #[test]
