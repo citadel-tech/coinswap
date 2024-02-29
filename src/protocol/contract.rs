@@ -517,7 +517,7 @@ mod test {
         PrivateKey,
     };
     use core::panic;
-    use std::{str::FromStr, string::String};
+    use std::str::FromStr;
 
     fn read_pubkeys_from_contract_reedimscript(
         contract_script: &Script,
