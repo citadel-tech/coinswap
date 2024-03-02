@@ -112,7 +112,7 @@ async fn malice1_taker_broadcast_contract_prematurely() {
 
     // Calculate Original balance excluding fidelity bonds.
     // Bonds are created automatically after spawning the maker server.
-    let _org_maker_balances = makers
+    let org_maker_balances = makers
         .iter()
         .map(|maker| {
             maker
@@ -172,14 +172,14 @@ async fn malice1_taker_broadcast_contract_prematurely() {
     assert_eq!(maker_balances.first().unwrap(), &Amount::from_sat(14994773));
 
     // Everybody looses 4227 sats for contract transactions.
-    // assert_eq!(
-    //     org_maker_balances
-    //         .first()
-    //         .unwrap()
-    //         .checked_sub(*maker_balances.first().unwrap())
-    //         .unwrap(),
-    //     Amount::from_sat(4227)
-    // );
+    assert_eq!(
+        org_maker_balances
+            .first()
+            .unwrap()
+            .checked_sub(*maker_balances.first().unwrap())
+            .unwrap(),
+        Amount::from_sat(4227)
+    );
     assert_eq!(
         org_take_balance.checked_sub(taker_balance).unwrap(),
         Amount::from_sat(4227)

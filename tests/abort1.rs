@@ -119,7 +119,7 @@ async fn test_stop_taker_after_setup() {
 
     // Calculate Original balance excluding fidelity bonds.
     // Bonds are created automatically after spawning the maker server.
-    let _org_maker_balances = makers
+    let org_maker_balances = makers
         .iter()
         .map(|maker| {
             maker
@@ -175,15 +175,20 @@ async fn test_stop_taker_after_setup() {
         .unwrap();
     assert_eq!(org_taker_balance - taker_balance, Amount::from_sat(4227));
 
-    // makers
-    //     .iter()
-    //     .zip(org_maker_balances.iter())
-    //     .for_each(|(maker, org_balance)| {
-    //         let new_balance = maker.get_wallet().read().unwrap().balance(false, false).unwrap();
-    //         log::info!("Org Balance: {}", *org_balance);
-    //         log::info!("New_balance: {}", new_balance);
-    //         assert_eq!(*org_balance - new_balance, Amount::from_sat(4227));
-    //     });
+    makers
+        .iter()
+        .zip(org_maker_balances.iter())
+        .for_each(|(maker, org_balance)| {
+            let new_balance = maker
+                .get_wallet()
+                .read()
+                .unwrap()
+                .balance(false, false)
+                .unwrap();
+            log::info!("Org Balance: {}", *org_balance);
+            log::info!("New_balance: {}", new_balance);
+            assert_eq!(*org_balance - new_balance, Amount::from_sat(4227));
+        });
 
     info!("All checks successful. Terminating integration test case");
 
