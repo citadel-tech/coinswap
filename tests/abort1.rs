@@ -68,6 +68,7 @@ async fn test_stop_taker_after_setup() {
                 .unwrap();
             test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
         });
+        });
     }
 
     // Coins for fidelity creation
@@ -89,8 +90,14 @@ async fn test_stop_taker_after_setup() {
         .read()
         .unwrap()
         .get_wallet()
-        .balance(false, false)
-        .unwrap();
+        .balance_descriptor_utxo()
+        .unwrap()
+        + taker
+            .read()
+            .unwrap()
+            .get_wallet()
+            .balance_swap_coins()
+            .unwrap();
 
     // ---- Start Servers and attempt Swap ----
 
@@ -127,8 +134,14 @@ async fn test_stop_taker_after_setup() {
                 .get_wallet()
                 .read()
                 .unwrap()
-                .balance(false, false)
+                .balance_descriptor_utxo()
                 .unwrap()
+                + maker
+                    .get_wallet()
+                    .read()
+                    .unwrap()
+                    .balance_swap_coins()
+                    .unwrap()
         })
         .collect::<Vec<_>>();
 
@@ -172,8 +185,14 @@ async fn test_stop_taker_after_setup() {
         .read()
         .unwrap()
         .get_wallet()
-        .balance(false, false)
-        .unwrap();
+        .balance_descriptor_utxo()
+        .unwrap()
+        + taker
+            .read()
+            .unwrap()
+            .get_wallet()
+            .balance_swap_coins()
+            .unwrap();
     assert_eq!(org_taker_balance - taker_balance, Amount::from_sat(4227));
 
     makers
@@ -184,10 +203,14 @@ async fn test_stop_taker_after_setup() {
                 .get_wallet()
                 .read()
                 .unwrap()
-                .balance(false, false)
-                .unwrap();
-            log::info!("Org Balance: {}", *org_balance);
-            log::info!("New_balance: {}", new_balance);
+                .balance_descriptor_utxo()
+                .unwrap()
+                + maker
+                    .get_wallet()
+                    .read()
+                    .unwrap()
+                    .balance_swap_coins()
+                    .unwrap();
             assert_eq!(*org_balance - new_balance, Amount::from_sat(4227));
         });
 

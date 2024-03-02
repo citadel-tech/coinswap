@@ -35,6 +35,9 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
     warn!(
         "Running test: Maker 6102 Closes before sending sender's sigs. Taker recovers. Or Swap cancels"
     );
+    warn!(
+        "Running test: Maker 6102 Closes before sending sender's sigs. Taker recovers. Or Swap cancels"
+    );
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
@@ -89,8 +92,14 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
         .read()
         .unwrap()
         .get_wallet()
-        .balance(false, false)
-        .unwrap();
+        .balance_descriptor_utxo()
+        .unwrap()
+        + taker
+            .read()
+            .unwrap()
+            .get_wallet()
+            .balance_swap_coins()
+            .unwrap();
 
     // ---- Start Servers and attempt Swap ----
 
@@ -124,8 +133,14 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
                 .get_wallet()
                 .read()
                 .unwrap()
-                .balance(false, false)
+                .balance_descriptor_utxo()
                 .unwrap()
+                + maker
+                    .get_wallet()
+                    .read()
+                    .unwrap()
+                    .balance_swap_coins()
+                    .unwrap()
         })
         .collect::<Vec<_>>();
 
@@ -172,19 +187,18 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
         .read()
         .unwrap()
         .get_wallet()
-        .balance(false, false)
-        .unwrap();
-
-    // Balance will not differ if the first maker drops and swap doesn't take place.
-    // The recovery will happen only if the 2nd maker drops, which has 50% probabiltiy.
-    // Only do this assert if the balance differs, implying that the swap took place.
-    if new_taker_balance != org_taker_balance {
-        assert_eq!(
-            org_taker_balance - new_taker_balance,
-            Amount::from_sat(4227)
-        );
-    }
-
+        .balance_descriptor_utxo()
+        .unwrap()
+        + taker
+            .read()
+            .unwrap()
+            .get_wallet()
+            .balance_swap_coins()
+            .unwrap();
+    assert_eq!(
+        org_taker_balance - new_taker_balance,
+        Amount::from_sat(4227)
+    );
     makers
         .iter()
         .zip(org_maker_balances.iter())
@@ -193,8 +207,14 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
                 .get_wallet()
                 .read()
                 .unwrap()
-                .balance(false, false)
-                .unwrap();
+                .balance_descriptor_utxo()
+                .unwrap()
+                + maker
+                    .get_wallet()
+                    .read()
+                    .unwrap()
+                    .balance_swap_coins()
+                    .unwrap();
             assert_eq!(*org_balance - new_balance, Amount::from_sat(0));
         });
 

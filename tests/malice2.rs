@@ -80,8 +80,14 @@ async fn malice2_maker_broadcast_contract_prematurely() {
         .read()
         .unwrap()
         .get_wallet()
-        .balance(false, false)
-        .unwrap();
+        .balance_descriptor_utxo()
+        .unwrap()
+        + taker
+            .read()
+            .unwrap()
+            .get_wallet()
+            .balance_swap_coins()
+            .unwrap();
 
     // ---- Start Servers and attempt Swap ----
 
@@ -115,8 +121,14 @@ async fn malice2_maker_broadcast_contract_prematurely() {
                 .get_wallet()
                 .read()
                 .unwrap()
-                .balance(false, false)
+                .balance_descriptor_utxo()
                 .unwrap()
+                + maker
+                    .get_wallet()
+                    .read()
+                    .unwrap()
+                    .balance_swap_coins()
+                    .unwrap()
         })
         .collect::<BTreeSet<_>>();
 
@@ -152,8 +164,14 @@ async fn malice2_maker_broadcast_contract_prematurely() {
                 .get_wallet()
                 .read()
                 .unwrap()
-                .balance(false, false)
+                .balance_descriptor_utxo()
                 .unwrap()
+                + maker
+                    .get_wallet()
+                    .read()
+                    .unwrap()
+                    .balance_swap_coins()
+                    .unwrap()
         })
         .collect::<BTreeSet<_>>();
 
@@ -161,8 +179,14 @@ async fn malice2_maker_broadcast_contract_prematurely() {
         .read()
         .unwrap()
         .get_wallet()
-        .balance(false, false)
-        .unwrap();
+        .balance_descriptor_utxo()
+        .unwrap()
+        + taker
+            .read()
+            .unwrap()
+            .get_wallet()
+            .balance_swap_coins()
+            .unwrap();
 
     assert_eq!(maker_balances.first().unwrap(), &Amount::from_sat(14994773));
 

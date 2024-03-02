@@ -69,7 +69,7 @@ async fn test_fidelity() {
         expected_error.err().unwrap(),
         MakerError::Wallet(WalletError::Fidelity(FidelityError::InsufficientFund {
             available: 4000000,
-            required: 5000000
+            required: 5000000,
         }))
     );
 
@@ -108,7 +108,7 @@ async fn test_fidelity() {
         let index = wallet_write
             .create_fidelity(
                 Amount::from_sat(1000000),
-                LockTime::from_height(test_framework.get_block_count() as u32 + 100).unwrap(),
+                LockTime::from_height((test_framework.get_block_count() as u32) + 100).unwrap(),
             )
             .unwrap();
         assert_eq!(index, 1);
@@ -124,7 +124,8 @@ async fn test_fidelity() {
     // Check the balances
     {
         let wallet = maker.get_wallet().read().unwrap();
-        let normal_balance = wallet.balance(false, false).unwrap();
+        let normal_balance =
+            wallet.balance_descriptor_utxo().unwrap() + wallet.balance_swap_coins().unwrap();
         assert_eq!(normal_balance.to_sat(), 1998000);
     }
 
@@ -161,7 +162,8 @@ async fn test_fidelity() {
     // Check the balances again
     {
         let wallet = maker.get_wallet().read().unwrap();
-        let normal_balance = wallet.balance(false, false).unwrap();
+        let normal_balance =
+            wallet.balance_descriptor_utxo().unwrap() + wallet.balance_swap_coins().unwrap();
         assert_eq!(normal_balance.to_sat(), 7996000);
     }
 

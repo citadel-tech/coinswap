@@ -90,9 +90,23 @@ async fn test_standard_coinswap() {
             .read()
             .unwrap()
             .get_wallet()
-            .list_unspent_from_wallet(false, true)
+            .list_descriptor_utxo_unspend_from_wallet()
             .unwrap()
-            .len(),
+            .len()
+            + taker
+                .read()
+                .unwrap()
+                .get_wallet()
+                .list_fidelity_unspend_from_wallet()
+                .unwrap()
+                .len()
+            + taker
+                .read()
+                .unwrap()
+                .get_wallet()
+                .list_swap_coin_unspend_from_wallet()
+                .unwrap()
+                .len(),
         3
     );
     makers.iter().for_each(|maker| {
@@ -100,10 +114,18 @@ async fn test_standard_coinswap() {
             .get_wallet()
             .read()
             .unwrap()
-            .list_unspent_from_wallet(false, false)
-            .unwrap();
+            .list_descriptor_utxo_unspend_from_wallet()
+            .unwrap()
+            .len()
+            + maker
+                .get_wallet()
+                .read()
+                .unwrap()
+                .list_swap_coin_unspend_from_wallet()
+                .unwrap()
+                .len();
 
-        assert_eq!(utxo_count.len(), 4);
+        assert_eq!(utxo_count, 4);
     });
 
     // Check locking non-wallet utxos worked.
@@ -189,26 +211,31 @@ async fn test_standard_coinswap() {
             .read()
             .unwrap()
             .get_wallet()
-            .balance(false, false)
+            .balance_descriptor_utxo()
             .unwrap()
+            + taker
+                .read()
+                .unwrap()
+                .get_wallet()
+                .balance_swap_coins()
+                .unwrap()
     );
     assert!(
-        taker
-            .read()
-            .unwrap()
-            .get_wallet()
-            .balance(false, false)
-            .unwrap()
-            < Amount::from_btc(0.15).unwrap()
+        taker.read().unwrap().get_wallet().balance().unwrap() < Amount::from_btc(0.15).unwrap()
     );
     makers.iter().for_each(|maker| {
         let balance = maker
             .get_wallet()
             .read()
             .unwrap()
-            .balance(false, false)
-            .unwrap();
-        log::info!("Lets see the amount {:?}", balance);
+            .balance_descriptor_utxo()
+            .unwrap()
+            + maker
+                .get_wallet()
+                .read()
+                .unwrap()
+                .balance_swap_coins()
+                .unwrap();
         assert!(balance > Amount::from_btc(0.15).unwrap());
     });
 

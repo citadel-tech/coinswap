@@ -70,7 +70,7 @@ impl Wallet {
     ) -> Result<Vec<f32>, WalletError> {
         for _ in 0..100000 {
             let mut knives = (1..count)
-                .map(|_| OsRng.next_u32() as f32 / u32::MAX as f32)
+                .map(|_| (OsRng.next_u32() as f32) / (u32::MAX as f32))
                 .collect::<Vec<f32>>();
             knives.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -84,7 +84,7 @@ impl Wallet {
 
             if fractions
                 .iter()
-                .all(|f| *f * (total_amount as f32) > lower_limit as f32)
+                .all(|f| *f * (total_amount as f32) > (lower_limit as f32))
             {
                 return Ok(fractions);
             }
@@ -102,7 +102,7 @@ impl Wallet {
                   //there should always be enough to pay miner fees
         )?
         .iter()
-        .map(|f| (*f * total_amount as f32) as u64)
+        .map(|f| (*f * (total_amount as f32)) as u64)
         .collect::<Vec<u64>>();
 
         //rounding errors mean usually 1 or 2 satoshis are lost, add them back
@@ -203,9 +203,8 @@ impl Wallet {
         destinations: &[Address],
         fee_rate: u64,
         change_address: &Address,
-        utxos: &mut dyn Iterator<Item = (Txid, u32, u64)>,
-        //utxos item is (txid, vout, value)
-        //utxos should be sorted by size, largest first
+        utxos: &mut dyn Iterator<Item = (Txid, u32, u64)>, //utxos item is (txid, vout, value)
+                                                           //utxos should be sorted by size, largest first
     ) -> Result<Option<CreateFundingTxesResult>, WalletError> {
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
@@ -215,7 +214,7 @@ impl Wallet {
         let mut destinations_iter = destinations.iter();
         let first_tx_input = utxos.next().unwrap();
 
-        for _ in 0..(destinations.len() - 2) {
+        for _ in 0..destinations.len() - 2 {
             let (txid, vout, value) = utxos.next().unwrap();
 
             let mut outputs = HashMap::<String, Amount>::new();
@@ -417,8 +416,11 @@ impl Wallet {
     ) -> Result<Option<CreateFundingTxesResult>, WalletError> {
         //this function will pick the top most valuable UTXOs and use them
         //to create funding transactions
+        let mut seed_coin_utxo = self.list_descriptor_utxo_unspend_from_wallet()?;
+        let mut swap_coin_utxo = self.list_swap_coin_unspend_from_wallet()?;
+        seed_coin_utxo.append(&mut swap_coin_utxo);
 
-        let mut list_unspent_result = self.list_unspent_from_wallet(false, false)?;
+        let mut list_unspent_result = seed_coin_utxo;
         if list_unspent_result.len() < destinations.len() {
             return Err(WalletError::Protocol(
                 "Not enough UTXOs to create this many funding txes".to_string(),

@@ -120,7 +120,7 @@ impl Wallet {
         //TODO this search within a search could get very slow
         // Filter out fidelity bonds. Use `wallet.redeem_fidelity()` function to spend fidelity bond coins.
         let list_unspent_result = self
-            .list_unspent_from_wallet(true, true)?
+            .list_unspent_from_wallet()?
             .into_iter()
             .filter(|(_, info)| !matches!(info, UTXOSpendInfo::FidelityBondCoin { .. }))
             .collect::<Vec<_>>();
