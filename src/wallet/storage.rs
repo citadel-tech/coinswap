@@ -2,19 +2,16 @@
 //!
 //! Wallet data is currently written in unencrypted CBOR files which are not directly human readable.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{ collections::HashMap, path::PathBuf };
 
 use bip39::Mnemonic;
-use bitcoin::{bip32::ExtendedPrivKey, Network, OutPoint, ScriptBuf};
-use serde::{Deserialize, Serialize};
-use std::{
-    fs::OpenOptions,
-    io::{BufReader, BufWriter},
-};
+use bitcoin::{ bip32::ExtendedPrivKey, Network, OutPoint, ScriptBuf };
+use serde::{ Deserialize, Serialize };
+use std::{ fs::OpenOptions, io::{ BufReader, BufWriter } };
 
-use super::{error::WalletError, fidelity::FidelityBond};
+use super::{ error::WalletError, fidelity::FidelityBond };
 
-use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
+use super::swapcoin::{ IncomingSwapCoin, OutgoingSwapCoin };
 
 /// Represents the internal data store for a Bitcoin wallet.
 // TODO: Derive Serialize/Deserialize for this structure, and remove FileData
@@ -48,7 +45,7 @@ impl WalletStore {
         path: &PathBuf,
         network: Network,
         seedphrase: String,
-        passphrase: String,
+        passphrase: String
     ) -> Result<Self, WalletError> {
         let mnemonic = Mnemonic::parse(seedphrase)?;
         let seed = mnemonic.to_seed(passphrase);
@@ -69,11 +66,7 @@ impl WalletStore {
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         // write: overwrites existing file.
         // create: creates new file if doesn't exist.
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
+        let file = OpenOptions::new().write(true).create(true).truncate(true).open(path)?;
         let writer = BufWriter::new(file);
         serde_cbor::to_writer(writer, &store)?;
         // let store_read = WalletStore::read_from_disk(path)?;
@@ -99,6 +92,7 @@ impl WalletStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use bitcoind::tempfile::tempdir;
 
     #[test]
@@ -112,9 +106,8 @@ mod tests {
             &file_path,
             Network::Bitcoin,
             mnemonic,
-            "passphrase".to_string(),
-        )
-        .unwrap();
+            "passphrase".to_string()
+        ).unwrap();
 
         original_wallet_store.write_to_disk(&file_path).unwrap();
 

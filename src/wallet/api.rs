@@ -281,7 +281,7 @@ impl Wallet {
                 println!(
                     "[{}] locktime={}",
                     Address::from_script(&bond.script_pub_key(), self.store.network).unwrap(),
-                    locktime,
+                    locktime
                 );
             }
         }
@@ -440,6 +440,27 @@ impl Wallet {
             .list_unspent_from_wallet(live_contracts, fidelity_bonds)?
             .iter()
             .fold(Amount::ZERO, |a, (utxo, _)| a + utxo.amount))
+    }
+
+    pub fn balance_fidelity_bonds(&self) -> Result<Amount, WalletError> {
+        Ok(self
+            .list_fidelity_unspend_from_wallet()?
+            .iter()
+            .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount))
+    }
+
+    pub fn balance_live_transaction(&self) -> Result<Amount, WalletError> {
+        Ok(self
+            .list_live_contract_unspend_from_wallet()?
+            .iter()
+            .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount))
+    }
+
+    pub fn balance_descriptor_utxo_or_swap_coins(&self) -> Result<Amount, WalletError> {
+        Ok(self
+            .list_descriptor_utxo_or_swap_coin_unspend_from_wallet()?
+            .iter()
+            .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount))
     }
 
     /// Checks if the previous output (prevout) matches the cached contract in the wallet.
@@ -640,9 +661,11 @@ impl Wallet {
 
         let result = self.rpc.import_multi(
             &import_requests,
-            Some(&ImportMultiOptions {
-                rescan: Some(false),
-            }),
+            Some(
+                &(ImportMultiOptions {
+                    rescan: Some(false),
+                }),
+            ),
         )?;
 
         // Only hard error if it errors, or else log the warning
@@ -687,100 +710,6 @@ impl Wallet {
             .collect::<HashMap<_, _>>()
     }
 
-    fn is_utxo_ours_and_spendable_get_pointer(
-        &self,
-        u: &ListUnspentResultEntry,
-        option_contract_scriptpubkeys_outgoing_swapcoins: Option<
-            &HashMap<ScriptBuf, &OutgoingSwapCoin>,
-        >,
-        option_contract_scriptpubkeys_incoming_swapcoins: Option<
-            &HashMap<ScriptBuf, &IncomingSwapCoin>,
-        >,
-        include_all_fidelity_bonds: bool,
-    ) -> Option<UTXOSpendInfo> {
-        if include_all_fidelity_bonds {
-            if let Some((i, (b, _, _))) = self.store.fidelity_bond.iter().find(|(_, (b, _, _))| {
-                b.script_pub_key() == u.script_pub_key && b.amount == u.amount.to_sat()
-            }) {
-                return Some(UTXOSpendInfo::FidelityBondCoin {
-                    index: *i,
-                    input_value: b.amount,
-                });
-            }
-        }
-
-        if u.descriptor.is_none() {
-            if let Some(map) = option_contract_scriptpubkeys_outgoing_swapcoins {
-                if let Some(swapcoin) = map.get(&u.script_pub_key) {
-                    let timelock = swapcoin.get_timelock();
-                    if u.confirmations >= timelock.into() {
-                        return Some(UTXOSpendInfo::TimelockContract {
-                            swapcoin_multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
-                            input_value: u.amount.to_sat(),
-                        });
-                    }
-                }
-            }
-            if let Some(map) = option_contract_scriptpubkeys_incoming_swapcoins {
-                if let Some(swapcoin) = map.get(&u.script_pub_key) {
-                    if swapcoin.is_hash_preimage_known() && u.confirmations >= 1 {
-                        return Some(UTXOSpendInfo::HashlockContract {
-                            swapcoin_multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
-                            input_value: u.amount.to_sat(),
-                        });
-                    }
-                }
-            }
-            return None;
-        }
-        let descriptor = u.descriptor.as_ref().unwrap();
-        if let Some(ret) = get_hd_path_from_descriptor(descriptor) {
-            //utxo is in a hd wallet
-            let (fingerprint, addr_type, index) = ret;
-
-            let secp = Secp256k1::new();
-            let master_private_key = self
-                .store
-                .master_key
-                .derive_priv(
-                    &secp,
-                    &DerivationPath::from_str(HARDENDED_DERIVATION).unwrap(),
-                )
-                .unwrap();
-            if fingerprint == master_private_key.fingerprint(&secp).to_string() {
-                Some(UTXOSpendInfo::SeedCoin {
-                    path: format!("m/{}/{}", addr_type, index),
-                    input_value: u.amount.to_sat(),
-                })
-            } else {
-                None
-            }
-        } else {
-            //utxo might be one of our swapcoins
-            let found = self
-                .find_incoming_swapcoin(
-                    u.witness_script
-                        .as_ref()
-                        .unwrap_or(&ScriptBuf::from(Vec::from_hex("").unwrap())),
-                )
-                .map_or(false, |sc| sc.other_privkey.is_some())
-                || self
-                    .find_outgoing_swapcoin(
-                        u.witness_script
-                            .as_ref()
-                            .unwrap_or(&ScriptBuf::from(Vec::from_hex("").unwrap())),
-                    )
-                    .map_or(false, |sc| sc.hash_preimage.is_some());
-            if found {
-                Some(UTXOSpendInfo::SwapCoin {
-                    multisig_redeemscript: u.witness_script.as_ref().unwrap().clone(),
-                })
-            } else {
-                None
-            }
-        }
-    }
-
     /// Locks all non-wallet unspent transaction outputs (UTXOs) & returns a `WalletError`
     /// if there is an issue with the RPC call or locking the UTXOs.
     pub fn lock_all_nonwallet_unspents(&self) -> Result<(), WalletError> {
@@ -794,10 +723,7 @@ impl Wallet {
             .list_unspent(Some(0), Some(9999999), None, None, None)?;
         let utxos_to_lock = &all_unspents
             .into_iter()
-            .filter(|u| {
-                self.is_utxo_ours_and_spendable_get_pointer(u, None, None, false)
-                    .is_none()
-            })
+            .filter(|u| self.check_descriptor_utxo_or_swap_coin(u).is_none())
             .map(|u| OutPoint {
                 txid: u.txid,
                 vout: u.vout,
@@ -807,49 +733,217 @@ impl Wallet {
         Ok(())
     }
 
+    fn check_fidelity_bonds(&self, utxo: &ListUnspentResultEntry) -> Option<UTXOSpendInfo> {
+        self.store
+            .fidelity_bond
+            .iter()
+            .find_map(|(i, (bond, _, _))| {
+                if bond.script_pub_key() == utxo.script_pub_key
+                    && bond.amount == utxo.amount.to_sat()
+                {
+                    Some(UTXOSpendInfo::FidelityBondCoin {
+                        index: *i,
+                        input_value: bond.amount,
+                    })
+                } else {
+                    None
+                }
+            })
+    }
+
+    fn check_live_contracts(
+        &self,
+        utxo: &ListUnspentResultEntry,
+        contract_scriptpubkeys_outgoing: &HashMap<ScriptBuf, &OutgoingSwapCoin>,
+        contract_scriptpubkeys_incoming: &HashMap<ScriptBuf, &IncomingSwapCoin>,
+    ) -> Option<UTXOSpendInfo> {
+        if let Some(outgoing_swapcoin) = contract_scriptpubkeys_outgoing.get(&utxo.script_pub_key) {
+            if utxo.confirmations >= outgoing_swapcoin.get_timelock().into() {
+                return Some(UTXOSpendInfo::TimelockContract {
+                    swapcoin_multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
+                    input_value: utxo.amount.to_sat(),
+                });
+            }
+        } else if let Some(incoming_swapcoin) =
+            contract_scriptpubkeys_incoming.get(&utxo.script_pub_key)
+        {
+            if incoming_swapcoin.is_hash_preimage_known() && utxo.confirmations >= 1 {
+                return Some(UTXOSpendInfo::HashlockContract {
+                    swapcoin_multisig_redeemscript: incoming_swapcoin.get_multisig_redeemscript(),
+                    input_value: utxo.amount.to_sat(),
+                });
+            }
+        }
+        None
+    }
+
+    fn check_descriptor_utxo_or_swap_coin(
+        &self,
+        utxo: &ListUnspentResultEntry,
+    ) -> Option<UTXOSpendInfo> {
+        if let Some(descriptor) = &utxo.descriptor {
+            // Descriptor logic here
+            if let Some(ret) = get_hd_path_from_descriptor(descriptor) {
+                //utxo is in a hd wallet
+                let (fingerprint, addr_type, index) = ret;
+
+                let secp = Secp256k1::new();
+                let master_private_key = self
+                    .store
+                    .master_key
+                    .derive_priv(
+                        &secp,
+                        &DerivationPath::from_str(HARDENDED_DERIVATION).unwrap(),
+                    )
+                    .unwrap();
+                if fingerprint == master_private_key.fingerprint(&secp).to_string() {
+                    return Some(UTXOSpendInfo::SeedCoin {
+                        path: format!("m/{}/{}", addr_type, index),
+                        input_value: utxo.amount.to_sat(),
+                    });
+                }
+            } else {
+                //utxo might be one of our swapcoins
+                let found = self
+                    .find_incoming_swapcoin(
+                        utxo.witness_script
+                            .as_ref()
+                            .unwrap_or(&ScriptBuf::from(Vec::from_hex("").unwrap())),
+                    )
+                    .map_or(false, |sc| sc.other_privkey.is_some())
+                    || self
+                        .find_outgoing_swapcoin(
+                            utxo.witness_script
+                                .as_ref()
+                                .unwrap_or(&ScriptBuf::from(Vec::from_hex("").unwrap())),
+                        )
+                        .map_or(false, |sc| sc.hash_preimage.is_some());
+                if found {
+                    return Some(UTXOSpendInfo::SwapCoin {
+                        multisig_redeemscript: utxo.witness_script.as_ref().unwrap().clone(),
+                    });
+                }
+            };
+        }
+        None
+    }
+
     /// Lists UTXOs from the wallet, optionally including live contracts and fidelity bonds.
+    /// Simplified method to list UTXOs from the wallet, integrating the logic directly.
     pub fn list_unspent_from_wallet(
         &self,
         include_live_contracts: bool,
         include_fidelity_bonds: bool,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        let (contract_scriptpubkeys_outgoing_swapcoins, contract_scriptpubkeys_incoming_swapcoins) =
+        let (contract_scriptpubkeys_outgoing, contract_scriptpubkeys_incoming) =
             if include_live_contracts {
                 (
                     self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap(),
                     self.create_contract_scriptpubkey_incoming_swapcoin_hashmap(),
                 )
             } else {
-                (HashMap::<_, _>::new(), HashMap::<_, _>::new())
+                (HashMap::new(), HashMap::new())
             };
+
         self.rpc
             .call::<Value>("lockunspent", &[Value::Bool(true)])?;
-        Ok(self
+        let all_utxos = self
             .rpc
-            .list_unspent(Some(0), Some(9999999), None, None, None)?
+            .list_unspent(Some(0), Some(9999999), None, None, None)?;
+
+        let processed_utxos = all_utxos
             .iter()
-            .map(|u| {
-                (
-                    u,
-                    self.is_utxo_ours_and_spendable_get_pointer(
-                        u,
-                        if include_live_contracts {
-                            Some(&contract_scriptpubkeys_outgoing_swapcoins)
-                        } else {
-                            None
-                        },
-                        if include_live_contracts {
-                            Some(&contract_scriptpubkeys_incoming_swapcoins)
-                        } else {
-                            None
-                        },
-                        include_fidelity_bonds,
-                    ),
-                )
+            .filter_map(|utxo| {
+                let mut spend_info = if include_fidelity_bonds {
+                    self.check_fidelity_bonds(utxo)
+                } else {
+                    None
+                };
+
+                if spend_info.is_none() && utxo.descriptor.is_none() {
+                    spend_info = self.check_live_contracts(
+                        utxo,
+                        &contract_scriptpubkeys_outgoing,
+                        &contract_scriptpubkeys_incoming,
+                    );
+                }
+
+                if spend_info.is_none() {
+                    spend_info = self.check_descriptor_utxo_or_swap_coin(utxo);
+                }
+
+                spend_info.map(|info| (utxo.clone(), info))
             })
-            .filter(|(_u, o_info)| o_info.is_some())
-            .map(|(u, o_info)| (u.clone(), o_info.unwrap()))
-            .collect::<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>())
+            .collect::<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>();
+
+        Ok(processed_utxos)
+    }
+
+    pub fn list_live_contract_unspend_from_wallet(
+        &self,
+    ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+        let (contract_scriptpubkeys_outgoing, contract_scriptpubkeys_incoming) = (
+            self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap(),
+            self.create_contract_scriptpubkey_incoming_swapcoin_hashmap(),
+        );
+        self.rpc
+            .call::<Value>("lockunspent", &[Value::Bool(true)])?;
+        let all_utxos = self
+            .rpc
+            .list_unspent(Some(0), Some(9999999), None, None, None)?;
+        let processed_utxos = all_utxos
+            .iter()
+            .filter_map(|utxo| {
+                let spend_info = self.check_live_contracts(
+                    utxo,
+                    &contract_scriptpubkeys_outgoing,
+                    &contract_scriptpubkeys_incoming,
+                );
+
+                spend_info.map(|info| (utxo.clone(), info))
+            })
+            .collect::<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>();
+
+        Ok(processed_utxos)
+    }
+
+    pub fn list_fidelity_unspend_from_wallet(
+        &self,
+    ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+        self.rpc
+            .call::<Value>("lockunspent", &[Value::Bool(true)])?;
+        let all_utxos = self
+            .rpc
+            .list_unspent(Some(0), Some(9999999), None, None, None)?;
+        let processed_utxos = all_utxos
+            .iter()
+            .filter_map(|utxo| {
+                let spend_info = self.check_fidelity_bonds(utxo);
+
+                spend_info.map(|info| (utxo.clone(), info))
+            })
+            .collect::<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>();
+
+        Ok(processed_utxos)
+    }
+
+    pub fn list_descriptor_utxo_or_swap_coin_unspend_from_wallet(
+        &self,
+    ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+        self.rpc
+            .call::<Value>("lockunspent", &[Value::Bool(true)])?;
+        let all_utxos = self
+            .rpc
+            .list_unspent(Some(0), Some(9999999), None, None, None)?;
+        let processed_utxos = all_utxos
+            .iter()
+            .filter_map(|utxo| {
+                let spend_info = self.check_descriptor_utxo_or_swap_coin(utxo);
+                spend_info.map(|info| (utxo.clone(), info))
+            })
+            .collect::<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>();
+
+        Ok(processed_utxos)
     }
 
     /// Finds incomplete coin swaps in the wallet.
@@ -971,7 +1065,7 @@ impl Wallet {
                     u,
                 )
             })
-            .filter(|isc_osc_u| isc_osc_u.0.is_some() || isc_osc_u.1.is_some())
+            .filter(|isc_osc_u| (isc_osc_u.0.is_some() || isc_osc_u.1.is_some()))
             .partition(|isc_osc_u| isc_osc_u.0.is_some());
 
         Ok((
@@ -990,7 +1084,7 @@ impl Wallet {
     pub(super) fn find_hd_next_index(&self, keychain: KeychainKind) -> Result<u32, WalletError> {
         let mut max_index: i32 = -1;
         //TODO error handling
-        let utxos = self.list_unspent_from_wallet(false, false)?;
+        let utxos = self.list_descriptor_utxo_or_swap_coin_unspend_from_wallet()?;
         for (utxo, _) in utxos {
             if utxo.descriptor.is_none() {
                 continue;
@@ -1044,7 +1138,7 @@ impl Wallet {
 
     /// Refreshes the offer maximum size cache based on the current wallet's unspent transaction outputs (UTXOs).
     pub fn refresh_offer_maxsize_cache(&mut self) -> Result<(), WalletError> {
-        let utxos = self.list_unspent_from_wallet(false, false)?;
+        let utxos = self.list_descriptor_utxo_or_swap_coin_unspend_from_wallet()?;
         let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.0.amount);
         self.store.offer_maxsize = balance.to_sat();
         Ok(())
@@ -1432,9 +1526,11 @@ impl Wallet {
                     label: Some(address_label),
                     ..Default::default()
                 }],
-                Some(&ImportMultiOptions {
-                    rescan: Some(false),
-                }),
+                Some(
+                    &(ImportMultiOptions {
+                        rescan: Some(false),
+                    }),
+                ),
             )
             .unwrap();
         for r in result {
@@ -1464,9 +1560,11 @@ impl Wallet {
                 label: Some(address_label),
                 ..Default::default()
             }],
-            Some(&ImportMultiOptions {
-                rescan: Some(false),
-            }),
+            Some(
+                &(ImportMultiOptions {
+                    rescan: Some(false),
+                }),
+            ),
         )?;
         for r in result {
             if !r.success {
