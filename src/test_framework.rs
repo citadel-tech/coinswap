@@ -12,22 +12,36 @@
 //!
 //! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
 
-use bitcoin::secp256k1::rand::{ distributions::Alphanumeric, thread_rng, Rng }; // 0.8
+use bitcoin::secp256k1::rand::{distributions::Alphanumeric, thread_rng, Rng}; // 0.8
 
-use std::{ collections::HashMap, fs, path::PathBuf, sync::{ Arc, RwLock }, thread, time::Duration };
+use std::{
+    collections::HashMap,
+    fs,
+    path::PathBuf,
+    sync::{Arc, RwLock},
+    thread,
+    time::Duration,
+};
 
-use bitcoin::{ Address, Amount };
+use bitcoin::{Address, Amount};
 
 use crate::{
-    maker::{ Maker, MakerBehavior },
-    taker::{ Taker, TakerBehavior },
-    utill::{ setup_logger, str_to_bitcoin_network },
+    maker::{Maker, MakerBehavior},
+    taker::{Taker, TakerBehavior},
+    utill::{setup_logger, str_to_bitcoin_network},
     wallet::RPCConfig,
 };
-use bitcoind::{ bitcoincore_rpc::{ Auth, RpcApi }, BitcoinD, Conf };
+use bitcoind::{
+    bitcoincore_rpc::{Auth, RpcApi},
+    BitcoinD, Conf,
+};
 
 fn get_random_tmp_dir() -> PathBuf {
-    let s: String = thread_rng().sample_iter(&Alphanumeric).take(8).map(char::from).collect();
+    let s: String = thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(8)
+        .map(char::from)
+        .collect();
     let path = "/tmp/teleport/tests/temp-files/".to_string() + &s;
     PathBuf::from(path)
 }
@@ -55,7 +69,7 @@ impl TestFramework {
     pub async fn init(
         bitcoind_conf: Option<Conf<'_>>,
         makers_config_map: HashMap<u16, MakerBehavior>,
-        taker_behavior: Option<TakerBehavior>
+        taker_behavior: Option<TakerBehavior>,
     ) -> (Arc<Self>, Arc<RwLock<Taker>>, Vec<Arc<Maker>>) {
         setup_logger();
 
@@ -83,12 +97,16 @@ impl TestFramework {
         // let bitcoind = BitcoinD::from_downloaded_with_conf(&conf).unwrap();
 
         // Generate initial 101 blocks
-        let mining_address = bitcoind.client
+        let mining_address = bitcoind
+            .client
             .get_new_address(None, None)
             .unwrap()
             .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
             .unwrap();
-        bitcoind.client.generate_to_address(101, &mining_address).unwrap();
+        bitcoind
+            .client
+            .generate_to_address(101, &mining_address)
+            .unwrap();
         log::info!("bitcoind initiated!!");
 
         let shutdown = Arc::new(RwLock::new(false));
@@ -104,16 +122,15 @@ impl TestFramework {
 
         // Create the Taker.
         let taker_rpc_config = rpc_config.clone();
-        let taker = Arc::new(
-            RwLock::new(
-                Taker::init(
-                    Some(&temp_dir),
-                    None,
-                    Some(taker_rpc_config),
-                    taker_behavior.unwrap_or_default()
-                ).unwrap()
+        let taker = Arc::new(RwLock::new(
+            Taker::init(
+                Some(&temp_dir),
+                None,
+                Some(taker_rpc_config),
+                taker_behavior.unwrap_or_default(),
             )
-        );
+            .unwrap(),
+        ));
 
         // Create the Makers as per given configuration map.
         let makers = makers_config_map
@@ -128,8 +145,9 @@ impl TestFramework {
                         Some(maker_id),
                         Some(maker_rpc_config),
                         Some(*port),
-                        *behavior
-                    ).unwrap()
+                        *behavior,
+                    )
+                    .unwrap(),
                 )
             })
             .collect::<Vec<_>>();
@@ -151,17 +169,23 @@ impl TestFramework {
 
     /// Generate 1 block in the backend bitcoind.
     pub fn generate_1_block(&self) {
-        let mining_address = self.bitcoind.client
+        let mining_address = self
+            .bitcoind
+            .client
             .get_new_address(None, None)
             .unwrap()
             .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
             .unwrap();
-        self.bitcoind.client.generate_to_address(1, &mining_address).unwrap();
+        self.bitcoind
+            .client
+            .generate_to_address(1, &mining_address)
+            .unwrap();
     }
 
     /// Send coins to a bitcoin address.
     pub fn send_to_address(&self, addrs: &Address, amount: Amount) {
-        self.bitcoind.client
+        self.bitcoind
+            .client
             .send_to_address(addrs, amount, None, None, None, None, None, None)
             .unwrap();
     }
@@ -186,7 +210,13 @@ impl From<&TestFramework> for RPCConfig {
         let url = value.bitcoind.rpc_url().split_at(7).1.to_string();
         let auth = Auth::CookieFile(value.bitcoind.params.cookie_file.clone());
         let network = str_to_bitcoin_network(
-            value.bitcoind.client.get_blockchain_info().unwrap().chain.as_str()
+            value
+                .bitcoind
+                .client
+                .get_blockchain_info()
+                .unwrap()
+                .chain
+                .as_str(),
         );
         Self {
             url,
