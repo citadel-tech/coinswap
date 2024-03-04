@@ -76,6 +76,13 @@ tests/
 | **`src/bin`**       | Houses deployed project binaries. |
 | **`src/protocol`**  | Contains utility functions, error handling, and messages for protocol communication. |
 
+### Setting Up Git Hooks
+
+After cloning the repository, set up the pre-commit hook by running:
+
+```bash
+ln -s ../../git_hooks/pre-commit .git/hooks/pre-commit
+```
 
 ## Build and Run
 
