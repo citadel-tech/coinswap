@@ -1,0 +1,15 @@
+#!/bin/sh
+
+# Check Rust formatting and automatically correct it
+echo "Auto-correcting code style with rustfmt..."
+cargo fmt
+
+# Check Clippy lints
+echo "Checking code quality with Clippy..."
+if ! cargo clippy --all-targets -- -D warnings; then
+    echo "Clippy issues detected."
+    echo "Please fix the Clippy issues before committing."
+    exit 1 
+fi
+
+exit 0 
