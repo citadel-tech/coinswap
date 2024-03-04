@@ -86,7 +86,16 @@ impl TestFramework {
         conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
         conf.staticdir = Some(temp_dir.join(".bitcoin"));
         log::info!("bitcoind configuration: {:?}", conf.args);
-        let bitcoind = BitcoinD::from_downloaded_with_conf(&conf).unwrap();
+
+        let key = "BITCOIND_EXE";
+        let curr_dir_path = std::env::current_dir().unwrap();
+        let bitcoind_path = curr_dir_path.join("bin").join("bitcoind");
+        std::env::set_var(key, bitcoind_path);
+        let exe_path = bitcoind::exe_path().unwrap();
+
+        log::info!("Executable path: {:?}", exe_path);
+
+        let bitcoind = BitcoinD::with_conf(exe_path, &conf).unwrap();
 
         // Generate initial 101 blocks
         let mining_address = bitcoind
