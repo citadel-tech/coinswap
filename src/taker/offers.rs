@@ -144,9 +144,8 @@ pub async fn fetch_addresses_from_dns(
     socks_port: Option<u16>,
     directory_server_address: String,
     _network: Network,
+    number_of_makers: u16,
 ) -> Result<Vec<MakerAddress>, DirectoryServerError> {
-    let max_retries = 10;
-    let mut retries = 0;
     loop {
         let result: Result<Vec<MakerAddress>, DirectoryServerError> = (async {
             let mut stream: TcpStream = Socks5Stream::connect(
@@ -186,16 +185,10 @@ pub async fn fetch_addresses_from_dns(
 
         match result {
             Ok(addresses) => {
-                if cfg!(feature = "integration-test") && addresses.len() < 2 {
+                if addresses.len() < (number_of_makers as usize) {
                     thread::sleep(Duration::from_secs(10));
                     continue;
                 }
-                if retries < max_retries {
-                    retries += 1;
-                    thread::sleep(Duration::from_secs(10));
-                    continue;
-                }
-
                 return Ok(addresses);
             }
             Err(e) => {

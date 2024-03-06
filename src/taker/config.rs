@@ -25,6 +25,7 @@ pub struct TakerConfig {
     pub port: u16,
     pub socks_port: u16,
     pub directory_server_onion_address: String,
+    pub number_of_makers: u16,
 }
 
 impl Default for TakerConfig {
@@ -43,6 +44,7 @@ impl Default for TakerConfig {
             port: 8000,
             socks_port: 19050,
             directory_server_onion_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
+            number_of_makers: 1,
         }
     }
 }
@@ -58,7 +60,7 @@ impl TakerConfig {
     ///
     /// Default data-dir for linux: `~/.coinswap/`
     /// Default config locations: `~/.coinswap/configs/taker.toml`.
-    pub fn new(config_path: Option<&PathBuf>) -> io::Result<Self> {
+    pub fn new(config_path: Option<&PathBuf>, number_of_makers: Option<u16>) -> io::Result<Self> {
         let default_config = Self::default();
 
         let default_config_path = get_config_dir().join("taker.toml");
@@ -79,6 +81,7 @@ impl TakerConfig {
         );
 
         let taker_config_section = section.get("taker_config").cloned().unwrap_or_default();
+        let taker_number_of_makers: u16 = number_of_makers.unwrap_or(1);
 
         Ok(Self {
             refund_locktime: parse_field(
@@ -142,6 +145,7 @@ impl TakerConfig {
                 .get("directory_server_onion_address")
                 .map(|s| s.to_string())
                 .unwrap_or(default_config.directory_server_onion_address),
+            number_of_makers: taker_number_of_makers,
         })
     }
 }
@@ -162,7 +166,8 @@ fn write_default_taker_config(config_path: &PathBuf) {
                         reconnect_attempt_timeout_sec = 300\n\
                         port = 8000\n\
                         socks_port = 19050\n\
-                        directory_server_onion_address = directoryhiddenserviceaddress.onion:8080\n
+                        directory_server_onion_address = directoryhiddenserviceaddress.onion:8080\n\
+                        number_of_makers =1\n
                         ",
     );
     write_default_config(config_path, config_string).unwrap();
@@ -207,7 +212,7 @@ mod tests {
         socks_port = 19050
         "#;
         let config_path = create_temp_config(contents, "valid_taker_config.toml");
-        let config = TakerConfig::new(Some(&config_path)).unwrap();
+        let config = TakerConfig::new(Some(&config_path), None).unwrap();
         remove_temp_config(&config_path);
 
         let default_config = TakerConfig::default();
@@ -221,7 +226,7 @@ mod tests {
             refund_locktime = 48
         "#;
         let config_path = create_temp_config(contents, "missing_fields_taker_config.toml");
-        let config = TakerConfig::new(Some(&config_path)).unwrap();
+        let config = TakerConfig::new(Some(&config_path), None).unwrap();
         remove_temp_config(&config_path);
 
         assert_eq!(config.refund_locktime, 48);
@@ -235,7 +240,7 @@ mod tests {
             refund_locktime = "not_a_number"
         "#;
         let config_path = create_temp_config(contents, "incorrect_type_taker_config.toml");
-        let config = TakerConfig::new(Some(&config_path)).unwrap();
+        let config = TakerConfig::new(Some(&config_path), None).unwrap();
         remove_temp_config(&config_path);
 
         assert_eq!(config, TakerConfig::default());
@@ -248,7 +253,7 @@ mod tests {
             refund_locktime = 49
         "#;
         let config_path = create_temp_config(contents, "different_data_taker_config.toml");
-        let config = TakerConfig::new(Some(&config_path)).unwrap();
+        let config = TakerConfig::new(Some(&config_path), None).unwrap();
         remove_temp_config(&config_path);
         assert_eq!(config.refund_locktime, 49);
         assert_eq!(
@@ -263,7 +268,7 @@ mod tests {
     #[test]
     fn test_missing_file() {
         let config_path = get_home_dir().join("taker.toml");
-        let config = TakerConfig::new(Some(&config_path)).unwrap();
+        let config = TakerConfig::new(Some(&config_path), None).unwrap();
         remove_temp_config(&config_path);
         assert_eq!(config, TakerConfig::default());
     }

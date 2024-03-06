@@ -184,6 +184,7 @@ fn main() -> Result<(), WalletError> {
                 Some("taker".to_string()),
                 Some(taker_rpc_config),
                 TakerBehavior::Normal,
+                1,
             )
             .unwrap();
 

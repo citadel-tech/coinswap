@@ -115,27 +115,6 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         maker_port,
         directory_onion_address
     );
-    loop {
-        match Socks5Stream::connect(format!("127.0.0.1:{}", maker_socks_port).as_str(), address)
-            .await
-        {
-            Ok(socks_stream) => {
-                let mut stream = socks_stream.into_inner();
-                let request_line = format!("POST {}\n", maker_onion_address);
-                if let Err(e) = stream.write_all(request_line.as_bytes()).await {
-                    log::error!("[{}] Failed to send request line: {}", maker_port, e);
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                    continue;
-                }
-                break;
-            }
-            Err(e) => {
-                log::error!("[{}] Error with socks connection: {}", maker_port, e);
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                continue;
-            }
-        }
-    }
 
     log::debug!("Running maker with special behavior = {:?}", maker.behavior);
     maker.wallet.write()?.refresh_offer_maxsize_cache()?;
@@ -207,6 +186,30 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                     let mut proof = maker.highest_fidelity_proof.write()?;
                     *proof = Some(highest_proof);
                 }
+            }
+        }
+    }
+
+    thread::sleep(Duration::from_secs(180));
+
+    loop {
+        match Socks5Stream::connect(format!("127.0.0.1:{}", maker_socks_port).as_str(), address)
+            .await
+        {
+            Ok(socks_stream) => {
+                let mut stream = socks_stream.into_inner();
+                let request_line = format!("POST {}\n", maker_onion_address);
+                if let Err(e) = stream.write_all(request_line.as_bytes()).await {
+                    log::error!("[{}] Failed to send request line: {}", maker_port, e);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+                break;
+            }
+            Err(e) => {
+                log::error!("[{}] Error with socks connection: {}", maker_port, e);
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                continue;
             }
         }
     }

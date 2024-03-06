@@ -164,6 +164,7 @@ impl Taker {
         wallet_file_name: Option<String>,
         rpc_config: Option<RPCConfig>,
         behavior: TakerBehavior,
+        number_of_makers: u16,
     ) -> Result<Taker, TakerError> {
         // Only allow Special Behavior in functional tests
         let behavior = if cfg!(feature = "integration-test") {
@@ -215,7 +216,8 @@ impl Taker {
         };
 
         // If config file doesn't exist, default config will be loaded.
-        let config = TakerConfig::new(Some(&config_dir.join("taker.toml")))?;
+        let config =
+            TakerConfig::new(Some(&config_dir.join("taker.toml")), Some(number_of_makers))?;
 
         wallet.sync()?;
 
@@ -1924,8 +1926,13 @@ impl Taker {
             directory_onion_addr.pop();
             directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
         }
-        let addresses_from_dns =
-            fetch_addresses_from_dns(None, directory_onion_address, network).await?;
+        let addresses_from_dns = fetch_addresses_from_dns(
+            None,
+            directory_onion_address,
+            network,
+            config.number_of_makers,
+        )
+        .await?;
         let offers = fetch_offer_from_makers(addresses_from_dns, config).await;
 
         let new_offers = offers

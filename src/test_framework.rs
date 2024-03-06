@@ -126,6 +126,7 @@ impl TestFramework {
                 None,
                 Some(taker_rpc_config),
                 taker_behavior.unwrap_or_default(),
+                makers_config_map.len() as u16,
             )
             .unwrap(),
         ));
