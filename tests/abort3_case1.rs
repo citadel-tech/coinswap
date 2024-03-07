@@ -96,7 +96,7 @@ async fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
 
     info!("Initiating coinswap protocol");
     // Start swap
-    thread::sleep(Duration::from_secs(20)); // Take a delay because Makers take time to fully setup.
+    thread::sleep(Duration::from_secs(360)); // Take a delay because Makers take time to fully setup.
     let swap_params = SwapParams {
         send_amount: 500000,
         maker_count: 2,

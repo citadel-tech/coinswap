@@ -95,7 +95,7 @@ async fn malice2_maker_broadcast_contract_prematurely() {
         .collect::<Vec<_>>();
 
     // Start swap
-    thread::sleep(Duration::from_secs(20)); // Take a delay because Makers take time to fully setup.
+    thread::sleep(Duration::from_secs(360)); // Take a delay because Makers take time to fully setup.
     let swap_params = SwapParams {
         send_amount: 500000,
         maker_count: 2,

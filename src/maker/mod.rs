@@ -190,7 +190,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         }
     }
 
-    thread::sleep(Duration::from_secs(180));
+    // thread::sleep(Duration::from_secs(180));
 
     loop {
         match Socks5Stream::connect(format!("127.0.0.1:{}", maker_socks_port).as_str(), address)

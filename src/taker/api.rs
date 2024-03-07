@@ -164,7 +164,6 @@ impl Taker {
         wallet_file_name: Option<String>,
         rpc_config: Option<RPCConfig>,
         behavior: TakerBehavior,
-        number_of_makers: u16,
     ) -> Result<Taker, TakerError> {
         // Only allow Special Behavior in functional tests
         let behavior = if cfg!(feature = "integration-test") {
@@ -216,8 +215,7 @@ impl Taker {
         };
 
         // If config file doesn't exist, default config will be loaded.
-        let config =
-            TakerConfig::new(Some(&config_dir.join("taker.toml")), Some(number_of_makers))?;
+        let config = TakerConfig::new(Some(&config_dir.join("taker.toml")))?;
 
         wallet.sync()?;
 
@@ -280,7 +278,8 @@ impl Taker {
         log::info!("Syncing Offerbook");
         let network = self.wallet.store.network;
         let config = self.config.clone();
-        self.sync_offerbook(network, &config).await?;
+        self.sync_offerbook(network, &config, swap_params.maker_count)
+            .await?;
 
         // Generate new random preimage and initiate the first hop.
         let mut preimage = [0u8; 32];
@@ -1913,6 +1912,7 @@ impl Taker {
         &mut self,
         network: Network,
         config: &TakerConfig,
+        maker_count: u16,
     ) -> Result<(), TakerError> {
         let mut directory_onion_address = config.directory_server_onion_address.clone();
         if cfg!(feature = "integration-test") {
@@ -1926,13 +1926,8 @@ impl Taker {
             directory_onion_addr.pop();
             directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
         }
-        let addresses_from_dns = fetch_addresses_from_dns(
-            None,
-            directory_onion_address,
-            network,
-            config.number_of_makers,
-        )
-        .await?;
+        let addresses_from_dns =
+            fetch_addresses_from_dns(None, directory_onion_address, network, maker_count).await?;
         let offers = fetch_offer_from_makers(addresses_from_dns, config).await;
 
         let new_offers = offers

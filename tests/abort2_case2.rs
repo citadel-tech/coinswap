@@ -83,7 +83,7 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
     test_framework.generate_1_block();
 
     // Get the original balances
-    let _org_taker_balance = taker
+    let org_taker_balance = taker
         .read()
         .unwrap()
         .get_wallet()
@@ -104,7 +104,7 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
         .collect::<Vec<_>>();
 
     // Start swap
-    thread::sleep(Duration::from_secs(20)); // Take a delay because Makers take time to fully setup.
+    thread::sleep(Duration::from_secs(360)); // Take a delay because Makers take time to fully setup.
     let swap_params = SwapParams {
         send_amount: 500000,
         maker_count: 2,
@@ -166,16 +166,16 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
 
     // Assert that Taker burned the mining fees,
     // Makers are fine.
-    let _new_taker_balance = taker
+    let new_taker_balance = taker
         .read()
         .unwrap()
         .get_wallet()
         .balance(false, false)
         .unwrap();
-    // assert_eq!(
-    //     org_taker_balance - new_taker_balance,
-    //     Amount::from_sat(4227)
-    // );
+    assert_eq!(
+        org_taker_balance - new_taker_balance,
+        Amount::from_sat(4227)
+    );
     makers
         .iter()
         .zip(org_maker_balances.iter())
