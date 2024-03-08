@@ -134,8 +134,8 @@ If you're interested in contributing to the project, explore the [open issues](h
 - [x] Switch to binary encoding for network messages.
 - [x] Switch to binary encoding for wallet data.
 - [x] Clean up and integrate fidelity bonds with maker banning.
-- [ ] Make tor detectable and connectable by default for Maker and Taker. And Tor configs to their config lists.
-- [ ] Sketch a simple `Directory Server`. Tor must. This will act as the MVP DNS server.
+- [x] Make tor detectable and connectable by default for Maker and Taker. And Tor configs to their config lists.
+- [x] Sketch a simple `Directory Server`. Tor must. This will act as the MVP DNS server.
 - [ ] Complete all unit tests in modules.
 - [ ] Achieve >80% crate-level test coverage ratio (including integration tests).
 - [ ] Turn maker server into a `maker` cli app, that spawns the server in the background, and exposes a basic maker wallet API.
