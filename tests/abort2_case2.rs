@@ -172,10 +172,17 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
         .get_wallet()
         .balance(false, false)
         .unwrap();
-    assert_eq!(
-        org_taker_balance - new_taker_balance,
-        Amount::from_sat(4227)
-    );
+
+    // Balance will not differ if the first maker drops and swap doesn't take place.
+    // The recovery will happen only if the 2nd maker drops, which has 50% probabiltiy.
+    // Only do this assert if the balance differs, implying that the swap took place.
+    if new_taker_balance != org_taker_balance {
+        assert_eq!(
+            org_taker_balance - new_taker_balance,
+            Amount::from_sat(4227)
+        );
+    }
+
     makers
         .iter()
         .zip(org_maker_balances.iter())

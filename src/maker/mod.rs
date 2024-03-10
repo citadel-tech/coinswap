@@ -110,7 +110,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     let address = directory_onion_address.as_str();
 
-    log::warn!(
+    log::info!(
         "[{}] Directory onion address : {}",
         maker_port,
         directory_onion_address
@@ -198,15 +198,27 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 let mut stream = socks_stream.into_inner();
                 let request_line = format!("POST {}\n", maker_onion_address);
                 if let Err(e) = stream.write_all(request_line.as_bytes()).await {
-                    log::error!("[{}] Failed to send request line: {}", maker_port, e);
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    log::warn!(
+                        "[{}] Failed to send maker address to directory, reattempting: {}",
+                        maker_port,
+                        e
+                    );
+                    thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
                     continue;
                 }
+                log::info!(
+                    "[{}] Sucessfuly sent maker address to directory",
+                    maker_port
+                );
                 break;
             }
             Err(e) => {
-                log::error!("[{}] Error with socks connection: {}", maker_port, e);
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                log::warn!(
+                    "[{}] Socks connection error with directory, reattempting: {}",
+                    maker_port,
+                    e
+                );
+                thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
                 continue;
             }
         }

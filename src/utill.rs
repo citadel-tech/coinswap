@@ -304,7 +304,7 @@ pub fn monitor_log_for_completion(log_dir: PathBuf, pattern: &str) -> io::Result
             for line in lines {
                 if let Ok(line) = line {
                     if line.contains(pattern) {
-                        log::warn!("Tor instance bootstrapped");
+                        log::info!("Tor instance bootstrapped");
                         return Ok(());
                     }
                 } else {
