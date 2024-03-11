@@ -76,13 +76,6 @@ tests/
 | **`src/bin`**       | Houses deployed project binaries. |
 | **`src/protocol`**  | Contains utility functions, error handling, and messages for protocol communication. |
 
-### Setting Up Git Hooks
-
-After cloning the repository, set up the pre-commit hook by running:
-
-```bash
-ln -s ../../git_hooks/pre-commit .git/hooks/pre-commit
-```
 
 ## Build and Run
 
@@ -97,7 +90,7 @@ The project includes both integration and unit tests. The integration tests simu
 To run the tests:
 
 ```console
-$ cargo test -- --nocapture
+$ cargo test --features=integration-test -- --nocapture
 ```
 
 For manual swaps using the `teleport` app, follow the instructions in [demo](/docs/demo.md).
@@ -168,6 +161,15 @@ Few directions for new contributors:
 - Reviewing [open PRs](https://github.com/utxo-teleport/teleport-transactions/pulls) are a good place to start gathering a contextual understanding of the codebase.
 
 - Search for `TODO`s in the codebase to find in-line marked code todos and smaller improvements.
+
+### Setting Up Git Hooks
+
+The repo contains pre-commit githooks to do auto-linting before commits. Set up the pre-commit hook by running:
+
+```bash
+ln -s ../../git_hooks/pre-commit .git/hooks/pre-commit
+```
+
 
 ## Community
 
