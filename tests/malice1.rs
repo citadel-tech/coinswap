@@ -4,8 +4,10 @@ use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     market::directory::{start_directory_server, DirectoryServer},
     taker::{SwapParams, TakerBehavior},
-    test_framework::*,
 };
+
+mod test_framework;
+use test_framework::*;
 
 use log::{info, warn};
 use std::{collections::BTreeSet, sync::Arc, thread, time::Duration};
