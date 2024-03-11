@@ -270,10 +270,16 @@ impl Taker {
 
         Ok(())
     }
+
     /// Perform a coinswap round with given [SwapParams]. The Taker will try to perform swap with makers
     /// in it's [OfferBook] sequentially as per the maker_count given in swap params.
     /// If [SwapParams] doesn't fit suitably with any available offers, or not enough makers
     /// respond back, the swap round will fail.
+    ///
+    /// Depending upon the failure situation, Taker will automatically try to recover from failed swaps
+    /// by executing the contract txs. If that fails too for any reason, user should manually call the [Taker::recover_from_swap].
+    ///
+    /// If that fails too. Open an issue at [our github](https://github.com/utxo-teleport/teleport-transactions/issues)
     pub async fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         log::info!("Syncing Offerbook");
         let network = self.wallet.store.network;
