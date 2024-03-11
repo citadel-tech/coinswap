@@ -2,10 +2,13 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
+    market::directory::{start_directory_server, DirectoryServer},
     taker::{SwapParams, TakerBehavior},
     test_framework::*,
 };
-use std::{collections::BTreeSet, thread, time::Duration};
+
+use log::info;
+use std::{collections::BTreeSet, sync::Arc, thread, time::Duration};
 
 /// Malice 2: Maker Broadcasts contract transactions prematurely.
 ///
@@ -19,14 +22,23 @@ async fn malice2_maker_broadcast_contract_prematurely() {
     // ---- Setup ----
 
     let makers_config_map = [
-        (6102, MakerBehavior::Normal),
-        (16102, MakerBehavior::BroadcastContractAfterSetup),
+        ((6102, 19051), MakerBehavior::Normal),
+        ((16102, 19052), MakerBehavior::BroadcastContractAfterSetup),
     ];
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
     let (test_framework, taker, makers) =
         TestFramework::init(None, makers_config_map.into(), Some(TakerBehavior::Normal)).await;
+
+    info!("Initiating Directory Server .....");
+
+    let directory_server_instance =
+        Arc::new(DirectoryServer::init(Some(8080), Some(19060)).unwrap());
+    let directory_server_instance_clone = directory_server_instance.clone();
+    thread::spawn(move || {
+        start_directory_server(directory_server_instance_clone);
+    });
 
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
@@ -45,7 +57,7 @@ async fn malice2_maker_broadcast_contract_prematurely() {
                 .get_next_external_address()
                 .unwrap();
             test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
-        })
+        });
     }
 
     // Coins for fidelity creation
@@ -83,7 +95,7 @@ async fn malice2_maker_broadcast_contract_prematurely() {
         .collect::<Vec<_>>();
 
     // Start swap
-    thread::sleep(Duration::from_secs(20)); // Take a delay because Makers take time to fully setup.
+    thread::sleep(Duration::from_secs(360)); // Take a delay because Makers take time to fully setup.
     let swap_params = SwapParams {
         send_amount: 500000,
         maker_count: 2,
@@ -112,7 +124,7 @@ async fn malice2_maker_broadcast_contract_prematurely() {
         taker_clone
             .write()
             .unwrap()
-            .send_coinswap(swap_params)
+            .do_coinswap(swap_params)
             .unwrap();
     });
 
@@ -126,6 +138,11 @@ async fn malice2_maker_broadcast_contract_prematurely() {
         .for_each(|thread| thread.join().unwrap());
 
     // ---- After Swap checks ----
+
+    let _ = directory_server_instance.shutdown();
+
+    thread::sleep(Duration::from_secs(10));
+
     let maker_balances = makers
         .iter()
         .map(|maker| {

@@ -6,17 +6,20 @@
 //! [SwapParams]: Set of parameters defining a specific Swap round.
 //! [OngoingSwapState]: Represents the State of an ongoing swap round. All swap related data are stored in this state.
 //!
-//! [Taker::send_coinswap]: The routine running all other protocol subroutines.
+//! [Taker::do_coinswap]: The routine running all other protocol subroutines.
 
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+    thread,
     time::{Duration, Instant},
 };
 
 use bip39::Mnemonic;
 use bitcoind::bitcoincore_rpc::RpcApi;
-use tokio::{net::TcpStream, select, time::sleep};
+use tokio::{select, time::sleep};
 
 use bitcoin::{
     consensus::encode::deserialize,
@@ -27,13 +30,11 @@ use bitcoin::{
     },
     BlockHash, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
+use tokio_socks::tcp::Socks5Stream;
 
 use super::{
     error::TakerError,
-    offers::{
-        get_advertised_maker_addresses, sync_offerbook_with_addresses, MakerAddress,
-        OfferAndAddress,
-    },
+    offers::{fetch_addresses_from_dns, fetch_offer_from_makers, MakerAddress, OfferAndAddress},
     routines::*,
 };
 use crate::{
@@ -235,16 +236,50 @@ impl Taker {
         &mut self.wallet
     }
 
+    #[tokio::main]
+    pub async fn do_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
+        let tor_log_dir = "/tmp/tor-rust-taker/log".to_string();
+
+        let taker_port = self.config.port;
+        let taker_socks_port = self.config.socks_port;
+
+        if Path::new(tor_log_dir.as_str()).exists() {
+            match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
+                Ok(_) => log::info!("Previous taker log file deleted successfully"),
+                Err(_) => log::error!("Error deleting taker log file "),
+            }
+        }
+
+        let handle = spawn_tor(
+            taker_socks_port,
+            taker_port,
+            "/tmp/tor-rust-taker".to_string(),
+        );
+
+        thread::sleep(Duration::from_secs(10));
+
+        if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
+            log::error!("Error monitoring taker log file: {}", e);
+        }
+
+        log::info!("Taker tor is instantiated");
+
+        self.send_coinswap(swap_params).await?;
+
+        kill_tor_handles(handle);
+
+        Ok(())
+    }
     /// Perform a coinswap round with given [SwapParams]. The Taker will try to perform swap with makers
     /// in it's [OfferBook] sequentially as per the maker_count given in swap params.
     /// If [SwapParams] doesn't fit suitably with any available offers, or not enough makers
     /// respond back, the swap round will fail.
-    #[tokio::main]
     pub async fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         log::info!("Syncing Offerbook");
         let network = self.wallet.store.network;
         let config = self.config.clone();
-        self.sync_offerbook(network, &config).await?;
+        self.sync_offerbook(network, &config, swap_params.maker_count)
+            .await?;
 
         // Generate new random preimage and initiate the first hop.
         let mut preimage = [0u8; 32];
@@ -263,11 +298,11 @@ impl Taker {
         // Iterate until `maker_count` numbers of Makers are found and initiate swap between them sequentially.
         for maker_index in 0..self.ongoing_swap_state.swap_params.maker_count {
             if maker_index == 0 {
-                self.ongoing_swap_state.taker_position = TakerPosition::FirstPeer
+                self.ongoing_swap_state.taker_position = TakerPosition::FirstPeer;
             } else if maker_index == self.ongoing_swap_state.swap_params.maker_count - 1 {
-                self.ongoing_swap_state.taker_position = TakerPosition::LastPeer
+                self.ongoing_swap_state.taker_position = TakerPosition::LastPeer;
             } else {
-                self.ongoing_swap_state.taker_position = TakerPosition::WatchOnly
+                self.ongoing_swap_state.taker_position = TakerPosition::WatchOnly;
             }
 
             // Refund lock time decreases by `refund_locktime_step` for each hop.
@@ -392,7 +427,7 @@ impl Taker {
             // Fail early if not enough good makers in the list to satisfy swap requirements.
             let untried_maker_count = self.offerbook.get_all_untried().len();
 
-            if untried_maker_count < self.ongoing_swap_state.swap_params.maker_count as usize {
+            if untried_maker_count < (self.ongoing_swap_state.swap_params.maker_count as usize) {
                 log::info!("We don't have enough makers to satisfy the swap requirements!");
                 return Err(TakerError::NotEnoughMakersInOfferBook);
             }
@@ -457,7 +492,7 @@ impl Taker {
                 .iter()
                 .zip(outgoing_swapcoins.iter_mut())
                 .for_each(|(sig, outgoing_swapcoin)| {
-                    outgoing_swapcoin.others_contract_sig = Some(*sig)
+                    outgoing_swapcoin.others_contract_sig = Some(*sig);
                 });
 
             for outgoing_swapcoin in &outgoing_swapcoins {
@@ -581,12 +616,14 @@ impl Taker {
                     if gettx.confirmations.is_none() {
                         let mempool_tx = match self.wallet.rpc.get_mempool_entry(txid) {
                             Ok(m) => m,
-                            Err(_e) => continue,
+                            Err(_e) => {
+                                continue;
+                            }
                         };
                         log::info!(
                             "Seen in mempool: {} [{:.1} sat/vbyte]",
                             txid,
-                            mempool_tx.fees.base.to_sat() as f32 / mempool_tx.vsize as f32
+                            (mempool_tx.fees.base.to_sat() as f32) / (mempool_tx.vsize as f32)
                         );
                     }
                 }
@@ -816,9 +853,15 @@ impl Taker {
         let previous_maker = self.ongoing_swap_state.peer_infos.iter().rev().nth(1);
 
         log::info!("Connecting to {}", this_maker.address);
-        let mut socket = TcpStream::connect(this_maker.address.get_tcpstream_address()).await?;
-        let (mut socket_reader, mut socket_writer) =
-            handshake_maker(&mut socket, &this_maker.address).await?;
+        let address = this_maker.address.as_str();
+        let mut socket = Socks5Stream::connect(
+            format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+            address,
+        )
+        .await?
+        .into_inner();
+        // let mut socket = TcpStream::connect(this_maker.address.get_tcpstream_address()).await?;
+        let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
         let mut next_maker = this_maker.clone();
         let (
             next_peer_multisig_pubkeys,
@@ -916,7 +959,7 @@ impl Taker {
             // If This Maker is the Sender, and we (the Taker) are the Receiver (Last Hop). We provide the Sender's Contact Tx Sigs.
             let senders_sigs = if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer
             {
-                log::info!("Taker is next peer. Signing Sender's Contract Txs",);
+                log::info!("Taker is next peer. Signing Sender's Contract Txs");
                 // Sign the seder's contract transactions with our multisig privkey.
                 next_peer_multisig_keys_or_nonces
                     .iter()
@@ -985,7 +1028,7 @@ impl Taker {
 
         // If This Maker is the Reciver, and We (The Taker) are the Sender (First Hop), Sign the Contract Tx.
         let receivers_sigs = if self.ongoing_swap_state.taker_position == TakerPosition::FirstPeer {
-            log::info!("Taker is previous peer. Signing Receivers Contract Txs",);
+            log::info!("Taker is previous peer. Signing Receivers Contract Txs");
             // Sign the receiver's contract using our [OutgoingSwapCoin].
             contract_sigs_as_recvr_sender
                 .receivers_contract_txs
@@ -1001,7 +1044,7 @@ impl Taker {
             let previous_maker_addr = &previous_maker.peer.address;
             log::info!(
                 "===> Sending SignReceiversContractTx, previous maker is {}",
-                previous_maker_addr,
+                previous_maker_addr
             );
             let previous_maker_watchonly_swapcoins =
                 if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
@@ -1081,7 +1124,7 @@ impl Taker {
         // is not equal to p2wsh(next_swap_contract_redeemscripts)
         for swapcoin in &next_swapcoins {
             self.wallet
-                .import_watchonly_redeemscript(&swapcoin.get_multisig_redeemscript())?
+                .import_watchonly_redeemscript(&swapcoin.get_multisig_redeemscript())?;
         }
         Ok(next_swapcoins)
     }
@@ -1432,8 +1475,8 @@ impl Taker {
         for (index, maker_address) in maker_addresses.iter().enumerate() {
             if index == 0 {
                 self.ongoing_swap_state.taker_position = TakerPosition::FirstPeer;
-            } else if index == (self.ongoing_swap_state.swap_params.maker_count - 1) as usize {
-                self.ongoing_swap_state.taker_position = TakerPosition::LastPeer
+            } else if index == ((self.ongoing_swap_state.swap_params.maker_count - 1) as usize) {
+                self.ongoing_swap_state.taker_position = TakerPosition::LastPeer;
             } else {
                 self.ongoing_swap_state.taker_position = TakerPosition::WatchOnly;
             }
@@ -1550,9 +1593,14 @@ impl Taker {
         receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {
         log::info!("Connecting to {}", maker_address);
-        let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
-        let (mut socket_reader, mut socket_writer) =
-            handshake_maker(&mut socket, maker_address).await?;
+        let address = maker_address.as_str();
+        let mut socket = Socks5Stream::connect(
+            format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+            address,
+        )
+        .await?
+        .into_inner();
+        let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
 
         log::info!("===> Sending HashPreimage to {}", maker_address);
         let maker_private_key_handover = send_hash_preimage_and_get_private_keys(
@@ -1580,7 +1628,7 @@ impl Taker {
             *outgoing_privkeys = None;
             reply
         };
-        if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
+        (if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
             check_and_apply_maker_private_keys(
                 &mut self.ongoing_swap_state.incoming_swapcoins,
                 &maker_private_key_handover.multisig_privkeys,
@@ -1595,7 +1643,7 @@ impl Taker {
             );
             *outgoing_privkeys = Some(maker_private_key_handover.multisig_privkeys);
             ret
-        }?;
+        })?;
         log::info!("===> Sending PrivateKeyHandover to {}", maker_address);
         send_message(
             &mut socket_writer,
@@ -1819,7 +1867,7 @@ impl Taker {
                     );
                     if let Some(confirmation) = result.confirmations {
                         // Now the transaction is confirmed in a block, check for required maturity
-                        if confirmation > *timelock as u32 {
+                        if confirmation > (*timelock as u32) {
                             log::info!(
                                 "Timelock maturity of {} blocks for Contract Tx is reached : {}",
                                 timelock,
@@ -1844,7 +1892,7 @@ impl Taker {
                 // Everything is broadcasted. Clear the connectionstate and break the loop
                 if timelock_boardcasted.len() == outgoing_infos.len() {
                     self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
-                    log::info!("All outgoing contracts reedemed. Cleared ongoing swap state",);
+                    log::info!("All outgoing contracts reedemed. Cleared ongoing swap state");
                     self.wallet.sync()?;
                     return Ok(());
                 }
@@ -1864,10 +1912,23 @@ impl Taker {
         &mut self,
         network: Network,
         config: &TakerConfig,
+        maker_count: u16,
     ) -> Result<(), TakerError> {
-        let offers =
-            sync_offerbook_with_addresses(get_advertised_maker_addresses(network).await?, config)
-                .await;
+        let mut directory_onion_address = config.directory_server_onion_address.clone();
+        if cfg!(feature = "integration-test") {
+            let directory_hs_path_str = "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
+            let directory_hs_path = PathBuf::from(directory_hs_path_str);
+            let mut directory_file = fs::File::open(directory_hs_path).map_err(TakerError::IO)?;
+            let mut directory_onion_addr = String::new();
+            directory_file
+                .read_to_string(&mut directory_onion_addr)
+                .map_err(TakerError::IO)?;
+            directory_onion_addr.pop();
+            directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
+        }
+        let addresses_from_dns =
+            fetch_addresses_from_dns(None, directory_onion_address, network, maker_count).await?;
+        let offers = fetch_offer_from_makers(addresses_from_dns, config).await;
 
         let new_offers = offers
             .into_iter()
@@ -1883,7 +1944,11 @@ impl Taker {
                 .wallet
                 .verify_fidelity_proof(&offer.offer.fidelity, offer.address.to_string())
             {
-                log::warn!("Fidelity Proof Verification failed with error: {:?}. Rejecting Offer from Maker : {}", e, offer.address.to_string());
+                log::warn!(
+                    "Fidelity Proof Verification failed with error: {:?}. Rejecting Offer from Maker : {}",
+                    e,
+                    offer.address.to_string()
+                );
             } else {
                 log::info!("Fideity Bond verification succes. Adding offer to our OfferBook");
                 self.offerbook.add_new_offer(&offer);

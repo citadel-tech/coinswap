@@ -64,16 +64,9 @@ pub struct ContractsInfo {
 }
 
 /// Performs a handshake with a Maker and returns and Reader and Writer halves.
-pub async fn handshake_maker<'a>(
-    socket: &'a mut TcpStream,
-    maker_address: &MakerAddress,
-) -> Result<(BufReader<ReadHalf<'a>>, WriteHalf<'a>), TakerError> {
-    let socket = match maker_address {
-        MakerAddress::Clearnet { address: _ } => socket,
-        MakerAddress::Tor { address } => Socks5Stream::connect_with_socket(socket, address.clone())
-            .await?
-            .into_inner(),
-    };
+pub async fn handshake_maker(
+    socket: &mut TcpStream,
+) -> Result<(BufReader<ReadHalf>, WriteHalf), TakerError> {
     let (reader, mut socket_writer) = socket.split();
     let mut socket_reader = BufReader::new(reader);
     send_message(
@@ -87,13 +80,15 @@ pub async fn handshake_maker<'a>(
     let makerhello = match read_maker_message(&mut socket_reader).await {
         Ok(MakerToTakerMessage::MakerHello(m)) => m,
         Ok(any) => {
-            return Err(ProtocolError::WrongMessage {
+            return Err((ProtocolError::WrongMessage {
                 expected: "MakerHello".to_string(),
                 received: format!("{}", any),
-            }
+            })
             .into());
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => {
+            return Err(e.into());
+        }
     };
 
     log::debug!("{:#?}", makerhello);
@@ -109,9 +104,12 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
     locktime: u16,
 ) -> Result<ContractSigsForSender, TakerError> {
     log::info!("Connecting to {}", maker_address);
-    let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
-    let (mut socket_reader, mut socket_writer) =
-        handshake_maker(&mut socket, maker_address).await?;
+    let address = maker_address.as_str();
+    // let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
+    let mut socket = Socks5Stream::connect("127.0.0.1:19050", address)
+        .await?
+        .into_inner();
+    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
     log::info!("===> Sending ReqContractSigsForSender to {}", maker_address);
 
     // TODO: Take this construction out of function body.
@@ -145,23 +143,25 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
     let contract_sigs_for_sender = match read_maker_message(&mut socket_reader).await {
         Ok(MakerToTakerMessage::RespContractSigsForSender(m)) => {
             if m.sigs.len() != outgoing_swapcoins.len() {
-                return Err(ProtocolError::WrongNumOfSigs {
+                return Err((ProtocolError::WrongNumOfSigs {
                     expected: outgoing_swapcoins.len(),
                     received: m.sigs.len(),
-                }
+                })
                 .into());
             } else {
                 m
             }
         }
         Ok(any) => {
-            return Err(ProtocolError::WrongMessage {
+            return Err((ProtocolError::WrongMessage {
                 expected: "RespContractSigsForSender".to_string(),
                 received: format!("{}", any),
-            }
+            })
             .into());
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => {
+            return Err(e.into());
+        }
     };
 
     for (sig, outgoing_swapcoin) in contract_sigs_for_sender
@@ -182,9 +182,12 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
     receivers_contract_txes: &[Transaction],
 ) -> Result<ContractSigsForRecvr, TakerError> {
     log::info!("Connecting to {}", maker_address);
-    let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
-    let (mut socket_reader, mut socket_writer) =
-        handshake_maker(&mut socket, maker_address).await?;
+    let address = maker_address.as_str();
+    let mut socket = Socks5Stream::connect("127.0.0.1:19050", address)
+        .await?
+        .into_inner();
+    // let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
+    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
 
     // TODO: Take the message construction out of function body.
     send_message(
@@ -204,23 +207,25 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
     let contract_sigs_for_recvr = match read_maker_message(&mut socket_reader).await {
         Ok(MakerToTakerMessage::RespContractSigsForRecvr(m)) => {
             if m.sigs.len() != incoming_swapcoins.len() {
-                return Err(ProtocolError::WrongNumOfSigs {
+                return Err((ProtocolError::WrongNumOfSigs {
                     expected: incoming_swapcoins.len(),
                     received: m.sigs.len(),
-                }
+                })
                 .into());
             } else {
                 m
             }
         }
         Ok(any) => {
-            return Err(ProtocolError::WrongMessage {
+            return Err((ProtocolError::WrongMessage {
                 expected: "ContractSigsForRecvr".to_string(),
                 received: format!("{}", any),
-            }
+            })
             .into());
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => {
+            return Err(e.into());
+        }
     };
 
     for (sig, swapcoin) in contract_sigs_for_recvr
@@ -284,29 +289,31 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
     let contract_sigs_as_recvr_and_sender = match read_maker_message(socket_reader).await {
         Ok(MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(m)) => {
             if m.receivers_contract_txs.len() != tmi.funding_tx_infos.len() {
-                return Err(ProtocolError::WrongNumOfContractTxs {
+                return Err((ProtocolError::WrongNumOfContractTxs {
                     expected: tmi.funding_tx_infos.len(),
                     received: m.receivers_contract_txs.len(),
-                }
+                })
                 .into());
             } else if m.senders_contract_txs_info.len() != npi.next_peer_multisig_pubkeys.len() {
-                return Err(ProtocolError::WrongNumOfContractTxs {
+                return Err((ProtocolError::WrongNumOfContractTxs {
                     expected: m.senders_contract_txs_info.len(),
                     received: npi.next_peer_multisig_pubkeys.len(),
-                }
+                })
                 .into());
             } else {
                 m
             }
         }
         Ok(any) => {
-            return Err(ProtocolError::WrongMessage {
+            return Err((ProtocolError::WrongMessage {
                 expected: "ContractSigsAsRecvrAndSender".to_string(),
                 received: format!("{}", any),
-            }
+            })
             .into());
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => {
+            return Err(e.into());
+        }
     };
 
     let funding_tx_values = tmi
@@ -338,16 +345,16 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
         this_amount,
         1, //time_in_blocks just 1 for now
     );
-    let miner_fees_paid_by_taker = FUNDING_TX_VBYTE_SIZE
+    let miner_fees_paid_by_taker = (FUNDING_TX_VBYTE_SIZE
         * npi.next_maker_fee_rate
-        * (npi.next_peer_multisig_pubkeys.len() as u64)
+        * (npi.next_peer_multisig_pubkeys.len() as u64))
         / 1000;
     let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
     if calculated_next_amount != next_amount {
-        return Err(ProtocolError::IncorrectFundingAmount {
+        return Err((ProtocolError::IncorrectFundingAmount {
             expected: calculated_next_amount,
             found: next_amount,
-        }
+        })
         .into());
     }
     log::info!(
@@ -419,23 +426,25 @@ pub(crate) async fn send_hash_preimage_and_get_private_keys(
     let privkey_handover = match read_maker_message(socket_reader).await {
         Ok(MakerToTakerMessage::RespPrivKeyHandover(m)) => {
             if m.multisig_privkeys.len() != receivers_multisig_redeemscripts.len() {
-                return Err(ProtocolError::WrongNumOfPrivkeys {
+                return Err((ProtocolError::WrongNumOfPrivkeys {
                     expected: receivers_multisig_redeemscripts.len(),
                     received: m.multisig_privkeys.len(),
-                }
+                })
                 .into());
             } else {
                 m
             }
         }
         Ok(any) => {
-            return Err(ProtocolError::WrongMessage {
+            return Err((ProtocolError::WrongMessage {
                 expected: "PrivkeyHandover".to_string(),
                 received: format!("{}", any),
-            }
+            })
             .into());
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => {
+            return Err(e.into());
+        }
     };
 
     Ok(privkey_handover)
@@ -443,8 +452,11 @@ pub(crate) async fn send_hash_preimage_and_get_private_keys(
 
 async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer, TakerError> {
     log::debug!(target: "offerbook", "Connecting to {}", addr);
-    let mut socket = TcpStream::connect(addr.get_tcpstream_address()).await?;
-    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket, addr).await?;
+    let address = addr.as_str();
+    let mut socket = Socks5Stream::connect("127.0.0.1:19050", address)
+        .await?
+        .into_inner();
+    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
 
     send_message(
         &mut socket_writer,
@@ -459,7 +471,7 @@ async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer,
             return Err(TakerError::Protocol(ProtocolError::WrongMessage {
                 expected: "RespOffer".to_string(),
                 received: format!("{}", msg),
-            }))
+            }));
         }
     };
 

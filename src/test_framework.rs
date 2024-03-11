@@ -11,9 +11,7 @@
 //! The test data also includes the backend bitcoind data-directory, which is useful for observing the blockchain states after a swap.
 //!
 //! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
-
-use bitcoin::secp256k1::rand::{distributions::Alphanumeric, thread_rng, Rng}; // 0.8
-
+use bitcoin::secp256k1::rand::{distributions::Alphanumeric, thread_rng, Rng};
 use std::{
     collections::HashMap,
     fs,
@@ -28,7 +26,7 @@ use bitcoin::{Address, Amount};
 use crate::{
     maker::{Maker, MakerBehavior},
     taker::{Taker, TakerBehavior},
-    utill::{setup_logger, str_to_bitcoin_network},
+    utill::{setup_logger, setup_mitosis, str_to_bitcoin_network},
     wallet::RPCConfig,
 };
 use bitcoind::{
@@ -68,11 +66,11 @@ impl TestFramework {
     /// If no bitcoind conf is provide a default value will be used.
     pub async fn init(
         bitcoind_conf: Option<Conf<'_>>,
-        makers_config_map: HashMap<u16, MakerBehavior>,
+        makers_config_map: HashMap<(u16, u16), MakerBehavior>,
         taker_behavior: Option<TakerBehavior>,
     ) -> (Arc<Self>, Arc<RwLock<Taker>>, Vec<Arc<Maker>>) {
+        setup_mitosis();
         setup_logger();
-
         // Setup directory
         let temp_dir = get_random_tmp_dir();
         // Remove if previously existing
@@ -109,7 +107,6 @@ impl TestFramework {
             .generate_to_address(101, &mining_address)
             .unwrap();
         log::info!("bitcoind initiated!!");
-
         let shutdown = Arc::new(RwLock::new(false));
         let test_framework = Arc::new(Self {
             bitcoind,
@@ -137,15 +134,18 @@ impl TestFramework {
         let makers = makers_config_map
             .iter()
             .map(|(port, behavior)| {
-                let maker_id = "maker".to_string() + &port.to_string(); // ex: "maker6102"
+                let maker_id = "maker".to_string() + &port.0.to_string(); // ex: "maker6102"
                 let maker_rpc_config = rpc_config.clone();
                 thread::sleep(Duration::from_secs(5)); // Sleep for some time avoid resource unavailable error.
+                let tor_port = port.0;
+                let socks_port = port.1;
                 Arc::new(
                     Maker::init(
                         Some(&temp_dir),
                         Some(maker_id),
                         Some(maker_rpc_config),
-                        Some(*port),
+                        Some(tor_port),
+                        Some(socks_port),
                         *behavior,
                     )
                     .unwrap(),
@@ -204,7 +204,6 @@ impl TestFramework {
         self.bitcoind.client.get_block_count().unwrap()
     }
 }
-
 /// Initializes a [TestFramework] given a [RPCConfig].
 impl From<&TestFramework> for RPCConfig {
     fn from(value: &TestFramework) -> Self {

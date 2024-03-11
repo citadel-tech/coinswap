@@ -10,13 +10,18 @@ pub mod error;
 mod handlers;
 
 use std::{
+    fs,
     net::Ipv4Addr,
+    path::{Path, PathBuf},
     sync::Arc,
+    thread,
     time::{Duration, Instant},
 };
 
-use bitcoin::{absolute::LockTime, Amount, Network};
+use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
+
+use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncReadExt, BufReader},
     net::{tcp::ReadHalf, TcpListener},
@@ -27,14 +32,23 @@ use tokio::{
 
 pub use api::{Maker, MakerBehavior};
 
+use std::io::Read;
+use tokio::io::AsyncWriteExt;
+use tokio_socks::tcp::Socks5Stream;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct OnionAddress {
+    port: String,
+    onion_addr: String,
+}
+
 use crate::{
     maker::{
         api::{check_for_broadcasted_contracts, check_for_idle_states, ConnectionState},
         handlers::handle_message,
     },
-    market::directory::post_maker_address_to_directory_servers,
     protocol::messages::{MakerHello, MakerToTakerMessage, TakerToMakerMessage},
-    utill::send_message,
+    utill::{kill_tor_handles, monitor_log_for_completion, send_message, spawn_tor},
     wallet::WalletError,
 };
 
@@ -44,23 +58,95 @@ use crate::maker::error::MakerError;
 /// aspects of the Maker's behavior.
 #[tokio::main]
 pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
+    let maker_port = maker.config.port;
+    let maker_socks_port = maker.config.socks_port;
+
+    let tor_log_dir = format!("/tmp/tor-rust-maker{}/log", maker_port);
+
+    if Path::new(tor_log_dir.as_str()).exists() {
+        match fs::remove_file(Path::new(tor_log_dir.as_str())) {
+            Ok(_) => log::info!(
+                "[{}] Previous Maker log file deleted successfully",
+                maker_port
+            ),
+            Err(_) => log::error!("[{}] Error deleting Maker log file", maker_port),
+        }
+    }
+
+    let handle = spawn_tor(
+        maker_socks_port,
+        maker_port,
+        format!("/tmp/tor-rust-maker{}", maker_port),
+    );
+    thread::sleep(Duration::from_secs(10));
+
+    if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
+        log::error!("[{}] Error monitoring log file: {}", maker_port, e);
+    }
+
+    log::info!("Maker tor is instantiated");
+
+    let maker_hs_path_str = format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
+    let maker_hs_path = PathBuf::from(maker_hs_path_str);
+    let mut maker_file = fs::File::open(&maker_hs_path).unwrap();
+    let mut maker_onion_addr: String = String::new();
+    maker_file.read_to_string(&mut maker_onion_addr).unwrap();
+    maker_onion_addr.pop();
+    let maker_onion_address = format!("{}:{}", maker_onion_addr, maker.config.port);
+
+    let mut directory_onion_address = maker.config.directory_server_onion_address.clone();
+
+    if cfg!(feature = "integration-test") {
+        let directory_hs_path_str = "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
+        let directory_hs_path = PathBuf::from(directory_hs_path_str);
+        let mut directory_file = fs::File::open(directory_hs_path).unwrap();
+        let mut directory_onion_addr: String = String::new();
+        directory_file
+            .read_to_string(&mut directory_onion_addr)
+            .unwrap();
+        directory_onion_addr.pop();
+        directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
+    }
+
+    let address = directory_onion_address.as_str();
+
+    log::info!(
+        "[{}] Directory onion address : {}",
+        maker_port,
+        directory_onion_address
+    );
+
     log::debug!("Running maker with special behavior = {:?}", maker.behavior);
     maker.wallet.write()?.refresh_offer_maxsize_cache()?;
 
     let network = maker.get_wallet().read()?.store.network;
+    log::info!("Network: {:?}", network);
 
-    if maker.wallet.read()?.store.network != Network::Regtest {
-        if maker.config.onion_addrs == "myhiddenserviceaddress.onion:6102" {
-            panic!("You must set config variable MAKER_ONION_ADDR in file src/maker_protocol.rs");
-        }
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.port)).await?;
+    log::info!("Listening On Port {}", maker.config.port);
+
+    let (server_loop_comms_tx, mut server_loop_comms_rx) = mpsc::channel::<MakerError>(100);
+    let mut accepting_clients = true;
+    let mut last_rpc_ping = Instant::now();
+    // let mut last_directory_servers_refresh = Instant::now();
+
+    let maker_clone_1 = maker.clone();
+    std::thread::spawn(move || {
         log::info!(
-            "Adding my address ({}) to the directory servers. . .",
-            maker.config.onion_addrs
+            "[{}] Spawning Connection status check thread",
+            maker_clone_1.config.port
         );
-        post_maker_address_to_directory_servers(network, &maker.config.onion_addrs)
-            .await
-            .expect("unable to add my address to the directory servers, is tor reachable?");
-    }
+        check_for_idle_states(maker_clone_1).unwrap();
+    });
+
+    let maker_clone_2 = maker.clone();
+    std::thread::spawn(move || {
+        log::info!(
+            "[{}] Spawning contract-watcher thread",
+            maker_clone_2.config.port
+        );
+        check_for_broadcasted_contracts(maker_clone_2).unwrap();
+    });
 
     // Get the highest value fidelity bond from the wallet.
     {
@@ -94,8 +180,8 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 }
                 Ok(i) => {
                     log::info!("[{}] Successfully created fidelity bond", maker.config.port);
-                    // FIXME: Hack to get the tests running. This should be the actual onion address.
-                    let onion_string = "localhost:".to_string() + &maker.config.port.to_string();
+
+                    let onion_string = maker_onion_address.clone();
                     let highest_proof = wallet.generate_fidelity_proof(i, onion_string)?;
                     let mut proof = maker.highest_fidelity_proof.write()?;
                     *proof = Some(highest_proof);
@@ -104,39 +190,48 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         }
     }
 
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.port)).await?;
-    log::info!("Listening On Port {}", maker.config.port);
-
-    let (server_loop_comms_tx, mut server_loop_comms_rx) = mpsc::channel::<MakerError>(100);
-    let mut accepting_clients = true;
-    let mut last_rpc_ping = Instant::now();
-    let mut last_directory_servers_refresh = Instant::now();
-
-    let maker_clone_1 = maker.clone();
-    std::thread::spawn(move || {
-        log::info!(
-            "[{}] Spawning Connection status check thread",
-            maker_clone_1.config.port
-        );
-        check_for_idle_states(maker_clone_1).unwrap();
-    });
-
-    let maker_clone_2 = maker.clone();
-    std::thread::spawn(move || {
-        log::info!(
-            "[{}] Spawning contract-watcher thread",
-            maker_clone_2.config.port
-        );
-        check_for_broadcasted_contracts(maker_clone_2).unwrap();
-    });
+    loop {
+        match Socks5Stream::connect(format!("127.0.0.1:{}", maker_socks_port).as_str(), address)
+            .await
+        {
+            Ok(socks_stream) => {
+                let mut stream = socks_stream.into_inner();
+                let request_line = format!("POST {}\n", maker_onion_address);
+                if let Err(e) = stream.write_all(request_line.as_bytes()).await {
+                    log::warn!(
+                        "[{}] Failed to send maker address to directory, reattempting: {}",
+                        maker_port,
+                        e
+                    );
+                    thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
+                    continue;
+                }
+                log::info!(
+                    "[{}] Sucessfuly sent maker address to directory",
+                    maker_port
+                );
+                break;
+            }
+            Err(e) => {
+                log::warn!(
+                    "[{}] Socks connection error with directory, reattempting: {}",
+                    maker_port,
+                    e
+                );
+                thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
+                continue;
+            }
+        }
+    }
 
     // Loop to keep checking for new connections
-    loop {
+    let result = loop {
         if *maker.shutdown.read()? {
             log::warn!("[{}] Maker is shutting down", maker.config.port);
             break Ok(());
         }
         let (mut socket, addr) = select! {
+
             new_client = listener.accept() => new_client?,
             client_err = server_loop_comms_rx.recv() => {
                 //unwrap the option here because we'll never close the mscp so it will always work
@@ -160,6 +255,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                         maker.shutdown()?;
                         // We continue, as the shutdown flag will be caught in the next iteration of the loop.
                         // In the case below.
+                        // Shutting down tor here
                         continue;
                     }
                 }
@@ -176,22 +272,6 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 accepting_clients = rpc_ping_success;
                 if !accepting_clients {
                     log::warn!("not accepting clients, rpc_ping_success={}", rpc_ping_success);
-                }
-
-                let directory_servers_refresh_interval = Duration::from_secs(
-                    maker.config.directory_servers_refresh_interval_secs
-                );
-                let network = maker.get_wallet().read()?.store.network;
-                if maker.wallet.read()?.store.network != Network::Regtest
-                        && Instant::now().saturating_duration_since(last_directory_servers_refresh)
-                        > directory_servers_refresh_interval {
-                    last_directory_servers_refresh = Instant::now();
-                    let result_expiry_time = post_maker_address_to_directory_servers(
-                        network,
-                        &maker.config.onion_addrs
-                    ).await;
-                    log::info!("Refreshing my address at the directory servers = {:?}",
-                        result_expiry_time);
                 }
                 continue;
             },
@@ -277,7 +357,11 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 }
             }
         });
-    }
+    };
+
+    kill_tor_handles(handle);
+
+    result
 }
 
 /// Reads a Taker Message.

@@ -2,12 +2,13 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
+    market::directory::{start_directory_server, DirectoryServer},
     taker::SwapParams,
     test_framework::*,
 };
 
 use log::{info, warn};
-use std::{thread, time::Duration};
+use std::{sync::Arc, thread, time::Duration};
 
 /// This test demonstrates a standard coinswap round between a Taker and 2 Makers. Nothing goes wrong
 /// and the coinswap completes successfully.
@@ -17,8 +18,8 @@ async fn test_standard_coinswap() {
 
     // 2 Makers with Normal behavior.
     let makers_config_map = [
-        (6102, MakerBehavior::Normal),
-        (16102, MakerBehavior::Normal),
+        ((6102, 19051), MakerBehavior::Normal),
+        ((16102, 19052), MakerBehavior::Normal),
     ];
 
     // Initiate test framework, Makers and a Taker with default behavior.
@@ -26,6 +27,15 @@ async fn test_standard_coinswap() {
         TestFramework::init(None, makers_config_map.into(), None).await;
 
     warn!("Running Test: Standard Coinswap Procedure");
+
+    info!("Initiating Directory Server .....");
+
+    let directory_server_instance =
+        Arc::new(DirectoryServer::init(Some(8080), Some(19060)).unwrap());
+    let directory_server_instance_clone = directory_server_instance.clone();
+    thread::spawn(move || {
+        start_directory_server(directory_server_instance_clone);
+    });
 
     info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
@@ -45,7 +55,7 @@ async fn test_standard_coinswap() {
                 .get_next_external_address()
                 .unwrap();
             test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
-        })
+        });
     }
 
     // Coins for fidelity creation
@@ -125,7 +135,7 @@ async fn test_standard_coinswap() {
         .collect::<Vec<_>>();
 
     // Start swap
-    thread::sleep(Duration::from_secs(20)); // Take a delay because Makers take time to fully setup.
+    thread::sleep(Duration::from_secs(360)); // Take a delay because Makers take time to fully setup.
     let swap_params = SwapParams {
         send_amount: 500000,
         maker_count: 2,
@@ -141,7 +151,7 @@ async fn test_standard_coinswap() {
         taker_clone
             .write()
             .unwrap()
-            .send_coinswap(swap_params)
+            .do_coinswap(swap_params)
             .unwrap();
     });
 
@@ -155,6 +165,10 @@ async fn test_standard_coinswap() {
         .for_each(|thread| thread.join().unwrap());
 
     info!("All coinswaps processed successfully. Transaction complete.");
+
+    let _ = directory_server_instance.shutdown();
+
+    thread::sleep(Duration::from_secs(10));
 
     // ---- After Swap Asserts ----
 
@@ -192,6 +206,7 @@ async fn test_standard_coinswap() {
             .unwrap()
             .balance(false, false)
             .unwrap();
+        log::info!("Lets see the amount {:?}", balance);
         assert!(balance > Amount::from_btc(0.15).unwrap());
     });
 

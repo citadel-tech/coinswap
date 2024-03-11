@@ -124,9 +124,9 @@ pub fn calculate_fidelity_value(
     let sec_in_a_year: f64 = 60.0 * 60.0 * 24.0 * 365.2425; // Gregorian calender year length
 
     let interest_rate = BOND_VALUE_INTEREST_RATE;
-    let lock_period_yr = (locktime - confirmation_time) as f64 / sec_in_a_year;
-    let locktime_yr = locktime as f64 / sec_in_a_year;
-    let currenttime_yr = current_time as f64 / sec_in_a_year;
+    let lock_period_yr = ((locktime - confirmation_time) as f64) / sec_in_a_year;
+    let locktime_yr = (locktime as f64) / sec_in_a_year;
+    let currenttime_yr = (current_time as f64) / sec_in_a_year;
 
     // TODO: This calculation can be simplified
     let exp_rt_m1 = f64::exp_m1(interest_rate * lock_period_yr);
@@ -134,7 +134,7 @@ pub fn calculate_fidelity_value(
 
     let timevalue = f64::max(0.0, f64::min(1.0, exp_rt_m1) - f64::min(1.0, exp_rtl_m1));
 
-    Amount::from_sat((value.to_sat() as f64 * timevalue).powf(BOND_VALUE_EXPONENT) as u64)
+    Amount::from_sat(((value.to_sat() as f64) * timevalue).powf(BOND_VALUE_EXPONENT) as u64)
 }
 
 /// Structure describing a Fidelity Bond.
@@ -284,7 +284,7 @@ impl Wallet {
                     (info.height, info.time as u64)
                 };
                 // Estimated locktime from block height = [current-time + (maturity-height - block-count) * 10 * 60] sec
-                tip_time + ((blocks.to_consensus_u32() - tip_height as u32) * 10 * 60) as u64
+                tip_time + (((blocks.to_consensus_u32() - (tip_height as u32)) * 10 * 60) as u64)
             }
             LockTime::Seconds(sec) => sec.to_consensus_u32() as u64,
         };
@@ -340,10 +340,10 @@ impl Wallet {
         });
 
         if total_input_amount < amount {
-            return Err(FidelityError::InsufficientFund {
+            return Err((FidelityError::InsufficientFund {
                 available: total_input_amount.to_sat(),
                 required: amount.to_sat(),
-            }
+            })
             .into());
         }
 
@@ -368,7 +368,7 @@ impl Wallet {
             tx_outs.push(TxOut {
                 value: change_amount.expect("expected").to_sat(),
                 script_pubkey: change_addrs,
-            })
+            });
         }
         let current_height = self.rpc.get_block_count()?;
         let anti_fee_snipping_locktime = LockTime::from_height(current_height as u32)?;
@@ -579,7 +579,7 @@ impl Wallet {
     /// Calculate the expiry value. This depends on the current block height.
     pub fn get_fidelity_expriy(&self) -> Result<u64, WalletError> {
         let current_height = self.rpc.get_block_count()?;
-        Ok(((current_height + 2/* safety buffer */) / 2016) + 5)
+        Ok((current_height + 2) /* safety buffer */ / 2016 + 5)
     }
 
     /// Extend the expiry of a fidelity bond. This is useful for bonds which are close to their expiry.
@@ -625,7 +625,7 @@ mod test {
                     Amount::from_sat(100000000),
                     (6.0 * YEAR) as u64,
                     0,
-                    y * YEAR as u64,
+                    y * (YEAR as u64),
                 )
                 .to_sat() as f64
             })
@@ -644,7 +644,7 @@ mod test {
                     Amount::from_sat(100000000),
                     (6.0 * YEAR) as u64,
                     0,
-                    (6 + y) * YEAR as u64,
+                    (6 + y) * (YEAR as u64),
                 )
                 .to_sat() as f64
             })
@@ -661,7 +661,7 @@ mod test {
             .map(|y| {
                 calculate_fidelity_value(
                     Amount::from_sat(100000000),
-                    (y as f64 * YEAR) as u64,
+                    ((y as f64) * YEAR) as u64,
                     0,
                     0,
                 )
@@ -683,7 +683,7 @@ mod test {
             .map(|y| {
                 calculate_fidelity_value(
                     Amount::from_sat(100000000),
-                    ((200 + y) as f64 * YEAR) as u64,
+                    (((200 + y) as f64) * YEAR) as u64,
                     0,
                     0,
                 )
@@ -732,17 +732,33 @@ mod test {
             assert_eq!(
                 fidelity_value,
                 calculate_fidelity_value(value, locktime, confirmation_time, current_time)
-            )
+            );
         }
     }
 
     #[test]
     fn test_fidleity_redeemscripts() {
-        let test_data = [(("03ffe2b8b46eb21eadc3b535e9f57054213a1775b035faba6c5b3368b3a0ab5a5c", 15000), "02983ab1752103ffe2b8b46eb21eadc3b535e9f57054213a1775b035faba6c5b3368b3a0ab5a5cac"),
-        (("031499764842691088897cff51efd85347dd3215912cbb8fb9b121b1da3b15bec8", 30000), "023075b17521031499764842691088897cff51efd85347dd3215912cbb8fb9b121b1da3b15bec8ac"),
-        (("022714334f189db14fabd3dd893bbb913b8c3ddff245f7094cdc0b24c2fabb3570", 45000), "03c8af00b17521022714334f189db14fabd3dd893bbb913b8c3ddff245f7094cdc0b24c2fabb3570ac"),
-        (("02145a1d2bd118edcb3fe85495192d44e1d09f75ab4f0fe98269f61ff672860dae", 60000), "0360ea00b1752102145a1d2bd118edcb3fe85495192d44e1d09f75ab4f0fe98269f61ff672860daeac"),]
-        .map(|((pk, lt), script)| ((PublicKey::from_str(pk).unwrap(), LockTime::from_height(lt).unwrap()), ScriptBuf::from_hex(script).unwrap()));
+        let test_data = [
+            (
+                ("03ffe2b8b46eb21eadc3b535e9f57054213a1775b035faba6c5b3368b3a0ab5a5c", 15000),
+                "02983ab1752103ffe2b8b46eb21eadc3b535e9f57054213a1775b035faba6c5b3368b3a0ab5a5cac",
+            ),
+            (
+                ("031499764842691088897cff51efd85347dd3215912cbb8fb9b121b1da3b15bec8", 30000),
+                "023075b17521031499764842691088897cff51efd85347dd3215912cbb8fb9b121b1da3b15bec8ac",
+            ),
+            (
+                ("022714334f189db14fabd3dd893bbb913b8c3ddff245f7094cdc0b24c2fabb3570", 45000),
+                "03c8af00b17521022714334f189db14fabd3dd893bbb913b8c3ddff245f7094cdc0b24c2fabb3570ac",
+            ),
+            (
+                ("02145a1d2bd118edcb3fe85495192d44e1d09f75ab4f0fe98269f61ff672860dae", 60000),
+                "0360ea00b1752102145a1d2bd118edcb3fe85495192d44e1d09f75ab4f0fe98269f61ff672860daeac",
+            ),
+        ].map(|((pk, lt), script)| (
+            (PublicKey::from_str(pk).unwrap(), LockTime::from_height(lt).unwrap()),
+            ScriptBuf::from_hex(script).unwrap(),
+        ));
 
         for ((pk, lt), script) in test_data {
             assert_eq!(script, fidelity_redeemscript(&lt, &pk));

@@ -31,6 +31,10 @@ pub struct MakerConfig {
     pub min_contract_reaction_time: u16,
     /// Minimum coinswap amount size in sats
     pub min_size: u64,
+    /// Socks port
+    pub socks_port: u16,
+    /// Directory server onion address
+    pub directory_server_onion_address: String,
     /// Fidelity Bond Value
     pub fidelity_value: u64,
     /// Fidelity Bond timelock in Block heights.
@@ -52,6 +56,8 @@ impl Default for MakerConfig {
             required_confirms: 1,
             min_contract_reaction_time: 48,
             min_size: 10_000,
+            socks_port: 19050,
+            directory_server_onion_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
             fidelity_value: 5_000_000, // 5 million  sats
             fidelity_timelock: 26_000, // Approx 6 months of blocks
         }
@@ -148,6 +154,15 @@ impl MakerConfig {
                 default_config.min_size,
             )
             .unwrap_or(default_config.min_size),
+            socks_port: parse_field(
+                maker_config_section.get("socks_port"),
+                default_config.socks_port,
+            )
+            .unwrap_or(default_config.socks_port),
+            directory_server_onion_address: maker_config_section
+                .get("directory_server_onion_address")
+                .map(|s| s.to_string())
+                .unwrap_or(default_config.directory_server_onion_address),
             fidelity_value: parse_field(
                 maker_config_section.get("fidelity_value"),
                 default_config.fidelity_value,
@@ -177,7 +192,10 @@ fn write_default_maker_config(config_path: &PathBuf) {
             time_relative_fee_ppb = 100000\n\
             required_confirms = 1\n\
             min_contract_reaction_time = 48\n\
-            min_size = 10000\n",
+            min_size = 10000\n\
+            socks_port = 19050\n\
+            directory_server_onion_address = directoryhiddenserviceaddress.onion:8080\n
+            ",
     );
 
     write_default_config(config_path, config_string).unwrap();
@@ -220,6 +238,7 @@ mod tests {
             required_confirms = 1
             min_contract_reaction_time = 48
             min_size = 10000
+            socks_port = 19050
         "#;
         let config_path = create_temp_config(contents, "valid_maker_config.toml");
         let config = MakerConfig::new(Some(&config_path)).unwrap();

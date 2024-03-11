@@ -61,8 +61,8 @@ pub fn calculate_coinswap_fee(
     time_in_blocks: u64,
 ) -> u64 {
     absolute_fee_sat
-        + (total_funding_amount * amount_relative_fee_ppb / 1_000_000_000)
-        + (time_in_blocks * time_relative_fee_ppb / 1_000_000_000)
+        + (total_funding_amount * amount_relative_fee_ppb) / 1_000_000_000
+        + (time_in_blocks * time_relative_fee_ppb) / 1_000_000_000
 }
 
 /// Apply two signatures to a 2-of-2 multisig spend.
@@ -89,11 +89,11 @@ pub fn apply_two_signatures_to_2of2_multisig_spend(
 /// Create a multisig redeem script for a 2-of-2 setup.
 pub fn create_multisig_redeemscript(key1: &PublicKey, key2: &PublicKey) -> ScriptBuf {
     let builder = Builder::new().push_opcode(all::OP_PUSHNUM_2);
-    if key1.inner.serialize()[..] < key2.inner.serialize()[..] {
+    (if key1.inner.serialize()[..] < key2.inner.serialize()[..] {
         builder.push_key(key1).push_key(key2)
     } else {
         builder.push_key(key2).push_key(key1)
-    }
+    })
     .push_opcode(all::OP_PUSHNUM_2)
     .push_opcode(all::OP_CHECKMULTISIG)
     .into_script()
@@ -624,7 +624,10 @@ mod test {
         let multisig = create_multisig_redeemscript(&pub1, &pub2);
 
         // Check script generation works
-        assert_eq!(format!("{:x}", multisig), "5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae");
+        assert_eq!(
+            format!("{:x}", multisig),
+            "5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae"
+        );
 
         // Check pubkey fetching from the script works
         let (fetched_pub1, fetched_pub2) =
@@ -637,8 +640,16 @@ mod test {
     #[test]
     fn test_find_funding_output() {
         // Create a 20f2 multi + another random spk
-        let multisig_redeemscript = ScriptBuf::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
-        let another_script = ScriptBuf::from(Vec::from_hex("020000000156944c5d3f98413ef45cf54545538103cc9f298e0575820ad3591376e2e0f65d2a0000000000000000014871000000000000220020dad1b452caf4a0f26aecf1cc43aaae9b903a043c34f75ad9a36c86317b22236800000000").unwrap());
+        let multisig_redeemscript = ScriptBuf::from(
+            Vec::from_hex(
+                "5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae"
+            ).unwrap()
+        );
+        let another_script = ScriptBuf::from(
+            Vec::from_hex(
+                "020000000156944c5d3f98413ef45cf54545538103cc9f298e0575820ad3591376e2e0f65d2a0000000000000000014871000000000000220020dad1b452caf4a0f26aecf1cc43aaae9b903a043c34f75ad9a36c86317b22236800000000"
+            ).unwrap()
+        );
 
         let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript);
         let another_script_pubkey = redeemscript_to_scriptpubkey(&another_script);
@@ -683,10 +694,13 @@ mod test {
 
     #[test]
     fn test_contract_tx_miscellaneous() {
-        let contract_script = ScriptBuf::from(Vec::from_hex(
-            "827ca91414cdf8fe0b7b2db2bd976f27fb6f3cd5f9228633876321038cc778b555c3fe2b01d1b550a07\
+        let contract_script = ScriptBuf::from(
+            Vec::from_hex(
+                "827ca91414cdf8fe0b7b2db2bd976f27fb6f3cd5f9228633876321038cc778b555c3fe2b01d1b550a07\
             d26e38c026c4c4e1dee2a41f0431283230ee0012051672102b6b9ab72d42fb625a24598a792fa5346aa\
-            64d728b446f7560f4ce1c29378b22c00012868b2757b88ac").unwrap());
+            64d728b446f7560f4ce1c29378b22c00012868b2757b88ac"
+            ).unwrap()
+        );
 
         // Contract transaction spending utxo, randomly choosen
         let spending_utxo = OutPoint::from_str(
@@ -740,7 +754,7 @@ mod test {
         )
         .unwrap_err()
         {
-            assert_eq!(message, "not spending the funding outpoint")
+            assert_eq!(message, "not spending the funding outpoint");
         } else {
             panic!();
         }
@@ -768,7 +782,11 @@ mod test {
 
         // Change contract transaction to pay into wrong output
         let mut contract_tx_err2 = contract_tx;
-        let multisig_redeemscript = ScriptBuf::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
+        let multisig_redeemscript = ScriptBuf::from(
+            Vec::from_hex(
+                "5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae"
+            ).unwrap()
+        );
         let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript);
         contract_tx_err2.output[0] = TxOut {
             script_pubkey: multi_script_pubkey,
@@ -823,7 +841,11 @@ mod test {
         // Create the contract transaction spending the funding outpoint
         let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
 
-        let contract_script = ScriptBuf::from(Vec::from_hex("827ca914cdccf6695323f22d061a58c398deba38bba47148876321032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af0120516721039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef000812dabb690fe0fd3768b2757b88ac").unwrap());
+        let contract_script = ScriptBuf::from(
+            Vec::from_hex(
+                "827ca914cdccf6695323f22d061a58c398deba38bba47148876321032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af0120516721039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef000812dabb690fe0fd3768b2757b88ac"
+            ).unwrap()
+        );
 
         let contract_tx = create_receivers_contract_tx(
             funding_outpoint,
@@ -1017,7 +1039,11 @@ mod test {
     }
     #[test]
     fn test_check_reedemscript_is_multisig() {
-        let initial_redeem_script = ScriptBuf::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
+        let initial_redeem_script = ScriptBuf::from(
+            Vec::from_hex(
+                "5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae"
+            ).unwrap()
+        );
         let valid_multisig_script = initial_redeem_script.as_script();
 
         assert!(check_reedemscript_is_multisig(valid_multisig_script).is_ok());
@@ -1060,8 +1086,8 @@ mod test {
         let time_in_blocks = 100;
 
         let expected_fee = 1000
-            + (1_000_000_000 * 500_000_000 / 1_000_000_000)
-            + (100 * 200_000_000 / 1_000_000_000);
+            + (1_000_000_000 * 500_000_000) / 1_000_000_000
+            + (100 * 200_000_000) / 1_000_000_000;
 
         let calculated_fee = calculate_coinswap_fee(
             absolute_fee_sat,
@@ -1163,8 +1189,16 @@ mod test {
         let pub_1 = priv_1.public_key(&secp);
         let pub_2 = priv_2.public_key(&secp);
         // Create a 20f2 multi + another random spk
-        let multisig_redeemscript = ScriptBuf::from(Vec::from_hex("5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae").unwrap());
-        let another_script = ScriptBuf::from(Vec::from_hex("020000000156944c5d3f98413ef45cf54545538103cc9f298e0575820ad3591376e2e0f65d2a0000000000000000014871000000000000220020dad1b452caf4a0f26aecf1cc43aaae9b903a043c34f75ad9a36c86317b22236800000000").unwrap());
+        let multisig_redeemscript = ScriptBuf::from(
+            Vec::from_hex(
+                "5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae"
+            ).unwrap()
+        );
+        let another_script = ScriptBuf::from(
+            Vec::from_hex(
+                "020000000156944c5d3f98413ef45cf54545538103cc9f298e0575820ad3591376e2e0f65d2a0000000000000000014871000000000000220020dad1b452caf4a0f26aecf1cc43aaae9b903a043c34f75ad9a36c86317b22236800000000"
+            ).unwrap()
+        );
 
         let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript);
         let another_script_pubkey = redeemscript_to_scriptpubkey(&another_script);

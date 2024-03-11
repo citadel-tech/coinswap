@@ -12,11 +12,15 @@ use bitcoin::{
     },
     Network, PublicKey, ScriptBuf,
 };
+use libtor::{HiddenServiceVersion, LogDestination, LogLevel, Tor, TorAddress, TorFlag};
+use mitosis::JoinHandle;
 
 use std::{
     collections::HashMap,
     fs::{self, File},
     io::{self, BufRead, Write},
+    thread,
+    time::Duration,
 };
 
 use serde_json::Value;
@@ -81,9 +85,13 @@ pub fn setup_logger() {
                 .default_filter_or("coinswap=info")
                 .default_write_style_or("always"),
         )
-        .is_test(true)
+        // .is_test(true)
         .init();
     });
+}
+
+pub fn setup_mitosis() {
+    mitosis::init();
 }
 
 /// Can send both Taker and Maker messages.
@@ -220,8 +228,8 @@ pub fn to_hex(bytes: &[u8]) -> String {
     let mut hex_string = String::new();
 
     for &byte in bytes {
-        let high_nibble = (byte >> 4) & 0xF;
-        let low_nibble = byte & 0xF;
+        let high_nibble = (byte >> 4) & 0xf;
+        let low_nibble = byte & 0xf;
         hex_string.push(hex_chars[high_nibble as usize]);
         hex_string.push(hex_chars[low_nibble as usize]);
     }
@@ -242,7 +250,7 @@ pub fn parse_toml(file_path: &PathBuf) -> io::Result<HashMap<String, HashMap<Str
         if line.trim().starts_with('[') {
             current_section = line
                 .trim()
-                .trim_matches(|p| p == '[' || p == ']')
+                .trim_matches(|p| (p == '[' || p == ']'))
                 .to_string();
             sections.insert(current_section.clone(), HashMap::new());
         } else if line.trim().starts_with('#') {
@@ -280,6 +288,70 @@ pub fn write_default_config(path: &PathBuf, toml_data: String) -> std::io::Resul
     Ok(())
 }
 
+/// Function to check if tor log contains a pattern
+pub fn monitor_log_for_completion(log_dir: PathBuf, pattern: &str) -> io::Result<()> {
+    let mut last_size = 0;
+
+    loop {
+        let file = fs::File::open(&log_dir)?;
+        let metadata = file.metadata()?;
+        let current_size = metadata.len();
+
+        if current_size != last_size {
+            let reader = io::BufReader::new(file);
+            let lines = reader.lines();
+
+            for line in lines {
+                if let Ok(line) = line {
+                    if line.contains(pattern) {
+                        log::info!("Tor instance bootstrapped");
+                        return Ok(());
+                    }
+                } else {
+                    return Err(io::Error::new(io::ErrorKind::Other, "Error reading line"));
+                }
+            }
+
+            last_size = current_size;
+        }
+        thread::sleep(Duration::from_secs(3));
+    }
+}
+
+pub fn spawn_tor(socks_port: u16, port: u16, base_dir: String) -> JoinHandle<()> {
+    let handle = mitosis::spawn(
+        (socks_port, port, base_dir),
+        |(socks_port, port, base_dir)| {
+            let hs_string = format!("{}/hs-dir/", base_dir);
+            let data_dir = format!("{}/", base_dir);
+            let log_dir = format!("{}/log", base_dir);
+            let _handler = Tor::new()
+                .flag(TorFlag::DataDirectory(data_dir))
+                .flag(TorFlag::LogTo(
+                    LogLevel::Notice,
+                    LogDestination::File(log_dir),
+                ))
+                .flag(TorFlag::SocksPort(socks_port))
+                .flag(TorFlag::HiddenServiceDir(hs_string))
+                .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
+                .flag(TorFlag::HiddenServicePort(
+                    TorAddress::Port(port),
+                    None.into(),
+                ))
+                .start();
+        },
+    );
+
+    handle
+}
+
+pub fn kill_tor_handles(handle: JoinHandle<()>) {
+    match handle.kill() {
+        Ok(_) => log::info!("Tor instance terminated successfully"),
+        Err(_) => log::error!("Error occurred while terminating tor instance"),
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -309,7 +381,7 @@ mod tests {
             match network {
                 Ok(net) => assert_eq!(net, expected_network),
                 Err(_) => {
-                    assert_eq!(Network::Bitcoin, expected_network)
+                    assert_eq!(Network::Bitcoin, expected_network);
                 }
             }
         }
@@ -353,21 +425,21 @@ mod tests {
     fn test_to_hex() {
         let mut txid_test_vector = [
             vec![
-                0x5A, 0x4E, 0xBF, 0x66, 0x82, 0x2B, 0x0B, 0x2D, 0x56, 0xBD, 0x9D, 0xC6, 0x4E, 0xCE,
-                0x0B, 0xC3, 0x8E, 0xE7, 0x84, 0x4A, 0x23, 0xFF, 0x1D, 0x73, 0x20, 0xA8, 0x8C, 0x5F,
-                0xDB, 0x2A, 0xD3, 0xE2,
+                0x5a, 0x4e, 0xbf, 0x66, 0x82, 0x2b, 0x0b, 0x2d, 0x56, 0xbd, 0x9d, 0xc6, 0x4e, 0xce,
+                0x0b, 0xc3, 0x8e, 0xe7, 0x84, 0x4a, 0x23, 0xff, 0x1d, 0x73, 0x20, 0xa8, 0x8c, 0x5f,
+                0xdb, 0x2a, 0xd3, 0xe2,
             ],
             vec![
-                0x6D, 0x69, 0x37, 0x2E, 0x3E, 0x59, 0x28, 0xA7, 0x3C, 0x98, 0x38, 0x18, 0xBD, 0x19,
-                0x27, 0xE1, 0x90, 0x8F, 0x51, 0xA6, 0xC2, 0xCD, 0x32, 0x58, 0x98, 0xB3, 0xB4, 0x16,
-                0x90, 0xD4, 0xFA, 0x7B,
+                0x6d, 0x69, 0x37, 0x2e, 0x3e, 0x59, 0x28, 0xa7, 0x3c, 0x98, 0x38, 0x18, 0xbd, 0x19,
+                0x27, 0xe1, 0x90, 0x8f, 0x51, 0xa6, 0xc2, 0xcd, 0x32, 0x58, 0x98, 0xb3, 0xb4, 0x16,
+                0x90, 0xd4, 0xfa, 0x7b,
             ],
         ];
         for i in txid_test_vector.iter_mut() {
             let txid1 = Txid::from_str(to_hex(i).as_str()).unwrap();
             i.reverse();
             let txid2 = Txid::from_slice(i).unwrap();
-            assert_eq!(txid1, txid2)
+            assert_eq!(txid1, txid2);
         }
     }
     #[test]
@@ -424,11 +496,21 @@ mod tests {
     }
     #[test]
     fn test_hd_path_from_descriptor() {
-        assert_eq!(get_hd_path_from_descriptor("wpkh([a945b5ca/1/1]020b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9"), Some(("a945b5ca", 1, 1)));
+        assert_eq!(
+            get_hd_path_from_descriptor(
+                "wpkh([a945b5ca/1/1]020b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9"
+            ),
+            Some(("a945b5ca", 1, 1))
+        );
     }
     #[test]
     fn test_hd_path_from_descriptor_gets_none() {
-        assert_eq!(get_hd_path_from_descriptor("wsh(multi(2,[f67b69a3]0245ddf535f08a04fd86d794b76f8e3949f27f7ae039b641bf277c6a4552b4c387,[dbcd3c6e]030f781e9d2a6d3a823cee56be2d062ed4269f5a6294b20cb8817eb540c641d9a2))#8f70vn2q"), None);
+        assert_eq!(
+            get_hd_path_from_descriptor(
+                "wsh(multi(2,[f67b69a3]0245ddf535f08a04fd86d794b76f8e3949f27f7ae039b641bf277c6a4552b4c387,[dbcd3c6e]030f781e9d2a6d3a823cee56be2d062ed4269f5a6294b20cb8817eb540c641d9a2))#8f70vn2q"
+            ),
+            None
+        );
     }
 
     #[test]
