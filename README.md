@@ -77,23 +77,34 @@ tests/
 | **`src/protocol`**  | Contains utility functions, error handling, and messages for protocol communication. |
 
 
-## Build and Run
+## Build and Test
 
-The project follows the standard Rust build workflow and generates a CLI app named `teleport`.
+The repo contains a fully automated integration testing framework on Bitcoin Regtest. The bitcoin binary used for testing is
+included [here](./bin/bitcoind).
 
-```console
-$ cargo build
-```
+> [!TIP]
+> Delete the bitcoind binary to reduce repo size, if you don't intend to run the integration tests.
 
-The project includes both integration and unit tests. The integration tests simulates various edge cases of the coinswap protocol.
+The integration tests are the best way to look at a working demonstration of the coinswap protocol, involving multiple makers,
+a taker and the directory server. All working over Tor by default. No pre-requisite setup is needed, other than rust and cargo.
 
-To run the tests:
+Run all the integration tests by running:
 
 ```console
 $ cargo test --features=integration-test -- --nocapture
 ```
 
-For manual swaps using the `teleport` app, follow the instructions in [demo](/docs/demo.md).
+Each test in the [tests](./tests/) folder covers a different edge-case situation and demonstrates how the taker and makers recover
+from various types of swap failures.
+
+keep an eye on the logs, that's where all the actions are happening.
+
+Play through a single test case, for example, `standard_swap`,  by running:
+
+```console
+$ cargo test --features=integration-test --tests test_standard_coinswap -- --nocapture
+```
+The individual test names can be found in the test files.
 
 For in-depth developer documentation on protocol workflow and implementation, consult the [dev book](/docs/dev-book.md).
 
