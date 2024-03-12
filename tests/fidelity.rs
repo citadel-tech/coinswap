@@ -3,9 +3,12 @@ use bitcoin::{absolute::LockTime, Amount};
 use coinswap::{
     maker::{error::MakerError, start_maker_server, MakerBehavior},
     market::directory::{start_directory_server, DirectoryServer},
-    test_framework::TestFramework,
     wallet::{FidelityError, WalletError},
 };
+
+mod test_framework;
+use test_framework::*;
+
 use log::info;
 use std::{sync::Arc, thread, time::Duration};
 

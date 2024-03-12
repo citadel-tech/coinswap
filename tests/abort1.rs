@@ -4,11 +4,12 @@ use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     market::directory::{start_directory_server, DirectoryServer},
     taker::{SwapParams, TakerBehavior},
-    test_framework::*,
 };
 
+mod test_framework;
 use log::{info, warn};
 use std::{sync::Arc, thread, time::Duration};
+use test_framework::*;
 
 /// Abort 1: TAKER Drops After Full Setup.
 /// This test demonstrates the situation where the Taker drops connection after broadcasting all the

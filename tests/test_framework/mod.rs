@@ -23,15 +23,15 @@ use std::{
 
 use bitcoin::{Address, Amount};
 
-use crate::{
+use bitcoind::{
+    bitcoincore_rpc::{Auth, RpcApi},
+    BitcoinD, Conf,
+};
+use coinswap::{
     maker::{Maker, MakerBehavior},
     taker::{Taker, TakerBehavior},
     utill::{setup_logger, setup_mitosis, str_to_bitcoin_network},
     wallet::RPCConfig,
-};
-use bitcoind::{
-    bitcoincore_rpc::{Auth, RpcApi},
-    BitcoinD, Conf,
 };
 
 fn get_random_tmp_dir() -> PathBuf {

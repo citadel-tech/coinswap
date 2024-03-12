@@ -3,7 +3,7 @@
 <h1><img alt="/logo" src="https://raw.githubusercontent.com/utxo-teleport/teleport-transactions/master/assets/logo.png" width="25" style="margin:-4px 4px" />Teleport Transactions</h1>
 
 <p>
-    A Taker library with minimal API for performing coinswaps. A Maker binary with minimal config to deploy swap-service demons.
+    Functioning, minimal-viable binaries and libraries to perform a trustless, p2p <a href="https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964">Maxwell-Belcher Coinswap Protocol</a>.
   </p>
 
 <p>
@@ -22,15 +22,15 @@
   </p>
 </div>
 
-> \[!WARNING\]
+> [!WARNING]
 > This library is currently under beta development and at an experimental stage. There are known and unknown bugs. Mainnet use is strictly NOT recommended.
 
 ## Table of Contents
 
 - [Table of Contents](#table-of-contents)
 - [About](#about)
+- [Build and Test](#build-and-test)
 - [Architecture](#architecture)
-- [Build and Run](#build-and-run)
 - [Project Status](#project-status)
 - [Roadmap](#roadmap)
   - [V 0.1.0](#v-010)
@@ -46,6 +46,37 @@ Teleport Transactions is a rust implementation of a variant of atomic-swap proto
 * [Developer's resources](/docs/dev-book.md)
 * [Run demo](/docs/demo.md)
 
+## Build and Test
+
+The repo contains a fully automated integration testing framework on Bitcoin Regtest. The bitcoin binary used for testing is
+included [here](./bin/bitcoind).
+
+> [!TIP]
+> Delete the bitcoind binary to reduce repo size, if you don't intend to run the integration tests.
+
+The integration tests are the best way to look at a working demonstration of the coinswap protocol, involving multiple makers,
+a taker and the directory server. All working over Tor by default. No pre-requisite setup is needed, other than rust and cargo.
+
+Run all the integration tests by running:
+
+```console
+$ cargo test --features=integration-test -- --nocapture
+```
+
+Each test in the [tests](./tests/) folder covers a different edge-case situation and demonstrates how the taker and makers recover
+from various types of swap failures.
+
+keep an eye on the logs, that's where all the actions are happening.
+
+Play through a single test case, for example, `standard_swap`,  by running:
+
+```console
+$ cargo test --features=integration-test --tests test_standard_coinswap -- --nocapture
+```
+The individual test names can be found in the test files.
+
+For in-depth developer documentation on the coinswap protocol and implementation, consult the [dev book](/docs/dev-book.md).
+
 ## Architecture
 
 The project is divided into distinct modules, each focused on specific functionalities.
@@ -57,58 +88,18 @@ src/
 ├─ maker/
 ├─ market/
 ├─ protocol/
-├─ scripts/
 ├─ taker/
-├─ wallet/
-├─ watchtower/
 tests/
 ```
 | Directory           | Description |
 |---------------------|-------------|
 | **`doc`**           | Contains all the project-related docs. The [dev-book](./docs/dev-book.md) includes major developer salient points and the [demo doc](./docs/demo.md) describes how to run the `teleport` binary and perform a swap in regtest.|
-| **`tests`**         | Contains integration tests. Describes behavior of various abort/malice cases.|
 | **`src/taker`**     | Taker module houses its core logic in `src/taker/api.rs` and handles both Taker-related behaviors and most of the protocol-related logic. |
 | **`src/maker`**     | Encompasses Maker-specific logic and plays a relatively passive role compared to Taker. |
 | **`src/wallet`**    | Manages wallet-related operations, including storage and blockchain interaction. |
 | **`src/market`**    | Handles market-related logic, where Makers post their offers. |
-| **`src/watchtower`**| Provides a Taker-offloadable watchtower implementation for monitoring contract transactions. |
-| **`src/scripts`**   | Offers simple scripts to utilize library APIs in the `teleport` app. |
-| **`src/bin`**       | Houses deployed project binaries. |
 | **`src/protocol`**  | Contains utility functions, error handling, and messages for protocol communication. |
-
-### Setting Up Git Hooks
-
-After cloning the repository, set up the pre-commit hook by running:
-
-```bash
-ln -s ../../git_hooks/pre-commit .git/hooks/pre-commit
-```
-
-## Build and Run
-
-The project follows the standard Rust build workflow and generates a CLI app named `teleport`.
-
-```console
-$ cargo build
-```
-
-The project includes both integration and unit tests. The integration tests simulates various edge cases of the coinswap protocol.
-
-To run the tests:
-
-```console
-$ cargo test -- --nocapture
-```
-
-For manual swaps using the `teleport` app, follow the instructions in [demo](/docs/demo.md).
-
-For in-depth developer documentation on protocol workflow and implementation, consult the [dev book](/docs/dev-book.md).
-
-## Project Status
-
-The project is currently in a pre-alpha stage, intended for demonstration and prototyping. The protocol has various hard-coded configuration variables and known/unknown bugs. Basic swap protocol functionality works on `regtest` and `signet` networks, but it's not recommended for `mainnet` use.
-
-If you're interested in contributing to the project, explore the [open issues](https://github.com/utxo-teleport/teleport-transactions/issues) and submit a PR.
+| **`tests`**         | Contains integration tests. Describes behavior of various abort/malice cases.|
 
 ## Roadmap
 
@@ -168,6 +159,15 @@ Few directions for new contributors:
 - Reviewing [open PRs](https://github.com/utxo-teleport/teleport-transactions/pulls) are a good place to start gathering a contextual understanding of the codebase.
 
 - Search for `TODO`s in the codebase to find in-line marked code todos and smaller improvements.
+
+### Setting Up Git Hooks
+
+The repo contains pre-commit githooks to do auto-linting before commits. Set up the pre-commit hook by running:
+
+```bash
+ln -s ../../git_hooks/pre-commit .git/hooks/pre-commit
+```
+
 
 ## Community
 
