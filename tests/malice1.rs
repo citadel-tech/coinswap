@@ -80,17 +80,19 @@ async fn malice1_taker_broadcast_contract_prematurely() {
     // confirm balances
     test_framework.generate_1_block();
 
+    let mut all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
+
     let org_take_balance = taker
         .read()
         .unwrap()
         .get_wallet()
-        .balance_descriptor_utxo()
+        .balance_descriptor_utxo(Some(&all_utxos))
         .unwrap()
         + taker
             .read()
             .unwrap()
             .get_wallet()
-            .balance_swap_coins()
+            .balance_swap_coins(Some(&all_utxos))
             .unwrap();
 
     // ---- Start Servers and attempt Swap ----
@@ -123,17 +125,18 @@ async fn malice1_taker_broadcast_contract_prematurely() {
     let org_maker_balances = makers
         .iter()
         .map(|maker| {
+            all_utxos = maker.get_wallet().read().unwrap().get_all_utxo().unwrap();
             maker
                 .get_wallet()
                 .read()
                 .unwrap()
-                .balance_descriptor_utxo()
+                .balance_descriptor_utxo(Some(&all_utxos))
                 .unwrap()
                 + maker
                     .get_wallet()
                     .read()
                     .unwrap()
-                    .balance_swap_coins()
+                    .balance_swap_coins(Some(&all_utxos))
                     .unwrap()
         })
         .collect::<BTreeSet<_>>();
@@ -166,32 +169,35 @@ async fn malice1_taker_broadcast_contract_prematurely() {
     let maker_balances = makers
         .iter()
         .map(|maker| {
+            all_utxos = maker.get_wallet().read().unwrap().get_all_utxo().unwrap();
             maker
                 .get_wallet()
                 .read()
                 .unwrap()
-                .balance_descriptor_utxo()
+                .balance_descriptor_utxo(Some(&all_utxos))
                 .unwrap()
                 + maker
                     .get_wallet()
                     .read()
                     .unwrap()
-                    .balance_swap_coins()
+                    .balance_swap_coins(Some(&all_utxos))
                     .unwrap()
         })
         .collect::<BTreeSet<_>>();
+
+    all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
 
     let taker_balance = taker
         .read()
         .unwrap()
         .get_wallet()
-        .balance_descriptor_utxo()
+        .balance_descriptor_utxo(Some(&all_utxos))
         .unwrap()
         + taker
             .read()
             .unwrap()
             .get_wallet()
-            .balance_swap_coins()
+            .balance_swap_coins(Some(&all_utxos))
             .unwrap();
 
     assert!(maker_balances.len() == 1); // The set only contains one element,

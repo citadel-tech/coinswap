@@ -124,8 +124,9 @@ async fn test_fidelity() {
     // Check the balances
     {
         let wallet = maker.get_wallet().read().unwrap();
-        let normal_balance =
-            wallet.balance_descriptor_utxo().unwrap() + wallet.balance_swap_coins().unwrap();
+        let all_utxos = wallet.get_all_utxo().unwrap();
+        let normal_balance = wallet.balance_descriptor_utxo(Some(&all_utxos)).unwrap()
+            + wallet.balance_swap_coins(Some(&all_utxos)).unwrap();
         assert_eq!(normal_balance.to_sat(), 1998000);
     }
 
@@ -162,8 +163,9 @@ async fn test_fidelity() {
     // Check the balances again
     {
         let wallet = maker.get_wallet().read().unwrap();
-        let normal_balance =
-            wallet.balance_descriptor_utxo().unwrap() + wallet.balance_swap_coins().unwrap();
+        let all_utxos = wallet.get_all_utxo().unwrap();
+        let normal_balance = wallet.balance_descriptor_utxo(Some(&all_utxos)).unwrap()
+            + wallet.balance_swap_coins(Some(&all_utxos)).unwrap();
         assert_eq!(normal_balance.to_sat(), 7996000);
     }
 

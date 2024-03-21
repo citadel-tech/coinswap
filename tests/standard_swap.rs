@@ -85,43 +85,47 @@ async fn test_standard_coinswap() {
 
     // Check if utxo list looks good.
     // TODO: Assert other interesting things from the utxo list.
+
+    let mut all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
+
     assert_eq!(
         taker
             .read()
             .unwrap()
             .get_wallet()
-            .list_descriptor_utxo_unspend_from_wallet()
+            .list_descriptor_utxo_unspend_from_wallet(Some(&all_utxos))
             .unwrap()
             .len()
             + taker
                 .read()
                 .unwrap()
                 .get_wallet()
-                .list_fidelity_unspend_from_wallet()
+                .list_fidelity_unspend_from_wallet(Some(&all_utxos))
                 .unwrap()
                 .len()
             + taker
                 .read()
                 .unwrap()
                 .get_wallet()
-                .list_swap_coin_unspend_from_wallet()
+                .list_swap_coin_unspend_from_wallet(Some(&all_utxos))
                 .unwrap()
                 .len(),
         3
     );
     makers.iter().for_each(|maker| {
+        all_utxos = maker.get_wallet().read().unwrap().get_all_utxo().unwrap();
         let utxo_count = maker
             .get_wallet()
             .read()
             .unwrap()
-            .list_descriptor_utxo_unspend_from_wallet()
+            .list_descriptor_utxo_unspend_from_wallet(Some(&all_utxos))
             .unwrap()
             .len()
             + maker
                 .get_wallet()
                 .read()
                 .unwrap()
-                .list_swap_coin_unspend_from_wallet()
+                .list_swap_coin_unspend_from_wallet(Some(&all_utxos))
                 .unwrap()
                 .len();
 
@@ -205,36 +209,38 @@ async fn test_standard_coinswap() {
     });
 
     // Check balances makes sense
+    all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
     warn!(
         "Taker balance : {}",
         taker
             .read()
             .unwrap()
             .get_wallet()
-            .balance_descriptor_utxo()
+            .balance_descriptor_utxo(Some(&all_utxos))
             .unwrap()
             + taker
                 .read()
                 .unwrap()
                 .get_wallet()
-                .balance_swap_coins()
+                .balance_swap_coins(Some(&all_utxos))
                 .unwrap()
     );
     assert!(
         taker.read().unwrap().get_wallet().balance().unwrap() < Amount::from_btc(0.15).unwrap()
     );
     makers.iter().for_each(|maker| {
+        all_utxos = maker.get_wallet().read().unwrap().get_all_utxo().unwrap();
         let balance = maker
             .get_wallet()
             .read()
             .unwrap()
-            .balance_descriptor_utxo()
+            .balance_descriptor_utxo(Some(&all_utxos))
             .unwrap()
             + maker
                 .get_wallet()
                 .read()
                 .unwrap()
-                .balance_swap_coins()
+                .balance_swap_coins(Some(&all_utxos))
                 .unwrap();
         assert!(balance > Amount::from_btc(0.15).unwrap());
     });
