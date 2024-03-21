@@ -68,7 +68,6 @@ async fn test_stop_taker_after_setup() {
                 .unwrap();
             test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
         });
-        });
     }
 
     // Coins for fidelity creation
