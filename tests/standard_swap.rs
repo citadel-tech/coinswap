@@ -92,7 +92,7 @@ async fn test_standard_coinswap() {
         .read()
         .unwrap()
         .get_wallet()
-        .list_descriptor_utxo_unspent_from_wallet(Some(&all_utxos))
+        .list_descriptor_utxo_spend_info(Some(&all_utxos))
         .unwrap()
         .len();
 
@@ -100,14 +100,14 @@ async fn test_standard_coinswap() {
         .read()
         .unwrap()
         .get_wallet()
-        .list_fidelity_unspent_from_wallet(Some(&all_utxos))
+        .list_fidelity_spend_info(Some(&all_utxos))
         .unwrap()
         .len();
     let taker_no_of_swap_coin_unspent = taker
         .read()
         .unwrap()
         .get_wallet()
-        .list_swap_coin_unspent_from_wallet(Some(&all_utxos))
+        .list_swap_coin_utxo_spend_info(Some(&all_utxos))
         .unwrap()
         .len();
 
@@ -115,7 +115,7 @@ async fn test_standard_coinswap() {
         .read()
         .unwrap()
         .get_wallet()
-        .list_live_contract_unspent_from_wallet(Some(&all_utxos))
+        .list_live_contract_spend_info(Some(&all_utxos))
         .unwrap()
         .len();
 
@@ -131,7 +131,7 @@ async fn test_standard_coinswap() {
             .get_wallet()
             .read()
             .unwrap()
-            .list_descriptor_utxo_unspent_from_wallet(Some(&all_utxos))
+            .list_descriptor_utxo_spend_info(Some(&all_utxos))
             .unwrap()
             .len();
 
@@ -139,7 +139,7 @@ async fn test_standard_coinswap() {
             .get_wallet()
             .read()
             .unwrap()
-            .list_fidelity_unspent_from_wallet(Some(&all_utxos))
+            .list_fidelity_spend_info(Some(&all_utxos))
             .unwrap()
             .len();
 
@@ -147,7 +147,7 @@ async fn test_standard_coinswap() {
             .get_wallet()
             .read()
             .unwrap()
-            .list_swap_coin_unspent_from_wallet(Some(&all_utxos))
+            .list_swap_coin_utxo_spend_info(Some(&all_utxos))
             .unwrap()
             .len();
 
@@ -155,7 +155,7 @@ async fn test_standard_coinswap() {
             .get_wallet()
             .read()
             .unwrap()
-            .list_live_contract_unspent_from_wallet(Some(&all_utxos))
+            .list_live_contract_spend_info(Some(&all_utxos))
             .unwrap()
             .len();
 
@@ -170,14 +170,14 @@ async fn test_standard_coinswap() {
         .read()
         .unwrap()
         .get_wallet()
-        .lock_all_nonwallet_unspents()
+        .lock_unspendable_utxos()
         .unwrap();
     makers.iter().for_each(|maker| {
         maker
             .get_wallet()
             .read()
             .unwrap()
-            .lock_all_nonwallet_unspents()
+            .lock_unspendable_utxos()
             .unwrap();
     });
 
