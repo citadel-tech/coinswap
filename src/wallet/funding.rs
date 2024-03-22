@@ -29,37 +29,37 @@ pub struct CreateFundingTxesResult {
 }
 
 impl Wallet {
+    // Attempts to create the funding transactions.
+    /// Returns Ok(None) if there was no error but the wallet was unable to create funding txes
     pub fn create_funding_txes(
         &self,
         coinswap_amount: u64,
         destinations: &[Address],
         fee_rate: u64,
-    ) -> Result<Option<CreateFundingTxesResult>, WalletError> {
-        //returns Ok(None) if there was no error but the wallet was unable to create funding txes
-
+    ) -> Result<CreateFundingTxesResult, WalletError> {
         log::debug!(target: "wallet", "coinswap_amount = {} destinations = {:?}",
             coinswap_amount, destinations);
 
         let ret = self.create_funding_txes_random_amounts(coinswap_amount, destinations, fee_rate);
         if ret.is_ok() {
-            log::debug!(target: "wallet", "created funding txes with random amounts");
+            log::info!(target: "wallet", "created funding txes with random amounts");
             return ret;
         }
 
         let ret = self.create_funding_txes_utxo_max_sends(coinswap_amount, destinations, fee_rate);
         if ret.is_ok() {
-            log::debug!(target: "wallet", "created funding txes with fully-spending utxos");
+            log::info!(target: "wallet", "created funding txes with fully-spending utxos");
             return ret;
         }
 
         let ret =
             self.create_funding_txes_use_biggest_utxos(coinswap_amount, destinations, fee_rate);
         if ret.is_ok() {
-            log::debug!(target: "wallet", "created funding txes with using the biggest utxos");
+            log::info!(target: "wallet", "created funding txes with using the biggest utxos");
             return ret;
         }
 
-        log::debug!(target: "wallet", "failed to create funding txes with any method");
+        log::info!(target: "wallet", "failed to create funding txes with any method");
         ret
     }
 
@@ -121,22 +121,21 @@ impl Wallet {
         Ok(output_values)
     }
 
+    /// This function creates funding txes by
+    /// Randomly generating some satoshi amounts and send them into
+    /// walletcreatefundedpsbt to create txes that create change
     fn create_funding_txes_random_amounts(
         &self,
         coinswap_amount: u64,
         destinations: &[Address],
         fee_rate: u64,
-    ) -> Result<Option<CreateFundingTxesResult>, WalletError> {
-        //this function creates funding txes by
-        //randomly generating some satoshi amounts and send them into
-        //walletcreatefundedpsbt to create txes that create change
-
+    ) -> Result<CreateFundingTxesResult, WalletError> {
         let change_addresses = self.get_next_internal_addresses(destinations.len() as u32)?;
         log::debug!(target: "wallet", "change addrs = {:?}", change_addresses);
 
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
-        self.lock_all_nonwallet_unspents()?;
+        self.lock_unspendable_utxos()?;
 
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
@@ -190,11 +189,11 @@ impl Wallet {
             payment_output_positions.push(payment_pos);
         }
 
-        Ok(Some(CreateFundingTxesResult {
+        Ok(CreateFundingTxesResult {
             funding_txes,
             payment_output_positions,
             total_miner_fee,
-        }))
+        })
     }
 
     fn create_mostly_sweep_txes_with_one_tx_having_change(
@@ -205,7 +204,7 @@ impl Wallet {
         change_address: &Address,
         utxos: &mut dyn Iterator<Item = (Txid, u32, u64)>, //utxos item is (txid, vout, value)
                                                            //utxos should be sorted by size, largest first
-    ) -> Result<Option<CreateFundingTxesResult>, WalletError> {
+    ) -> Result<CreateFundingTxesResult, WalletError> {
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
         let mut total_miner_fee = 0;
@@ -323,11 +322,11 @@ impl Wallet {
             0
         });
 
-        Ok(Some(CreateFundingTxesResult {
+        Ok(CreateFundingTxesResult {
             funding_txes,
             payment_output_positions,
             total_miner_fee,
-        }))
+        })
     }
 
     fn create_funding_txes_utxo_max_sends(
@@ -335,7 +334,7 @@ impl Wallet {
         coinswap_amount: u64,
         destinations: &[Address],
         fee_rate: u64,
-    ) -> Result<Option<CreateFundingTxesResult>, WalletError> {
+    ) -> Result<CreateFundingTxesResult, WalletError> {
         //this function creates funding txes by
         //using walletcreatefundedpsbt for the total amount, and if
         //the number if inputs UTXOs is >number_of_txes then split those inputs into groups
@@ -351,7 +350,7 @@ impl Wallet {
         let change_addrs_uncheked: Address<NetworkUnchecked> =
             change_address.to_string().parse().unwrap();
 
-        self.lock_all_nonwallet_unspents()?;
+        self.lock_unspendable_utxos()?;
         let wcfp_result = self.rpc.wallet_create_funded_psbt(
             &[],
             &outputs,
@@ -413,14 +412,14 @@ impl Wallet {
         coinswap_amount: u64,
         destinations: &[Address],
         fee_rate: u64,
-    ) -> Result<Option<CreateFundingTxesResult>, WalletError> {
+    ) -> Result<CreateFundingTxesResult, WalletError> {
         //this function will pick the top most valuable UTXOs and use them
         //to create funding transactions
 
         let all_utxos = self.get_all_utxo()?;
 
-        let mut seed_coin_utxo = self.list_descriptor_utxo_unspent_from_wallet(Some(&all_utxos))?;
-        let mut swap_coin_utxo = self.list_swap_coin_unspent_from_wallet(Some(&all_utxos))?;
+        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
+        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
         seed_coin_utxo.append(&mut swap_coin_utxo);
 
         let mut list_unspent_result = seed_coin_utxo;
@@ -467,7 +466,9 @@ impl Wallet {
             log::debug!(target: "wallet",
                 concat!("Failed to create funding txes with the biggest-utxos method, this ",
                     "branch not implemented yet!"));
-            Ok(None)
+            Err(WalletError::Protocol(
+                "Some stupid error that will never occur".to_string(),
+            ))
         } else {
             //at most one utxo bigger than the coinswap amount
 
