@@ -10,7 +10,7 @@ mod test_framework;
 use test_framework::*;
 
 use log::{info, warn};
-use std::{sync::Arc, thread, time::Duration};
+use std::{assert_eq, sync::Arc, thread, time::Duration};
 
 /// This test demonstrates a standard coinswap round between a Taker and 2 Makers. Nothing goes wrong
 /// and the coinswap completes successfully.
@@ -88,48 +88,81 @@ async fn test_standard_coinswap() {
 
     let mut all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
 
-    assert_eq!(
-        taker
-            .read()
-            .unwrap()
-            .get_wallet()
-            .list_descriptor_utxo_unspend_from_wallet(Some(&all_utxos))
-            .unwrap()
-            .len()
-            + taker
-                .read()
-                .unwrap()
-                .get_wallet()
-                .list_fidelity_unspend_from_wallet(Some(&all_utxos))
-                .unwrap()
-                .len()
-            + taker
-                .read()
-                .unwrap()
-                .get_wallet()
-                .list_swap_coin_unspend_from_wallet(Some(&all_utxos))
-                .unwrap()
-                .len(),
-        3
-    );
+    let taker_no_of_descriptor_utxo_unspent = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .list_descriptor_utxo_unspent_from_wallet(Some(&all_utxos))
+        .unwrap()
+        .len();
+
+    let taker_no_of_fidelity_unspent = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .list_fidelity_unspent_from_wallet(Some(&all_utxos))
+        .unwrap()
+        .len();
+    let taker_no_of_swap_coin_unspent = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .list_swap_coin_unspent_from_wallet(Some(&all_utxos))
+        .unwrap()
+        .len();
+
+    let taker_no_of_live_contract_unspent = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .list_live_contract_unspent_from_wallet(Some(&all_utxos))
+        .unwrap()
+        .len();
+
+    assert_eq!(taker_no_of_descriptor_utxo_unspent, 3);
+    assert_eq!(taker_no_of_fidelity_unspent, 0);
+    assert_eq!(taker_no_of_swap_coin_unspent, 0);
+    assert_eq!(taker_no_of_live_contract_unspent, 0);
+
     makers.iter().for_each(|maker| {
         all_utxos = maker.get_wallet().read().unwrap().get_all_utxo().unwrap();
-        let utxo_count = maker
+
+        let maker_no_of_descriptor_utxo_unspent = maker
             .get_wallet()
             .read()
             .unwrap()
-            .list_descriptor_utxo_unspend_from_wallet(Some(&all_utxos))
+            .list_descriptor_utxo_unspent_from_wallet(Some(&all_utxos))
             .unwrap()
-            .len()
-            + maker
-                .get_wallet()
-                .read()
-                .unwrap()
-                .list_swap_coin_unspend_from_wallet(Some(&all_utxos))
-                .unwrap()
-                .len();
+            .len();
 
-        assert_eq!(utxo_count, 4);
+        let maker_no_of_fidelity_unspent = maker
+            .get_wallet()
+            .read()
+            .unwrap()
+            .list_fidelity_unspent_from_wallet(Some(&all_utxos))
+            .unwrap()
+            .len();
+
+        let maker_no_of_swap_coin_unspent = maker
+            .get_wallet()
+            .read()
+            .unwrap()
+            .list_swap_coin_unspent_from_wallet(Some(&all_utxos))
+            .unwrap()
+            .len();
+
+        let maker_no_of_live_contract_unspent = maker
+            .get_wallet()
+            .read()
+            .unwrap()
+            .list_live_contract_unspent_from_wallet(Some(&all_utxos))
+            .unwrap()
+            .len();
+
+        assert_eq!(maker_no_of_descriptor_utxo_unspent, 4);
+        assert_eq!(maker_no_of_fidelity_unspent, 0);
+        assert_eq!(maker_no_of_swap_coin_unspent, 0);
+        assert_eq!(maker_no_of_live_contract_unspent, 0);
     });
 
     // Check locking non-wallet utxos worked.
@@ -225,23 +258,90 @@ async fn test_standard_coinswap() {
                 .balance_swap_coins(Some(&all_utxos))
                 .unwrap()
     );
+    let taker_balance_fidelity = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .balance_fidelity_bonds(Some(&all_utxos))
+        .unwrap();
+    let taker_balance_descriptor_utxo = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .balance_descriptor_utxo(Some(&all_utxos))
+        .unwrap();
+    let taker_balance_swap_coins = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .balance_swap_coins(Some(&all_utxos))
+        .unwrap();
+    let taker_balance_live_contract = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .balance_live_contract(Some(&all_utxos))
+        .unwrap();
     assert!(
-        taker.read().unwrap().get_wallet().balance().unwrap() < Amount::from_btc(0.15).unwrap()
+        taker_balance_fidelity
+            + taker_balance_descriptor_utxo
+            + taker_balance_swap_coins
+            + taker_balance_live_contract
+            < Amount::from_btc(0.15).unwrap()
     );
+    assert_eq!(
+        taker_balance_descriptor_utxo,
+        Amount::from_btc(0.14499541).unwrap()
+    );
+    assert_eq!(
+        taker_balance_swap_coins,
+        Amount::from_btc(0.0048584).unwrap()
+    );
+    assert_eq!(taker_balance_fidelity, Amount::from_btc(0.0).unwrap());
+    assert_eq!(taker_balance_live_contract, Amount::from_btc(0.0).unwrap());
+
     makers.iter().for_each(|maker| {
         all_utxos = maker.get_wallet().read().unwrap().get_all_utxo().unwrap();
-        let balance = maker
+        let maker_balance_fidelity = maker
+            .get_wallet()
+            .read()
+            .unwrap()
+            .balance_fidelity_bonds(Some(&all_utxos))
+            .unwrap();
+        let maker_balance_descriptor_utxo = maker
             .get_wallet()
             .read()
             .unwrap()
             .balance_descriptor_utxo(Some(&all_utxos))
+            .unwrap();
+        let maker_balance_swap_coins = maker
+            .get_wallet()
+            .read()
             .unwrap()
-            + maker
-                .get_wallet()
-                .read()
-                .unwrap()
-                .balance_swap_coins(Some(&all_utxos))
-                .unwrap();
+            .balance_swap_coins(Some(&all_utxos))
+            .unwrap();
+        let maker_balance_live_contract = maker
+            .get_wallet()
+            .read()
+            .unwrap()
+            .balance_live_contract(Some(&all_utxos))
+            .unwrap();
+
+        assert!(
+            maker_balance_descriptor_utxo == Amount::from_btc(0.14505657).unwrap()
+                || maker_balance_descriptor_utxo == Amount::from_btc(0.14512701).unwrap(),
+            "maker_balance_descriptor_utxo does not match any of the expected values"
+        );
+        assert!(
+            maker_balance_swap_coins == Amount::from_btc(0.00492884).unwrap()
+                || maker_balance_swap_coins == Amount::from_btc(0.005).unwrap(),
+            "maker_balance_swap_coins does not match any of the expected values"
+        );
+        assert_eq!(maker_balance_fidelity, Amount::from_btc(0.0).unwrap());
+        assert_eq!(maker_balance_live_contract, Amount::from_btc(0.0).unwrap());
+
+        let balance = maker_balance_descriptor_utxo + maker_balance_swap_coins;
+
         assert!(balance > Amount::from_btc(0.15).unwrap());
     });
 

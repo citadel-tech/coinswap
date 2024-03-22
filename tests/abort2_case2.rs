@@ -90,18 +90,20 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
     let mut all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
 
     // Get the original balances
-    let org_taker_balance = taker
+    let org_taker_balance_descriptor_utxo = taker
         .read()
         .unwrap()
         .get_wallet()
         .balance_descriptor_utxo(Some(&all_utxos))
+        .unwrap();
+    let org_taker_balance_swap_coins = taker
+        .read()
         .unwrap()
-        + taker
-            .read()
-            .unwrap()
-            .get_wallet()
-            .balance_swap_coins(Some(&all_utxos))
-            .unwrap();
+        .get_wallet()
+        .balance_swap_coins(Some(&all_utxos))
+        .unwrap();
+
+    let org_taker_balance = org_taker_balance_descriptor_utxo + org_taker_balance_swap_coins;
 
     // ---- Start Servers and attempt Swap ----
 
@@ -132,18 +134,46 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
         .iter()
         .map(|maker| {
             all_utxos = maker.get_wallet().read().unwrap().get_all_utxo().unwrap();
-            maker
+            let maker_balance_fidelity = maker
+                .get_wallet()
+                .read()
+                .unwrap()
+                .balance_fidelity_bonds(Some(&all_utxos))
+                .unwrap();
+            let maker_balance_descriptor_utxo = maker
                 .get_wallet()
                 .read()
                 .unwrap()
                 .balance_descriptor_utxo(Some(&all_utxos))
+                .unwrap();
+            let maker_balance_swap_coins = maker
+                .get_wallet()
+                .read()
                 .unwrap()
-                + maker
-                    .get_wallet()
-                    .read()
-                    .unwrap()
-                    .balance_swap_coins(Some(&all_utxos))
-                    .unwrap()
+                .balance_swap_coins(Some(&all_utxos))
+                .unwrap();
+            let maker_balance_live_contract = maker
+                .get_wallet()
+                .read()
+                .unwrap()
+                .balance_live_contract(Some(&all_utxos))
+                .unwrap();
+
+            assert_eq!(maker_balance_fidelity, Amount::from_btc(0.0).unwrap());
+            assert_eq!(
+                maker_balance_descriptor_utxo,
+                Amount::from_btc(0.14999).unwrap()
+            );
+            assert_eq!(maker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
+            assert_eq!(maker_balance_live_contract, Amount::from_btc(0.0).unwrap());
+
+            (
+                maker_balance_fidelity,
+                maker_balance_descriptor_utxo,
+                maker_balance_swap_coins,
+                maker_balance_live_contract,
+                maker_balance_descriptor_utxo + maker_balance_swap_coins,
+            )
         })
         .collect::<Vec<_>>();
 
@@ -188,41 +218,72 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
 
     // Assert that Taker burned the mining fees,
     // Makers are fine.
-    let new_taker_balance = taker
+
+    let new_taker_balance_descriptor_utxo = taker
         .read()
         .unwrap()
         .get_wallet()
         .balance_descriptor_utxo(Some(&all_utxos))
+        .unwrap();
+    let new_taker_balance_swap_coins = taker
+        .read()
         .unwrap()
-        + taker
-            .read()
-            .unwrap()
-            .get_wallet()
-            .balance_swap_coins(Some(&all_utxos))
-            .unwrap();
-    assert_eq!(
-        org_taker_balance - new_taker_balance,
-        Amount::from_sat(4227)
-    );
+        .get_wallet()
+        .balance_swap_coins(Some(&all_utxos))
+        .unwrap();
+
+    let new_taker_balance = new_taker_balance_descriptor_utxo + new_taker_balance_swap_coins;
+
+    // Balance will not differ if the first maker drops and swap doesn't take place.
+    // The recovery will happen only if the 2nd maker drops, which has 50% probabiltiy.
+    // Only do this assert if the balance differs, implying that the swap took place.
+    if new_taker_balance != org_taker_balance {
+        assert_eq!(
+            org_taker_balance - new_taker_balance,
+            Amount::from_sat(4227)
+        );
+    }
     makers
         .iter()
         .zip(org_maker_balances.iter())
         .for_each(|(maker, org_balance)| {
             all_utxos = maker.get_wallet().read().unwrap().get_all_utxo().unwrap();
-
-            let new_balance = maker
+            let maker_balance_fidelity = maker
+                .get_wallet()
+                .read()
+                .unwrap()
+                .balance_fidelity_bonds(Some(&all_utxos))
+                .unwrap();
+            let maker_balance_descriptor_utxo = maker
                 .get_wallet()
                 .read()
                 .unwrap()
                 .balance_descriptor_utxo(Some(&all_utxos))
+                .unwrap();
+            let maker_balance_swap_coins = maker
+                .get_wallet()
+                .read()
                 .unwrap()
-                + maker
-                    .get_wallet()
-                    .read()
-                    .unwrap()
-                    .balance_swap_coins(Some(&all_utxos))
-                    .unwrap();
-            assert_eq!(*org_balance - new_balance, Amount::from_sat(0));
+                .balance_swap_coins(Some(&all_utxos))
+                .unwrap();
+            let maker_balance_live_contract = maker
+                .get_wallet()
+                .read()
+                .unwrap()
+                .balance_live_contract(Some(&all_utxos))
+                .unwrap();
+
+            let new_balance = maker_balance_descriptor_utxo + maker_balance_swap_coins;
+
+            assert_eq!(org_balance.4 - new_balance, Amount::from_sat(0));
+
+            assert_eq!(maker_balance_fidelity, Amount::from_btc(0.0).unwrap());
+            assert_eq!(
+                maker_balance_descriptor_utxo,
+                Amount::from_btc(0.14999000).unwrap()
+            );
+            assert_eq!(maker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
+            assert_eq!(maker_balance_live_contract, Amount::from_btc(0.0).unwrap());
         });
 
     // Stop test and clean everything.

@@ -419,8 +419,8 @@ impl Wallet {
 
         let all_utxos = self.get_all_utxo()?;
 
-        let mut seed_coin_utxo = self.list_descriptor_utxo_unspend_from_wallet(Some(&all_utxos))?;
-        let mut swap_coin_utxo = self.list_swap_coin_unspend_from_wallet(Some(&all_utxos))?;
+        let mut seed_coin_utxo = self.list_descriptor_utxo_unspent_from_wallet(Some(&all_utxos))?;
+        let mut swap_coin_utxo = self.list_swap_coin_unspent_from_wallet(Some(&all_utxos))?;
         seed_coin_utxo.append(&mut swap_coin_utxo);
 
         let mut list_unspent_result = seed_coin_utxo;
