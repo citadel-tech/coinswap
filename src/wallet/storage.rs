@@ -99,6 +99,7 @@ impl WalletStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use bitcoind::tempfile::tempdir;
 
     #[test]

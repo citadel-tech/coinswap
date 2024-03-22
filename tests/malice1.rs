@@ -10,7 +10,7 @@ mod test_framework;
 use test_framework::*;
 
 use log::{info, warn};
-use std::{collections::BTreeSet, sync::Arc, thread, time::Duration};
+use std::{assert_eq, collections::BTreeSet, sync::Arc, thread, time::Duration};
 
 /// Malice 1: Taker Broadcasts contract transactions prematurely.
 ///
@@ -80,12 +80,35 @@ async fn malice1_taker_broadcast_contract_prematurely() {
     // confirm balances
     test_framework.generate_1_block();
 
-    let org_take_balance = taker
+    let mut all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
+
+    // Get the original balances
+    let org_taker_balance_fidelity = taker
         .read()
         .unwrap()
         .get_wallet()
-        .balance(false, false)
+        .balance_fidelity_bonds(Some(&all_utxos))
         .unwrap();
+    let org_taker_balance_descriptor_utxo = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .balance_descriptor_utxo(Some(&all_utxos))
+        .unwrap();
+    let org_taker_balance_swap_coins = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .balance_swap_coins(Some(&all_utxos))
+        .unwrap();
+    let org_taker_balance_live_contract = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .balance_live_contract(Some(&all_utxos))
+        .unwrap();
+
+    let org_taker_balance = org_taker_balance_descriptor_utxo + org_taker_balance_swap_coins;
 
     // ---- Start Servers and attempt Swap ----
 
@@ -117,12 +140,41 @@ async fn malice1_taker_broadcast_contract_prematurely() {
     let org_maker_balances = makers
         .iter()
         .map(|maker| {
-            maker
+            all_utxos = maker.get_wallet().read().unwrap().get_all_utxo().unwrap();
+            let maker_balance_fidelity = maker
                 .get_wallet()
                 .read()
                 .unwrap()
-                .balance(false, false)
+                .balance_fidelity_bonds(Some(&all_utxos))
+                .unwrap();
+            let maker_balance_descriptor_utxo = maker
+                .get_wallet()
+                .read()
                 .unwrap()
+                .balance_descriptor_utxo(Some(&all_utxos))
+                .unwrap();
+            let maker_balance_swap_coins = maker
+                .get_wallet()
+                .read()
+                .unwrap()
+                .balance_swap_coins(Some(&all_utxos))
+                .unwrap();
+            let maker_balance_live_contract = maker
+                .get_wallet()
+                .read()
+                .unwrap()
+                .balance_live_contract(Some(&all_utxos))
+                .unwrap();
+
+            assert_eq!(maker_balance_fidelity, Amount::from_btc(0.0).unwrap());
+            assert_eq!(
+                maker_balance_descriptor_utxo,
+                Amount::from_btc(0.14999).unwrap()
+            );
+            assert_eq!(maker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
+            assert_eq!(maker_balance_live_contract, Amount::from_btc(0.0).unwrap());
+
+            maker_balance_descriptor_utxo + maker_balance_swap_coins
         })
         .collect::<BTreeSet<_>>();
 
@@ -154,24 +206,76 @@ async fn malice1_taker_broadcast_contract_prematurely() {
     let maker_balances = makers
         .iter()
         .map(|maker| {
-            maker
+            all_utxos = maker.get_wallet().read().unwrap().get_all_utxo().unwrap();
+            let maker_balance_fidelity = maker
                 .get_wallet()
                 .read()
                 .unwrap()
-                .balance(false, false)
+                .balance_fidelity_bonds(Some(&all_utxos))
+                .unwrap();
+            let maker_balance_descriptor_utxo = maker
+                .get_wallet()
+                .read()
                 .unwrap()
+                .balance_descriptor_utxo(Some(&all_utxos))
+                .unwrap();
+            let maker_balance_swap_coins = maker
+                .get_wallet()
+                .read()
+                .unwrap()
+                .balance_swap_coins(Some(&all_utxos))
+                .unwrap();
+            let maker_balance_live_contract = maker
+                .get_wallet()
+                .read()
+                .unwrap()
+                .balance_live_contract(Some(&all_utxos))
+                .unwrap();
+
+            assert_eq!(maker_balance_fidelity, Amount::from_btc(0.05).unwrap());
+            assert_eq!(
+                maker_balance_descriptor_utxo,
+                Amount::from_btc(0.14994773).unwrap()
+            );
+            assert_eq!(maker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
+            assert_eq!(maker_balance_live_contract, Amount::from_btc(0.0).unwrap());
+
+            maker_balance_descriptor_utxo + maker_balance_swap_coins
         })
         .collect::<BTreeSet<_>>();
 
-    let taker_balance = taker
+    all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
+
+    // Check everybody looses mining fees of contract txs.
+    let taker_balance_fidelity = taker
         .read()
         .unwrap()
         .get_wallet()
-        .balance(false, false)
+        .balance_fidelity_bonds(Some(&all_utxos))
+        .unwrap();
+    let taker_balance_descriptor_utxo = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .balance_descriptor_utxo(Some(&all_utxos))
+        .unwrap();
+    let taker_balance_swap_coins = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .balance_swap_coins(Some(&all_utxos))
+        .unwrap();
+    let taker_balance_live_contract = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .balance_live_contract(Some(&all_utxos))
         .unwrap();
 
+    let taker_balance = taker_balance_descriptor_utxo + taker_balance_swap_coins;
+
     assert!(maker_balances.len() == 1); // The set only contains one element,
-    assert_eq!(maker_balances.first().unwrap(), &Amount::from_sat(14994773));
+                                        // assert_eq!(maker_balances.first().unwrap(), &Amount::from_sat(14994773));
 
     // Everybody looses 4227 sats for contract transactions.
     assert_eq!(
@@ -182,8 +286,28 @@ async fn malice1_taker_broadcast_contract_prematurely() {
             .unwrap(),
         Amount::from_sat(4227)
     );
+
+    assert_eq!(org_taker_balance_fidelity, Amount::from_btc(0.0).unwrap());
     assert_eq!(
-        org_take_balance.checked_sub(taker_balance).unwrap(),
+        org_taker_balance_descriptor_utxo,
+        Amount::from_btc(0.15).unwrap()
+    );
+    assert_eq!(
+        org_taker_balance_live_contract,
+        Amount::from_btc(0.0).unwrap()
+    );
+    assert_eq!(org_taker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
+
+    assert_eq!(taker_balance_fidelity, Amount::from_btc(0.0).unwrap());
+    assert_eq!(
+        taker_balance_descriptor_utxo,
+        Amount::from_btc(0.14995773).unwrap()
+    );
+    assert_eq!(taker_balance_live_contract, Amount::from_btc(0.0).unwrap());
+    assert_eq!(taker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
+
+    assert_eq!(
+        org_taker_balance.checked_sub(taker_balance).unwrap(),
         Amount::from_sat(4227)
     );
 
