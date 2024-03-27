@@ -37,8 +37,7 @@ async fn abort3_case2_close_at_contract_sigs_for_recvr() {
 
     info!("Initiating Directory Server .....");
 
-    let directory_server_instance =
-        Arc::new(DirectoryServer::init(Some(8080), Some(19060)).unwrap());
+    let directory_server_instance = Arc::new(DirectoryServer::new(None).unwrap());
     let directory_server_instance_clone = directory_server_instance.clone();
     thread::spawn(move || {
         start_directory_server(directory_server_instance_clone);
