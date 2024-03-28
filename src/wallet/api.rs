@@ -1091,7 +1091,6 @@ impl Wallet {
     /// Finds the next unused index in the HD keychain.
     pub(super) fn find_hd_next_index(&self, keychain: KeychainKind) -> Result<u32, WalletError> {
         let mut max_index: i32 = -1;
-        //TODO error handling
         let all_utxos = self.get_all_utxo()?;
         let mut utxos = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
         let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
