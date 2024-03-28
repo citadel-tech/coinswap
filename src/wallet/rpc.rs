@@ -85,10 +85,10 @@ impl Wallet {
         // Create or load the watch-only bitcoin core wallet
         let wallet_name = &self.store.file_name;
         if self.rpc.list_wallets()?.contains(wallet_name) {
-            log::info!("wallet already loaded: {}", wallet_name);
+            log::debug!("wallet already loaded: {}", wallet_name);
         } else if list_wallet_dir(&self.rpc)?.contains(wallet_name) {
             self.rpc.load_wallet(wallet_name)?;
-            log::info!("wallet loaded: {}", wallet_name);
+            log::debug!("wallet loaded: {}", wallet_name);
         } else {
             // pre-0.21 use legacy wallets
             if self.rpc.version()? < 210_000 {
@@ -107,7 +107,7 @@ impl Wallet {
                 let _: Value = self.rpc.call("createwallet", &args)?;
             }
 
-            log::info!("wallet created: {}", wallet_name);
+            log::debug!("wallet created: {}", wallet_name);
         }
 
         let hd_descriptors_to_import = self.get_unimoprted_wallet_desc()?;
@@ -226,7 +226,11 @@ impl Wallet {
             return Ok(());
         }
 
-        log::info!(target: "wallet", "New wallet detected, synchronizing balance...");
+        log::debug!("Importing Wallet spks/descriptors");
+        log::debug!("HD descriptors: {:?}", hd_descriptors_to_import);
+        log::debug!("Swapcoin descriptors: {:?}", swapcoin_descriptors_to_import);
+        log::debug!("Contract SPKs: {:?}", contract_scriptpubkeys_to_import);
+
         self.import_addresses(
             &hd_descriptors_to_import,
             &swapcoin_descriptors_to_import,
@@ -257,6 +261,7 @@ impl Wallet {
             .collect::<Vec<Value>>();
 
         // Now run the scan
+        log::debug!("Initializing TxOut scan. This may take a while.");
         let scantxoutset_result: Value = self
             .rpc
             .call("scantxoutset", &[json!("start"), json!(desc_list)])?;
@@ -265,11 +270,15 @@ impl Wallet {
                 bitcoind::bitcoincore_rpc::Error::UnexpectedStructure,
             ));
         }
-        log::info!(target: "wallet", "TxOut set scan complete, found {} btc",
-            Amount::from_sat(convert_json_rpc_bitcoin_to_satoshis(&scantxoutset_result["total_amount"])),
+        log::debug!(
+            "TxOut set scan complete, found {} btc",
+            Amount::from_sat(convert_json_rpc_bitcoin_to_satoshis(
+                &scantxoutset_result["total_amount"]
+            )),
         );
         let unspent_list = scantxoutset_result["unspents"].as_array().unwrap();
-        log::debug!(target: "wallet", "scantxoutset found_coins={} txouts={} height={} bestblock={}",
+        log::debug!(
+            "Found \ncoins={} \ntxouts={} \nheight={} \nbestblock={}",
             unspent_list.len(),
             scantxoutset_result["txouts"].as_u64().unwrap(),
             scantxoutset_result["height"].as_u64().unwrap(),
@@ -280,25 +289,12 @@ impl Wallet {
                 .rpc
                 .get_block_hash(unspent["height"].as_u64().unwrap())?;
             let txid = unspent["txid"].as_str().unwrap().parse::<Txid>().unwrap();
-            let rawtx = self.rpc.get_raw_transaction_hex(&txid, Some(&blockhash));
-            if let Ok(rawtx_hex) = rawtx {
-                log::debug!(target: "wallet", "found coin {}:{} {} height={} {}",
-                    txid,
-                    unspent["vout"].as_u64().unwrap(),
-                    Amount::from_sat(convert_json_rpc_bitcoin_to_satoshis(&unspent["amount"])),
-                    unspent["height"].as_u64().unwrap(),
-                    unspent["desc"].as_str().unwrap(),
-                );
-                let merkleproof = to_hex(&self.rpc.get_tx_out_proof(&[txid], Some(&blockhash))?);
-
-                self.rpc.call(
-                    "importprunedfunds",
-                    &[Value::String(rawtx_hex), Value::String(merkleproof)],
-                )?;
-            } else {
-                log::error!(target: "wallet", "block pruned, TODO add UTXO to wallet file");
-                panic!("teleport doesnt work with pruning yet, try rescanning");
-            }
+            let rawtx = self.rpc.get_raw_transaction_hex(&txid, Some(&blockhash))?;
+            let merkleproof = to_hex(&self.rpc.get_tx_out_proof(&[txid], Some(&blockhash))?);
+            self.rpc.call(
+                "importprunedfunds",
+                &[Value::String(rawtx), Value::String(merkleproof)],
+            )?;
         }
 
         let max_external_index = self.find_hd_next_index(KeychainKind::External)?;
