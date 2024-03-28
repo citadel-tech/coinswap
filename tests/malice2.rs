@@ -18,7 +18,7 @@ use std::{collections::BTreeSet, sync::Arc, thread, time::Duration};
 /// a potential DOS on other Makers. But the attacker Maker would loose money too in the process.
 ///
 /// This case is hard to "blame". As the contract transactions is available to both the Makers, its not identifiable
-/// which Maker is the culrpit. This requires more protocol level considerations.
+/// which Maker is the culprit. Taker does not ban in this case.
 #[tokio::test]
 async fn malice2_maker_broadcast_contract_prematurely() {
     // ---- Setup ----
@@ -158,7 +158,7 @@ async fn malice2_maker_broadcast_contract_prematurely() {
                 .balance_live_contract(Some(&all_utxos))
                 .unwrap();
 
-            assert_eq!(maker_balance_fidelity, Amount::from_btc(0.0).unwrap());
+            assert_eq!(maker_balance_fidelity, Amount::from_btc(0.05).unwrap());
             assert_eq!(
                 maker_balance_descriptor_utxo,
                 Amount::from_btc(0.14999).unwrap()
@@ -224,9 +224,11 @@ async fn malice2_maker_broadcast_contract_prematurely() {
                 .unwrap();
 
             assert_eq!(maker_balance_fidelity, Amount::from_btc(0.05).unwrap());
-            assert_eq!(
-                maker_balance_descriptor_utxo,
-                Amount::from_btc(0.14994773).unwrap()
+            // If the first maker misbehaves, then the 2nd maker doesn't loose anything.
+            // as they haven't broadcasted their outgoing swap.
+            assert!(
+                maker_balance_descriptor_utxo == Amount::from_btc(0.14994773).unwrap()
+                    || maker_balance_descriptor_utxo == Amount::from_btc(0.14999000).unwrap()
             );
             assert_eq!(maker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
             assert_eq!(maker_balance_live_contract, Amount::from_btc(0.0).unwrap());

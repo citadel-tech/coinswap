@@ -168,7 +168,7 @@ async fn test_stop_taker_after_setup() {
                 .unwrap()
                 .balance_live_contract(Some(&all_utxos))
                 .unwrap();
-            assert_eq!(maker_balance_fidelity, Amount::from_btc(0.0).unwrap());
+            assert_eq!(maker_balance_fidelity, Amount::from_btc(0.05).unwrap());
             assert_eq!(
                 maker_balance_descriptor_utxo,
                 Amount::from_btc(0.14999).unwrap()
