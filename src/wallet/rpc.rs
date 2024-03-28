@@ -1,6 +1,6 @@
 //! Manages connection with a Bitcoin Core RPC.
 //!
-use std::convert::TryFrom;
+use std::{convert::TryFrom, thread, time::Duration};
 
 use bitcoin::{Address, Amount, Network, Txid};
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
@@ -237,8 +237,8 @@ impl Wallet {
             &contract_scriptpubkeys_to_import,
         )?;
 
-        // Abort a previous scan, if any
-        self.rpc.call::<Value>("scantxoutset", &[json!("abort")])?;
+        // // Abort a previous scan, if any
+        // self.rpc.call::<Value>("scantxoutset", &[json!("abort")])?;
 
         // The final descriptor list to import
         let desc_list = hd_descriptors_to_import
@@ -262,9 +262,29 @@ impl Wallet {
 
         // Now run the scan
         log::debug!("Initializing TxOut scan. This may take a while.");
-        let scantxoutset_result: Value = self
-            .rpc
-            .call("scantxoutset", &[json!("start"), json!(desc_list)])?;
+
+        // Sometimes in test multiple wallet scans can occur at same time, resulting in error.
+        // Just retry after 3 sec.
+        let scantxoutset_result: Value = if cfg!(feature = "integration-test") {
+            loop {
+                let result: Result<Value, _> = self
+                    .rpc
+                    .call("scantxoutset", &[json!("start"), json!(desc_list)]);
+
+                match result {
+                    Ok(r) => break r,
+                    Err(e) => {
+                        log::warn!("Sync Error, Retrying: {}", e);
+                        thread::sleep(Duration::from_secs(3));
+                        continue;
+                    }
+                }
+            }
+        } else {
+            self.rpc
+                .call("scantxoutset", &[json!("start"), json!(desc_list)])?
+        };
+
         if !scantxoutset_result["success"].as_bool().unwrap() {
             return Err(WalletError::Rpc(
                 bitcoind::bitcoincore_rpc::Error::UnexpectedStructure,
