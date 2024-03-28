@@ -633,7 +633,13 @@ impl Maker {
                 .expect("incoming swapcoin not found")
                 .apply_privkey(swapcoin_private_key.key)?
         }
-        self.wallet.write()?.save_to_disk()?;
+        log::info!("initializing Wallet Sync.");
+        {
+            let mut wallet_write = self.wallet.write()?;
+            wallet_write.sync()?;
+            wallet_write.save_to_disk()?;
+        }
+        log::info!("Completed Wallet Sync.");
         log::info!("Successfully Completed Coinswap");
         Ok(())
     }
@@ -670,7 +676,7 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
         // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
         let maker_clone = maker.clone();
         std::thread::spawn(move || {
-            recover_from_swap(maker_clone, outgoings, incomings);
+            recover_from_swap(maker_clone, outgoings, incomings).unwrap();
         });
     }
     Ok(())
