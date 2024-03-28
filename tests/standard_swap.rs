@@ -248,16 +248,16 @@ async fn test_standard_coinswap() {
     assert_eq!(all_utxos.len(), 12);
 
     let taker_spendable_bal = taker
+        .read()
+        .unwrap()
+        .get_wallet()
+        .balance_descriptor_utxo(Some(&all_utxos))
+        .unwrap()
+        + taker
             .read()
             .unwrap()
             .get_wallet()
-            .balance_descriptor_utxo(Some(&all_utxos))
-            .unwrap()
-            + taker
-                .read()
-                .unwrap()
-                .get_wallet()
-                .balance_swap_coins(Some(&all_utxos))
+            .balance_swap_coins(Some(&all_utxos))
             .unwrap();
 
     assert_eq!(taker_spendable_bal, Amount::from_btc(0.14985381).unwrap());
@@ -414,8 +414,5 @@ async fn test_standard_coinswap() {
 
     info!("All checks successful. Terminating integration test case");
 
-    // Stop test and clean everything.
-    // comment this line if you want the wallet directory and bitcoind to live. Can be useful for
-    // after test debugging.
     test_framework.stop();
 }

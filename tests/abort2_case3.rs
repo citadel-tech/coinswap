@@ -145,8 +145,5 @@ async fn maker_drops_after_sending_senders_sigs() {
             .to_string()
     );
 
-    // Stop test and clean everything.
-    // comment this line if you want the wallet directory and bitcoind to live. Can be useful for
-    // after test debugging.
     test_framework.stop();
 }

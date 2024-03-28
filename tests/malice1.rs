@@ -310,8 +310,5 @@ async fn malice1_taker_broadcast_contract_prematurely() {
         Amount::from_sat(4227)
     );
 
-    // Stop test and clean everything.
-    // comment this line if you want the wallet directory and bitcoind to live. Can be useful for
-    // after test debugging.
     test_framework.stop();
 }

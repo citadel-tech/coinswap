@@ -24,7 +24,7 @@ use std::{
 use bitcoin::{Address, Amount};
 
 use bitcoind::{
-    bitcoincore_rpc::{Auth, RpcApi},
+    bitcoincore_rpc::{Auth, Client, RpcApi},
     BitcoinD, Conf,
 };
 use coinswap::{
@@ -156,16 +156,22 @@ impl TestFramework {
         // start the block generation thread
         log::info!("spawning block generation thread");
         let tf_clone = test_framework.clone();
-        thread::spawn(move || {
-            while !*tf_clone.shutdown.read().unwrap() {
-                thread::sleep(Duration::from_millis(500));
-                tf_clone.generate_1_block();
-                log::debug!("created 1 block");
+        thread::spawn(move || loop {
+            thread::sleep(Duration::from_secs(3));
+            tf_clone.generate_1_block();
+            log::debug!("created 1 block");
+            if *tf_clone.shutdown.read().unwrap() {
+                log::info!("ending block generation thread");
+                return;
             }
-            log::info!("ending block generation thread");
         });
 
         (test_framework, taker, makers)
+    }
+
+    /// Get the internal bitcoind client reference.
+    pub fn get_client(&self) -> &Client {
+        &self.bitcoind.client
     }
 
     /// Generate 1 block in the backend bitcoind.
@@ -204,6 +210,7 @@ impl TestFramework {
         self.bitcoind.client.get_block_count().unwrap()
     }
 }
+
 /// Initializes a [TestFramework] given a [RPCConfig].
 impl From<&TestFramework> for RPCConfig {
     fn from(value: &TestFramework) -> Self {

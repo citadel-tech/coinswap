@@ -317,8 +317,5 @@ async fn test_stop_taker_after_setup() {
 
     info!("All checks successful. Terminating integration test case");
 
-    // Stop test and clean everything.
-    // comment this line if you want the wallet directory and bitcoind to live. Can be useful for
-    // after-test debugging.
     test_framework.stop();
 }

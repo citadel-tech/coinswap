@@ -285,8 +285,5 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
             assert_eq!(maker_balance_live_contract, Amount::from_btc(0.0).unwrap());
         });
 
-    // Stop test and clean everything.
-    // comment this line if you want the wallet directory and bitcoind to live. Can be useful for
-    // after test debugging.
     test_framework.stop();
 }
