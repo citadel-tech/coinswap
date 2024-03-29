@@ -100,7 +100,8 @@ async fn maker_drops_after_sending_senders_sigs() {
     // Makers take time to fully setup.
     makers.iter().for_each(|maker| {
         while !*maker.is_setup_complete.read().unwrap() {
-            // Introduce a delay of 10 units to prevent write lock starvation.
+            log::info!("Waiting for maker setup completion");
+            // Introduce a delay of 10 seconds to prevent write lock starvation.
             thread::sleep(Duration::from_secs(10));
             continue;
         }
