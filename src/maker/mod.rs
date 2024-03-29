@@ -224,6 +224,10 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         }
     }
 
+    maker.setup_complete()?;
+
+    log::info!("[{}] Maker setup is ready", maker.config.port);
+
     // Loop to keep checking for new connections
     let result = loop {
         if *maker.shutdown.read()? {

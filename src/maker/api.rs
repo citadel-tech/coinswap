@@ -101,6 +101,8 @@ pub struct Maker {
     pub connection_state: Mutex<HashMap<IpAddr, (ConnectionState, Instant)>>,
     /// Highest Value Fidelity Proof
     pub highest_fidelity_proof: RwLock<Option<FidelityProof>>,
+    /// Is setup complete
+    pub is_setup_complete: RwLock<bool>,
 }
 
 impl Maker {
@@ -191,12 +193,20 @@ impl Maker {
             shutdown: RwLock::new(false),
             connection_state: Mutex::new(HashMap::new()),
             highest_fidelity_proof: RwLock::new(None),
+            is_setup_complete: RwLock::new(false),
         })
     }
 
     /// Triggers a shutdown event for the Maker.
     pub fn shutdown(&self) -> Result<(), MakerError> {
         let mut flag = self.shutdown.write()?;
+        *flag = true;
+        Ok(())
+    }
+
+    /// Triggers a setup complete event for the Maker.
+    pub fn setup_complete(&self) -> Result<(), MakerError> {
+        let mut flag = self.is_setup_complete.write()?;
         *flag = true;
         Ok(())
     }
