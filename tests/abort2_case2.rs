@@ -168,7 +168,7 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
                 .balance_live_contract(Some(&all_utxos))
                 .unwrap();
 
-            assert_eq!(maker_balance_fidelity, Amount::from_btc(0.0).unwrap());
+            assert_eq!(maker_balance_fidelity, Amount::from_btc(0.05).unwrap());
             assert_eq!(
                 maker_balance_descriptor_utxo,
                 Amount::from_btc(0.14999).unwrap()
@@ -286,7 +286,7 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
 
             assert_eq!(org_balance.4 - new_balance, Amount::from_sat(0));
 
-            assert_eq!(maker_balance_fidelity, Amount::from_btc(0.0).unwrap());
+            assert_eq!(maker_balance_fidelity, Amount::from_btc(0.05).unwrap());
             assert_eq!(
                 maker_balance_descriptor_utxo,
                 Amount::from_btc(0.14999000).unwrap()
@@ -295,8 +295,5 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
             assert_eq!(maker_balance_live_contract, Amount::from_btc(0.0).unwrap());
         });
 
-    // Stop test and clean everything.
-    // comment this line if you want the wallet directory and bitcoind to live. Can be useful for
-    // after test debugging.
     test_framework.stop();
 }

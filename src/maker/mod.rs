@@ -188,6 +188,10 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 }
             }
         }
+        log::info!("[{}] Syncing and saving wallet data", maker.config.port);
+        wallet.sync()?;
+        wallet.save_to_disk()?;
+        log::info!("[{}] Sync and save successful", maker.config.port);
     }
 
     loop {

@@ -162,8 +162,5 @@ async fn test_abort_case_2_move_on_with_other_makers() {
         );
     }
 
-    // Stop test and clean everything.
-    // comment this line if you want the wallet directory and bitcoind to live. Can be useful for
-    // after test debugging.
     test_framework.stop();
 }

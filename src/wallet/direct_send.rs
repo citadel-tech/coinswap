@@ -10,7 +10,7 @@ use bitcoin::{
     absolute::LockTime, Address, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn,
     TxOut, Witness,
 };
-use bitcoind::bitcoincore_rpc::RpcApi;
+use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
 
 use crate::wallet::{api::UTXOSpendInfo, SwapCoin};
 
@@ -107,80 +107,55 @@ impl FromStr for CoinToSpend {
 }
 
 impl Wallet {
-    pub fn create_direct_send(
+    /// API to perform spending from wallet utxos, Including descriptor coins, swap coins or contract outputs (timelock/hashlock).
+    /// This should not be used to spend the Fidelity Bond. Check [Wallet::redeem_fidelity] for fidelity spending.
+    ///
+    /// The caller needs to specify the list of utxo data and their corresponding spend_info. These can be extracted by various `list_utxo_*` Wallet APIs.
+    ///
+    /// Caller needs to specify a total Fee and Destination address. Using [Destination::Wallet] will create a transaction to an internal wallet change address.
+    ///
+    /// Using [SendAmount::Max] will sweep all the inputs, creating a transaction of max possible value to destination. To send custom value and hold remaining in
+    /// a change address, use [SendAmount::Amount].
+    pub fn spend_from_wallet(
         &mut self,
-        fee_rate: u64,
+        fee: Amount,
         send_amount: SendAmount,
         destination: Destination,
-        coins_to_spend: &[CoinToSpend],
+        coins_to_spend: &[(ListUnspentResultEntry, UTXOSpendInfo)],
     ) -> Result<Transaction, WalletError> {
         let mut tx_inputs = Vec::<TxIn>::new();
-        let mut unspent_inputs = Vec::new();
+        let mut spend_infos = Vec::new();
+        let mut total_input_value = Amount::ZERO;
 
-        //TODO this search within a search could get very slow
-        // Filter out fidelity bonds. Use `wallet.redeem_fidelity()` function to spend fidelity bond coins.
-        let list_unspent_result = self
-            .list_all_utxo_spend_info(None)?
-            .into_iter()
-            .filter(|(_, info)| !matches!(info, UTXOSpendInfo::FidelityBondCoin { .. }))
-            .collect::<Vec<_>>();
+        for (utxo_data, spend_info) in coins_to_spend {
+            // Sequence value required if utxo is timelock/hashlock
+            let sequence = match spend_info {
+                UTXOSpendInfo::TimelockContract {
+                    ref swapcoin_multisig_redeemscript,
+                    input_value: _,
+                } => self
+                    .find_outgoing_swapcoin(swapcoin_multisig_redeemscript)
+                    .unwrap()
+                    .get_timelock() as u32,
+                UTXOSpendInfo::HashlockContract {
+                    swapcoin_multisig_redeemscript: _,
+                    input_value: _,
+                } => 1, //hashlock spends must have 1 because of the `OP_CSV 1`
+                _ => 0,
+            };
 
-        for (list_unspent_entry, spend_info) in list_unspent_result {
-            for cts in coins_to_spend {
-                let previous_output = match cts {
-                    CoinToSpend::LongForm(outpoint) => {
-                        if list_unspent_entry.txid == outpoint.txid
-                            && list_unspent_entry.vout == outpoint.vout
-                        {
-                            *outpoint
-                        } else {
-                            continue;
-                        }
-                    }
-                    CoinToSpend::ShortForm {
-                        prefix,
-                        suffix,
-                        vout,
-                    } => {
-                        let txid_hex = list_unspent_entry.txid.to_string();
-                        if txid_hex.starts_with(prefix)
-                            && txid_hex.ends_with(suffix)
-                            && list_unspent_entry.vout == *vout
-                        {
-                            OutPoint {
-                                txid: list_unspent_entry.txid,
-                                vout: list_unspent_entry.vout,
-                            }
-                        } else {
-                            continue;
-                        }
-                    }
-                };
-                log::debug!("found coin to spend = {:?}", previous_output);
+            tx_inputs.push(TxIn {
+                previous_output: OutPoint::new(utxo_data.txid, utxo_data.vout),
+                sequence: Sequence(sequence),
+                witness: Witness::new(),
+                script_sig: ScriptBuf::new(),
+            });
 
-                let sequence = match spend_info {
-                    UTXOSpendInfo::TimelockContract {
-                        ref swapcoin_multisig_redeemscript,
-                        input_value: _,
-                    } => self
-                        .find_outgoing_swapcoin(swapcoin_multisig_redeemscript)
-                        .unwrap()
-                        .get_timelock() as u32,
-                    UTXOSpendInfo::HashlockContract {
-                        swapcoin_multisig_redeemscript: _,
-                        input_value: _,
-                    } => 1, //hashlock spends must have 1 because of the `OP_CSV 1`
-                    _ => 0,
-                };
-                tx_inputs.push(TxIn {
-                    previous_output,
-                    sequence: Sequence(sequence),
-                    witness: Witness::new(),
-                    script_sig: ScriptBuf::new(),
-                });
-                unspent_inputs.push((list_unspent_entry.clone(), spend_info.clone()));
-            }
+            spend_infos.push(spend_info);
+
+            total_input_value += utxo_data.amount;
         }
+
         if tx_inputs.len() != coins_to_spend.len() {
             panic!(
                 "unable to find all given inputs, only found = {:?}",
@@ -203,28 +178,29 @@ impl Wallet {
                 a
             }
         };
-        let miner_fee = (500 * fee_rate) / 1000; //TODO this is just a rough estimate now
 
         let mut output = Vec::<TxOut>::new();
-        let total_input_value = unspent_inputs
-            .iter()
-            .fold(Amount::ZERO, |acc, u| acc + u.0.amount)
-            .to_sat();
         output.push(TxOut {
             script_pubkey: dest_addr.script_pubkey(),
             value: match send_amount {
-                SendAmount::Max => total_input_value - miner_fee,
+                SendAmount::Max => (total_input_value - fee).to_sat(),
                 SendAmount::Amount(a) => a.to_sat(),
             },
         });
+
+        // Only include change if remaining > dust
         if let SendAmount::Amount(amount) = send_amount {
-            output.push(TxOut {
-                script_pubkey: self.get_next_internal_addresses(1)?[0].script_pubkey(),
-                value: total_input_value - amount.to_sat() - miner_fee,
-            });
+            let internal_spk = self.get_next_internal_addresses(1)?[0].script_pubkey();
+            let remaining = total_input_value - amount - fee;
+            if remaining > internal_spk.dust_value() {
+                output.push(TxOut {
+                    script_pubkey: internal_spk,
+                    value: remaining.to_sat(),
+                });
+            }
         }
 
-        // Anti fee snipping locktime
+        // Set the Anti-Fee-Snipping locktime
         let lock_time = LockTime::from_height(self.rpc.get_block_count().unwrap() as u32).unwrap();
 
         let mut tx = Transaction {
@@ -236,7 +212,7 @@ impl Wallet {
         log::debug!("unsigned transaction = {:#?}", tx);
         self.sign_transaction(
             &mut tx,
-            &mut unspent_inputs.iter().map(|(_u, usi)| usi.clone()),
+            &mut coins_to_spend.iter().map(|(_, usi)| usi.clone()),
         )?;
         Ok(tx)
     }

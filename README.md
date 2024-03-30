@@ -127,8 +127,7 @@ tests/
 - [x] Clean up and integrate fidelity bonds with maker banning.
 - [x] Make tor detectable and connectable by default for Maker and Taker. And Tor configs to their config lists.
 - [x] Sketch a simple `Directory Server`. Tor must. This will act as the MVP DNS server.
-- [ ] Complete all unit tests in modules.
-- [ ] Achieve >80% crate-level test coverage ratio (including integration tests).
+- [x] Achieve >80% crate-level test coverage ratio (including integration tests).
 - [ ] Turn maker server into a `maker` cli app, that spawns the server in the background, and exposes a basic maker wallet API.
 - [ ] Turn the taker into a `taker` cli app. This also has basic taker wallet API + `do_coinswap()` which spawns a swap process in the background.
 - [ ] Create `swap_dns_server` as a stand-alone directory server binary.

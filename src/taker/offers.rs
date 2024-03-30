@@ -172,12 +172,12 @@ pub async fn fetch_addresses_from_dns(
                 .await
                 .map_err(|_e| DirectoryServerError::Other("Error receiving the response"))?;
 
-            log::warn!("Received: {}", response);
-
             let addresses: Vec<MakerAddress> = response
                 .lines()
                 .map(|addr| MakerAddress::new(addr.to_string()))
                 .collect();
+
+            log::info!("Maker addresses received from DNS: {:?}", addresses);
 
             Ok(addresses)
         })

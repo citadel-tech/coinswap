@@ -173,8 +173,5 @@ async fn test_fidelity() {
 
     thread::sleep(Duration::from_secs(10));
 
-    // Stop test and clean everything.
-    // comment this line if you want the wallet directory and bitcoind to live. Can be useful for
-    // after test debugging.
     test_framework.stop();
 }

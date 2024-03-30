@@ -217,7 +217,9 @@ impl Taker {
         // If config file doesn't exist, default config will be loaded.
         let config = TakerConfig::new(Some(&config_dir.join("taker.toml")))?;
 
+        log::info!("Initializing wallet sync");
         wallet.sync()?;
+        log::info!("Completed wallet sync");
 
         Ok(Self {
             wallet,
@@ -410,8 +412,12 @@ impl Taker {
                 return Ok(());
             }
         }
+
+        log::info!("Syncing and saving wallet data");
+        self.wallet.sync()?;
         self.save_and_reset_swap_round()?;
-        log::info!("Successfully Completed Coinswap");
+        log::info!("Synced and saved wallet data.");
+        log::info!("Successfully Completed Coinswap.");
         Ok(())
     }
 
@@ -1897,9 +1903,11 @@ impl Taker {
                 }
                 // Everything is broadcasted. Clear the connectionstate and break the loop
                 if timelock_boardcasted.len() == outgoing_infos.len() {
-                    self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
                     log::info!("All outgoing contracts reedemed. Cleared ongoing swap state");
+                    self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
+                    log::info!("Initializing Wallet sync and save");
                     self.wallet.sync()?;
+                    log::info!("Completed wallet sync and save");
                     return Ok(());
                 }
             }

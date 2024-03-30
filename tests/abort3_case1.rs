@@ -156,8 +156,5 @@ async fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
             .to_string()
     );
 
-    // Stop test and clean everything.
-    // comment this line if you want the wallet directory and bitcoind to live. Can be useful for
-    // after test debugging.
     test_framework.stop();
 }
