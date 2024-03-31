@@ -194,9 +194,9 @@ async fn handle_client(mut stream: tokio::net::TcpStream, addresses: &mut HashSe
     reader.read_line(&mut request_line).await.unwrap();
 
     if request_line.starts_with("POST") {
-        log::info!("Maker pinged the directory server");
         let onion_address = request_line.replace("POST ", "").trim().to_string();
         addresses.insert(onion_address.clone());
+        log::info!("Got new maker address: {}", onion_address);
     } else if request_line.starts_with("GET") {
         log::info!("Taker pinged the directory server");
         let response = addresses

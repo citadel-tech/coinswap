@@ -230,7 +230,8 @@ impl Maker {
             && total_funding_amount < self.wallet.read()?.store.offer_maxsize
         {
             log::info!(
-                "messageed contracts amount={}, for funding txids = {:?}",
+                "[{}] Total Funding Amount = {} | Funding Txids = {:?}",
+                self.config.port,
                 Amount::from_sat(total_funding_amount),
                 funding_txids
             );
@@ -238,10 +239,6 @@ impl Maker {
                 ContractSigsForSender { sigs },
             ))
         } else {
-            log::info!(
-                "rejecting contracts for amount={} because not enough funds",
-                Amount::from_sat(total_funding_amount)
-            );
             Err(MakerError::General("not enough funds"))
         }
     }
@@ -263,7 +260,10 @@ impl Maker {
         // Basic verification of ProofOfFunding Message.
         // Check function definition for all the checks performed.
         let hashvalue = self.verify_proof_of_funding(&message)?;
-        log::debug!("proof of funding valid, creating own funding txes");
+        log::info!(
+            "[{}] Validated Proof of Funding of receiving swap. Adding Incoming Swaps.",
+            self.config.port
+        );
 
         // Import transactions and addresses into Bitcoin core's wallet.
         // Add IncomingSwapcoin to Maker's Wallet
@@ -316,12 +316,6 @@ impl Maker {
             let hashlock_privkey =
                 tweakable_privkey.add_tweak(&funding_info.hashlock_nonce.into())?;
 
-            log::debug!(
-                "Adding incoming_swapcoin contract_tx = {:?} fo = {:?}",
-                receiver_contract_tx.clone(),
-                funding_output
-            );
-
             // Taker can send same funding transactions twice. Happens when one maker in the
             // path fails. Only add it if it din't already existed.
             let incoming_swapcoin = IncomingSwapCoin::new(
@@ -336,6 +330,11 @@ impl Maker {
                 .incoming_swapcoins
                 .contains(&incoming_swapcoin)
             {
+                log::debug!(
+                    "[{}] Incoming SwapCoins: {:?}",
+                    self.config.port,
+                    incoming_swapcoin
+                );
                 connection_state.incoming_swapcoins.push(incoming_swapcoin);
             }
         }
@@ -351,22 +350,23 @@ impl Maker {
             acc + txout.value
         });
 
-        let coinswap_fees = calculate_coinswap_fee(
+        let calc_coinswap_fees = calculate_coinswap_fee(
             self.config.absolute_fee_sats,
             self.config.amount_relative_fee_ppb,
             self.config.time_relative_fee_ppb,
             incoming_amount,
             self.config.required_confirms, //time_in_blocks just 1 for now
         );
-        let miner_fees_paid_by_taker = FUNDING_TX_VBYTE_SIZE
+
+        let calc_funding_tx_fees = FUNDING_TX_VBYTE_SIZE
             * message.next_fee_rate
             * (message.next_coinswap_info.len() as u64)
             / 1000;
 
-        let outgoing_amount = incoming_amount - coinswap_fees - miner_fees_paid_by_taker;
+        let outgoing_amount = incoming_amount - calc_coinswap_fees - calc_funding_tx_fees;
 
         // Create outgoing coinswap of the next hop
-        let (my_funding_txes, outgoing_swapcoins, total_miner_fee) = {
+        let (my_funding_txes, outgoing_swapcoins, act_funding_txs_fees) = {
             self.wallet.write()?.initalize_coinswap(
                 outgoing_amount,
                 &message
@@ -385,42 +385,40 @@ impl Maker {
             )?
         };
 
+        let act_coinswap_fees = incoming_amount - outgoing_amount - act_funding_txs_fees;
+
         log::info!(
-            "Proof of funding valid. Incoming funding txes, txids = {:?}",
-            message
-                .confirmed_funding_txes
+            "[{}] Outgoing Funding Txids: {:?}.",
+            self.config.port,
+            my_funding_txes
                 .iter()
-                .map(|cft| cft.funding_tx.txid())
-                .collect::<Vec<Txid>>()
+                .map(|tx| tx.txid())
+                .collect::<Vec<_>>()
         );
+        log::debug!(
+            "[{}] Outgoing Swapcoins: {:?}.",
+            self.config.port,
+            outgoing_swapcoins
+        );
+
         log::info!(
-            "incoming_amount={}, incoming_locktime={}, hashvalue={}",
+            "incoming_amount = {} | incoming_locktime = {} | outgoing_amount = {} | outgoing_locktime = {}",
             Amount::from_sat(incoming_amount),
             read_contract_locktime(&message.confirmed_funding_txes[0].contract_redeemscript)
                 .unwrap(),
-            //unwrap() as format of contract_redeemscript already checked in verify_proof_of_funding
-            hashvalue
-        );
-        log::info!(
-            concat!(
-                "outgoing_amount={}, outgoing_locktime={}, miner fees paid by taker={}, ",
-                "actual miner fee={}, coinswap_fees={}, POTENTIALLY EARNED={}"
-            ),
             Amount::from_sat(outgoing_amount),
             message.next_locktime,
-            Amount::from_sat(miner_fees_paid_by_taker),
-            Amount::from_sat(total_miner_fee),
-            Amount::from_sat(coinswap_fees),
-            Amount::from_sat(incoming_amount - outgoing_amount - total_miner_fee)
+        );
+        log::info!(
+                "Calculated Funding Txs Fees = {} | Actual Funding Txs Fees = {} | Calculated Swap Revenue = {} | Actual Swap Revenue = {}",
+            Amount::from_sat(calc_funding_tx_fees),
+            Amount::from_sat(act_funding_txs_fees),
+            Amount::from_sat(calc_coinswap_fees),
+            Amount::from_sat(act_coinswap_fees)
         );
 
         connection_state.pending_funding_txes = my_funding_txes;
         connection_state.outgoing_swapcoins = outgoing_swapcoins;
-        log::debug!(
-            "Incoming_swapcoins = {:#?}\nOutgoing_swapcoins = {:#?}",
-            connection_state.incoming_swapcoins,
-            connection_state.outgoing_swapcoins,
-        );
 
         // Save things to disk after Proof of Funding is confirmed.
         {
@@ -510,7 +508,6 @@ impl Maker {
 
         let mut my_funding_txids = Vec::<Txid>::new();
         for my_funding_tx in &connection_state.pending_funding_txes {
-            log::debug!("Broadcasting My Funding Tx : {:#?}", my_funding_tx);
             let txid = self
                 .wallet
                 .read()?
@@ -520,7 +517,11 @@ impl Maker {
             assert_eq!(txid, my_funding_tx.txid());
             my_funding_txids.push(txid);
         }
-        log::info!("Broadcasted My Funding Txes: {:?}", my_funding_txids);
+        log::info!(
+            "[{}] Outgoing Funding Txids: {:?}",
+            self.config.port,
+            my_funding_txids
+        );
 
         {
             let mut wallet_writer = self.wallet.write()?;

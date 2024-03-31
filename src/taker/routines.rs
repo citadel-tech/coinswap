@@ -77,7 +77,7 @@ pub async fn handshake_maker(
         }),
     )
     .await?;
-    let makerhello = match read_maker_message(&mut socket_reader).await {
+    let _makerhello = match read_maker_message(&mut socket_reader).await {
         Ok(MakerToTakerMessage::MakerHello(m)) => m,
         Ok(any) => {
             return Err((ProtocolError::WrongMessage {
@@ -90,8 +90,6 @@ pub async fn handshake_maker(
             return Err(e.into());
         }
     };
-
-    log::debug!("{:#?}", makerhello);
     Ok((socket_reader, socket_writer))
 }
 
@@ -451,7 +449,6 @@ pub(crate) async fn send_hash_preimage_and_get_private_keys(
 }
 
 async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer, TakerError> {
-    log::debug!(target: "offerbook", "Connecting to {}", addr);
     let address = addr.as_str();
     let mut socket = Socks5Stream::connect("127.0.0.1:19050", address)
         .await?
@@ -475,7 +472,6 @@ async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer,
         }
     };
 
-    log::debug!(target: "offerbook", "Obtained offer from {}", addr);
     Ok(*offer)
 }
 

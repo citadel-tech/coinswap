@@ -85,10 +85,10 @@ impl Wallet {
         // Create or load the watch-only bitcoin core wallet
         let wallet_name = &self.store.file_name;
         if self.rpc.list_wallets()?.contains(wallet_name) {
-            log::debug!("wallet already loaded: {}", wallet_name);
+            log::info!("wallet already loaded: {}", wallet_name);
         } else if list_wallet_dir(&self.rpc)?.contains(wallet_name) {
             self.rpc.load_wallet(wallet_name)?;
-            log::debug!("wallet loaded: {}", wallet_name);
+            log::info!("wallet loaded: {}", wallet_name);
         } else {
             // pre-0.21 use legacy wallets
             if self.rpc.version()? < 210_000 {
@@ -107,7 +107,7 @@ impl Wallet {
                 let _: Value = self.rpc.call("createwallet", &args)?;
             }
 
-            log::debug!("wallet created: {}", wallet_name);
+            log::info!("wallet created: {}", wallet_name);
         }
 
         let hd_descriptors_to_import = self.get_unimoprted_wallet_desc()?;
@@ -195,7 +195,6 @@ impl Wallet {
 
             let is_first_imported = if let Some(spk) = first_addr {
                 let ad = Address::from_script(&spk, self.store.network)?;
-                log::debug!("First Fidelity Addrs: {}", ad);
                 self.rpc
                     .get_address_info(&ad)?
                     .is_watchonly
@@ -206,7 +205,6 @@ impl Wallet {
 
             let is_last_imported = if let Some(spk) = last_addr {
                 let ad = Address::from_script(&spk, self.store.network)?;
-                log::debug!("Last Fidelity Addr: {}", ad);
                 self.rpc
                     .get_address_info(&ad)?
                     .is_watchonly
@@ -297,13 +295,6 @@ impl Wallet {
             )),
         );
         let unspent_list = scantxoutset_result["unspents"].as_array().unwrap();
-        log::debug!(
-            "Found \ncoins={} \ntxouts={} \nheight={} \nbestblock={}",
-            unspent_list.len(),
-            scantxoutset_result["txouts"].as_u64().unwrap(),
-            scantxoutset_result["height"].as_u64().unwrap(),
-            scantxoutset_result["bestblock"].as_str().unwrap(),
-        );
         for unspent in unspent_list {
             let blockhash = self
                 .rpc

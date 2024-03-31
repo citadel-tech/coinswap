@@ -320,8 +320,9 @@ impl Wallet {
             )));
         }
         let rpc = Client::try_from(rpc_config)?;
-        log::debug!(target: "wallet",
-            "loaded wallet file, external_index={} incoming_swapcoins={} outgoing_swapcoins={}",
+        log::info!(
+            "Loaded wallet file {} | External Index = {} | Incoming Swapcoins = {} | Outgoing Swapcoins = {}",
+            store.file_name,
             store.external_index,
             store.incoming_swapcoins.len(), store.outgoing_swapcoins.len());
         let wallet = Self {
@@ -532,7 +533,10 @@ impl Wallet {
         contract: ScriptBuf,
     ) -> Result<(), WalletError> {
         if let Some(contract) = self.store.prevout_to_contract_map.insert(prevout, contract) {
-            log::debug!(target: "Wallet:cache_prevout_to_contract", "prevout-contract map updated.\nExisting contract: {}", contract);
+            log::warn!(
+                "Prevout to Contract map updated.\nExisting Contract: {}",
+                contract
+            );
         }
         Ok(())
     }
@@ -639,9 +643,6 @@ impl Wallet {
         swapcoin_descriptors: &[String],
         contract_scriptpubkeys: &[ScriptBuf],
     ) -> Result<(), WalletError> {
-        log::debug!(target: "Wallet: ",
-            "import_initial_addresses with initial_address_import_count = {}",
-            self.get_addrss_import_count());
         let address_label = self.get_core_wallet_label();
 
         let import_requests = hd_descriptors
@@ -1198,7 +1199,6 @@ impl Wallet {
         let tx_clone = tx.clone();
 
         for (ix, (input, input_info)) in tx.input.iter_mut().zip(inputs_info).enumerate() {
-            log::debug!(target: "wallet", "signing with input_info = {:?}", input_info);
             match input_info {
                 UTXOSpendInfo::SwapCoin {
                     multisig_redeemscript,
@@ -1284,7 +1284,6 @@ impl Wallet {
         let decoded_psbt = self
             .rpc
             .call::<Value>("decodepsbt", &[Value::String(psbt.to_string())])?;
-        log::debug!(target: "wallet", "decoded_psbt = {:?}", decoded_psbt);
 
         //TODO proper error handling, theres many unwrap()s here
         //make this function return Result<>
@@ -1321,7 +1320,6 @@ impl Wallet {
             lock_time: LockTime::ZERO,
             version: 2,
         };
-        log::debug!(target: "wallet", "tx = {:?}", tx);
 
         let mut inputs_info = decoded_psbt["inputs"]
             .as_array()
@@ -1346,13 +1344,8 @@ impl Wallet {
                     }
                 }
             });
-        log::debug!(target: "wallet", "inputs_info = {:?}", inputs_info);
         self.sign_transaction(&mut tx, &mut inputs_info)?;
 
-        log::debug!(target: "wallet",
-            "txhex = {}",
-            bitcoin::consensus::encode::serialize_hex(&tx)
-        );
         Ok(tx)
     }
 
@@ -1425,7 +1418,6 @@ impl Wallet {
                 Value::String(merkleproof.to_owned()),
             ],
         )?;
-        log::debug!(target: "wallet", "import_tx_with_merkleproof txid={}", tx.txid());
         Ok(())
     }
 
@@ -1444,9 +1436,7 @@ impl Wallet {
             .iter()
             .map(|other_key| self.create_and_import_coinswap_address(other_key))
             .unzip();
-        log::debug!(target: "wallet", "coinswap_addresses = {:?}", coinswap_addresses);
 
-        // TODO: Instead of options, return results.
         let create_funding_txes_result =
             self.create_funding_txes(total_coinswap_amount, &coinswap_addresses, fee_rate)?;
         //for sweeping there would be another function, probably

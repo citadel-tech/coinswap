@@ -79,7 +79,7 @@ async fn maker_drops_after_sending_senders_sigs() {
     });
 
     // confirm balances
-    test_framework.generate_1_block();
+    test_framework.generate_blocks(1);
 
     // ---- Start Servers and attempt Swap ----
 

@@ -79,13 +79,12 @@ pub fn seed_phrase_to_unique_id(seed: &str) -> String {
 /// Setup function that will only run once, even if called multiple times.
 pub fn setup_logger() {
     Once::new().call_once(|| {
-        env::set_var("RUST_LOG", "info");
+        env::set_var("RUST_LOG", "coinswap=info");
         env_logger::Builder::from_env(
             env_logger::Env::default()
                 .default_filter_or("coinswap=info")
                 .default_write_style_or("always"),
         )
-        // .is_test(true)
         .init();
     });
 }
@@ -177,7 +176,7 @@ pub fn get_hd_path_from_descriptor(descriptor: &str) -> Option<(&str, u32, i32)>
     let close = descriptor.find(']');
     if open.is_none() || close.is_none() {
         //unexpected, so printing it to stdout
-        println!("unknown descriptor = {}", descriptor);
+        log::error!("unknown descriptor = {}", descriptor);
         return None;
     }
     let path = &descriptor[open.unwrap() + 1..close.unwrap()];
@@ -188,7 +187,7 @@ pub fn get_hd_path_from_descriptor(descriptor: &str) -> Option<(&str, u32, i32)>
     }
     let addr_type = path_chunks[1].parse::<u32>();
     if addr_type.is_err() {
-        log::debug!(target: "wallet", "unexpected address_type = {}", path);
+        log::error!(target: "wallet", "unexpected address_type = {}", path);
         return None;
     }
     let index = path_chunks[2].parse::<i32>();

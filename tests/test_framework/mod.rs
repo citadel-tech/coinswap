@@ -158,8 +158,7 @@ impl TestFramework {
         let tf_clone = test_framework.clone();
         thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(3));
-            tf_clone.generate_1_block();
-            log::debug!("created 1 block");
+            tf_clone.generate_blocks(10);
             if *tf_clone.shutdown.read().unwrap() {
                 log::info!("ending block generation thread");
                 return;
@@ -174,8 +173,8 @@ impl TestFramework {
         &self.bitcoind.client
     }
 
-    /// Generate 1 block in the backend bitcoind.
-    pub fn generate_1_block(&self) {
+    /// Generate Blocks in regtest node.
+    pub fn generate_blocks(&self, n: u64) {
         let mining_address = self
             .bitcoind
             .client
@@ -185,7 +184,7 @@ impl TestFramework {
             .unwrap();
         self.bitcoind
             .client
-            .generate_to_address(1, &mining_address)
+            .generate_to_address(n, &mining_address)
             .unwrap();
     }
 

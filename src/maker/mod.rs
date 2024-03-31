@@ -116,7 +116,6 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         directory_onion_address
     );
 
-    log::debug!("Running maker with special behavior = {:?}", maker.behavior);
     maker.wallet.write()?.refresh_offer_maxsize_cache()?;
 
     let network = maker.get_wallet().read()?.store.network;
@@ -275,7 +274,6 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 if Instant::now().saturating_duration_since(last_rpc_ping) > rpc_ping_interval {
                     last_rpc_ping = Instant::now();
                     rpc_ping_success = maker.wallet.write()?.refresh_offer_maxsize_cache().is_ok();
-                    log::debug!("rpc_ping_success = {}", rpc_ping_success);
                 }
                 accepting_clients = rpc_ping_success;
                 if !accepting_clients {
@@ -350,7 +348,6 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                     Ok(reply) => {
                         if let Some(message) = reply {
                             log::info!("[{}] ===> {} ", maker_clone.config.port, message);
-                            log::debug!("{:#?}", message);
                             if let Err(e) = send_message(&mut socket_writer, &message).await {
                                 log::error!("Closing due to IO error in sending message: {:?}", e);
                                 continue;
