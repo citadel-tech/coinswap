@@ -44,7 +44,6 @@ Teleport Transactions is a rust implementation of a variant of atomic-swap proto
 * [Mailing list post](https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-October/018221.html)
 * [Detailed design](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964)
 * [Developer's resources](/docs/dev-book.md)
-* [Run demo](/docs/demo.md)
 
 ## Build and Test
 
@@ -93,13 +92,16 @@ tests/
 ```
 | Directory           | Description |
 |---------------------|-------------|
-| **`doc`**           | Contains all the project-related docs. The [dev-book](./docs/dev-book.md) includes major developer salient points and the [demo doc](./docs/demo.md) describes how to run the `teleport` binary and perform a swap in regtest.|
+| **`doc`**           | Contains all the project-related docs. The [dev-book](./docs/dev-book.md) includes major developer salient points.|
 | **`src/taker`**     | Taker module houses its core logic in `src/taker/api.rs` and handles both Taker-related behaviors and most of the protocol-related logic. |
 | **`src/maker`**     | Encompasses Maker-specific logic and plays a relatively passive role compared to Taker. |
 | **`src/wallet`**    | Manages wallet-related operations, including storage and blockchain interaction. |
 | **`src/market`**    | Handles market-related logic, where Makers post their offers. |
 | **`src/protocol`**  | Contains utility functions, error handling, and messages for protocol communication. |
 | **`tests`**         | Contains integration tests. Describes behavior of various abort/malice cases.|
+
+> [!IMPORTANT]
+>  The project currently only compiles in Linux. Mac/Windows is not supported. To compile in Mac/Windows use virtual machines
 
 ## Roadmap
 
