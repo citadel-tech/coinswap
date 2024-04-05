@@ -37,9 +37,6 @@ impl Wallet {
         destinations: &[Address],
         fee_rate: u64,
     ) -> Result<CreateFundingTxesResult, WalletError> {
-        log::debug!(target: "wallet", "coinswap_amount = {} destinations = {:?}",
-            coinswap_amount, destinations);
-
         let ret = self.create_funding_txes_random_amounts(coinswap_amount, destinations, fee_rate);
         if ret.is_ok() {
             log::info!(target: "wallet", "created funding txes with random amounts");
@@ -116,7 +113,6 @@ impl Wallet {
         *output_values.first_mut().unwrap() =
             total_amount - output_values.iter().skip(1).sum::<u64>();
         assert_eq!(output_values.iter().sum::<u64>(), total_amount);
-        log::debug!(target: "wallet", "output values = {:?}", output_values);
 
         Ok(output_values)
     }
@@ -131,7 +127,6 @@ impl Wallet {
         fee_rate: u64,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let change_addresses = self.get_next_internal_addresses(destinations.len() as u32)?;
-        log::debug!(target: "wallet", "change addrs = {:?}", change_addresses);
 
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
@@ -145,8 +140,6 @@ impl Wallet {
             .zip(output_values.iter())
             .zip(change_addresses.iter())
         {
-            log::debug!(target: "wallet", "output_value = {} to addr={}", output_value, address);
-
             let mut outputs = HashMap::<String, Amount>::new();
             outputs.insert(address.to_string(), Amount::from_sat(output_value));
 
@@ -166,7 +159,6 @@ impl Wallet {
                 None,
             )?;
             total_miner_fee += wcfp_result.fee.to_sat();
-            log::debug!(target: "wallet", "created funding tx, miner fee={}", wcfp_result.fee);
 
             let funding_tx = self.from_walletcreatefundedpsbt_to_tx(&wcfp_result.psbt)?;
 
@@ -183,7 +175,6 @@ impl Wallet {
             } else {
                 0
             };
-            log::debug!(target: "wallet", "payment_pos = {}", payment_pos);
 
             funding_txes.push(funding_tx);
             payment_output_positions.push(payment_pos);
@@ -241,7 +232,6 @@ impl Wallet {
             leftover_coinswap_amount -= funding_tx.output[0].value;
 
             total_miner_fee += wcfp_result.fee.to_sat();
-            log::debug!(target: "wallet", "created funding tx, miner fee={}", wcfp_result.fee);
 
             funding_txes.push(funding_tx);
             payment_output_positions.push(0);
@@ -280,7 +270,6 @@ impl Wallet {
         leftover_coinswap_amount -= funding_tx.output[0].value;
 
         total_miner_fee += wcfp_result.fee.to_sat();
-        log::debug!(target: "wallet", "created funding tx, miner fee={}", wcfp_result.fee);
 
         funding_txes.push(funding_tx);
         payment_output_positions.push(0);
@@ -313,7 +302,6 @@ impl Wallet {
         let funding_tx = self.from_walletcreatefundedpsbt_to_tx(&wcfp_result.psbt)?;
 
         total_miner_fee += wcfp_result.fee.to_sat();
-        log::debug!(target: "wallet", "created funding tx, miner fee={}", wcfp_result.fee);
 
         funding_txes.push(funding_tx);
         payment_output_positions.push(if wcfp_result.change_position == 0 {
@@ -367,10 +355,7 @@ impl Wallet {
         let decoded_psbt = self
             .rpc
             .call::<Value>("decodepsbt", &[Value::String(wcfp_result.psbt)])?;
-        log::debug!(target: "wallet", "total tx decoded_psbt = {:?}", decoded_psbt);
-
         let total_tx_inputs_len = decoded_psbt["inputs"].as_array().unwrap().len();
-        log::debug!(target: "wallet", "total tx inputs.len = {}", total_tx_inputs_len);
         if total_tx_inputs_len < destinations.len() {
             return Err(WalletError::Protocol(
                 "not enough UTXOs found, cant use this method".to_string(),
@@ -452,20 +437,13 @@ impl Wallet {
         }
 
         let inputs = &list_unspent_result[..list_unspent_count.unwrap()];
-        log::debug!(target: "wallet", "inputs sizes = {:?}",
-            inputs.iter().map(|(l, _)| l.amount.to_sat()).collect::<Vec<u64>>());
 
         if inputs[1..]
             .iter()
             .map(|(l, _)| l.amount.to_sat())
             .any(|utxo_value| utxo_value > coinswap_amount)
         {
-            //at least two utxos bigger than the coinswap amount
-
-            //not implemented yet!
-            log::debug!(target: "wallet",
-                concat!("Failed to create funding txes with the biggest-utxos method, this ",
-                    "branch not implemented yet!"));
+            // TODO: Handle this case
             Err(WalletError::Protocol(
                 "Some stupid error that will never occur".to_string(),
             ))

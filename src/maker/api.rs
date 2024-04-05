@@ -251,12 +251,6 @@ impl Maker {
         }
 
         for funding_info in &message.confirmed_funding_txes {
-            //check that the funding transaction pays to correct multisig
-            log::debug!(
-                "Proof of Funding: \ntx = {:#?}\nMultisig_Reedimscript = {:x}",
-                funding_info.funding_tx,
-                funding_info.multisig_redeemscript
-            );
             // check that the new locktime is sufficently short enough compared to the
             // locktime in the provided funding tx
             let locktime = read_contract_locktime(&funding_info.contract_redeemscript)?;

@@ -83,7 +83,7 @@ async fn test_abort_case_2_move_on_with_other_makers() {
     });
 
     // confirm balances
-    test_framework.generate_1_block();
+    test_framework.generate_blocks(1);
 
     // ---- Start Servers and attempt Swap ----
 

@@ -55,7 +55,7 @@ async fn test_fidelity() {
         .get_next_external_address()
         .unwrap();
     test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.04).unwrap());
-    test_framework.generate_1_block();
+    test_framework.generate_blocks(1);
 
     let maker_clone = maker.clone();
     let maker_thread = thread::spawn(move || start_maker_server(maker_clone));
@@ -74,7 +74,7 @@ async fn test_fidelity() {
 
     // Give Maker more funds and check fidelity bond is created at the restart of server.
     test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.04).unwrap());
-    test_framework.generate_1_block();
+    test_framework.generate_blocks(1);
 
     let maker_clone = maker.clone();
     let maker_thread = thread::spawn(move || start_maker_server(maker_clone));

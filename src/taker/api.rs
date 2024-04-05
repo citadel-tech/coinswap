@@ -379,6 +379,7 @@ impl Taker {
             if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
                 let incoming_swapcoins =
                     self.create_incoming_swapcoins(multisig_reedemscripts, funding_outpoints)?;
+                log::debug!("Incoming Swapcoins: {:?}", incoming_swapcoins);
                 self.ongoing_swap_state.incoming_swapcoins = incoming_swapcoins;
                 match self.request_sigs_for_incoming_swap().await {
                     Ok(_) => (),
@@ -413,10 +414,10 @@ impl Taker {
             }
         }
 
-        log::info!("Syncing and saving wallet data");
+        log::info!("Initializing Sync and Save.");
         self.wallet.sync()?;
         self.save_and_reset_swap_round()?;
-        log::info!("Synced and saved wallet data.");
+        log::info!("Completed Sync and Save.");
         log::info!("Successfully Completed Coinswap.");
         Ok(())
     }
@@ -427,6 +428,7 @@ impl Taker {
     /// fail if no suitable makers are found.
     /// Creates and stores the [OutgoingSwapCoin] into [OngoingSwapState], and also saves it into the [Wallet] file.
     async fn init_first_hop(&mut self) -> Result<(), TakerError> {
+        log::info!("Initializing First Hop.");
         // Set the Taker Position state
         self.ongoing_swap_state.taker_position = TakerPosition::FirstPeer;
 
@@ -440,7 +442,7 @@ impl Taker {
             let untried_maker_count = self.offerbook.get_all_untried().len();
 
             if untried_maker_count < (self.ongoing_swap_state.swap_params.maker_count as usize) {
-                log::info!("We don't have enough makers to satisfy the swap requirements!");
+                log::error!("Not enough makers to satisfy swap requirements.");
                 return Err(TakerError::NotEnoughMakersInOfferBook);
             }
             let maker = self.choose_next_maker()?.clone();
@@ -450,15 +452,15 @@ impl Taker {
                     self.ongoing_swap_state.swap_params.tx_count,
                 );
 
-            //TODO: Figure out where to use the fee.
-            let (funding_txs, mut outgoing_swapcoins, _fee) = self.wallet.initalize_coinswap(
-                self.ongoing_swap_state.swap_params.send_amount,
-                &multisig_pubkeys,
-                &hashlock_pubkeys,
-                self.get_preimage_hash(),
-                swap_locktime,
-                self.ongoing_swap_state.swap_params.fee_rate,
-            )?;
+            let (funding_txs, mut outgoing_swapcoins, funding_fee) =
+                self.wallet.initalize_coinswap(
+                    self.ongoing_swap_state.swap_params.send_amount,
+                    &multisig_pubkeys,
+                    &hashlock_pubkeys,
+                    self.get_preimage_hash(),
+                    swap_locktime,
+                    self.ongoing_swap_state.swap_params.fee_rate,
+                )?;
 
             let contract_reedemscripts = outgoing_swapcoins
                 .iter()
@@ -480,8 +482,8 @@ impl Taker {
                 Err(e) => {
                     // Bad maker, mark it, and try next one.
                     self.offerbook.add_bad_maker(&maker);
-                    log::debug!(
-                        "Failed to obtain senders contract tx signature from first_maker {}: {:?}",
+                    log::error!(
+                        "Failed to obtain sender's contract signatures from first_maker {}: {:?}",
                         maker.address,
                         e
                     );
@@ -514,21 +516,22 @@ impl Taker {
 
             self.ongoing_swap_state.outgoing_swapcoins = outgoing_swapcoins;
 
+            log::info!("Total Funding Txs Fees: {}", funding_fee);
+
             break (maker, funding_txs);
         };
 
-        // Boradcast amd wait for funding txs to confirm
-        log::debug!("My Funding Txids:  {:#?}", funding_txs);
         log::debug!(
-            "Outgoing SwapCoins: {:#?}",
+            "Outgoing SwapCoins: {:?}",
             self.ongoing_swap_state.outgoing_swapcoins
         );
 
+        // Broadcast and wait for funding txs to confirm
         let funding_txids = funding_txs
             .iter()
             .map(|tx| {
                 let txid = self.wallet.rpc.send_raw_transaction(tx)?;
-                log::info!("Broadcasting My Funding Tx: {}", txid);
+                log::info!("Funding Txid: {}", txid);
                 assert_eq!(txid, tx.txid());
                 Ok(txid)
             })
@@ -538,7 +541,7 @@ impl Taker {
         // This errors in two cases.
         // TakerError::ContractsBroadcasted and TakerError::FundingTxWaitTimeOut.
         // For all cases, abort from swap immediately.
-        // For the timeout case also ban the Peer.
+        // For the contract-broadcasted case also ban the Peer.
         match self.watch_for_txs(&funding_txids).await {
             Ok(stuffs) => {
                 self.ongoing_swap_state.funding_txs.push(stuffs);
@@ -546,7 +549,7 @@ impl Taker {
             }
             Err(e) => {
                 log::error!("Error: {:?}", e);
-                if let TakerError::FundingTxWaitTimeOut = e {
+                if let TakerError::ContractsBroadcasted(_) = e {
                     self.offerbook.add_bad_maker(&maker);
                 }
                 return Err(e);
@@ -633,7 +636,7 @@ impl Taker {
                             }
                         };
                         log::info!(
-                            "Seen in mempool: {} [{:.1} sat/vbyte]",
+                            "Tx {} Seen in Mempool | [{:.1} sat/vbyte]",
                             txid,
                             (mempool_tx.fees.base.to_sat() as f32) / (mempool_tx.vsize as f32)
                         );
@@ -643,15 +646,10 @@ impl Taker {
                 if gettx.confirmations >= Some(required_confirmations as u32) {
                     txid_tx_map.insert(*txid, deserialize::<Transaction>(&gettx.hex).unwrap());
                     txid_blockhash_map.insert(*txid, gettx.blockhash.unwrap());
-                    log::debug!(
-                        "funding tx {} reached {} confirmation(s)",
-                        txid,
-                        required_confirmations
-                    );
+                    log::info!("Tx {} | Confirmed at {}", txid, required_confirmations);
                 }
             }
             if txid_tx_map.len() == funding_txids.len() {
-                log::info!("Funding Transactions confirmed");
                 let txes = funding_txids
                     .iter()
                     .map(|txid| txid_tx_map.get(txid).unwrap().clone())
@@ -1715,30 +1713,6 @@ impl Taker {
 
     /// Save all the finalized swap data and reset the [OngoingSwapState].
     fn save_and_reset_swap_round(&mut self) -> Result<(), TakerError> {
-        for (index, watchonly_swapcoin) in self
-            .ongoing_swap_state
-            .watchonly_swapcoins
-            .iter()
-            .enumerate()
-        {
-            log::debug!(
-                "maker[{}] funding txes = {:#?}",
-                index,
-                watchonly_swapcoin
-                    .iter()
-                    .map(|w| w.contract_tx.input[0].previous_output.txid)
-                    .collect::<Vec<_>>()
-            );
-        }
-        log::debug!(
-            "my incoming txes = {:#?}",
-            self.ongoing_swap_state
-                .incoming_swapcoins
-                .iter()
-                .map(|w| w.contract_tx.input[0].previous_output.txid)
-                .collect::<Vec<_>>()
-        );
-
         for incoming_swapcoin in &self.ongoing_swap_state.incoming_swapcoins {
             self.wallet
                 .find_incoming_swapcoin_mut(&incoming_swapcoin.get_multisig_redeemscript())
@@ -1954,6 +1928,7 @@ impl Taker {
                 "Found New Offer from {}. Verifying Fidelity Proof",
                 offer.address.to_string()
             );
+            log::debug!("{:?}", offer);
             if let Err(e) = self
                 .wallet
                 .verify_fidelity_proof(&offer.offer.fidelity, offer.address.to_string())

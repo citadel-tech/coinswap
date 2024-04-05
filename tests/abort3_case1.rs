@@ -79,7 +79,7 @@ async fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
     });
 
     // confirm balances
-    test_framework.generate_1_block();
+    test_framework.generate_blocks(1);
 
     // ---- Start Servers and attempt Swap ----
 

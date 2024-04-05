@@ -74,7 +74,7 @@ async fn test_standard_coinswap() {
     });
 
     // confirm balances
-    test_framework.generate_1_block();
+    test_framework.generate_blocks(1);
 
     // --- Basic Checks ----
 
@@ -407,7 +407,7 @@ async fn test_standard_coinswap() {
         .send_raw_transaction(&tx)
         .unwrap();
 
-    test_framework.generate_1_block();
+    test_framework.generate_blocks(1);
 
     taker.write().unwrap().get_wallet_mut().sync().unwrap();
 

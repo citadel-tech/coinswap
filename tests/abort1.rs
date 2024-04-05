@@ -81,7 +81,7 @@ async fn test_stop_taker_after_setup() {
     });
 
     // confirm balances
-    test_framework.generate_1_block();
+    test_framework.generate_blocks(1);
 
     let mut all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
 

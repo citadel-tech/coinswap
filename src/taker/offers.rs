@@ -126,7 +126,6 @@ pub async fn fetch_offer_from_makers(
         let taker_config: TakerConfig = config.clone();
         tokio::spawn(async move {
             let offer = download_maker_offer(addr, taker_config).await;
-            log::debug!("Received Maker Offer: {:?}", offer);
             offers_writer.send(offer).await.unwrap();
         });
     }

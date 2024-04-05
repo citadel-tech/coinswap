@@ -10,7 +10,7 @@ use bitcoin::{
     absolute::LockTime, Address, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn,
     TxOut, Witness,
 };
-use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
+use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RawTx, RpcApi};
 
 use crate::wallet::{api::UTXOSpendInfo, SwapCoin};
 
@@ -123,6 +123,7 @@ impl Wallet {
         destination: Destination,
         coins_to_spend: &[(ListUnspentResultEntry, UTXOSpendInfo)],
     ) -> Result<Transaction, WalletError> {
+        log::info!("Creating Direct-Spend from Wallet.");
         let mut tx_inputs = Vec::<TxIn>::new();
         let mut spend_infos = Vec::new();
         let mut total_input_value = Amount::ZERO;
@@ -157,11 +158,12 @@ impl Wallet {
         }
 
         if tx_inputs.len() != coins_to_spend.len() {
-            panic!(
-                "unable to find all given inputs, only found = {:?}",
-                tx_inputs
-            );
+            return Err(WalletError::Protocol(
+                "Could not fetch all inputs.".to_string(),
+            ));
         }
+
+        log::info!("Total Input Amount: {} | Fees: {}", total_input_value, fee);
 
         let dest_addr = match destination {
             Destination::Wallet => self.get_next_external_address()?,
@@ -173,26 +175,36 @@ impl Wallet {
                     && (self.store.network == Network::Testnet
                         || self.store.network == Network::Signet);
                 if a.network != self.store.network && !testnet_signet_type {
-                    panic!("wrong address network type (e.g. mainnet, testnet, regtest, signet)");
+                    return Err(WalletError::Protocol(
+                        "Wrong address type in destinations.".to_string(),
+                    ));
                 }
                 a
             }
         };
 
         let mut output = Vec::<TxOut>::new();
-        output.push(TxOut {
-            script_pubkey: dest_addr.script_pubkey(),
-            value: match send_amount {
+
+        let txout = {
+            let value = match send_amount {
                 SendAmount::Max => (total_input_value - fee).to_sat(),
                 SendAmount::Amount(a) => a.to_sat(),
-            },
-        });
+            };
+            log::info!("Sending {} to {}.", value, dest_addr);
+            TxOut {
+                script_pubkey: dest_addr.script_pubkey(),
+                value,
+            }
+        };
+
+        output.push(txout);
 
         // Only include change if remaining > dust
         if let SendAmount::Amount(amount) = send_amount {
             let internal_spk = self.get_next_internal_addresses(1)?[0].script_pubkey();
             let remaining = total_input_value - amount - fee;
             if remaining > internal_spk.dust_value() {
+                log::info!("Adding Change {}:{}", internal_spk, remaining);
                 output.push(TxOut {
                     script_pubkey: internal_spk,
                     value: remaining.to_sat(),
@@ -209,11 +221,11 @@ impl Wallet {
             lock_time,
             version: 2,
         };
-        log::debug!("unsigned transaction = {:#?}", tx);
         self.sign_transaction(
             &mut tx,
             &mut coins_to_spend.iter().map(|(_, usi)| usi.clone()),
         )?;
+        log::debug!("Signed Transaction : {:?}", tx.raw_hex());
         Ok(tx)
     }
 }
