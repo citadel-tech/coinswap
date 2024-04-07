@@ -23,6 +23,7 @@ clap = { version = "4.3.19", features = ["derive"] }
 bitcoind = "0.32"
 libtor = "47.13.0"
 mitosis = "0.1.1"
+log4rs = "1.3.0"
 
 
 #Empty default feature set, (helpful to generalise in github actions)
