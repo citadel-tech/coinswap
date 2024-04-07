@@ -10,7 +10,7 @@ mod test_framework;
 use test_framework::*;
 
 use log::{info, warn};
-use std::{fs::File, io::Read, path::PathBuf, sync::Arc, thread, time::Duration};
+use std::{sync::Arc, thread, time::Duration};
 
 /// ABORT 2: Maker Drops Before Setup
 /// This test demonstrates the situation where a Maker prematurely drops connections after doing
@@ -149,13 +149,8 @@ async fn test_abort_case_2_move_on_with_other_makers() {
 
     // Maker might not get banned as Taker may not try 6102 for swap. If it does then check its 6102.
     if !taker.read().unwrap().get_bad_makers().is_empty() {
-        let onion_addr_path = PathBuf::from(format!("/tmp/tor-rust-maker{}/hs-dir/hostname", 6102));
-        let mut file = File::open(onion_addr_path).unwrap();
-        let mut onion_addr: String = String::new();
-        file.read_to_string(&mut onion_addr).unwrap();
-        onion_addr.pop();
         assert_eq!(
-            format!("{}:{}", onion_addr, 6102),
+            format!("127.0.0.1:{}", 6102),
             taker.read().unwrap().get_bad_makers()[0]
                 .address
                 .to_string()

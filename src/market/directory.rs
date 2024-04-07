@@ -6,6 +6,7 @@
 use std::{
     collections::HashSet,
     fs, io,
+    net::Ipv4Addr,
     sync::{Arc, RwLock},
     thread,
     time::Duration,
@@ -15,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use crate::utill::{
     get_data_dir, kill_tor_handles, monitor_log_for_completion, parse_field, parse_toml, spawn_tor,
-    write_default_config,
+    write_default_config, ConnectionType,
 };
 
 use tokio::{
@@ -36,6 +37,7 @@ pub enum DirectoryServerError {
 pub struct DirectoryServer {
     pub port: u16,
     pub socks_port: u16,
+    pub connection_type: ConnectionType,
     pub shutdown: RwLock<bool>,
 }
 
@@ -44,6 +46,7 @@ impl Default for DirectoryServer {
         Self {
             port: 8080,
             socks_port: 19060,
+            connection_type: ConnectionType::CLEARNET,
             shutdown: RwLock::new(false),
         }
     }
@@ -95,6 +98,11 @@ impl DirectoryServer {
             )
             .unwrap_or(default_config.socks_port),
             shutdown: RwLock::new(false),
+            connection_type: parse_field(
+                directory_config_section.get("connection_type"),
+                default_config.connection_type,
+            )
+            .unwrap_or(default_config.connection_type),
         })
     }
 
@@ -114,6 +122,7 @@ fn write_default_directory_config(config_path: &PathBuf) {
             [directory_config]\n\
             port = 8080\n\
             socks_port = 19060\n\
+            connection_type = clearnet\n\
             ",
     );
 
@@ -132,29 +141,42 @@ pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
 
     let address_file = get_data_dir().join("directory_server").join("address.dat");
 
-    let tor_log_dir = "/tmp/tor-rust-directory/log".to_string();
-    if Path::new(tor_log_dir.as_str()).exists() {
-        match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
-            Ok(_) => log::info!("Previous directory log file deleted successfully"),
-            Err(_) => log::error!("Error deleting directory log file"),
+    let mut addresses = HashSet::new();
+
+    let mut handle = None;
+
+    match directory.connection_type {
+        ConnectionType::CLEARNET => {}
+        ConnectionType::TOR => {
+            let tor_log_dir = "/tmp/tor-rust-directory/log".to_string();
+            if Path::new(tor_log_dir.as_str()).exists() {
+                match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
+                    Ok(_) => log::info!("Previous directory log file deleted successfully"),
+                    Err(_) => log::error!("Error deleting directory log file"),
+                }
+            }
+
+            let socks_port = directory.socks_port;
+            let tor_port = directory.port;
+            handle = Some(spawn_tor(
+                socks_port,
+                tor_port,
+                "/tmp/tor-rust-directory".to_string(),
+            ));
+
+            thread::sleep(Duration::from_secs(10));
+
+            if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
+                log::error!("Error monitoring Directory log file: {}", e);
+            }
+
+            log::info!("Directory tor is instantiated");
         }
     }
 
-    let socks_port = directory.socks_port;
-    let tor_port = directory.port;
-    let handle = spawn_tor(socks_port, tor_port, "/tmp/tor-rust-directory".to_string());
-
-    let mut addresses = HashSet::new();
-
-    thread::sleep(Duration::from_secs(10));
-
-    if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
-        log::error!("Error monitoring Directory log file: {}", e);
-    }
-
-    log::info!("Directory tor is instantiated");
-
-    let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port))
+        .await
+        .unwrap();
 
     loop {
         tokio::select! {
@@ -167,8 +189,10 @@ pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
             _ = tokio::time::sleep(Duration::from_secs(3)) => {
                 if *directory.shutdown.read().unwrap() {
                     log::info!("Shutdown signal received. Stopping directory server.");
-                   kill_tor_handles(handle);
-                    log::info!("Directory server and Tor instance terminated successfully");
+                    if directory.connection_type == ConnectionType::TOR {
+                        kill_tor_handles(handle.unwrap());
+                        log::info!("Directory server and Tor instance terminated successfully");
+                    }
                     break;
                 } else {
                      let mut file = OpenOptions::new()

@@ -19,7 +19,7 @@ use std::{
 
 use bip39::Mnemonic;
 use bitcoind::bitcoincore_rpc::RpcApi;
-use tokio::{select, time::sleep};
+use tokio::{net::TcpStream, select, time::sleep};
 
 use bitcoin::{
     consensus::encode::deserialize,
@@ -243,33 +243,42 @@ impl Taker {
         let tor_log_dir = "/tmp/tor-rust-taker/log".to_string();
 
         let taker_port = self.config.port;
-        let taker_socks_port = self.config.socks_port;
 
-        if Path::new(tor_log_dir.as_str()).exists() {
-            match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
-                Ok(_) => log::info!("Previous taker log file deleted successfully"),
-                Err(_) => log::error!("Error deleting taker log file "),
+        let mut handle = None;
+
+        match self.config.connection_type {
+            ConnectionType::CLEARNET => {}
+            ConnectionType::TOR => {
+                let taker_socks_port = self.config.socks_port;
+
+                if Path::new(tor_log_dir.as_str()).exists() {
+                    match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
+                        Ok(_) => log::info!("Previous taker log file deleted successfully"),
+                        Err(_) => log::error!("Error deleting taker log file "),
+                    }
+                }
+
+                handle = Some(spawn_tor(
+                    taker_socks_port,
+                    taker_port,
+                    "/tmp/tor-rust-taker".to_string(),
+                ));
+
+                thread::sleep(Duration::from_secs(10));
+
+                if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
+                    log::error!("Error monitoring taker log file: {}", e);
+                }
+
+                log::info!("Taker tor is instantiated");
             }
         }
 
-        let handle = spawn_tor(
-            taker_socks_port,
-            taker_port,
-            "/tmp/tor-rust-taker".to_string(),
-        );
-
-        thread::sleep(Duration::from_secs(10));
-
-        if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
-            log::error!("Error monitoring taker log file: {}", e);
-        }
-
-        log::info!("Taker tor is instantiated");
-
         self.send_coinswap(swap_params).await?;
 
-        kill_tor_handles(handle);
-
+        if self.config.connection_type == ConnectionType::TOR {
+            kill_tor_handles(handle.unwrap());
+        }
         Ok(())
     }
 
@@ -864,12 +873,15 @@ impl Taker {
 
         log::info!("Connecting to {}", this_maker.address);
         let address = this_maker.address.as_str();
-        let mut socket = Socks5Stream::connect(
-            format!("127.0.0.1:{}", self.config.socks_port).as_str(),
-            address,
-        )
-        .await?
-        .into_inner();
+        let mut socket = match self.config.connection_type {
+            ConnectionType::CLEARNET => TcpStream::connect(address).await?,
+            ConnectionType::TOR => Socks5Stream::connect(
+                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+                address,
+            )
+            .await?
+            .into_inner(),
+        };
         // let mut socket = TcpStream::connect(this_maker.address.get_tcpstream_address()).await?;
         let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
         let mut next_maker = this_maker.clone();
@@ -1357,6 +1369,7 @@ impl Taker {
             ii += 1;
             select! {
                 ret = req_sigs_for_sender_once(
+                    self.config.connection_type,
                     maker_address,
                     outgoing_swapcoins,
                     maker_multisig_nonces,
@@ -1425,6 +1438,7 @@ impl Taker {
             ii += 1;
             select! {
                 ret = req_sigs_for_recvr_once(
+                    self.config.connection_type,
                     maker_address,
                     incoming_swapcoins,
                     receivers_contract_txes,
@@ -1604,12 +1618,15 @@ impl Taker {
     ) -> Result<(), TakerError> {
         log::info!("Connecting to {}", maker_address);
         let address = maker_address.as_str();
-        let mut socket = Socks5Stream::connect(
-            format!("127.0.0.1:{}", self.config.socks_port).as_str(),
-            address,
-        )
-        .await?
-        .into_inner();
+        let mut socket = match self.config.connection_type {
+            ConnectionType::CLEARNET => TcpStream::connect(address).await?,
+            ConnectionType::TOR => Socks5Stream::connect(
+                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+                address,
+            )
+            .await?
+            .into_inner(),
+        };
         let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
 
         log::info!("===> Sending HashPreimage to {}", maker_address);
@@ -1902,20 +1919,41 @@ impl Taker {
         config: &TakerConfig,
         maker_count: u16,
     ) -> Result<(), TakerError> {
-        let mut directory_onion_address = config.directory_server_onion_address.clone();
-        if cfg!(feature = "integration-test") {
-            let directory_hs_path_str = "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
-            let directory_hs_path = PathBuf::from(directory_hs_path_str);
-            let mut directory_file = fs::File::open(directory_hs_path).map_err(TakerError::IO)?;
-            let mut directory_onion_addr = String::new();
-            directory_file
-                .read_to_string(&mut directory_onion_addr)
-                .map_err(TakerError::IO)?;
-            directory_onion_addr.pop();
-            directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
-        }
-        let addresses_from_dns =
-            fetch_addresses_from_dns(None, directory_onion_address, network, maker_count).await?;
+        let directory_address = match self.config.connection_type {
+            ConnectionType::CLEARNET => {
+                let mut address = config.directory_server_address.clone();
+                if cfg!(feature = "integration-test") {
+                    address = format!("127.0.0.1:{}", 8080);
+                }
+                address
+            }
+            ConnectionType::TOR => {
+                let mut address = config.directory_server_onion_address.clone();
+                if cfg!(feature = "integration-test") {
+                    let directory_hs_path_str =
+                        "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
+                    let directory_hs_path = PathBuf::from(directory_hs_path_str);
+                    let mut directory_file =
+                        fs::File::open(directory_hs_path).map_err(TakerError::IO)?;
+                    let mut directory_onion_addr = String::new();
+                    directory_file
+                        .read_to_string(&mut directory_onion_addr)
+                        .map_err(TakerError::IO)?;
+                    directory_onion_addr.pop();
+                    address = format!("{}:{}", directory_onion_addr, 8080);
+                }
+                address
+            }
+        };
+
+        let addresses_from_dns = fetch_addresses_from_dns(
+            None,
+            directory_address,
+            network,
+            maker_count,
+            config.connection_type,
+        )
+        .await?;
         let offers = fetch_offer_from_makers(addresses_from_dns, config).await;
 
         let new_offers = offers

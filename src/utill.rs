@@ -1,6 +1,6 @@
 //! Various utility and helper functions for both Taker and Maker.
 
-use std::{env, io::ErrorKind, path::PathBuf, sync::Once};
+use std::{env, io::ErrorKind, path::PathBuf, str::FromStr, sync::Once};
 
 use bitcoin::{
     address::{WitnessProgram, WitnessVersion},
@@ -54,6 +54,23 @@ pub fn str_to_bitcoin_network(net_str: &str) -> Network {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ConnectionType {
+    TOR,
+    CLEARNET,
+}
+
+impl FromStr for ConnectionType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "tor" => Ok(ConnectionType::TOR),
+            "clearnet" => Ok(ConnectionType::CLEARNET),
+            _ => Err("Invalid connection type".to_string()),
+        }
+    }
+}
 /// Get the system specific home directory.
 pub fn get_home_dir() -> PathBuf {
     dirs::home_dir().expect("home directory expected")
@@ -393,8 +410,6 @@ pub fn kill_tor_handles(handle: JoinHandle<()>) {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use bitcoin::{
         blockdata::{opcodes::all, script::Builder},
         secp256k1::Scalar,

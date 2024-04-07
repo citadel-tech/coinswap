@@ -37,7 +37,7 @@ use crate::{
         },
         Hash160,
     },
-    utill::{read_maker_message, send_message},
+    utill::{read_maker_message, send_message, ConnectionType},
 };
 
 use super::{
@@ -95,6 +95,7 @@ pub async fn handshake_maker(
 
 /// Request signatures for sender side of the hop. Attempt once.
 pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
+    connection_type: ConnectionType,
     maker_address: &MakerAddress,
     outgoing_swapcoins: &[S],
     maker_multisig_nonces: &[SecretKey],
@@ -103,10 +104,13 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
 ) -> Result<ContractSigsForSender, TakerError> {
     log::info!("Connecting to {}", maker_address);
     let address = maker_address.as_str();
-    // let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
-    let mut socket = Socks5Stream::connect("127.0.0.1:19050", address)
-        .await?
-        .into_inner();
+
+    let mut socket = match connection_type {
+        ConnectionType::CLEARNET => TcpStream::connect(address).await?,
+        ConnectionType::TOR => Socks5Stream::connect("127.0.0.1:19050", address)
+            .await?
+            .into_inner(),
+    };
     let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
     log::info!("===> Sending ReqContractSigsForSender to {}", maker_address);
 
@@ -175,16 +179,20 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
 
 /// Request signatures for receiver side of the hop. Attempt once.
 pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
+    connection_type: ConnectionType,
     maker_address: &MakerAddress,
     incoming_swapcoins: &[S],
     receivers_contract_txes: &[Transaction],
 ) -> Result<ContractSigsForRecvr, TakerError> {
     log::info!("Connecting to {}", maker_address);
     let address = maker_address.as_str();
-    let mut socket = Socks5Stream::connect("127.0.0.1:19050", address)
-        .await?
-        .into_inner();
-    // let mut socket = TcpStream::connect(maker_address.get_tcpstream_address()).await?;
+    let mut socket = match connection_type {
+        ConnectionType::CLEARNET => TcpStream::connect(address).await?,
+        ConnectionType::TOR => Socks5Stream::connect("127.0.0.1:19050", address)
+            .await?
+            .into_inner(),
+    };
+
     let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
 
     // TODO: Take the message construction out of function body.
@@ -448,11 +456,18 @@ pub(crate) async fn send_hash_preimage_and_get_private_keys(
     Ok(privkey_handover)
 }
 
-async fn download_maker_offer_attempt_once(addr: &MakerAddress) -> Result<Offer, TakerError> {
+async fn download_maker_offer_attempt_once(
+    addr: &MakerAddress,
+    connection_type: ConnectionType,
+) -> Result<Offer, TakerError> {
     let address = addr.as_str();
-    let mut socket = Socks5Stream::connect("127.0.0.1:19050", address)
-        .await?
-        .into_inner();
+
+    let mut socket = match connection_type {
+        ConnectionType::CLEARNET => TcpStream::connect(address).await?,
+        ConnectionType::TOR => Socks5Stream::connect("127.0.0.1:19050", address)
+            .await?
+            .into_inner(),
+    };
     let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
 
     send_message(
@@ -483,7 +498,7 @@ pub async fn download_maker_offer(
     loop {
         ii += 1;
         select! {
-            ret = download_maker_offer_attempt_once(&address) => {
+            ret = download_maker_offer_attempt_once(&address, config.connection_type) => {
                 match ret {
                     Ok(offer) => return Some(OfferAndAddress { offer, address }),
                     Err(e) => {

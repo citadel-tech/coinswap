@@ -24,7 +24,7 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncReadExt, BufReader},
-    net::{tcp::ReadHalf, TcpListener},
+    net::{tcp::ReadHalf, TcpListener, TcpStream},
     select,
     sync::mpsc,
     time::sleep,
@@ -48,7 +48,9 @@ use crate::{
         handlers::handle_message,
     },
     protocol::messages::{MakerHello, MakerToTakerMessage, TakerToMakerMessage},
-    utill::{kill_tor_handles, monitor_log_for_completion, send_message, spawn_tor},
+    utill::{
+        kill_tor_handles, monitor_log_for_completion, send_message, spawn_tor, ConnectionType,
+    },
     wallet::WalletError,
 };
 
@@ -59,62 +61,152 @@ use crate::maker::error::MakerError;
 #[tokio::main]
 pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let maker_port = maker.config.port;
-    let maker_socks_port = maker.config.socks_port;
 
-    let tor_log_dir = format!("/tmp/tor-rust-maker{}/log", maker_port);
+    let mut handle = None;
 
-    if Path::new(tor_log_dir.as_str()).exists() {
-        match fs::remove_file(Path::new(tor_log_dir.as_str())) {
-            Ok(_) => log::info!(
-                "[{}] Previous Maker log file deleted successfully",
-                maker_port
-            ),
-            Err(_) => log::error!("[{}] Error deleting Maker log file", maker_port),
+    let mut maker_address = format!("127.0.0.1:{}", maker_port);
+
+    match maker.config.connection_type {
+        ConnectionType::CLEARNET => {
+            let mut directory_address = maker.config.directory_server_address.clone();
+            if cfg!(feature = "integration-test") {
+                directory_address = format!("127.0.0.1:{}", 8080);
+            }
+            loop {
+                match TcpStream::connect(directory_address.clone()).await {
+                    Ok(mut stream) => {
+                        let request_line = format!("POST {}\n", maker_address);
+                        if let Err(e) = stream.write_all(request_line.as_bytes()).await {
+                            // Error sending the payload, log and retry after waiting
+                            log::warn!(
+                                "[{}] Failed to send maker address to directory, reattempting: {}",
+                                maker_port,
+                                e
+                            );
+                            thread::sleep(Duration::from_secs(
+                                maker.config.heart_beat_interval_secs,
+                            ));
+                            continue;
+                        }
+                        // Payload sent successfully, exit the loop
+                        log::info!(
+                            "[{}] Successfully sent maker address to directory",
+                            maker_port
+                        );
+                        break;
+                    }
+                    Err(e) => {
+                        // Connection error, log and retry after waiting
+                        log::warn!(
+                            "[{}] TCP connection error with directory, reattempting: {}",
+                            maker_port,
+                            e
+                        );
+                        thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
+                        continue;
+                    }
+                }
+            }
+        }
+        ConnectionType::TOR => {
+            let maker_socks_port = maker.config.socks_port;
+
+            let tor_log_dir = format!("/tmp/tor-rust-maker{}/log", maker_port);
+
+            if Path::new(tor_log_dir.as_str()).exists() {
+                match fs::remove_file(Path::new(tor_log_dir.as_str())) {
+                    Ok(_) => log::info!(
+                        "[{}] Previous Maker log file deleted successfully",
+                        maker_port
+                    ),
+                    Err(_) => log::error!("[{}] Error deleting Maker log file", maker_port),
+                }
+            }
+
+            handle = Some(spawn_tor(
+                maker_socks_port,
+                maker_port,
+                format!("/tmp/tor-rust-maker{}", maker_port),
+            ));
+            thread::sleep(Duration::from_secs(10));
+
+            if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
+                log::error!("[{}] Error monitoring log file: {}", maker_port, e);
+            }
+
+            log::info!("Maker tor is instantiated");
+
+            let maker_hs_path_str =
+                format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
+            let maker_hs_path = PathBuf::from(maker_hs_path_str);
+            let mut maker_file = fs::File::open(&maker_hs_path).unwrap();
+            let mut maker_onion_addr: String = String::new();
+            maker_file.read_to_string(&mut maker_onion_addr).unwrap();
+            maker_onion_addr.pop();
+            maker_address = format!("{}:{}", maker_onion_addr, maker.config.port);
+
+            let mut directory_onion_address = maker.config.directory_server_onion_address.clone();
+
+            if cfg!(feature = "integration-test") {
+                let directory_hs_path_str = "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
+                let directory_hs_path = PathBuf::from(directory_hs_path_str);
+                let mut directory_file = fs::File::open(directory_hs_path).unwrap();
+                let mut directory_onion_addr: String = String::new();
+                directory_file
+                    .read_to_string(&mut directory_onion_addr)
+                    .unwrap();
+                directory_onion_addr.pop();
+                directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
+            }
+
+            let address = directory_onion_address.as_str();
+
+            log::info!(
+                "[{}] Directory onion address : {}",
+                maker_port,
+                directory_onion_address
+            );
+
+            loop {
+                match Socks5Stream::connect(
+                    format!("127.0.0.1:{}", maker_socks_port).as_str(),
+                    address,
+                )
+                .await
+                {
+                    Ok(socks_stream) => {
+                        let mut stream = socks_stream.into_inner();
+                        let request_line = format!("POST {}\n", maker_address);
+                        if let Err(e) = stream.write_all(request_line.as_bytes()).await {
+                            log::warn!(
+                                "[{}] Failed to send maker address to directory, reattempting: {}",
+                                maker_port,
+                                e
+                            );
+                            thread::sleep(Duration::from_secs(
+                                maker.config.heart_beat_interval_secs,
+                            ));
+                            continue;
+                        }
+                        log::info!(
+                            "[{}] Sucessfuly sent maker address to directory",
+                            maker_port
+                        );
+                        break;
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[{}] Socks connection error with directory, reattempting: {}",
+                            maker_port,
+                            e
+                        );
+                        thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
+                        continue;
+                    }
+                }
+            }
         }
     }
-
-    let handle = spawn_tor(
-        maker_socks_port,
-        maker_port,
-        format!("/tmp/tor-rust-maker{}", maker_port),
-    );
-    thread::sleep(Duration::from_secs(10));
-
-    if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
-        log::error!("[{}] Error monitoring log file: {}", maker_port, e);
-    }
-
-    log::info!("Maker tor is instantiated");
-
-    let maker_hs_path_str = format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
-    let maker_hs_path = PathBuf::from(maker_hs_path_str);
-    let mut maker_file = fs::File::open(&maker_hs_path).unwrap();
-    let mut maker_onion_addr: String = String::new();
-    maker_file.read_to_string(&mut maker_onion_addr).unwrap();
-    maker_onion_addr.pop();
-    let maker_onion_address = format!("{}:{}", maker_onion_addr, maker.config.port);
-
-    let mut directory_onion_address = maker.config.directory_server_onion_address.clone();
-
-    if cfg!(feature = "integration-test") {
-        let directory_hs_path_str = "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
-        let directory_hs_path = PathBuf::from(directory_hs_path_str);
-        let mut directory_file = fs::File::open(directory_hs_path).unwrap();
-        let mut directory_onion_addr: String = String::new();
-        directory_file
-            .read_to_string(&mut directory_onion_addr)
-            .unwrap();
-        directory_onion_addr.pop();
-        directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
-    }
-
-    let address = directory_onion_address.as_str();
-
-    log::info!(
-        "[{}] Directory onion address : {}",
-        maker_port,
-        directory_onion_address
-    );
 
     maker.wallet.write()?.refresh_offer_maxsize_cache()?;
 
@@ -180,8 +272,8 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 Ok(i) => {
                     log::info!("[{}] Successfully created fidelity bond", maker.config.port);
 
-                    let onion_string = maker_onion_address.clone();
-                    let highest_proof = wallet.generate_fidelity_proof(i, onion_string)?;
+                    let address_string = maker_address.clone();
+                    let highest_proof = wallet.generate_fidelity_proof(i, address_string)?;
                     let mut proof = maker.highest_fidelity_proof.write()?;
                     *proof = Some(highest_proof);
                 }
@@ -191,40 +283,6 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         wallet.sync()?;
         wallet.save_to_disk()?;
         log::info!("[{}] Sync and save successful", maker.config.port);
-    }
-
-    loop {
-        match Socks5Stream::connect(format!("127.0.0.1:{}", maker_socks_port).as_str(), address)
-            .await
-        {
-            Ok(socks_stream) => {
-                let mut stream = socks_stream.into_inner();
-                let request_line = format!("POST {}\n", maker_onion_address);
-                if let Err(e) = stream.write_all(request_line.as_bytes()).await {
-                    log::warn!(
-                        "[{}] Failed to send maker address to directory, reattempting: {}",
-                        maker_port,
-                        e
-                    );
-                    thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
-                    continue;
-                }
-                log::info!(
-                    "[{}] Sucessfuly sent maker address to directory",
-                    maker_port
-                );
-                break;
-            }
-            Err(e) => {
-                log::warn!(
-                    "[{}] Socks connection error with directory, reattempting: {}",
-                    maker_port,
-                    e
-                );
-                thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
-                continue;
-            }
-        }
     }
 
     maker.setup_complete()?;
@@ -364,7 +422,9 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         });
     };
 
-    kill_tor_handles(handle);
+    if maker.config.connection_type == ConnectionType::TOR {
+        kill_tor_handles(handle.unwrap());
+    }
 
     result
 }

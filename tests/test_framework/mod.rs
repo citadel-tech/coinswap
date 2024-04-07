@@ -69,7 +69,9 @@ impl TestFramework {
         makers_config_map: HashMap<(u16, u16), MakerBehavior>,
         taker_behavior: Option<TakerBehavior>,
     ) -> (Arc<Self>, Arc<RwLock<Taker>>, Vec<Arc<Maker>>) {
-        setup_mitosis();
+        if cfg!(not(feature = "integration-test")) {
+            setup_mitosis();
+        }
         setup_logger();
         // Setup directory
         let temp_dir = get_random_tmp_dir();
