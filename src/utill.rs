@@ -13,6 +13,11 @@ use bitcoin::{
     Network, PublicKey, ScriptBuf,
 };
 use libtor::{HiddenServiceVersion, LogDestination, LogLevel, Tor, TorAddress, TorFlag};
+use log4rs::{
+    append::{console::ConsoleAppender, file::FileAppender},
+    config::{Appender, Logger, Root},
+    Config,
+};
 use mitosis::JoinHandle;
 
 use std::{
@@ -80,7 +85,47 @@ pub fn seed_phrase_to_unique_id(seed: &str) -> String {
 pub fn setup_logger() {
     Once::new().call_once(|| {
         env::set_var("RUST_LOG", "coinswap=info");
-        log4rs::init_file("log4rs.yml", Default::default()).unwrap();
+        let mut taker_log_dir = get_data_dir().join("taker").join("debug.log");
+        let mut maker_log_dir = get_data_dir().join("maker").join("debug.log");
+        let mut directory_log_dir = get_data_dir().join("directory").join("debug.log");
+        if cfg!(feature = "integration-test") {
+            taker_log_dir = PathBuf::from("/tmp/taker/debug.log");
+            maker_log_dir = PathBuf::from("/tmp/maker/debug.log");
+            directory_log_dir = PathBuf::from("/tmp/directory/debug.log");
+        }
+
+        // log4rs::init_file("log4rs.yml", Default::default()).unwrap();
+        let stdout = ConsoleAppender::builder().build();
+        let taker = FileAppender::builder().build(taker_log_dir).unwrap();
+        let maker = FileAppender::builder().build(maker_log_dir).unwrap();
+        let directory = FileAppender::builder().build(directory_log_dir).unwrap();
+        let config = Config::builder()
+            .appender(Appender::builder().build("stdout", Box::new(stdout)))
+            .appender(Appender::builder().build("taker", Box::new(taker)))
+            .appender(Appender::builder().build("maker", Box::new(maker)))
+            .appender(Appender::builder().build("directory", Box::new(directory)))
+            .logger(
+                Logger::builder()
+                    .appender("taker")
+                    .build("coinswap::taker", log::LevelFilter::Info),
+            )
+            .logger(
+                Logger::builder()
+                    .appender("maker")
+                    .build("coinswap::maker", log::LevelFilter::Info),
+            )
+            .logger(
+                Logger::builder()
+                    .appender("directory")
+                    .build("coinswap::market", log::LevelFilter::Info),
+            )
+            .build(
+                Root::builder()
+                    .appender("stdout")
+                    .build(log::LevelFilter::Info),
+            )
+            .unwrap();
+        log4rs::init_config(config).unwrap();
     });
 }
 
