@@ -25,7 +25,7 @@ pub struct TakerConfig {
     pub port: u16,
     pub socks_port: u16,
     pub directory_server_onion_address: String,
-    pub directory_server_address: String,
+    pub directory_server_clearnet_address: String,
     pub connection_type: ConnectionType,
 }
 
@@ -45,8 +45,8 @@ impl Default for TakerConfig {
             port: 8000,
             socks_port: 19050,
             directory_server_onion_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
-            directory_server_address: "127.0.0.1:8080".to_string(),
-            connection_type: ConnectionType::CLEARNET,
+            directory_server_clearnet_address: "127.0.0.1:8080".to_string(),
+            connection_type: ConnectionType::TOR,
         }
     }
 }
@@ -146,10 +146,10 @@ impl TakerConfig {
                 .get("directory_server_onion_address")
                 .map(|s| s.to_string())
                 .unwrap_or(default_config.directory_server_onion_address),
-            directory_server_address: taker_config_section
-                .get("directory_server_address")
+            directory_server_clearnet_address: taker_config_section
+                .get("directory_server_clearnet_address")
                 .map(|s| s.to_string())
-                .unwrap_or(default_config.directory_server_address),
+                .unwrap_or(default_config.directory_server_clearnet_address),
             connection_type: parse_field(
                 taker_config_section.get("connection_type"),
                 default_config.connection_type,
@@ -176,8 +176,8 @@ fn write_default_taker_config(config_path: &PathBuf) {
                         port = 8000\n\
                         socks_port = 19050\n\
                         directory_server_onion_address = directoryhiddenserviceaddress.onion:8080\n\
-                        directory_server_address = 127.0.0.1:8080\n\
-                        connection_type = clearnet\n
+                        directory_server_clearnet_address = 127.0.0.1:8080\n\
+                        connection_type = tor\n
                         ",
     );
     write_default_config(config_path, config_string).unwrap();

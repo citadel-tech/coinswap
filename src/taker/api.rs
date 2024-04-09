@@ -138,7 +138,7 @@ pub enum TakerBehavior {
 /// sequence and corresponding SwapCoin infos are stored in `ongoing_swap_state`.
 pub struct Taker {
     wallet: Wallet,
-    config: TakerConfig,
+    pub config: TakerConfig,
     offerbook: OfferBook,
     ongoing_swap_state: OngoingSwapState,
     behavior: TakerBehavior,
@@ -164,6 +164,7 @@ impl Taker {
         wallet_file_name: Option<String>,
         rpc_config: Option<RPCConfig>,
         behavior: TakerBehavior,
+        connection_type: Option<ConnectionType>,
     ) -> Result<Taker, TakerError> {
         // Only allow Special Behavior in functional tests
         let behavior = if cfg!(feature = "integration-test") {
@@ -215,7 +216,11 @@ impl Taker {
         };
 
         // If config file doesn't exist, default config will be loaded.
-        let config = TakerConfig::new(Some(&config_dir.join("taker.toml")))?;
+        let mut config = TakerConfig::new(Some(&config_dir.join("taker.toml")))?;
+
+        if let Some(connection_type) = connection_type {
+            config.connection_type = connection_type;
+        }
 
         log::info!("Initializing wallet sync");
         wallet.sync()?;
@@ -249,35 +254,37 @@ impl Taker {
         match self.config.connection_type {
             ConnectionType::CLEARNET => {}
             ConnectionType::TOR => {
-                let taker_socks_port = self.config.socks_port;
+                if cfg!(feature = "tor") {
+                    let taker_socks_port = self.config.socks_port;
 
-                if Path::new(tor_log_dir.as_str()).exists() {
-                    match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
-                        Ok(_) => log::info!("Previous taker log file deleted successfully"),
-                        Err(_) => log::error!("Error deleting taker log file "),
+                    if Path::new(tor_log_dir.as_str()).exists() {
+                        match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
+                            Ok(_) => log::info!("Previous taker log file deleted successfully"),
+                            Err(_) => log::error!("Error deleting taker log file "),
+                        }
                     }
+
+                    handle = Some(crate::tor::spawn_tor(
+                        taker_socks_port,
+                        taker_port,
+                        "/tmp/tor-rust-taker".to_string(),
+                    ));
+
+                    thread::sleep(Duration::from_secs(10));
+
+                    if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
+                        log::error!("Error monitoring taker log file: {}", e);
+                    }
+
+                    log::info!("Taker tor is instantiated");
                 }
-
-                handle = Some(spawn_tor(
-                    taker_socks_port,
-                    taker_port,
-                    "/tmp/tor-rust-taker".to_string(),
-                ));
-
-                thread::sleep(Duration::from_secs(10));
-
-                if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
-                    log::error!("Error monitoring taker log file: {}", e);
-                }
-
-                log::info!("Taker tor is instantiated");
             }
         }
 
         self.send_coinswap(swap_params).await?;
 
-        if self.config.connection_type == ConnectionType::TOR {
-            kill_tor_handles(handle.unwrap());
+        if self.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {
+            crate::tor::kill_tor_handles(handle.unwrap());
         }
         Ok(())
     }
@@ -1921,7 +1928,7 @@ impl Taker {
     ) -> Result<(), TakerError> {
         let directory_address = match self.config.connection_type {
             ConnectionType::CLEARNET => {
-                let mut address = config.directory_server_address.clone();
+                let mut address = config.directory_server_clearnet_address.clone();
                 if cfg!(feature = "integration-test") {
                     address = format!("127.0.0.1:{}", 8080);
                 }

@@ -15,8 +15,8 @@ use std::{
 use std::path::{Path, PathBuf};
 
 use crate::utill::{
-    get_data_dir, kill_tor_handles, monitor_log_for_completion, parse_field, parse_toml, spawn_tor,
-    write_default_config, ConnectionType,
+    get_data_dir, monitor_log_for_completion, parse_field, parse_toml, write_default_config,
+    ConnectionType,
 };
 
 use tokio::{
@@ -46,7 +46,7 @@ impl Default for DirectoryServer {
         Self {
             port: 8080,
             socks_port: 19060,
-            connection_type: ConnectionType::CLEARNET,
+            connection_type: ConnectionType::TOR,
             shutdown: RwLock::new(false),
         }
     }
@@ -64,7 +64,10 @@ impl DirectoryServer {
     /// Default data-dir for linux: `~/.coinswap/`
     /// Default config locations: `~/.coinswap/directory_server/configs/directory.toml`.
 
-    pub fn new(config_path: Option<&PathBuf>) -> io::Result<Self> {
+    pub fn new(
+        config_path: Option<&PathBuf>,
+        connection_type: Option<ConnectionType>,
+    ) -> io::Result<Self> {
         let default_config = Self::default();
 
         let default_config_path = get_data_dir()
@@ -89,6 +92,8 @@ impl DirectoryServer {
 
         let directory_config_section = section.get("maker_config").cloned().unwrap_or_default();
 
+        let connection_type_value = connection_type.unwrap_or(ConnectionType::TOR);
+
         Ok(DirectoryServer {
             port: parse_field(directory_config_section.get("port"), default_config.port)
                 .unwrap_or(default_config.port),
@@ -100,9 +105,9 @@ impl DirectoryServer {
             shutdown: RwLock::new(false),
             connection_type: parse_field(
                 directory_config_section.get("connection_type"),
-                default_config.connection_type,
+                connection_type_value,
             )
-            .unwrap_or(default_config.connection_type),
+            .unwrap_or(connection_type_value),
         })
     }
 
@@ -122,7 +127,7 @@ fn write_default_directory_config(config_path: &PathBuf) {
             [directory_config]\n\
             port = 8080\n\
             socks_port = 19060\n\
-            connection_type = clearnet\n\
+            connection_type = tor\n\
             ",
     );
 
@@ -148,29 +153,31 @@ pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
     match directory.connection_type {
         ConnectionType::CLEARNET => {}
         ConnectionType::TOR => {
-            let tor_log_dir = "/tmp/tor-rust-directory/log".to_string();
-            if Path::new(tor_log_dir.as_str()).exists() {
-                match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
-                    Ok(_) => log::info!("Previous directory log file deleted successfully"),
-                    Err(_) => log::error!("Error deleting directory log file"),
+            if cfg!(feature = "tor") {
+                let tor_log_dir = "/tmp/tor-rust-directory/log".to_string();
+                if Path::new(tor_log_dir.as_str()).exists() {
+                    match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
+                        Ok(_) => log::info!("Previous directory log file deleted successfully"),
+                        Err(_) => log::error!("Error deleting directory log file"),
+                    }
                 }
+
+                let socks_port = directory.socks_port;
+                let tor_port = directory.port;
+                handle = Some(crate::tor::spawn_tor(
+                    socks_port,
+                    tor_port,
+                    "/tmp/tor-rust-directory".to_string(),
+                ));
+
+                thread::sleep(Duration::from_secs(10));
+
+                if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
+                    log::error!("Error monitoring Directory log file: {}", e);
+                }
+
+                log::info!("Directory tor is instantiated");
             }
-
-            let socks_port = directory.socks_port;
-            let tor_port = directory.port;
-            handle = Some(spawn_tor(
-                socks_port,
-                tor_port,
-                "/tmp/tor-rust-directory".to_string(),
-            ));
-
-            thread::sleep(Duration::from_secs(10));
-
-            if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
-                log::error!("Error monitoring Directory log file: {}", e);
-            }
-
-            log::info!("Directory tor is instantiated");
         }
     }
 
@@ -189,8 +196,8 @@ pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
             _ = tokio::time::sleep(Duration::from_secs(3)) => {
                 if *directory.shutdown.read().unwrap() {
                     log::info!("Shutdown signal received. Stopping directory server.");
-                    if directory.connection_type == ConnectionType::TOR {
-                        kill_tor_handles(handle.unwrap());
+                    if directory.connection_type == ConnectionType::TOR && cfg!(feature = "tor"){
+                        crate::tor::kill_tor_handles(handle.unwrap());
                         log::info!("Directory server and Tor instance terminated successfully");
                     }
                     break;
@@ -256,7 +263,7 @@ mod tests {
             socks_port = 19060
         "#;
         let config_path = create_temp_config(contents, "valid_directory_config.toml");
-        let config = DirectoryServer::new(Some(&config_path)).unwrap();
+        let config = DirectoryServer::new(Some(&config_path), None).unwrap();
         remove_temp_config(&config_path);
 
         let default_config = DirectoryServer::default();
@@ -271,7 +278,7 @@ mod tests {
             port = 8080
         "#;
         let config_path = create_temp_config(contents, "missing_fields_directory_config.toml");
-        let config = DirectoryServer::new(Some(&config_path)).unwrap();
+        let config = DirectoryServer::new(Some(&config_path), None).unwrap();
         remove_temp_config(&config_path);
 
         assert_eq!(config.port, 8080);
@@ -285,7 +292,7 @@ mod tests {
             port = "not_a_number"
         "#;
         let config_path = create_temp_config(contents, "incorrect_type_directory_config.toml");
-        let config = DirectoryServer::new(Some(&config_path)).unwrap();
+        let config = DirectoryServer::new(Some(&config_path), None).unwrap();
         remove_temp_config(&config_path);
 
         let default_config = DirectoryServer::default();
@@ -296,7 +303,7 @@ mod tests {
     #[test]
     fn test_missing_file() {
         let config_path = get_home_dir().join("directory.toml");
-        let config = DirectoryServer::new(Some(&config_path)).unwrap();
+        let config = DirectoryServer::new(Some(&config_path), None).unwrap();
         remove_temp_config(&config_path);
         let default_config = DirectoryServer::default();
         assert_eq!(config.port, default_config.port);

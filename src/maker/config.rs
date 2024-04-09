@@ -35,8 +35,8 @@ pub struct MakerConfig {
     pub socks_port: u16,
     /// Directory server onion address
     pub directory_server_onion_address: String,
-    /// Directory server address
-    pub directory_server_address: String,
+    /// Directory server clearnet address
+    pub directory_server_clearnet_address: String,
     /// Fidelity Bond Value
     pub fidelity_value: u64,
     /// Fidelity Bond timelock in Block heights.
@@ -62,10 +62,10 @@ impl Default for MakerConfig {
             min_size: 10_000,
             socks_port: 19050,
             directory_server_onion_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
-            directory_server_address: "127.0.0.1:8080".to_string(),
+            directory_server_clearnet_address: "127.0.0.1:8080".to_string(),
             fidelity_value: 5_000_000, // 5 million  sats
             fidelity_timelock: 26_000, // Approx 6 months of blocks
-            connection_type: ConnectionType::CLEARNET,
+            connection_type: ConnectionType::TOR,
         }
     }
 }
@@ -169,10 +169,10 @@ impl MakerConfig {
                 .get("directory_server_onion_address")
                 .map(|s| s.to_string())
                 .unwrap_or(default_config.directory_server_onion_address),
-            directory_server_address: maker_config_section
-                .get("directory_server_address")
+            directory_server_clearnet_address: maker_config_section
+                .get("directory_server_clearnet_address")
                 .map(|s| s.to_string())
-                .unwrap_or(default_config.directory_server_address),
+                .unwrap_or(default_config.directory_server_clearnet_address),
             fidelity_value: parse_field(
                 maker_config_section.get("fidelity_value"),
                 default_config.fidelity_value,
@@ -210,8 +210,8 @@ fn write_default_maker_config(config_path: &PathBuf) {
             min_size = 10000\n\
             socks_port = 19050\n\
             directory_server_onion_address = directoryhiddenserviceaddress.onion:8080\n\
-            directory_server_address = 127.0.0.1:8080\n\
-            connection_type = clearnet
+            directory_server_clearnet_address = 127.0.0.1:8080\n\
+            connection_type = tor
             ",
     );
 

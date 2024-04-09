@@ -48,9 +48,7 @@ use crate::{
         handlers::handle_message,
     },
     protocol::messages::{MakerHello, MakerToTakerMessage, TakerToMakerMessage},
-    utill::{
-        kill_tor_handles, monitor_log_for_completion, send_message, spawn_tor, ConnectionType,
-    },
+    utill::{monitor_log_for_completion, send_message, ConnectionType},
     wallet::WalletError,
 };
 
@@ -68,7 +66,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     match maker.config.connection_type {
         ConnectionType::CLEARNET => {
-            let mut directory_address = maker.config.directory_server_address.clone();
+            let mut directory_address = maker.config.directory_server_clearnet_address.clone();
             if cfg!(feature = "integration-test") {
                 directory_address = format!("127.0.0.1:{}", 8080);
             }
@@ -109,77 +107,97 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             }
         }
         ConnectionType::TOR => {
-            let maker_socks_port = maker.config.socks_port;
+            if cfg!(feature = "tor") {
+                let maker_socks_port = maker.config.socks_port;
 
-            let tor_log_dir = format!("/tmp/tor-rust-maker{}/log", maker_port);
+                let tor_log_dir = format!("/tmp/tor-rust-maker{}/log", maker_port);
 
-            if Path::new(tor_log_dir.as_str()).exists() {
-                match fs::remove_file(Path::new(tor_log_dir.as_str())) {
-                    Ok(_) => log::info!(
-                        "[{}] Previous Maker log file deleted successfully",
-                        maker_port
-                    ),
-                    Err(_) => log::error!("[{}] Error deleting Maker log file", maker_port),
+                if Path::new(tor_log_dir.as_str()).exists() {
+                    match fs::remove_file(Path::new(tor_log_dir.as_str())) {
+                        Ok(_) => log::info!(
+                            "[{}] Previous Maker log file deleted successfully",
+                            maker_port
+                        ),
+                        Err(_) => log::error!("[{}] Error deleting Maker log file", maker_port),
+                    }
                 }
-            }
 
-            handle = Some(spawn_tor(
-                maker_socks_port,
-                maker_port,
-                format!("/tmp/tor-rust-maker{}", maker_port),
-            ));
-            thread::sleep(Duration::from_secs(10));
+                handle = Some(crate::tor::spawn_tor(
+                    maker_socks_port,
+                    maker_port,
+                    format!("/tmp/tor-rust-maker{}", maker_port),
+                ));
+                thread::sleep(Duration::from_secs(10));
 
-            if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
-                log::error!("[{}] Error monitoring log file: {}", maker_port, e);
-            }
+                if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
+                    log::error!("[{}] Error monitoring log file: {}", maker_port, e);
+                }
 
-            log::info!("Maker tor is instantiated");
+                log::info!("Maker tor is instantiated");
 
-            let maker_hs_path_str =
-                format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
-            let maker_hs_path = PathBuf::from(maker_hs_path_str);
-            let mut maker_file = fs::File::open(&maker_hs_path).unwrap();
-            let mut maker_onion_addr: String = String::new();
-            maker_file.read_to_string(&mut maker_onion_addr).unwrap();
-            maker_onion_addr.pop();
-            maker_address = format!("{}:{}", maker_onion_addr, maker.config.port);
+                let maker_hs_path_str =
+                    format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
+                let maker_hs_path = PathBuf::from(maker_hs_path_str);
+                let mut maker_file = fs::File::open(&maker_hs_path).unwrap();
+                let mut maker_onion_addr: String = String::new();
+                maker_file.read_to_string(&mut maker_onion_addr).unwrap();
+                maker_onion_addr.pop();
+                maker_address = format!("{}:{}", maker_onion_addr, maker.config.port);
 
-            let mut directory_onion_address = maker.config.directory_server_onion_address.clone();
+                let mut directory_onion_address =
+                    maker.config.directory_server_onion_address.clone();
 
-            if cfg!(feature = "integration-test") {
-                let directory_hs_path_str = "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
-                let directory_hs_path = PathBuf::from(directory_hs_path_str);
-                let mut directory_file = fs::File::open(directory_hs_path).unwrap();
-                let mut directory_onion_addr: String = String::new();
-                directory_file
-                    .read_to_string(&mut directory_onion_addr)
-                    .unwrap();
-                directory_onion_addr.pop();
-                directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
-            }
+                if cfg!(feature = "integration-test") {
+                    let directory_hs_path_str =
+                        "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
+                    let directory_hs_path = PathBuf::from(directory_hs_path_str);
+                    let mut directory_file = fs::File::open(directory_hs_path).unwrap();
+                    let mut directory_onion_addr: String = String::new();
+                    directory_file
+                        .read_to_string(&mut directory_onion_addr)
+                        .unwrap();
+                    directory_onion_addr.pop();
+                    directory_onion_address = format!("{}:{}", directory_onion_addr, 8080);
+                }
 
-            let address = directory_onion_address.as_str();
+                let address = directory_onion_address.as_str();
 
-            log::info!(
-                "[{}] Directory onion address : {}",
-                maker_port,
-                directory_onion_address
-            );
+                log::info!(
+                    "[{}] Directory onion address : {}",
+                    maker_port,
+                    directory_onion_address
+                );
 
-            loop {
-                match Socks5Stream::connect(
-                    format!("127.0.0.1:{}", maker_socks_port).as_str(),
-                    address,
-                )
-                .await
-                {
-                    Ok(socks_stream) => {
-                        let mut stream = socks_stream.into_inner();
-                        let request_line = format!("POST {}\n", maker_address);
-                        if let Err(e) = stream.write_all(request_line.as_bytes()).await {
+                loop {
+                    match Socks5Stream::connect(
+                        format!("127.0.0.1:{}", maker_socks_port).as_str(),
+                        address,
+                    )
+                    .await
+                    {
+                        Ok(socks_stream) => {
+                            let mut stream = socks_stream.into_inner();
+                            let request_line = format!("POST {}\n", maker_address);
+                            if let Err(e) = stream.write_all(request_line.as_bytes()).await {
+                                log::warn!(
+                                    "[{}] Failed to send maker address to directory, reattempting: {}",
+                                    maker_port,
+                                    e
+                                );
+                                thread::sleep(Duration::from_secs(
+                                    maker.config.heart_beat_interval_secs,
+                                ));
+                                continue;
+                            }
+                            log::info!(
+                                "[{}] Sucessfuly sent maker address to directory",
+                                maker_port
+                            );
+                            break;
+                        }
+                        Err(e) => {
                             log::warn!(
-                                "[{}] Failed to send maker address to directory, reattempting: {}",
+                                "[{}] Socks connection error with directory, reattempting: {}",
                                 maker_port,
                                 e
                             );
@@ -188,20 +206,6 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                             ));
                             continue;
                         }
-                        log::info!(
-                            "[{}] Sucessfuly sent maker address to directory",
-                            maker_port
-                        );
-                        break;
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "[{}] Socks connection error with directory, reattempting: {}",
-                            maker_port,
-                            e
-                        );
-                        thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
-                        continue;
                     }
                 }
             }
@@ -422,8 +426,8 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         });
     };
 
-    if maker.config.connection_type == ConnectionType::TOR {
-        kill_tor_handles(handle.unwrap());
+    if maker.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {
+        crate::tor::kill_tor_handles(handle.unwrap());
     }
 
     result

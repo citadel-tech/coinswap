@@ -32,6 +32,7 @@ use crate::{
     },
     utill::{
         get_config_dir, get_wallet_dir, redeemscript_to_scriptpubkey, seed_phrase_to_unique_id,
+        ConnectionType,
     },
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
 };
@@ -123,6 +124,7 @@ impl Maker {
         rpc_config: Option<RPCConfig>,
         port: Option<u16>,
         socks_port: Option<u16>,
+        connection_type: Option<ConnectionType>,
         behavior: MakerBehavior,
     ) -> Result<Self, MakerError> {
         // Only allow MakerBehavior in functional tests
@@ -183,6 +185,10 @@ impl Maker {
 
         if let Some(socks_port) = socks_port {
             config.socks_port = socks_port;
+        }
+
+        if let Some(connection_type) = connection_type {
+            config.connection_type = connection_type;
         }
 
         log::info!("Initializing wallet sync");
@@ -270,7 +276,7 @@ impl Maker {
                 .get_tx_out(&funding_info.funding_tx.txid(), funding_output_index, None)
                 .map_err(WalletError::Rpc)?
             {
-                if txout.confirmations < self.config.required_confirms as u32 {
+                if txout.confirmations < (self.config.required_confirms as u32) {
                     return Err(MakerError::General(
                         "funding tx not confirmed to required depth",
                     ));
@@ -300,10 +306,10 @@ impl Maker {
             let contract_spk = redeemscript_to_scriptpubkey(&funding_info.contract_redeemscript);
 
             if !self.wallet.read()?.does_prevout_match_cached_contract(
-                &OutPoint {
+                &(OutPoint {
                     txid: funding_info.funding_tx.txid(),
                     vout: funding_output_index,
-                },
+                }),
                 &contract_spk,
             )? {
                 return Err(MakerError::General(
@@ -426,7 +432,7 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                         log::warn!(
                             "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
                             maker.config.port,
-                            txid,
+                            txid
                         );
                         // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
                         // fully signed.
@@ -450,13 +456,13 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                                 outgoings.push((
                                     (og_sc.get_multisig_redeemscript(), tx),
                                     (contract_timelock, time_lock_spend),
-                                ))
+                                ));
                             } else {
                                 log::warn!(
                                     "[{}] Outgoing contact signature not known. Not Broadcasting",
                                     maker.config.port
                                 );
-                            };
+                            }
                             if let Ok(tx) = ic_sc.get_fully_signed_contract_tx() {
                                 incomings.push((ic_sc.get_multisig_redeemscript(), tx));
                             } else {
@@ -679,7 +685,7 @@ pub fn recover_from_swap(
                 );
                 if let Some(confirmation) = result.confirmations {
                     // Now the transaction is confirmed in a block, check for required maturity
-                    if confirmation > *timelock as u32 {
+                    if confirmation > (*timelock as u32) {
                         log::info!(
                             "[{}] Timelock maturity of {} blocks for Contract Tx is reached : {}",
                             maker.config.port,

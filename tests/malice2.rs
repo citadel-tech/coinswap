@@ -4,6 +4,7 @@ use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     market::directory::{start_directory_server, DirectoryServer},
     taker::{SwapParams, TakerBehavior},
+    utill::ConnectionType,
 };
 
 mod test_framework;
@@ -24,8 +25,14 @@ async fn malice2_maker_broadcast_contract_prematurely() {
     // ---- Setup ----
 
     let makers_config_map = [
-        ((6102, 19051), MakerBehavior::Normal),
-        ((16102, 19052), MakerBehavior::BroadcastContractAfterSetup),
+        (
+            (6102, 19051, ConnectionType::CLEARNET),
+            MakerBehavior::Normal,
+        ),
+        (
+            (16102, 19052, ConnectionType::CLEARNET),
+            MakerBehavior::BroadcastContractAfterSetup,
+        ),
     ];
 
     // Initiate test framework, Makers.
@@ -35,7 +42,8 @@ async fn malice2_maker_broadcast_contract_prematurely() {
 
     info!("Initiating Directory Server .....");
 
-    let directory_server_instance = Arc::new(DirectoryServer::new(None).unwrap());
+    let directory_server_instance =
+        Arc::new(DirectoryServer::new(None, Some(ConnectionType::CLEARNET)).unwrap());
     let directory_server_instance_clone = directory_server_instance.clone();
     thread::spawn(move || {
         start_directory_server(directory_server_instance_clone);
@@ -238,7 +246,7 @@ async fn malice2_maker_broadcast_contract_prematurely() {
             // as they haven't broadcasted their outgoing swap.
             assert!(
                 maker_balance_descriptor_utxo == Amount::from_btc(0.14994773).unwrap()
-                    || maker_balance_descriptor_utxo == Amount::from_btc(0.14999000).unwrap()
+                    || maker_balance_descriptor_utxo == Amount::from_btc(0.14999).unwrap()
             );
             assert_eq!(maker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
             assert_eq!(maker_balance_live_contract, Amount::from_btc(0.0).unwrap());
