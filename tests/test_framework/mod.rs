@@ -69,7 +69,7 @@ impl TestFramework {
         makers_config_map: HashMap<(u16, u16, ConnectionType), MakerBehavior>,
         taker_behavior: Option<TakerBehavior>,
     ) -> (Arc<Self>, Arc<RwLock<Taker>>, Vec<Arc<Maker>>) {
-        if cfg!(not(feature = "tor")) {
+        if cfg!(feature = "tor") {
             coinswap::tor::setup_mitosis();
         }
         setup_logger();
