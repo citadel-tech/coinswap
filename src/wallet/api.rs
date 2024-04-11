@@ -324,7 +324,9 @@ impl Wallet {
             "Loaded wallet file {} | External Index = {} | Incoming Swapcoins = {} | Outgoing Swapcoins = {}",
             store.file_name,
             store.external_index,
-            store.incoming_swapcoins.len(), store.outgoing_swapcoins.len());
+            store.incoming_swapcoins.len(),
+            store.outgoing_swapcoins.len()
+        );
         let wallet = Self {
             rpc,
             wallet_file_path: path.clone(),
@@ -583,7 +585,7 @@ impl Wallet {
     /// Index range depend on [`WalletMode`].
     /// Normal => 5000
     /// Test => 6
-    pub(super) fn get_unimoprted_wallet_desc(&self) -> Result<Vec<String>, WalletError> {
+    pub(super) fn get_unimported_wallet_desc(&self) -> Result<Vec<String>, WalletError> {
         let mut unimported = Vec::new();
         for (_, descriptor) in self.get_wallet_descriptors()? {
             let first_addr = self.rpc.derive_addresses(&descriptor, Some([0, 0]))?[0].clone();

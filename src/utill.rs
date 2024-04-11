@@ -1,40 +1,44 @@
 //! Various utility and helper functions for both Taker and Maker.
 
-use std::{ env, io::ErrorKind, path::PathBuf, str::FromStr, sync::Once };
+use std::{env, io::ErrorKind, path::PathBuf, str::FromStr, sync::Once};
 
 use bitcoin::{
-    address::{ WitnessProgram, WitnessVersion },
-    hashes::{ sha256, Hash },
+    address::{WitnessProgram, WitnessVersion},
+    hashes::{sha256, Hash},
     script::PushBytesBuf,
-    secp256k1::{ rand::{ rngs::OsRng, RngCore }, Secp256k1, SecretKey },
-    Network,
-    PublicKey,
-    ScriptBuf,
+    secp256k1::{
+        rand::{rngs::OsRng, RngCore},
+        Secp256k1, SecretKey,
+    },
+    Network, PublicKey, ScriptBuf,
 };
 use log4rs::{
-    append::{ console::ConsoleAppender, file::FileAppender },
-    config::{ Appender, Logger, Root },
+    append::{console::ConsoleAppender, file::FileAppender},
+    config::{Appender, Logger, Root},
     Config,
 };
 
 use std::{
     collections::HashMap,
-    fs::{ self, File },
-    io::{ self, BufRead, Write },
+    fs::{self, File},
+    io::{self, BufRead, Write},
     thread,
     time::Duration,
 };
 
 use serde_json::Value;
-use tokio::{ io::{ AsyncReadExt, AsyncWriteExt, BufReader }, net::tcp::{ ReadHalf, WriteHalf } };
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt, BufReader},
+    net::tcp::{ReadHalf, WriteHalf},
+};
 
 use crate::{
     error::NetError,
     protocol::{
         contract::derive_maker_pubkey_and_nonce,
-        messages::{ MakerToTakerMessage, MultisigPrivkey },
+        messages::{MakerToTakerMessage, MultisigPrivkey},
     },
-    wallet::{ SwapCoin, WalletError },
+    wallet::{SwapCoin, WalletError},
 };
 
 /// Converts a string representation of a network to a `Network` enum variant.
@@ -105,7 +109,6 @@ pub fn setup_logger() {
             directory_log_dir = PathBuf::from("/tmp/directory/debug.log");
         }
 
-        // log4rs::init_file("log4rs.yml", Default::default()).unwrap();
         let stdout = ConsoleAppender::builder().build();
         let taker = FileAppender::builder().build(taker_log_dir).unwrap();
         let maker = FileAppender::builder().build(maker_log_dir).unwrap();
@@ -116,17 +119,25 @@ pub fn setup_logger() {
             .appender(Appender::builder().build("maker", Box::new(maker)))
             .appender(Appender::builder().build("directory", Box::new(directory)))
             .logger(
-                Logger::builder().appender("taker").build("coinswap::taker", log::LevelFilter::Info)
+                Logger::builder()
+                    .appender("taker")
+                    .build("coinswap::taker", log::LevelFilter::Info),
             )
             .logger(
-                Logger::builder().appender("maker").build("coinswap::maker", log::LevelFilter::Info)
+                Logger::builder()
+                    .appender("maker")
+                    .build("coinswap::maker", log::LevelFilter::Info),
             )
             .logger(
                 Logger::builder()
                     .appender("directory")
-                    .build("coinswap::market", log::LevelFilter::Info)
+                    .build("coinswap::market", log::LevelFilter::Info),
             )
-            .build(Root::builder().appender("stdout").build(log::LevelFilter::Info))
+            .build(
+                Root::builder()
+                    .appender("stdout")
+                    .build(log::LevelFilter::Info),
+            )
             .unwrap();
         log4rs::init_config(config).unwrap();
     });
@@ -135,7 +146,7 @@ pub fn setup_logger() {
 /// Can send both Taker and Maker messages.
 pub async fn send_message(
     socket_writer: &mut WriteHalf<'_>,
-    message: &impl serde::Serialize
+    message: &impl serde::Serialize,
 ) -> Result<(), NetError> {
     let message_cbor = serde_cbor::ser::to_vec(message).map_err(NetError::Cbor)?;
     socket_writer.write_u32(message_cbor.len() as u32).await?;
@@ -145,7 +156,7 @@ pub async fn send_message(
 
 /// Read a Maker Message.
 pub async fn read_maker_message(
-    reader: &mut BufReader<ReadHalf<'_>>
+    reader: &mut BufReader<ReadHalf<'_>>,
 ) -> Result<MakerToTakerMessage, NetError> {
     let length = reader.read_u32().await?;
     let mut buffer = vec![0; length as usize];
@@ -157,7 +168,7 @@ pub async fn read_maker_message(
 /// Apply the maker's privatekey to swapcoins, and check it's the correct privkey for corresponding pubkey.
 pub fn check_and_apply_maker_private_keys<S: SwapCoin>(
     swapcoins: &mut [S],
-    swapcoin_private_keys: &[MultisigPrivkey]
+    swapcoin_private_keys: &[MultisigPrivkey],
 ) -> Result<(), WalletError> {
     for (swapcoin, swapcoin_private_key) in swapcoins.iter_mut().zip(swapcoin_private_keys.iter()) {
         swapcoin.apply_privkey(swapcoin_private_key.key)?;
@@ -170,15 +181,25 @@ pub fn check_and_apply_maker_private_keys<S: SwapCoin>(
 /// Maker's advertised Pubkey with these two nonces.
 pub fn generate_maker_keys(
     tweakable_point: &PublicKey,
-    count: u32
-) -> (Vec<PublicKey>, Vec<SecretKey>, Vec<PublicKey>, Vec<SecretKey>) {
+    count: u32,
+) -> (
+    Vec<PublicKey>,
+    Vec<SecretKey>,
+    Vec<PublicKey>,
+    Vec<SecretKey>,
+) {
     let (multisig_pubkeys, multisig_nonces): (Vec<_>, Vec<_>) = (0..count)
         .map(|_| derive_maker_pubkey_and_nonce(tweakable_point).unwrap())
         .unzip();
     let (hashlock_pubkeys, hashlock_nonces): (Vec<_>, Vec<_>) = (0..count)
         .map(|_| derive_maker_pubkey_and_nonce(tweakable_point).unwrap())
         .unzip();
-    (multisig_pubkeys, multisig_nonces, hashlock_pubkeys, hashlock_nonces)
+    (
+        multisig_pubkeys,
+        multisig_nonces,
+        hashlock_pubkeys,
+        hashlock_nonces,
+    )
 }
 
 /// Converts a Bitcoin amount from JSON-RPC representation to satoshis.
@@ -188,7 +209,10 @@ pub fn convert_json_rpc_bitcoin_to_satoshis(amount: &Value) -> u64 {
     //obtain the value in satoshi
     //this is necessary because the json rpc represents bitcoin values
     //as floats :(
-    format!("{:.8}", amount.as_f64().unwrap()).replace('.', "").parse::<u64>().unwrap()
+    format!("{:.8}", amount.as_f64().unwrap())
+        .replace('.', "")
+        .parse::<u64>()
+        .unwrap()
 }
 
 /// Extracts hierarchical deterministic (HD) path components from a descriptor.
@@ -240,8 +264,9 @@ pub fn generate_keypair() -> (PublicKey, SecretKey) {
 pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> ScriptBuf {
     let witness_program = WitnessProgram::new(
         WitnessVersion::V0,
-        PushBytesBuf::from(&redeemscript.wscript_hash().to_byte_array())
-    ).unwrap();
+        PushBytesBuf::from(&redeemscript.wscript_hash().to_byte_array()),
+    )
+    .unwrap();
     //p2wsh address
     ScriptBuf::new_witness_program(&witness_program)
 }
@@ -294,8 +319,9 @@ pub fn parse_toml(file_path: &PathBuf) -> io::Result<HashMap<String, HashMap<Str
 /// Parse and log errors for each field.
 pub fn parse_field<T: std::str::FromStr>(value: Option<&String>, default: T) -> io::Result<T> {
     match value {
-        Some(value) =>
-            value.parse().map_err(|_e| io::Error::new(ErrorKind::InvalidData, "parsing failed")),
+        Some(value) => value
+            .parse()
+            .map_err(|_e| io::Error::new(ErrorKind::InvalidData, "parsing failed")),
         None => Ok(default),
     }
 }
@@ -344,14 +370,13 @@ pub fn monitor_log_for_completion(log_dir: PathBuf, pattern: &str) -> io::Result
 #[cfg(test)]
 mod tests {
     use bitcoin::{
-        blockdata::{ opcodes::all, script::Builder },
+        blockdata::{opcodes::all, script::Builder},
         secp256k1::Scalar,
-        PubkeyHash,
-        Txid,
+        PubkeyHash, Txid,
     };
 
     use serde_json::json;
-    use tokio::net::{ TcpListener, TcpStream };
+    use tokio::net::{TcpListener, TcpStream};
 
     use super::*;
 
@@ -362,7 +387,7 @@ mod tests {
             ("test", Network::Testnet),
             ("signet", Network::Signet),
             ("regtest", Network::Regtest),
-            ("unknown_network", Network::Bitcoin)
+            ("unknown_network", Network::Bitcoin),
         ];
         for (net_str, expected_network) in net_strs {
             let network = std::panic::catch_unwind(|| str_to_bitcoin_network(net_str));
@@ -404,78 +429,23 @@ mod tests {
 
         // Test with a very large value
         let amount = json!(12345678.12345678);
-        assert_eq!(convert_json_rpc_bitcoin_to_satoshis(&amount), 1_234_567_812_345_678);
+        assert_eq!(
+            convert_json_rpc_bitcoin_to_satoshis(&amount),
+            1_234_567_812_345_678
+        );
     }
     #[test]
     fn test_to_hex() {
         let mut txid_test_vector = [
             vec![
-                0x5a,
-                0x4e,
-                0xbf,
-                0x66,
-                0x82,
-                0x2b,
-                0x0b,
-                0x2d,
-                0x56,
-                0xbd,
-                0x9d,
-                0xc6,
-                0x4e,
-                0xce,
-                0x0b,
-                0xc3,
-                0x8e,
-                0xe7,
-                0x84,
-                0x4a,
-                0x23,
-                0xff,
-                0x1d,
-                0x73,
-                0x20,
-                0xa8,
-                0x8c,
-                0x5f,
-                0xdb,
-                0x2a,
-                0xd3,
-                0xe2
+                0x5a, 0x4e, 0xbf, 0x66, 0x82, 0x2b, 0x0b, 0x2d, 0x56, 0xbd, 0x9d, 0xc6, 0x4e, 0xce,
+                0x0b, 0xc3, 0x8e, 0xe7, 0x84, 0x4a, 0x23, 0xff, 0x1d, 0x73, 0x20, 0xa8, 0x8c, 0x5f,
+                0xdb, 0x2a, 0xd3, 0xe2,
             ],
             vec![
-                0x6d,
-                0x69,
-                0x37,
-                0x2e,
-                0x3e,
-                0x59,
-                0x28,
-                0xa7,
-                0x3c,
-                0x98,
-                0x38,
-                0x18,
-                0xbd,
-                0x19,
-                0x27,
-                0xe1,
-                0x90,
-                0x8f,
-                0x51,
-                0xa6,
-                0xc2,
-                0xcd,
-                0x32,
-                0x58,
-                0x98,
-                0xb3,
-                0xb4,
-                0x16,
-                0x90,
-                0xd4,
-                0xfa,
-                0x7b
+                0x6d, 0x69, 0x37, 0x2e, 0x3e, 0x59, 0x28, 0xa7, 0x3c, 0x98, 0x38, 0x18, 0xbd, 0x19,
+                0x27, 0xe1, 0x90, 0x8f, 0x51, 0xa6, 0xc2, 0xcd, 0x32, 0x58, 0x98, 0xb3, 0xb4, 0x16,
+                0x90, 0xd4, 0xfa, 0x7b,
             ],
         ];
         for i in txid_test_vector.iter_mut() {
@@ -518,11 +488,13 @@ mod tests {
     #[test]
     fn test_redeemscript_to_scriptpubkey_1of2musig() {
         let pubkey1 = PublicKey::from_str(
-            "03cccac45f4521514187be4b5650ecb241d4d898aa41daa7c5384b2d8055fbb509"
-        ).unwrap();
+            "03cccac45f4521514187be4b5650ecb241d4d898aa41daa7c5384b2d8055fbb509",
+        )
+        .unwrap();
         let pubkey2 = PublicKey::from_str(
-            "0316665712a0b90de0bcf7cac70d3fd3cfd102050e99b5cd41a55f2c92e1d9e6f5"
-        ).unwrap();
+            "0316665712a0b90de0bcf7cac70d3fd3cfd102050e99b5cd41a55f2c92e1d9e6f5",
+        )
+        .unwrap();
         let script = Builder::new()
             .push_opcode(all::OP_PUSHNUM_1)
             .push_key(&pubkey1)
@@ -559,26 +531,32 @@ mod tests {
         // generate_maker_keys: test that given a tweakable_point the return values satisfy the equation:
         // tweak_point * returned_nonce = returned_publickey
         let tweak_point = PublicKey::from_str(
-            "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af"
-        ).unwrap();
+            "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af",
+        )
+        .unwrap();
         let (multisig_pubkeys, multisig_nonces, hashlock_pubkeys, hashlock_nonces) =
             generate_maker_keys(&tweak_point, 1);
         // test returned multisg part
         let returned_nonce = multisig_nonces[0];
         let returned_pubkey = multisig_pubkeys[0];
         let secp = Secp256k1::new();
-        let pubkey_secp = bitcoin::secp256k1::PublicKey
-            ::from_str("032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af")
-            .unwrap();
+        let pubkey_secp = bitcoin::secp256k1::PublicKey::from_str(
+            "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af",
+        )
+        .unwrap();
         let scalar_from_nonce: Scalar = Scalar::from(returned_nonce);
-        let tweaked_pubkey = pubkey_secp.add_exp_tweak(&secp, &scalar_from_nonce).unwrap();
+        let tweaked_pubkey = pubkey_secp
+            .add_exp_tweak(&secp, &scalar_from_nonce)
+            .unwrap();
         assert_eq!(returned_pubkey.to_string(), tweaked_pubkey.to_string());
 
         // test returned hashlock part
         let returned_nonce = hashlock_nonces[0];
         let returned_pubkey = hashlock_pubkeys[0];
         let scalar_from_nonce: Scalar = Scalar::from(returned_nonce);
-        let tweaked_pubkey = pubkey_secp.add_exp_tweak(&secp, &scalar_from_nonce).unwrap();
+        let tweaked_pubkey = pubkey_secp
+            .add_exp_tweak(&secp, &scalar_from_nonce)
+            .unwrap();
         assert_eq!(returned_pubkey.to_string(), tweaked_pubkey.to_string());
     }
 }

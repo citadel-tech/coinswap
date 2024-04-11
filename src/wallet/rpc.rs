@@ -110,7 +110,7 @@ impl Wallet {
             log::info!("wallet created: {}", wallet_name);
         }
 
-        let hd_descriptors_to_import = self.get_unimoprted_wallet_desc()?;
+        let hd_descriptors_to_import = self.get_unimported_wallet_desc()?;
 
         let mut swapcoin_descriptors_to_import = self
             .store
@@ -270,7 +270,9 @@ impl Wallet {
                     .call("scantxoutset", &[json!("start"), json!(desc_list)]);
 
                 match result {
-                    Ok(r) => break r,
+                    Ok(r) => {
+                        break r;
+                    }
                     Err(e) => {
                         log::warn!("Sync Error, Retrying: {}", e);
                         thread::sleep(Duration::from_secs(3));
@@ -292,7 +294,7 @@ impl Wallet {
             "TxOut set scan complete, found {} btc",
             Amount::from_sat(convert_json_rpc_bitcoin_to_satoshis(
                 &scantxoutset_result["total_amount"]
-            )),
+            ))
         );
         let unspent_list = scantxoutset_result["unspents"].as_array().unwrap();
         for unspent in unspent_list {
