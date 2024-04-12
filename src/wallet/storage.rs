@@ -17,7 +17,6 @@ use super::{error::WalletError, fidelity::FidelityBond};
 use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
 
 /// Represents the internal data store for a Bitcoin wallet.
-// TODO: Derive Serialize/Deserialize for this structure, and remove FileData
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct WalletStore {
     /// The file name associated with the wallet store.
