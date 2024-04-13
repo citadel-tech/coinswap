@@ -38,6 +38,7 @@ pub struct WalletStore {
     /// Map for all the fidelity bond information. (index, (Bond, script_pubkey, is_spent)).
     pub(super) fidelity_bond: HashMap<u32, (FidelityBond, ScriptBuf, bool)>,
     //TODO: Add last synced height and Wallet birthday.
+    pub(super) last_synced_height: Option<u64>,
 }
 
 impl WalletStore {
@@ -63,6 +64,7 @@ impl WalletStore {
             outgoing_swapcoins: HashMap::new(),
             prevout_to_contract_map: HashMap::new(),
             fidelity_bond: HashMap::new(),
+            last_synced_height: None,
         };
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
