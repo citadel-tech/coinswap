@@ -533,7 +533,7 @@ impl Wallet {
     pub fn generate_fidelity_proof(
         &self,
         index: u32,
-        onion_addr: String,
+        maker_addr: String,
     ) -> Result<FidelityProof, WalletError> {
         // Generate a fidelity bond proof from the fidelity data.
         let (bond, _, is_spent) = self
@@ -548,7 +548,7 @@ impl Wallet {
 
         let fidelity_privkey = self.get_fidelity_keypair(index)?.secret_key();
 
-        let cert_hash = bond.generate_cert_hash(onion_addr);
+        let cert_hash = bond.generate_cert_hash(maker_addr);
 
         let secp = Secp256k1::new();
         let cert_sig = secp.sign_ecdsa(

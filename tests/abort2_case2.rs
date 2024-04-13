@@ -4,6 +4,7 @@ use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     market::directory::{start_directory_server, DirectoryServer},
     taker::SwapParams,
+    utill::ConnectionType,
 };
 
 mod test_framework;
@@ -26,10 +27,13 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
     // 6102 is naughty. And theres not enough makers.
     let makers_config_map = [
         (
-            (6102, 19051),
+            (6102, 19051, ConnectionType::CLEARNET),
             MakerBehavior::CloseAtReqContractSigsForSender,
         ),
-        ((16102, 19052), MakerBehavior::Normal),
+        (
+            (16102, 19052, ConnectionType::CLEARNET),
+            MakerBehavior::Normal,
+        ),
     ];
 
     warn!(
@@ -46,7 +50,8 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
 
     info!("Initiating Directory Server .....");
 
-    let directory_server_instance = Arc::new(DirectoryServer::new(None).unwrap());
+    let directory_server_instance =
+        Arc::new(DirectoryServer::new(None, Some(ConnectionType::CLEARNET)).unwrap());
     let directory_server_instance_clone = directory_server_instance.clone();
     thread::spawn(move || {
         start_directory_server(directory_server_instance_clone);
@@ -211,17 +216,30 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
     thread::sleep(Duration::from_secs(10));
 
     // Maker gets banned for being naughty.
-    let onion_addr_path = PathBuf::from(format!("/tmp/tor-rust-maker{}/hs-dir/hostname", 6102));
-    let mut file = File::open(onion_addr_path).unwrap();
-    let mut onion_addr: String = String::new();
-    file.read_to_string(&mut onion_addr).unwrap();
-    onion_addr.pop();
-    assert_eq!(
-        format!("{}:{}", onion_addr, 6102),
-        taker.read().unwrap().get_bad_makers()[0]
-            .address
-            .to_string()
-    );
+    match taker.read().unwrap().config.connection_type {
+        ConnectionType::CLEARNET => {
+            assert_eq!(
+                format!("127.0.0.1:{}", 6102),
+                taker.read().unwrap().get_bad_makers()[0]
+                    .address
+                    .to_string()
+            );
+        }
+        ConnectionType::TOR => {
+            let onion_addr_path =
+                PathBuf::from(format!("/tmp/tor-rust-maker{}/hs-dir/hostname", 6102));
+            let mut file = File::open(onion_addr_path).unwrap();
+            let mut onion_addr: String = String::new();
+            file.read_to_string(&mut onion_addr).unwrap();
+            onion_addr.pop();
+            assert_eq!(
+                format!("{}:{}", onion_addr, 6102),
+                taker.read().unwrap().get_bad_makers()[0]
+                    .address
+                    .to_string()
+            );
+        }
+    }
 
     all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
 
@@ -289,7 +307,7 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
             assert_eq!(maker_balance_fidelity, Amount::from_btc(0.05).unwrap());
             assert_eq!(
                 maker_balance_descriptor_utxo,
-                Amount::from_btc(0.14999000).unwrap()
+                Amount::from_btc(0.14999).unwrap()
             );
             assert_eq!(maker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
             assert_eq!(maker_balance_live_contract, Amount::from_btc(0.0).unwrap());

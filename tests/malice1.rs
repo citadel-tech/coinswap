@@ -4,6 +4,7 @@ use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     market::directory::{start_directory_server, DirectoryServer},
     taker::{SwapParams, TakerBehavior},
+    utill::ConnectionType,
 };
 
 mod test_framework;
@@ -21,8 +22,14 @@ async fn malice1_taker_broadcast_contract_prematurely() {
     // ---- Setup ----
 
     let makers_config_map = [
-        ((6102, 19051), MakerBehavior::Normal),
-        ((16102, 19052), MakerBehavior::Normal),
+        (
+            (6102, 19051, ConnectionType::CLEARNET),
+            MakerBehavior::Normal,
+        ),
+        (
+            (16102, 19052, ConnectionType::CLEARNET),
+            MakerBehavior::Normal,
+        ),
     ];
 
     // Initiate test framework, Makers.
@@ -38,7 +45,8 @@ async fn malice1_taker_broadcast_contract_prematurely() {
 
     info!("Initiating Directory Server .....");
 
-    let directory_server_instance = Arc::new(DirectoryServer::new(None).unwrap());
+    let directory_server_instance =
+        Arc::new(DirectoryServer::new(None, Some(ConnectionType::CLEARNET)).unwrap());
     let directory_server_instance_clone = directory_server_instance.clone();
     thread::spawn(move || {
         start_directory_server(directory_server_instance_clone);

@@ -2,7 +2,7 @@
 
 use std::{io, path::PathBuf};
 
-use crate::utill::{get_config_dir, parse_field, parse_toml, write_default_config};
+use crate::utill::{get_config_dir, parse_field, parse_toml, write_default_config, ConnectionType};
 
 /// Maker Configuration, controlling various maker behavior.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,10 +35,14 @@ pub struct MakerConfig {
     pub socks_port: u16,
     /// Directory server onion address
     pub directory_server_onion_address: String,
+    /// Directory server clearnet address
+    pub directory_server_clearnet_address: String,
     /// Fidelity Bond Value
     pub fidelity_value: u64,
     /// Fidelity Bond timelock in Block heights.
     pub fidelity_timelock: u32,
+    /// Connection type
+    pub connection_type: ConnectionType,
 }
 
 impl Default for MakerConfig {
@@ -58,8 +62,10 @@ impl Default for MakerConfig {
             min_size: 10_000,
             socks_port: 19050,
             directory_server_onion_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
+            directory_server_clearnet_address: "127.0.0.1:8080".to_string(),
             fidelity_value: 5_000_000, // 5 million  sats
             fidelity_timelock: 26_000, // Approx 6 months of blocks
+            connection_type: ConnectionType::TOR,
         }
     }
 }
@@ -163,6 +169,10 @@ impl MakerConfig {
                 .get("directory_server_onion_address")
                 .map(|s| s.to_string())
                 .unwrap_or(default_config.directory_server_onion_address),
+            directory_server_clearnet_address: maker_config_section
+                .get("directory_server_clearnet_address")
+                .map(|s| s.to_string())
+                .unwrap_or(default_config.directory_server_clearnet_address),
             fidelity_value: parse_field(
                 maker_config_section.get("fidelity_value"),
                 default_config.fidelity_value,
@@ -173,6 +183,11 @@ impl MakerConfig {
                 default_config.fidelity_timelock,
             )
             .unwrap_or(default_config.fidelity_timelock),
+            connection_type: parse_field(
+                maker_config_section.get("connection_type"),
+                default_config.connection_type,
+            )
+            .unwrap_or(default_config.connection_type),
         })
     }
 }
@@ -194,7 +209,9 @@ fn write_default_maker_config(config_path: &PathBuf) {
             min_contract_reaction_time = 48\n\
             min_size = 10000\n\
             socks_port = 19050\n\
-            directory_server_onion_address = directoryhiddenserviceaddress.onion:8080\n
+            directory_server_onion_address = directoryhiddenserviceaddress.onion:8080\n\
+            directory_server_clearnet_address = 127.0.0.1:8080\n\
+            connection_type = tor
             ",
     );
 

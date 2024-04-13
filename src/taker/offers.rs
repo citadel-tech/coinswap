@@ -15,7 +15,7 @@ use tokio::{
 
 use bitcoin::Network;
 
-use crate::protocol::messages::Offer;
+use crate::{protocol::messages::Offer, utill::ConnectionType};
 
 use crate::market::directory::DirectoryServerError;
 
@@ -144,20 +144,26 @@ pub async fn fetch_addresses_from_dns(
     directory_server_address: String,
     _network: Network,
     number_of_makers: u16,
+    connection_type: ConnectionType,
 ) -> Result<Vec<MakerAddress>, DirectoryServerError> {
     loop {
         let result: Result<Vec<MakerAddress>, DirectoryServerError> = (async {
-            let mut stream: TcpStream = Socks5Stream::connect(
-                format!("127.0.0.1:{}", socks_port.unwrap_or(19050)).as_str(),
-                directory_server_address.as_str(),
-            )
-            .await
-            .map_err(|_e| {
-                DirectoryServerError::Other(
-                    "Issue with fetching maker address from directory server",
+            let mut stream = match connection_type {
+                ConnectionType::CLEARNET => TcpStream::connect(directory_server_address.as_str())
+                    .await
+                    .unwrap(),
+                ConnectionType::TOR => Socks5Stream::connect(
+                    format!("127.0.0.1:{}", socks_port.unwrap_or(19050)).as_str(),
+                    directory_server_address.as_str(),
                 )
-            })?
-            .into_inner();
+                .await
+                .map_err(|_e| {
+                    DirectoryServerError::Other(
+                        "Issue with fetching maker address from directory server",
+                    )
+                })?
+                .into_inner(),
+            };
 
             let request_line = "GET\n";
             stream

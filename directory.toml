@@ -1,3 +1,4 @@
 [directory_config]
 port = 8080
 socks_port = 19060
+connection_type = "tor"

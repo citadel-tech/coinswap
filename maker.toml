@@ -26,3 +26,4 @@ min_size = 10000
 socks_part = 19050
 # Directory server onion address
 directory_server_onion_address = "directoryhiddenserviceaddress.onion:8080"
+connection_type = "tor"

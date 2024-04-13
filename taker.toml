@@ -36,4 +36,4 @@ tor_port = 8000
 socks_port = 19050
 # Directory server onion address
 directory_server_onion_address = "directoryhiddenserviceaddress.onion:8080"
-number_of_makers = 1
+connection_type = "tor"

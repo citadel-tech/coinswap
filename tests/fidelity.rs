@@ -3,6 +3,7 @@ use bitcoin::{absolute::LockTime, Amount};
 use coinswap::{
     maker::{error::MakerError, start_maker_server, MakerBehavior},
     market::directory::{start_directory_server, DirectoryServer},
+    utill::ConnectionType,
     wallet::{FidelityError, WalletError},
 };
 
@@ -29,14 +30,18 @@ use std::{sync::Arc, thread, time::Duration};
 async fn test_fidelity() {
     // ---- Setup ----
 
-    let makers_config_map = [((6102, 19051), MakerBehavior::Normal)];
+    let makers_config_map = [(
+        (6102, 19051, ConnectionType::CLEARNET),
+        MakerBehavior::Normal,
+    )];
 
     let (test_framework, _, makers) =
         TestFramework::init(None, makers_config_map.into(), None).await;
 
     info!("Initiating Directory Server .....");
 
-    let directory_server_instance = Arc::new(DirectoryServer::new(None).unwrap());
+    let directory_server_instance =
+        Arc::new(DirectoryServer::new(None, Some(ConnectionType::CLEARNET)).unwrap());
     let directory_server_instance_clone = directory_server_instance.clone();
     thread::spawn(move || {
         start_directory_server(directory_server_instance_clone);
