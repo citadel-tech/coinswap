@@ -2,7 +2,6 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
-    market::directory::{start_directory_server, DirectoryServer},
     taker::SwapParams,
     utill::ConnectionType,
 };
@@ -11,7 +10,7 @@ mod test_framework;
 use test_framework::*;
 
 use log::{info, warn};
-use std::{fs::File, io::Read, path::PathBuf, sync::Arc, thread, time::Duration};
+use std::{fs::File, io::Read, path::PathBuf, thread, time::Duration};
 
 /// ABORT 3: Maker Drops After Setup
 /// Case 1: CloseAtContractSigsForRecvrAndSender
@@ -26,30 +25,23 @@ async fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
     // 6102 is naughty. And theres not enough makers.
     let makers_config_map = [
         (
-            (6102, 19051, ConnectionType::CLEARNET),
+            (6102, None),
             MakerBehavior::CloseAtContractSigsForRecvrAndSender,
         ),
-        (
-            (16102, 19052, ConnectionType::CLEARNET),
-            MakerBehavior::Normal,
-        ),
+        ((16102, None), MakerBehavior::Normal),
     ];
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, taker, makers) =
-        TestFramework::init(None, makers_config_map.into(), None).await;
+    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
+        None,
+        makers_config_map.into(),
+        None,
+        ConnectionType::CLEARNET,
+    )
+    .await;
 
     warn!("Running Test: Maker closes connection after receiving a ContractSigsForRecvrAndSender");
-
-    info!("Initiating Directory Server .....");
-
-    let directory_server_instance =
-        Arc::new(DirectoryServer::new(None, Some(ConnectionType::CLEARNET)).unwrap());
-    let directory_server_instance_clone = directory_server_instance.clone();
-    thread::spawn(move || {
-        start_directory_server(directory_server_instance_clone);
-    });
 
     info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.

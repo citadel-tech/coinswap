@@ -2,7 +2,6 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
-    market::directory::{start_directory_server, DirectoryServer},
     taker::SwapParams,
     utill::ConnectionType,
 };
@@ -11,7 +10,7 @@ mod test_framework;
 use test_framework::*;
 
 use log::{info, warn};
-use std::{fs::File, io::Read, path::PathBuf, sync::Arc, thread, time::Duration};
+use std::{fs::File, io::Read, path::PathBuf, thread, time::Duration};
 
 /// ABORT 2: Maker Drops Before Setup
 /// This test demonstrates the situation where a Maker prematurely drops connections after doing
@@ -26,14 +25,8 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
 
     // 6102 is naughty. And theres not enough makers.
     let makers_config_map = [
-        (
-            (6102, 19051, ConnectionType::CLEARNET),
-            MakerBehavior::CloseAtReqContractSigsForSender,
-        ),
-        (
-            (16102, 19052, ConnectionType::CLEARNET),
-            MakerBehavior::Normal,
-        ),
+        ((6102, None), MakerBehavior::CloseAtReqContractSigsForSender),
+        ((16102, None), MakerBehavior::Normal),
     ];
 
     warn!(
@@ -45,17 +38,13 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, taker, makers) =
-        TestFramework::init(None, makers_config_map.into(), None).await;
-
-    info!("Initiating Directory Server .....");
-
-    let directory_server_instance =
-        Arc::new(DirectoryServer::new(None, Some(ConnectionType::CLEARNET)).unwrap());
-    let directory_server_instance_clone = directory_server_instance.clone();
-    thread::spawn(move || {
-        start_directory_server(directory_server_instance_clone);
-    });
+    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
+        None,
+        makers_config_map.into(),
+        None,
+        ConnectionType::CLEARNET,
+    )
+    .await;
 
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {

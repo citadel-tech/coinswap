@@ -29,6 +29,7 @@ use bitcoind::{
 };
 use coinswap::{
     maker::{Maker, MakerBehavior},
+    market::directory::{start_directory_server, DirectoryServer},
     taker::{Taker, TakerBehavior},
     utill::{setup_logger, str_to_bitcoin_network, ConnectionType},
     wallet::RPCConfig,
@@ -66,10 +67,16 @@ impl TestFramework {
     /// If no bitcoind conf is provide a default value will be used.
     pub async fn init(
         bitcoind_conf: Option<Conf<'_>>,
-        makers_config_map: HashMap<(u16, u16, ConnectionType), MakerBehavior>,
+        makers_config_map: HashMap<(u16, Option<u16>), MakerBehavior>,
         taker_behavior: Option<TakerBehavior>,
-    ) -> (Arc<Self>, Arc<RwLock<Taker>>, Vec<Arc<Maker>>) {
-        if cfg!(feature = "tor") {
+        connection_type: ConnectionType,
+    ) -> (
+        Arc<Self>,
+        Arc<RwLock<Taker>>,
+        Vec<Arc<Maker>>,
+        Arc<DirectoryServer>,
+    ) {
+        if cfg!(feature = "tor") && connection_type == ConnectionType::TOR {
             coinswap::tor::setup_mitosis();
         }
         setup_logger();
@@ -116,6 +123,15 @@ impl TestFramework {
             shutdown,
         });
 
+        log::info!("Initiating Directory Server .....");
+
+        let directory_server_instance =
+            Arc::new(DirectoryServer::new(None, Some(connection_type)).unwrap());
+        let directory_server_instance_clone = directory_server_instance.clone();
+        thread::spawn(move || {
+            start_directory_server(directory_server_instance_clone);
+        });
+
         // Translate a RpcConfig from the test framework.
         // a modification of this will be used for taker and makers rpc connections.
         let rpc_config = RPCConfig::from(test_framework.as_ref());
@@ -128,7 +144,7 @@ impl TestFramework {
                 None,
                 Some(taker_rpc_config),
                 taker_behavior.unwrap_or_default(),
-                Some(ConnectionType::CLEARNET),
+                Some(connection_type),
             )
             .unwrap(),
         ));
@@ -141,15 +157,13 @@ impl TestFramework {
                 let maker_rpc_config = rpc_config.clone();
                 thread::sleep(Duration::from_secs(5)); // Sleep for some time avoid resource unavailable error.
                 let tor_port = port.0;
-                let socks_port = port.1;
-                let connection_type = port.2;
                 Arc::new(
                     Maker::init(
                         Some(&temp_dir),
                         Some(maker_id),
                         Some(maker_rpc_config),
                         Some(tor_port),
-                        Some(socks_port),
+                        port.1,
                         Some(connection_type),
                         *behavior,
                     )
@@ -170,7 +184,7 @@ impl TestFramework {
             }
         });
 
-        (test_framework, taker, makers)
+        (test_framework, taker, makers, directory_server_instance)
     }
 
     /// Get the internal bitcoind client reference.

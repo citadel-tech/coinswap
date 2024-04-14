@@ -2,7 +2,6 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
-    market::directory::{start_directory_server, DirectoryServer},
     taker::SwapParams,
     utill::ConnectionType,
     wallet::{Destination, SendAmount},
@@ -14,7 +13,7 @@ mod test_framework;
 use test_framework::*;
 
 use log::{info, warn};
-use std::{assert_eq, sync::Arc, thread, time::Duration};
+use std::{assert_eq, thread, time::Duration};
 
 /// This test demonstrates a standard coinswap round between a Taker and 2 Makers. Nothing goes wrong
 /// and the coinswap completes successfully.
@@ -24,30 +23,15 @@ async fn test_standard_coinswap() {
 
     // 2 Makers with Normal behavior.
     let makers_config_map = [
-        (
-            (6102, 19051, ConnectionType::CLEARNET),
-            MakerBehavior::Normal,
-        ),
-        (
-            (16102, 19052, ConnectionType::CLEARNET),
-            MakerBehavior::Normal,
-        ),
+        ((6102, Some(19051)), MakerBehavior::Normal),
+        ((16102, Some(19052)), MakerBehavior::Normal),
     ];
 
     // Initiate test framework, Makers and a Taker with default behavior.
-    let (test_framework, taker, makers) =
-        TestFramework::init(None, makers_config_map.into(), None).await;
+    let (test_framework, taker, makers, directory_server_instance) =
+        TestFramework::init(None, makers_config_map.into(), None, ConnectionType::TOR).await;
 
     warn!("Running Test: Standard Coinswap Procedure");
-
-    info!("Initiating Directory Server .....");
-
-    let directory_server_instance =
-        Arc::new(DirectoryServer::new(None, Some(ConnectionType::CLEARNET)).unwrap());
-    let directory_server_instance_clone = directory_server_instance.clone();
-    thread::spawn(move || {
-        start_directory_server(directory_server_instance_clone);
-    });
 
     info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
