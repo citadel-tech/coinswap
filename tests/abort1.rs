@@ -2,14 +2,13 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
-    market::directory::{start_directory_server, DirectoryServer},
     taker::{SwapParams, TakerBehavior},
     utill::ConnectionType,
 };
 
 mod test_framework;
 use log::{info, warn};
-use std::{assert_eq, sync::Arc, thread, time::Duration};
+use std::{assert_eq, thread, time::Duration};
 use test_framework::*;
 
 /// Abort 1: TAKER Drops After Full Setup.
@@ -26,35 +25,21 @@ async fn test_stop_taker_after_setup() {
 
     // 2 Makers with Normal behavior.
     let makers_config_map = [
-        (
-            (6102, 19051, ConnectionType::CLEARNET),
-            MakerBehavior::Normal,
-        ),
-        (
-            (16102, 19052, ConnectionType::CLEARNET),
-            MakerBehavior::Normal,
-        ),
+        ((6102, None), MakerBehavior::Normal),
+        ((16102, None), MakerBehavior::Normal),
     ];
 
     // Initiate test framework, Makers.
     // Taker has a special behavior DropConnectionAfterFullSetup.
-    let (test_framework, taker, makers) = TestFramework::init(
+    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
         None,
         makers_config_map.into(),
         Some(TakerBehavior::DropConnectionAfterFullSetup),
+        ConnectionType::CLEARNET,
     )
     .await;
 
     warn!("Running Test: Taker Cheats on Everybody.");
-
-    info!("Initiating Directory Server .....");
-
-    let directory_server_instance =
-        Arc::new(DirectoryServer::new(None, Some(ConnectionType::CLEARNET)).unwrap());
-    let directory_server_instance_clone = directory_server_instance.clone();
-    thread::spawn(move || {
-        start_directory_server(directory_server_instance_clone);
-    });
 
     info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.

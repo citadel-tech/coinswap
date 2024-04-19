@@ -2,7 +2,6 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
-    market::directory::{start_directory_server, DirectoryServer},
     taker::{SwapParams, TakerBehavior},
     utill::ConnectionType,
 };
@@ -11,7 +10,7 @@ mod test_framework;
 use test_framework::*;
 
 use log::{info, warn};
-use std::{assert_eq, collections::BTreeSet, sync::Arc, thread, time::Duration};
+use std::{assert_eq, collections::BTreeSet, thread, time::Duration};
 
 /// Malice 1: Taker Broadcasts contract transactions prematurely.
 ///
@@ -22,35 +21,21 @@ async fn malice1_taker_broadcast_contract_prematurely() {
     // ---- Setup ----
 
     let makers_config_map = [
-        (
-            (6102, 19051, ConnectionType::CLEARNET),
-            MakerBehavior::Normal,
-        ),
-        (
-            (16102, 19052, ConnectionType::CLEARNET),
-            MakerBehavior::Normal,
-        ),
+        ((6102, None), MakerBehavior::Normal),
+        ((16102, None), MakerBehavior::Normal),
     ];
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, taker, makers) = TestFramework::init(
+    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
         None,
         makers_config_map.into(),
         Some(TakerBehavior::BroadcastContractAfterFullSetup),
+        ConnectionType::CLEARNET,
     )
     .await;
 
     warn!("Running Test: Taker broadcasts contract transaction prematurely");
-
-    info!("Initiating Directory Server .....");
-
-    let directory_server_instance =
-        Arc::new(DirectoryServer::new(None, Some(ConnectionType::CLEARNET)).unwrap());
-    let directory_server_instance_clone = directory_server_instance.clone();
-    thread::spawn(move || {
-        start_directory_server(directory_server_instance_clone);
-    });
 
     info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
