@@ -1,19 +1,19 @@
 //! Manages connection with a Bitcoin Core RPC.
 //!
-use std::{convert::TryFrom, thread, time::Duration};
+use std::{ convert::TryFrom, thread, time::Duration };
 
-use bitcoin::{Address, Network};
-use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
+use bitcoin::{ Address, Network };
+use bitcoind::bitcoincore_rpc::{ Auth, Client, RpcApi };
 use serde_json::Value;
 
 use crate::{
-    utill::{redeemscript_to_scriptpubkey, str_to_bitcoin_network},
-    wallet::{api::KeychainKind, WalletSwapCoin},
+    utill::{ redeemscript_to_scriptpubkey, str_to_bitcoin_network },
+    wallet::{ api::KeychainKind, WalletSwapCoin },
 };
 
 use serde::Deserialize;
 
-use super::{error::WalletError, Wallet};
+use super::{ error::WalletError, Wallet };
 
 /// Configuration parameters for connecting to a Bitcoin node via RPC.
 #[derive(Debug, Clone)]
@@ -49,14 +49,13 @@ impl TryFrom<&RPCConfig> for Client {
                 "http://{}/wallet/{}",
                 config.url.as_str(),
                 config.wallet_name.as_str()
-            )
-            .as_str(),
-            config.auth.clone(),
+            ).as_str(),
+            config.auth.clone()
         )?;
         if config.network != str_to_bitcoin_network(rpc.get_blockchain_info()?.chain.as_str()) {
-            return Err(WalletError::Protocol(
-                "RPC Network not mathcing with RPCConfig".to_string(),
-            ));
+            return Err(
+                WalletError::Protocol("RPC Network not mathcing with RPCConfig".to_string())
+            );
         }
         Ok(rpc)
     }
@@ -73,7 +72,12 @@ fn list_wallet_dir(client: &Client) -> Result<Vec<String>, WalletError> {
     }
 
     let result: CallResult = client.call("listwalletdir", &[])?;
-    Ok(result.wallets.into_iter().map(|n| n.name).collect())
+    Ok(
+        result.wallets
+            .into_iter()
+            .map(|n| n.name)
+            .collect()
+    )
 }
 
 impl Wallet {
@@ -89,15 +93,14 @@ impl Wallet {
         } else {
             // pre-0.21 use legacy wallets
             if self.rpc.version()? < 210_000 {
-                self.rpc
-                    .create_wallet(wallet_name, Some(true), None, None, None)?;
+                self.rpc.create_wallet(wallet_name, Some(true), None, None, None)?;
             } else {
                 // TODO: move back to api call when https://github.com/rust-bitcoin/rust-bitcoincore-rpc/issues/225 is closed
                 let args = [
                     Value::String(wallet_name.clone()),
-                    Value::Bool(true),  // Disable Private Keys
+                    Value::Bool(true), // Disable Private Keys
                     Value::Bool(false), // Create a blank wallet
-                    Value::Null,        // Optional Passphrase
+                    Value::Null, // Optional Passphrase
                     Value::Bool(false), // Avoid Reuse
                     Value::Bool(false), // Descriptor Wallet
                 ];
@@ -109,47 +112,34 @@ impl Wallet {
 
         let hd_descriptors_to_import = self.get_unimported_wallet_desc()?;
 
-        let mut swapcoin_descriptors_to_import = self
-            .store
-            .incoming_swapcoins
+        let mut swapcoin_descriptors_to_import = self.store.incoming_swapcoins
             .values()
             .map(|sc| {
-                format!(
-                    "wsh(sortedmulti(2,{},{}))",
-                    sc.get_other_pubkey(),
-                    sc.get_my_pubkey()
-                )
+                format!("wsh(sortedmulti(2,{},{}))", sc.get_other_pubkey(), sc.get_my_pubkey())
             })
             .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
             .filter(|d| !self.is_swapcoin_descriptor_imported(d))
             .collect::<Vec<String>>();
 
         swapcoin_descriptors_to_import.extend(
-            self.store
-                .outgoing_swapcoins
+            self.store.outgoing_swapcoins
                 .values()
                 .map(|sc| {
-                    format!(
-                        "wsh(sortedmulti(2,{},{}))",
-                        sc.get_other_pubkey(),
-                        sc.get_my_pubkey()
-                    )
+                    format!("wsh(sortedmulti(2,{},{}))", sc.get_other_pubkey(), sc.get_my_pubkey())
                 })
                 .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
-                .filter(|d| !self.is_swapcoin_descriptor_imported(d)),
+                .filter(|d| !self.is_swapcoin_descriptor_imported(d))
         );
 
-        let mut contract_scriptpubkeys_to_import = self
-            .store
-            .incoming_swapcoins
+        let mut contract_scriptpubkeys_to_import = self.store.incoming_swapcoins
             .values()
             .filter_map(|sc| {
                 let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript);
-                let addr_info = self
-                    .rpc
+                let addr_info = self.rpc
                     .get_address_info(
-                        &Address::from_script(&contract_spk, self.store.network)
-                            .expect("address wrong"),
+                        &Address::from_script(&contract_spk, self.store.network).expect(
+                            "address wrong"
+                        )
                     )
                     .unwrap();
                 if addr_info.is_watchonly.is_none() {
@@ -161,16 +151,15 @@ impl Wallet {
             .collect::<Vec<_>>();
 
         contract_scriptpubkeys_to_import.extend(
-            self.store
-                .outgoing_swapcoins
+            self.store.outgoing_swapcoins
                 .values()
                 .filter_map(|sc| {
                     let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript);
-                    let addr_info = self
-                        .rpc
+                    let addr_info = self.rpc
                         .get_address_info(
-                            &Address::from_script(&contract_spk, self.store.network)
-                                .expect("address wrong"),
+                            &Address::from_script(&contract_spk, self.store.network).expect(
+                                "address wrong"
+                            )
                         )
                         .unwrap();
                     if addr_info.is_watchonly.is_none() {
@@ -179,33 +168,23 @@ impl Wallet {
                         None
                     }
                 })
-                .collect::<Vec<_>>(),
+                .collect::<Vec<_>>()
         );
 
         let is_fidelity_addrs_imported = {
-            let mut spks = self
-                .store
-                .fidelity_bond
-                .iter()
-                .map(|(_, (b, _, _))| b.script_pub_key());
+            let mut spks = self.store.fidelity_bond.iter().map(|(_, (b, _, _))| b.script_pub_key());
             let (first_addr, last_addr) = (spks.next(), spks.last());
 
             let is_first_imported = if let Some(spk) = first_addr {
                 let ad = Address::from_script(&spk, self.store.network)?;
-                self.rpc
-                    .get_address_info(&ad)?
-                    .is_watchonly
-                    .unwrap_or(false)
+                self.rpc.get_address_info(&ad)?.is_watchonly.unwrap_or(false)
             } else {
                 true // mark true if theres no spk to import
             };
 
             let is_last_imported = if let Some(spk) = last_addr {
                 let ad = Address::from_script(&spk, self.store.network)?;
-                self.rpc
-                    .get_address_info(&ad)?
-                    .is_watchonly
-                    .unwrap_or(false)
+                self.rpc.get_address_info(&ad)?.is_watchonly.unwrap_or(false)
             } else {
                 true // mark true if theres no spks to import
             };
@@ -213,10 +192,11 @@ impl Wallet {
             is_first_imported && is_last_imported
         };
 
-        if hd_descriptors_to_import.is_empty()
-            && swapcoin_descriptors_to_import.is_empty()
-            && contract_scriptpubkeys_to_import.is_empty()
-            && is_fidelity_addrs_imported
+        if
+            hd_descriptors_to_import.is_empty() &&
+            swapcoin_descriptors_to_import.is_empty() &&
+            contract_scriptpubkeys_to_import.is_empty() &&
+            is_fidelity_addrs_imported
         {
             return Ok(());
         }
@@ -229,7 +209,7 @@ impl Wallet {
         self.import_addresses(
             &hd_descriptors_to_import,
             &swapcoin_descriptors_to_import,
-            &contract_scriptpubkeys_to_import,
+            &contract_scriptpubkeys_to_import
         )?;
 
         // Now run the scan
@@ -238,17 +218,17 @@ impl Wallet {
         // Sometimes in test multiple wallet scans can occur at same time, resulting in error.
         // Just retry after 3 sec.
         loop {
-            let last_synced_height = self.store.last_synced_height.unwrap_or(0);
+            let last_synced_height = self.store.last_synced_height
+                .unwrap_or(0)
+                .max(self.store.wallet_birthday.unwrap_or(0));
             let node_synced = self.rpc.get_block_count()?;
-            log::info!(
-                "rescan_blockchain from:{} to:{}",
-                last_synced_height,
-                node_synced
-            );
-            match self.rpc.rescan_blockchain(
-                Some(last_synced_height as usize),
-                Some(node_synced as usize),
-            ) {
+            log::info!("rescan_blockchain from:{} to:{}", last_synced_height, node_synced);
+            match
+                self.rpc.rescan_blockchain(
+                    Some(last_synced_height as usize),
+                    Some(node_synced as usize)
+                )
+            {
                 Ok(_) => {
                     self.store.last_synced_height = Some(node_synced);
                     break;
