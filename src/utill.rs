@@ -527,6 +527,30 @@ mod tests {
     }
 
     #[test]
+    fn test_hd_path_from_descriptor_without_brackets() {
+        assert_eq!(
+            get_hd_path_from_descriptor("wpkh a945b5ca/1/1 029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad aq759em9"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_hd_path_from_descriptor_with_invalid_addr_type() {
+        assert_eq!(
+            get_hd_path_from_descriptor("wpkh([a945b5ca/invalid/1]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9"),
+            None
+        )
+    }
+
+    #[test]
+    fn test_hd_path_from_descriptor_with_invalid_index() {
+        assert_eq!(
+            get_hd_path_from_descriptor("wpkh([a945b5ca/1/invalid]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9"),
+            None
+        );
+    }
+
+    #[test]
     fn test_generate_maker_keys() {
         // generate_maker_keys: test that given a tweakable_point the return values satisfy the equation:
         // tweak_point * returned_nonce = returned_publickey
