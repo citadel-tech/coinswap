@@ -527,27 +527,17 @@ mod tests {
     }
 
     #[test]
-    fn test_hd_path_from_descriptor_without_brackets() {
-        assert_eq!(
-            get_hd_path_from_descriptor("wpkh a945b5ca/1/1 029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad aq759em9"),
-            None
-        );
-    }
+    fn test_hd_path_from_descriptor_failure_cases() {
+        let test_cases = [
+            ("wpkh a945b5ca/1/1 029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad aq759em9", None), // without brackets
+            ("wpkh([a945b5ca/invalid/1]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9", None), // invalid address type
+            ("wpkh([a945b5ca/1/invalid]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9", None), // invalid index 
+        ];
 
-    #[test]
-    fn test_hd_path_from_descriptor_with_invalid_addr_type() {
-        assert_eq!(
-            get_hd_path_from_descriptor("wpkh([a945b5ca/invalid/1]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9"),
-            None
-        )
-    }
-
-    #[test]
-    fn test_hd_path_from_descriptor_with_invalid_index() {
-        assert_eq!(
-            get_hd_path_from_descriptor("wpkh([a945b5ca/1/invalid]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9"),
-            None
-        );
+        for (descriptor, expected_output) in test_cases.iter() {
+            let result = get_hd_path_from_descriptor(descriptor);
+            assert_eq!(result, *expected_output);
+        }
     }
 
     #[test]
