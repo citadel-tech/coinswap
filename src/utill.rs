@@ -380,6 +380,17 @@ mod tests {
 
     use super::*;
 
+    fn create_temp_config( contents: &str, file_name: &str) -> PathBuf {
+        let file_path = PathBuf::from(file_name);
+        let mut file = File::create(&file_path).unwrap();
+        writeln!(file, "{}", contents).unwrap();
+        file_path
+    }
+
+    fn remove_temp_config(path: &PathBuf) {
+        fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn test_str_to_bitcoin_network() {
         let net_strs = vec![
@@ -572,5 +583,62 @@ mod tests {
             .add_exp_tweak(&secp, &scalar_from_nonce)
             .unwrap();
         assert_eq!(returned_pubkey.to_string(), tweaked_pubkey.to_string());
+    }
+
+    #[test]
+    fn test_parse_toml() {
+        let file_content = r#"
+            [section1]
+            key1 = "value1"
+            key2 = "value2"
+            
+            [section2]
+            key3 = "value3"
+            key4 = "value4"
+        "#;
+        let file_path = create_temp_config( file_content, "test.toml");
+
+        let mut result = parse_toml(&file_path).expect("Failed to parse TOML");
+
+        let expected_json = r#"{
+            "section1": {"key1": "value1", "key2": "value3"},
+            "section2": {"key3": "value3", "key4": "value4"}
+        }"#;
+
+        let expected_result: HashMap<String, HashMap<String, String>> =
+        serde_json::from_str(expected_json).expect("Failed to parse JSON");
+
+
+        for (section_name, right_section) in expected_result.iter() {
+            if let Some(left_section) = result.get_mut(section_name) {
+                for (key, value) in right_section.iter() {
+                    left_section.insert(key.clone(), value.clone());
+                }
+            } else {
+                result.insert(section_name.clone(), right_section.clone());
+            }
+        }
+
+        assert_eq!(result, expected_result);
+
+        remove_temp_config(&file_path);
+    }
+
+    #[test]
+    fn test_monitor_log_for_completion_error() {
+        let contents = "";
+        let temp_config_path = create_temp_config(contents, "test.log");
+
+        let result = monitor_log_for_completion(temp_config_path.clone(), "pattern");
+
+        match result {
+            Err(err) => {
+                assert_eq!(err.kind(), ErrorKind::Other);
+                assert_eq!(err.to_string(), "Error reading line");
+            }
+            _ => panic!("Expected an error"),
+        }
+
+        remove_temp_config(&temp_config_path);
     }
 }
