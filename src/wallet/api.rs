@@ -746,10 +746,7 @@ impl Wallet {
 
     /// Locks the fidelity and live_contract utxos which are not considered for spending from the wallet.
     pub fn lock_unspendable_utxos(&self) -> Result<(), WalletError> {
-        //rpc.unlock_unspent(&[])?;
-        //https://github.com/rust-bitcoin/rust-bitcoincore-rpc/issues/148
-        self.rpc
-            .call::<Value>("lockunspent", &[Value::Bool(true)])?;
+        self.rpc.unlock_unspent_all()?;
 
         let all_unspents = self
             .rpc
@@ -866,8 +863,7 @@ impl Wallet {
 
     /// Returns a list of all UTXOs tracked by the wallet. Including fidelity, live_contracts and swap coins.
     pub fn get_all_utxo(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
-        self.rpc
-            .call::<Value>("lockunspent", &[Value::Bool(true)])?;
+        self.rpc.unlock_unspent_all()?;
         let all_utxos = self
             .rpc
             .list_unspent(Some(0), Some(9999999), None, None, None)?;
@@ -969,8 +965,7 @@ impl Wallet {
     pub fn find_incomplete_coinswaps(
         &self,
     ) -> Result<HashMap<Hash160, SwapCoinsInfo>, WalletError> {
-        self.rpc
-            .call::<Value>("lockunspent", &[Value::Bool(true)])?;
+        self.rpc.unlock_unspent_all()?;
 
         let completed_coinswap_hashvalues = self
             .store
@@ -1069,8 +1064,7 @@ impl Wallet {
         let contract_scriptpubkeys_outgoing_swapcoins =
             self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap();
 
-        self.rpc
-            .call::<Value>("lockunspent", &[Value::Bool(true)])?;
+        self.rpc.unlock_unspent_all()?;
         let listunspent = self
             .rpc
             .list_unspent(Some(0), Some(9999999), None, None, None)?;
