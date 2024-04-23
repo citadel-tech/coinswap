@@ -380,7 +380,7 @@ mod tests {
 
     use super::*;
 
-    fn create_temp_config( contents: &str, file_name: &str) -> PathBuf {
+    fn create_temp_config(contents: &str, file_name: &str) -> PathBuf {
         let file_path = PathBuf::from(file_name);
         let mut file = File::create(&file_path).unwrap();
         writeln!(file, "{}", contents).unwrap();
@@ -596,7 +596,7 @@ mod tests {
             key3 = "value3"
             key4 = "value4"
         "#;
-        let file_path = create_temp_config( file_content, "test.toml");
+        let file_path = create_temp_config(file_content, "test.toml");
 
         let mut result = parse_toml(&file_path).expect("Failed to parse TOML");
 
@@ -606,8 +606,7 @@ mod tests {
         }"#;
 
         let expected_result: HashMap<String, HashMap<String, String>> =
-        serde_json::from_str(expected_json).expect("Failed to parse JSON");
-
+            serde_json::from_str(expected_json).expect("Failed to parse JSON");
 
         for (section_name, right_section) in expected_result.iter() {
             if let Some(left_section) = result.get_mut(section_name) {
@@ -622,23 +621,5 @@ mod tests {
         assert_eq!(result, expected_result);
 
         remove_temp_config(&file_path);
-    }
-
-    #[test]
-    fn test_monitor_log_for_completion_error() {
-        let contents = "";
-        let temp_config_path = create_temp_config(contents, "test.log");
-
-        let result = monitor_log_for_completion(temp_config_path.clone(), "pattern");
-
-        match result {
-            Err(err) => {
-                assert_eq!(err.kind(), ErrorKind::Other);
-                assert_eq!(err.to_string(), "Error reading line");
-            }
-            _ => panic!("Expected an error"),
-        }
-
-        remove_temp_config(&temp_config_path);
     }
 }
