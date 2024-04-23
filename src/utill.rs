@@ -380,6 +380,17 @@ mod tests {
 
     use super::*;
 
+    fn create_temp_config(contents: &str, file_name: &str) -> PathBuf {
+        let file_path = PathBuf::from(file_name);
+        let mut file = File::create(&file_path).unwrap();
+        writeln!(file, "{}", contents).unwrap();
+        file_path
+    }
+
+    fn remove_temp_config(path: &PathBuf) {
+        fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn test_str_to_bitcoin_network() {
         let net_strs = vec![
@@ -527,6 +538,20 @@ mod tests {
     }
 
     #[test]
+    fn test_hd_path_from_descriptor_failure_cases() {
+        let test_cases = [
+            ("wpkh a945b5ca/1/1 029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad aq759em9", None), // without brackets
+            ("wpkh([a945b5ca/invalid/1]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9", None), // invalid address type
+            ("wpkh([a945b5ca/1/invalid]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9", None), // invalid index 
+        ];
+
+        for (descriptor, expected_output) in test_cases.iter() {
+            let result = get_hd_path_from_descriptor(descriptor);
+            assert_eq!(result, *expected_output);
+        }
+    }
+
+    #[test]
     fn test_generate_maker_keys() {
         // generate_maker_keys: test that given a tweakable_point the return values satisfy the equation:
         // tweak_point * returned_nonce = returned_publickey
@@ -558,5 +583,43 @@ mod tests {
             .add_exp_tweak(&secp, &scalar_from_nonce)
             .unwrap();
         assert_eq!(returned_pubkey.to_string(), tweaked_pubkey.to_string());
+    }
+
+    #[test]
+    fn test_parse_toml() {
+        let file_content = r#"
+            [section1]
+            key1 = "value1"
+            key2 = "value2"
+            
+            [section2]
+            key3 = "value3"
+            key4 = "value4"
+        "#;
+        let file_path = create_temp_config(file_content, "test.toml");
+
+        let mut result = parse_toml(&file_path).expect("Failed to parse TOML");
+
+        let expected_json = r#"{
+            "section1": {"key1": "value1", "key2": "value3"},
+            "section2": {"key3": "value3", "key4": "value4"}
+        }"#;
+
+        let expected_result: HashMap<String, HashMap<String, String>> =
+            serde_json::from_str(expected_json).expect("Failed to parse JSON");
+
+        for (section_name, right_section) in expected_result.iter() {
+            if let Some(left_section) = result.get_mut(section_name) {
+                for (key, value) in right_section.iter() {
+                    left_section.insert(key.clone(), value.clone());
+                }
+            } else {
+                result.insert(section_name.clone(), right_section.clone());
+            }
+        }
+
+        assert_eq!(result, expected_result);
+
+        remove_temp_config(&file_path);
     }
 }
