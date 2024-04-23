@@ -2,9 +2,9 @@
 //!
 use std::{convert::TryFrom, thread, time::Duration};
 
-use bitcoin::{Address, Network};
+use bitcoin::Network;
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::{
     utill::{redeemscript_to_scriptpubkey, str_to_bitcoin_network},
@@ -99,13 +99,142 @@ impl Wallet {
                     Value::Bool(false), // Create a blank wallet
                     Value::Null,        // Optional Passphrase
                     Value::Bool(false), // Avoid Reuse
-                    Value::Bool(false), // Descriptor Wallet
+                    Value::Bool(true),  // Descriptor Wallet
                 ];
                 let _: Value = self.rpc.call("createwallet", &args)?;
             }
 
             log::info!("wallet created: {}", wallet_name);
         }
+
+        // let mut descriptors_to_import = Vec::new();
+
+        // let hd_descriptors_to_import = self.get_unimported_wallet_desc()?;
+
+        // descriptors_to_import.extend(hd_descriptors_to_import);
+
+        // descriptors_to_import.extend(
+        //     self.store.incoming_swapcoins
+        //         .values()
+        //         .map(|sc| {
+        //             format!("wsh(sortedmulti(2,{},{}))", sc.get_other_pubkey(), sc.get_my_pubkey())
+        //         })
+        //         .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
+        //         .filter(|d| !self.is_swapcoin_descriptor_imported(d))
+        //         .collect::<Vec<String>>()
+        // );
+
+        // descriptors_to_import.extend(
+        //     self.store.outgoing_swapcoins
+        //         .values()
+        //         .map(|sc| {
+        //             format!("wsh(sortedmulti(2,{},{}))", sc.get_other_pubkey(), sc.get_my_pubkey())
+        //         })
+        //         .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
+        //         .filter(|d| !self.is_swapcoin_descriptor_imported(d))
+        // );
+
+        // // let mut contract_scriptpubkeys_to_import = self.store.incoming_swapcoins
+        // //     .values()
+        // //     .filter_map(|sc| {
+        // //         let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript);
+        // //         let addr_info = self.rpc
+        // //             .get_address_info(
+        // //                 &Address::from_script(&contract_spk, self.store.network).expect(
+        // //                     "address wrong"
+        // //                 )
+        // //             )
+        // //             .unwrap();
+        // //         if addr_info.is_watchonly.is_none() {
+        // //             Some(contract_spk)
+        // //         } else {
+        // //             None
+        // //         }
+        // //     })
+        // //     .collect::<Vec<_>>();
+
+        // // contract_scriptpubkeys_to_import.extend(
+        // //     self.store.outgoing_swapcoins
+        // //         .values()
+        // //         .filter_map(|sc| {
+        // //             let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript);
+        // //             let addr_info = self.rpc
+        // //                 .get_address_info(
+        // //                     &Address::from_script(&contract_spk, self.store.network).expect(
+        // //                         "address wrong"
+        // //                     )
+        // //                 )
+        // //                 .unwrap();
+        // //             if addr_info.is_watchonly.is_none() {
+        // //                 Some(contract_spk)
+        // //             } else {
+        // //                 None
+        // //             }
+        // //         })
+        // //         .collect::<Vec<_>>()
+        // // );
+        // descriptors_to_import.extend(
+        //     self.store.incoming_swapcoins
+        //         .values()
+        //         .map(|sc| {
+        //             let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript);
+        //             format!("raw({:x})", contract_spk)
+        //         })
+        //         .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
+        //         .filter(|d| self.is_descriptor_imported(d))
+        //         .collect::<Vec<_>>()
+        // );
+
+        // descriptors_to_import.extend(
+        //     self.store.outgoing_swapcoins
+        //         .values()
+        //         .map(|sc| {
+        //             let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript);
+        //             format!("raw({:x})", contract_spk)
+        //         })
+        //         .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
+        //         .filter(|d| self.is_descriptor_imported(d))
+        //         .collect::<Vec<_>>()
+        // );
+
+        // let is_fidelity_addrs_imported = {
+        //     let mut spks = self.store.fidelity_bond.iter().map(|(_, (b, _, _))| b.script_pub_key());
+        //     let (first_addr, last_addr) = (spks.next(), spks.last());
+
+        //     let is_first_imported = if let Some(spk) = first_addr {
+        //         let descriptor_without_checksum = format!("raw({:x})", spk);
+        //         let descriptor = self.rpc
+        //             .get_descriptor_info(&descriptor_without_checksum)
+        //             .unwrap().descriptor;
+        //         let addr = self.rpc.derive_addresses(&descriptor, None).unwrap()[0].clone();
+        //         self.rpc
+        //             .get_address_info(&addr.assume_checked())
+        //             .unwrap()
+        //             .is_watchonly.unwrap_or(false)
+        //     } else {
+        //         true // mark true if theres no spk to import
+        //     };
+
+        //     let is_last_imported = if let Some(spk) = last_addr {
+        //         let descriptor_without_checksum = format!("raw({:x})", spk);
+        //         let descriptor = self.rpc
+        //             .get_descriptor_info(&descriptor_without_checksum)
+        //             .unwrap().descriptor;
+        //         let addr = self.rpc.derive_addresses(&descriptor, None).unwrap()[0].clone();
+        //         self.rpc
+        //             .get_address_info(&addr.assume_checked())
+        //             .unwrap()
+        //             .is_watchonly.unwrap_or(false)
+        //     } else {
+        //         true // mark true if theres no spks to import
+        //     };
+
+        //     is_first_imported && is_last_imported
+        // };
+
+        // if descriptors_to_import.is_empty() && is_fidelity_addrs_imported {
+        //     return Ok(());
+        // }
 
         let hd_descriptors_to_import = self.get_unimported_wallet_desc()?;
 
@@ -138,46 +267,40 @@ impl Wallet {
                 .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
                 .filter(|d| !self.is_swapcoin_descriptor_imported(d)),
         );
-
         let mut contract_scriptpubkeys_to_import = self
             .store
             .incoming_swapcoins
             .values()
-            .filter_map(|sc| {
+            .map(|sc| {
                 let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript);
-                let addr_info = self
-                    .rpc
-                    .get_address_info(
-                        &Address::from_script(&contract_spk, self.store.network)
-                            .expect("address wrong"),
-                    )
-                    .unwrap();
-                if addr_info.is_watchonly.is_none() {
-                    Some(contract_spk)
-                } else {
-                    None
-                }
+                format!("raw({:x})", contract_spk)
+            })
+            .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
+            .filter(|d| {
+                let addr = self.rpc.derive_addresses(d, None).unwrap()[0].clone();
+                self.rpc
+                    .get_address_info(&addr.assume_checked())
+                    .unwrap()
+                    .is_watchonly
+                    .unwrap_or(false)
             })
             .collect::<Vec<_>>();
-
         contract_scriptpubkeys_to_import.extend(
             self.store
                 .outgoing_swapcoins
                 .values()
-                .filter_map(|sc| {
+                .map(|sc| {
                     let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript);
-                    let addr_info = self
-                        .rpc
-                        .get_address_info(
-                            &Address::from_script(&contract_spk, self.store.network)
-                                .expect("address wrong"),
-                        )
-                        .unwrap();
-                    if addr_info.is_watchonly.is_none() {
-                        Some(contract_spk)
-                    } else {
-                        None
-                    }
+                    format!("raw({:x})", contract_spk)
+                })
+                .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
+                .filter(|d| {
+                    let addr = self.rpc.derive_addresses(d, None).unwrap()[0].clone();
+                    self.rpc
+                        .get_address_info(&addr.assume_checked())
+                        .unwrap()
+                        .is_watchonly
+                        .unwrap_or(false)
                 })
                 .collect::<Vec<_>>(),
         );
@@ -191,9 +314,16 @@ impl Wallet {
             let (first_addr, last_addr) = (spks.next(), spks.last());
 
             let is_first_imported = if let Some(spk) = first_addr {
-                let ad = Address::from_script(&spk, self.store.network)?;
+                let descriptor_without_checksum = format!("raw({:x})", spk);
+                let descriptor = self
+                    .rpc
+                    .get_descriptor_info(&descriptor_without_checksum)
+                    .unwrap()
+                    .descriptor;
+                let addr = self.rpc.derive_addresses(&descriptor, None).unwrap()[0].clone();
                 self.rpc
-                    .get_address_info(&ad)?
+                    .get_address_info(&addr.assume_checked())
+                    .unwrap()
                     .is_watchonly
                     .unwrap_or(false)
             } else {
@@ -201,9 +331,16 @@ impl Wallet {
             };
 
             let is_last_imported = if let Some(spk) = last_addr {
-                let ad = Address::from_script(&spk, self.store.network)?;
+                let descriptor_without_checksum = format!("raw({:x})", spk);
+                let descriptor = self
+                    .rpc
+                    .get_descriptor_info(&descriptor_without_checksum)
+                    .unwrap()
+                    .descriptor;
+                let addr = self.rpc.derive_addresses(&descriptor, None).unwrap()[0].clone();
                 self.rpc
-                    .get_address_info(&ad)?
+                    .get_address_info(&addr.assume_checked())
+                    .unwrap()
                     .is_watchonly
                     .unwrap_or(false)
             } else {
@@ -222,18 +359,48 @@ impl Wallet {
         }
 
         log::debug!("Importing Wallet spks/descriptors");
-        log::debug!("HD descriptors: {:?}", hd_descriptors_to_import);
-        log::debug!("Swapcoin descriptors: {:?}", swapcoin_descriptors_to_import);
-        log::debug!("Contract SPKs: {:?}", contract_scriptpubkeys_to_import);
+        // log::debug!("Descriptor to import: {:?}", descriptors_to_import);
+        // log::debug!("HD descriptors: {:?}", hd_descriptors_to_import);
+        // log::debug!("Swapcoin descriptors: {:?}", swapcoin_descriptors_to_import);
+        // log::debug!("Contract SPKs: {:?}", contract_scriptpubkeys_to_import);
 
-        self.import_addresses(
+        // self.import_addresses(
+        //     &hd_descriptors_to_import,
+        //     &swapcoin_descriptors_to_import,
+        //     &contract_scriptpubkeys_to_import
+        // )?;
+        // self.import_descriptors(&descriptors_to_import)?;
+
+        self.import_descriptor_address(
             &hd_descriptors_to_import,
             &swapcoin_descriptors_to_import,
             &contract_scriptpubkeys_to_import,
         )?;
 
+        // / The final descriptor list to import
+        let _desc_list = hd_descriptors_to_import
+            .iter()
+            .map(|d| {
+                json!(
+                {"desc": d,
+                "range": self.get_addrss_import_count() -1})
+            })
+            .chain(swapcoin_descriptors_to_import.iter().map(|d| json!(d)))
+            .chain(
+                contract_scriptpubkeys_to_import
+                    .iter()
+                    .map(|desc| json!({ "desc":  desc})),
+            )
+            .chain(self.store.fidelity_bond.iter().map(|(_, (bond, _, _))| {
+                let spk = bond.script_pub_key();
+                json!({ "desc": format!("raw({:x})", spk) })
+            }))
+            .collect::<Vec<Value>>();
+
         // Now run the scan
         log::debug!("Initializing TxOut scan. This may take a while.");
+        // let value: Value = self.rpc.call("listdescriptors", &[])?;
+        // log::error!("Wallet descriptors: {:?}", value);
 
         // Sometimes in test multiple wallet scans can occur at same time, resulting in error.
         // Just retry after 3 sec.

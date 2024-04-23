@@ -25,9 +25,10 @@ use bitcoind::bitcoincore_rpc::{
         ImportMultiOptions, ImportMultiRequest, ImportMultiRequestScriptPubkey,
         ListUnspentResultEntry, Timestamp,
     },
+    json::ImportDescriptors,
     Client, RpcApi,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::{
     protocol::contract,
@@ -639,6 +640,15 @@ impl Wallet {
             .unwrap_or(false)
     }
 
+    pub(super) fn _is_descriptor_imported(&self, descriptor: &str) -> bool {
+        let addr = self.rpc.derive_addresses(descriptor, None).unwrap()[0].clone();
+        self.rpc
+            .get_address_info(&addr.assume_checked())
+            .unwrap()
+            .is_watchonly
+            .unwrap_or(false)
+    }
+
     /// Core wallet label is the master XPub fingerint.
     pub fn get_core_wallet_label(&self) -> String {
         let secp = Secp256k1::new();
@@ -647,7 +657,7 @@ impl Wallet {
     }
 
     /// Import watch addresses into core wallet. Does not check if the address was already imported.
-    pub(super) fn import_addresses(
+    pub(super) fn _import_addresses(
         &self,
         hd_descriptors: &[String],
         swapcoin_descriptors: &[String],
@@ -711,6 +721,95 @@ impl Wallet {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Import watch addresses into core wallet. Does not check if the address was already imported.
+    pub fn import_descriptor_address(
+        &self,
+        hd_descriptors: &[String],
+        swapcoin_descriptors: &[String],
+        contract_scriptpubkeys: &[String],
+    ) -> Result<(), WalletError> {
+        let import_requests = hd_descriptors
+            .iter()
+            .map(|desc| {
+                json!({
+                    "timestamp": "now",
+                    "desc": desc,
+                })
+            })
+            .chain(swapcoin_descriptors.iter().map(|desc| {
+                json!({
+                    "timestamp": "now",
+                    "desc": desc,
+                })
+            }))
+            .chain(contract_scriptpubkeys.iter().map(|desc| {
+                json!({
+                    "timestamp": "now",
+                    "desc": desc,
+                })
+            }))
+            .chain(self.store.fidelity_bond.iter().map(|(_, (_, spk, _))| {
+                let descriptor_without_checksum = format!("raw({:x})", spk);
+                let descriptor = self
+                    .rpc
+                    .get_descriptor_info(&descriptor_without_checksum)
+                    .unwrap()
+                    .descriptor;
+                json!({
+                    "timestamp": "now",
+                    "desc": descriptor,
+                })
+            }))
+            .collect();
+        let _res: Vec<Value> = self
+            .rpc
+            .call("importdescriptors", &[import_requests])
+            .unwrap();
+        Ok(())
+    }
+
+    pub fn import_descriptors(&self, descriptor_to_import: &[String]) -> Result<(), WalletError> {
+        let address_label = self.get_core_wallet_label();
+        //wpkh({}/{}/*)"
+        let mut import_requests = descriptor_to_import
+            .iter()
+            .map(|desc| {
+                log::error!("Descriptor unimported: {:?}", desc);
+                if desc.contains("/*") {
+                    return ImportDescriptors {
+                        timestamp: Timestamp::Now,
+                        descriptor: desc.to_string(),
+                        range: Some((0, (self.get_addrss_import_count() - 1) as usize)),
+                        ..Default::default()
+                    };
+                }
+                ImportDescriptors {
+                    timestamp: Timestamp::Now,
+                    descriptor: desc.to_string(),
+                    label: Some(address_label.clone()),
+                    ..Default::default()
+                }
+            })
+            .collect::<Vec<ImportDescriptors>>();
+
+        while let Some(import_request) = import_requests.last() {
+            let result = self.rpc.import_descriptors(import_request.clone())?;
+            log::error!("Import request :{:?}", import_request);
+            // Only hard error if it errors, or else log the warning
+            for r in result {
+                if !r.success {
+                    log::warn!(target: "Wallet:import_addresses", "{:?}", r.warnings);
+                    // if let Some(e) = r.error {
+                    //     return Err(WalletError::Protocol(e.message));
+                    // }
+                }
+            }
+            import_requests.pop();
+        }
+
         Ok(())
     }
 
@@ -1504,45 +1603,114 @@ impl Wallet {
         &self,
         redeemscript: &ScriptBuf,
     ) -> Result<(), WalletError> {
-        self.import_redeemscript(redeemscript, &WATCH_ONLY_SWAPCOIN_LABEL.to_string())
+        self.import_redeemscript(redeemscript, WATCH_ONLY_SWAPCOIN_LABEL)
     }
 
-    /// Imports a multisig redeem script with a descriptor into the wallet.
+    // /// Imports a multisig redeem script with a descriptor into the wallet.
+    // fn import_multisig_redeemscript_descriptor(
+    //     &self,
+    //     pubkey1: &PublicKey,
+    //     pubkey2: &PublicKey,
+    //     address_label: &String
+    // ) -> Result<(), WalletError> {
+    //     let descriptor = self.rpc.get_descriptor_info(
+    //         &format!("wsh(sortedmulti(2,{},{}))", pubkey1, pubkey2)
+    //     )?.descriptor;
+    //     // let result = self.rpc
+    //     //     .import_multi(
+    //     //         &[
+    //     //             ImportMultiRequest {
+    //     //                 timestamp: Timestamp::Now,
+    //     //                 descriptor: Some(&descriptor),
+    //     //                 watchonly: Some(true),
+    //     //                 label: Some(address_label),
+    //     //                 ..Default::default()
+    //     //             },
+    //     //         ],
+    //     //         Some(
+    //     //             &(ImportMultiOptions {
+    //     //                 rescan: Some(false),
+    //     //             })
+    //     //         )
+    //     //     )
+    //     //     .unwrap();
+    //     // for r in result {
+    //     //     if !r.success {
+    //     //         log::warn!(target: "Wallet:import_addresses", "{:?}", r.warnings);
+    //     //         if let Some(e) = r.error {
+    //     //             return Err(WalletError::Protocol(e.message));
+    //     //         }
+    //     //     }
+    //     // }
+    //     self.rpc.import_descriptors(ImportDescriptors {
+    //         timestamp: Timestamp::Now,
+    //         descriptor: descriptor.to_string(),
+    //         label: Some(address_label.clone()),
+    //         ..Default::default()
+    //     })?;
+    //     Ok(())
+    // }
+
+    // /// Imports a redeem script into the wallet.
+    // pub fn import_redeemscript(
+    //     &self,
+    //     redeemscript: &ScriptBuf,
+    //     address_label: &String
+    // ) -> Result<(), WalletError> {
+    //     // let spk = redeemscript_to_scriptpubkey(redeemscript);
+    //     // let result = self.rpc.import_multi(
+    //     //     &[
+    //     //         ImportMultiRequest {
+    //     //             timestamp: Timestamp::Now,
+    //     //             script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(&spk)),
+    //     //             redeem_script: Some(redeemscript),
+    //     //             watchonly: Some(true),
+    //     //             label: Some(address_label),
+    //     //             ..Default::default()
+    //     //         },
+    //     //     ],
+    //     //     Some(
+    //     //         &(ImportMultiOptions {
+    //     //             rescan: Some(false),
+    //     //         })
+    //     //     )
+    //     // )?;
+    //     // for r in result {
+    //     //     if !r.success {
+    //     //         log::warn!(target: "Wallet:import_addresses", "{:?}", r.warnings);
+    //     //         if let Some(e) = r.error {
+    //     //             return Err(WalletError::Protocol(e.message));
+    //     //         }
+    //     //     }
+    //     // }
+    //     let spk = redeemscript_to_scriptpubkey(redeemscript);
+    //     let descriptor = self.rpc
+    //         .get_descriptor_info(&format!("raw({:x})", spk))
+    //         .unwrap().descriptor;
+    //     self.rpc.import_descriptors(ImportDescriptors {
+    //         timestamp: Timestamp::Now,
+    //         descriptor: descriptor.to_string(),
+    //         label: Some(address_label.clone()),
+    //         ..Default::default()
+    //     })?;
+    //     Ok(())
+    // }
     fn import_multisig_redeemscript_descriptor(
         &self,
         pubkey1: &PublicKey,
         pubkey2: &PublicKey,
-        address_label: &String,
+        _address_label: &str,
     ) -> Result<(), WalletError> {
         let descriptor = self
             .rpc
-            .get_descriptor_info(&format!("wsh(sortedmulti(2,{},{}))", pubkey1, pubkey2))?
-            .descriptor;
-        let result = self
+            .get_descriptor_info(&format!("wsh(sortedmulti(2,{},{}))", pubkey1, pubkey2))?;
+        let import_requests = Value::Array(vec![
+            json!({"desc":descriptor.descriptor,"timestamp":"now"}),
+        ]);
+        let _res: Vec<Value> = self
             .rpc
-            .import_multi(
-                &[ImportMultiRequest {
-                    timestamp: Timestamp::Now,
-                    descriptor: Some(&descriptor),
-                    watchonly: Some(true),
-                    label: Some(address_label),
-                    ..Default::default()
-                }],
-                Some(
-                    &(ImportMultiOptions {
-                        rescan: Some(false),
-                    }),
-                ),
-            )
+            .call("importdescriptors", &[import_requests])
             .unwrap();
-        for r in result {
-            if !r.success {
-                log::warn!(target: "Wallet:import_addresses", "{:?}", r.warnings);
-                if let Some(e) = r.error {
-                    return Err(WalletError::Protocol(e.message));
-                }
-            }
-        }
         Ok(())
     }
 
@@ -1550,32 +1718,16 @@ impl Wallet {
     pub fn import_redeemscript(
         &self,
         redeemscript: &ScriptBuf,
-        address_label: &String,
+        _address_label: &str,
     ) -> Result<(), WalletError> {
         let spk = redeemscript_to_scriptpubkey(redeemscript);
-        let result = self.rpc.import_multi(
-            &[ImportMultiRequest {
-                timestamp: Timestamp::Now,
-                script_pubkey: Some(ImportMultiRequestScriptPubkey::Script(&spk)),
-                redeem_script: Some(redeemscript),
-                watchonly: Some(true),
-                label: Some(address_label),
-                ..Default::default()
-            }],
-            Some(
-                &(ImportMultiOptions {
-                    rescan: Some(false),
-                }),
-            ),
-        )?;
-        for r in result {
-            if !r.success {
-                log::warn!(target: "Wallet:import_addresses", "{:?}", r.warnings);
-                if let Some(e) = r.error {
-                    return Err(WalletError::Protocol(e.message));
-                }
-            }
-        }
+        let descriptor = self
+            .rpc
+            .get_descriptor_info(&format!("raw({:x})", spk))
+            .unwrap()
+            .descriptor;
+        let import_requests = Value::Array(vec![json!({"desc":descriptor,"timestamp":"now"})]);
+        let _res: Vec<Value> = self.rpc.call("importdescriptors", &[import_requests])?;
         Ok(())
     }
 }
