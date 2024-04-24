@@ -312,7 +312,6 @@ pub fn parse_toml(file_path: &PathBuf) -> io::Result<HashMap<String, HashMap<Str
             }
         }
     }
-
     Ok(sections)
 }
 
@@ -540,9 +539,18 @@ mod tests {
     #[test]
     fn test_hd_path_from_descriptor_failure_cases() {
         let test_cases = [
-            ("wpkh a945b5ca/1/1 029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad aq759em9", None), // without brackets
-            ("wpkh([a945b5ca/invalid/1]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9", None), // invalid address type
-            ("wpkh([a945b5ca/1/invalid]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9", None), // invalid index 
+            (
+                "wpkh a945b5ca/1/1 029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad aq759em9",
+                None,
+            ), // without brackets
+            (
+                "wpkh([a945b5ca/invalid/1]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9",
+                None,
+            ), // invalid address type
+            (
+                "wpkh([a945b5ca/1/invalid]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9",
+                None,
+            ), // invalid index
         ];
 
         for (descriptor, expected_output) in test_cases.iter() {
