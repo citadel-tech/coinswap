@@ -57,8 +57,6 @@ impl WalletStore {
         let seed = mnemonic.to_seed(passphrase);
         let master_key = ExtendedPrivKey::new_master(network, &seed)?;
 
-        log::error!("Wallet is here: {:?}", path);
-
         let store = Self {
             file_name,
             network,
@@ -72,7 +70,7 @@ impl WalletStore {
             last_synced_height: None,
             wallet_birthday,
         };
-        log::error!("Lets check value: {:?}", path.exists());
+
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         // write: overwrites existing file.
         // create: creates new file if doesn't exist.
@@ -83,9 +81,7 @@ impl WalletStore {
             .open(path)?;
         let writer = BufWriter::new(file);
         serde_cbor::to_writer(writer, &store)?;
-        let store_read = WalletStore::read_from_disk(path)?;
-        // assert_eq!(store_read, store);
-        log::error!("Lets check the store: {:?}", store_read);
+
         Ok(store)
     }
 

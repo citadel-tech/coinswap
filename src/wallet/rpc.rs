@@ -106,52 +106,7 @@ impl Wallet {
 
         let descriptors_to_import = self.collect_descriptors_to_import()?;
 
-        let is_fidelity_addrs_imported = {
-            let mut spks = self
-                .store
-                .fidelity_bond
-                .iter()
-                .map(|(_, (b, _, _))| b.script_pub_key());
-            let (first_addr, last_addr) = (spks.next(), spks.last());
-
-            let is_first_imported = if let Some(spk) = first_addr {
-                let descriptor_without_checksum = format!("raw({:x})", spk);
-                let descriptor = self
-                    .rpc
-                    .get_descriptor_info(&descriptor_without_checksum)
-                    .unwrap()
-                    .descriptor;
-                let addr = self.rpc.derive_addresses(&descriptor, None).unwrap()[0].clone();
-                self.rpc
-                    .get_address_info(&addr.assume_checked())
-                    .unwrap()
-                    .is_watchonly
-                    .unwrap_or(false)
-            } else {
-                true // mark true if theres no spk to import
-            };
-
-            let is_last_imported = if let Some(spk) = last_addr {
-                let descriptor_without_checksum = format!("raw({:x})", spk);
-                let descriptor = self
-                    .rpc
-                    .get_descriptor_info(&descriptor_without_checksum)
-                    .unwrap()
-                    .descriptor;
-                let addr = self.rpc.derive_addresses(&descriptor, None).unwrap()[0].clone();
-                self.rpc
-                    .get_address_info(&addr.assume_checked())
-                    .unwrap()
-                    .is_watchonly
-                    .unwrap_or(false)
-            } else {
-                true // mark true if theres no spks to import
-            };
-
-            is_first_imported && is_last_imported
-        };
-
-        if descriptors_to_import.is_empty() && is_fidelity_addrs_imported {
+        if descriptors_to_import.is_empty() {
             return Ok(());
         }
 
