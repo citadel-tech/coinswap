@@ -1,53 +1,44 @@
-use clap::{Parser, Subcommand};
+use clap::{Arg, Command};
 use coinswap::{
     market::directory::{start_directory_server, DirectoryServer},
     utill::{setup_logger, ConnectionType},
 };
 use std::{path::PathBuf, sync::Arc};
 
-#[derive(Parser, Debug)]
-#[clap(
-    name = "directory-server",
-    about = "A simple directory server.",
-    version
-)]
-struct Cli {
-    #[clap(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand, Debug)]
-enum Commands {
-    Start {
-        #[clap(long, value_parser)]
-        data_directory: Option<PathBuf>,
-        #[clap(long, value_parser)]
-        network: Option<ConnectionType>,
-    },
-}
-
 fn main() {
     setup_logger();
-    let cli = Cli::parse();
 
-    match &cli.command {
-        Commands::Start {
-            data_directory,
-            network,
-        } => {
-            log::info!("Data directory : {:?}", data_directory);
-            let directory_server = match data_directory {
-                Some(data_dir) => DirectoryServer::new(Some(data_dir), *network),
-                None => DirectoryServer::new(None, *network),
-            };
+    let matches = Command::new("Directory Server")
+        .version("0.1.0")
+        .about("A simple directory server.")
+        .subcommand(
+            Command::new("start")
+                .about("Starts the directory server")
+                .arg(
+                    Arg::new("data-directory")
+                        .long("data-directory")
+                        .help("Sets a custom directory for storing server data. Optional.")
+                        .value_parser(clap::value_parser!(PathBuf))
+                        .default_value("directory.toml"),
+                )
+                .arg(
+                    Arg::new("network")
+                        .long("network")
+                        .help("Sets the network type for the server. Optional.")
+                        .default_value("clearnet"),
+                ),
+        )
+        .get_matches();
+    if let Some(sub_matches) = matches.subcommand_matches("start") {
+        let data_directory = sub_matches.get_one::<PathBuf>("data-directory").cloned();
+        let network = match sub_matches.get_one::<String>("network").map(String::as_str) {
+            Some("tor") => Some(ConnectionType::TOR),
+            _ => Some(ConnectionType::CLEARNET),
+        };
 
-            match directory_server {
-                Ok(server) => {
-                    let arc_server = Arc::new(server);
-                    start_directory_server(arc_server);
-                }
-                Err(e) => println!("Failed to initialize directory server: {}", e),
-            }
-        }
+        let directory_server = DirectoryServer::new(data_directory, network).unwrap();
+        let arc_directory_server = Arc::new(directory_server);
+
+        start_directory_server(arc_directory_server);
     }
 }
