@@ -65,7 +65,7 @@ impl DirectoryServer {
     /// Default config locations: `~/.coinswap/directory_server/configs/directory.toml`.
 
     pub fn new(
-        config_path: Option<PathBuf>,
+        config_path: Option<&PathBuf>,
         connection_type: Option<ConnectionType>,
     ) -> io::Result<Self> {
         let default_config = Self::default();
@@ -74,17 +74,17 @@ impl DirectoryServer {
             .join("directory_server")
             .join("config")
             .join("directory.toml");
-        let config_path = config_path.unwrap_or(default_config_path);
+        let config_path = config_path.unwrap_or(&default_config_path);
 
         if !config_path.exists() {
-            write_default_directory_config(&config_path);
+            write_default_directory_config(config_path);
             log::warn!(
                 "Directory config file not found, creating default config file at path: {}",
                 config_path.display()
             );
         }
 
-        let section = parse_toml(&config_path)?;
+        let section = parse_toml(config_path)?;
         log::info!(
             "Successfully loaded config file from : {}",
             config_path.display()
@@ -263,7 +263,7 @@ mod tests {
             socks_port = 19060
         "#;
         let config_path = create_temp_config(contents, "valid_directory_config.toml");
-        let config = DirectoryServer::new(Some(config_path.clone()), None).unwrap();
+        let config = DirectoryServer::new(Some(&config_path), None).unwrap();
         remove_temp_config(&config_path);
 
         let default_config = DirectoryServer::default();
@@ -278,7 +278,7 @@ mod tests {
             port = 8080
         "#;
         let config_path = create_temp_config(contents, "missing_fields_directory_config.toml");
-        let config = DirectoryServer::new(Some(config_path.clone()), None).unwrap();
+        let config = DirectoryServer::new(Some(&config_path), None).unwrap();
         remove_temp_config(&config_path);
 
         assert_eq!(config.port, 8080);
@@ -292,7 +292,7 @@ mod tests {
             port = "not_a_number"
         "#;
         let config_path = create_temp_config(contents, "incorrect_type_directory_config.toml");
-        let config = DirectoryServer::new(Some(config_path.clone()), None).unwrap();
+        let config = DirectoryServer::new(Some(&config_path), None).unwrap();
         remove_temp_config(&config_path);
 
         let default_config = DirectoryServer::default();
@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn test_missing_file() {
         let config_path = get_home_dir().join("directory.toml");
-        let config = DirectoryServer::new(Some(config_path.clone()), None).unwrap();
+        let config = DirectoryServer::new(Some(&config_path), None).unwrap();
         remove_temp_config(&config_path);
         let default_config = DirectoryServer::default();
         assert_eq!(config.port, default_config.port);
