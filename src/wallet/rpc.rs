@@ -4,7 +4,7 @@ use std::{convert::TryFrom, thread, time::Duration};
 
 use bitcoin::Network;
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::{utill::str_to_bitcoin_network, wallet::api::KeychainKind};
 
@@ -104,7 +104,7 @@ impl Wallet {
             log::info!("wallet created: {}", wallet_name);
         }
 
-        let descriptors_to_import = self.collect_descriptors_to_import()?;
+        let descriptors_to_import = self.descriptors_to_import()?;
 
         if descriptors_to_import.is_empty() {
             return Ok(());
@@ -150,6 +150,38 @@ impl Wallet {
 
         let max_external_index = self.find_hd_next_index(KeychainKind::External)?;
         self.update_external_index(max_external_index)?;
+        Ok(())
+    }
+
+    /// Import watch addresses into core wallet. Does not check if the address was already imported.
+    pub fn import_descriptors(
+        &self,
+        descriptors_to_import: &[String],
+        address_label: Option<String>,
+    ) -> Result<(), WalletError> {
+        let address_label = address_label.unwrap_or(self.get_core_wallet_label());
+
+        let import_requests = descriptors_to_import
+            .iter()
+            .map(|desc| {
+                if desc.contains("/*") {
+                    return json!({
+                        "timestamp": "now",
+                        "desc": desc,
+                        "range": (self.get_addrss_import_count() - 1)
+                    });
+                }
+                json!({
+                    "timestamp": "now",
+                    "desc": desc,
+                    "label": address_label
+                })
+            })
+            .collect();
+        let _res: Vec<Value> = self
+            .rpc
+            .call("importdescriptors", &[import_requests])
+            .unwrap();
         Ok(())
     }
 }

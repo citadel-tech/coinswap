@@ -1161,7 +1161,7 @@ impl Taker {
     /// Create the [IncomingSwapCoin] for this round. The Taker is always the "next_peer" here
     /// and the sender side is the laste Maker in the route.
     fn create_incoming_swapcoins(
-        &self,
+        &mut self,
         multisig_redeemscripts: Vec<ScriptBuf>,
         funding_outpoints: Vec<OutPoint>,
     ) -> Result<Vec<IncomingSwapCoin>, TakerError> {
@@ -1240,9 +1240,9 @@ impl Taker {
                     ),
                     &maker_funding_tx_value,
                 ),
-                funding_tx,
+                _,
             ),
-            funding_tx_merkleproof,
+            _,
         ) in multisig_redeemscripts
             .iter()
             .zip(next_swap_info.multisig_pubkeys.iter())
@@ -1272,12 +1272,7 @@ impl Taker {
                 o_ms_pubkey1
             };
 
-            self.wallet
-                .import_wallet_multisig_redeemscript(&o_ms_pubkey1, &o_ms_pubkey2)?;
-            self.wallet
-                .import_tx_with_merkleproof(funding_tx, funding_tx_merkleproof)?;
-            self.wallet
-                .import_wallet_contract_redeemscript(next_contract_redeemscript)?;
+            self.wallet.sync()?;
 
             let mut incoming_swapcoin = IncomingSwapCoin::new(
                 maker_funded_multisig_privkey,

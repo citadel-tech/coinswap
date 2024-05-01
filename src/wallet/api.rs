@@ -11,7 +11,6 @@ use bitcoin::{
     absolute::LockTime,
     bip32::{ChildNumber, DerivationPath, ExtendedPubKey},
     blockdata::script::Builder,
-    consensus::encode::serialize_hex,
     hashes::{hash160::Hash as Hash160, hex::FromHex},
     secp256k1,
     secp256k1::{Secp256k1, SecretKey},
@@ -21,7 +20,7 @@ use bitcoin::{
 };
 
 use bitcoind::bitcoincore_rpc::{core_rpc_json::ListUnspentResultEntry, Client, RpcApi};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::{
     protocol::contract,
@@ -37,6 +36,8 @@ use super::{
     storage::WalletStore,
     swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletSwapCoin},
 };
+
+use std::iter::FromIterator;
 
 // these subroutines are coded so that as much as possible they keep all their
 // data in the bitcoin core wallet
@@ -566,15 +567,14 @@ impl Wallet {
         let x = [KeychainKind::External, KeychainKind::Internal]
             .iter()
             .map(|keychain| {
-                let desc_info = self
-                    .rpc
-                    .get_descriptor_info(&format!(
-                        "wpkh({}/{}/*)",
-                        wallet_xpub,
-                        keychain.index_num()
-                    ))
-                    .unwrap();
-                (*keychain, desc_info.descriptor)
+                let descriptor_without_checksum =
+                    format!("wpkh({}/{}/*)", wallet_xpub, keychain.index_num());
+                let decriptor = format!(
+                    "{}#{}",
+                    descriptor_without_checksum,
+                    compute_checksum(&descriptor_without_checksum).unwrap()
+                );
+                (*keychain, decriptor)
             })
             .collect::<HashMap<KeychainKind, String>>();
 
@@ -622,53 +622,17 @@ impl Wallet {
         &self.store.external_index
     }
 
-    /// Checks if the first derived address from a swapcoin descriptor is imported.
-    pub(super) fn is_descriptor_imported(&self, descriptor: &str) -> bool {
-        let addr = self.rpc.derive_addresses(descriptor, None).unwrap()[0].clone();
-        self.rpc
-            .get_address_info(&addr.assume_checked())
-            .unwrap()
-            .is_watchonly
-            .unwrap_or(false)
-    }
+    // /// Checks if the first derived address from a swapcoin descriptor is imported.
+    // pub(super) fn is_descriptor_imported(&self, descriptor: &str) -> bool {
+    //     let addr = self.rpc.derive_addresses(descriptor, None).unwrap()[0].clone();
+    //     self.rpc.get_address_info(&addr.assume_checked()).unwrap().is_watchonly.unwrap_or(false)
+    // }
 
     /// Core wallet label is the master XPub fingerint.
     pub fn get_core_wallet_label(&self) -> String {
         let secp = Secp256k1::new();
         let m_xpub = ExtendedPubKey::from_priv(&secp, &self.store.master_key);
         m_xpub.fingerprint().to_string()
-    }
-
-    /// Import watch addresses into core wallet. Does not check if the address was already imported.
-    pub fn import_descriptors(
-        &self,
-        descriptor_to_import: &[String],
-        address_label: Option<String>,
-    ) -> Result<(), WalletError> {
-        let address_label = address_label.unwrap_or(self.get_core_wallet_label());
-
-        let import_requests = descriptor_to_import
-            .iter()
-            .map(|desc| {
-                if desc.contains("/*") {
-                    return json!({
-                        "timestamp": "now",
-                        "desc": desc,
-                        "range": (self.get_addrss_import_count() - 1)
-                    });
-                }
-                json!({
-                    "timestamp": "now",
-                    "desc": desc,
-                    "label": address_label
-                })
-            })
-            .collect();
-        let _res: Vec<Value> = self
-            .rpc
-            .call("importdescriptors", &[import_requests])
-            .unwrap();
-        Ok(())
     }
 
     fn create_contract_scriptpubkey_outgoing_swapcoin_hashmap(
@@ -1339,50 +1303,6 @@ impl Wallet {
         )
     }
 
-    /// Imports a contract redeem script into the wallet.
-    pub fn import_wallet_contract_redeemscript(
-        &self,
-        redeemscript: &ScriptBuf,
-    ) -> Result<(), WalletError> {
-        let spk = redeemscript_to_scriptpubkey(redeemscript);
-        let descriptor = self
-            .rpc
-            .get_descriptor_info(&format!("raw({:x})", spk))
-            .unwrap()
-            .descriptor;
-        self.import_descriptors(&[descriptor], None)
-    }
-
-    /// Imports a multisig redeem script into the wallet using two public keys.
-    pub fn import_wallet_multisig_redeemscript(
-        &self,
-        pubkey1: &PublicKey,
-        pubkey2: &PublicKey,
-    ) -> Result<(), WalletError> {
-        let descriptor = self
-            .rpc
-            .get_descriptor_info(&format!("wsh(sortedmulti(2,{},{}))", pubkey1, pubkey2))?
-            .descriptor;
-        self.import_descriptors(&[descriptor], None)
-    }
-
-    /// Imports a transaction along with its merkle proof into the wallet.
-    pub fn import_tx_with_merkleproof(
-        &self,
-        tx: &Transaction,
-        merkleproof: &str,
-    ) -> Result<(), WalletError> {
-        let rawtx_hex = serialize_hex(&tx);
-        self.rpc.call(
-            "importprunedfunds",
-            &[
-                Value::String(rawtx_hex),
-                Value::String(merkleproof.to_owned()),
-            ],
-        )?;
-        Ok(())
-    }
-
     /// Initialize a Coinswap with the Other party.
     /// Returns, the Funding Transactions, [`OutgoingSwapCoin`]s and the Total Miner fees.
     pub fn initalize_coinswap(
@@ -1439,7 +1359,7 @@ impl Wallet {
                 &contract_redeemscript,
             );
 
-            self.import_wallet_contract_redeemscript(&contract_redeemscript)?;
+            // self.import_wallet_contract_redeemscript(&contract_redeemscript)?;
             outgoing_swapcoins.push(OutgoingSwapCoin::new(
                 my_multisig_privkey,
                 other_multisig_pubkey,
@@ -1471,7 +1391,7 @@ impl Wallet {
         self.import_descriptors(&[descriptor], Some(WATCH_ONLY_SWAPCOIN_LABEL.to_string()))
     }
 
-    pub fn collect_descriptors_to_import(&self) -> Result<Vec<String>, WalletError> {
+    pub fn descriptors_to_import(&self) -> Result<Vec<String>, WalletError> {
         let mut descriptors_to_import = Vec::new();
 
         descriptors_to_import.extend(self.get_unimported_wallet_desc()?);
@@ -1481,14 +1401,17 @@ impl Wallet {
                 .incoming_swapcoins
                 .values()
                 .map(|sc| {
-                    format!(
+                    let descriptor_without_checksum = format!(
                         "wsh(sortedmulti(2,{},{}))",
                         sc.get_other_pubkey(),
                         sc.get_my_pubkey()
+                    );
+                    format!(
+                        "{}#{}",
+                        descriptor_without_checksum,
+                        compute_checksum(&descriptor_without_checksum).unwrap()
                     )
                 })
-                .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
-                .filter(|d| !self.is_descriptor_imported(d))
                 .collect::<Vec<String>>(),
         );
 
@@ -1497,14 +1420,18 @@ impl Wallet {
                 .outgoing_swapcoins
                 .values()
                 .map(|sc| {
-                    format!(
+                    let descriptor_without_checksum = format!(
                         "wsh(sortedmulti(2,{},{}))",
                         sc.get_other_pubkey(),
                         sc.get_my_pubkey()
+                    );
+                    format!(
+                        "{}#{}",
+                        descriptor_without_checksum,
+                        compute_checksum(&descriptor_without_checksum).unwrap()
                     )
                 })
-                .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
-                .filter(|d| !self.is_descriptor_imported(d)),
+                .collect::<Vec<String>>(),
         );
 
         descriptors_to_import.extend(
@@ -1513,10 +1440,13 @@ impl Wallet {
                 .values()
                 .map(|sc| {
                     let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript);
-                    format!("raw({:x})", contract_spk)
+                    let descriptor_without_checksum = format!("raw({:x})", contract_spk);
+                    format!(
+                        "{}#{}",
+                        descriptor_without_checksum,
+                        compute_checksum(&descriptor_without_checksum).unwrap()
+                    )
                 })
-                .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
-                .filter(|d| !self.is_descriptor_imported(d))
                 .collect::<Vec<_>>(),
         );
         descriptors_to_import.extend(
@@ -1525,21 +1455,91 @@ impl Wallet {
                 .values()
                 .map(|sc| {
                     let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript);
-                    format!("raw({:x})", contract_spk)
+                    let descriptor_without_checksum = format!("raw({:x})", contract_spk);
+                    format!(
+                        "{}#{}",
+                        descriptor_without_checksum,
+                        compute_checksum(&descriptor_without_checksum).unwrap()
+                    )
                 })
-                .map(|d| self.rpc.get_descriptor_info(&d).unwrap().descriptor)
-                .filter(|d| !self.is_descriptor_imported(d))
                 .collect::<Vec<_>>(),
         );
 
         descriptors_to_import.extend(self.store.fidelity_bond.iter().map(|(_, (_, spk, _))| {
             let descriptor_without_checksum = format!("raw({:x})", spk);
-            self.rpc
-                .get_descriptor_info(&descriptor_without_checksum)
-                .unwrap()
-                .descriptor
+            format!(
+                "{}#{}",
+                descriptor_without_checksum,
+                compute_checksum(&descriptor_without_checksum).unwrap()
+            )
         }));
 
         Ok(descriptors_to_import)
     }
+}
+
+const INPUT_CHARSET: &str =
+    "0123456789()[],'/*abcdefgh@:$%{}IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~ijklmnopqrstuvwxyzABCDEFGH`#\"\\ ";
+const CHECKSUM_CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+fn poly_mod(mut c: u64, val: u64) -> u64 {
+    let c0 = c >> 35;
+    c = ((c & 0x7ffffffff) << 5) ^ val;
+    if c0 & 1 > 0 {
+        c ^= 0xf5dee51989;
+    }
+    if c0 & 2 > 0 {
+        c ^= 0xa9fdca3312;
+    }
+    if c0 & 4 > 0 {
+        c ^= 0x1bab10e32d;
+    }
+    if c0 & 8 > 0 {
+        c ^= 0x3706b1677a;
+    }
+    if c0 & 16 > 0 {
+        c ^= 0x644d626ffd;
+    }
+
+    c
+}
+
+/// Compute the checksum of a descriptor
+pub fn compute_checksum(desc: &str) -> Result<String, WalletError> {
+    let mut c = 1;
+    let mut cls = 0;
+    let mut clscount = 0;
+    for ch in desc.chars() {
+        let pos = INPUT_CHARSET
+            .find(ch)
+            .ok_or(WalletError::Protocol("Descriptor invalid".to_string()))?
+            as u64;
+        c = poly_mod(c, pos & 31);
+        cls = cls * 3 + (pos >> 5);
+        clscount += 1;
+        if clscount == 3 {
+            c = poly_mod(c, cls);
+            cls = 0;
+            clscount = 0;
+        }
+    }
+    if clscount > 0 {
+        c = poly_mod(c, cls);
+    }
+    (0..8).for_each(|_| {
+        c = poly_mod(c, 0);
+    });
+    c ^= 1;
+
+    let mut chars = Vec::with_capacity(8);
+    for j in 0..8 {
+        chars.push(
+            CHECKSUM_CHARSET
+                .chars()
+                .nth(((c >> (5 * (7 - j))) & 31) as usize)
+                .unwrap(),
+        );
+    }
+
+    Ok(String::from_iter(chars))
 }
