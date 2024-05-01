@@ -622,12 +622,6 @@ impl Wallet {
         &self.store.external_index
     }
 
-    // /// Checks if the first derived address from a swapcoin descriptor is imported.
-    // pub(super) fn is_descriptor_imported(&self, descriptor: &str) -> bool {
-    //     let addr = self.rpc.derive_addresses(descriptor, None).unwrap()[0].clone();
-    //     self.rpc.get_address_info(&addr.assume_checked()).unwrap().is_watchonly.unwrap_or(false)
-    // }
-
     /// Core wallet label is the master XPub fingerint.
     pub fn get_core_wallet_label(&self) -> String {
         let secp = Secp256k1::new();
