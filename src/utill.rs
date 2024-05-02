@@ -41,6 +41,14 @@ use crate::{
     wallet::{SwapCoin, WalletError},
 };
 
+const INPUT_CHARSET: &str =
+    "0123456789()[],'/*abcdefgh@:$%{}IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~ijklmnopqrstuvwxyzABCDEFGH`#\"\\ ";
+const CHECKSUM_CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+const MASK_LOW_35_BITS: u64 = 0x7ffffffff;
+const SHIFT_FOR_C0: u64 = 35;
+const CHECKSUM_FINAL_XOR_VALUE: u64 = 1;
+
 /// Converts a string representation of a network to a `Network` enum variant.
 pub fn str_to_bitcoin_network(net_str: &str) -> Network {
     match net_str {
@@ -364,6 +372,72 @@ pub fn monitor_log_for_completion(log_dir: PathBuf, pattern: &str) -> io::Result
         }
         thread::sleep(Duration::from_secs(3));
     }
+}
+
+fn polynomial_modulus(mut checksum: u64, value: u64) -> u64 {
+    let upper_bits = checksum >> SHIFT_FOR_C0;
+    checksum = ((checksum & MASK_LOW_35_BITS) << 5) ^ value;
+
+    static FEEDBACK_TERMS: [(u64, u64); 5] = [
+        (0x1, 0xf5dee51989),
+        (0x2, 0xa9fdca3312),
+        (0x4, 0x1bab10e32d),
+        (0x8, 0x3706b1677a),
+        (0x10, 0x644d626ffd),
+    ];
+
+    for &(bit, term) in FEEDBACK_TERMS.iter() {
+        if (upper_bits & bit) != 0 {
+            checksum ^= term;
+        }
+    }
+
+    checksum
+}
+
+/// Compute the checksum of a descriptor
+pub fn compute_checksum(descriptor: &str) -> Result<String, WalletError> {
+    let mut checksum = CHECKSUM_FINAL_XOR_VALUE;
+    let mut accumulated_value = 0;
+    let mut group_count = 0;
+
+    for character in descriptor.chars() {
+        let position = INPUT_CHARSET
+            .find(character)
+            .ok_or(WalletError::Protocol("Descriptor invalid".to_string()))?
+            as u64;
+        checksum = polynomial_modulus(checksum, position & 31);
+        accumulated_value = accumulated_value * 3 + (position >> 5);
+        group_count += 1;
+
+        if group_count == 3 {
+            checksum = polynomial_modulus(checksum, accumulated_value);
+            accumulated_value = 0;
+            group_count = 0;
+        }
+    }
+
+    if group_count > 0 {
+        checksum = polynomial_modulus(checksum, accumulated_value);
+    }
+
+    // Finalize checksum by feeding zeros.
+    (0..8).for_each(|_| {
+        checksum = polynomial_modulus(checksum, 0);
+    });
+    checksum ^= CHECKSUM_FINAL_XOR_VALUE;
+
+    // Convert the checksum into a character string.
+    let checksum_chars = (0..8)
+        .map(|i| {
+            CHECKSUM_CHARSET
+                .chars()
+                .nth(((checksum >> (5 * (7 - i))) & 31) as usize)
+                .unwrap()
+        })
+        .collect::<String>();
+
+    Ok(checksum_chars)
 }
 
 #[cfg(test)]

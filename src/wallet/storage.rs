@@ -38,6 +38,9 @@ pub struct WalletStore {
     /// Map for all the fidelity bond information. (index, (Bond, script_pubkey, is_spent)).
     pub(super) fidelity_bond: HashMap<u32, (FidelityBond, ScriptBuf, bool)>,
     //TODO: Add last synced height and Wallet birthday.
+    pub(super) last_synced_height: Option<u64>,
+
+    pub(super) wallet_birthday: Option<u64>,
 }
 
 impl WalletStore {
@@ -48,6 +51,7 @@ impl WalletStore {
         network: Network,
         seedphrase: String,
         passphrase: String,
+        wallet_birthday: Option<u64>,
     ) -> Result<Self, WalletError> {
         let mnemonic = Mnemonic::parse(seedphrase)?;
         let seed = mnemonic.to_seed(passphrase);
@@ -63,6 +67,8 @@ impl WalletStore {
             outgoing_swapcoins: HashMap::new(),
             prevout_to_contract_map: HashMap::new(),
             fidelity_bond: HashMap::new(),
+            last_synced_height: None,
+            wallet_birthday,
         };
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
@@ -75,8 +81,7 @@ impl WalletStore {
             .open(path)?;
         let writer = BufWriter::new(file);
         serde_cbor::to_writer(writer, &store)?;
-        // let store_read = WalletStore::read_from_disk(path)?;
-        // assert_eq!(store_read, store);
+
         Ok(store)
     }
 
@@ -113,6 +118,7 @@ mod tests {
             Network::Bitcoin,
             mnemonic,
             "passphrase".to_string(),
+            None,
         )
         .unwrap();
 

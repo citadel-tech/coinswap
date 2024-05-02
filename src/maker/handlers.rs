@@ -278,16 +278,7 @@ impl Maker {
                 .get(funding_output_index as usize)
                 .expect("funding output expected at this index");
 
-            self.wallet
-                .read()?
-                .import_wallet_multisig_redeemscript(&pubkey1, &pubkey2)?;
-            self.wallet.read()?.import_tx_with_merkleproof(
-                &funding_info.funding_tx,
-                &funding_info.funding_tx_merkleproof,
-            )?;
-            self.wallet
-                .read()?
-                .import_wallet_contract_redeemscript(&funding_info.contract_redeemscript)?;
+            self.wallet.write()?.sync()?;
 
             let receiver_contract_tx = create_receivers_contract_tx(
                 OutPoint {
@@ -358,9 +349,9 @@ impl Maker {
             self.config.required_confirms, //time_in_blocks just 1 for now
         );
 
-        let calc_funding_tx_fees = FUNDING_TX_VBYTE_SIZE
+        let calc_funding_tx_fees = (FUNDING_TX_VBYTE_SIZE
             * message.next_fee_rate
-            * (message.next_coinswap_info.len() as u64)
+            * (message.next_coinswap_info.len() as u64))
             / 1000;
 
         let outgoing_amount = incoming_amount - calc_coinswap_fees - calc_funding_tx_fees;
@@ -404,13 +395,14 @@ impl Maker {
         log::info!(
             "incoming_amount = {} | incoming_locktime = {} | outgoing_amount = {} | outgoing_locktime = {}",
             Amount::from_sat(incoming_amount),
-            read_contract_locktime(&message.confirmed_funding_txes[0].contract_redeemscript)
-                .unwrap(),
+            read_contract_locktime(
+                &message.confirmed_funding_txes[0].contract_redeemscript
+            ).unwrap(),
             Amount::from_sat(outgoing_amount),
-            message.next_locktime,
+            message.next_locktime
         );
         log::info!(
-                "Calculated Funding Txs Fees = {} | Actual Funding Txs Fees = {} | Calculated Swap Revenue = {} | Actual Swap Revenue = {}",
+            "Calculated Funding Txs Fees = {} | Actual Funding Txs Fees = {} | Calculated Swap Revenue = {} | Actual Swap Revenue = {}",
             Amount::from_sat(calc_funding_tx_fees),
             Amount::from_sat(act_funding_txs_fees),
             Amount::from_sat(calc_coinswap_fees),
@@ -553,7 +545,7 @@ impl Maker {
             return Err(MakerError::General(
                 "Speacial Behavior: CloseAtContractSigsForRecvr",
             ));
-        };
+        }
 
         let sigs = message
             .txs
@@ -632,7 +624,7 @@ impl Maker {
                 .write()?
                 .find_incoming_swapcoin_mut(&swapcoin_private_key.multisig_redeemscript)
                 .expect("incoming swapcoin not found")
-                .apply_privkey(swapcoin_private_key.key)?
+                .apply_privkey(swapcoin_private_key.key)?;
         }
         log::info!("initializing Wallet Sync.");
         {
