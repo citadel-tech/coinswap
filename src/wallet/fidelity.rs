@@ -368,7 +368,7 @@ impl Wallet {
             script_pubkey: fidelity_addr.script_pubkey(),
         }];
 
-        if change_amount.is_some() {
+        if let Some(_x) = change_amount {
             let change_addrs = self.get_next_internal_addresses(1)?[0].script_pubkey();
             tx_outs.push(TxOut {
                 value: change_amount.expect("expected").to_sat(),

@@ -9,17 +9,33 @@ use std::collections::{HashMap, HashSet};
 
 use bitcoin::{
     absolute::LockTime,
+    // address::NetworkUnchecked,
     bip32::{ChildNumber, DerivationPath, ExtendedPubKey},
     blockdata::script::Builder,
     hashes::{hash160::Hash as Hash160, hex::FromHex},
     secp256k1,
     secp256k1::{Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
-    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
-    Txid, Witness,
+    Address,
+    Amount,
+    OutPoint,
+    PublicKey,
+    Script,
+    ScriptBuf,
+    Sequence,
+    Transaction,
+    TxIn,
+    TxOut,
+    Txid,
+    Witness,
 };
 
-use bitcoind::bitcoincore_rpc::{core_rpc_json::ListUnspentResultEntry, Client, RpcApi};
+use bitcoind::bitcoincore_rpc::{
+    core_rpc_json::ListUnspentResultEntry,
+    // json::WalletCreateFundedPsbtOptions,
+    Client,
+    RpcApi,
+};
 use serde_json::Value;
 
 use crate::{
@@ -1203,6 +1219,7 @@ impl Wallet {
         let decoded_psbt = self
             .rpc
             .call::<Value>("decodepsbt", &[Value::String(psbt.to_string())])?;
+        // log::error!("Partially signed transaction: {:?}", decoded_psbt);
 
         //TODO proper error handling, theres many unwrap()s here
         //make this function return Result<>
@@ -1266,6 +1283,208 @@ impl Wallet {
         self.sign_transaction(&mut tx, &mut inputs_info)?;
 
         Ok(tx)
+    }
+
+    pub fn coin_select(
+        &self,
+        amount: Amount,
+    ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+        let all_utxos = self.get_all_utxo()?;
+
+        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
+        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
+        seed_coin_utxo.append(&mut swap_coin_utxo);
+
+        // Fetch utxos, filter out existing fidelity coins
+        let mut unspents = seed_coin_utxo
+            .into_iter()
+            .filter(|(_, spend_info)| !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. }))
+            .collect::<Vec<_>>();
+
+        unspents.sort_by(|a, b| b.0.amount.cmp(&a.0.amount));
+
+        let mut selected_utxo = Vec::new();
+        let mut remaining = amount;
+
+        // the simplest largest first coinselection.
+        for unspent in unspents {
+            if remaining.checked_sub(unspent.0.amount).is_none() {
+                selected_utxo.push(unspent);
+                break;
+            } else {
+                remaining -= unspent.0.amount;
+                selected_utxo.push(unspent);
+            }
+        }
+        Ok(selected_utxo)
+    }
+
+    pub fn get_utxo(
+        &self,
+        (txid, vout): (Txid, u32),
+    ) -> Result<Option<UTXOSpendInfo>, WalletError> {
+        let all_utxos = self.get_all_utxo()?;
+
+        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
+        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
+        seed_coin_utxo.append(&mut swap_coin_utxo);
+
+        for utxo in seed_coin_utxo {
+            if utxo.0.txid == txid && utxo.0.vout == vout {
+                return Ok(Some(utxo.1));
+            }
+        }
+
+        Ok(None)
+    }
+
+    pub fn construct_pbst(
+        &self,
+        coinswap_amount: u64,
+        destinations: &[Address],
+        fee_rate: u64,
+    ) -> Result<(), WalletError> {
+        let change_addresses = self.get_next_internal_addresses(destinations.len() as u32)?;
+
+        log::error!("Here in construct pbst");
+        log::error!("Coinswap amount: {:?}", coinswap_amount);
+        log::error!("Destination: {:?}", destinations);
+        log::error!("Fee rate: {:?}", fee_rate);
+        log::error!("Change address: {:?}", change_addresses);
+        for x in &change_addresses {
+            log::error!("Lets check change address : {:?}", x);
+        }
+
+        for x in destinations {
+            log::error!("Lets check destination : {:?}", x);
+        }
+
+        let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
+
+        for x in &output_values {
+            log::error!("Lets check the output_values: {:?}", x);
+        }
+
+        self.lock_unspendable_utxos()?;
+
+        for ((address, &output_value), change_address) in destinations
+            .iter()
+            .zip(output_values.iter())
+            .zip(change_addresses.iter())
+        {
+            log::error!(
+                "Address: {:?}, output_value: {:?}, change_address: {:?}",
+                address,
+                output_value,
+                change_address
+            );
+
+            let fee = Amount::from_sat(fee_rate); // TODO: Update this with the feerate
+
+            let remaining = Amount::from_sat(coinswap_amount);
+
+            let selected_utxo = self.coin_select(remaining)?;
+
+            let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
+                acc.checked_add(unspet.amount)
+                    .expect("Amount sum overflowed")
+            });
+            let change_amount = total_input_amount.checked_sub(remaining + fee);
+
+            log::error!("Change amount: {:?}", change_amount);
+            log::error!("fee: {:?}", fee);
+            log::error!("Total input amount: {:?}", total_input_amount);
+            log::error!("Selected utxo: {:?}", selected_utxo);
+
+            let mut tx_outs = vec![TxOut {
+                value: output_value,
+                script_pubkey: address.script_pubkey(),
+            }];
+
+            if let Some(_x) = change_amount {
+                tx_outs.push(TxOut {
+                    value: change_amount.expect("expected").to_sat(),
+                    script_pubkey: change_address.script_pubkey(),
+                });
+            }
+
+            let tx_inputs = selected_utxo
+                .iter()
+                .map(|(unspent, _)| TxIn {
+                    previous_output: OutPoint::new(unspent.txid, unspent.vout),
+                    sequence: Sequence(0),
+                    witness: Witness::new(),
+                    script_sig: ScriptBuf::new(),
+                })
+                .collect::<Vec<_>>();
+
+            let mut tx = Transaction {
+                input: tx_inputs,
+                output: tx_outs,
+                lock_time: LockTime::ZERO,
+                version: 2, // anti-fee-snipping
+            };
+
+            let mut input_info = selected_utxo
+                .iter()
+                .map(|(_, spend_info)| spend_info.clone());
+            self.sign_transaction(&mut tx, &mut input_info)?;
+            let txid = self.rpc.send_raw_transaction(&tx)?;
+            log::error!(" LEts check the txid : {:?}", txid);
+
+            self.rpc.lock_unspent(
+                &tx.input
+                    .iter()
+                    .map(|vin| vin.previous_output)
+                    .collect::<Vec<OutPoint>>(),
+            )?;
+            // let mut outputs = HashMap::<String, Amount>::new();
+            // outputs.insert(address.to_string(), Amount::from_sat(output_value));
+
+            // let change_addrs_unchecked: Address<NetworkUnchecked> = change_address
+            //     .to_string()
+            //     .parse()
+            //     .unwrap();
+            // log::error!("Change address unchecked: {:?}", change_addrs_unchecked);
+
+            // let wcfp_result = self.rpc.wallet_create_funded_psbt(
+            //     &[],
+            //     &outputs,
+            //     None,
+            //     Some(WalletCreateFundedPsbtOptions {
+            //         include_watching: Some(true),
+            //         change_address: Some(change_addrs_unchecked),
+            //         fee_rate: Some(Amount::from_sat(fee_rate)),
+            //         ..Default::default()
+            //     }),
+            //     None
+            // )?;
+
+            // let decoded_psbt = self.rpc.call::<Value>(
+            //     "decodepsbt",
+            //     &[Value::String(wcfp_result.psbt.to_string())]
+            // )?;
+
+            // log::error!("Decode pbst: {:?}", decoded_psbt);
+            // log::error!("Lets check the pbst: {:?}", wcfp_result);
+            // total_miner_fee += wcfp_result.fee.to_sat();
+
+            // let funding_tx = self.from_walletcreatefundedpsbt_to_tx(&wcfp_result.psbt)?;
+
+            // self.rpc.lock_unspent(
+            //     &funding_tx.input
+            //         .iter()
+            //         .map(|vin| vin.previous_output)
+            //         .collect::<Vec<OutPoint>>()
+            // )?;
+
+            // let payment_pos = if wcfp_result.change_position == 0 { 1 } else { 0 };
+
+            // funding_txes.push(funding_tx);
+            // payment_output_positions.push(payment_pos);
+        }
+
+        Ok(())
     }
 
     fn create_and_import_coinswap_address(
