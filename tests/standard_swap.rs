@@ -341,20 +341,19 @@ async fn test_standard_coinswap() {
             .unwrap();
 
         let maker_total_balance = maker.get_wallet().read().unwrap().balance().unwrap();
-        log::error!("HEre: {:?}", maker_total_balance);
+
         assert!(
             maker_total_balance == Amount::from_btc(0.20003044).unwrap()
                 || maker_total_balance == Amount::from_btc(0.20003116).unwrap(),
             "maker total balance didn't match any of the expected values"
         );
 
-        log::error!("HEre: {:?}", maker_balance_descriptor_utxo);
         assert!(
             maker_balance_descriptor_utxo == Amount::from_btc(0.14503116).unwrap()
                 || maker_balance_descriptor_utxo == Amount::from_btc(0.1451016).unwrap(),
             "maker_balance_descriptor_utxo does not match any of the expected values"
         );
-        log::error!("HEre: {:?}", maker_balance_swap_coins);
+
         assert!(
             maker_balance_swap_coins == Amount::from_btc(0.00492884).unwrap()
                 || maker_balance_swap_coins == Amount::from_btc(0.005).unwrap(),
@@ -365,7 +364,6 @@ async fn test_standard_coinswap() {
 
         let maker_spendable_balance = maker_balance_descriptor_utxo + maker_balance_swap_coins;
 
-        log::error!("HEre: {:?}", maker_spendable_balance);
         assert!(
             maker_spendable_balance == Amount::from_btc(0.15003116).unwrap()
                 || maker_spendable_balance == Amount::from_btc(0.15003044).unwrap(),
