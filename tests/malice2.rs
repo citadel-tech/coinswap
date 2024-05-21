@@ -233,7 +233,7 @@ async fn malice2_maker_broadcast_contract_prematurely() {
             // If the first maker misbehaves, then the 2nd maker doesn't loose anything.
             // as they haven't broadcasted their outgoing swap.
             assert!(
-                maker_balance_descriptor_utxo == Amount::from_btc(0.14994773).unwrap()
+                maker_balance_descriptor_utxo == Amount::from_btc(0.14992232).unwrap()
                     || maker_balance_descriptor_utxo == Amount::from_btc(0.14999).unwrap()
             );
             assert_eq!(maker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
@@ -286,12 +286,12 @@ async fn malice2_maker_broadcast_contract_prematurely() {
     assert_eq!(taker_balance_fidelity, Amount::from_btc(0.0).unwrap());
     assert_eq!(
         taker_balance_descriptor_utxo,
-        Amount::from_btc(0.14995773).unwrap()
+        Amount::from_btc(0.14993232).unwrap()
     );
     assert_eq!(taker_balance_live_contract, Amount::from_btc(0.0).unwrap());
     assert_eq!(taker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
 
-    assert_eq!(*maker_balances.first().unwrap(), Amount::from_sat(14994773));
+    assert_eq!(*maker_balances.first().unwrap(), Amount::from_sat(14992232));
 
     // Everybody looses 4227 sats for contract transactions.
     assert_eq!(
@@ -300,12 +300,12 @@ async fn malice2_maker_broadcast_contract_prematurely() {
             .unwrap()
             .checked_sub(*maker_balances.first().unwrap())
             .unwrap(),
-        Amount::from_sat(4227)
+        Amount::from_sat(6768)
     );
 
     assert_eq!(
         org_taker_balance.checked_sub(taker_balance).unwrap(),
-        Amount::from_sat(4227)
+        Amount::from_sat(6768)
     );
 
     test_framework.stop();

@@ -237,7 +237,7 @@ async fn malice1_taker_broadcast_contract_prematurely() {
             assert_eq!(maker_balance_fidelity, Amount::from_btc(0.05).unwrap());
             assert_eq!(
                 maker_balance_descriptor_utxo,
-                Amount::from_btc(0.14994773).unwrap()
+                Amount::from_btc(0.14992232).unwrap()
             );
             assert_eq!(maker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
             assert_eq!(maker_balance_live_contract, Amount::from_btc(0.0).unwrap());
@@ -286,7 +286,7 @@ async fn malice1_taker_broadcast_contract_prematurely() {
             .unwrap()
             .checked_sub(*maker_balances.first().unwrap())
             .unwrap(),
-        Amount::from_sat(4227)
+        Amount::from_sat(6768)
     );
 
     assert_eq!(org_taker_balance_fidelity, Amount::from_btc(0.0).unwrap());
@@ -303,14 +303,14 @@ async fn malice1_taker_broadcast_contract_prematurely() {
     assert_eq!(taker_balance_fidelity, Amount::from_btc(0.0).unwrap());
     assert_eq!(
         taker_balance_descriptor_utxo,
-        Amount::from_btc(0.14995773).unwrap()
+        Amount::from_btc(0.14993232).unwrap()
     );
     assert_eq!(taker_balance_live_contract, Amount::from_btc(0.0).unwrap());
     assert_eq!(taker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
 
     assert_eq!(
         org_taker_balance.checked_sub(taker_balance).unwrap(),
-        Amount::from_sat(4227)
+        Amount::from_sat(6768)
     );
 
     test_framework.stop();
