@@ -126,7 +126,6 @@ impl Wallet {
         destinations: &[Address],
         fee_rate: u64,
     ) -> Result<CreateFundingTxesResult, WalletError> {
-        // let _ = self.construct_pbst(coinswap_amount, destinations, fee_rate);
         let change_addresses = self.get_next_internal_addresses(destinations.len() as u32)?;
 
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
