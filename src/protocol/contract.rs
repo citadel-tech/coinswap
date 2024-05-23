@@ -1151,7 +1151,7 @@ mod test {
         tx_input_2.witness.push(sig_1.to_vec());
         tx_input_2
             .witness
-            .push(&mutlisig_2_of_2_redeemscript.to_bytes());
+            .push(mutlisig_2_of_2_redeemscript.to_bytes());
 
         assert_eq!(tx_input_1, tx_input_2);
 
@@ -1173,7 +1173,7 @@ mod test {
         tx_input_2.witness.push(sig_1.to_vec());
         tx_input_2
             .witness
-            .push(&mutlisig_2_of_2_redeemscript.to_bytes());
+            .push(mutlisig_2_of_2_redeemscript.to_bytes());
 
         assert_eq!(tx_input_1, tx_input_2);
     }
