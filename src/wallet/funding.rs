@@ -157,9 +157,9 @@ impl Wallet {
                 script_pubkey: address.script_pubkey(),
             }];
 
-            if let Some(_x) = change_amount {
+            if let Some(change) = change_amount {
                 tx_outs.push(TxOut {
-                    value: change_amount.expect("expected").to_sat(),
+                    value: change.to_sat(),
                     script_pubkey: change_address.script_pubkey(),
                 });
             }
@@ -386,9 +386,9 @@ impl Wallet {
             script_pubkey: destinations[0].script_pubkey(),
         }];
 
-        if let Some(_x) = change_amount {
+        if let Some(change) = change_amount {
             tx_outs.push(TxOut {
-                value: change_amount.expect("expected").to_sat(),
+                value: change.to_sat(),
                 script_pubkey: change_address.script_pubkey(),
             });
         }
