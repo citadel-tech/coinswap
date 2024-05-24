@@ -8,24 +8,20 @@ use std::{convert::TryFrom, fs, path::PathBuf, str::FromStr};
 use std::collections::{HashMap, HashSet};
 
 use bitcoin::{
-    absolute::LockTime,
     bip32::{ChildNumber, DerivationPath, ExtendedPubKey},
-    blockdata::script::Builder,
     hashes::{hash160::Hash as Hash160, hex::FromHex},
     secp256k1,
     secp256k1::{Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
-    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
-    Txid, Witness,
+    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid,
 };
 
 use bitcoind::bitcoincore_rpc::{core_rpc_json::ListUnspentResultEntry, Client, RpcApi};
-use serde_json::Value;
 
 use crate::{
     protocol::contract,
     utill::{
-        convert_json_rpc_bitcoin_to_satoshis, generate_keypair, get_hd_path_from_descriptor,
+        compute_checksum, generate_keypair, get_hd_path_from_descriptor,
         redeemscript_to_scriptpubkey,
     },
 };
@@ -36,8 +32,6 @@ use super::{
     storage::WalletStore,
     swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletSwapCoin},
 };
-
-use std::iter::FromIterator;
 
 // these subroutines are coded so that as much as possible they keep all their
 // data in the bitcoin core wallet
@@ -785,6 +779,12 @@ impl Wallet {
         Ok(all_utxos)
     }
 
+    pub fn get_all_locked_utxo(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
+        let all_utxos = self
+            .rpc
+            .list_unspent(Some(0), Some(9999999), None, None, None)?;
+        Ok(all_utxos)
+    }
     /// Returns a list all utxos with their spend info tracked by the wallet.
     /// Optionally takes in an Utxo list to reduce RPC calls. If None is given, the
     /// full list of utxo is fetched from core rpc.
@@ -1193,79 +1193,57 @@ impl Wallet {
         Ok(())
     }
 
-    /// Converts a PSBT (Partially Signed Bitcoin Transaction) created by the wallet
-    /// into a fully signed transaction.
-    pub fn from_walletcreatefundedpsbt_to_tx(
+    pub fn coin_select(
         &self,
-        psbt: &String,
-    ) -> Result<Transaction, WalletError> {
-        //TODO rust-bitcoin handles psbt, use those functions instead
-        let decoded_psbt = self
-            .rpc
-            .call::<Value>("decodepsbt", &[Value::String(psbt.to_string())])?;
+        amount: Amount,
+    ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+        let all_utxos = self.get_all_locked_utxo()?;
 
-        //TODO proper error handling, theres many unwrap()s here
-        //make this function return Result<>
-        let inputs = decoded_psbt["tx"]["vin"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|vin| TxIn {
-                previous_output: OutPoint {
-                    txid: vin["txid"].as_str().unwrap().parse::<Txid>().unwrap(),
-                    vout: vin["vout"].as_u64().unwrap() as u32,
-                },
-                sequence: Sequence::ZERO,
-                witness: Witness::new(),
-                script_sig: ScriptBuf::new(),
-            })
-            .collect::<Vec<TxIn>>();
-        let outputs = decoded_psbt["tx"]["vout"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|vout| TxOut {
-                script_pubkey: Builder::from(
-                    Vec::from_hex(vout["scriptPubKey"]["hex"].as_str().unwrap()).unwrap(),
-                )
-                .into_script(),
-                value: convert_json_rpc_bitcoin_to_satoshis(&vout["value"]),
-            })
-            .collect::<Vec<TxOut>>();
+        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
+        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
+        seed_coin_utxo.append(&mut swap_coin_utxo);
 
-        let mut tx = Transaction {
-            input: inputs,
-            output: outputs,
-            lock_time: LockTime::ZERO,
-            version: 2,
-        };
+        // Fetch utxos, filter out existing fidelity coins
+        let mut unspents = seed_coin_utxo
+            .into_iter()
+            .filter(|(_, spend_info)| !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. }))
+            .collect::<Vec<_>>();
 
-        let mut inputs_info = decoded_psbt["inputs"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|input_info| (input_info, input_info["bip32_derivs"].as_array().unwrap()))
-            .map(|(input_info, bip32_info)| {
-                if bip32_info.len() == 2 {
-                    UTXOSpendInfo::SwapCoin {
-                        multisig_redeemscript: Builder::from(
-                            Vec::from_hex(input_info["witness_script"]["hex"].as_str().unwrap())
-                                .unwrap(),
-                        )
-                        .into_script(),
-                    }
-                } else {
-                    UTXOSpendInfo::SeedCoin {
-                        path: bip32_info[0]["path"].as_str().unwrap().to_string(),
-                        input_value: convert_json_rpc_bitcoin_to_satoshis(
-                            &input_info["witness_utxo"]["amount"],
-                        ),
-                    }
-                }
-            });
-        self.sign_transaction(&mut tx, &mut inputs_info)?;
+        unspents.sort_by(|a, b| b.0.amount.cmp(&a.0.amount));
 
-        Ok(tx)
+        let mut selected_utxo = Vec::new();
+        let mut remaining = amount;
+
+        // the simplest largest first coinselection.
+        for unspent in unspents {
+            if remaining.checked_sub(unspent.0.amount).is_none() {
+                selected_utxo.push(unspent);
+                break;
+            } else {
+                remaining -= unspent.0.amount;
+                selected_utxo.push(unspent);
+            }
+        }
+        Ok(selected_utxo)
+    }
+
+    pub fn get_utxo(
+        &self,
+        (txid, vout): (Txid, u32),
+    ) -> Result<Option<UTXOSpendInfo>, WalletError> {
+        let all_utxos = self.get_all_utxo()?;
+
+        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
+        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
+        seed_coin_utxo.append(&mut swap_coin_utxo);
+
+        for utxo in seed_coin_utxo {
+            if utxo.0.txid == txid && utxo.0.vout == vout {
+                return Ok(Some(utxo.1));
+            }
+        }
+
+        Ok(None)
     }
 
     fn create_and_import_coinswap_address(
@@ -1470,70 +1448,4 @@ impl Wallet {
 
         Ok(descriptors_to_import)
     }
-}
-
-const INPUT_CHARSET: &str =
-    "0123456789()[],'/*abcdefgh@:$%{}IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~ijklmnopqrstuvwxyzABCDEFGH`#\"\\ ";
-const CHECKSUM_CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
-
-fn poly_mod(mut c: u64, val: u64) -> u64 {
-    let c0 = c >> 35;
-    c = ((c & 0x7ffffffff) << 5) ^ val;
-    if c0 & 1 > 0 {
-        c ^= 0xf5dee51989;
-    }
-    if c0 & 2 > 0 {
-        c ^= 0xa9fdca3312;
-    }
-    if c0 & 4 > 0 {
-        c ^= 0x1bab10e32d;
-    }
-    if c0 & 8 > 0 {
-        c ^= 0x3706b1677a;
-    }
-    if c0 & 16 > 0 {
-        c ^= 0x644d626ffd;
-    }
-
-    c
-}
-
-/// Compute the checksum of a descriptor
-pub fn compute_checksum(desc: &str) -> Result<String, WalletError> {
-    let mut c = 1;
-    let mut cls = 0;
-    let mut clscount = 0;
-    for ch in desc.chars() {
-        let pos = INPUT_CHARSET
-            .find(ch)
-            .ok_or(WalletError::Protocol("Descriptor invalid".to_string()))?
-            as u64;
-        c = poly_mod(c, pos & 31);
-        cls = cls * 3 + (pos >> 5);
-        clscount += 1;
-        if clscount == 3 {
-            c = poly_mod(c, cls);
-            cls = 0;
-            clscount = 0;
-        }
-    }
-    if clscount > 0 {
-        c = poly_mod(c, cls);
-    }
-    (0..8).for_each(|_| {
-        c = poly_mod(c, 0);
-    });
-    c ^= 1;
-
-    let mut chars = Vec::with_capacity(8);
-    for j in 0..8 {
-        chars.push(
-            CHECKSUM_CHARSET
-                .chars()
-                .nth(((c >> (5 * (7 - j))) & 31) as usize)
-                .unwrap(),
-        );
-    }
-
-    Ok(String::from_iter(chars))
 }

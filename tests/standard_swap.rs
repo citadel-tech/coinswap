@@ -23,13 +23,18 @@ async fn test_standard_coinswap() {
 
     // 2 Makers with Normal behavior.
     let makers_config_map = [
-        ((6102, Some(19051)), MakerBehavior::Normal),
-        ((16102, Some(19052)), MakerBehavior::Normal),
+        ((6102, None), MakerBehavior::Normal),
+        ((16102, None), MakerBehavior::Normal),
     ];
 
     // Initiate test framework, Makers and a Taker with default behavior.
-    let (test_framework, taker, makers, directory_server_instance) =
-        TestFramework::init(None, makers_config_map.into(), None, ConnectionType::TOR).await;
+    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
+        None,
+        makers_config_map.into(),
+        None,
+        ConnectionType::CLEARNET,
+    )
+    .await;
 
     warn!("Running Test: Standard Coinswap Procedure");
 
@@ -262,7 +267,7 @@ async fn test_standard_coinswap() {
             .balance_swap_coins(Some(&all_utxos))
             .unwrap();
 
-    assert_eq!(taker_spendable_bal, Amount::from_btc(0.14985381).unwrap());
+    assert_eq!(taker_spendable_bal, Amount::from_btc(0.1498284).unwrap());
 
     let taker_balance_fidelity = taker
         .read()
@@ -293,11 +298,11 @@ async fn test_standard_coinswap() {
             + taker_balance_descriptor_utxo
             + taker_balance_swap_coins
             + taker_balance_live_contract,
-        Amount::from_btc(0.14985381).unwrap()
+        Amount::from_btc(0.1498284).unwrap()
     );
     assert_eq!(
         taker_balance_descriptor_utxo,
-        Amount::from_btc(0.14499541).unwrap()
+        Amount::from_btc(0.14497).unwrap()
     );
     assert_eq!(
         taker_balance_swap_coins,
@@ -338,16 +343,17 @@ async fn test_standard_coinswap() {
         let maker_total_balance = maker.get_wallet().read().unwrap().balance().unwrap();
 
         assert!(
-            maker_total_balance == Amount::from_btc(0.20005657).unwrap()
-                || maker_total_balance == Amount::from_btc(0.20005585).unwrap(),
+            maker_total_balance == Amount::from_btc(0.20003044).unwrap()
+                || maker_total_balance == Amount::from_btc(0.20003116).unwrap(),
             "maker total balance didn't match any of the expected values"
         );
 
         assert!(
-            maker_balance_descriptor_utxo == Amount::from_btc(0.14505657).unwrap()
-                || maker_balance_descriptor_utxo == Amount::from_btc(0.14512701).unwrap(),
+            maker_balance_descriptor_utxo == Amount::from_btc(0.14503116).unwrap()
+                || maker_balance_descriptor_utxo == Amount::from_btc(0.1451016).unwrap(),
             "maker_balance_descriptor_utxo does not match any of the expected values"
         );
+
         assert!(
             maker_balance_swap_coins == Amount::from_btc(0.00492884).unwrap()
                 || maker_balance_swap_coins == Amount::from_btc(0.005).unwrap(),
@@ -359,8 +365,8 @@ async fn test_standard_coinswap() {
         let maker_spendable_balance = maker_balance_descriptor_utxo + maker_balance_swap_coins;
 
         assert!(
-            maker_spendable_balance == Amount::from_btc(0.15005657).unwrap()
-                || maker_spendable_balance == Amount::from_btc(0.15005585).unwrap(),
+            maker_spendable_balance == Amount::from_btc(0.15003116).unwrap()
+                || maker_spendable_balance == Amount::from_btc(0.15003044).unwrap(),
             "maker spendable balance didn't match any of the expected values"
         );
     });
@@ -412,7 +418,7 @@ async fn test_standard_coinswap() {
         .unwrap();
 
     assert_eq!(swap_coin_bal, Amount::ZERO);
-    assert_eq!(descriptor_bal, Amount::from_btc(0.14984381).unwrap());
+    assert_eq!(descriptor_bal, Amount::from_btc(0.1498184).unwrap());
 
     info!("All checks successful. Terminating integration test case");
 

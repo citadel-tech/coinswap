@@ -256,7 +256,7 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
     if new_taker_balance != org_taker_balance {
         assert_eq!(
             org_taker_balance - new_taker_balance,
-            Amount::from_sat(4227)
+            Amount::from_sat(6768)
         );
     }
     makers
