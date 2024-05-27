@@ -5,7 +5,7 @@
 
 use std::{io, path::PathBuf};
 
-use crate::utill::{get_config_dir, parse_field, parse_toml, write_default_config, ConnectionType};
+use crate::utill::{get_taker_dir, parse_field, parse_toml, write_default_config, ConnectionType};
 /// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
@@ -61,11 +61,11 @@ impl TakerConfig {
     /// For reference of default config checkout `./taker.toml` in repo folder.
     ///
     /// Default data-dir for linux: `~/.coinswap/`
-    /// Default config locations: `~/.coinswap/configs/taker.toml`.
+    /// Default config locations: `~/.coinswap/taker/config.toml`.
     pub fn new(config_path: Option<&PathBuf>) -> io::Result<Self> {
         let default_config = Self::default();
 
-        let default_config_path = get_config_dir().join("taker.toml");
+        let default_config_path = get_taker_dir().join("config.toml");
         let config_path = config_path.unwrap_or(&default_config_path);
 
         if !config_path.exists() {
@@ -185,7 +185,7 @@ fn write_default_taker_config(config_path: &PathBuf) {
 
 #[cfg(test)]
 mod tests {
-    use crate::utill::get_home_dir;
+    use crate::utill::get_taker_dir;
 
     use super::*;
     use std::{
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn test_missing_file() {
-        let config_path = get_home_dir().join("taker.toml");
+        let config_path = get_taker_dir().join("taker.toml");
         let config = TakerConfig::new(Some(&config_path)).unwrap();
         remove_temp_config(&config_path);
         assert_eq!(config, TakerConfig::default());

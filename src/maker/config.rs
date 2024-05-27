@@ -2,7 +2,7 @@
 
 use std::{io, path::PathBuf};
 
-use crate::utill::{get_config_dir, parse_field, parse_toml, write_default_config, ConnectionType};
+use crate::utill::{get_maker_dir, parse_field, parse_toml, write_default_config, ConnectionType};
 
 /// Maker Configuration, controlling various maker behavior.
 #[derive(Debug, Clone, PartialEq)]
@@ -17,8 +17,6 @@ pub struct MakerConfig {
     pub directory_servers_refresh_interval_secs: u64,
     /// Time interval to close a connection if no response is received
     pub idle_connection_timeout: u64,
-    /// Onion address of the Maker
-    pub onion_addrs: String,
     /// Absolute coinswap fee
     pub absolute_fee_sats: u64,
     /// Fee rate per swap amount in ppb.
@@ -53,7 +51,6 @@ impl Default for MakerConfig {
             rpc_ping_interval_secs: 60,
             directory_servers_refresh_interval_secs: 60 * 60 * 12, //12 Hours
             idle_connection_timeout: 300,
-            onion_addrs: "myhiddenserviceaddress.onion".to_string(),
             absolute_fee_sats: 1000,
             amount_relative_fee_ppb: 10_000_000,
             time_relative_fee_ppb: 100_000,
@@ -80,11 +77,11 @@ impl MakerConfig {
     /// For reference of default config checkout `./maker.toml` in repo folder.
     ///
     /// Default data-dir for linux: `~/.coinswap/`
-    /// Default config locations: `~/.coinswap/configs/maker.toml`.
+    /// Default config locations, for taker for ex: `~/.coinswap/taker/config.toml`.
     pub fn new(config_path: Option<&PathBuf>) -> io::Result<Self> {
         let default_config = Self::default();
 
-        let default_config_path = get_config_dir().join("maker.toml");
+        let default_config_path = get_maker_dir().join("maker.toml");
         let config_path = config_path.unwrap_or(&default_config_path);
 
         if !config_path.exists() {
@@ -126,10 +123,6 @@ impl MakerConfig {
                 default_config.idle_connection_timeout,
             )
             .unwrap_or(default_config.idle_connection_timeout),
-            onion_addrs: maker_config_section
-                .get("onion_addrs")
-                .map(|s| s.to_string())
-                .unwrap_or(default_config.onion_addrs),
             absolute_fee_sats: parse_field(
                 maker_config_section.get("absolute_fee_sats"),
                 default_config.absolute_fee_sats,
@@ -220,8 +213,6 @@ fn write_default_maker_config(config_path: &PathBuf) {
 
 #[cfg(test)]
 mod tests {
-    use crate::utill::get_home_dir;
-
     use super::*;
     use std::{
         fs::{self, File},
@@ -300,7 +291,7 @@ mod tests {
 
     #[test]
     fn test_missing_file() {
-        let config_path = get_home_dir().join("maker.toml");
+        let config_path = get_maker_dir().join("maker.toml");
         let config = MakerConfig::new(Some(&config_path)).unwrap();
         remove_temp_config(&config_path);
         assert_eq!(config, MakerConfig::default());

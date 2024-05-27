@@ -1,6 +1,12 @@
 //! Various utility and helper functions for both Taker and Maker.
 
-use std::{env, io::ErrorKind, path::PathBuf, str::FromStr, sync::Once};
+use std::{
+    env,
+    io::{ErrorKind, Read},
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Once,
+};
 
 use bitcoin::{
     address::{WitnessProgram, WitnessVersion},
@@ -77,24 +83,44 @@ impl FromStr for ConnectionType {
         }
     }
 }
+
+/// Read the tor address given an hidden_service directory path
+pub fn get_tor_addrs(hs_dir: &Path) -> String {
+    let hostname_file_path = hs_dir.join("hs-dir").join("hostname");
+    let mut hostname_file = fs::File::open(hostname_file_path).unwrap();
+    let mut tor_addrs: String = String::new();
+    hostname_file.read_to_string(&mut tor_addrs).unwrap();
+    tor_addrs
+}
+
 /// Get the system specific home directory.
-pub fn get_home_dir() -> PathBuf {
-    dirs::home_dir().expect("home directory expected")
+/// Uses "/tmp" directory for integration tests
+fn get_home_dir() -> PathBuf {
+    if cfg!(feature = "integration-test") {
+        "/tmp".into()
+    } else {
+        dirs::home_dir().expect("home directory expected")
+    }
 }
 
 /// Get the default data directory. `~/.coinswap`.
-pub fn get_data_dir() -> PathBuf {
+fn get_data_dir() -> PathBuf {
     get_home_dir().join(".coinswap")
 }
 
-/// Get the default wallets directory. `~/.coinswap/wallets`
-pub fn get_wallet_dir() -> PathBuf {
-    get_data_dir().join("wallets")
+/// Get the Maker Directory
+pub fn get_maker_dir() -> PathBuf {
+    get_data_dir().join("maker")
 }
 
-/// Get the default configs directory. `~/.coinswap/configs`
-pub fn get_config_dir() -> PathBuf {
-    get_data_dir().join("configs")
+/// Get the Taker Directory
+pub fn get_taker_dir() -> PathBuf {
+    get_data_dir().join("taker")
+}
+
+/// Get the DNS Directory
+pub fn get_dns_dir() -> PathBuf {
+    get_data_dir().join("dns")
 }
 
 /// Generate an unique identifier from the seedphrase.
@@ -108,14 +134,9 @@ pub fn seed_phrase_to_unique_id(seed: &str) -> String {
 pub fn setup_logger() {
     Once::new().call_once(|| {
         env::set_var("RUST_LOG", "coinswap=info");
-        let mut taker_log_dir = get_data_dir().join("taker").join("debug.log");
-        let mut maker_log_dir = get_data_dir().join("maker").join("debug.log");
-        let mut directory_log_dir = get_data_dir().join("directory").join("debug.log");
-        if cfg!(feature = "integration-test") {
-            taker_log_dir = PathBuf::from("/tmp/taker/debug.log");
-            maker_log_dir = PathBuf::from("/tmp/maker/debug.log");
-            directory_log_dir = PathBuf::from("/tmp/directory/debug.log");
-        }
+        let taker_log_dir = get_taker_dir().join("debug.log");
+        let maker_log_dir = get_maker_dir().join("debug.log");
+        let directory_log_dir = get_dns_dir().join("debug.log");
 
         let stdout = ConsoleAppender::builder().build();
         let taker = FileAppender::builder().build(taker_log_dir).unwrap();
@@ -345,11 +366,11 @@ pub fn write_default_config(path: &PathBuf, toml_data: String) -> std::io::Resul
 }
 
 /// Function to check if tor log contains a pattern
-pub fn monitor_log_for_completion(log_dir: PathBuf, pattern: &str) -> io::Result<()> {
+pub fn monitor_log_for_completion(log_file: &PathBuf, pattern: &str) -> io::Result<()> {
     let mut last_size = 0;
 
     loop {
-        let file = fs::File::open(&log_dir)?;
+        let file = fs::File::open(log_file)?;
         let metadata = file.metadata()?;
         let current_size = metadata.len();
 
@@ -438,6 +459,38 @@ pub fn compute_checksum(descriptor: &str) -> Result<String, WalletError> {
         .collect::<String>();
 
     Ok(checksum_chars)
+}
+
+/// Parse the proxy (Socket:Port) argument from the cli input.
+pub fn parse_proxy_auth(s: &str) -> Result<(String, String), String> {
+    let parts: Vec<_> = s.split(':').collect();
+    if parts.len() != 2 {
+        return Err("Invalid format".to_string());
+    }
+
+    let user = parts[0].to_string();
+    let passwd = parts[1].to_string();
+
+    Ok((user, passwd))
+}
+
+/// Parse the network string for Bitcoin Backend. Used in CLI apps.
+pub fn read_bitcoin_network_string(network: &str) -> Result<Network, String> {
+    match network {
+        "regtest" => Ok(Network::Regtest),
+        "mainnet" => Ok(Network::Bitcoin),
+        "signet" => Ok(Network::Signet),
+        _ => Err("Invalid Bitcoin Network".to_string()),
+    }
+}
+
+/// Parse the network string for Connection Type. Used in CLI apps.
+pub fn read_connection_network_string(network: &str) -> Result<ConnectionType, String> {
+    match network {
+        "clearnet" => Ok(ConnectionType::CLEARNET),
+        "tor" => Ok(ConnectionType::TOR),
+        _ => Err("Invalid Connection Network".to_string()),
+    }
 }
 
 #[cfg(test)]

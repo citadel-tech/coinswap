@@ -41,7 +41,7 @@ fn get_random_tmp_dir() -> PathBuf {
         .take(8)
         .map(char::from)
         .collect();
-    let path = "/tmp/teleport/tests/temp-files/".to_string() + &s;
+    let path = "/tmp/.coinswap/".to_string() + &s;
     PathBuf::from(path)
 }
 
@@ -140,7 +140,7 @@ impl TestFramework {
         let taker_rpc_config = rpc_config.clone();
         let taker = Arc::new(RwLock::new(
             Taker::init(
-                Some(&temp_dir),
+                Some(temp_dir.clone().join("taker")),
                 None,
                 Some(taker_rpc_config),
                 taker_behavior.unwrap_or_default(),
@@ -159,7 +159,7 @@ impl TestFramework {
                 let tor_port = port.0;
                 Arc::new(
                     Maker::init(
-                        Some(&temp_dir),
+                        Some(temp_dir.clone()),
                         Some(maker_id),
                         Some(maker_rpc_config),
                         Some(tor_port),
