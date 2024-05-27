@@ -133,7 +133,7 @@ async fn handle_request(maker: &Arc<Maker>, mut socket: TcpStream) -> Result<(),
 }
 
 pub async fn start_rpc_server_thread(maker: Arc<Maker>) {
-    let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:6103").await.unwrap();
 
     tokio::spawn(async move {
         loop {
