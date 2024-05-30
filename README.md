@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1><img alt="/logo" src="https://raw.githubusercontent.com/utxo-teleport/teleport-transactions/master/assets/logo.png" width="30" style="margin:-5px 5px" />Coinswap</h1>
+<h1>Coinswap</h1>
 
 <p>
     Functioning, minimal-viable binaries and libraries to perform a trustless, p2p <a href="https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964">Maxwell-Belcher Coinswap Protocol</a>.
