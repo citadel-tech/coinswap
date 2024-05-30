@@ -172,7 +172,7 @@ ln -s ../../git_hooks/pre-commit .git/hooks/pre-commit
 
 ## Community
 
-The dev community lurks in a small corner of Discord [here](https://discord.gg/TSSAB3g4Zf) (say holla, if you drop there from this readme).
+The dev community lurks in a Discord [here](https://discord.gg/Wz42hVmrrK).
 
 Dev discussions predominantly happen via FOSS best practices, and by using Github as the Community Forum.
 
