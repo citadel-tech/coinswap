@@ -148,21 +148,22 @@ impl TestFramework {
             )
             .unwrap(),
         ));
-
-        // Create the Makers as per given configuration map.
+        let mut base_rpc_port = 3500; // Random port for RPC connection in tests. (Not used)
+                                      // Create the Makers as per given configuration map.
         let makers = makers_config_map
             .iter()
             .map(|(port, behavior)| {
+                base_rpc_port += 1;
                 let maker_id = "maker".to_string() + &port.0.to_string(); // ex: "maker6102"
                 let maker_rpc_config = rpc_config.clone();
                 thread::sleep(Duration::from_secs(5)); // Sleep for some time avoid resource unavailable error.
-                let tor_port = port.0;
                 Arc::new(
                     Maker::init(
                         Some(temp_dir.clone()),
                         Some(maker_id),
                         Some(maker_rpc_config),
-                        Some(tor_port),
+                        Some(port.0),
+                        Some(base_rpc_port),
                         port.1,
                         Some(connection_type),
                         *behavior,

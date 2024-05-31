@@ -105,6 +105,7 @@ pub struct Maker {
     pub is_setup_complete: RwLock<bool>,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl Maker {
     /// Initializes a Maker structure.
     ///
@@ -122,6 +123,7 @@ impl Maker {
         wallet_file_name: Option<String>,
         rpc_config: Option<RPCConfig>,
         port: Option<u16>,
+        rpc_port: Option<u16>,
         socks_port: Option<u16>,
         connection_type: Option<ConnectionType>,
         behavior: MakerBehavior,
@@ -189,6 +191,10 @@ impl Maker {
             config.port = port;
         }
 
+        if let Some(rpc_port) = rpc_port {
+            config.rpc_port = rpc_port;
+        }
+
         if let Some(socks_port) = socks_port {
             config.socks_port = socks_port;
         }
@@ -196,6 +202,8 @@ impl Maker {
         if let Some(connection_type) = connection_type {
             config.connection_type = connection_type;
         }
+
+        // TODO: Write the modified config back to the file.
 
         log::info!("Initializing wallet sync");
         wallet.sync()?;

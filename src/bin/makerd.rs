@@ -75,6 +75,7 @@ fn main() -> std::io::Result<()> {
             Some(rpc_config),
             None,
             None,
+            None,
             Some(conn_type),
             MakerBehavior::Normal,
         )

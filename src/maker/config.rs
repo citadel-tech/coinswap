@@ -7,8 +7,10 @@ use crate::utill::{get_maker_dir, parse_field, parse_toml, write_default_config,
 /// Maker Configuration, controlling various maker behavior.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MakerConfig {
-    /// Listening port
+    /// Network listening port
     pub port: u16,
+    /// RPC listening port
+    pub rpc_port: u16,
     /// Time interval between connection checks
     pub heart_beat_interval_secs: u64,
     /// Time interval to ping the RPC backend
@@ -47,6 +49,7 @@ impl Default for MakerConfig {
     fn default() -> Self {
         Self {
             port: 6102,
+            rpc_port: 6103,
             heart_beat_interval_secs: 3,
             rpc_ping_interval_secs: 60,
             directory_servers_refresh_interval_secs: 60 * 60 * 12, //12 Hours
@@ -103,6 +106,11 @@ impl MakerConfig {
         Ok(MakerConfig {
             port: parse_field(maker_config_section.get("port"), default_config.port)
                 .unwrap_or(default_config.port),
+            rpc_port: parse_field(
+                maker_config_section.get("rpc_port"),
+                default_config.rpc_port,
+            )
+            .unwrap_or(default_config.rpc_port),
             heart_beat_interval_secs: parse_field(
                 maker_config_section.get("heart_beat_interval_secs"),
                 default_config.heart_beat_interval_secs,
@@ -190,6 +198,7 @@ fn write_default_maker_config(config_path: &PathBuf) {
         "\
             [maker_config]\n\
             port = 6102\n\
+            rpc_port = 6103\n\
             heart_beat_interval_secs = 3\n\
             rpc_ping_interval_secs = 60\n\
             directory_servers_refresh_interval_secs = 43200\n\
@@ -235,6 +244,7 @@ mod tests {
         let contents = r#"
             [maker_config]
             port = 6102
+            rpc_port = 6103
             heart_beat_interval_secs = 3
             rpc_ping_interval_secs = 60
             watchtower_ping_interval_secs = 300
