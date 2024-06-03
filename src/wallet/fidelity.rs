@@ -9,7 +9,7 @@ use bitcoin::{
     absolute::LockTime,
     bip32::{ChildNumber, DerivationPath},
     hashes::{sha256d, Hash},
-    opcodes,
+    opcodes::all::{OP_CHECKSIGVERIFY, OP_CLTV},
     script::{Builder, Instruction},
     secp256k1::{Keypair, Message, Secp256k1},
     transaction::Version,
@@ -80,13 +80,23 @@ pub enum FidelityError {
 // ------- Fidelity Helper Scripts -------------
 
 /// Create a Fidelity Timelocked redeemscript.
+/// Redeem script used
+/// Old script: <locktime> <OP_CLTV> <OP_DROP> <pubkey> <OP_CHECKSIG>
+/// The new script drops the extra byte <OP_DROP>
+/// New script: <pubkey> <OP_CHECKSIGVERIFY> <locktime> <OP_CLTV>
 pub fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> ScriptBuf {
+    // Builder::new()
+    //     .push_lock_time(*lock_time)
+    //     .push_opcode(opcodes::all::OP_CLTV)
+    //     .push_opcode(opcodes::all::OP_DROP)
+    //     .push_key(pubkey)
+    //     .push_opcode(opcodes::all::OP_CHECKSIG)
+    //     .into_script()
     Builder::new()
-        .push_lock_time(*lock_time)
-        .push_opcode(opcodes::all::OP_CLTV)
-        .push_opcode(opcodes::all::OP_DROP)
         .push_key(pubkey)
-        .push_opcode(opcodes::all::OP_CHECKSIG)
+        .push_opcode(OP_CHECKSIGVERIFY)
+        .push_lock_time(*lock_time)
+        .push_opcode(OP_CLTV)
         .into_script()
 }
 
@@ -95,7 +105,10 @@ pub fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> Script
 pub fn read_locktime_from_fidelity_script(
     redeemscript: &ScriptBuf,
 ) -> Result<LockTime, FidelityError> {
-    if let Some(Ok(Instruction::PushBytes(locktime_bytes))) = redeemscript.instructions().next() {
+    // let locktime = redeemscript.bytes();
+    // println!("Lets check the redeem script: {:?}", locktime);
+    println!("{:?}", redeemscript.instructions());
+    if let Some(Ok(Instruction::PushBytes(locktime_bytes))) = redeemscript.instructions().nth(2) {
         let mut u4slice: [u8; 4] = [0; 4];
         u4slice[..locktime_bytes.len()].copy_from_slice(locktime_bytes.as_bytes());
         Ok(LockTime::from_consensus(u32::from_le_bytes(u4slice)))
@@ -107,7 +120,7 @@ pub fn read_locktime_from_fidelity_script(
 #[allow(unused)]
 /// Reads the public key from a fidelity redeemscript.
 fn read_pubkey_from_fidelity_script(redeemscript: &ScriptBuf) -> Result<PublicKey, FidelityError> {
-    if let Some(Ok(Instruction::PushBytes(pubkey_bytes))) = redeemscript.instructions().nth(3) {
+    if let Some(Ok(Instruction::PushBytes(pubkey_bytes))) = redeemscript.instructions().next() {
         Ok(PublicKey::from_slice(pubkey_bytes.as_bytes()).unwrap())
     } else {
         Err(FidelityError::WrongScriptType)
