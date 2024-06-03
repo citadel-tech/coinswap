@@ -31,8 +31,7 @@ use crate::{
         Hash160,
     },
     utill::{
-        get_config_dir, get_wallet_dir, redeemscript_to_scriptpubkey, seed_phrase_to_unique_id,
-        ConnectionType,
+        get_maker_dir, redeemscript_to_scriptpubkey, seed_phrase_to_unique_id, ConnectionType,
     },
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
 };
@@ -106,6 +105,7 @@ pub struct Maker {
     pub is_setup_complete: RwLock<bool>,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl Maker {
     /// Initializes a Maker structure.
     ///
@@ -119,10 +119,11 @@ impl Maker {
     ///
     /// behavior: Defines special Maker behavior. Only applicable in integration-tests.
     pub fn init(
-        data_dir: Option<&PathBuf>,
+        data_dir: Option<PathBuf>,
         wallet_file_name: Option<String>,
         rpc_config: Option<RPCConfig>,
         port: Option<u16>,
+        rpc_port: Option<u16>,
         socks_port: Option<u16>,
         connection_type: Option<ConnectionType>,
         behavior: MakerBehavior,
@@ -135,16 +136,23 @@ impl Maker {
         };
 
         // Get provided data directory or the default data directory.
-        let (wallets_dir, config_dir) = data_dir
-            .map_or((get_wallet_dir(), get_config_dir()), |d| {
-                (d.join("wallets"), d.join("configs"))
-            });
+        let data_dir = if cfg!(feature = "integration-test") {
+            // We only append port number in data-dir for integration test
+            let port = port.expect("port value expected in Int tests");
+            data_dir.map_or(get_maker_dir().join(port.to_string()), |d| {
+                d.join("maker").join(port.to_string())
+            })
+        } else {
+            data_dir.unwrap_or(get_maker_dir())
+        };
+
+        let wallet_dir = data_dir.join("wallets");
 
         let mut rpc_config = rpc_config.unwrap_or_default();
 
         // Load/Create wallet depending on if a wallet with wallet_file_name exists.
         let mut wallet = if let Some(file_name) = wallet_file_name {
-            let wallet_path = wallets_dir.join(&file_name);
+            let wallet_path = wallet_dir.join(&file_name);
             rpc_config.wallet_name = file_name;
             if wallet_path.exists() {
                 // Try loading wallet
@@ -168,7 +176,7 @@ impl Maker {
             // File names are unique for default wallets
             let unique_id = seed_phrase_to_unique_id(&seedphrase);
             let file_name = unique_id + "-maker";
-            let wallet_path = wallets_dir.join(&file_name);
+            let wallet_path = wallet_dir.join(&file_name);
             rpc_config.wallet_name = file_name;
 
             let wallet = Wallet::init(&wallet_path, &rpc_config, seedphrase, "".to_string())?;
@@ -177,10 +185,14 @@ impl Maker {
         };
 
         // If config file doesn't exist, default config will be loaded.
-        let mut config = MakerConfig::new(Some(&config_dir.join("maker.toml")))?;
+        let mut config = MakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
         if let Some(port) = port {
             config.port = port;
+        }
+
+        if let Some(rpc_port) = rpc_port {
+            config.rpc_port = rpc_port;
         }
 
         if let Some(socks_port) = socks_port {
@@ -190,6 +202,8 @@ impl Maker {
         if let Some(connection_type) = connection_type {
             config.connection_type = connection_type;
         }
+
+        // TODO: Write the modified config back to the file.
 
         log::info!("Initializing wallet sync");
         wallet.sync()?;

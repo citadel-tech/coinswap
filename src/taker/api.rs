@@ -160,7 +160,7 @@ impl Taker {
     ///
     /// behavior: Defines special Maker behavior. Only applicable in integration-tests.
     pub fn init(
-        data_dir: Option<&PathBuf>,
+        data_dir: Option<PathBuf>,
         wallet_file_name: Option<String>,
         rpc_config: Option<RPCConfig>,
         behavior: TakerBehavior,
@@ -174,10 +174,8 @@ impl Taker {
         };
 
         // Get provided data directory or the default data directory.
-        let (wallets_dir, config_dir) = data_dir
-            .map_or((get_wallet_dir(), get_config_dir()), |d| {
-                (d.join("wallets"), d.join("configs"))
-            });
+        let data_dir = data_dir.unwrap_or(get_taker_dir());
+        let wallets_dir = data_dir.join("wallets");
 
         let mut rpc_config = rpc_config.unwrap_or_default();
 
@@ -216,7 +214,7 @@ impl Taker {
         };
 
         // If config file doesn't exist, default config will be loaded.
-        let mut config = TakerConfig::new(Some(&config_dir.join("taker.toml")))?;
+        let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
         if let Some(connection_type) = connection_type {
             config.connection_type = connection_type;
@@ -272,7 +270,8 @@ impl Taker {
 
                     thread::sleep(Duration::from_secs(10));
 
-                    if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
+                    if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%")
+                    {
                         log::error!("Error monitoring taker log file: {}", e);
                     }
 

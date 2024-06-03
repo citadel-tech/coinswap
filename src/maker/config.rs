@@ -2,13 +2,15 @@
 
 use std::{io, path::PathBuf};
 
-use crate::utill::{get_config_dir, parse_field, parse_toml, write_default_config, ConnectionType};
+use crate::utill::{get_maker_dir, parse_field, parse_toml, write_default_config, ConnectionType};
 
 /// Maker Configuration, controlling various maker behavior.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MakerConfig {
-    /// Listening port
+    /// Network listening port
     pub port: u16,
+    /// RPC listening port
+    pub rpc_port: u16,
     /// Time interval between connection checks
     pub heart_beat_interval_secs: u64,
     /// Time interval to ping the RPC backend
@@ -17,8 +19,6 @@ pub struct MakerConfig {
     pub directory_servers_refresh_interval_secs: u64,
     /// Time interval to close a connection if no response is received
     pub idle_connection_timeout: u64,
-    /// Onion address of the Maker
-    pub onion_addrs: String,
     /// Absolute coinswap fee
     pub absolute_fee_sats: u64,
     /// Fee rate per swap amount in ppb.
@@ -49,11 +49,11 @@ impl Default for MakerConfig {
     fn default() -> Self {
         Self {
             port: 6102,
+            rpc_port: 6103,
             heart_beat_interval_secs: 3,
             rpc_ping_interval_secs: 60,
             directory_servers_refresh_interval_secs: 60 * 60 * 12, //12 Hours
             idle_connection_timeout: 300,
-            onion_addrs: "myhiddenserviceaddress.onion".to_string(),
             absolute_fee_sats: 1000,
             amount_relative_fee_ppb: 10_000_000,
             time_relative_fee_ppb: 100_000,
@@ -80,11 +80,11 @@ impl MakerConfig {
     /// For reference of default config checkout `./maker.toml` in repo folder.
     ///
     /// Default data-dir for linux: `~/.coinswap/`
-    /// Default config locations: `~/.coinswap/configs/maker.toml`.
+    /// Default config locations, for taker for ex: `~/.coinswap/taker/config.toml`.
     pub fn new(config_path: Option<&PathBuf>) -> io::Result<Self> {
         let default_config = Self::default();
 
-        let default_config_path = get_config_dir().join("maker.toml");
+        let default_config_path = get_maker_dir().join("maker.toml");
         let config_path = config_path.unwrap_or(&default_config_path);
 
         if !config_path.exists() {
@@ -106,6 +106,11 @@ impl MakerConfig {
         Ok(MakerConfig {
             port: parse_field(maker_config_section.get("port"), default_config.port)
                 .unwrap_or(default_config.port),
+            rpc_port: parse_field(
+                maker_config_section.get("rpc_port"),
+                default_config.rpc_port,
+            )
+            .unwrap_or(default_config.rpc_port),
             heart_beat_interval_secs: parse_field(
                 maker_config_section.get("heart_beat_interval_secs"),
                 default_config.heart_beat_interval_secs,
@@ -126,10 +131,6 @@ impl MakerConfig {
                 default_config.idle_connection_timeout,
             )
             .unwrap_or(default_config.idle_connection_timeout),
-            onion_addrs: maker_config_section
-                .get("onion_addrs")
-                .map(|s| s.to_string())
-                .unwrap_or(default_config.onion_addrs),
             absolute_fee_sats: parse_field(
                 maker_config_section.get("absolute_fee_sats"),
                 default_config.absolute_fee_sats,
@@ -197,6 +198,7 @@ fn write_default_maker_config(config_path: &PathBuf) {
         "\
             [maker_config]\n\
             port = 6102\n\
+            rpc_port = 6103\n\
             heart_beat_interval_secs = 3\n\
             rpc_ping_interval_secs = 60\n\
             directory_servers_refresh_interval_secs = 43200\n\
@@ -220,8 +222,6 @@ fn write_default_maker_config(config_path: &PathBuf) {
 
 #[cfg(test)]
 mod tests {
-    use crate::utill::get_home_dir;
-
     use super::*;
     use std::{
         fs::{self, File},
@@ -244,6 +244,7 @@ mod tests {
         let contents = r#"
             [maker_config]
             port = 6102
+            rpc_port = 6103
             heart_beat_interval_secs = 3
             rpc_ping_interval_secs = 60
             watchtower_ping_interval_secs = 300
@@ -300,7 +301,7 @@ mod tests {
 
     #[test]
     fn test_missing_file() {
-        let config_path = get_home_dir().join("maker.toml");
+        let config_path = get_maker_dir().join("maker.toml");
         let config = MakerConfig::new(Some(&config_path)).unwrap();
         remove_temp_config(&config_path);
         assert_eq!(config, MakerConfig::default());
