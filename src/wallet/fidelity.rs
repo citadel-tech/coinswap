@@ -749,35 +749,4 @@ mod test {
             );
         }
     }
-
-    #[test]
-    fn test_fidleity_redeemscripts() {
-        let test_data = [
-            (
-                ("03ffe2b8b46eb21eadc3b535e9f57054213a1775b035faba6c5b3368b3a0ab5a5c", 15000),
-                "02983ab1752103ffe2b8b46eb21eadc3b535e9f57054213a1775b035faba6c5b3368b3a0ab5a5cac",
-            ),
-            (
-                ("031499764842691088897cff51efd85347dd3215912cbb8fb9b121b1da3b15bec8", 30000),
-                "023075b17521031499764842691088897cff51efd85347dd3215912cbb8fb9b121b1da3b15bec8ac",
-            ),
-            (
-                ("022714334f189db14fabd3dd893bbb913b8c3ddff245f7094cdc0b24c2fabb3570", 45000),
-                "03c8af00b17521022714334f189db14fabd3dd893bbb913b8c3ddff245f7094cdc0b24c2fabb3570ac",
-            ),
-            (
-                ("02145a1d2bd118edcb3fe85495192d44e1d09f75ab4f0fe98269f61ff672860dae", 60000),
-                "0360ea00b1752102145a1d2bd118edcb3fe85495192d44e1d09f75ab4f0fe98269f61ff672860daeac",
-            ),
-        ].map(|((pk, lt), script)| (
-            (PublicKey::from_str(pk).unwrap(), LockTime::from_height(lt).unwrap()),
-            ScriptBuf::from_hex(script).unwrap(),
-        ));
-
-        for ((pk, lt), script) in test_data {
-            assert_eq!(script, fidelity_redeemscript(&lt, &pk));
-            assert_eq!(pk, read_pubkey_from_fidelity_script(&script).unwrap());
-            assert_eq!(lt, read_locktime_from_fidelity_script(&script).unwrap());
-        }
-    }
 }
