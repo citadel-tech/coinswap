@@ -105,9 +105,6 @@ pub fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> Script
 pub fn read_locktime_from_fidelity_script(
     redeemscript: &ScriptBuf,
 ) -> Result<LockTime, FidelityError> {
-    // let locktime = redeemscript.bytes();
-    // println!("Lets check the redeem script: {:?}", locktime);
-    println!("{:?}", redeemscript.instructions());
     if let Some(Ok(Instruction::PushBytes(locktime_bytes))) = redeemscript.instructions().nth(2) {
         let mut u4slice: [u8; 4] = [0; 4];
         u4slice[..locktime_bytes.len()].copy_from_slice(locktime_bytes.as_bytes());
@@ -425,7 +422,7 @@ impl Wallet {
             }
         };
 
-        let cert_expiry = self.get_fidelity_expriy()?;
+        let cert_expiry = self.get_fidelity_expiry()?;
 
         let bond = FidelityBond {
             outpoint: OutPoint::new(txid, 0),
@@ -591,14 +588,14 @@ impl Wallet {
     }
 
     /// Calculate the expiry value. This depends on the current block height.
-    pub fn get_fidelity_expriy(&self) -> Result<u64, WalletError> {
+    pub fn get_fidelity_expiry(&self) -> Result<u64, WalletError> {
         let current_height = self.rpc.get_block_count()?;
         Ok((current_height + 2) /* safety buffer */ / 2016 + 5)
     }
 
     /// Extend the expiry of a fidelity bond. This is useful for bonds which are close to their expiry.
     pub fn extend_fidelity_expiry(&mut self, index: u32) -> Result<(), WalletError> {
-        let cert_expiry = self.get_fidelity_expriy()?;
+        let cert_expiry = self.get_fidelity_expiry()?;
         let (bond, _, _) = self
             .store
             .fidelity_bond
