@@ -27,6 +27,7 @@ pub struct TakerConfig {
     pub directory_server_onion_address: String,
     pub directory_server_clearnet_address: String,
     pub connection_type: ConnectionType,
+    pub rpc_port: u16,
 }
 
 impl Default for TakerConfig {
@@ -47,6 +48,7 @@ impl Default for TakerConfig {
             directory_server_onion_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
             directory_server_clearnet_address: "127.0.0.1:8080".to_string(),
             connection_type: ConnectionType::TOR,
+            rpc_port: 8081,
         }
     }
 }
@@ -155,6 +157,11 @@ impl TakerConfig {
                 default_config.connection_type,
             )
             .unwrap_or(default_config.connection_type),
+            rpc_port: parse_field(
+                taker_config_section.get("rpc_port"),
+                default_config.rpc_port,
+            )
+            .unwrap_or(default_config.rpc_port),
         })
     }
 }
@@ -177,7 +184,8 @@ fn write_default_taker_config(config_path: &PathBuf) {
                         socks_port = 19050\n\
                         directory_server_onion_address = directoryhiddenserviceaddress.onion:8080\n\
                         directory_server_clearnet_address = 127.0.0.1:8080\n\
-                        connection_type = tor\n
+                        connection_type = tor\n\
+                        rpc_port = 8081\n
                         ",
     );
     write_default_config(config_path, config_string).unwrap();
