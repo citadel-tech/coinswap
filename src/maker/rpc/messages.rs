@@ -7,11 +7,11 @@ pub enum RpcMsgReq {
     SeedUtxo,
     SwapUtxo,
     ContractUtxo,
-    FidleityUtxo,
+    FidelityUtxo,
     SeedBalance,
     SwapBalance,
-    ContratBalance,
-    FidleityBalance,
+    ContractBalance,
+    FidelityBalance,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

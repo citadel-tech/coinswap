@@ -34,15 +34,15 @@ enum Commands {
     /// Returns a list of live contract utxos
     ContractUtxo,
     /// Returns a list of fidelity utxos
-    FidleityUtxo,
+    FidelityUtxo,
     /// Returns the total seed balance
     SeedBalance,
     /// Returns the total swap coin balance
     SwapBalance,
     /// Returns the total live contract balance
-    ContratBalance,
+    ContractBalance,
     /// Returns the total fidelity balance
-    FidleityBalance,
+    FidelityBalance,
 }
 
 #[tokio::main]
@@ -57,14 +57,14 @@ async fn main() -> Result<(), MakerError> {
         Commands::ContractUtxo => {
             send_rpc_req(&RpcMsgReq::ContractUtxo).await?;
         }
-        Commands::ContratBalance => {
-            send_rpc_req(&RpcMsgReq::ContratBalance).await?;
+        Commands::ContractBalance => {
+            send_rpc_req(&RpcMsgReq::ContractBalance).await?;
         }
-        Commands::FidleityBalance => {
-            send_rpc_req(&RpcMsgReq::FidleityBalance).await?;
+        Commands::FidelityBalance => {
+            send_rpc_req(&RpcMsgReq::FidelityBalance).await?;
         }
-        Commands::FidleityUtxo => {
-            send_rpc_req(&RpcMsgReq::FidleityUtxo).await?;
+        Commands::FidelityUtxo => {
+            send_rpc_req(&RpcMsgReq::FidelityUtxo).await?;
         }
         Commands::SeedBalance => {
             send_rpc_req(&RpcMsgReq::SeedBalance).await?;
