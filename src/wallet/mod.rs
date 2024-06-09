@@ -8,6 +8,7 @@ mod funding;
 mod rpc;
 mod storage;
 mod swapcoin;
+mod cbf;
 
 pub use api::{DisplayAddressType, UTXOSpendInfo, Wallet};
 pub use direct_send::{CoinToSpend, Destination, SendAmount};
