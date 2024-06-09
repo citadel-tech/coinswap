@@ -37,7 +37,7 @@ pub enum CbfSyncError {
     NakamotoError(nakamoto::client::Error),
     WalletError(crate::wallet::error::WalletError),
 }
-
+ 
 impl From<nakamoto::client::Error> for CbfSyncError {
     fn from(err: nakamoto::client::Error) -> Self {
         CbfSyncError::NakamotoError(err)
@@ -213,19 +213,26 @@ impl CbfBlockchain {
         Ok(relevant_outputs)
     }
 
-    fn find_relevant_inputs(
-        &self,
-        input_outpoints: &[OutPoint],
-    ) -> Result<Vec<OutPoint>, CbfSyncError> {
-        let mut relevant_inputs = Vec::new();
+    fn update_wallet_with_tx(
+        &mut self,
+        transaction: &Transaction,
+        relevant_outputs: &[(u32, Script)],
+        relevant_inputs: &[OutPoint],
+    ) -> Result<(), CbfSyncError> {
+        let txid = transaction.txid();
 
-        for outpoint in input_outpoints {
-            if self.wallet.is_utxo_tracked(outpoint)? {
-                relevant_inputs.push(*outpoint);
-            }
+        for (vout, script) in relevant_outputs {
+            let amount = transaction.output[*vout as usize].value;
+            self.wallet.add_utxo(OutPoint { txid, vout: *vout }, amount, script.clone())?;
         }
-        Ok(relevant_inputs)
-    }
 
-    //fn update_wallet : TO BE IMPLEMTED
+        for outpoint in relevant_inputs {
+            self.wallet.remove_utxo(outpoint)?;
+        }
+
+        self.wallet.store_transaction(transaction.clone())?;
+        // functions store_transaction, remove_utxo,add_utxo, is_script_tracked, is_utxo_tracked needs to be added.
+        // And we also need to define the methods to add scripts to track and then get them back.
+        Ok(())
+    }
 }
