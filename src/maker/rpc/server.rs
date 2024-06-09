@@ -59,7 +59,7 @@ async fn handle_request(maker: &Arc<Maker>, mut socket: TcpStream) -> Result<(),
                     log::info!("Error sending RPC response {:?}", e);
                 };
             }
-            RpcMsgReq::FidleityUtxo => {
+            RpcMsgReq::FidelityUtxo => {
                 let utxos = maker
                     .get_wallet()
                     .read()?
@@ -98,14 +98,14 @@ async fn handle_request(maker: &Arc<Maker>, mut socket: TcpStream) -> Result<(),
                     log::info!("Error sending RPC response {:?}", e);
                 };
             }
-            RpcMsgReq::ContratBalance => {
+            RpcMsgReq::ContractBalance => {
                 let balance = maker.get_wallet().read()?.balance_live_contract(None)?;
                 let resp = RpcMsgResp::ContractBalanceResp(balance.to_sat());
                 if let Err(e) = send_message(&mut socket_writer, &resp).await {
                     log::info!("Error sending RPC response {:?}", e);
                 };
             }
-            RpcMsgReq::FidleityBalance => {
+            RpcMsgReq::FidelityBalance => {
                 let balance = maker.get_wallet().read()?.balance_fidelity_bonds(None)?;
                 let resp = RpcMsgResp::ContractBalanceResp(balance.to_sat());
                 if let Err(e) = send_message(&mut socket_writer, &resp).await {
