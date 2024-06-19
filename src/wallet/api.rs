@@ -1003,7 +1003,7 @@ impl Wallet {
                         compressed: true,
                         inner: privkey.public_key(&secp),
                     };
-                    let scriptcode = ScriptBuf::new_p2pkh(&pubkey.pubkey_hash());
+                    let scriptcode = ScriptBuf::new_p2wpkh(&pubkey.wpubkey_hash().unwrap());
                     let sighash = SighashCache::new(&tx_clone)
                         .p2wpkh_signature_hash(
                             ix,
