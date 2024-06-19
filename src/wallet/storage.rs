@@ -5,7 +5,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use bip39::Mnemonic;
-use bitcoin::{bip32::ExtendedPrivKey, Network, OutPoint, ScriptBuf};
+use bitcoin::{bip32::Xpriv, Network, OutPoint, ScriptBuf};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::OpenOptions,
@@ -24,7 +24,7 @@ pub struct WalletStore {
     /// Network the wallet operates on.
     pub(crate) network: Network,
     /// The master key for the wallet.
-    pub(super) master_key: ExtendedPrivKey,
+    pub(super) master_key: Xpriv,
     /// The external index for the wallet.
     pub(super) external_index: u32,
     /// The maximum size for an offer in the wallet.
@@ -55,7 +55,7 @@ impl WalletStore {
     ) -> Result<Self, WalletError> {
         let mnemonic = Mnemonic::parse(seedphrase)?;
         let seed = mnemonic.to_seed(passphrase);
-        let master_key = ExtendedPrivKey::new_master(network, &seed)?;
+        let master_key = Xpriv::new_master(network, &seed)?;
 
         let store = Self {
             file_name,

@@ -6,8 +6,8 @@
 use std::{collections::HashMap, iter};
 
 use bitcoin::{
-    absolute::LockTime, Address, Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
-    Txid, Witness,
+    absolute::LockTime, transaction::Version, Address, Amount, OutPoint, ScriptBuf, Sequence,
+    Transaction, TxIn, TxOut, Txid, Witness,
 };
 
 use bitcoind::bitcoincore_rpc::{json::CreateRawTransactionInput, RpcApi};
@@ -152,13 +152,13 @@ impl Wallet {
             });
             let change_amount = total_input_amount.checked_sub(remaining + fee);
             let mut tx_outs = vec![TxOut {
-                value: output_value,
+                value: Amount::from_sat(output_value),
                 script_pubkey: address.script_pubkey(),
             }];
 
             if let Some(change) = change_amount {
                 tx_outs.push(TxOut {
-                    value: change.to_sat(),
+                    value: change,
                     script_pubkey: change_address.script_pubkey(),
                 });
             }
@@ -175,7 +175,7 @@ impl Wallet {
                 input: tx_inputs,
                 output: tx_outs,
                 lock_time: LockTime::ZERO,
-                version: 2,
+                version: Version::TWO,
             };
             let mut input_info = selected_utxo
                 .iter()
@@ -237,7 +237,7 @@ impl Wallet {
             let mut tx_outs = Vec::new();
             for (address, value) in outputs {
                 tx_outs.push(TxOut {
-                    value,
+                    value: Amount::from_sat(value),
                     script_pubkey: address.script_pubkey(),
                 });
             }
@@ -245,11 +245,11 @@ impl Wallet {
                 input: tx_inputs,
                 output: tx_outs,
                 lock_time: LockTime::ZERO,
-                version: 2,
+                version: Version::TWO,
             };
             self.sign_transaction(&mut funding_tx, &mut input_info)?;
 
-            leftover_coinswap_amount -= funding_tx.output[0].value;
+            leftover_coinswap_amount -= funding_tx.output[0].value.to_sat();
 
             total_miner_fee += fee_rate;
 
@@ -285,7 +285,7 @@ impl Wallet {
         let mut tx_outs = Vec::new();
         for (address, value) in outputs {
             tx_outs.push(TxOut {
-                value,
+                value: Amount::from_sat(value),
                 script_pubkey: address.script_pubkey(),
             });
         }
@@ -293,12 +293,12 @@ impl Wallet {
             input: tx_inputs,
             output: tx_outs,
             lock_time: LockTime::ZERO,
-            version: 2,
+            version: Version::TWO,
         };
         let mut info = input_info.iter().cloned();
         self.sign_transaction(&mut funding_tx, &mut info)?;
 
-        leftover_coinswap_amount -= funding_tx.output[0].value;
+        leftover_coinswap_amount -= funding_tx.output[0].value.to_sat();
 
         total_miner_fee += fee_rate;
 
@@ -321,19 +321,19 @@ impl Wallet {
         for (address, value) in outputs {
             change_amount -= value;
             tx_outs.push(TxOut {
-                value,
+                value: Amount::from_sat(value),
                 script_pubkey: address.script_pubkey(),
             });
         }
         tx_outs.push(TxOut {
-            value: change_amount,
+            value: Amount::from_sat(change_amount),
             script_pubkey: change_address.script_pubkey(),
         });
         let mut funding_tx = Transaction {
             input: tx_inputs,
             output: tx_outs,
             lock_time: LockTime::ZERO,
-            version: 2,
+            version: Version::TWO,
         };
         let mut info = iter::once(self.get_utxo((first_txid, first_vout))?.unwrap());
         self.sign_transaction(&mut funding_tx, &mut info)?;
@@ -381,13 +381,13 @@ impl Wallet {
         let change_amount = total_input_amount.checked_sub(remaining + fee);
 
         let mut tx_outs = vec![TxOut {
-            value: coinswap_amount,
+            value: Amount::from_sat(coinswap_amount),
             script_pubkey: destinations[0].script_pubkey(),
         }];
 
         if let Some(change) = change_amount {
             tx_outs.push(TxOut {
-                value: change.to_sat(),
+                value: change,
                 script_pubkey: change_address.script_pubkey(),
             });
         }
@@ -406,7 +406,7 @@ impl Wallet {
             input: tx_inputs,
             output: tx_outs,
             lock_time: LockTime::ZERO,
-            version: 2,
+            version: Version::TWO,
         };
 
         let mut input_info = selected_utxo

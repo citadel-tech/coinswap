@@ -6,7 +6,7 @@ use bitcoin::Network;
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 use serde_json::{json, Value};
 
-use crate::{utill::str_to_bitcoin_network, wallet::api::KeychainKind};
+use crate::wallet::api::KeychainKind;
 
 use serde::Deserialize;
 
@@ -50,7 +50,7 @@ impl TryFrom<&RPCConfig> for Client {
             .as_str(),
             config.auth.clone(),
         )?;
-        if config.network != str_to_bitcoin_network(rpc.get_blockchain_info()?.chain.as_str()) {
+        if config.network != rpc.get_blockchain_info()?.chain {
             return Err(WalletError::Protocol(
                 "RPC Network not mathcing with RPCConfig".to_string(),
             ));

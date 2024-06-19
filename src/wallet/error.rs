@@ -14,9 +14,8 @@ pub enum WalletError {
     BIP39(bip39::Error),
     Contract(ContractError),
     Fidelity(FidelityError),
-    Locktime(bitcoin::blockdata::locktime::absolute::Error),
+    Locktime(bitcoin::blockdata::locktime::absolute::ConversionError),
     Secp(bitcoin::secp256k1::Error),
-    Address(bitcoin::address::Error),
 }
 
 impl From<std::io::Error> for WalletError {
@@ -61,8 +60,8 @@ impl From<FidelityError> for WalletError {
     }
 }
 
-impl From<bitcoin::blockdata::locktime::absolute::Error> for WalletError {
-    fn from(value: bitcoin::blockdata::locktime::absolute::Error) -> Self {
+impl From<bitcoin::blockdata::locktime::absolute::ConversionError> for WalletError {
+    fn from(value: bitcoin::blockdata::locktime::absolute::ConversionError) -> Self {
         Self::Locktime(value)
     }
 }
@@ -70,11 +69,5 @@ impl From<bitcoin::blockdata::locktime::absolute::Error> for WalletError {
 impl From<bitcoin::secp256k1::Error> for WalletError {
     fn from(value: bitcoin::secp256k1::Error) -> Self {
         Self::Secp(value)
-    }
-}
-
-impl From<bitcoin::address::Error> for WalletError {
-    fn from(value: bitcoin::address::Error) -> Self {
-        Self::Address(value)
     }
 }

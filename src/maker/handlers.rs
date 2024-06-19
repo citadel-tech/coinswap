@@ -282,10 +282,10 @@ impl Maker {
 
             let receiver_contract_tx = create_receivers_contract_tx(
                 OutPoint {
-                    txid: funding_info.funding_tx.txid(),
+                    txid: funding_info.funding_tx.compute_txid(),
                     vout: funding_output_index,
                 },
-                funding_output.value,
+                funding_output.value.to_sat(),
                 &funding_info.contract_redeemscript,
             );
 
@@ -315,7 +315,7 @@ impl Maker {
                 receiver_contract_tx.clone(),
                 funding_info.contract_redeemscript.clone(),
                 hashlock_privkey,
-                funding_output.value,
+                funding_output.value.to_sat(),
             );
             if !connection_state
                 .incoming_swapcoins
@@ -338,7 +338,7 @@ impl Maker {
                 .output
                 .get(index as usize)
                 .expect("output at index expected");
-            acc + txout.value
+            acc + txout.value.to_sat()
         });
 
         let calc_coinswap_fees = calculate_coinswap_fee(
@@ -383,7 +383,7 @@ impl Maker {
             self.config.port,
             my_funding_txes
                 .iter()
-                .map(|tx| tx.txid())
+                .map(|tx| tx.compute_txid())
                 .collect::<Vec<_>>()
         );
         log::debug!(
@@ -506,7 +506,7 @@ impl Maker {
                 .rpc
                 .send_raw_transaction(my_funding_tx)
                 .map_err(|e| MakerError::Wallet(e.into()))?;
-            assert_eq!(txid, my_funding_tx.txid());
+            assert_eq!(txid, my_funding_tx.compute_txid());
             my_funding_txids.push(txid);
         }
         log::info!(

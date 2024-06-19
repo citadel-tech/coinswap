@@ -11,7 +11,8 @@ use bitcoin::{
     hashes::{sha256d, Hash},
     opcodes,
     script::{Builder, Instruction},
-    secp256k1::{KeyPair, Message, Secp256k1},
+    secp256k1::{Keypair, Message, Secp256k1},
+    transaction::Version,
     Address, Amount, OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid,
     Witness,
 };
@@ -202,18 +203,17 @@ impl Wallet {
             .map(|(i, _)| *i))
     }
     /// Get the [KeyPair] for the fidelity bond at given index.
-    pub fn get_fidelity_keypair(&self, index: u32) -> Result<KeyPair, WalletError> {
+    pub fn get_fidelity_keypair(&self, index: u32) -> Result<Keypair, WalletError> {
         let secp = Secp256k1::new();
 
         let derivation_path = DerivationPath::from_str(FIDELITY_DERIVATION_PATH)?;
 
-        let child_index = ChildNumber::Normal { index };
+        let child_derivation_path = derivation_path.child(ChildNumber::Normal { index });
 
         Ok(self
             .store
             .master_key
-            .derive_priv(&secp, &derivation_path)?
-            .ckd_priv(&secp, child_index)?
+            .derive_priv(&secp, &child_derivation_path)?
             .to_keypair(&secp))
     }
 
@@ -364,14 +364,14 @@ impl Wallet {
             .collect::<Vec<_>>();
 
         let mut tx_outs = vec![TxOut {
-            value: amount.to_sat(),
+            value: amount,
             script_pubkey: fidelity_addr.script_pubkey(),
         }];
 
         if let Some(change) = change_amount {
             let change_addrs = self.get_next_internal_addresses(1)?[0].script_pubkey();
             tx_outs.push(TxOut {
-                value: change.to_sat(),
+                value: change,
                 script_pubkey: change_addrs,
             });
         }
@@ -382,7 +382,7 @@ impl Wallet {
             input: tx_inputs,
             output: tx_outs,
             lock_time: anti_fee_snipping_locktime,
-            version: 2, // anti-fee-snipping
+            version: Version::TWO, // anti-fee-snipping
         };
 
         let mut input_info = selected_utxo
@@ -465,14 +465,14 @@ impl Wallet {
 
         let txout = TxOut {
             script_pubkey: change_addr.script_pubkey(),
-            value: bond.amount - fee,
+            value: Amount::from_sat(bond.amount - fee),
         };
 
         let mut tx = Transaction {
             input: vec![txin],
             output: vec![txout],
             lock_time: bond.lock_time,
-            version: 2,
+            version: Version::TWO,
         };
 
         let utxo_spend_info = UTXOSpendInfo::FidelityBondCoin {
@@ -552,7 +552,7 @@ impl Wallet {
 
         let secp = Secp256k1::new();
         let cert_sig = secp.sign_ecdsa(
-            &Message::from_slice(cert_hash.as_byte_array())?,
+            &Message::from_digest_slice(cert_hash.as_byte_array())?,
             &fidelity_privkey,
         );
 
@@ -574,7 +574,7 @@ impl Wallet {
         }
 
         let cert_message =
-            Message::from_slice(proof.bond.generate_cert_hash(onion_addr).as_byte_array())?;
+            Message::from_digest_slice(proof.bond.generate_cert_hash(onion_addr).as_byte_array())?;
 
         let secp = Secp256k1::new();
 

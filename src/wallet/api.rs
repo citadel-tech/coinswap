@@ -8,7 +8,7 @@ use std::{convert::TryFrom, fs, path::PathBuf, str::FromStr};
 use std::collections::{HashMap, HashSet};
 
 use bitcoin::{
-    bip32::{ChildNumber, DerivationPath, ExtendedPubKey},
+    bip32::{ChildNumber, DerivationPath, Xpub},
     hashes::{hash160::Hash as Hash160, hex::FromHex},
     secp256k1,
     secp256k1::{Secp256k1, SecretKey},
@@ -16,7 +16,7 @@ use bitcoin::{
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid,
 };
 
-use bitcoind::bitcoincore_rpc::{core_rpc_json::ListUnspentResultEntry, Client, RpcApi};
+use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
 
 use crate::{
     protocol::contract,
@@ -412,7 +412,7 @@ impl Wallet {
     /// Wallet descriptors are derivable. Currently only supports two KeychainKind. Internal and External.
     fn get_wallet_descriptors(&self) -> Result<HashMap<KeychainKind, String>, WalletError> {
         let secp = Secp256k1::new();
-        let wallet_xpub = ExtendedPubKey::from_priv(
+        let wallet_xpub = Xpub::from_priv(
             &secp,
             &self
                 .store
@@ -486,7 +486,7 @@ impl Wallet {
     /// Core wallet label is the master XPub fingerint.
     pub fn get_core_wallet_label(&self) -> String {
         let secp = Secp256k1::new();
-        let m_xpub = ExtendedPubKey::from_priv(&secp, &self.store.master_key);
+        let m_xpub = Xpub::from_priv(&secp, &self.store.master_key);
         m_xpub.fingerprint().to_string()
     }
 
@@ -956,7 +956,7 @@ impl Wallet {
         let privkey = self
             .store
             .master_key
-            .ckd_priv(&secp, ChildNumber::from_hardened_idx(0).unwrap())
+            .derive_priv(&secp, &[ChildNumber::from_hardened_idx(0).unwrap()])
             .unwrap()
             .private_key;
 
@@ -1005,12 +1005,17 @@ impl Wallet {
                     };
                     let scriptcode = ScriptBuf::new_p2pkh(&pubkey.pubkey_hash());
                     let sighash = SighashCache::new(&tx_clone)
-                        .segwit_signature_hash(ix, &scriptcode, input_value, EcdsaSighashType::All)
+                        .p2wpkh_signature_hash(
+                            ix,
+                            &scriptcode,
+                            Amount::from_sat(input_value),
+                            EcdsaSighashType::All,
+                        )
                         .unwrap();
                     //use low-R value signatures for privacy
                     //https://en.bitcoin.it/wiki/Privacy#Wallet_fingerprinting
                     let signature = secp.sign_ecdsa_low_r(
-                        &secp256k1::Message::from_slice(&sighash[..]).unwrap(),
+                        &secp256k1::Message::from_digest_slice(&sighash[..]).unwrap(),
                         &privkey,
                     );
                     let mut sig_serialised = signature.serialize_der().to_vec();
@@ -1038,15 +1043,15 @@ impl Wallet {
                     let privkey = self.get_fidelity_keypair(index)?.secret_key();
                     let redeemscript = self.get_fidelity_reedemscript(index)?;
                     let sighash = SighashCache::new(&tx_clone)
-                        .segwit_signature_hash(
+                        .p2wsh_signature_hash(
                             ix,
                             &redeemscript,
-                            input_value,
+                            Amount::from_sat(input_value),
                             EcdsaSighashType::All,
                         )
                         .unwrap();
                     let sig = secp.sign_ecdsa(
-                        &secp256k1::Message::from_slice(&sighash[..]).unwrap(),
+                        &secp256k1::Message::from_digest_slice(&sighash[..]).unwrap(),
                         &privkey,
                     );
 
@@ -1191,10 +1196,10 @@ impl Wallet {
             let funding_amount = my_funding_tx.output[utxo_index as usize].value;
             let my_senders_contract_tx = contract::create_senders_contract_tx(
                 OutPoint {
-                    txid: my_funding_tx.txid(),
+                    txid: my_funding_tx.compute_txid(),
                     vout: utxo_index,
                 },
-                funding_amount,
+                funding_amount.to_sat(),
                 &contract_redeemscript,
             );
 
@@ -1205,7 +1210,7 @@ impl Wallet {
                 my_senders_contract_tx,
                 contract_redeemscript,
                 timelock_privkey,
-                funding_amount,
+                funding_amount.to_sat(),
             ));
         }
 
