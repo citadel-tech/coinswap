@@ -8,10 +8,9 @@ pub enum ContractError {
     Secp(secp256k1::Error),
     Protocol(&'static str),
     Script(bitcoin::blockdata::script::Error),
-    Hash(bitcoin::hashes::Error),
-    Key(bitcoin::key::Error),
-    Sighash(bitcoin::sighash::Error),
-    Addrs(bitcoin::address::Error),
+    Hash(bitcoin::hashes::FromSliceError),
+    Key(bitcoin::key::FromSliceError),
+    Sighash(bitcoin::transaction::InputsIndexError),
 }
 
 impl From<secp256k1::Error> for ContractError {
@@ -26,26 +25,20 @@ impl From<bitcoin::blockdata::script::Error> for ContractError {
     }
 }
 
-impl From<bitcoin::hashes::Error> for ContractError {
-    fn from(value: bitcoin::hashes::Error) -> Self {
+impl From<bitcoin::hashes::FromSliceError> for ContractError {
+    fn from(value: bitcoin::hashes::FromSliceError) -> Self {
         Self::Hash(value)
     }
 }
 
-impl From<bitcoin::key::Error> for ContractError {
-    fn from(value: bitcoin::key::Error) -> Self {
+impl From<bitcoin::key::FromSliceError> for ContractError {
+    fn from(value: bitcoin::key::FromSliceError) -> Self {
         Self::Key(value)
     }
 }
 
-impl From<bitcoin::sighash::Error> for ContractError {
-    fn from(value: bitcoin::sighash::Error) -> Self {
+impl From<bitcoin::transaction::InputsIndexError> for ContractError {
+    fn from(value: bitcoin::transaction::InputsIndexError) -> Self {
         Self::Sighash(value)
-    }
-}
-
-impl From<bitcoin::address::Error> for ContractError {
-    fn from(value: bitcoin::address::Error) -> Self {
-        Self::Addrs(value)
     }
 }

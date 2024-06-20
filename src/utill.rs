@@ -9,14 +9,12 @@ use std::{
 };
 
 use bitcoin::{
-    address::{WitnessProgram, WitnessVersion},
     hashes::{sha256, Hash},
-    script::PushBytesBuf,
     secp256k1::{
         rand::{rngs::OsRng, RngCore},
         Secp256k1, SecretKey,
     },
-    Network, PublicKey, ScriptBuf,
+    Network, PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
 };
 use log4rs::{
     append::{console::ConsoleAppender, file::FileAppender},
@@ -54,17 +52,6 @@ const CHECKSUM_CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 const MASK_LOW_35_BITS: u64 = 0x7ffffffff;
 const SHIFT_FOR_C0: u64 = 35;
 const CHECKSUM_FINAL_XOR_VALUE: u64 = 1;
-
-/// Converts a string representation of a network to a `Network` enum variant.
-pub fn str_to_bitcoin_network(net_str: &str) -> Network {
-    match net_str {
-        "main" => Network::Bitcoin,
-        "test" => Network::Testnet,
-        "signet" => Network::Signet,
-        "regtest" => Network::Regtest,
-        _ => panic!("unknown network: {}", net_str),
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectionType {
@@ -293,7 +280,7 @@ pub fn generate_keypair() -> (PublicKey, SecretKey) {
 pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> ScriptBuf {
     let witness_program = WitnessProgram::new(
         WitnessVersion::V0,
-        PushBytesBuf::from(&redeemscript.wscript_hash().to_byte_array()),
+        &redeemscript.wscript_hash().to_byte_array(),
     )
     .unwrap();
     //p2wsh address
@@ -515,26 +502,6 @@ mod tests {
 
     fn remove_temp_config(path: &PathBuf) {
         fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn test_str_to_bitcoin_network() {
-        let net_strs = vec![
-            ("main", Network::Bitcoin),
-            ("test", Network::Testnet),
-            ("signet", Network::Signet),
-            ("regtest", Network::Regtest),
-            ("unknown_network", Network::Bitcoin),
-        ];
-        for (net_str, expected_network) in net_strs {
-            let network = std::panic::catch_unwind(|| str_to_bitcoin_network(net_str));
-            match network {
-                Ok(net) => assert_eq!(net, expected_network),
-                Err(_) => {
-                    assert_eq!(Network::Bitcoin, expected_network);
-                }
-            }
-        }
     }
 
     #[allow(clippy::read_zero_byte_vec)]

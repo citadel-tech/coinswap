@@ -333,7 +333,8 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
                 .output
                 .get(funding_output_index as usize)
                 .expect("funding output expected")
-                .value)
+                .value
+                .to_sat())
         })
         .collect::<Result<Vec<u64>, TakerError>>()?;
 

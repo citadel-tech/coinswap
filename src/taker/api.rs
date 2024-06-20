@@ -547,7 +547,7 @@ impl Taker {
             .map(|tx| {
                 let txid = self.wallet.rpc.send_raw_transaction(tx)?;
                 log::info!("Funding Txid: {}", txid);
-                assert_eq!(txid, tx.txid());
+                assert_eq!(txid, tx.compute_txid());
                 Ok(txid)
             })
             .collect::<Result<_, TakerError>>()?;
@@ -952,7 +952,7 @@ impl Taker {
 
             let funding_txids = funding_tx_infos
                 .iter()
-                .map(|fi| fi.funding_tx.txid())
+                .map(|fi| fi.funding_tx.compute_txid())
                 .collect::<Vec<_>>();
 
             log::info!("Fundix Txids: {:?}", funding_txids);
@@ -1208,7 +1208,7 @@ impl Taker {
                 )| {
                     crate::protocol::contract::create_receivers_contract_tx(
                         previous_funding_output,
-                        maker_funding_tx_value,
+                        maker_funding_tx_value.to_sat(),
                         next_contract_redeemscript,
                     )
                 },
@@ -1279,7 +1279,7 @@ impl Taker {
                 my_receivers_contract_tx.clone(),
                 next_contract_redeemscript.clone(),
                 hashlock_privkey,
-                maker_funding_tx_value,
+                maker_funding_tx_value.to_sat(),
             );
             incoming_swapcoin.hash_preimage = Some(self.ongoing_swap_state.active_preimage);
             incoming_swapcoins.push(incoming_swapcoin);
@@ -1752,19 +1752,19 @@ impl Taker {
             .ongoing_swap_state
             .incoming_swapcoins
             .iter()
-            .map(|sc| sc.contract_tx.txid())
+            .map(|sc| sc.contract_tx.compute_txid())
             .chain(
                 self.ongoing_swap_state
                     .outgoing_swapcoins
                     .iter()
-                    .map(|sc| sc.contract_tx.txid()),
+                    .map(|sc| sc.contract_tx.compute_txid()),
             )
             .chain(
                 self.ongoing_swap_state
                     .watchonly_swapcoins
                     .iter()
                     .flatten()
-                    .map(|sc| sc.contract_tx.txid()),
+                    .map(|sc| sc.contract_tx.compute_txid()),
             )
             .collect::<Vec<_>>();
 
@@ -1797,7 +1797,7 @@ impl Taker {
             if self
                 .wallet
                 .rpc
-                .get_raw_transaction_info(&contract_tx.txid(), None)
+                .get_raw_transaction_info(&contract_tx.compute_txid(), None)
                 .is_ok()
             {
                 log::info!("Incoming Contract already broadacsted");
@@ -1805,12 +1805,12 @@ impl Taker {
                 self.wallet.rpc.send_raw_transaction(contract_tx)?;
                 log::info!(
                     "Broadcasted Incoming Contract. Removing from wallet. Contract Txid {}",
-                    contract_tx.txid()
+                    contract_tx.compute_txid()
                 );
             }
             log::info!(
                 "Incoming Swapcoin removed from wallet, Contact Txid: {}",
-                contract_tx.txid()
+                contract_tx.compute_txid()
             );
             self.wallet.remove_incoming_swapcoin(redeemscript)?;
         }
@@ -1823,7 +1823,7 @@ impl Taker {
             if self
                 .wallet
                 .rpc
-                .get_raw_transaction_info(&contract_tx.txid(), None)
+                .get_raw_transaction_info(&contract_tx.compute_txid(), None)
                 .is_ok()
             {
                 log::info!("Outgoing Contract already broadcasted");
@@ -1831,7 +1831,7 @@ impl Taker {
                 self.wallet.rpc.send_raw_transaction(&contract_tx)?;
                 log::info!(
                     "Broadcasted Outgoing Contract, Contract txid : {}",
-                    contract_tx.txid()
+                    contract_tx.compute_txid()
                 );
             }
             let reedemscript = outgoing.get_multisig_redeemscript();
@@ -1861,11 +1861,11 @@ impl Taker {
                 if let Ok(result) = self
                     .wallet
                     .rpc
-                    .get_raw_transaction_info(&contract.txid(), None)
+                    .get_raw_transaction_info(&contract.compute_txid(), None)
                 {
                     log::info!(
                         "Contract Tx : {}, reached confirmation : {:?}, required : {}",
-                        contract.txid(),
+                        contract.compute_txid(),
                         result.confirmations,
                         timelock
                     );
@@ -1875,9 +1875,12 @@ impl Taker {
                             log::info!(
                                 "Timelock maturity of {} blocks for Contract Tx is reached : {}",
                                 timelock,
-                                contract.txid()
+                                contract.compute_txid()
                             );
-                            log::info!("Broadcasting timelocked tx: {}", timelocked_tx.txid());
+                            log::info!(
+                                "Broadcasting timelocked tx: {}",
+                                timelocked_tx.compute_txid()
+                            );
                             self.wallet.rpc.send_raw_transaction(timelocked_tx).unwrap();
                             timelock_boardcasted.push(timelocked_tx);
 
@@ -1888,7 +1891,7 @@ impl Taker {
                                 .expect("outgoing swapcoin expected");
                             log::info!(
                                 "Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
-                                outgoing_removed.contract_tx.txid()
+                                outgoing_removed.contract_tx.compute_txid()
                             );
                         }
                     }

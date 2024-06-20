@@ -7,8 +7,8 @@
 use std::{num::ParseIntError, str::FromStr};
 
 use bitcoin::{
-    absolute::LockTime, Address, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn,
-    TxOut, Witness,
+    absolute::LockTime, transaction::Version, Address, Amount, Network, OutPoint, ScriptBuf,
+    Sequence, Transaction, TxIn, TxOut, Witness,
 };
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RawTx, RpcApi};
 
@@ -43,7 +43,7 @@ pub enum Destination {
 }
 
 impl FromStr for Destination {
-    type Err = bitcoin::address::Error;
+    type Err = bitcoin::address::ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(if s == "wallet" {
@@ -170,11 +170,13 @@ impl Wallet {
             Destination::Address(a) => {
                 //testnet and signet addresses have the same vbyte
                 //so a.network is always testnet even if the address is signet
-                let testnet_signet_type = (a.network == Network::Testnet
-                    || a.network == Network::Signet)
+                let testnet_signet_type = (a.as_unchecked().is_valid_for_network(Network::Testnet)
+                    || a.as_unchecked().is_valid_for_network(Network::Signet))
                     && (self.store.network == Network::Testnet
                         || self.store.network == Network::Signet);
-                if a.network != self.store.network && !testnet_signet_type {
+                if !a.as_unchecked().is_valid_for_network(self.store.network)
+                    && !testnet_signet_type
+                {
                     return Err(WalletError::Protocol(
                         "Wrong address type in destinations.".to_string(),
                     ));
@@ -193,7 +195,7 @@ impl Wallet {
             log::info!("Sending {} to {}.", value, dest_addr);
             TxOut {
                 script_pubkey: dest_addr.script_pubkey(),
-                value,
+                value: Amount::from_sat(value),
             }
         };
 
@@ -203,11 +205,11 @@ impl Wallet {
         if let SendAmount::Amount(amount) = send_amount {
             let internal_spk = self.get_next_internal_addresses(1)?[0].script_pubkey();
             let remaining = total_input_value - amount - fee;
-            if remaining > internal_spk.dust_value() {
+            if remaining > internal_spk.minimal_non_dust() {
                 log::info!("Adding Change {}:{}", internal_spk, remaining);
                 output.push(TxOut {
                     script_pubkey: internal_spk,
-                    value: remaining.to_sat(),
+                    value: remaining,
                 });
             }
         }
@@ -219,7 +221,7 @@ impl Wallet {
             input: tx_inputs,
             output,
             lock_time,
-            version: 2,
+            version: Version::TWO,
         };
         self.sign_transaction(
             &mut tx,

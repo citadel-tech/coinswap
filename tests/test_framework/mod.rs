@@ -31,7 +31,7 @@ use coinswap::{
     maker::{Maker, MakerBehavior},
     market::directory::{start_directory_server, DirectoryServer},
     taker::{Taker, TakerBehavior},
-    utill::{setup_logger, str_to_bitcoin_network, ConnectionType},
+    utill::{setup_logger, ConnectionType},
     wallet::RPCConfig,
 };
 
@@ -235,15 +235,7 @@ impl From<&TestFramework> for RPCConfig {
     fn from(value: &TestFramework) -> Self {
         let url = value.bitcoind.rpc_url().split_at(7).1.to_string();
         let auth = Auth::CookieFile(value.bitcoind.params.cookie_file.clone());
-        let network = str_to_bitcoin_network(
-            value
-                .bitcoind
-                .client
-                .get_blockchain_info()
-                .unwrap()
-                .chain
-                .as_str(),
-        );
+        let network = value.bitcoind.client.get_blockchain_info().unwrap().chain;
         Self {
             url,
             auth,

@@ -17,7 +17,8 @@ use bitcoin::{
         Message, Secp256k1, SecretKey,
     },
     sighash::{EcdsaSighashType, SighashCache},
-    OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+    transaction::Version,
+    Amount, OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 
 pub use bitcoin::hashes::hash160::Hash as Hash160;
@@ -391,10 +392,10 @@ pub fn create_senders_contract_tx(
         output: vec![TxOut {
             script_pubkey: redeemscript_to_scriptpubkey(contract_redeemscript),
             // TODO: Mining fee for contract tx is hard coded here. Make it configurable.
-            value: input_value - 1000,
+            value: Amount::from_sat(input_value - 1000),
         }],
         lock_time: LockTime::ZERO,
-        version: 2,
+        version: Version::TWO,
     }
 }
 
@@ -465,19 +466,19 @@ pub fn sign_contract_tx(
     privkey: &SecretKey,
 ) -> Result<Signature, ContractError> {
     let input_index = 0;
-    let sighash = Message::from_slice(
-        &SighashCache::new(contract_tx).segwit_signature_hash(
+    let sighash = Message::from_digest_slice(
+        &SighashCache::new(contract_tx).p2wsh_signature_hash(
             input_index,
             multisig_redeemscript,
-            funding_amount,
+            Amount::from_sat(funding_amount),
             EcdsaSighashType::All,
         )?[..],
     )?;
     let secp = Secp256k1::new();
     let sig = secp.sign_ecdsa(&sighash, privkey);
     Ok(Signature {
-        sig,
-        hash_ty: EcdsaSighashType::All,
+        signature: sig,
+        sighash_type: EcdsaSighashType::All,
     })
 }
 
@@ -490,11 +491,11 @@ pub fn verify_contract_tx_sig(
     sig: &bitcoin::secp256k1::ecdsa::Signature,
 ) -> Result<(), ContractError> {
     let input_index = 0;
-    let sighash = Message::from_slice(
-        &SighashCache::new(contract_tx).segwit_signature_hash(
+    let sighash = Message::from_digest_slice(
+        &SighashCache::new(contract_tx).p2wsh_signature_hash(
             input_index,
             multisig_redeemscript,
-            funding_amount,
+            Amount::from_sat(funding_amount),
             EcdsaSighashType::All,
         )?[..],
     )?;
@@ -668,15 +669,15 @@ mod test {
             output: vec![
                 TxOut {
                     script_pubkey: another_script_pubkey,
-                    value: 2000,
+                    value: Amount::from_sat(2000),
                 },
                 TxOut {
                     script_pubkey: multi_script_pubkey,
-                    value: 3000,
+                    value: Amount::from_sat(3000),
                 },
             ],
             lock_time: LockTime::ZERO,
-            version: 2,
+            version: Version::TWO,
         };
 
         let funding_info = FundingTxInfo {
@@ -790,7 +791,7 @@ mod test {
         let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript);
         contract_tx_err2.output[0] = TxOut {
             script_pubkey: multi_script_pubkey,
-            value: 3000,
+            value: Amount::from_sat(3000),
         };
         // Verify validation fails
         if let ContractError::Protocol(message) =
@@ -832,14 +833,14 @@ mod test {
             }],
             output: vec![TxOut {
                 script_pubkey: funding_spk,
-                value: 2000,
+                value: Amount::from_sat(2000),
             }],
             lock_time: LockTime::ZERO,
-            version: 2,
+            version: Version::TWO,
         };
 
         // Create the contract transaction spending the funding outpoint
-        let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+        let funding_outpoint = OutPoint::new(funding_tx.compute_txid(), 0);
 
         let contract_script = ScriptBuf::from(
             Vec::from_hex(
@@ -849,7 +850,7 @@ mod test {
 
         let contract_tx = create_receivers_contract_tx(
             funding_outpoint,
-            funding_tx.output[0].value,
+            funding_tx.output[0].value.to_sat(),
             &contract_script,
         );
 
@@ -857,7 +858,7 @@ mod test {
         let sig1 = sign_contract_tx(
             &contract_tx,
             &funding_outpoint_script,
-            funding_tx.output[0].value,
+            funding_tx.output[0].value.to_sat(),
             &priv_1.inner,
         )
         .unwrap();
@@ -865,9 +866,9 @@ mod test {
         assert!(verify_contract_tx_sig(
             &contract_tx,
             &funding_outpoint_script,
-            funding_tx.output[0].value,
+            funding_tx.output[0].value.to_sat(),
             &pub1,
-            &sig1.sig
+            &sig1.signature
         )
         .is_ok());
 
@@ -875,7 +876,7 @@ mod test {
         let sig2 = sign_contract_tx(
             &contract_tx,
             &funding_outpoint_script,
-            funding_tx.output[0].value,
+            funding_tx.output[0].value.to_sat(),
             &priv_2.inner,
         )
         .unwrap();
@@ -883,9 +884,9 @@ mod test {
         assert!(verify_contract_tx_sig(
             &contract_tx,
             &funding_outpoint_script,
-            funding_tx.output[0].value,
+            funding_tx.output[0].value.to_sat(),
             &pub2,
-            &sig2.sig
+            &sig2.signature
         )
         .is_ok());
     }
@@ -1128,12 +1129,12 @@ mod test {
 
         let msg = b"0123456789abcdefghijklmnopqrstuv";
         let sig_1 = Signature {
-            sig: secp.sign_ecdsa(&Message::from_slice(msg).unwrap(), &priv_1.inner),
-            hash_ty: EcdsaSighashType::All,
+            signature: secp.sign_ecdsa(&Message::from_digest_slice(msg).unwrap(), &priv_1.inner),
+            sighash_type: EcdsaSighashType::All,
         };
         let sig_2 = Signature {
-            sig: secp.sign_ecdsa(&Message::from_slice(msg).unwrap(), &priv_2.inner),
-            hash_ty: EcdsaSighashType::All,
+            signature: secp.sign_ecdsa(&Message::from_digest_slice(msg).unwrap(), &priv_2.inner),
+            sighash_type: EcdsaSighashType::All,
         };
         let mut tx_input_1 = TxIn::default();
         let mut tx_input_2 = TxIn::default();
@@ -1217,15 +1218,15 @@ mod test {
             output: vec![
                 TxOut {
                     script_pubkey: another_script_pubkey,
-                    value: 2000,
+                    value: Amount::from_sat(2000),
                 },
                 TxOut {
                     script_pubkey: multi_script_pubkey,
-                    value: 3000,
+                    value: Amount::from_sat(3000),
                 },
             ],
             lock_time: LockTime::ZERO,
-            version: 2,
+            version: Version::TWO,
         };
 
         let hash_value_1 = Hash160::from_slice(&thread_rng().gen::<[u8; 20]>()).unwrap();
