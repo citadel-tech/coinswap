@@ -1,6 +1,7 @@
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, thread, time::Duration};
 use std::cell::Cell;
-
+use bitcoin::Script;
+use log::debug;
 use nakamoto::{
     client::{
         chan::Receiver,
@@ -14,6 +15,7 @@ use nakamoto::{
 };
 use nakamoto::chain::Transaction;
 use nakamoto::p2p::fsm::fees::FeeEstimate;
+use crate::utill::get_taker_dir;
 
 type Reactor = nakamoto::net::poll::Reactor<std::net::TcpStream>;
 
@@ -79,8 +81,42 @@ impl CbfBlockchain {
     pub fn initialize_cbf_sync(&mut self) -> Result<(), CbfSyncError> {
         let last_sync_height = self.client_handle.get_tip().map_err(nakamoto::client::Error::from)?;
         let (height, _) = last_sync_height?;
+        self.last_sync_height.set(height);
         Ok(())
     }
 
-    //TO BE IMPLEMENTED
+    pub fn scan(&self, from: u32, scripts: Vec<Script>) {
+        let _ = self.client_handle.rescan((from as u64).., scripts.into_iter());
+    }
+
+    fn add_fee_data(&self, height: u32, fee_estimate: FeeEstimate) {
+        let mut data = self.fee_data.take();
+        data.insert(height, fee_estimate);
+        self.fee_data.set(data);
+    }
+
+    pub fn get_next_event(&self) -> Result<Event, CbfSyncError> {
+        Ok(self.receiver.recv().map_err(|e| nakamoto::client::Error::from(nakamoto::client::handle::Error::from(e)))?)
+    }
+
+    pub fn process_events(&self) -> Result<(), CbfSyncError> {
+        loop {
+            match self.get_next_event()? {
+                Event::BlockConnected { hash, height, .. } => {
+                    debug!("Block connected: {} at height {}", hash, height);
+                }
+                Event::BlockDisconnected { hash, height, .. } => {
+                    debug!("Block disconnected: {} at  height {}", hash, height);
+                }
+                Event::Synced { height, tip } => {
+                    debug!("Sync complete up to {}/{}", height, tip);
+                    if height == tip {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
 }
