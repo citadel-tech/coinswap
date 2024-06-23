@@ -27,14 +27,12 @@ pub struct CbfBlockchain {
 }
 
 pub enum CbfSyncError {
-    FilterHeaderRetrievalError,
-    BlockFilterDownloadError,
-    TransactionRetrievalError,
+    NakamotoError(nakamoto::client::Error),
 }
 
 impl From<nakamoto::client::Error> for CbfSyncError {
-    fn from(_: nakamoto::client::Error) -> Self {
-        CbfSyncError::FilterHeaderRetrievalError
+    fn from(err: nakamoto::client::Error) -> Self {
+        CbfSyncError::NakamotoError(err)
     }
 }
 
@@ -47,7 +45,7 @@ impl CbfBlockchain {
         let root = if let Some(dir) = datadir {
             dir
         } else {
-            PathBuf::from(std::env::var("HOME").unwrap_or_default())
+            get_taker_dir().join(("cbf"))
         };
         let cbf_client = Client::<Reactor>::new()?;
         let client_cfg = Config {
@@ -79,7 +77,7 @@ impl CbfBlockchain {
     }
 
     pub fn initialize_cbf_sync(&mut self) -> Result<(), CbfSyncError> {
-        let last_sync_height = self.client_handle.get_tip();
+        let last_sync_height = self.client_handle.get_tip().map_err(nakamoto::client::Error::from)?;
         let (height, _) = last_sync_height?;
         Ok(())
     }
