@@ -46,6 +46,11 @@ Teleport Transactions is a rust implementation of a variant of atomic-swap proto
 * [Developer's resources](/docs/dev-book.md)
 
 ## Build and Test
+Macos (M series) needs some feature for compilation 
+
+```console
+$ cargo build --target=aarch64-apple-darwin  --features=build-macos-aarch
+```
 
 The repo contains a fully automated integration testing framework on Bitcoin Regtest. The bitcoin binary used for testing is
 included [here](./bin/bitcoind).
