@@ -2,6 +2,8 @@
 
 use std::{io, path::PathBuf};
 
+use bitcoin::Amount;
+
 use crate::utill::{get_maker_dir, parse_field, parse_toml, write_default_config, ConnectionType};
 
 /// Maker Configuration, controlling various maker behavior.
@@ -20,7 +22,7 @@ pub struct MakerConfig {
     /// Time interval to close a connection if no response is received
     pub idle_connection_timeout: u64,
     /// Absolute coinswap fee
-    pub absolute_fee_sats: u64,
+    pub absolute_fee_sats: Amount,
     /// Fee rate per swap amount in ppb.
     pub amount_relative_fee_ppb: u64,
     /// Fee rate for timelocked contract in ppb
@@ -54,7 +56,7 @@ impl Default for MakerConfig {
             rpc_ping_interval_secs: 60,
             directory_servers_refresh_interval_secs: 60 * 60 * 12, //12 Hours
             idle_connection_timeout: 300,
-            absolute_fee_sats: 1000,
+            absolute_fee_sats: Amount::from_sat(1000),
             amount_relative_fee_ppb: 10_000_000,
             time_relative_fee_ppb: 100_000,
             required_confirms: 1,

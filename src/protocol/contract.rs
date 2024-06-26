@@ -55,14 +55,14 @@ const PUBKEY2_OFFSET: usize = PUBKEY1_OFFSET + PUBKEY_LENGTH + 1;
 
 /// Calculate the coin swap fee based on various parameters.
 pub fn calculate_coinswap_fee(
-    absolute_fee_sat: u64,
+    absolute_fee_sat: Amount,
     amount_relative_fee_ppb: u64,
     time_relative_fee_ppb: u64,
-    total_funding_amount: u64,
+    total_funding_amount: Amount,
     time_in_blocks: u64,
 ) -> u64 {
-    absolute_fee_sat
-        + (total_funding_amount * amount_relative_fee_ppb) / 1_000_000_000
+    absolute_fee_sat.to_sat()
+        + (total_funding_amount.to_sat() * amount_relative_fee_ppb) / 1_000_000_000
         + (time_in_blocks * time_relative_fee_ppb) / 1_000_000_000
 }
 
@@ -1091,24 +1091,36 @@ mod test {
             + (100 * 200_000_000) / 1_000_000_000;
 
         let calculated_fee = calculate_coinswap_fee(
-            absolute_fee_sat,
+            Amount::from_sat(absolute_fee_sat),
             amount_relative_fee_ppb,
             time_relative_fee_ppb,
-            total_funding_amount,
+            Amount::from_sat(total_funding_amount),
             time_in_blocks,
         );
 
         assert_eq!(calculated_fee, expected_fee);
 
         // Test with zero values
-        assert_eq!(calculate_coinswap_fee(0, 0, 0, 0, 0), 0);
+        assert_eq!(
+            calculate_coinswap_fee(Amount::ZERO, 0, 0, Amount::ZERO, 0),
+            0
+        );
 
         // Test with only the absolute fee being non-zero
-        assert_eq!(calculate_coinswap_fee(1000, 0, 0, 0, 0), 1000);
+        assert_eq!(
+            calculate_coinswap_fee(Amount::from_sat(1000), 0, 0, Amount::ZERO, 0),
+            1000
+        );
 
         // Test with only the relative fees being non-zero
         assert_eq!(
-            calculate_coinswap_fee(0, 1_000_000_000, 1_000_000_000, 1000, 10),
+            calculate_coinswap_fee(
+                Amount::ZERO,
+                1_000_000_000,
+                1_000_000_000,
+                Amount::from_sat(1000),
+                10
+            ),
             1010
         );
     }

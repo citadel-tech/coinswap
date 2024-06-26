@@ -185,7 +185,6 @@ fn write_default_taker_config(config_path: &PathBuf) {
 
 #[cfg(test)]
 mod tests {
-    use crate::utill::get_taker_dir;
 
     use super::*;
     use std::{

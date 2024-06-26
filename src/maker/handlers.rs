@@ -345,7 +345,7 @@ impl Maker {
             self.config.absolute_fee_sats,
             self.config.amount_relative_fee_ppb,
             self.config.time_relative_fee_ppb,
-            incoming_amount,
+            Amount::from_sat(incoming_amount),
             self.config.required_confirms, //time_in_blocks just 1 for now
         );
 
@@ -359,7 +359,7 @@ impl Maker {
         // Create outgoing coinswap of the next hop
         let (my_funding_txes, outgoing_swapcoins, act_funding_txs_fees) = {
             self.wallet.write()?.initalize_coinswap(
-                outgoing_amount,
+                Amount::from_sat(outgoing_amount),
                 &message
                     .next_coinswap_info
                     .iter()
@@ -372,7 +372,7 @@ impl Maker {
                     .collect::<Vec<PublicKey>>(),
                 hashvalue,
                 message.next_locktime,
-                message.next_fee_rate,
+                Amount::from_sat(message.next_fee_rate),
             )?
         };
 

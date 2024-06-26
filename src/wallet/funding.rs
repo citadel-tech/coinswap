@@ -30,9 +30,9 @@ impl Wallet {
     /// Returns Ok(None) if there was no error but the wallet was unable to create funding txes
     pub fn create_funding_txes(
         &self,
-        coinswap_amount: u64,
+        coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: u64,
+        fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let ret = self.create_funding_txes_random_amounts(coinswap_amount, destinations, fee_rate);
         if ret.is_ok() {
@@ -122,13 +122,14 @@ impl Wallet {
     /// walletcreatefundedpsbt to create txes that create change
     fn create_funding_txes_random_amounts(
         &self,
-        coinswap_amount: u64,
+        coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: u64,
+        fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let change_addresses = self.get_next_internal_addresses(destinations.len() as u32)?;
 
-        let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
+        let output_values =
+            Wallet::generate_amount_fractions(destinations.len(), coinswap_amount.to_sat())?;
 
         self.lock_unspendable_utxos()?;
 
@@ -143,7 +144,7 @@ impl Wallet {
             let mut outputs = HashMap::<String, Amount>::new();
             outputs.insert(address.to_string(), Amount::from_sat(output_value));
 
-            let fee = Amount::from_sat(fee_rate);
+            let fee = fee_rate;
             let remaining = Amount::from_sat(output_value);
             let selected_utxo = self.coin_select(remaining)?;
             let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
@@ -194,7 +195,7 @@ impl Wallet {
 
             funding_txes.push(funding_tx);
             payment_output_positions.push(payment_pos);
-            total_miner_fee += fee_rate;
+            total_miner_fee += fee_rate.to_sat();
         }
 
         Ok(CreateFundingTxesResult {
@@ -206,9 +207,9 @@ impl Wallet {
 
     fn create_mostly_sweep_txes_with_one_tx_having_change(
         &self,
-        coinswap_amount: u64,
+        coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: u64,
+        fee_rate: Amount,
         change_address: &Address,
         utxos: &mut dyn Iterator<Item = (Txid, u32, u64)>, //utxos item is (txid, vout, value)
                                                            //utxos should be sorted by size, largest first
@@ -249,9 +250,9 @@ impl Wallet {
             };
             self.sign_transaction(&mut funding_tx, &mut input_info)?;
 
-            leftover_coinswap_amount -= funding_tx.output[0].value.to_sat();
+            leftover_coinswap_amount -= funding_tx.output[0].value;
 
-            total_miner_fee += fee_rate;
+            total_miner_fee += fee_rate.to_sat();
 
             funding_txes.push(funding_tx);
             payment_output_positions.push(0);
@@ -298,16 +299,19 @@ impl Wallet {
         let mut info = input_info.iter().cloned();
         self.sign_transaction(&mut funding_tx, &mut info)?;
 
-        leftover_coinswap_amount -= funding_tx.output[0].value.to_sat();
+        leftover_coinswap_amount -= funding_tx.output[0].value;
 
-        total_miner_fee += fee_rate;
+        total_miner_fee += fee_rate.to_sat();
 
         funding_txes.push(funding_tx);
         payment_output_positions.push(0);
 
         let (first_txid, first_vout, first_value) = first_tx_input;
         let mut outputs = HashMap::<&Address, u64>::new();
-        outputs.insert(destinations_iter.next().unwrap(), leftover_coinswap_amount);
+        outputs.insert(
+            destinations_iter.next().unwrap(),
+            leftover_coinswap_amount.to_sat(),
+        );
 
         tx_inputs = Vec::new();
         tx_outs = Vec::new();
@@ -338,7 +342,7 @@ impl Wallet {
         let mut info = iter::once(self.get_utxo((first_txid, first_vout))?.unwrap());
         self.sign_transaction(&mut funding_tx, &mut info)?;
 
-        total_miner_fee += fee_rate;
+        total_miner_fee += fee_rate.to_sat();
 
         funding_txes.push(funding_tx);
         payment_output_positions.push(1);
@@ -352,9 +356,9 @@ impl Wallet {
 
     fn create_funding_txes_utxo_max_sends(
         &self,
-        coinswap_amount: u64,
+        coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: u64,
+        fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         //this function creates funding txes by
         //using walletcreatefundedpsbt for the total amount, and if
@@ -362,14 +366,14 @@ impl Wallet {
         //across multiple transactions
 
         let mut outputs = HashMap::<&Address, u64>::new();
-        outputs.insert(&destinations[0], coinswap_amount);
+        outputs.insert(&destinations[0], coinswap_amount.to_sat());
         let change_address = self.get_next_internal_addresses(1)?[0].clone();
 
         self.lock_unspendable_utxos()?;
 
         let fee = Amount::from_sat(1000);
 
-        let remaining = Amount::from_sat(coinswap_amount);
+        let remaining = coinswap_amount;
 
         let selected_utxo = self.coin_select(remaining + fee)?;
 
@@ -381,7 +385,7 @@ impl Wallet {
         let change_amount = total_input_amount.checked_sub(remaining + fee);
 
         let mut tx_outs = vec![TxOut {
-            value: Amount::from_sat(coinswap_amount),
+            value: coinswap_amount,
             script_pubkey: destinations[0].script_pubkey(),
         }];
 
@@ -434,9 +438,9 @@ impl Wallet {
 
     fn create_funding_txes_use_biggest_utxos(
         &self,
-        coinswap_amount: u64,
+        coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: u64,
+        fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         //this function will pick the top most valuable UTXOs and use them
         //to create funding transactions
@@ -465,7 +469,7 @@ impl Wallet {
                 .iter()
                 .map(|(l, _)| l.amount.to_sat())
                 .sum::<u64>();
-            if sum > coinswap_amount {
+            if sum > coinswap_amount.to_sat() {
                 list_unspent_count = Some(ii);
                 break;
             }
@@ -481,7 +485,7 @@ impl Wallet {
         if inputs[1..]
             .iter()
             .map(|(l, _)| l.amount.to_sat())
-            .any(|utxo_value| utxo_value > coinswap_amount)
+            .any(|utxo_value| utxo_value > coinswap_amount.to_sat())
         {
             // TODO: Handle this case
             Err(WalletError::Protocol(

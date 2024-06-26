@@ -1151,12 +1151,12 @@ impl Wallet {
     /// Returns, the Funding Transactions, [`OutgoingSwapCoin`]s and the Total Miner fees.
     pub fn initalize_coinswap(
         &mut self,
-        total_coinswap_amount: u64,
+        total_coinswap_amount: Amount,
         other_multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
         hashvalue: Hash160,
         locktime: u16,
-        fee_rate: u64,
+        fee_rate: Amount,
     ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, u64), WalletError> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
             .iter()

@@ -28,7 +28,7 @@ use bitcoin::{
         rand::{rngs::OsRng, RngCore},
         SecretKey,
     },
-    BlockHash, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
+    Amount, BlockHash, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
 use tokio_socks::tcp::Socks5Stream;
 
@@ -466,15 +466,14 @@ impl Taker {
                     &maker.offer.tweakable_point,
                     self.ongoing_swap_state.swap_params.tx_count,
                 );
-
             let (funding_txs, mut outgoing_swapcoins, funding_fee) =
                 self.wallet.initalize_coinswap(
-                    self.ongoing_swap_state.swap_params.send_amount,
+                    Amount::from_sat(self.ongoing_swap_state.swap_params.send_amount),
                     &multisig_pubkeys,
                     &hashlock_pubkeys,
                     self.get_preimage_hash(),
                     swap_locktime,
-                    self.ongoing_swap_state.swap_params.fee_rate,
+                    Amount::from_sat(self.ongoing_swap_state.swap_params.fee_rate),
                 )?;
 
             let contract_reedemscripts = outgoing_swapcoins

@@ -58,7 +58,7 @@
 use std::fmt::Display;
 
 use bitcoin::{
-    ecdsa::Signature, hashes::sha256d::Hash, secp256k1::SecretKey, PublicKey, ScriptBuf,
+    ecdsa::Signature, hashes::sha256d::Hash, secp256k1::SecretKey, Amount, PublicKey, ScriptBuf,
     Transaction,
 };
 
@@ -238,7 +238,7 @@ pub struct FidelityProof {
 /// Represents an offer in the context of the Coinswap protocol.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Offer {
-    pub absolute_fee_sat: u64,
+    pub absolute_fee_sat: Amount,
     pub amount_relative_fee_ppb: u64,
     pub time_relative_fee_ppb: u64,
     pub required_confirms: u64,

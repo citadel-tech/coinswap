@@ -9,18 +9,6 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use bitcoin::{secp256k1::SecretKey, PublicKey, ScriptBuf, Transaction};
-use tokio::{
-    io::BufReader,
-    net::{
-        tcp::{ReadHalf, WriteHalf},
-        TcpStream,
-    },
-    select,
-    time::sleep,
-};
-use tokio_socks::tcp::Socks5Stream;
-
 use crate::{
     error::ProtocolError,
     protocol::{
@@ -39,6 +27,17 @@ use crate::{
     },
     utill::{read_maker_message, send_message, ConnectionType},
 };
+use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
+use tokio::{
+    io::BufReader,
+    net::{
+        tcp::{ReadHalf, WriteHalf},
+        TcpStream,
+    },
+    select,
+    time::sleep,
+};
+use tokio_socks::tcp::Socks5Stream;
 
 use super::{
     config::TakerConfig,
@@ -349,7 +348,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
         tmi.this_maker.offer.absolute_fee_sat,
         tmi.this_maker.offer.amount_relative_fee_ppb,
         tmi.this_maker.offer.time_relative_fee_ppb,
-        this_amount,
+        Amount::from_sat(this_amount),
         1, //time_in_blocks just 1 for now
     );
     let miner_fees_paid_by_taker = (FUNDING_TX_VBYTE_SIZE
