@@ -59,7 +59,7 @@ impl Wallet {
 
     fn generate_amount_fractions_without_correction(
         count: usize,
-        total_amount: u64,
+        total_amount: Amount,
         lower_limit: u64,
     ) -> Result<Vec<f32>, WalletError> {
         for _ in 0..100000 {
@@ -78,7 +78,7 @@ impl Wallet {
 
             if fractions
                 .iter()
-                .all(|f| *f * (total_amount as f32) > (lower_limit as f32))
+                .all(|f| *f * (total_amount.to_sat() as f32) > (lower_limit as f32))
             {
                 return Ok(fractions);
             }
@@ -90,7 +90,7 @@ impl Wallet {
 
     pub fn generate_amount_fractions(
         count: usize,
-        total_amount: u64,
+        total_amount: Amount,
     ) -> Result<Vec<u64>, WalletError> {
         let mut output_values = Wallet::generate_amount_fractions_without_correction(
             count,
@@ -99,7 +99,7 @@ impl Wallet {
                   //there should always be enough to pay miner fees
         )?
         .iter()
-        .map(|f| (*f * (total_amount as f32)) as u64)
+        .map(|f| (*f * (total_amount.to_sat() as f32)) as u64)
         .collect::<Vec<u64>>();
 
         //rounding errors mean usually 1 or 2 satoshis are lost, add them back
@@ -111,8 +111,8 @@ impl Wallet {
         //a' <-- a + (t -a-b-c-...)      | rearrange
         //a' <-- t - b - c -...          |
         *output_values.first_mut().unwrap() =
-            total_amount - output_values.iter().skip(1).sum::<u64>();
-        assert_eq!(output_values.iter().sum::<u64>(), total_amount);
+            total_amount.to_sat() - output_values.iter().skip(1).sum::<u64>();
+        assert_eq!(output_values.iter().sum::<u64>(), total_amount.to_sat());
 
         Ok(output_values)
     }
@@ -128,8 +128,7 @@ impl Wallet {
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let change_addresses = self.get_next_internal_addresses(destinations.len() as u32)?;
 
-        let output_values =
-            Wallet::generate_amount_fractions(destinations.len(), coinswap_amount.to_sat())?;
+        let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
         self.lock_unspendable_utxos()?;
 

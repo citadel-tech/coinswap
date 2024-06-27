@@ -24,9 +24,9 @@ pub struct MakerConfig {
     /// Absolute coinswap fee
     pub absolute_fee_sats: Amount,
     /// Fee rate per swap amount in ppb.
-    pub amount_relative_fee_ppb: u64,
+    pub amount_relative_fee_ppb: Amount,
     /// Fee rate for timelocked contract in ppb
-    pub time_relative_fee_ppb: u64,
+    pub time_relative_fee_ppb: Amount,
     /// No of confirmation required for funding transaction
     pub required_confirms: u64,
     // Minimum timelock difference between contract transaction of two hops
@@ -57,8 +57,8 @@ impl Default for MakerConfig {
             directory_servers_refresh_interval_secs: 60 * 60 * 12, //12 Hours
             idle_connection_timeout: 300,
             absolute_fee_sats: Amount::from_sat(1000),
-            amount_relative_fee_ppb: 10_000_000,
-            time_relative_fee_ppb: 100_000,
+            amount_relative_fee_ppb: Amount::from_sat(10_000_000),
+            time_relative_fee_ppb: Amount::from_sat(100_000),
             required_confirms: 1,
             min_contract_reaction_time: 48,
             min_size: 10_000,

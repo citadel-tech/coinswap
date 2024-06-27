@@ -143,7 +143,7 @@ pub fn calculate_fidelity_value(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Hash)]
 pub struct FidelityBond {
     pub outpoint: OutPoint,
-    pub amount: u64,
+    pub amount: Amount,
     pub lock_time: LockTime,
     pub pubkey: PublicKey,
     // Height at which the bond was confirmed.
@@ -289,12 +289,8 @@ impl Wallet {
             LockTime::Seconds(sec) => sec.to_consensus_u32() as u64,
         };
 
-        let bond_value = calculate_fidelity_value(
-            Amount::from_sat(bond.amount),
-            locktime,
-            confirmation_time,
-            current_time,
-        );
+        let bond_value =
+            calculate_fidelity_value(bond.amount, locktime, confirmation_time, current_time);
 
         Ok(bond_value)
     }
@@ -420,7 +416,7 @@ impl Wallet {
 
         let bond = FidelityBond {
             outpoint: OutPoint::new(txid, 0),
-            amount: amount.to_sat(),
+            amount,
             lock_time: locktime,
             pubkey: fidelity_pubkey,
             conf_height,
@@ -459,13 +455,13 @@ impl Wallet {
         };
 
         // TODO take feerate as user input
-        let fee = 1000;
+        let fee = Amount::from_sat(1000);
 
         let change_addr = &self.get_next_internal_addresses(1)?[0];
 
         let txout = TxOut {
             script_pubkey: change_addr.script_pubkey(),
-            value: Amount::from_sat(bond.amount - fee),
+            value: bond.amount - fee,
         };
 
         let mut tx = Transaction {

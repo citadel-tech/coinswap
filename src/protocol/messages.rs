@@ -93,7 +93,7 @@ pub struct ContractTxInfoForSender {
     pub timelock_pubkey: PublicKey,
     pub senders_contract_tx: Transaction,
     pub multisig_redeemscript: ScriptBuf,
-    pub funding_input_value: u64,
+    pub funding_input_value: Amount,
 }
 
 /// Request for Contract Sigs **for** the Sender side of the hop.
@@ -239,8 +239,8 @@ pub struct FidelityProof {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Offer {
     pub absolute_fee_sat: Amount,
-    pub amount_relative_fee_ppb: u64,
-    pub time_relative_fee_ppb: u64,
+    pub amount_relative_fee_ppb: Amount,
+    pub time_relative_fee_ppb: Amount,
     pub required_confirms: u64,
     pub minimum_locktime: u16,
     pub max_size: u64,
@@ -261,7 +261,7 @@ pub struct SenderContractTxInfo {
     pub contract_tx: Transaction,
     pub timelock_pubkey: PublicKey,
     pub multisig_redeemscript: ScriptBuf,
-    pub funding_amount: u64,
+    pub funding_amount: Amount,
 }
 
 /// This message is sent by a Maker to a Taker, which is a request to the Taker for gathering signatures for the Maker as both Sender and Receiver of Coinswaps.

@@ -92,7 +92,7 @@ async fn test_fidelity() {
             .next()
             .unwrap();
         assert_eq!(*index, 0);
-        assert_eq!(bond.amount, 5000000);
+        assert_eq!(bond.amount, Amount::from_sat(5000000));
         assert!(!is_spent);
         bond.conf_height
     };
@@ -111,7 +111,7 @@ async fn test_fidelity() {
             .get_fidelity_bonds()
             .get(&index)
             .expect("bond expected");
-        assert_eq!(bond.amount, 1000000);
+        assert_eq!(bond.amount, Amount::from_sat(1000000));
         assert!(!is_spent);
         bond.conf_height
     };
