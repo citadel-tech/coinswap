@@ -28,7 +28,7 @@ use bitcoin::{
         rand::{rngs::OsRng, RngCore},
         SecretKey,
     },
-    BlockHash, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
+    Amount, BlockHash, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
 use tokio_socks::tcp::Socks5Stream;
 
@@ -61,7 +61,7 @@ use crate::{
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SwapParams {
     /// Total Amount to Swap.
-    pub send_amount: u64,
+    pub send_amount: Amount,
     /// How many hops.
     pub maker_count: u16,
     /// How many splits
@@ -70,7 +70,7 @@ pub struct SwapParams {
     /// Confirmation count required for funding txs.
     pub required_confirms: u64,
     /// Fee rate for funding txs.
-    pub fee_rate: u64,
+    pub fee_rate: Amount,
 }
 
 // Defines the Taker's position in the current ongoing swap.
@@ -466,7 +466,6 @@ impl Taker {
                     &maker.offer.tweakable_point,
                     self.ongoing_swap_state.swap_params.tx_count,
                 );
-
             let (funding_txs, mut outgoing_swapcoins, funding_fee) =
                 self.wallet.initalize_coinswap(
                     self.ongoing_swap_state.swap_params.send_amount,
@@ -1208,7 +1207,7 @@ impl Taker {
                 )| {
                     crate::protocol::contract::create_receivers_contract_tx(
                         previous_funding_output,
-                        maker_funding_tx_value.to_sat(),
+                        maker_funding_tx_value,
                         next_contract_redeemscript,
                     )
                 },
@@ -1279,7 +1278,7 @@ impl Taker {
                 my_receivers_contract_tx.clone(),
                 next_contract_redeemscript.clone(),
                 hashlock_privkey,
-                maker_funding_tx_value.to_sat(),
+                maker_funding_tx_value,
             );
             incoming_swapcoin.hash_preimage = Some(self.ongoing_swap_state.active_preimage);
             incoming_swapcoins.push(incoming_swapcoin);
@@ -1688,7 +1687,7 @@ impl Taker {
     /// Choose a suitable **untried** maker address from the offerbook that fits the swap params.
     fn choose_next_maker(&self) -> Result<&OfferAndAddress, TakerError> {
         let send_amount = self.ongoing_swap_state.swap_params.send_amount;
-        if send_amount == 0 {
+        if send_amount == Amount::ZERO {
             return Err(TakerError::SendAmountNotSet);
         }
 
@@ -1698,8 +1697,8 @@ impl Taker {
             .get_all_untried()
             .iter()
             .find(|oa| {
-                send_amount > oa.offer.min_size
-                    && send_amount < oa.offer.max_size
+                send_amount > Amount::from_sat(oa.offer.min_size)
+                    && send_amount < Amount::from_sat(oa.offer.max_size)
                     && !self
                         .ongoing_swap_state
                         .peer_infos

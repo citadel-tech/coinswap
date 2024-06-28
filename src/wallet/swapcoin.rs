@@ -41,7 +41,7 @@ pub struct IncomingSwapCoin {
     pub contract_tx: Transaction,
     pub contract_redeemscript: ScriptBuf,
     pub hashlock_privkey: SecretKey,
-    pub funding_amount: u64,
+    pub funding_amount: Amount,
     pub others_contract_sig: Option<Signature>,
     pub hash_preimage: Option<Preimage>,
 }
@@ -54,7 +54,7 @@ pub struct OutgoingSwapCoin {
     pub contract_tx: Transaction,
     pub contract_redeemscript: ScriptBuf,
     pub timelock_privkey: SecretKey,
-    pub funding_amount: u64,
+    pub funding_amount: Amount,
     pub others_contract_sig: Option<Signature>,
     pub hash_preimage: Option<Preimage>,
 }
@@ -73,7 +73,7 @@ pub struct WatchOnlySwapCoin {
     /// Redeem script associated with the coinswap contract.
     pub contract_redeemscript: ScriptBuf,
     /// The funding amount of the coinswap.
-    pub funding_amount: u64,
+    pub funding_amount: Amount,
 }
 
 /// Trait representing common functionality for swap coins.
@@ -93,7 +93,7 @@ pub trait SwapCoin {
     /// Get the hash value.
     fn get_hashvalue(&self) -> Hash160;
     /// Get the funding amount.
-    fn get_funding_amount(&self) -> u64;
+    fn get_funding_amount(&self) -> Amount;
     /// Verify the receiver's signature on the contract transaction.
     fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> Result<(), WalletError>;
     /// Verify the sender's signature on the contract transaction.
@@ -141,7 +141,7 @@ macro_rules! impl_walletswapcoin {
                         .p2wsh_signature_hash(
                             index,
                             &multisig_redeemscript,
-                            Amount::from_sat(self.funding_amount),
+                            self.funding_amount,
                             EcdsaSighashType::All,
                         )
                         .map_err(ContractError::Sighash)?[..],
@@ -198,7 +198,7 @@ macro_rules! impl_swapcoin_getters {
             self.contract_redeemscript.clone()
         }
 
-        fn get_funding_amount(&self) -> u64 {
+        fn get_funding_amount(&self) -> Amount {
             self.funding_amount
         }
     };
@@ -211,7 +211,7 @@ impl IncomingSwapCoin {
         contract_tx: Transaction,
         contract_redeemscript: ScriptBuf,
         hashlock_privkey: SecretKey,
-        funding_amount: u64,
+        funding_amount: Amount,
     ) -> Self {
         let secp = Secp256k1::new();
         let hashlock_pubkey = PublicKey {
@@ -254,7 +254,7 @@ impl IncomingSwapCoin {
                 .p2wsh_signature_hash(
                     index,
                     redeemscript,
-                    Amount::from_sat(self.funding_amount),
+                    self.funding_amount,
                     EcdsaSighashType::All,
                 )
                 .map_err(ContractError::Sighash)?[..],
@@ -286,7 +286,7 @@ impl IncomingSwapCoin {
         index: usize,
         tx: &Transaction,
         input: &mut TxIn,
-        input_value: u64,
+        input_value: Amount,
         hash_preimage: &[u8],
     ) -> Result<(), WalletError> {
         let secp = Secp256k1::new();
@@ -295,7 +295,7 @@ impl IncomingSwapCoin {
                 .p2wsh_signature_hash(
                     index,
                     &self.contract_redeemscript,
-                    Amount::from_sat(input_value),
+                    input_value,
                     EcdsaSighashType::All,
                 )
                 .map_err(ContractError::Sighash)?[..],
@@ -316,7 +316,7 @@ impl IncomingSwapCoin {
         index: usize,
         tx: &Transaction,
         input: &mut TxIn,
-        input_value: u64,
+        input_value: Amount,
     ) -> Result<(), WalletError> {
         if self.hash_preimage.is_none() {
             panic!("invalid state, unable to sign: preimage unknown");
@@ -358,7 +358,7 @@ impl IncomingSwapCoin {
             index,
             &tx.clone(),
             &mut tx.input[0],
-            self.contract_tx.output[0].value.to_sat(),
+            self.contract_tx.output[0].value,
             &preimage,
         )
         .unwrap();
@@ -383,7 +383,7 @@ impl OutgoingSwapCoin {
         contract_tx: Transaction,
         contract_redeemscript: ScriptBuf,
         timelock_privkey: SecretKey,
-        funding_amount: u64,
+        funding_amount: Amount,
     ) -> Self {
         let secp = Secp256k1::new();
         let timelock_pubkey = PublicKey {
@@ -410,7 +410,7 @@ impl OutgoingSwapCoin {
         index: usize,
         tx: &Transaction,
         input: &mut TxIn,
-        input_value: u64,
+        input_value: Amount,
     ) -> Result<(), WalletError> {
         let secp = Secp256k1::new();
         let sighash = secp256k1::Message::from_digest_slice(
@@ -418,7 +418,7 @@ impl OutgoingSwapCoin {
                 .p2wsh_signature_hash(
                     index,
                     &self.contract_redeemscript,
-                    Amount::from_sat(input_value),
+                    input_value,
                     EcdsaSighashType::All,
                 )
                 .map_err(ContractError::Sighash)?[..],
@@ -459,7 +459,7 @@ impl OutgoingSwapCoin {
             index,
             &tx.clone(),
             &mut tx.input[0],
-            self.contract_tx.output[0].value.to_sat(),
+            self.contract_tx.output[0].value,
         )
         .unwrap();
         tx
@@ -496,7 +496,7 @@ impl WatchOnlySwapCoin {
         receiver_pubkey: PublicKey,
         contract_tx: Transaction,
         contract_redeemscript: ScriptBuf,
-        funding_amount: u64,
+        funding_amount: Amount,
     ) -> Result<WatchOnlySwapCoin, WalletError> {
         let (pubkey1, pubkey2) = read_pubkeys_from_multisig_redeemscript(multisig_redeemscript)?;
         if pubkey1 != receiver_pubkey && pubkey2 != receiver_pubkey {
@@ -672,7 +672,7 @@ mod tests {
         let mut swapcoin = WatchOnlySwapCoin {
             sender_pubkey: PublicKey::from_private_key(&secp, &privkey_sender),
             receiver_pubkey: PublicKey::from_private_key(&secp, &privkey_receiver),
-            funding_amount: 100,
+            funding_amount: Amount::from_sat(100),
             contract_tx: Transaction {
                 input: vec![],
                 output: vec![],
@@ -729,7 +729,7 @@ mod tests {
                 "0000000000000000000000000000000000000000000000000000000000000004",
             )
             .unwrap(),
-            funding_amount: 0,
+            funding_amount: Amount::ZERO,
             others_contract_sig: None,
             hash_preimage: None,
         };
@@ -780,7 +780,7 @@ mod tests {
                 "0000000000000000000000000000000000000000000000000000000000000003",
             )
             .unwrap(),
-            funding_amount: 0,
+            funding_amount: Amount::ZERO,
             others_contract_sig: None,
             hash_preimage: None,
         };
@@ -849,7 +849,7 @@ mod tests {
                 "0000000000000000000000000000000000000000000000000000000000000004",
             )
             .unwrap(),
-            funding_amount: 100_000,
+            funding_amount: Amount::from_sat(100_000),
             others_contract_sig: None,
             hash_preimage: None,
         };
@@ -904,7 +904,7 @@ mod tests {
                 "0000000000000000000000000000000000000000000000000000000000000004",
             )
             .unwrap(),
-            funding_amount: 100_000,
+            funding_amount: Amount::from_sat(100_000),
             others_contract_sig: None,
             hash_preimage: Some(Preimage::from([0; 32])),
         };
@@ -940,7 +940,7 @@ mod tests {
                 index,
                 &tx.clone(),
                 &mut tx.input[0],
-                incoming_swapcoin.contract_tx.output[0].value.to_sat(),
+                incoming_swapcoin.contract_tx.output[0].value,
                 &preimage,
             )
             .unwrap();
@@ -984,7 +984,7 @@ mod tests {
                 "0000000000000000000000000000000000000000000000000000000000000004",
             )
             .unwrap(),
-            funding_amount: 100_000,
+            funding_amount: Amount::from_sat(100_000),
             others_contract_sig: None,
             hash_preimage: Some(Preimage::from([0; 32])),
         };
@@ -1014,14 +1014,14 @@ mod tests {
             version: Version::TWO,
         };
         let index = 0;
-        let input_value = 100;
+        let input_value = Amount::from_sat(100);
         let preimage = Vec::new();
         incoming_swapcoin
             .sign_hashlocked_transaction_input_given_preimage(
                 index,
                 &tx.clone(),
                 &mut tx.input[0],
-                incoming_swapcoin.contract_tx.output[0].value.to_sat(),
+                incoming_swapcoin.contract_tx.output[0].value,
                 &preimage,
             )
             .unwrap();

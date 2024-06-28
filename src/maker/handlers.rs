@@ -221,10 +221,9 @@ impl Maker {
             .map(|txinfo| txinfo.senders_contract_tx.input[0].previous_output.txid)
             .collect::<Vec<_>>();
 
-        let total_funding_amount = message
-            .txs_info
-            .iter()
-            .fold(0u64, |acc, txinfo| acc + txinfo.funding_input_value);
+        let total_funding_amount = message.txs_info.iter().fold(0u64, |acc, txinfo| {
+            acc + txinfo.funding_input_value.to_sat()
+        });
 
         if total_funding_amount >= self.config.min_size
             && total_funding_amount < self.wallet.read()?.store.offer_maxsize
@@ -285,7 +284,7 @@ impl Maker {
                     txid: funding_info.funding_tx.compute_txid(),
                     vout: funding_output_index,
                 },
-                funding_output.value.to_sat(),
+                funding_output.value,
                 &funding_info.contract_redeemscript,
             );
 
@@ -315,7 +314,7 @@ impl Maker {
                 receiver_contract_tx.clone(),
                 funding_info.contract_redeemscript.clone(),
                 hashlock_privkey,
-                funding_output.value.to_sat(),
+                funding_output.value,
             );
             if !connection_state
                 .incoming_swapcoins
@@ -345,7 +344,7 @@ impl Maker {
             self.config.absolute_fee_sats,
             self.config.amount_relative_fee_ppb,
             self.config.time_relative_fee_ppb,
-            incoming_amount,
+            Amount::from_sat(incoming_amount),
             self.config.required_confirms, //time_in_blocks just 1 for now
         );
 
@@ -359,7 +358,7 @@ impl Maker {
         // Create outgoing coinswap of the next hop
         let (my_funding_txes, outgoing_swapcoins, act_funding_txs_fees) = {
             self.wallet.write()?.initalize_coinswap(
-                outgoing_amount,
+                Amount::from_sat(outgoing_amount),
                 &message
                     .next_coinswap_info
                     .iter()
@@ -372,11 +371,11 @@ impl Maker {
                     .collect::<Vec<PublicKey>>(),
                 hashvalue,
                 message.next_locktime,
-                message.next_fee_rate,
+                Amount::from_sat(message.next_fee_rate),
             )?
         };
 
-        let act_coinswap_fees = incoming_amount - outgoing_amount - act_funding_txs_fees;
+        let act_coinswap_fees = incoming_amount - outgoing_amount - act_funding_txs_fees.to_sat();
 
         log::info!(
             "[{}] Outgoing Funding Txids: {:?}.",
@@ -404,7 +403,7 @@ impl Maker {
         log::info!(
             "Calculated Funding Txs Fees = {} | Actual Funding Txs Fees = {} | Calculated Swap Revenue = {} | Actual Swap Revenue = {}",
             Amount::from_sat(calc_funding_tx_fees),
-            Amount::from_sat(act_funding_txs_fees),
+            act_funding_txs_fees,
             Amount::from_sat(calc_coinswap_fees),
             Amount::from_sat(act_coinswap_fees)
         );

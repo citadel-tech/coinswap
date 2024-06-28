@@ -207,11 +207,11 @@ async fn test_standard_coinswap() {
     });
 
     let swap_params = SwapParams {
-        send_amount: 500000,
+        send_amount: Amount::from_sat(500000),
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
-        fee_rate: 1000,
+        fee_rate: Amount::from_sat(1000),
     };
 
     info!("Initiating coinswap protocol");

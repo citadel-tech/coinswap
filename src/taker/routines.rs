@@ -9,18 +9,6 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use bitcoin::{secp256k1::SecretKey, PublicKey, ScriptBuf, Transaction};
-use tokio::{
-    io::BufReader,
-    net::{
-        tcp::{ReadHalf, WriteHalf},
-        TcpStream,
-    },
-    select,
-    time::sleep,
-};
-use tokio_socks::tcp::Socks5Stream;
-
 use crate::{
     error::ProtocolError,
     protocol::{
@@ -39,6 +27,17 @@ use crate::{
     },
     utill::{read_maker_message, send_message, ConnectionType},
 };
+use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
+use tokio::{
+    io::BufReader,
+    net::{
+        tcp::{ReadHalf, WriteHalf},
+        TcpStream,
+    },
+    select,
+    time::sleep,
+};
+use tokio_socks::tcp::Socks5Stream;
 
 use super::{
     config::TakerConfig,
@@ -261,7 +260,7 @@ pub struct NextPeerInfoArgs {
     pub next_peer_multisig_pubkeys: Vec<PublicKey>,
     pub next_peer_hashlock_pubkeys: Vec<PublicKey>,
     pub next_maker_refund_locktime: u16,
-    pub next_maker_fee_rate: u64,
+    pub next_maker_fee_rate: Amount,
 }
 
 /// [Internal] Send a Proof funding to the maker and init next hop.
@@ -288,7 +287,7 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
                 )
                 .collect::<Vec<NextHopInfo>>(),
             next_locktime: npi.next_maker_refund_locktime,
-            next_fee_rate: npi.next_maker_fee_rate,
+            next_fee_rate: npi.next_maker_fee_rate.to_sat(),
         }),
     )
     .await?;
@@ -344,22 +343,22 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
         .senders_contract_txs_info
         .iter()
         .map(|i| i.funding_amount)
-        .sum::<u64>();
+        .sum::<Amount>();
     let coinswap_fees = calculate_coinswap_fee(
         tmi.this_maker.offer.absolute_fee_sat,
         tmi.this_maker.offer.amount_relative_fee_ppb,
         tmi.this_maker.offer.time_relative_fee_ppb,
-        this_amount,
+        Amount::from_sat(this_amount),
         1, //time_in_blocks just 1 for now
     );
     let miner_fees_paid_by_taker = (FUNDING_TX_VBYTE_SIZE
-        * npi.next_maker_fee_rate
+        * npi.next_maker_fee_rate.to_sat()
         * (npi.next_peer_multisig_pubkeys.len() as u64))
         / 1000;
     let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
-    if calculated_next_amount != next_amount {
+    if Amount::from_sat(calculated_next_amount) != next_amount {
         return Err((ProtocolError::IncorrectFundingAmount {
-            expected: calculated_next_amount,
+            expected: Amount::from_sat(calculated_next_amount),
             found: next_amount,
         })
         .into());

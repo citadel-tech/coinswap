@@ -117,22 +117,22 @@ impl FromStr for DisplayAddressType {
 pub enum UTXOSpendInfo {
     SeedCoin {
         path: String,
-        input_value: u64,
+        input_value: Amount,
     },
     SwapCoin {
         multisig_redeemscript: ScriptBuf,
     },
     TimelockContract {
         swapcoin_multisig_redeemscript: ScriptBuf,
-        input_value: u64,
+        input_value: Amount,
     },
     HashlockContract {
         swapcoin_multisig_redeemscript: ScriptBuf,
-        input_value: u64,
+        input_value: Amount,
     },
     FidelityBondCoin {
         index: u32,
-        input_value: u64,
+        input_value: Amount,
     },
 }
 
@@ -545,9 +545,7 @@ impl Wallet {
             .fidelity_bond
             .iter()
             .find_map(|(i, (bond, _, _))| {
-                if bond.script_pub_key() == utxo.script_pub_key
-                    && bond.amount == utxo.amount.to_sat()
-                {
+                if bond.script_pub_key() == utxo.script_pub_key && bond.amount == utxo.amount {
                     Some(UTXOSpendInfo::FidelityBondCoin {
                         index: *i,
                         input_value: bond.amount,
@@ -569,7 +567,7 @@ impl Wallet {
             if utxo.confirmations >= outgoing_swapcoin.get_timelock().into() {
                 return Some(UTXOSpendInfo::TimelockContract {
                     swapcoin_multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
-                    input_value: utxo.amount.to_sat(),
+                    input_value: utxo.amount,
                 });
             }
         } else if let Some(incoming_swapcoin) =
@@ -578,7 +576,7 @@ impl Wallet {
             if incoming_swapcoin.is_hash_preimage_known() && utxo.confirmations >= 1 {
                 return Some(UTXOSpendInfo::HashlockContract {
                     swapcoin_multisig_redeemscript: incoming_swapcoin.get_multisig_redeemscript(),
-                    input_value: utxo.amount.to_sat(),
+                    input_value: utxo.amount,
                 });
             }
         }
@@ -608,7 +606,7 @@ impl Wallet {
                 if fingerprint == master_private_key.fingerprint(&secp).to_string() {
                     return Some(UTXOSpendInfo::SeedCoin {
                         path: format!("m/{}/{}", addr_type, index),
-                        input_value: utxo.amount.to_sat(),
+                        input_value: utxo.amount,
                     });
                 }
             } else {
@@ -1005,12 +1003,7 @@ impl Wallet {
                     };
                     let scriptcode = ScriptBuf::new_p2wpkh(&pubkey.wpubkey_hash().unwrap());
                     let sighash = SighashCache::new(&tx_clone)
-                        .p2wpkh_signature_hash(
-                            ix,
-                            &scriptcode,
-                            Amount::from_sat(input_value),
-                            EcdsaSighashType::All,
-                        )
+                        .p2wpkh_signature_hash(ix, &scriptcode, input_value, EcdsaSighashType::All)
                         .unwrap();
                     //use low-R value signatures for privacy
                     //https://en.bitcoin.it/wiki/Privacy#Wallet_fingerprinting
@@ -1043,12 +1036,7 @@ impl Wallet {
                     let privkey = self.get_fidelity_keypair(index)?.secret_key();
                     let redeemscript = self.get_fidelity_reedemscript(index)?;
                     let sighash = SighashCache::new(&tx_clone)
-                        .p2wsh_signature_hash(
-                            ix,
-                            &redeemscript,
-                            Amount::from_sat(input_value),
-                            EcdsaSighashType::All,
-                        )
+                        .p2wsh_signature_hash(ix, &redeemscript, input_value, EcdsaSighashType::All)
                         .unwrap();
                     let sig = secp.sign_ecdsa(
                         &secp256k1::Message::from_digest_slice(&sighash[..]).unwrap(),
@@ -1151,13 +1139,13 @@ impl Wallet {
     /// Returns, the Funding Transactions, [`OutgoingSwapCoin`]s and the Total Miner fees.
     pub fn initalize_coinswap(
         &mut self,
-        total_coinswap_amount: u64,
+        total_coinswap_amount: Amount,
         other_multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
         hashvalue: Hash160,
         locktime: u16,
-        fee_rate: u64,
-    ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, u64), WalletError> {
+        fee_rate: Amount,
+    ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, Amount), WalletError> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
             .iter()
             .map(|other_key| self.create_and_import_coinswap_address(other_key))
@@ -1199,7 +1187,7 @@ impl Wallet {
                     txid: my_funding_tx.compute_txid(),
                     vout: utxo_index,
                 },
-                funding_amount.to_sat(),
+                funding_amount,
                 &contract_redeemscript,
             );
 
@@ -1210,14 +1198,14 @@ impl Wallet {
                 my_senders_contract_tx,
                 contract_redeemscript,
                 timelock_privkey,
-                funding_amount.to_sat(),
+                funding_amount,
             ));
         }
 
         Ok((
             create_funding_txes_result.funding_txes,
             outgoing_swapcoins,
-            create_funding_txes_result.total_miner_fee,
+            Amount::from_sat(create_funding_txes_result.total_miner_fee),
         ))
     }
 

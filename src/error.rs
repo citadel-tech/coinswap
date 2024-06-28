@@ -1,5 +1,7 @@
 //! High-level network and protocol errors.
 
+use bitcoin::Amount;
+
 use crate::protocol::error::ContractError;
 
 /// Includes all network-related errors.
@@ -30,7 +32,7 @@ pub enum ProtocolError {
     WrongNumOfSigs { expected: usize, received: usize },
     WrongNumOfContractTxs { expected: usize, received: usize },
     WrongNumOfPrivkeys { expected: usize, received: usize },
-    IncorrectFundingAmount { expected: u64, found: u64 },
+    IncorrectFundingAmount { expected: Amount, found: Amount },
     Contract(ContractError),
 }
 
