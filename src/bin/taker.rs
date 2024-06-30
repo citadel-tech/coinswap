@@ -10,7 +10,6 @@ use coinswap::{
     wallet::RPCConfig,
 };
 
-
 /// taker-cli is a command line app to use taker client API's.
 #[derive(Parser, Debug)]
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
