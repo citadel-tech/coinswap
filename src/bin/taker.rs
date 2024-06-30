@@ -10,23 +10,30 @@ use coinswap::{
     wallet::RPCConfig,
 };
 
+
+/// taker-cli is a command line app to use taker client API's.
 #[derive(Parser, Debug)]
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
+    /// Optional Connection Network Type
     #[clap(long, default_value = "clearnet",possible_values = &["tor","clearnet"])]
     network: String,
+    /// Optional DNS data directory. Default value : "~/.coinswap/taker"
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
+    /// Sets the full node address for rpc connection.
     #[clap(
         name = "ADDRESS:PORT",
         long,
         short = 'r',
-        default_value = "127.0.0.1:18444"
+        default_value = "127.0.0.1:18443"
     )]
     pub rpc: String,
+    /// Sets the rpc basic authentication.
     #[clap(name="USER:PASSWORD",short='a',long, value_parser = parse_proxy_auth, default_value = "user:password")]
     pub auth: (String, String),
+    /// Sets the full node network, this should match with the network of the running node.
     #[clap(
         name = "NETWORK",
         long,
@@ -34,35 +41,54 @@ struct Cli {
         default_value = "regtest", possible_values = &["regtest", "signet", "mainnet"]
     )]
     pub rpc_network: String,
+    /// Sets the taker wallet's name. If the wallet file already exists at data-directory, it will load that wallet.
     #[clap(name = "WALLET", long, short = 'w', default_value = "taker")]
     pub wallet_name: String,
+    /// Sets the maker count to initiate coinswap with.
     #[clap(name = "maker_count", default_value = "2")]
     pub maker_count: u16,
+    /// Sets the send amount.
     #[clap(name = "send_amount", default_value = "500000")]
     pub send_amount: u64,
+    /// Sets the transaction count.
     #[clap(name = "tx_count", default_value = "3")]
     pub tx_count: u32,
+    /// Sets the fee-rate.
     #[clap(name = "fee_rate", default_value = "1000")]
     pub fee_rate: u64,
+    /// Sets the required on-chain confirmations.
     #[clap(name = "required_confirms", default_value = "1000")]
     pub required_confirms: u64,
+    /// List of sub commands to process various endpoints of taker cli app.
     #[clap(subcommand)]
     command: Commands,
 }
 
 #[derive(Parser, Debug)]
 enum Commands {
+    /// Returns a list of seed utxos
     SeedUtxo,
+    /// Returns a list of swap coin utxos
     SwapUtxo,
+    /// Returns a list of live contract utxos
     ContractUtxo,
+    /// Returns a list of fidelity utxos
     FidelityUtxo,
+    /// Returns the total seed balance
     SeedBalance,
+    /// Returns the total swap coin balance
     SwapBalance,
+    /// Returns the total live contract balance
     ContractBalance,
+    /// Returns the total fidelity balance
     FidelityBalance,
+    /// Returns the total balance of taker wallet
     TotalBalance,
+    /// Returns a new address
     GetNewAddress,
+    /// Sync the offer book
     SyncOfferBook,
+    /// Initiate the coinswap process
     DoCoinswap,
 }
 
