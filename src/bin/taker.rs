@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Auth};
 use clap::Parser;
 use coinswap::{
@@ -104,11 +105,11 @@ fn main() {
     };
 
     let swap_params = SwapParams {
-        send_amount: args.send_amount,
+        send_amount: Amount::from_sat(args.send_amount),
         maker_count: args.maker_count,
         tx_count: args.tx_count,
         required_confirms: args.required_confirms,
-        fee_rate: args.fee_rate,
+        fee_rate: Amount::from_sat(args.fee_rate),
     };
 
     let mut taker = Taker::init(
