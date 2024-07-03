@@ -1209,6 +1209,7 @@ impl Taker {
                         previous_funding_output,
                         maker_funding_tx_value,
                         next_contract_redeemscript,
+                        self.ongoing_swap_state.swap_params.fee_rate,
                     )
                 },
             )

@@ -1189,6 +1189,7 @@ impl Wallet {
                 },
                 funding_amount,
                 &contract_redeemscript,
+                fee_rate,
             );
 
             // self.import_wallet_contract_redeemscript(&contract_redeemscript)?;
