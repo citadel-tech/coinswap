@@ -381,6 +381,7 @@ pub fn create_senders_contract_tx(
     input: OutPoint,
     input_value: Amount,
     contract_redeemscript: &ScriptBuf,
+    fee_rate: Amount,
 ) -> Transaction {
     Transaction {
         input: vec![TxIn {
@@ -391,8 +392,7 @@ pub fn create_senders_contract_tx(
         }],
         output: vec![TxOut {
             script_pubkey: redeemscript_to_scriptpubkey(contract_redeemscript),
-            // TODO: Mining fee for contract tx is hard coded here. Make it configurable.
-            value: input_value - Amount::from_sat(1000),
+            value: input_value - fee_rate,
         }],
         lock_time: LockTime::ZERO,
         version: Version::TWO,
@@ -404,10 +404,11 @@ pub fn create_receivers_contract_tx(
     input: OutPoint,
     input_value: Amount,
     contract_redeemscript: &ScriptBuf,
+    fee_rate: Amount,
 ) -> Transaction {
     //exactly the same thing as senders contract for now, until collateral
     //inputs are implemented
-    create_senders_contract_tx(input, input_value, contract_redeemscript)
+    create_senders_contract_tx(input, input_value, contract_redeemscript, fee_rate)
 }
 
 /// Check if a contract output is valid.
@@ -710,8 +711,12 @@ mod test {
         .unwrap();
 
         // Create a contract transaction spending the above utxo
-        let contract_tx =
-            create_receivers_contract_tx(spending_utxo, Amount::from_sat(30000), &contract_script);
+        let contract_tx = create_receivers_contract_tx(
+            spending_utxo,
+            Amount::from_sat(30000),
+            &contract_script,
+            Amount::from_sat(1000),
+        );
 
         // Check creation matches expectation
         let expected_tx_hex = String::from(
@@ -853,6 +858,7 @@ mod test {
             funding_outpoint,
             funding_tx.output[0].value,
             &contract_script,
+            Amount::from_sat(1000),
         );
 
         // priv1 signs the contract and verify

@@ -286,6 +286,7 @@ impl Maker {
                 },
                 funding_output.value,
                 &funding_info.contract_redeemscript,
+                Amount::from_sat(message.next_fee_rate),
             );
 
             let (tweakable_privkey, _) = self.wallet.read()?.get_tweakable_keypair();
