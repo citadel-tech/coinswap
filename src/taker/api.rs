@@ -279,7 +279,6 @@ impl Taker {
                 }
             }
         }
-
         self.send_coinswap(swap_params).await?;
 
         if self.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {

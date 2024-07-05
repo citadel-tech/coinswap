@@ -24,6 +24,13 @@ pub enum TakerError {
     Protocol(ProtocolError),
     SendAmountNotSet,
     FundingTxWaitTimeOut,
+    Deserialize(serde_cbor::Error),
+}
+
+impl From<serde_cbor::Error> for TakerError {
+    fn from(value: serde_cbor::Error) -> Self {
+        Self::Deserialize(value)
+    }
 }
 
 impl From<RpcError> for TakerError {
