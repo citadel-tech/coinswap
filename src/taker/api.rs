@@ -296,7 +296,7 @@ impl Taker {
     /// Depending upon the failure situation, Taker will automatically try to recover from failed swaps
     /// by executing the contract txs. If that fails too for any reason, user should manually call the [Taker::recover_from_swap].
     ///
-    /// If that fails too. Open an issue at [our github](https://github.com/utxo-teleport/teleport-transactions/issues)
+    /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub async fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         log::info!("Syncing Offerbook");
         let network = self.wallet.store.network;
