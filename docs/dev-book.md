@@ -209,7 +209,7 @@ pub enum TakerToMakerMessage {
 }
 ```
 
-A step-by-step communication sequence for a typical 3-hop-swap with the above messages is provided in [`src/messages.rs`](https://github.com/utxo-teleport/teleport-transactions/blob/30be708642cfdaa206d52e147ecb580af7db0bda/src/messages.rs#L20-L59), as below.
+A step-by-step communication sequence for a typical 3-hop-swap with the above messages is provided in [`src/messages.rs`](https://github.com/citadel-tech/coinswap/blob/master/src/protocol/messages.rs#L1-L55), as below.
 
 ```
 //! The simplest 3 hop Coinswap communication, between a Taker and two Makers in a multi-hop coinswap is shown below.
