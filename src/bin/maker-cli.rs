@@ -37,6 +37,8 @@ enum Commands {
     ContractBalance,
     /// Returns the total fidelity balance
     FidelityBalance,
+    /// Gets a new address
+    NewAddress,
 }
 
 #[tokio::main]
@@ -71,6 +73,9 @@ async fn main() -> Result<(), MakerError> {
         }
         Commands::SwapUtxo => {
             send_rpc_req(&RpcMsgReq::SwapUtxo).await?;
+        }
+        Commands::NewAddress => {
+            send_rpc_req(&RpcMsgReq::NewAddress).await?;
         }
     }
 
