@@ -876,7 +876,7 @@ impl Taker {
         let previous_maker = self.ongoing_swap_state.peer_infos.iter().rev().nth(1);
 
         log::info!("Connecting to {}", this_maker.address);
-        let address = this_maker.address.as_str();
+        let address = this_maker.address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(address).await?,
             ConnectionType::TOR => Socks5Stream::connect(
@@ -1617,7 +1617,7 @@ impl Taker {
         receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {
         log::info!("Connecting to {}", maker_address);
-        let address = maker_address.as_str();
+        let address = maker_address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(address).await?,
             ConnectionType::TOR => Socks5Stream::connect(

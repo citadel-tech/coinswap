@@ -102,7 +102,7 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
     locktime: u16,
 ) -> Result<ContractSigsForSender, TakerError> {
     log::info!("Connecting to {}", maker_address);
-    let address = maker_address.as_str();
+    let address = maker_address.to_string();
 
     let mut socket = match connection_type {
         ConnectionType::CLEARNET => TcpStream::connect(address).await?,
@@ -184,7 +184,7 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
     receivers_contract_txes: &[Transaction],
 ) -> Result<ContractSigsForRecvr, TakerError> {
     log::info!("Connecting to {}", maker_address);
-    let address = maker_address.as_str();
+    let address = maker_address.to_string();
     let mut socket = match connection_type {
         ConnectionType::CLEARNET => TcpStream::connect(address).await?,
         ConnectionType::TOR => Socks5Stream::connect("127.0.0.1:19050", address)
@@ -460,7 +460,7 @@ async fn download_maker_offer_attempt_once(
     addr: &MakerAddress,
     connection_type: ConnectionType,
 ) -> Result<Offer, TakerError> {
-    let address = addr.as_str();
+    let address = addr.to_string();
 
     let mut socket = match connection_type {
         ConnectionType::CLEARNET => TcpStream::connect(address).await?,
