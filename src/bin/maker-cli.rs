@@ -6,13 +6,7 @@ use coinswap::{
     },
     utill::{send_message, setup_logger},
 };
-use serde::{Deserialize, Serialize};
 use tokio::{io::BufReader, net::TcpStream};
-
-#[derive(Serialize, Deserialize, Debug)]
-enum Message {
-    Hello,
-}
 
 /// maker-cli is a command line app to send RPC messages to maker server.
 #[derive(Parser, Debug)]

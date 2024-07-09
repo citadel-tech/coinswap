@@ -7,6 +7,7 @@
 
 use std::{fmt, thread, time::Duration};
 
+use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -31,29 +32,31 @@ pub struct OfferAndAddress {
 
 const _REGTEST_MAKER_ADDRESSES_PORT: &[&str] = &["6102", "16102", "26102", "36102", "46102"];
 
-type OnionAddress = String;
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct OnionAddress {
+    port: String,
+    onion_addr: String,
+}
 /// Enum representing maker addresses.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MakerAddress(OnionAddress);
 
 impl MakerAddress {
-    /// Returns the TCP stream address as a string.
-    pub fn get_tcpstream_address(&self) -> String {
-        self.0.to_string()
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    pub fn new(address: String) -> Self {
-        MakerAddress(address)
+    pub fn new(address: String) -> Option<Self> {
+        if let Some((onion_addr, port)) = address.split_once(":") {
+            Some(Self(OnionAddress {
+                port: port.to_string(),
+                onion_addr: onion_addr.to_string(),
+            }))
+        } else {
+            None
+        }
     }
 }
 
 impl fmt::Display for MakerAddress {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}:{}", self.0.onion_addr, self.0.port)
     }
 }
 
@@ -179,7 +182,7 @@ pub async fn fetch_addresses_from_dns(
 
             let addresses: Vec<MakerAddress> = response
                 .lines()
-                .map(|addr| MakerAddress::new(addr.to_string()))
+                .map(|addr| MakerAddress::new(addr.to_string()).expect("Malformed maker address"))
                 .collect();
 
             log::info!("Maker addresses received from DNS: {:?}", addresses);
