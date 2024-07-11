@@ -47,7 +47,7 @@ fn main() {
 
             let data_directory = data_directory.unwrap_or(get_dns_dir());
             let directory_server = DirectoryServer::new(
-                Some(&data_directory.join("config.toml")),
+                Some(data_directory.join("config.toml")),
                 Some(network_type),
             )
             .unwrap();

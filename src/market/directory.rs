@@ -14,6 +14,7 @@ use std::{
 };
 
 use std::path::PathBuf;
+use crate::market::rpc::start_rpc_server_thread;
 
 use crate::utill::{
     get_dns_dir, get_tor_addrs, monitor_log_for_completion, parse_field, parse_toml,
@@ -35,6 +36,7 @@ pub enum DirectoryServerError {
 /// Directory Configuration,
 #[derive(Debug)]
 pub struct DirectoryServer {
+    pub rpc_port : u16,
     pub port: u16,
     pub socks_port: u16,
     pub connection_type: ConnectionType,
@@ -45,6 +47,7 @@ pub struct DirectoryServer {
 impl Default for DirectoryServer {
     fn default() -> Self {
         Self {
+            rpc_port: 4321,
             port: 8080,
             socks_port: 19060,
             connection_type: ConnectionType::TOR,
@@ -67,13 +70,13 @@ impl DirectoryServer {
     /// Default config locations: `~/.coinswap/dns/config.toml`.
 
     pub fn new(
-        config_path: Option<&PathBuf>,
+        config_path: Option<PathBuf>,
         connection_type: Option<ConnectionType>,
     ) -> io::Result<Self> {
         let default_config = Self::default();
 
         let default_config_path = get_dns_dir().join("config.toml");
-        let config_path = config_path.cloned().unwrap_or(default_config_path);
+        let config_path = config_path.unwrap_or(default_config_path);
 
         // This will create parent directories if they don't exist
         if !config_path.exists() {
@@ -93,11 +96,16 @@ impl DirectoryServer {
             config_path.display()
         );
 
+        log::info!("Data directory: {:?}", data_dir);
+
         let directory_config_section = section.get("maker_config").cloned().unwrap_or_default();
 
         let connection_type_value = connection_type.unwrap_or(ConnectionType::TOR);
 
+        log::info!("Connection type: {:?}", connection_type_value);
+
         Ok(DirectoryServer {
+            rpc_port: 4321,
             port: parse_field(directory_config_section.get("port"), default_config.port)
                 .unwrap_or(default_config.port),
             socks_port: parse_field(
@@ -114,6 +122,8 @@ impl DirectoryServer {
             .unwrap_or(connection_type_value),
         })
     }
+
+
 
     pub fn shutdown(&self) -> Result<(), DirectoryServerError> {
         let mut flag = self
@@ -132,6 +142,7 @@ fn write_default_directory_config(config_path: &PathBuf) -> std::io::Result<()> 
             port = 8080\n\
             socks_port = 19060\n\
             connection_type = tor\n\
+            rpc_port= 4321\n\
             ",
     );
 
@@ -140,11 +151,13 @@ fn write_default_directory_config(config_path: &PathBuf) -> std::io::Result<()> 
 
 #[tokio::main]
 pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
-    log::info!("Inside Directory Server");
 
     let address_file = directory.data_dir.join("addresses.dat");
+    
+    log::info!("Address file location: {}", address_file.display());
 
     let mut addresses = HashSet::new();
+
 
     let mut handle = None;
 
@@ -223,7 +236,17 @@ pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
             }
         }
     }
+    // start directory rpc server here
+    // add directory server to arc
+    // read about ARC
+
+    let directory_server_arc = directory.clone();
+    log::info!("Starting RPC server for directory server");
+    let _ = start_rpc_server_thread(directory_server_arc).await;
+
 }
+
+
 
 async fn handle_client(mut stream: tokio::net::TcpStream, addresses: &mut HashSet<String>) {
     let mut reader = tokio::io::BufReader::new(&mut stream);
@@ -267,7 +290,7 @@ mod tests {
             socks_port = 19060
         "#;
         let config_path = create_temp_config(contents, "valid_directory_config.toml");
-        let config = DirectoryServer::new(Some(&config_path), None).unwrap();
+        let config = DirectoryServer::new(Some(config_path.clone()), None).unwrap();
         remove_temp_config(&config_path);
 
         let default_config = DirectoryServer::default();
@@ -282,7 +305,7 @@ mod tests {
             port = 8080
         "#;
         let config_path = create_temp_config(contents, "missing_fields_directory_config.toml");
-        let config = DirectoryServer::new(Some(&config_path), None).unwrap();
+        let config = DirectoryServer::new(Some(config_path.clone()), None).unwrap();
         remove_temp_config(&config_path);
 
         assert_eq!(config.port, 8080);
@@ -296,7 +319,7 @@ mod tests {
             port = "not_a_number"
         "#;
         let config_path = create_temp_config(contents, "incorrect_type_directory_config.toml");
-        let config = DirectoryServer::new(Some(&config_path), None).unwrap();
+        let config = DirectoryServer::new(Some(config_path.clone()), None).unwrap();
         remove_temp_config(&config_path);
 
         let default_config = DirectoryServer::default();
@@ -307,7 +330,7 @@ mod tests {
     #[test]
     fn test_missing_file() {
         let config_path = get_dns_dir().join("config.toml");
-        let config = DirectoryServer::new(Some(&config_path), None).unwrap();
+        let config = DirectoryServer::new(Some(config_path.clone()), None).unwrap();
         remove_temp_config(&config_path);
         let default_config = DirectoryServer::default();
         assert_eq!(config.port, default_config.port);
