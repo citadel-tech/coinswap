@@ -12,6 +12,7 @@ pub enum RpcMsgReq {
     SwapBalance,
     ContractBalance,
     FidelityBalance,
+    NewAddress,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -25,4 +26,5 @@ pub enum RpcMsgResp {
     SwapBalanceResp(u64),
     ContractBalanceResp(u64),
     FidleityBalanceResp(u64),
+    NewAddressResp(String),
 }

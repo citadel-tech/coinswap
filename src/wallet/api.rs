@@ -1306,7 +1306,6 @@ impl Wallet {
                 compute_checksum(&descriptor_without_checksum).unwrap()
             )
         }));
-
         Ok(descriptors_to_import)
     }
 }

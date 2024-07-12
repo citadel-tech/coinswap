@@ -126,6 +126,13 @@ async fn handle_request(maker: &Arc<Maker>, mut socket: TcpStream) -> Result<(),
                     log::info!("Error sending RPC response {:?}", e);
                 };
             }
+            RpcMsgReq::NewAddress => {
+                let new_address = maker.get_wallet().write()?.get_next_external_address()?;
+                let resp = RpcMsgResp::NewAddressResp(new_address.to_string());
+                if let Err(e) = send_message(&mut socket_writer, &resp).await {
+                    log::info!("Error sending RPC response {:?}", e);
+                };
+            }
         }
     }
 
