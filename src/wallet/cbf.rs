@@ -16,8 +16,10 @@ use nakamoto::{
     p2p::fsm::fees::FeeEstimate,
 };
 
-use crate::{utill::get_taker_dir, wallet::Wallet};
-use crate::wallet::OutgoingSwapCoin;
+use crate::{
+    utill::get_taker_dir,
+    wallet::{OutgoingSwapCoin, Wallet},
+};
 
 type Reactor = nakamoto::net::poll::Reactor<std::net::TcpStream>;
 
@@ -122,27 +124,52 @@ impl CbfBlockchain {
     pub fn process_events(&mut self) -> Result<(), CbfSyncError> {
         loop {
             match self.get_next_event()? {
+                Event::Ready { tip, filter_tip } => {
+                    info!("CBF sync ready. Tip: {}, Filter tip: {}", tip, filter_tip);
+                }
+                Event::PeerConnected { addr, link } => {
+                    info!("Peer connected: {}", addr);
+                }
+                Event::PeerDisconnected { addr, reason } => {
+                    info!("Peer disconnected: {}. Reason: {:?}", addr, reason);
+                }
+                Event::PeerConnectionFailed { addr, error } => {
+                    warn!("Peer connection failed: {}. Error: {}", addr, error);
+                }
+                Event::PeerNegotiated { addr, link, services, height, user_agent, version } => {
+                    info!("Peer negotiated: {}. Services: {:?}, Height: {}, User Agent: {}, Version: {}", addr, services, height, user_agent, version);
+                }
+                Event::PeerHeightUpdated { height } => {
+                    debug!("Peer height updated: {}", height);
+                }
                 Event::BlockConnected { hash, height, .. } => {
-                    debug!("Block connected: {} at height {}", hash, height);
+                    info!("Block connected: {} at height {}", hash, height);
                 }
                 Event::BlockDisconnected { hash, height, .. } => {
-                    debug!("Block disconnected: {} at  height {}", hash, height);
+                    info!("Block disconnected: {} at height {}", hash, height);
                 }
-                Event::BlockMatched {
-                    hash, header, height, transactions,
-                } => {
-                    debug!("Block matched:{} at height {}", hash, height);
+                Event::BlockMatched { hash, header, height, transactions } => {
+                    info!("Block matched: {} at height {}. Transactions: {}", hash, height, transactions.len());
                     for transaction in transactions {
+                        debug!("Processing transaction: {}", transaction.txid());
                         self.process_transaction(transaction)?;
                     }
                 }
+                Event::FeeEstimated { block, height, fees } => {
+                    debug!("Fee estimated for block: {} at height {}. Fees: {:?}", block, height, fees);
+                }
+                Event::FilterProcessed { block, height, matched, valid } => {
+                    debug!("Filter processed for block: {} at height {}. Matched: {}, Valid: {}", block, height, matched, valid);
+                }
+                Event::TxStatusChanged { txid, status } => {
+                    debug!("Transaction status changed: {}. Status: {:?}", txid, status);
+                }
                 Event::Synced { height, tip } => {
-                    debug!("Sync complete up to {}/{}", height, tip);
+                    info!("Sync complete up to {}/{}", height, tip);
                     if height == tip {
                         break;
                     }
                 }
-                _ => {}
             }
         }
         Ok(())
@@ -150,8 +177,16 @@ impl CbfBlockchain {
 
     fn process_transaction(&mut self, transaction: Transaction) -> Result<(), CbfSyncError> {
         let txid = transaction.txid();
-        let output_scripts: Vec<Script> = transaction.output.iter().map(|out| out.script_pubkey.clone()).collect();
-        let input_outpoints: Vec<OutPoint> = transaction.input.iter().map(|inp| inp.previous_output).collect();
+        let output_scripts: Vec<Script> = transaction
+            .output
+            .iter()
+            .map(|out| out.script_pubkey.clone())
+            .collect();
+        let input_outpoints: Vec<OutPoint> = transaction
+            .input
+            .iter()
+            .map(|inp| inp.previous_output)
+            .collect();
 
         let relevant_outputs = self.find_relevant_outputs(&output_scripts)?;
         let relevant_inputs = self.find_relevant_inputs(&input_outpoints)?;
@@ -163,10 +198,13 @@ impl CbfBlockchain {
         Ok(())
     }
 
-    fn find_relevant_outputs(&self, output_scripts: &[Script]) -> Result<Vec<(u32, Script)>, CbfSyncError>{
+    fn find_relevant_outputs(
+        &self,
+        output_scripts: &[Script],
+    ) -> Result<Vec<(u32, Script)>, CbfSyncError> {
         let mut relevant_outputs = Vec::new();
 
-        for(idx, script) in output_scripts.iter().enumerate() {
+        for (idx, script) in output_scripts.iter().enumerate() {
             if self.wallet.is_script_tracked(script)? {
                 relevant_outputs.push((idx as u32, script.clone()));
             }
@@ -175,12 +213,14 @@ impl CbfBlockchain {
         Ok(relevant_outputs)
     }
 
-
-    fn find_relevant_inputs(&self, input_outpoints: &[OutPoint]) -> Result<Vec<OutPoint>, CbfSyncError> {
+    fn find_relevant_inputs(
+        &self,
+        input_outpoints: &[OutPoint],
+    ) -> Result<Vec<OutPoint>, CbfSyncError> {
         let mut relevant_inputs = Vec::new();
 
         for outpoint in input_outpoints {
-            if self.wallet.is_utxo_tracked(outpoint)?{
+            if self.wallet.is_utxo_tracked(outpoint)? {
                 relevant_inputs.push(*outpoint);
             }
         }
