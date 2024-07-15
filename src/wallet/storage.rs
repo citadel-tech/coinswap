@@ -12,7 +12,7 @@ use std::{
     io::{BufReader, BufWriter},
 };
 
-use super::{error::WalletError, fidelity::FidelityBond};
+use super::{error::WalletError, fidelity::FidelityBond, UTXOSpendInfo};
 
 use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
 
@@ -37,10 +37,12 @@ pub struct WalletStore {
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
     /// Map for all the fidelity bond information. (index, (Bond, script_pubkey, is_spent)).
     pub(super) fidelity_bond: HashMap<u32, (FidelityBond, ScriptBuf, bool)>,
-    //TODO: Add last synced height and Wallet birthday.
+    /// last synced height
     pub(super) last_synced_height: Option<u64>,
-
+    /// Wallet birthday
     pub(super) wallet_birthday: Option<u64>,
+    /// list of unspent transaction output
+    pub(super) list_unspent: HashMap<ListUnspentResultEntry, UTXOSpendInfo>
 }
 
 impl WalletStore {
@@ -69,6 +71,7 @@ impl WalletStore {
             fidelity_bond: HashMap::new(),
             last_synced_height: None,
             wallet_birthday,
+            list_unspent: HashMap::new()
         };
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
