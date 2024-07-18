@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+// use std::collections::HashSet;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum RpcMsgReq {
@@ -9,5 +10,5 @@ pub enum RpcMsgReq {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum RpcMsgResp {
    Pong,
-   // ListAddressesResp { addresses: Vec<String> },
+   // ListAddressesResp(HashSet<String>),
 }

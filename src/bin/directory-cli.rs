@@ -1,14 +1,13 @@
 use clap::Parser;
 
-
 use coinswap::{
-    market::rpc::{read_rpc_message, RpcMsgReq}, utill::{send_message, setup_logger}, maker::error::MakerError,
+    maker::error::MakerError,
+    market::rpc::{read_resp_message, RpcMsgReq},
+    utill::{send_message, setup_logger},
 };
-
 
 use serde::{Deserialize, Serialize};
 use tokio::{io::BufReader, net::TcpStream};
-
 
 #[derive(Serialize, Deserialize, Debug)]
 enum Message {
@@ -27,7 +26,8 @@ struct App {
 #[derive(Parser, Debug)]
 enum Commands {
     /// Sends a Ping
-    Ping
+    Ping,
+    // ListAddresses,
 }
 
 #[tokio::main]
@@ -37,19 +37,15 @@ async fn main() -> Result<(), MakerError> {
 
     match cli.command {
         Commands::Ping => {
-            log::info!("Sending Ping");
             send_rpc_req(&RpcMsgReq::Ping).await?;
         }
     }
-
     Ok(())
 }
 
-async  fn send_rpc_req(req : &RpcMsgReq) -> Result<(), MakerError> {
-    log::info!("Connecting to 127.0.0.1:4321");
+async fn send_rpc_req(req: &RpcMsgReq) -> Result<(), MakerError> {
     let mut stream = TcpStream::connect("127.0.0.1:4321").await?;
     println!("{:?}", stream);
-    log::info!("Connected to 127.0.0.1:4321");
 
     let (read_half, mut write_half) = stream.split();
 
@@ -57,8 +53,7 @@ async  fn send_rpc_req(req : &RpcMsgReq) -> Result<(), MakerError> {
         log::error!("Error Sending RPC message : {:?}", e);
     };
 
-
-    if let Some(rpc_resp) = read_rpc_message(&mut BufReader::new(read_half)).await? {
+    if let Some(rpc_resp) = read_resp_message(&mut BufReader::new(read_half)).await? {
         log::info!("RPC response received: {:?}", rpc_resp);
     } else {
         log::error!("RPC response received: None");

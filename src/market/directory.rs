@@ -36,7 +36,7 @@ pub enum DirectoryServerError {
 /// Directory Configuration,
 #[derive(Debug)]
 pub struct DirectoryServer {
-    pub rpc_port : u16,
+    pub rpc_port: u16,
     pub port: u16,
     pub socks_port: u16,
     pub connection_type: ConnectionType,
@@ -96,13 +96,9 @@ impl DirectoryServer {
             config_path.display()
         );
 
-        log::info!("Data directory: {:?}", data_dir);
-
         let directory_config_section = section.get("maker_config").cloned().unwrap_or_default();
 
         let connection_type_value = connection_type.unwrap_or(ConnectionType::TOR);
-
-        log::info!("Connection type: {:?}", connection_type_value);
 
         Ok(DirectoryServer {
             rpc_port: 4321,
@@ -122,8 +118,6 @@ impl DirectoryServer {
             .unwrap_or(connection_type_value),
         })
     }
-
-
 
     pub fn shutdown(&self) -> Result<(), DirectoryServerError> {
         let mut flag = self
@@ -151,13 +145,9 @@ fn write_default_directory_config(config_path: &PathBuf) -> std::io::Result<()> 
 
 #[tokio::main]
 pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
-
     let address_file = directory.data_dir.join("addresses.dat");
-    
-    log::info!("Address file location: {}", address_file.display());
 
     let mut addresses = HashSet::new();
-
 
     let mut handle = None;
 
@@ -200,6 +190,12 @@ pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
         }
     }
 
+    // start directory rpc server here
+
+    let directory_server_arc = directory.clone();
+    let _ = start_rpc_server_thread(directory_server_arc).await;
+
+
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port))
         .await
         .unwrap();
@@ -236,22 +232,13 @@ pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
             }
         }
     }
-    // start directory rpc server here
-    // add directory server to arc
-    // read about ARC
-
-    let directory_server_arc = directory.clone();
-    log::info!("Starting RPC server for directory server");
-    let _ = start_rpc_server_thread(directory_server_arc).await;
-
 }
-
-
 
 async fn handle_client(mut stream: tokio::net::TcpStream, addresses: &mut HashSet<String>) {
     let mut reader = tokio::io::BufReader::new(&mut stream);
     let mut request_line = String::new();
     reader.read_line(&mut request_line).await.unwrap();
+    log::info!("addresses, {:?}", addresses);
 
     if request_line.starts_with("POST") {
         let onion_address = request_line.replace("POST ", "").trim().to_string();

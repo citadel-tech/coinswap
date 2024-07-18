@@ -5,10 +5,6 @@ use coinswap::{
 };
 use std::{path::PathBuf, sync::Arc};
 
-/// The DNS Server.
-///
-/// This app starts the DNS server to serve Maker addresses to the Taker clients.
-
 #[derive(Parser)]
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
@@ -24,7 +20,6 @@ struct Cli {
 
 fn main() {
     setup_logger();
-    log::info!("Starting Directory Server");
 
     let args = Cli::parse();
 
