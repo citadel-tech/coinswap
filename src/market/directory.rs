@@ -13,8 +13,8 @@ use std::{
     time::Duration,
 };
 
-use std::path::PathBuf;
 use crate::market::rpc::start_rpc_server_thread;
+use std::path::PathBuf;
 
 use crate::utill::{
     get_dns_dir, get_tor_addrs, monitor_log_for_completion, parse_field, parse_toml,
@@ -147,7 +147,7 @@ fn write_default_directory_config(config_path: &PathBuf) -> std::io::Result<()> 
 pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
     let address_file = directory.data_dir.join("addresses.dat");
 
-    let mut addresses = HashSet::new();
+    let addresses = Arc::new(RwLock::new(HashSet::new()));
 
     let mut handle = None;
 
@@ -190,11 +190,8 @@ pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
         }
     }
 
-    // start directory rpc server here
-
     let directory_server_arc = directory.clone();
-    let _ = start_rpc_server_thread(directory_server_arc).await;
-
+    let _ = start_rpc_server_thread(directory_server_arc, addresses.clone()).await;
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port))
         .await
@@ -204,7 +201,7 @@ pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
         tokio::select! {
             accept_result = listener.accept() => {
                 match accept_result {
-                    Ok((stream, _)) => handle_client(stream, &mut addresses).await,
+                    Ok((stream, _)) => handle_client(stream, addresses.clone()).await,
                     Err(e) => log::error!("Error accepting connection: {}", e),
                 }
             }
@@ -217,36 +214,38 @@ pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
                     }
                     break;
                 } else {
-                     let mut file = OpenOptions::new()
+                     let file_content = addresses.read().unwrap().iter().map(|addr| {
+                        format!("{}\n", addr)
+                    }).collect::<Vec<String>>().join("");
+                    let mut file = OpenOptions::new()
                     .write(true)
                     .create(true)
                     .append(true)
                     .open(address_file.to_str().unwrap())
                     .await
                     .unwrap();
-                    for addr in &addresses {
-                        let content = format!("{}\n", addr);
-                        file.write_all(content.as_bytes()).await.unwrap();
-                    }
+                    file.write_all(file_content.as_bytes()).await.unwrap();
                 }
             }
         }
     }
 }
 
-async fn handle_client(mut stream: tokio::net::TcpStream, addresses: &mut HashSet<String>) {
+async fn handle_client(mut stream: tokio::net::TcpStream, addresses: Arc<RwLock<HashSet<String>>>) {
     let mut reader = tokio::io::BufReader::new(&mut stream);
     let mut request_line = String::new();
     reader.read_line(&mut request_line).await.unwrap();
     log::info!("addresses, {:?}", addresses);
 
     if request_line.starts_with("POST") {
-        let onion_address = request_line.replace("POST ", "").trim().to_string();
-        addresses.insert(onion_address.clone());
+        let onion_address: String = request_line.replace("POST ", "").trim().to_string();
+        addresses.write().unwrap().insert(onion_address.clone());
         log::info!("Got new maker address: {}", onion_address);
     } else if request_line.starts_with("GET") {
         log::info!("Taker pinged the directory server");
         let response = addresses
+            .read()
+            .unwrap()
             .iter()
             .fold(String::new(), |acc, addr| acc + addr + "\n");
         stream.write_all(response.as_bytes()).await.unwrap();

@@ -46,11 +46,9 @@ fn main() {
             };
 
             let data_directory = data_directory.unwrap_or(get_dns_dir());
-            let directory_server = DirectoryServer::new(
-                Some(data_directory.join("config.toml")),
-                Some(network_type),
-            )
-            .unwrap();
+            let directory_server =
+                DirectoryServer::new(Some(data_directory.join("config.toml")), Some(network_type))
+                    .unwrap();
             let arc_directory_server = Arc::new(directory_server);
 
             start_directory_server(arc_directory_server);

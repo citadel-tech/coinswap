@@ -1,7 +1,7 @@
 use clap::Parser;
 use coinswap::{
     market::directory::{start_directory_server, DirectoryServer},
-    utill::{setup_logger, read_connection_network_string},
+    utill::{read_connection_network_string, setup_logger},
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -25,13 +25,7 @@ fn main() {
 
     let conn_type = read_connection_network_string(&args.network).unwrap();
 
-    let directory = Arc::new(
-        DirectoryServer::new(
-            args.data_directory,
-            Some(conn_type), 
-        ). unwrap(),
-    );
+    let directory = Arc::new(DirectoryServer::new(args.data_directory, Some(conn_type)).unwrap());
 
     start_directory_server(directory);
-
 }

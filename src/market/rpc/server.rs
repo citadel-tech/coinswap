@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    collections::HashSet,
+    sync::{Arc, RwLock},
+};
 use tokio::net::TcpListener;
 
 use tokio::{
@@ -6,12 +9,9 @@ use tokio::{
     net::{tcp::ReadHalf, TcpStream}, //TcpListener
 };
 
-use crate::{
-    maker::error::MakerError, market::directory::DirectoryServer, utill::send_message, 
-};
+use crate::{maker::error::MakerError, market::directory::DirectoryServer, utill::send_message};
 
-use super::RpcMsgReq;
-use super::RpcMsgResp;
+use super::{RpcMsgReq, RpcMsgResp};
 
 pub async fn read_rpc_message(
     reader: &mut BufReader<ReadHalf<'_>>,
@@ -59,16 +59,18 @@ pub async fn read_resp_message(
     Ok(Some(message))
 }
 
-async fn handle_request(mut socker: TcpStream) -> Result<(), MakerError> {
+async fn handle_request(
+    mut socker: TcpStream,
+    address: Arc<RwLock<HashSet<String>>>,
+) -> Result<(), MakerError> {
     let (socket_reader, mut socket_writer) = socker.split();
     let mut reader = BufReader::new(socket_reader);
-   
 
     if let Some(rpc_request) = read_rpc_message(&mut reader).await? {
         match rpc_request {
-            RpcMsgReq::Ping => {
+            RpcMsgReq::ListAddresses => {
                 log::info!("RPC request received: {:?}", rpc_request);
-                let resp = RpcMsgResp::Pong;
+                let resp = RpcMsgResp::ListAddressesResp(address.read().unwrap().clone());
                 if let Err(e) = send_message(&mut socket_writer, &resp).await {
                     log::info!("Error sending RPC response {:?}", e);
                 };
@@ -79,7 +81,10 @@ async fn handle_request(mut socker: TcpStream) -> Result<(), MakerError> {
     Ok(())
 }
 
-pub async fn start_rpc_server_thread(directory: Arc<DirectoryServer>) {
+pub async fn start_rpc_server_thread(
+    directory: Arc<DirectoryServer>,
+    address: Arc<RwLock<HashSet<String>>>,
+) {
     let rpc_port = directory.rpc_port;
     let rpc_socket = format!("127.0.0.1:{}", rpc_port);
     let listener = TcpListener::bind(&rpc_socket).await.unwrap();
@@ -88,14 +93,12 @@ pub async fn start_rpc_server_thread(directory: Arc<DirectoryServer>) {
         directory.rpc_port,
         rpc_socket
     );
-    // read this
+
     tokio::spawn(async move {
         loop {
             let (socket, addrs) = listener.accept().await.unwrap();
             log::info!("Got RPC request from: {}", addrs);
-            handle_request(socket).await.unwrap();
+            handle_request(socket, address.clone()).await.unwrap();
         }
     });
 }
-
-
