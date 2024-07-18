@@ -2,11 +2,11 @@
 //!
 use std::{convert::TryFrom, thread, time::Duration};
 
-use bitcoin::{Network, OutPoint};
+use bitcoin::Network;
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 use serde_json::{json, Value};
 
-use crate::wallet::api::KeychainKind;
+use crate::wallet::{api::KeychainKind, storage::ListUnspentInfo};
 
 use serde::Deserialize;
 
@@ -153,12 +153,18 @@ impl Wallet {
             .rpc
             .list_unspent(Some(0), Some(9999999), None, None, None)?;
         let utxo_spend_info = self.list_all_utxo_spend_info(Some(&all_utxos))?;
-        utxo_spend_info.into_iter().map(|(list_unspent_result_entry, utxo_spend_info)| {
-            let value = self.store.list_unspent.get(&list_unspent_result_entry);
-            if let None = value {
-                self.store.list_unspent.insert(list_unspent_result_entry, utxo_spend_info);
-            }
-        });
+        let _ = utxo_spend_info
+            .into_iter()
+            .map(|(list_unspent_result_entry, utxo_spend_info)| {
+                let list_unspent =
+                    ListUnspentInfo::ListUnspentResultEntry(list_unspent_result_entry);
+                let value = self.store.list_unspent.get(&list_unspent);
+                if value.is_none() {
+                    self.store
+                        .list_unspent
+                        .insert(list_unspent, utxo_spend_info);
+                }
+            });
 
         let max_external_index = self.find_hd_next_index(KeychainKind::External)?;
         self.update_external_index(max_external_index)?;

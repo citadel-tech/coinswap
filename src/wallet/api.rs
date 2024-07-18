@@ -17,6 +17,7 @@ use bitcoin::{
 };
 
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     protocol::contract,
@@ -113,7 +114,7 @@ impl FromStr for DisplayAddressType {
 /// Enum representing additional data needed to spend a UTXO, in addition to `ListUnspentResultEntry`.
 // data needed to find information  in addition to ListUnspentResultEntry
 // about a UTXO required to spend it
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum UTXOSpendInfo {
     SeedCoin {
         path: String,

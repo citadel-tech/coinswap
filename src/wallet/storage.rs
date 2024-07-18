@@ -2,10 +2,11 @@
 //!
 //! Wallet data is currently written in unencrypted CBOR files which are not directly human readable.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, hash::Hasher, path::PathBuf};
 
 use bip39::Mnemonic;
 use bitcoin::{bip32::Xpriv, Network, OutPoint, ScriptBuf};
+use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::OpenOptions,
@@ -15,6 +16,31 @@ use std::{
 use super::{error::WalletError, fidelity::FidelityBond, UTXOSpendInfo};
 
 use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
+
+#[derive(Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub enum ListUnspentInfo {
+    ListUnspentResultEntry(ListUnspentResultEntry),
+}
+
+impl std::hash::Hash for ListUnspentInfo {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            ListUnspentInfo::ListUnspentResultEntry(entry) => {
+                entry.txid.hash(state);
+                entry.vout.hash(state);
+            }
+        }
+    }
+
+    fn hash_slice<H: Hasher>(data: &[Self], state: &mut H)
+    where
+        Self: Sized,
+    {
+        for item in data {
+            item.hash(state);
+        }
+    }
+}
 
 /// Represents the internal data store for a Bitcoin wallet.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -42,7 +68,7 @@ pub struct WalletStore {
     /// Wallet birthday
     pub(super) wallet_birthday: Option<u64>,
     /// list of unspent transaction output
-    pub(super) list_unspent: HashMap<ListUnspentResultEntry, UTXOSpendInfo>
+    pub(super) list_unspent: HashMap<ListUnspentInfo, UTXOSpendInfo>,
 }
 
 impl WalletStore {
@@ -71,7 +97,7 @@ impl WalletStore {
             fidelity_bond: HashMap::new(),
             last_synced_height: None,
             wallet_birthday,
-            list_unspent: HashMap::new()
+            list_unspent: HashMap::new(),
         };
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
