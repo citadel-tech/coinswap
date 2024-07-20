@@ -83,7 +83,7 @@ pub fn get_tor_addrs(hs_dir: &Path) -> String {
 /// Get the system specific home directory.
 /// Uses "/tmp" directory for integration tests
 fn get_home_dir() -> PathBuf {
-    if cfg!(feature = "integration-test") {
+    if cfg!(test) {
         "/tmp".into()
     } else {
         dirs::home_dir().expect("home directory expected")
