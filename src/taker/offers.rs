@@ -43,7 +43,7 @@ pub struct MakerAddress(OnionAddress);
 
 impl MakerAddress {
     pub fn new(address: String) -> Option<Self> {
-        if let Some((onion_addr, port)) = address.split_once(":") {
+        if let Some((onion_addr, port)) = address.split_once(':') {
             Some(Self(OnionAddress {
                 port: port.to_string(),
                 onion_addr: onion_addr.to_string(),
