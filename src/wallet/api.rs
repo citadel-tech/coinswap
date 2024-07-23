@@ -8,7 +8,7 @@ use std::{convert::TryFrom, fs, path::PathBuf, str::FromStr};
 use std::collections::{HashMap, HashSet};
 
 use bitcoin::{
-    bip32::{ChildNumber, DerivationPath, Xpub},
+    bip32::{ChildNumber, DerivationPath, Xpriv, Xpub},
     hashes::{hash160::Hash as Hash160, hex::FromHex},
     secp256k1,
     secp256k1::{Secp256k1, SecretKey},
@@ -150,6 +150,12 @@ impl Wallet {
         seedphrase: String,
         passphrase: String,
     ) -> Result<Self, WalletError> {
+        // Xpriv Derivation from seedphrase
+        let mnemonic = bip39::Mnemonic::parse(seedphrase.clone())?;
+        let seed = mnemonic.to_seed(passphrase.clone());
+        let master_key = Xpriv::new_master(rpc_config.network, &seed)?;
+
+        // Initialise wallet
         let file_name = path
             .file_name()
             .expect("file name expected")
@@ -162,8 +168,7 @@ impl Wallet {
             file_name,
             path,
             rpc_config.network,
-            seedphrase,
-            passphrase,
+            master_key,
             Some(wallet_birthday),
         )?;
         Ok(Self {

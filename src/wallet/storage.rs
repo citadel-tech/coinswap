@@ -4,7 +4,6 @@
 
 use std::{collections::HashMap, path::PathBuf};
 
-use bip39::Mnemonic;
 use bitcoin::{bip32::Xpriv, Network, OutPoint, ScriptBuf};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -49,14 +48,9 @@ impl WalletStore {
         file_name: String,
         path: &PathBuf,
         network: Network,
-        seedphrase: String,
-        passphrase: String,
+        master_key: Xpriv,
         wallet_birthday: Option<u64>,
     ) -> Result<Self, WalletError> {
-        let mnemonic = Mnemonic::parse(seedphrase)?;
-        let seed = mnemonic.to_seed(passphrase);
-        let master_key = Xpriv::new_master(network, &seed)?;
-
         let store = Self {
             file_name,
             network,
@@ -103,7 +97,7 @@ impl WalletStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use bip39::Mnemonic;
     use bitcoind::tempfile::tempdir;
 
     #[test]
@@ -116,8 +110,7 @@ mod tests {
             "test_wallet".to_string(),
             &file_path,
             Network::Bitcoin,
-            mnemonic,
-            "passphrase".to_string(),
+            Xpriv::new_master(Network::Bitcoin, mnemonic.as_bytes()).unwrap(),
             None,
         )
         .unwrap();
