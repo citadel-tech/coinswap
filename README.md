@@ -46,10 +46,13 @@ CoinSwap is a rust implementation of a variant of atomic-swap protocol, using HT
 * [Developer's resources](/docs/dev-book.md)
 
 ## Build and Test
-Macos (M series) needs some feature for compilation 
+```console
+$ cargo build
+```
+Macos (M series) needs `openssl-sys/vendored` due to `libtor` has not been updated for `macos aarch architecture`
 
 ```console
-$ cargo build --target=aarch64-apple-darwin  --features=build-macos-aarch
+$ cargo build --features=build-macos-aarch
 ```
 
 The repo contains a fully automated integration testing framework on Bitcoin Regtest. The bitcoin binary used for testing is
@@ -65,6 +68,12 @@ Run all the integration tests by running:
 
 ```console
 $ cargo test --features=integration-test -- --nocapture
+```
+
+for macos(aarch)
+
+```console
+$ cargo test --features=integration-test-macos-aarch -- --nocapture
 ```
 
 Each test in the [tests](./tests/) folder covers a different edge-case situation and demonstrates how the taker and makers recover
