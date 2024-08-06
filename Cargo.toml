@@ -28,9 +28,11 @@ openssl-sys = { version = "0.9.68", optional = true }
 [features]
 default = ['tor']
 # Mac OS needs to use the vendored version of openssl-sys as upstream `libtor` is not updated for to support mac os aarch (M series)
-build-macos-aarch = ["openssl-sys/vendored"]
+build-macos-aarch = ['default','openssl-sys/vendored']
 # The following feature set is in response to the issue described at https://github.com/rust-lang/rust/issues/45599
 # Only used for running the integration tests
 integration-test = []
-# Only used for running the tor
-tor = ['dep:libtor', 'dep:mitosis']
+# Mac OS needs to use the vendored version of openssl-sys for integrating testing as upstream `libtor` is not updated for to support mac os aarch (M series)
+integration-test-macos-aarch = ['openssl-sys/vendored']
+#  Used for spawning Tor process and connecting to the Tor socks port
+tor = ['dep:libtor', 'dep:mitosis'] 
