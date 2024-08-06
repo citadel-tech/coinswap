@@ -33,6 +33,8 @@ aes-gcm = "0.10.3"
 sha2 = "0.10.9"
 rust-coinselect = "0.1.6"
 crossterm = "0.29.0"
+openssl-sys = { version = "0.9.68", optional = true }
+secp256k1 = {git = "https://github.com/rust-bitcoin/rust-secp256k1.git", branch = "master", features = ["rand", "global-context"]}
 
 [dev-dependencies]
 tracker = { git = "https://github.com/citadel-tech/tracker", features = ["integration-test"] }
