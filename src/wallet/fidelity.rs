@@ -143,7 +143,7 @@ impl FidelityBond {
     }
 
     /// Generate the bond's certificate hash.
-    pub fn generate_cert_hash(&self, onion_addr: String) -> sha256d::Hash {
+    pub fn generate_cert_hash(&self, onion_addr: &str) -> sha256d::Hash {
         let cert_msg_str = format!(
             "fidelity-bond-cert|{}|{}|{}|{}|{}|{}",
             self.outpoint, self.pubkey, self.cert_expiry, self.lock_time, self.amount, onion_addr
@@ -508,7 +508,7 @@ impl Wallet {
     pub fn generate_fidelity_proof(
         &self,
         index: u32,
-        maker_addr: String,
+        maker_addr: &str,
     ) -> Result<FidelityProof, WalletError> {
         // Generate a fidelity bond proof from the fidelity data.
         let (bond, _, is_spent) = self
@@ -542,7 +542,7 @@ impl Wallet {
     pub fn verify_fidelity_proof(
         &self,
         proof: &FidelityProof,
-        onion_addr: String,
+        onion_addr: &str,
     ) -> Result<(), WalletError> {
         if self.is_fidelity_expired(&proof.bond)? {
             return Err(FidelityError::CertExpired.into());
