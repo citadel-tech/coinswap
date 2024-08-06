@@ -1,12 +1,11 @@
+use std::{net::TcpStream, time::Duration};
+
 use clap::Parser;
 
 use coinswap::{
-    maker::error::MakerError,
-    market::rpc::{read_resp_message, RpcMsgReq, RpcMsgResp},
-    utill::{send_message, setup_logger},
+    market::rpc::{RpcMsgReq, RpcMsgResp},
+    utill::{read_message, send_message, setup_logger},
 };
-
-use tokio::{io::BufReader, net::TcpStream};
 
 /// directory-cli is a command line app to send RPC messages to directory server.
 #[derive(Parser, Debug)]
@@ -23,37 +22,30 @@ enum Commands {
     ListAddresses,
 }
 
-async fn send_rpc_req(req: &RpcMsgReq) -> Result<(), MakerError> {
-    let mut stream = TcpStream::connect("127.0.0.1:4321").await?;
-    println!("{:?}", stream);
+fn send_rpc_req(req: &RpcMsgReq) {
+    let mut stream = TcpStream::connect("127.0.0.1:4321").unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
 
-    let (read_half, mut write_half) = stream.split();
+    send_message(&mut stream, &req).unwrap();
 
-    if let Err(e) = send_message(&mut write_half, &req).await {
-        log::error!("Error Sending RPC message : {:?}", e);
-    };
+    let resp_bytes = read_message(&mut stream).unwrap();
+    let resp: RpcMsgResp = serde_cbor::from_slice(&resp_bytes).unwrap();
 
-    if let Some(RpcMsgResp::ListAddressesResp(list)) =
-        read_resp_message(&mut BufReader::new(read_half)).await?
-    {
-        println!("Maker Addresses: {:?}", list);
-    } else {
-        log::error!("RPC response received: None");
-    }
-
-    Ok(())
+    println!("{:?}", resp);
 }
 
-#[tokio::main]
-async fn main() -> Result<(), MakerError> {
+fn main() {
     setup_logger();
     let cli = App::parse();
 
     match cli.command {
         Commands::ListAddresses => {
-            send_rpc_req(&RpcMsgReq::ListAddresses).await?;
+            send_rpc_req(&RpcMsgReq::ListAddresses);
         }
     }
-
-    Ok(())
 }

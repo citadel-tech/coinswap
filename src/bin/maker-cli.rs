@@ -1,12 +1,10 @@
+use std::{net::TcpStream, time::Duration};
+
 use clap::Parser;
 use coinswap::{
-    maker::{
-        error::MakerError,
-        rpc::{read_rpc_message, RpcMsgReq},
-    },
-    utill::{send_message, setup_logger},
+    maker::{MakerError, RpcMsgReq, RpcMsgResp},
+    utill::{read_message, send_message, setup_logger},
 };
-use tokio::{io::BufReader, net::TcpStream};
 
 /// maker-cli is a command line app to send RPC messages to maker server.
 #[derive(Parser, Debug)]
@@ -41,63 +39,57 @@ enum Commands {
     NewAddress,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), MakerError> {
+fn main() -> Result<(), MakerError> {
     setup_logger();
     let cli = App::parse();
 
     match cli.command {
         Commands::Ping => {
-            send_rpc_req(&RpcMsgReq::Ping).await?;
+            send_rpc_req(&RpcMsgReq::Ping)?;
         }
         Commands::ContractUtxo => {
-            send_rpc_req(&RpcMsgReq::ContractUtxo).await?;
+            send_rpc_req(&RpcMsgReq::ContractUtxo)?;
         }
         Commands::ContractBalance => {
-            send_rpc_req(&RpcMsgReq::ContractBalance).await?;
+            send_rpc_req(&RpcMsgReq::ContractBalance)?;
         }
         Commands::FidelityBalance => {
-            send_rpc_req(&RpcMsgReq::FidelityBalance).await?;
+            send_rpc_req(&RpcMsgReq::FidelityBalance)?;
         }
         Commands::FidelityUtxo => {
-            send_rpc_req(&RpcMsgReq::FidelityUtxo).await?;
+            send_rpc_req(&RpcMsgReq::FidelityUtxo)?;
         }
         Commands::SeedBalance => {
-            send_rpc_req(&RpcMsgReq::SeedBalance).await?;
+            send_rpc_req(&RpcMsgReq::SeedBalance)?;
         }
         Commands::SeedUtxo => {
-            send_rpc_req(&RpcMsgReq::SeedUtxo).await?;
+            send_rpc_req(&RpcMsgReq::SeedUtxo)?;
         }
         Commands::SwapBalance => {
-            send_rpc_req(&RpcMsgReq::SwapBalance).await?;
+            send_rpc_req(&RpcMsgReq::SwapBalance)?;
         }
         Commands::SwapUtxo => {
-            send_rpc_req(&RpcMsgReq::SwapUtxo).await?;
+            send_rpc_req(&RpcMsgReq::SwapUtxo)?;
         }
         Commands::NewAddress => {
-            send_rpc_req(&RpcMsgReq::NewAddress).await?;
+            send_rpc_req(&RpcMsgReq::NewAddress)?;
         }
     }
 
     Ok(())
 }
 
-async fn send_rpc_req(req: &RpcMsgReq) -> Result<(), MakerError> {
-    let mut stream = TcpStream::connect("127.0.0.1:8080").await?;
+fn send_rpc_req(req: &RpcMsgReq) -> Result<(), MakerError> {
+    let mut stream = TcpStream::connect("127.0.0.1:8080")?;
+    stream.set_read_timeout(Some(Duration::from_secs(20)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(20)))?;
 
-    let (read_half, mut write_half) = stream.split();
+    send_message(&mut stream, &req)?;
 
-    if let Err(e) = send_message(&mut write_half, &req).await {
-        log::error!("Error Sending RPC message : {:?}", e);
-    };
+    let response_bytes = read_message(&mut stream)?;
+    let response: RpcMsgResp = serde_cbor::from_slice(&response_bytes)?;
 
-    let mut read_half = BufReader::new(read_half);
-
-    if let Some(rpc_resp) = read_rpc_message(&mut read_half).await? {
-        println!("{:?}", rpc_resp);
-    } else {
-        log::error!("No RPC response received");
-    }
+    println!("{:?}", response);
 
     Ok(())
 }
