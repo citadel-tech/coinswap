@@ -28,7 +28,7 @@ use bitcoin::{
         rand::{rngs::OsRng, RngCore},
         SecretKey,
     },
-    BlockHash, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
+    Amount, BlockHash, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
 use tokio_socks::tcp::Socks5Stream;
 
@@ -61,7 +61,7 @@ use crate::{
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SwapParams {
     /// Total Amount to Swap.
-    pub send_amount: u64,
+    pub send_amount: Amount,
     /// How many hops.
     pub maker_count: u16,
     /// How many splits
@@ -70,7 +70,7 @@ pub struct SwapParams {
     /// Confirmation count required for funding txs.
     pub required_confirms: u64,
     /// Fee rate for funding txs.
-    pub fee_rate: u64,
+    pub fee_rate: Amount,
 }
 
 // Defines the Taker's position in the current ongoing swap.
@@ -160,7 +160,7 @@ impl Taker {
     ///
     /// behavior: Defines special Maker behavior. Only applicable in integration-tests.
     pub fn init(
-        data_dir: Option<&PathBuf>,
+        data_dir: Option<PathBuf>,
         wallet_file_name: Option<String>,
         rpc_config: Option<RPCConfig>,
         behavior: TakerBehavior,
@@ -174,10 +174,8 @@ impl Taker {
         };
 
         // Get provided data directory or the default data directory.
-        let (wallets_dir, config_dir) = data_dir
-            .map_or((get_wallet_dir(), get_config_dir()), |d| {
-                (d.join("wallets"), d.join("configs"))
-            });
+        let data_dir = data_dir.unwrap_or(get_taker_dir());
+        let wallets_dir = data_dir.join("wallets");
 
         let mut rpc_config = rpc_config.unwrap_or_default();
 
@@ -216,7 +214,7 @@ impl Taker {
         };
 
         // If config file doesn't exist, default config will be loaded.
-        let mut config = TakerConfig::new(Some(&config_dir.join("taker.toml")))?;
+        let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
         if let Some(connection_type) = connection_type {
             config.connection_type = connection_type;
@@ -272,7 +270,8 @@ impl Taker {
 
                     thread::sleep(Duration::from_secs(10));
 
-                    if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
+                    if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%")
+                    {
                         log::error!("Error monitoring taker log file: {}", e);
                     }
 
@@ -280,7 +279,6 @@ impl Taker {
                 }
             }
         }
-
         self.send_coinswap(swap_params).await?;
 
         if self.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {
@@ -297,7 +295,7 @@ impl Taker {
     /// Depending upon the failure situation, Taker will automatically try to recover from failed swaps
     /// by executing the contract txs. If that fails too for any reason, user should manually call the [Taker::recover_from_swap].
     ///
-    /// If that fails too. Open an issue at [our github](https://github.com/utxo-teleport/teleport-transactions/issues)
+    /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub async fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         log::info!("Syncing Offerbook");
         let network = self.wallet.store.network;
@@ -467,7 +465,6 @@ impl Taker {
                     &maker.offer.tweakable_point,
                     self.ongoing_swap_state.swap_params.tx_count,
                 );
-
             let (funding_txs, mut outgoing_swapcoins, funding_fee) =
                 self.wallet.initalize_coinswap(
                     self.ongoing_swap_state.swap_params.send_amount,
@@ -548,7 +545,7 @@ impl Taker {
             .map(|tx| {
                 let txid = self.wallet.rpc.send_raw_transaction(tx)?;
                 log::info!("Funding Txid: {}", txid);
-                assert_eq!(txid, tx.txid());
+                assert_eq!(txid, tx.compute_txid());
                 Ok(txid)
             })
             .collect::<Result<_, TakerError>>()?;
@@ -879,7 +876,7 @@ impl Taker {
         let previous_maker = self.ongoing_swap_state.peer_infos.iter().rev().nth(1);
 
         log::info!("Connecting to {}", this_maker.address);
-        let address = this_maker.address.as_str();
+        let address = this_maker.address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(address).await?,
             ConnectionType::TOR => Socks5Stream::connect(
@@ -953,7 +950,7 @@ impl Taker {
 
             let funding_txids = funding_tx_infos
                 .iter()
-                .map(|fi| fi.funding_tx.txid())
+                .map(|fi| fi.funding_tx.compute_txid())
                 .collect::<Vec<_>>();
 
             log::info!("Fundix Txids: {:?}", funding_txids);
@@ -1211,6 +1208,7 @@ impl Taker {
                         previous_funding_output,
                         maker_funding_tx_value,
                         next_contract_redeemscript,
+                        self.ongoing_swap_state.swap_params.fee_rate,
                     )
                 },
             )
@@ -1619,7 +1617,7 @@ impl Taker {
         receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {
         log::info!("Connecting to {}", maker_address);
-        let address = maker_address.as_str();
+        let address = maker_address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(address).await?,
             ConnectionType::TOR => Socks5Stream::connect(
@@ -1689,7 +1687,7 @@ impl Taker {
     /// Choose a suitable **untried** maker address from the offerbook that fits the swap params.
     fn choose_next_maker(&self) -> Result<&OfferAndAddress, TakerError> {
         let send_amount = self.ongoing_swap_state.swap_params.send_amount;
-        if send_amount == 0 {
+        if send_amount == Amount::ZERO {
             return Err(TakerError::SendAmountNotSet);
         }
 
@@ -1699,8 +1697,8 @@ impl Taker {
             .get_all_untried()
             .iter()
             .find(|oa| {
-                send_amount > oa.offer.min_size
-                    && send_amount < oa.offer.max_size
+                send_amount > Amount::from_sat(oa.offer.min_size)
+                    && send_amount < Amount::from_sat(oa.offer.max_size)
                     && !self
                         .ongoing_swap_state
                         .peer_infos
@@ -1753,19 +1751,19 @@ impl Taker {
             .ongoing_swap_state
             .incoming_swapcoins
             .iter()
-            .map(|sc| sc.contract_tx.txid())
+            .map(|sc| sc.contract_tx.compute_txid())
             .chain(
                 self.ongoing_swap_state
                     .outgoing_swapcoins
                     .iter()
-                    .map(|sc| sc.contract_tx.txid()),
+                    .map(|sc| sc.contract_tx.compute_txid()),
             )
             .chain(
                 self.ongoing_swap_state
                     .watchonly_swapcoins
                     .iter()
                     .flatten()
-                    .map(|sc| sc.contract_tx.txid()),
+                    .map(|sc| sc.contract_tx.compute_txid()),
             )
             .collect::<Vec<_>>();
 
@@ -1798,7 +1796,7 @@ impl Taker {
             if self
                 .wallet
                 .rpc
-                .get_raw_transaction_info(&contract_tx.txid(), None)
+                .get_raw_transaction_info(&contract_tx.compute_txid(), None)
                 .is_ok()
             {
                 log::info!("Incoming Contract already broadacsted");
@@ -1806,12 +1804,12 @@ impl Taker {
                 self.wallet.rpc.send_raw_transaction(contract_tx)?;
                 log::info!(
                     "Broadcasted Incoming Contract. Removing from wallet. Contract Txid {}",
-                    contract_tx.txid()
+                    contract_tx.compute_txid()
                 );
             }
             log::info!(
                 "Incoming Swapcoin removed from wallet, Contact Txid: {}",
-                contract_tx.txid()
+                contract_tx.compute_txid()
             );
             self.wallet.remove_incoming_swapcoin(redeemscript)?;
         }
@@ -1824,7 +1822,7 @@ impl Taker {
             if self
                 .wallet
                 .rpc
-                .get_raw_transaction_info(&contract_tx.txid(), None)
+                .get_raw_transaction_info(&contract_tx.compute_txid(), None)
                 .is_ok()
             {
                 log::info!("Outgoing Contract already broadcasted");
@@ -1832,7 +1830,7 @@ impl Taker {
                 self.wallet.rpc.send_raw_transaction(&contract_tx)?;
                 log::info!(
                     "Broadcasted Outgoing Contract, Contract txid : {}",
-                    contract_tx.txid()
+                    contract_tx.compute_txid()
                 );
             }
             let reedemscript = outgoing.get_multisig_redeemscript();
@@ -1862,11 +1860,11 @@ impl Taker {
                 if let Ok(result) = self
                     .wallet
                     .rpc
-                    .get_raw_transaction_info(&contract.txid(), None)
+                    .get_raw_transaction_info(&contract.compute_txid(), None)
                 {
                     log::info!(
                         "Contract Tx : {}, reached confirmation : {:?}, required : {}",
-                        contract.txid(),
+                        contract.compute_txid(),
                         result.confirmations,
                         timelock
                     );
@@ -1876,9 +1874,12 @@ impl Taker {
                             log::info!(
                                 "Timelock maturity of {} blocks for Contract Tx is reached : {}",
                                 timelock,
-                                contract.txid()
+                                contract.compute_txid()
                             );
-                            log::info!("Broadcasting timelocked tx: {}", timelocked_tx.txid());
+                            log::info!(
+                                "Broadcasting timelocked tx: {}",
+                                timelocked_tx.compute_txid()
+                            );
                             self.wallet.rpc.send_raw_transaction(timelocked_tx).unwrap();
                             timelock_boardcasted.push(timelocked_tx);
 
@@ -1889,7 +1890,7 @@ impl Taker {
                                 .expect("outgoing swapcoin expected");
                             log::info!(
                                 "Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
-                                outgoing_removed.contract_tx.txid()
+                                outgoing_removed.contract_tx.compute_txid()
                             );
                         }
                     }

@@ -17,7 +17,8 @@ use bitcoin::{
         Message, Secp256k1, SecretKey,
     },
     sighash::{EcdsaSighashType, SighashCache},
-    OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+    transaction::Version,
+    Amount, OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 
 pub use bitcoin::hashes::hash160::Hash as Hash160;
@@ -54,15 +55,15 @@ const PUBKEY2_OFFSET: usize = PUBKEY1_OFFSET + PUBKEY_LENGTH + 1;
 
 /// Calculate the coin swap fee based on various parameters.
 pub fn calculate_coinswap_fee(
-    absolute_fee_sat: u64,
-    amount_relative_fee_ppb: u64,
-    time_relative_fee_ppb: u64,
-    total_funding_amount: u64,
+    absolute_fee_sat: Amount,
+    amount_relative_fee_ppb: Amount,
+    time_relative_fee_ppb: Amount,
+    total_funding_amount: Amount,
     time_in_blocks: u64,
 ) -> u64 {
-    absolute_fee_sat
-        + (total_funding_amount * amount_relative_fee_ppb) / 1_000_000_000
-        + (time_in_blocks * time_relative_fee_ppb) / 1_000_000_000
+    absolute_fee_sat.to_sat()
+        + (total_funding_amount.to_sat() * amount_relative_fee_ppb.to_sat()) / 1_000_000_000
+        + (time_in_blocks * time_relative_fee_ppb.to_sat()) / 1_000_000_000
 }
 
 /// Apply two signatures to a 2-of-2 multisig spend.
@@ -378,8 +379,9 @@ pub fn read_pubkeys_from_multisig_redeemscript(
 /// Receiver gets the coins via hashlock.
 pub fn create_senders_contract_tx(
     input: OutPoint,
-    input_value: u64,
+    input_value: Amount,
     contract_redeemscript: &ScriptBuf,
+    fee_rate: Amount,
 ) -> Transaction {
     Transaction {
         input: vec![TxIn {
@@ -390,23 +392,23 @@ pub fn create_senders_contract_tx(
         }],
         output: vec![TxOut {
             script_pubkey: redeemscript_to_scriptpubkey(contract_redeemscript),
-            // TODO: Mining fee for contract tx is hard coded here. Make it configurable.
-            value: input_value - 1000,
+            value: input_value - fee_rate,
         }],
         lock_time: LockTime::ZERO,
-        version: 2,
+        version: Version::TWO,
     }
 }
 
 /// Create the receiver's contract transaction.
 pub fn create_receivers_contract_tx(
     input: OutPoint,
-    input_value: u64,
+    input_value: Amount,
     contract_redeemscript: &ScriptBuf,
+    fee_rate: Amount,
 ) -> Transaction {
     //exactly the same thing as senders contract for now, until collateral
     //inputs are implemented
-    create_senders_contract_tx(input, input_value, contract_redeemscript)
+    create_senders_contract_tx(input, input_value, contract_redeemscript, fee_rate)
 }
 
 /// Check if a contract output is valid.
@@ -461,12 +463,12 @@ pub fn validate_contract_tx(
 pub fn sign_contract_tx(
     contract_tx: &Transaction,
     multisig_redeemscript: &Script,
-    funding_amount: u64,
+    funding_amount: Amount,
     privkey: &SecretKey,
 ) -> Result<Signature, ContractError> {
     let input_index = 0;
-    let sighash = Message::from_slice(
-        &SighashCache::new(contract_tx).segwit_signature_hash(
+    let sighash = Message::from_digest_slice(
+        &SighashCache::new(contract_tx).p2wsh_signature_hash(
             input_index,
             multisig_redeemscript,
             funding_amount,
@@ -476,8 +478,8 @@ pub fn sign_contract_tx(
     let secp = Secp256k1::new();
     let sig = secp.sign_ecdsa(&sighash, privkey);
     Ok(Signature {
-        sig,
-        hash_ty: EcdsaSighashType::All,
+        signature: sig,
+        sighash_type: EcdsaSighashType::All,
     })
 }
 
@@ -485,13 +487,13 @@ pub fn sign_contract_tx(
 pub fn verify_contract_tx_sig(
     contract_tx: &Transaction,
     multisig_redeemscript: &Script,
-    funding_amount: u64,
+    funding_amount: Amount,
     pubkey: &PublicKey,
     sig: &bitcoin::secp256k1::ecdsa::Signature,
 ) -> Result<(), ContractError> {
     let input_index = 0;
-    let sighash = Message::from_slice(
-        &SighashCache::new(contract_tx).segwit_signature_hash(
+    let sighash = Message::from_digest_slice(
+        &SighashCache::new(contract_tx).p2wsh_signature_hash(
             input_index,
             multisig_redeemscript,
             funding_amount,
@@ -668,15 +670,15 @@ mod test {
             output: vec![
                 TxOut {
                     script_pubkey: another_script_pubkey,
-                    value: 2000,
+                    value: Amount::from_sat(2000),
                 },
                 TxOut {
                     script_pubkey: multi_script_pubkey,
-                    value: 3000,
+                    value: Amount::from_sat(3000),
                 },
             ],
             lock_time: LockTime::ZERO,
-            version: 2,
+            version: Version::TWO,
         };
 
         let funding_info = FundingTxInfo {
@@ -709,7 +711,12 @@ mod test {
         .unwrap();
 
         // Create a contract transaction spending the above utxo
-        let contract_tx = create_receivers_contract_tx(spending_utxo, 30000, &contract_script);
+        let contract_tx = create_receivers_contract_tx(
+            spending_utxo,
+            Amount::from_sat(30000),
+            &contract_script,
+            Amount::from_sat(1000),
+        );
 
         // Check creation matches expectation
         let expected_tx_hex = String::from(
@@ -790,7 +797,7 @@ mod test {
         let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript);
         contract_tx_err2.output[0] = TxOut {
             script_pubkey: multi_script_pubkey,
-            value: 3000,
+            value: Amount::from_sat(3000),
         };
         // Verify validation fails
         if let ContractError::Protocol(message) =
@@ -832,14 +839,14 @@ mod test {
             }],
             output: vec![TxOut {
                 script_pubkey: funding_spk,
-                value: 2000,
+                value: Amount::from_sat(2000),
             }],
             lock_time: LockTime::ZERO,
-            version: 2,
+            version: Version::TWO,
         };
 
         // Create the contract transaction spending the funding outpoint
-        let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+        let funding_outpoint = OutPoint::new(funding_tx.compute_txid(), 0);
 
         let contract_script = ScriptBuf::from(
             Vec::from_hex(
@@ -851,6 +858,7 @@ mod test {
             funding_outpoint,
             funding_tx.output[0].value,
             &contract_script,
+            Amount::from_sat(1000),
         );
 
         // priv1 signs the contract and verify
@@ -867,7 +875,7 @@ mod test {
             &funding_outpoint_script,
             funding_tx.output[0].value,
             &pub1,
-            &sig1.sig
+            &sig1.signature
         )
         .is_ok());
 
@@ -885,7 +893,7 @@ mod test {
             &funding_outpoint_script,
             funding_tx.output[0].value,
             &pub2,
-            &sig2.sig
+            &sig2.signature
         )
         .is_ok());
     }
@@ -1079,10 +1087,10 @@ mod test {
     #[test]
     fn calculate_coinswap_fee_normal() {
         // Test with typical values
-        let absolute_fee_sat = 1000;
-        let amount_relative_fee_ppb = 500_000_000;
-        let time_relative_fee_ppb = 200_000_000;
-        let total_funding_amount = 1_000_000_000;
+        let absolute_fee_sat = Amount::from_sat(1000);
+        let amount_relative_fee_ppb = Amount::from_sat(500_000_000);
+        let time_relative_fee_ppb = Amount::from_sat(200_000_000);
+        let total_funding_amount = Amount::from_sat(1_000_000_000);
         let time_in_blocks = 100;
 
         let expected_fee = 1000
@@ -1100,14 +1108,32 @@ mod test {
         assert_eq!(calculated_fee, expected_fee);
 
         // Test with zero values
-        assert_eq!(calculate_coinswap_fee(0, 0, 0, 0, 0), 0);
+        assert_eq!(
+            calculate_coinswap_fee(Amount::ZERO, Amount::ZERO, Amount::ZERO, Amount::ZERO, 0),
+            0
+        );
 
         // Test with only the absolute fee being non-zero
-        assert_eq!(calculate_coinswap_fee(1000, 0, 0, 0, 0), 1000);
+        assert_eq!(
+            calculate_coinswap_fee(
+                Amount::from_sat(1000),
+                Amount::ZERO,
+                Amount::ZERO,
+                Amount::ZERO,
+                0
+            ),
+            1000
+        );
 
         // Test with only the relative fees being non-zero
         assert_eq!(
-            calculate_coinswap_fee(0, 1_000_000_000, 1_000_000_000, 1000, 10),
+            calculate_coinswap_fee(
+                Amount::ZERO,
+                Amount::from_sat(1_000_000_000),
+                Amount::from_sat(1_000_000_000),
+                Amount::from_sat(1000),
+                10
+            ),
             1010
         );
     }
@@ -1128,12 +1154,12 @@ mod test {
 
         let msg = b"0123456789abcdefghijklmnopqrstuv";
         let sig_1 = Signature {
-            sig: secp.sign_ecdsa(&Message::from_slice(msg).unwrap(), &priv_1.inner),
-            hash_ty: EcdsaSighashType::All,
+            signature: secp.sign_ecdsa(&Message::from_digest_slice(msg).unwrap(), &priv_1.inner),
+            sighash_type: EcdsaSighashType::All,
         };
         let sig_2 = Signature {
-            sig: secp.sign_ecdsa(&Message::from_slice(msg).unwrap(), &priv_2.inner),
-            hash_ty: EcdsaSighashType::All,
+            signature: secp.sign_ecdsa(&Message::from_digest_slice(msg).unwrap(), &priv_2.inner),
+            sighash_type: EcdsaSighashType::All,
         };
         let mut tx_input_1 = TxIn::default();
         let mut tx_input_2 = TxIn::default();
@@ -1151,7 +1177,7 @@ mod test {
         tx_input_2.witness.push(sig_1.to_vec());
         tx_input_2
             .witness
-            .push(&mutlisig_2_of_2_redeemscript.to_bytes());
+            .push(mutlisig_2_of_2_redeemscript.to_bytes());
 
         assert_eq!(tx_input_1, tx_input_2);
 
@@ -1173,7 +1199,7 @@ mod test {
         tx_input_2.witness.push(sig_1.to_vec());
         tx_input_2
             .witness
-            .push(&mutlisig_2_of_2_redeemscript.to_bytes());
+            .push(mutlisig_2_of_2_redeemscript.to_bytes());
 
         assert_eq!(tx_input_1, tx_input_2);
     }
@@ -1217,15 +1243,15 @@ mod test {
             output: vec![
                 TxOut {
                     script_pubkey: another_script_pubkey,
-                    value: 2000,
+                    value: Amount::from_sat(2000),
                 },
                 TxOut {
                     script_pubkey: multi_script_pubkey,
-                    value: 3000,
+                    value: Amount::from_sat(3000),
                 },
             ],
             lock_time: LockTime::ZERO,
-            version: 2,
+            version: Version::TWO,
         };
 
         let hash_value_1 = Hash160::from_slice(&thread_rng().gen::<[u8; 20]>()).unwrap();

@@ -8,6 +8,7 @@ pub mod api;
 pub mod config;
 pub mod error;
 mod handlers;
+pub mod rpc;
 
 use std::{
     fs,
@@ -21,7 +22,6 @@ use std::{
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
 
-use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncReadExt, BufReader},
     net::{tcp::ReadHalf, TcpListener, TcpStream},
@@ -36,16 +36,11 @@ use std::io::Read;
 use tokio::io::AsyncWriteExt;
 use tokio_socks::tcp::Socks5Stream;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct OnionAddress {
-    port: String,
-    onion_addr: String,
-}
-
 use crate::{
     maker::{
         api::{check_for_broadcasted_contracts, check_for_idle_states, ConnectionState},
         handlers::handle_message,
+        rpc::start_rpc_server_thread,
     },
     protocol::messages::{MakerHello, MakerToTakerMessage, TakerToMakerMessage},
     utill::{monitor_log_for_completion, send_message, ConnectionType},
@@ -129,7 +124,7 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 ));
                 thread::sleep(Duration::from_secs(10));
 
-                if let Err(e) = monitor_log_for_completion(PathBuf::from(tor_log_dir), "100%") {
+                if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
                     log::error!("[{}] Error monitoring log file: {}", maker_port, e);
                 }
 
@@ -288,6 +283,10 @@ pub async fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         wallet.save_to_disk()?;
         log::info!("[{}] Sync and save successful", maker.config.port);
     }
+
+    // Spawn the RPC Thread here.
+    let rpc_maker = maker.clone();
+    let _ = start_rpc_server_thread(rpc_maker).await;
 
     maker.setup_complete()?;
 

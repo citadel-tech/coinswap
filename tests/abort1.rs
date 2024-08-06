@@ -132,11 +132,11 @@ async fn test_stop_taker_after_setup() {
     });
 
     let swap_params = SwapParams {
-        send_amount: 500000,
+        send_amount: Amount::from_sat(500000),
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
-        fee_rate: 1000,
+        fee_rate: Amount::from_sat(1000),
     };
 
     info!("Initiating coinswap protocol");
@@ -246,7 +246,7 @@ async fn test_stop_taker_after_setup() {
         .unwrap();
     let taker_balance = taker_balance_descriptor_utxo + taker_balance_swap_coins;
 
-    assert_eq!(org_taker_balance - taker_balance, Amount::from_sat(4227));
+    assert_eq!(org_taker_balance - taker_balance, Amount::from_sat(6768));
     assert_eq!(org_taker_balance_fidelity, Amount::from_btc(0.0).unwrap());
     assert_eq!(
         org_taker_balance_descriptor_utxo,
@@ -260,7 +260,7 @@ async fn test_stop_taker_after_setup() {
     assert_eq!(taker_balance_fidelity, Amount::from_btc(0.0).unwrap());
     assert_eq!(
         taker_balance_descriptor_utxo,
-        Amount::from_btc(0.14995773).unwrap()
+        Amount::from_btc(0.14993232).unwrap()
     );
     assert_eq!(taker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
     assert_eq!(taker_balance_live_contract, Amount::from_btc(0.0).unwrap());
@@ -307,12 +307,12 @@ async fn test_stop_taker_after_setup() {
                     .balance_swap_coins(Some(&all_utxos))
                     .unwrap();
 
-            assert_eq!(*org_balance - new_balance, Amount::from_sat(4227));
+            assert_eq!(*org_balance - new_balance, Amount::from_sat(6768));
 
             assert_eq!(maker_balance_fidelity, Amount::from_btc(0.05).unwrap());
             assert_eq!(
                 maker_balance_descriptor_utxo,
-                Amount::from_btc(0.14994773).unwrap()
+                Amount::from_btc(0.14992232).unwrap()
             );
             assert_eq!(maker_balance_swap_coins, Amount::from_btc(0.0).unwrap());
             assert_eq!(maker_balance_live_contract, Amount::from_btc(0.0).unwrap());

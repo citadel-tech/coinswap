@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1><img alt="/logo" src="https://raw.githubusercontent.com/utxo-teleport/teleport-transactions/master/assets/logo.png" width="25" style="margin:-4px 4px" />Teleport Transactions</h1>
+<h1>Coinswap</h1>
 
 <p>
     Functioning, minimal-viable binaries and libraries to perform a trustless, p2p <a href="https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964">Maxwell-Belcher Coinswap Protocol</a>.
@@ -11,12 +11,12 @@
     <a href="https://crates.io/crates/coinswap"><img alt="Crate Info" src="https://img.shields.io/crates/v/coinswap.svg"/></a>
     <a href="https://docs.rs/coinswap"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-coinswap-green"/></a>
     -->
-    <a href="https://github.com/utxo-teleport/teleport-transactions/blob/master/LICENSE.md"><img alt="CC0 1.0 Universal Licensed" src="https://img.shields.io/badge/license-CC0--1.0-blue.svg"/></a>
-    <a href="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/build.yaml"><img alt="CI Status" src="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/build.yaml/badge.svg"></a>
-    <a href="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/lint.yaml"><img alt="CI Status" src="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/lint.yaml/badge.svg"></a>
-    <a href="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/test.yaml"><img alt="CI Status" src="https://github.com/utxo-teleport/teleport-transactions/actions/workflows/test.yaml/badge.svg"></a>
-    <a href="https://codecov.io/github/utxo-teleport/teleport-transactions?branch=master">
-    <img alt="Coverage" src="https://codecov.io/github/utxo-teleport/teleport-transactions/coverage.svg?branch=master">
+    <a href="https://github.com/citadel-tech/coinswap/blob/master/LICENSE.md"><img alt="CC0 1.0 Universal Licensed" src="https://img.shields.io/badge/license-CC0--1.0-blue.svg"/></a>
+    <a href="https://github.com/citadel-tech/coinswap/actions/workflows/build.yaml"><img alt="CI Status" src="https://github.com/citadel-tech/coinswap/actions/workflows/build.yaml/badge.svg"></a>
+    <a href="https://github.com/citadel-tech/coinswap/actions/workflows/lint.yaml"><img alt="CI Status" src="https://github.com/citadel-tech/coinswap/actions/workflows/lint.yaml/badge.svg"></a>
+    <a href="https://github.com/citadel-tech/coinswap/actions/workflows/test.yaml"><img alt="CI Status" src="https://github.com/citadel-tech/coinswap/actions/workflows/test.yaml/badge.svg"></a>
+    <a href="https://codecov.io/github/citadel-tech/coinswap?branch=master">
+    <img alt="Coverage" src="https://codecov.io/github/citadel-tech/coinswap/coverage.svg?branch=master">
     </a>
     <a href="https://blog.rust-lang.org/2023/12/28/Rust-1.75.0.html"><img alt="Rustc Version 1.75.0+" src="https://img.shields.io/badge/rustc-1.75.0%2B-lightgrey.svg"/></a>
   </p>
@@ -39,13 +39,18 @@
 
 ## About
 
-Teleport Transactions is a rust implementation of a variant of atomic-swap protocol, using HTLCs on Bitcoin. Read more at:
+CoinSwap is a rust implementation of a variant of atomic-swap protocol, using HTLCs on Bitcoin. Read more at:
 
 * [Mailing list post](https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-October/018221.html)
 * [Detailed design](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964)
 * [Developer's resources](/docs/dev-book.md)
 
 ## Build and Test
+Macos (M series) needs some feature for compilation 
+
+```console
+$ cargo build --target=aarch64-apple-darwin  --features=build-macos-aarch
+```
 
 The repo contains a fully automated integration testing framework on Bitcoin Regtest. The bitcoin binary used for testing is
 included [here](./bin/bitcoind).
@@ -151,13 +156,13 @@ The project is under active development by a few motivated Rusty Bitcoin devs. A
 
 Few directions for new contributors:
 
-- The list of [issues](https://github.com/utxo-teleport/teleport-transactions/issues) is a good place to look for contributable tasks and open problems.
+- The list of [issues](https://github.com/citadel-tech/coinswap/issues) is a good place to look for contributable tasks and open problems.
 
-- Issues marked with [`good first issue`](https://github.com/utxo-teleport/teleport-transactions/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) are good places to get started for newbie Rust/Bitcoin devs.
+- Issues marked with [`good first issue`](https://github.com/citadel-tech/coinswap/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) are good places to get started for newbie Rust/Bitcoin devs.
 
 - The [docs](./docs) are a good place to start reading up on the protocol.
 
-- Reviewing [open PRs](https://github.com/utxo-teleport/teleport-transactions/pulls) are a good place to start gathering a contextual understanding of the codebase.
+- Reviewing [open PRs](https://github.com/citadel-tech/coinswap/pulls) are a good place to start gathering a contextual understanding of the codebase.
 
 - Search for `TODO`s in the codebase to find in-line marked code todos and smaller improvements.
 
@@ -172,7 +177,7 @@ ln -s ../../git_hooks/pre-commit .git/hooks/pre-commit
 
 ## Community
 
-The dev community lurks in a small corner of Discord [here](https://discord.gg/TSSAB3g4Zf) (say holla, if you drop there from this readme).
+The dev community lurks in a Discord [here](https://discord.gg/Wz42hVmrrK).
 
 Dev discussions predominantly happen via FOSS best practices, and by using Github as the Community Forum.
 

@@ -31,7 +31,7 @@ use coinswap::{
     maker::{Maker, MakerBehavior},
     market::directory::{start_directory_server, DirectoryServer},
     taker::{Taker, TakerBehavior},
-    utill::{setup_logger, str_to_bitcoin_network, ConnectionType},
+    utill::{setup_logger, ConnectionType},
     wallet::RPCConfig,
 };
 
@@ -41,7 +41,7 @@ fn get_random_tmp_dir() -> PathBuf {
         .take(8)
         .map(char::from)
         .collect();
-    let path = "/tmp/teleport/tests/temp-files/".to_string() + &s;
+    let path = "/tmp/.coinswap/".to_string() + &s;
     PathBuf::from(path)
 }
 
@@ -140,7 +140,7 @@ impl TestFramework {
         let taker_rpc_config = rpc_config.clone();
         let taker = Arc::new(RwLock::new(
             Taker::init(
-                Some(&temp_dir),
+                Some(temp_dir.clone().join("taker")),
                 None,
                 Some(taker_rpc_config),
                 taker_behavior.unwrap_or_default(),
@@ -148,21 +148,22 @@ impl TestFramework {
             )
             .unwrap(),
         ));
-
-        // Create the Makers as per given configuration map.
+        let mut base_rpc_port = 3500; // Random port for RPC connection in tests. (Not used)
+                                      // Create the Makers as per given configuration map.
         let makers = makers_config_map
             .iter()
             .map(|(port, behavior)| {
+                base_rpc_port += 1;
                 let maker_id = "maker".to_string() + &port.0.to_string(); // ex: "maker6102"
                 let maker_rpc_config = rpc_config.clone();
                 thread::sleep(Duration::from_secs(5)); // Sleep for some time avoid resource unavailable error.
-                let tor_port = port.0;
                 Arc::new(
                     Maker::init(
-                        Some(&temp_dir),
+                        Some(temp_dir.clone()),
                         Some(maker_id),
                         Some(maker_rpc_config),
-                        Some(tor_port),
+                        Some(port.0),
+                        Some(base_rpc_port),
                         port.1,
                         Some(connection_type),
                         *behavior,
@@ -234,15 +235,7 @@ impl From<&TestFramework> for RPCConfig {
     fn from(value: &TestFramework) -> Self {
         let url = value.bitcoind.rpc_url().split_at(7).1.to_string();
         let auth = Auth::CookieFile(value.bitcoind.params.cookie_file.clone());
-        let network = str_to_bitcoin_network(
-            value
-                .bitcoind
-                .client
-                .get_blockchain_info()
-                .unwrap()
-                .chain
-                .as_str(),
-        );
+        let network = value.bitcoind.client.get_blockchain_info().unwrap().chain;
         Self {
             url,
             auth,

@@ -9,9 +9,10 @@ use bitcoin::{
     absolute::LockTime,
     bip32::{ChildNumber, DerivationPath},
     hashes::{sha256d, Hash},
-    opcodes,
+    opcodes::all::{OP_CHECKSIGVERIFY, OP_CLTV},
     script::{Builder, Instruction},
-    secp256k1::{KeyPair, Message, Secp256k1},
+    secp256k1::{Keypair, Message, Secp256k1},
+    transaction::Version,
     Address, Amount, OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid,
     Witness,
 };
@@ -52,40 +53,19 @@ pub enum FidelityError {
     InsufficientFund { available: u64, required: u64 },
 }
 
-// impl From<bitcoin::secp256k1::Error> for FidelityError {
-//     fn from(value: bitcoin::secp256k1::Error) -> Self {
-//         Self::Secp(value)
-//     }
-// }
-
-// impl From<bitcoin::bip32::Error> for FidelityError {
-//     fn from(value: bitcoin::bip32::Error) -> Self {
-//         Self::Bip32(value)
-//     }
-// }
-
-// impl From<bitcoin::consensus::encode::Error> for FidelityError {
-//     fn from(value: bitcoin::consensus::encode::Error) -> Self {
-//         Self::Encoding(value)
-//     }
-// }
-
-// impl From<bitcoin::key::Error> for FidelityError {
-//     fn from(value: bitcoin::key::Error) -> Self {
-//         Self::WrongPubKeyFormat(value.to_string())
-//     }
-// }
-
 // ------- Fidelity Helper Scripts -------------
 
 /// Create a Fidelity Timelocked redeemscript.
+/// Redeem script used
+/// Old script: <locktime> <OP_CLTV> <OP_DROP> <pubkey> <OP_CHECKSIG>
+/// The new script drops the extra byte <OP_DROP>
+/// New script: <pubkey> <OP_CHECKSIGVERIFY> <locktime> <OP_CLTV>
 pub fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> ScriptBuf {
     Builder::new()
-        .push_lock_time(*lock_time)
-        .push_opcode(opcodes::all::OP_CLTV)
-        .push_opcode(opcodes::all::OP_DROP)
         .push_key(pubkey)
-        .push_opcode(opcodes::all::OP_CHECKSIG)
+        .push_opcode(OP_CHECKSIGVERIFY)
+        .push_lock_time(*lock_time)
+        .push_opcode(OP_CLTV)
         .into_script()
 }
 
@@ -94,7 +74,7 @@ pub fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> Script
 pub fn read_locktime_from_fidelity_script(
     redeemscript: &ScriptBuf,
 ) -> Result<LockTime, FidelityError> {
-    if let Some(Ok(Instruction::PushBytes(locktime_bytes))) = redeemscript.instructions().next() {
+    if let Some(Ok(Instruction::PushBytes(locktime_bytes))) = redeemscript.instructions().nth(2) {
         let mut u4slice: [u8; 4] = [0; 4];
         u4slice[..locktime_bytes.len()].copy_from_slice(locktime_bytes.as_bytes());
         Ok(LockTime::from_consensus(u32::from_le_bytes(u4slice)))
@@ -106,7 +86,7 @@ pub fn read_locktime_from_fidelity_script(
 #[allow(unused)]
 /// Reads the public key from a fidelity redeemscript.
 fn read_pubkey_from_fidelity_script(redeemscript: &ScriptBuf) -> Result<PublicKey, FidelityError> {
-    if let Some(Ok(Instruction::PushBytes(pubkey_bytes))) = redeemscript.instructions().nth(3) {
+    if let Some(Ok(Instruction::PushBytes(pubkey_bytes))) = redeemscript.instructions().next() {
         Ok(PublicKey::from_slice(pubkey_bytes.as_bytes()).unwrap())
     } else {
         Err(FidelityError::WrongScriptType)
@@ -142,7 +122,7 @@ pub fn calculate_fidelity_value(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Hash)]
 pub struct FidelityBond {
     pub outpoint: OutPoint,
-    pub amount: u64,
+    pub amount: Amount,
     pub lock_time: LockTime,
     pub pubkey: PublicKey,
     // Height at which the bond was confirmed.
@@ -202,18 +182,17 @@ impl Wallet {
             .map(|(i, _)| *i))
     }
     /// Get the [KeyPair] for the fidelity bond at given index.
-    pub fn get_fidelity_keypair(&self, index: u32) -> Result<KeyPair, WalletError> {
+    pub fn get_fidelity_keypair(&self, index: u32) -> Result<Keypair, WalletError> {
         let secp = Secp256k1::new();
 
         let derivation_path = DerivationPath::from_str(FIDELITY_DERIVATION_PATH)?;
 
-        let child_index = ChildNumber::Normal { index };
+        let child_derivation_path = derivation_path.child(ChildNumber::Normal { index });
 
         Ok(self
             .store
             .master_key
-            .derive_priv(&secp, &derivation_path)?
-            .ckd_priv(&secp, child_index)?
+            .derive_priv(&secp, &child_derivation_path)?
             .to_keypair(&secp))
     }
 
@@ -289,12 +268,8 @@ impl Wallet {
             LockTime::Seconds(sec) => sec.to_consensus_u32() as u64,
         };
 
-        let bond_value = calculate_fidelity_value(
-            Amount::from_sat(bond.amount),
-            locktime,
-            confirmation_time,
-            current_time,
-        );
+        let bond_value =
+            calculate_fidelity_value(bond.amount, locktime, confirmation_time, current_time);
 
         Ok(bond_value)
     }
@@ -364,14 +339,14 @@ impl Wallet {
             .collect::<Vec<_>>();
 
         let mut tx_outs = vec![TxOut {
-            value: amount.to_sat(),
+            value: amount,
             script_pubkey: fidelity_addr.script_pubkey(),
         }];
 
-        if change_amount.is_some() {
+        if let Some(change) = change_amount {
             let change_addrs = self.get_next_internal_addresses(1)?[0].script_pubkey();
             tx_outs.push(TxOut {
-                value: change_amount.expect("expected").to_sat(),
+                value: change,
                 script_pubkey: change_addrs,
             });
         }
@@ -382,7 +357,7 @@ impl Wallet {
             input: tx_inputs,
             output: tx_outs,
             lock_time: anti_fee_snipping_locktime,
-            version: 2, // anti-fee-snipping
+            version: Version::TWO, // anti-fee-snipping
         };
 
         let mut input_info = selected_utxo
@@ -416,11 +391,11 @@ impl Wallet {
             }
         };
 
-        let cert_expiry = self.get_fidelity_expriy()?;
+        let cert_expiry = self.get_fidelity_expiry()?;
 
         let bond = FidelityBond {
             outpoint: OutPoint::new(txid, 0),
-            amount: amount.to_sat(),
+            amount,
             lock_time: locktime,
             pubkey: fidelity_pubkey,
             conf_height,
@@ -459,7 +434,7 @@ impl Wallet {
         };
 
         // TODO take feerate as user input
-        let fee = 1000;
+        let fee = Amount::from_sat(1000);
 
         let change_addr = &self.get_next_internal_addresses(1)?[0];
 
@@ -472,7 +447,7 @@ impl Wallet {
             input: vec![txin],
             output: vec![txout],
             lock_time: bond.lock_time,
-            version: 2,
+            version: Version::TWO,
         };
 
         let utxo_spend_info = UTXOSpendInfo::FidelityBondCoin {
@@ -552,7 +527,7 @@ impl Wallet {
 
         let secp = Secp256k1::new();
         let cert_sig = secp.sign_ecdsa(
-            &Message::from_slice(cert_hash.as_byte_array())?,
+            &Message::from_digest_slice(cert_hash.as_byte_array())?,
             &fidelity_privkey,
         );
 
@@ -574,7 +549,7 @@ impl Wallet {
         }
 
         let cert_message =
-            Message::from_slice(proof.bond.generate_cert_hash(onion_addr).as_byte_array())?;
+            Message::from_digest_slice(proof.bond.generate_cert_hash(onion_addr).as_byte_array())?;
 
         let secp = Secp256k1::new();
 
@@ -582,14 +557,14 @@ impl Wallet {
     }
 
     /// Calculate the expiry value. This depends on the current block height.
-    pub fn get_fidelity_expriy(&self) -> Result<u64, WalletError> {
+    pub fn get_fidelity_expiry(&self) -> Result<u64, WalletError> {
         let current_height = self.rpc.get_block_count()?;
         Ok((current_height + 2) /* safety buffer */ / 2016 + 5)
     }
 
     /// Extend the expiry of a fidelity bond. This is useful for bonds which are close to their expiry.
     pub fn extend_fidelity_expiry(&mut self, index: u32) -> Result<(), WalletError> {
-        let cert_expiry = self.get_fidelity_expriy()?;
+        let cert_expiry = self.get_fidelity_expiry()?;
         let (bond, _, _) = self
             .store
             .fidelity_bond
@@ -740,35 +715,53 @@ mod test {
             );
         }
     }
+}
 
-    #[test]
-    fn test_fidleity_redeemscripts() {
-        let test_data = [
+#[test]
+fn test_fidleity_redeemscripts() {
+    let test_data = [
+        (
             (
-                ("03ffe2b8b46eb21eadc3b535e9f57054213a1775b035faba6c5b3368b3a0ab5a5c", 15000),
-                "02983ab1752103ffe2b8b46eb21eadc3b535e9f57054213a1775b035faba6c5b3368b3a0ab5a5cac",
+                "03ffe2b8b46eb21eadc3b535e9f57054213a1775b035faba6c5b3368b3a0ab5a5c",
+                15000,
             ),
+            "2103ffe2b8b46eb21eadc3b535e9f57054213a1775b035faba6c5b3368b3a0ab5a5cad02983ab1",
+        ),
+        (
             (
-                ("031499764842691088897cff51efd85347dd3215912cbb8fb9b121b1da3b15bec8", 30000),
-                "023075b17521031499764842691088897cff51efd85347dd3215912cbb8fb9b121b1da3b15bec8ac",
+                "031499764842691088897cff51efd85347dd3215912cbb8fb9b121b1da3b15bec8",
+                30000,
             ),
+            "21031499764842691088897cff51efd85347dd3215912cbb8fb9b121b1da3b15bec8ad023075b1",
+        ),
+        (
             (
-                ("022714334f189db14fabd3dd893bbb913b8c3ddff245f7094cdc0b24c2fabb3570", 45000),
-                "03c8af00b17521022714334f189db14fabd3dd893bbb913b8c3ddff245f7094cdc0b24c2fabb3570ac",
+                "022714334f189db14fabd3dd893bbb913b8c3ddff245f7094cdc0b24c2fabb3570",
+                45000,
             ),
+            "21022714334f189db14fabd3dd893bbb913b8c3ddff245f7094cdc0b24c2fabb3570ad03c8af00b1",
+        ),
+        (
             (
-                ("02145a1d2bd118edcb3fe85495192d44e1d09f75ab4f0fe98269f61ff672860dae", 60000),
-                "0360ea00b1752102145a1d2bd118edcb3fe85495192d44e1d09f75ab4f0fe98269f61ff672860daeac",
+                "02145a1d2bd118edcb3fe85495192d44e1d09f75ab4f0fe98269f61ff672860dae",
+                60000,
             ),
-        ].map(|((pk, lt), script)| (
-            (PublicKey::from_str(pk).unwrap(), LockTime::from_height(lt).unwrap()),
+            "2102145a1d2bd118edcb3fe85495192d44e1d09f75ab4f0fe98269f61ff672860daead0360ea00b1",
+        ),
+    ]
+    .map(|((pk, lt), script)| {
+        (
+            (
+                PublicKey::from_str(pk).unwrap(),
+                LockTime::from_height(lt).unwrap(),
+            ),
             ScriptBuf::from_hex(script).unwrap(),
-        ));
+        )
+    });
 
-        for ((pk, lt), script) in test_data {
-            assert_eq!(script, fidelity_redeemscript(&lt, &pk));
-            assert_eq!(pk, read_pubkey_from_fidelity_script(&script).unwrap());
-            assert_eq!(lt, read_locktime_from_fidelity_script(&script).unwrap());
-        }
+    for ((pk, lt), script) in test_data {
+        assert_eq!(script, fidelity_redeemscript(&lt, &pk));
+        assert_eq!(pk, read_pubkey_from_fidelity_script(&script).unwrap());
+        assert_eq!(lt, read_locktime_from_fidelity_script(&script).unwrap());
     }
 }
