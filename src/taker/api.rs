@@ -10,15 +10,17 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    convert::TryFrom,
     fs,
     io::Read,
     path::{Path, PathBuf},
+    str::FromStr,
     thread,
     time::{Duration, Instant},
 };
 
 use bip39::Mnemonic;
-use bitcoind::bitcoincore_rpc::RpcApi;
+use bitcoind::bitcoincore_rpc::{Client, RpcApi};
 use tokio::{net::TcpStream, select, time::sleep};
 
 use bitcoin::{
@@ -1985,5 +1987,27 @@ impl Taker {
             }
         }
         Ok(())
+    }
+
+    pub async fn send_to_address(&mut self, rpc_config: RPCConfig, address: String, amount: u64) {
+        let client = Client::try_from(&rpc_config).expect("Failed to connect to Bitcoin RPC");
+
+        client
+            .send_to_address(
+                &bitcoin::Address::from_str(&address)
+                    .unwrap()
+                    .require_network(Network::Bitcoin)
+                    .expect("Not able to parse address, Please enter correct address"),
+                Amount::from_sat(amount),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .expect("Failed to send transaction");
+
+        println!("Transaction sent to {} for amount {}", address, amount);
     }
 }

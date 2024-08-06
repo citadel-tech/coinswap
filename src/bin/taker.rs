@@ -90,6 +90,8 @@ enum Commands {
     SyncOfferBook,
     /// Initiate the coinswap process
     DoCoinswap,
+    /// Send amount to address
+    SendToAddress { address: String, amount: u64 },
 }
 
 fn main() {
@@ -204,6 +206,9 @@ fn main() {
         }
         Commands::DoCoinswap => {
             let _ = taker.do_coinswap(swap_params);
+        }
+        Commands::SendToAddress { address, amount } => {
+            let _ = taker.send_to_address(rpc_config, address, amount);
         }
     }
 }
