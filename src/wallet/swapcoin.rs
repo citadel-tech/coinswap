@@ -32,7 +32,19 @@ use crate::protocol::{
 
 use super::WalletError;
 
-/// Represents an incoming swapcoin.
+/// Defines an incoming swapcoin, which can either be currently active or successfully completed.
+///
+/// ### NOTE:
+/// The term `Incoming` imply an Incoming Coin from a swap.
+/// This can be for either a Taker or a Maker, depending on their position in the swap route.
+/// This refers to coins that have been "received" by the party,
+/// i.e. the party holds the hash lock side of the contract.
+///
+/// ### Example:
+/// Consider a swap scenario where Alice and Bob are exchanging assets.
+/// The coin that Bob receives from Alice is referred to as `Incoming` from Bob's perspective.
+/// This designation applies regardless of the swap's status—whether
+/// it is still in progress or has been finalized.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct IncomingSwapCoin {
     pub my_privkey: SecretKey,
@@ -46,7 +58,19 @@ pub struct IncomingSwapCoin {
     pub hash_preimage: Option<Preimage>,
 }
 
-/// Represents an outgoing swapcoin.
+/// Describes an outgoing swapcoin, which can either be currently active or successfully completed.
+///
+/// ### NOTE:
+/// The term `Outgoing` imply an Outgoing Coin from a swap.
+/// This can be for either a Taker or a Maker, depending on their position in the swap route.
+/// This refers to coins that have been "sent" by the party,
+/// i.e. the party holds the time lock side of the contract.
+///
+/// ### Example:
+/// In a swap transaction between Alice and Bob,
+/// the coin that Alice sends to Bob is referred to as `Outgoing` from Alice's perspective.
+/// This terminology reflects the direction of the asset transfer,
+/// regardless of whether the swap is still ongoing or has been completed.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct OutgoingSwapCoin {
     pub my_privkey: SecretKey,
