@@ -1,7 +1,7 @@
 #![cfg(feature = "integration-test")]
 use bitcoin::{absolute::LockTime, Amount};
 use coinswap::{
-    maker::{error::MakerError, start_maker_server, MakerBehavior},
+    maker::{start_maker_server, MakerBehavior, MakerError},
     utill::ConnectionType,
     wallet::{FidelityError, WalletError},
 };
@@ -24,8 +24,8 @@ use std::{thread, time::Duration};
 ///
 /// Maker server will error if not enough balance is present to create fidelity bond.
 /// A custom fidelity bond can be create using the `create_fidelity()` API.
-#[tokio::test]
-async fn test_fidelity() {
+#[test]
+fn test_fidelity() {
     // ---- Setup ----
 
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
@@ -35,8 +35,7 @@ async fn test_fidelity() {
         makers_config_map.into(),
         None,
         ConnectionType::CLEARNET,
-    )
-    .await;
+    );
 
     let maker = makers.first().unwrap();
 

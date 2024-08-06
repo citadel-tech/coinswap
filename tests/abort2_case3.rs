@@ -19,8 +19,8 @@ use std::{fs::File, io::Read, path::PathBuf, thread, time::Duration};
 /// not swap this maker again.
 ///
 /// CASE 3: Maker Drops After Sending Sender's Signature. Taker and other Maker recovers.
-#[tokio::test]
-async fn maker_drops_after_sending_senders_sigs() {
+#[test]
+fn maker_drops_after_sending_senders_sigs() {
     // ---- Setup ----
 
     // 6102 is naughty. And theres not enough makers.
@@ -36,8 +36,7 @@ async fn maker_drops_after_sending_senders_sigs() {
         makers_config_map.into(),
         None,
         ConnectionType::CLEARNET,
-    )
-    .await;
+    );
 
     warn!(
         "Running Test: Maker 6102 Closes after sending sender's signature. This is really bad. Recovery is the only option."
