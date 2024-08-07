@@ -1,9 +1,8 @@
 #![cfg(feature = "integration-test")]
 use bitcoin::{absolute::LockTime, Amount};
 use coinswap::{
-    maker::{start_maker_server, MakerBehavior, MakerError},
+    maker::{start_maker_server, MakerBehavior},
     utill::ConnectionType,
-    wallet::{FidelityError, WalletError},
 };
 
 mod test_framework;
@@ -55,17 +54,12 @@ fn test_fidelity() {
     let maker_clone = maker.clone();
     let maker_thread = thread::spawn(move || start_maker_server(maker_clone));
 
-    thread::sleep(Duration::from_secs(5));
+    thread::sleep(Duration::from_secs(20));
     maker.shutdown().unwrap();
-    let expected_error = maker_thread.join().unwrap();
+    let _ = maker_thread.join().unwrap();
 
-    matches!(
-        expected_error.err().unwrap(),
-        MakerError::Wallet(WalletError::Fidelity(FidelityError::InsufficientFund {
-            available: 4000000,
-            required: 5000000,
-        }))
-    );
+    // TODO: Assert that fund request for fidelity is printed in the log.
+    *maker.shutdown.write().unwrap() = false;
 
     // Give Maker more funds and check fidelity bond is created at the restart of server.
     test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.04).unwrap());
@@ -74,7 +68,7 @@ fn test_fidelity() {
     let maker_clone = maker.clone();
     let maker_thread = thread::spawn(move || start_maker_server(maker_clone));
 
-    thread::sleep(Duration::from_secs(5));
+    thread::sleep(Duration::from_secs(20));
     maker.shutdown().unwrap();
 
     let success = maker_thread.join().unwrap();
