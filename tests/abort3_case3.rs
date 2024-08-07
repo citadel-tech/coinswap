@@ -19,7 +19,7 @@ use std::{fs::File, io::Read, path::PathBuf, thread, time::Duration};
 /// The Maker will loose contract txs fees in that case, so it's not a malice.
 /// Taker waits for the response until timeout. Aborts if the Maker doesn't show up.
 #[test]
-fn abort3_case2_close_at_contract_sigs_for_recvr() {
+fn abort3_case3_close_at_hash_preimage_handover() {
     // ---- Setup ----
 
     // 6102 is naughty. And theres not enough makers.

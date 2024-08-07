@@ -195,7 +195,7 @@ pub fn fetch_addresses_from_dns(
 
         match response
             .lines()
-            .map(|line| MakerAddress::new(line))
+            .map(MakerAddress::new)
             .collect::<Result<Vec<MakerAddress>, _>>()
         {
             Ok(addresses) => {
