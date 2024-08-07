@@ -197,15 +197,23 @@ fn network_bootstrap(
 
 /// Checks if the wallet already have fidelity bonds. if not, create the first fidelity bond.
 fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), MakerError> {
-    let mut wallet = maker.wallet.write()?;
-    if let Some(i) = wallet.get_highest_fidelity_index()? {
-        let highest_proof = wallet.generate_fidelity_proof(i, maker_address)?;
+    let highest_index = maker.get_wallet().read()?.get_highest_fidelity_index()?;
+    if let Some(i) = highest_index {
+        let highest_proof = maker
+            .get_wallet()
+            .read()?
+            .generate_fidelity_proof(i, maker_address)?;
         let mut proof = maker.highest_fidelity_proof.write()?;
         *proof = Some(highest_proof);
     } else {
         // No bond in the wallet. Lets attempt to create one.
         let amount = Amount::from_sat(maker.config.fidelity_value);
-        let current_height = wallet.rpc.get_block_count().map_err(WalletError::Rpc)? as u32;
+        let current_height = maker
+            .get_wallet()
+            .read()?
+            .rpc
+            .get_block_count()
+            .map_err(WalletError::Rpc)? as u32;
 
         // Set 100 blocks locktime for test
         let locktime = if cfg!(feature = "integration-test") {
@@ -213,8 +221,12 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
         } else {
             LockTime::from_height(maker.config.fidelity_timelock + current_height).unwrap()
         };
-        loop {
-            match wallet.create_fidelity(amount, locktime) {
+        while !*maker.shutdown.read()? {
+            let fidelity_result = maker
+                .get_wallet()
+                .write()?
+                .create_fidelity(amount, locktime);
+            match fidelity_result {
                 // Wait for sufficient fund to create fidelity bond.
                 // Hard error if fidelity still can't be created.
                 Err(e) => {
@@ -224,10 +236,17 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
                     }) = e
                     {
                         log::warn!("Insufficient fund to create fidelity bond.");
-                        let amount = available - required;
-                        let (_, addr, _) = wallet.get_next_fidelity_address(locktime)?;
+                        let amount = required - available;
+                        let (_, addr, _) = maker
+                            .get_wallet()
+                            .read()?
+                            .get_next_fidelity_address(locktime)?;
                         log::info!("Send {} sats to {}", amount, addr);
-                        sleep(Duration::from_secs(300)); //Wait for fund for 5 mins
+                        if cfg!(feature = "integration-test") {
+                            sleep(Duration::from_secs(3));
+                        } else {
+                            sleep(Duration::from_secs(300)); // Wait for 5 mins in production
+                        }
                         continue;
                     } else {
                         log::error!(
@@ -240,19 +259,21 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
                 }
                 Ok(i) => {
                     log::info!("[{}] Successfully created fidelity bond", maker.config.port);
-
-                    let highest_proof = wallet.generate_fidelity_proof(i, maker_address)?;
+                    let highest_proof = maker
+                        .get_wallet()
+                        .read()?
+                        .generate_fidelity_proof(i, maker_address)?;
                     let mut proof = maker.highest_fidelity_proof.write()?;
                     *proof = Some(highest_proof);
+                    log::info!("[{}] Syncing and saving wallet data", maker.config.port);
+                    maker.get_wallet().write()?.sync()?;
+                    maker.get_wallet().read()?.save_to_disk()?;
+                    log::info!("[{}] Sync and save successful", maker.config.port);
                     break;
                 }
             }
         }
     }
-    log::info!("[{}] Syncing and saving wallet data", maker.config.port);
-    wallet.sync()?;
-    wallet.save_to_disk()?;
-    log::info!("[{}] Sync and save successful", maker.config.port);
     Ok(())
 }
 
@@ -529,6 +550,12 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     if maker.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {
         crate::tor::kill_tor_handles(tor_thread.unwrap());
     }
+
+    log::info!("Shutdown wallet sync initiated.");
+    maker.get_wallet().write()?.sync()?;
+    log::info!("Shutdown wallet syncing completed.");
+    maker.get_wallet().read()?.save_to_disk()?;
+    log::info!("Wallet file saved to disk.");
 
     Ok(())
 }
