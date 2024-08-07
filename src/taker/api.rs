@@ -1377,36 +1377,28 @@ impl Taker {
             ) {
                 Ok(ret) => return Ok(ret),
                 Err(e) => {
-                    // Re attempt upto reconnect_attempts tries, if timedout error
-                    if let TakerError::Net(NetError::IO(error)) = e {
-                        if error.kind() == io::ErrorKind::WouldBlock
-                            || error.kind() == io::ErrorKind::TimedOut
-                        {
-                            if ii <= first_connect_attempts {
-                                log::warn!(
-                                    "Timeout for settling coinswap with maker {}, reattempting...",
-                                    maker_addr_str
-                                );
-                                continue;
+                    log::warn!(
+                        "Failed to connect to maker {} to request signatures for receiver, \
+                                reattempting... error={:?}",
+                        &maker_addr_str,
+                        e
+                    );
+                    if ii <= first_connect_attempts {
+                        sleep(Duration::from_secs(
+                            if ii <= self.config.short_long_sleep_delay_transition {
+                                sleep_delay
                             } else {
-                                log::warn!("Timeout Reattempt exceeded. Adding malicious Maker");
-                                return Err(NetError::ConnectionTimedOut.into());
-                            }
-                        }
+                                self.config.reconnect_long_sleep_delay
+                            },
+                        ));
+                        continue;
                     } else {
-                        // Re attempt with transitory delay for all other errors
                         log::warn!(
-                            "Failed to connect to maker {} to request sigs for sender, \
-                            reattempting... error={:?}",
-                            maker_addr_str,
-                            e
+                            "Failed to connect to maker {} to request signatures for receiver, \
+                                    reattempt limit exceeded",
+                            &maker_addr_str,
                         );
-                        if ii <= first_connect_attempts {
-                            sleep(Duration::from_secs(sleep_delay));
-                            continue;
-                        } else {
-                            return Err(e);
-                        }
+                        return Err(e);
                     }
                 }
             }
@@ -1457,41 +1449,32 @@ impl Taker {
 
         loop {
             ii += 1;
-
             match req_sigs_for_recvr_once(&mut socket, incoming_swapcoins, receivers_contract_txes)
             {
                 Ok(ret) => return Ok(ret),
                 Err(e) => {
-                    // Re attempt upto reconnect_attempts tries, if timedout error
-                    if let TakerError::Net(NetError::IO(error)) = e {
-                        if error.kind() == io::ErrorKind::WouldBlock
-                            || error.kind() == io::ErrorKind::TimedOut
-                        {
-                            if ii <= reconnect_attempts {
-                                log::warn!(
-                                    "Timeout for settling coinswap with maker {}, reattempting...",
-                                    maker_addr_str
-                                );
-                                continue;
+                    log::warn!(
+                        "Failed to connect to maker {} to request signatures for receiver, \
+                                reattempting... error={:?}",
+                        &maker_addr_str,
+                        e
+                    );
+                    if ii <= reconnect_attempts {
+                        sleep(Duration::from_secs(
+                            if ii <= self.config.short_long_sleep_delay_transition {
+                                sleep_delay
                             } else {
-                                log::warn!("Timeout Reattempt exceeded. Adding malicious Maker");
-                                return Err(NetError::ConnectionTimedOut.into());
-                            }
-                        }
+                                self.config.reconnect_long_sleep_delay
+                            },
+                        ));
+                        continue;
                     } else {
-                        // Re attempt with transitory delay for all other errors
                         log::warn!(
-                            "Failed to connect to maker {} to request sigs for receiver, \
-                            reattempting... error={:?}",
-                            maker_addr_str,
-                            e
+                            "Failed to connect to maker {} to request signatures for receiver, \
+                                    reattempt limit exceeded",
+                            &maker_addr_str,
                         );
-                        if ii <= reconnect_attempts {
-                            sleep(Duration::from_secs(sleep_delay));
-                            continue;
-                        } else {
-                            return Err(e);
-                        }
+                        return Err(e);
                     }
                 }
             }
@@ -1571,23 +1554,22 @@ impl Taker {
             socket.set_read_timeout(Some(reconnect_time_out))?;
             socket.set_write_timeout(Some(reconnect_time_out))?;
 
+            // Configurable reconnection attempts for testing
+            let reconnect_attempts = if cfg!(feature = "integration-test") {
+                10
+            } else {
+                self.config.reconnect_attempts
+            };
+
+            // Custom sleep delay for testing.
+            let sleep_delay = if cfg!(feature = "integration-test") {
+                1
+            } else {
+                self.config.reconnect_short_sleep_delay
+            };
+
             loop {
-                // Configurable reconnection attempts for testing
-                let reconnect_attempts = if cfg!(feature = "integration-test") {
-                    10
-                } else {
-                    self.config.reconnect_attempts
-                };
-
-                // Custom sleep delay for testing.
-                let sleep_delay = if cfg!(feature = "integration-test") {
-                    1
-                } else {
-                    self.config.reconnect_short_sleep_delay
-                };
-
                 ii += 1;
-
                 match self.settle_one_coinswap(
                     &mut socket,
                     index,
@@ -1597,46 +1579,29 @@ impl Taker {
                 ) {
                     Ok(()) => break,
                     Err(e) => {
-                        // Re attempt upto reconnect_attempts tries, if timedout error
-                        if let TakerError::Net(NetError::IO(error)) = e {
-                            if error.kind() == io::ErrorKind::WouldBlock
-                                || error.kind() == io::ErrorKind::TimedOut
-                            {
-                                if ii <= reconnect_attempts {
-                                    log::warn!(
-                                        "Timeout for settling coinswap with maker {}, reattempting...",
-                                        maker_addr_str
-                                    );
-                                    continue;
+                        log::warn!(
+                            "Failed to connect to maker {} to settle coinswap, \
+                                    reattempting... error={:?}",
+                            &maker_address.address,
+                            e
+                        );
+                        if ii <= reconnect_attempts {
+                            sleep(Duration::from_secs(
+                                if ii <= self.config.short_long_sleep_delay_transition {
+                                    sleep_delay
                                 } else {
-                                    log::warn!(
-                                        "Timeout Reattempt exceeded. Adding malicious Maker"
-                                    );
-                                    self.offerbook.add_bad_maker(maker_address);
-                                    return Err(NetError::ConnectionTimedOut.into());
-                                }
-                            }
+                                    self.config.reconnect_long_sleep_delay
+                                },
+                            ));
+                            continue;
                         } else {
-                            // Re attempt with transitory delay for all other errors
                             log::warn!(
                                 "Failed to connect to maker {} to settle coinswap, \
-                                reattempting... error={:?}",
+                                        reattempt limit exceeded",
                                 &maker_address.address,
-                                e
                             );
-                            if ii <= reconnect_attempts {
-                                sleep(Duration::from_secs(
-                                    if ii <= self.config.short_long_sleep_delay_transition {
-                                        sleep_delay
-                                    } else {
-                                        self.config.reconnect_long_sleep_delay
-                                    },
-                                ));
-                                continue;
-                            } else {
-                                self.offerbook.add_bad_maker(maker_address);
-                                return Err(e);
-                            }
+                            self.offerbook.add_bad_maker(maker_address);
+                            return Err(e);
                         }
                     }
                 }
