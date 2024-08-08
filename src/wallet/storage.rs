@@ -2,7 +2,10 @@
 //!
 //! Wallet data is currently written in unencrypted CBOR files which are not directly human readable.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use bitcoin::{bip32::Xpriv, Network, OutPoint, ScriptBuf};
 use serde::{Deserialize, Serialize};
@@ -19,7 +22,7 @@ use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct WalletStore {
     /// The file name associated with the wallet store.
-    pub(crate) file_name: String,
+    pub(crate) unique_id: String,
     /// Network the wallet operates on.
     pub(crate) network: Network,
     /// The master key for the wallet.
@@ -45,14 +48,14 @@ pub struct WalletStore {
 impl WalletStore {
     /// Initialize a store at a path (if path already exists, it will overwrite it).
     pub fn init(
-        file_name: String,
-        path: &PathBuf,
+        unique_id: String,
+        data_directory: &Path,
         network: Network,
         master_key: Xpriv,
         wallet_birthday: Option<u64>,
     ) -> Result<Self, WalletError> {
         let store = Self {
-            file_name,
+            unique_id: unique_id.clone(),
             network,
             master_key,
             external_index: 0,
@@ -64,15 +67,17 @@ impl WalletStore {
             last_synced_height: None,
             wallet_birthday,
         };
+        let wallet_file_path = data_directory.join(format!("{}.cbor", unique_id));
 
-        std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
+        std::fs::create_dir_all(data_directory)?;
+
         // write: overwrites existing file.
         // create: creates new file if doesn't exist.
         let file = OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
-            .open(path)?;
+            .open(wallet_file_path)?;
         let writer = BufWriter::new(file);
         serde_cbor::to_writer(writer, &store)?;
 
@@ -103,21 +108,26 @@ mod tests {
     #[test]
     fn test_write_and_read_wallet_to_disk() {
         let temp_dir = tempdir().unwrap();
-        let file_path = temp_dir.path().join("test_wallet.cbor");
+        let data_directory = temp_dir.path().to_path_buf();
+        let unique_id = "test_wallet".to_string();
+
         let mnemonic = Mnemonic::generate(12).unwrap().to_string();
 
         let original_wallet_store = WalletStore::init(
-            "test_wallet".to_string(),
-            &file_path,
+            unique_id.clone(),
+            &data_directory,
             Network::Bitcoin,
             Xpriv::new_master(Network::Bitcoin, mnemonic.as_bytes()).unwrap(),
             None,
         )
         .unwrap();
 
-        original_wallet_store.write_to_disk(&file_path).unwrap();
+        let wallet_file_path = data_directory.join(format!("{}.cbor", unique_id));
+        original_wallet_store
+            .write_to_disk(&wallet_file_path)
+            .unwrap();
 
-        let read_wallet = WalletStore::read_from_disk(&file_path).unwrap();
+        let read_wallet = WalletStore::read_from_disk(&wallet_file_path).unwrap();
         assert_eq!(original_wallet_store, read_wallet);
     }
 }

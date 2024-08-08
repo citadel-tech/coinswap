@@ -77,7 +77,7 @@ impl Wallet {
     /// Sync the wallet with the configured Bitcoin Core RPC. Save data to disk.
     pub fn sync(&mut self) -> Result<(), WalletError> {
         // Create or load the watch-only bitcoin core wallet
-        let wallet_name = &self.store.file_name;
+        let wallet_name = &self.store.unique_id;
         if self.rpc.list_wallets()?.contains(wallet_name) {
             log::info!("wallet already loaded: {}", wallet_name);
         } else if list_wallet_dir(&self.rpc)?.contains(wallet_name) {
