@@ -18,8 +18,8 @@ use std::{fs::File, io::Read, path::PathBuf, thread, time::Duration};
 /// Maker closes connection at hash preimage handling. Funding txs are already broadcasted.
 /// The Maker will loose contract txs fees in that case, so it's not a malice.
 /// Taker waits for the response until timeout. Aborts if the Maker doesn't show up.
-#[tokio::test]
-async fn abort3_case2_close_at_contract_sigs_for_recvr() {
+#[test]
+fn abort3_case3_close_at_hash_preimage_handover() {
     // ---- Setup ----
 
     // 6102 is naughty. And theres not enough makers.
@@ -35,8 +35,7 @@ async fn abort3_case2_close_at_contract_sigs_for_recvr() {
         makers_config_map.into(),
         None,
         ConnectionType::CLEARNET,
-    )
-    .await;
+    );
 
     warn!("Running Test: Maker closes conneciton at hash preimage handling");
 

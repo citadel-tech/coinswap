@@ -18,8 +18,8 @@ use std::{collections::BTreeSet, thread, time::Duration};
 ///
 /// This case is hard to "blame". As the contract transactions is available to both the Makers, its not identifiable
 /// which Maker is the culprit. Taker does not ban in this case.
-#[tokio::test]
-async fn malice2_maker_broadcast_contract_prematurely() {
+#[test]
+fn malice2_maker_broadcast_contract_prematurely() {
     // ---- Setup ----
 
     let makers_config_map = [
@@ -34,8 +34,7 @@ async fn malice2_maker_broadcast_contract_prematurely() {
         makers_config_map.into(),
         Some(TakerBehavior::Normal),
         ConnectionType::CLEARNET,
-    )
-    .await;
+    );
 
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {

@@ -19,8 +19,8 @@ use std::{thread, time::Duration};
 /// not swap this maker again.
 ///
 /// CASE 1: Maker Drops Before Sending Sender's Signature, and Taker carries on with a new Maker.
-#[tokio::test]
-async fn test_abort_case_2_move_on_with_other_makers() {
+#[test]
+fn test_abort_case_2_move_on_with_other_makers() {
     // ---- Setup ----
 
     // 6102 is naughty. But theres enough good ones.
@@ -37,8 +37,7 @@ async fn test_abort_case_2_move_on_with_other_makers() {
         makers_config_map.into(),
         None,
         ConnectionType::CLEARNET,
-    )
-    .await;
+    );
 
     warn!(
         "Running Test: Maker 6102 closes before sending sender's sigs. Taker moves on with other Makers."

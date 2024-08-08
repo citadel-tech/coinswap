@@ -10,6 +10,7 @@ pub enum NetError {
     IO(std::io::Error),
     ReachedEOF,
     ConnectionTimedOut,
+    InvalidNetworkAddress,
     Cbor(serde_cbor::Error),
 }
 
