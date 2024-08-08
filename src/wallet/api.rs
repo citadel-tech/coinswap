@@ -1308,4 +1308,29 @@ impl Wallet {
         }));
         Ok(descriptors_to_import)
     }
+
+    pub fn is_script_tracked(&self, _script: &ScriptBuf) -> Result<bool, WalletError> {
+        todo!("Implement is_script_tracked")
+    }
+
+    pub fn is_utxo_tracked(&self, _outpoint: &OutPoint) -> Result<bool, WalletError> {
+        todo!("Implement is_utxo_tracked")
+    }
+
+    pub fn add_utxo(
+        &mut self,
+        _outpoint: OutPoint,
+        _amount: Amount,
+        _script: ScriptBuf,
+    ) -> Result<(), WalletError> {
+        todo!("Implement add_utxo")
+    }
+
+    pub fn remove_utxo(&mut self, _outpoint: OutPoint) -> Result<(), WalletError> {
+        todo!("Implement remove_utxo")
+    }
+
+    pub fn store_transaction(&mut self, _transaction: Transaction) -> Result<(), WalletError> {
+        todo!("Implement store_transaction")
+    }
 }

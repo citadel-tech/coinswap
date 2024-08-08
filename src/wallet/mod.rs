@@ -1,6 +1,7 @@
 //! The Coinswap Wallet (unsecured). Used by both the Taker and Maker.
 
 mod api;
+mod cbf;
 mod direct_send;
 mod error;
 mod fidelity;

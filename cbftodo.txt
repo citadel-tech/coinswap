@@ -1,0 +1,86 @@
+in wallet/storage.rs
+
+use std::collections::{HashMap, HashSet};
+use bitcoin::{Script, OutPoint, Txid};
+
+pub struct WalletStore {
+    // ... existing fields ...
+    tracked_scripts: HashSet<Script>,
+    utxo_set: HashMap<OutPoint, Amount>,
+    transactions: HashMap<Txid, Transaction>,
+}
+
+in `wallet/api.rs`
+
+impl Wallet {
+    pub fn is_script_tracked(&self, script: &Script) -> Result<bool, WalletError> {
+        // Check if the script is in the wallet's tracked scripts
+        Ok(self.store.tracked_scripts.contains(script))
+    }
+
+    pub fn is_utxo_tracked(&self, outpoint: &OutPoint) -> Result<bool, WalletError> {
+        // Check if the outpoint is in the wallet's UTXO set
+        Ok(self.store.utxo_set.contains_key(outpoint))
+    }
+
+    pub fn add_utxo(&mut self, outpoint: OutPoint, amount: Amount, script: Script) -> Result<(), WalletError> {
+        // Add a new UTXO to the wallet's UTXO set
+        self.store.utxo_set.insert(outpoint, amount);
+        self.store.tracked_scripts.insert(script);
+        self.save_to_disk()
+    }
+
+    pub fn remove_utxo(&mut self, outpoint: &OutPoint) -> Result<(), WalletError> {
+        // Remove a spent UTXO from the wallet's UTXO set
+        self.store.utxo_set.remove(outpoint);
+        self.save_to_disk()
+    }
+
+    pub fn store_transaction(&mut self, transaction: Transaction) -> Result<(), WalletError> {
+        // Store the full transaction in the wallet
+        let txid = transaction.txid();
+        self.store.transactions.insert(txid, transaction);
+        self.save_to_disk()
+    }
+
+    pub fn update_last_synced_height(&mut self, height: u32) -> Result<(), WalletError> {
+        // Update the last synced height in the wallet store
+        self.store.last_synced_height = Some(height);
+        self.save_to_disk()
+    }
+
+    // New method to add scripts to track
+    pub fn add_script_to_track(&mut self, script: Script) -> Result<(), WalletError> {
+        self.store.tracked_scripts.insert(script);
+        self.save_to_disk()
+    }
+
+    // New method to get all tracked scripts
+    pub fn get_tracked_scripts(&self) -> &HashSet<Script> {
+        &self.store.tracked_scripts
+    }
+
+    // New method to get all UTXOs
+    pub fn get_utxos(&self) -> &HashMap<OutPoint, Amount> {
+        &self.store.utxo_set
+    }
+
+    // New method to get a specific transaction
+    pub fn get_transaction(&self, txid: &Txid) -> Option<&Transaction> {
+        self.store.transactions.get(txid)
+    }
+}
+
+Also update the WalletStore::new() method to initialize the new fields
+impl WalletStore {
+    pub fn new(
+        // ... existing parameters ...
+    ) -> Self {
+        Self {
+            // ... existing fields ...
+            tracked_scripts: HashSet::new(),
+            utxo_set: HashMap::new(),
+            transactions: HashMap::new(),
+        }
+    }
+}
