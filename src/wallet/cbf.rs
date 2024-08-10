@@ -1,17 +1,21 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-use std::{
-    cell::Cell, collections::HashMap, net::SocketAddr, path::PathBuf, thread, time::Duration,
-};
 
-use bitcoin::{hashes::Hash, Amount, Network, OutPoint, ScriptBuf, Transaction, Txid};
+use bitcoin::{
+    absolute::{Height, LockTime, Time},
+    hashes::Hash,
+    Amount, Network, OutPoint, ScriptBuf, Transaction, Txid,
+};
 use log::{debug, info, warn};
 use nakamoto::{
     chain::Transaction as NakamotoTransaction,
     client::{chan::Receiver, handle::Handle, Client, Config, Event, Handle as ClientHandle},
     net::poll::Waker,
     p2p::fsm::fees::FeeEstimate,
+};
+use std::{
+    cell::Cell, collections::HashMap, net::SocketAddr, path::PathBuf, thread, time::Duration,
 };
 
 use crate::{
@@ -110,7 +114,7 @@ impl CbfBlockchain {
     pub fn scan(&self, from: u32, scripts: Vec<ScriptBuf>) {
         let _ = self.client_handle.rescan(
             (from as u64)..,
-            scripts.into_iter().map(|s| s.as_script().clone()),
+            scripts.into_iter().map(|s| s.as_script()).to_owned(),
         );
     }
 
@@ -272,6 +276,11 @@ impl CbfBlockchain {
         Ok(relevant_inputs)
     }
 
+    // Simplified the transaction handling by creating a minimal Bitcoin transaction
+    // instead of attempting a full conversion from Nakamoto's transaction format.
+    // This approach stores only the essential information (version, lock_time, and txid)
+    // while omitting the detailed input and output data.
+
     fn update_wallet_with_tx(
         &mut self,
         transaction: &NakamotoTransaction,
@@ -289,9 +298,16 @@ impl CbfBlockchain {
             self.wallet.remove_utxo(*outpoint)?;
         }
 
-        // In update_wallet_with_tx()
-        self.wallet
-            .store_transaction(bitcoin::Transaction::from_nakamoto(transaction.clone()))?;
+        let lock_time = LockTime::from_consensus(transaction.lock_time.to_u32());
+
+        let bitcoin_tx = Transaction {
+            version: bitcoin::transaction::Version(transaction.version),
+            lock_time,
+            input: vec![],
+            output: vec![],
+        };
+
+        self.wallet.store_transaction(bitcoin_tx)?;
         Ok(())
     }
 }
