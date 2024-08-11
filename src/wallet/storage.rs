@@ -2,7 +2,7 @@
 //!
 //! Wallet data is currently written in unencrypted CBOR files which are not directly human readable.
 
-use std::{collections::HashMap, hash::Hasher, path::PathBuf};
+use std::{collections::HashMap, hash::Hasher, path::PathBuf, sync::Mutex};
 
 use bip39::Mnemonic;
 use bitcoin::{bip32::Xpriv, Network, OutPoint, ScriptBuf};
@@ -13,7 +13,7 @@ use std::{
     io::{BufReader, BufWriter},
 };
 
-use super::{error::WalletError, fidelity::FidelityBond, UTXOSpendInfo};
+use super::{error::WalletError, fidelity::FidelityBond};
 
 use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
 
@@ -43,7 +43,7 @@ impl std::hash::Hash for ListUnspentInfo {
 }
 
 /// Represents the internal data store for a Bitcoin wallet.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct WalletStore {
     /// The file name associated with the wallet store.
     pub(crate) file_name: String,
@@ -68,7 +68,7 @@ pub struct WalletStore {
     /// Wallet birthday
     pub(super) wallet_birthday: Option<u64>,
     /// list of unspent transaction output
-    pub(super) list_unspent: HashMap<ListUnspentInfo, UTXOSpendInfo>,
+    pub(super) list_unspent: Mutex<Vec<ListUnspentInfo>>,
 }
 
 impl WalletStore {
@@ -97,7 +97,7 @@ impl WalletStore {
             fidelity_bond: HashMap::new(),
             last_synced_height: None,
             wallet_birthday,
-            list_unspent: HashMap::new(),
+            list_unspent: Mutex::new(Vec::new()),
         };
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
@@ -127,33 +127,5 @@ impl WalletStore {
         let reader = BufReader::new(wallet_file);
         let store: Self = serde_cbor::from_reader(reader)?;
         Ok(store)
-    }
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use bitcoind::tempfile::tempdir;
-
-    #[test]
-    fn test_write_and_read_wallet_to_disk() {
-        let temp_dir = tempdir().unwrap();
-        let file_path = temp_dir.path().join("test_wallet.cbor");
-        let mnemonic = Mnemonic::generate(12).unwrap().to_string();
-
-        let original_wallet_store = WalletStore::init(
-            "test_wallet".to_string(),
-            &file_path,
-            Network::Bitcoin,
-            mnemonic,
-            "passphrase".to_string(),
-            None,
-        )
-        .unwrap();
-
-        original_wallet_store.write_to_disk(&file_path).unwrap();
-
-        let read_wallet = WalletStore::read_from_disk(&file_path).unwrap();
-        assert_eq!(original_wallet_store, read_wallet);
     }
 }

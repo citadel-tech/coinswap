@@ -27,6 +27,7 @@ use crate::{
     },
 };
 
+use super::storage::ListUnspentInfo;
 use super::{
     error::WalletError,
     rpc::RPCConfig,
@@ -638,17 +639,32 @@ impl Wallet {
 
     /// Returns a list of all UTXOs tracked by the wallet. Including fidelity, live_contracts and swap coins.
     pub fn get_all_utxo(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
-        self.rpc.unlock_unspent_all()?;
-        let all_utxos = self
-            .rpc
-            .list_unspent(Some(0), Some(9999999), None, None, None)?;
+        self.sync_unlocked_utxo_list()?;
+        let all_utxos: Vec<ListUnspentResultEntry> = self
+            .store
+            .list_unspent
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| match e {
+                ListUnspentInfo::ListUnspentResultEntry(v) => v.clone(),
+            })
+            .collect();
         Ok(all_utxos)
     }
 
     pub fn get_all_locked_utxo(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
-        let all_utxos = self
-            .rpc
-            .list_unspent(Some(0), Some(9999999), None, None, None)?;
+        self.sync_locked_utxo_list()?;
+        let all_utxos: Vec<ListUnspentResultEntry> = self
+            .store
+            .list_unspent
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| match e {
+                ListUnspentInfo::ListUnspentResultEntry(v) => v.clone(),
+            })
+            .collect();
         Ok(all_utxos)
     }
     /// Returns a list all utxos with their spend info tracked by the wallet.

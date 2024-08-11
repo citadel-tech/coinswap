@@ -1,6 +1,6 @@
 //! Manages connection with a Bitcoin Core RPC.
 //!
-use std::{collections::HashMap, convert::TryFrom, thread, time::Duration};
+use std::{convert::TryFrom, sync::Mutex, thread, time::Duration};
 
 use bitcoin::Network;
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
@@ -152,23 +152,40 @@ impl Wallet {
         let all_utxos = self
             .rpc
             .list_unspent(Some(0), Some(9999999), None, None, None)?;
-        self.store.list_unspent = HashMap::new();
-        let utxo_spend_info = self.list_all_utxo_spend_info(Some(&all_utxos))?;
-        utxo_spend_info
-            .into_iter()
-            .for_each(|(list_unspent_result_entry, utxo_spend_info)| {
-                let list_unspent =
-                    ListUnspentInfo::ListUnspentResultEntry(list_unspent_result_entry);
-                let value = self.store.list_unspent.get(&list_unspent);
-                if value.is_none() {
-                    self.store
-                        .list_unspent
-                        .insert(list_unspent, utxo_spend_info);
-                }
-            });
+        self.store.list_unspent = Mutex::new(Vec::new());
+        // let utxo_spend_info = self.list_all_utxo_spend_info(Some(&all_utxos))?;
+        all_utxos.into_iter().for_each(|list_unspent_result_entry| {
+            let list_unspent = ListUnspentInfo::ListUnspentResultEntry(list_unspent_result_entry);
+            self.store.list_unspent.lock().unwrap().push(list_unspent);
+        });
 
         let max_external_index = self.find_hd_next_index(KeychainKind::External)?;
         self.update_external_index(max_external_index)?;
+        Ok(())
+    }
+
+    pub fn sync_unlocked_utxo_list(&self) -> Result<(), WalletError> {
+        self.rpc.unlock_unspent_all()?;
+        let all_utxos = self
+            .rpc
+            .list_unspent(Some(0), Some(9999999), None, None, None)?;
+        self.store.list_unspent.lock().unwrap().clear();
+        all_utxos.into_iter().for_each(|list_unspent_result_entry| {
+            let list_unspent = ListUnspentInfo::ListUnspentResultEntry(list_unspent_result_entry);
+            self.store.list_unspent.lock().unwrap().push(list_unspent);
+        });
+        Ok(())
+    }
+
+    pub fn sync_locked_utxo_list(&self) -> Result<(), WalletError> {
+        let all_utxos = self
+            .rpc
+            .list_unspent(Some(0), Some(9999999), None, None, None)?;
+        self.store.list_unspent.lock().unwrap().clear();
+        all_utxos.into_iter().for_each(|list_unspent_result_entry| {
+            let list_unspent = ListUnspentInfo::ListUnspentResultEntry(list_unspent_result_entry);
+            self.store.list_unspent.lock().unwrap().push(list_unspent);
+        });
         Ok(())
     }
 
