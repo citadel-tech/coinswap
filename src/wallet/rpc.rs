@@ -1,6 +1,6 @@
 //! Manages connection with a Bitcoin Core RPC.
 //!
-use std::{convert::TryFrom, thread, time::Duration};
+use std::{collections::HashMap, convert::TryFrom, thread, time::Duration};
 
 use bitcoin::Network;
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
@@ -152,10 +152,11 @@ impl Wallet {
         let all_utxos = self
             .rpc
             .list_unspent(Some(0), Some(9999999), None, None, None)?;
+        self.store.list_unspent = HashMap::new();
         let utxo_spend_info = self.list_all_utxo_spend_info(Some(&all_utxos))?;
-        let _ = utxo_spend_info
+        utxo_spend_info
             .into_iter()
-            .map(|(list_unspent_result_entry, utxo_spend_info)| {
+            .for_each(|(list_unspent_result_entry, utxo_spend_info)| {
                 let list_unspent =
                     ListUnspentInfo::ListUnspentResultEntry(list_unspent_result_entry);
                 let value = self.store.list_unspent.get(&list_unspent);
