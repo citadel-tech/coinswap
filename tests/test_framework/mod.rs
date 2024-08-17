@@ -11,7 +11,10 @@
 //! The test data also includes the backend bitcoind data-directory, which is useful for observing the blockchain states after a swap.
 //!
 //! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
-use bitcoin::secp256k1::rand::{distributions::Alphanumeric, thread_rng, Rng};
+use bitcoin::{
+    secp256k1::rand::{distributions::Alphanumeric, thread_rng, Rng},
+    Address, Amount,
+};
 use std::{
     collections::HashMap,
     fs,
@@ -20,8 +23,6 @@ use std::{
     thread,
     time::Duration,
 };
-
-use bitcoin::{Address, Amount};
 
 use bitcoind::{
     bitcoincore_rpc::{Auth, Client, RpcApi},
@@ -94,9 +95,15 @@ impl TestFramework {
         conf.staticdir = Some(temp_dir.join(".bitcoin"));
         log::info!("bitcoind configuration: {:?}", conf.args);
 
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
         let key = "BITCOIND_EXE";
         let curr_dir_path = std::env::current_dir().unwrap();
-        let bitcoind_path = curr_dir_path.join("bin").join("bitcoind");
+
+        let bitcoind_path = match (os, arch) {
+            ("macos", "aarch64") => curr_dir_path.join("bin").join("bitcoind_macos"),
+            _ => curr_dir_path.join("bin").join("bitcoind"),
+        };
         std::env::set_var(key, bitcoind_path);
         let exe_path = bitcoind::exe_path().unwrap();
 
