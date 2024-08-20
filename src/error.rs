@@ -3,6 +3,8 @@
 use bitcoin::Amount;
 
 use crate::protocol::error::ContractError;
+use crate::maker::error::MakerError;
+use crate::taker::error::TakerError;
 
 /// Includes all network-related errors.
 #[derive(Debug)]
@@ -12,6 +14,12 @@ pub enum NetError {
     ConnectionTimedOut,
     InvalidNetworkAddress,
     Cbor(serde_cbor::Error),
+}
+
+pub enum AppError {
+    MakerError(MakerError), 
+    TakerError(TakerError),
+    ThreadPanic,
 }
 
 impl From<std::io::Error> for NetError {
@@ -26,6 +34,17 @@ impl From<serde_cbor::Error> for NetError {
     }
 }
 
+impl From<MakerError> for AppError { // Do we need AppError to directly handle MutexPoisson, walleterror etc? or is this sufficient?
+    fn from(error: MakerError) -> Self {
+        AppError::MakerError(error)
+    }
+}
+
+impl From<TakerError> for AppError {
+    fn from(error: TakerError) -> Self {
+        AppError::TakerError(error)
+    }
+}
 /// Includes all Protocol-level errors.
 #[derive(Debug)]
 pub enum ProtocolError {
