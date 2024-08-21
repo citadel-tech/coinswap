@@ -72,16 +72,12 @@ enum Commands {
     SwapUtxo,
     /// Returns a list of live contract utxos
     ContractUtxo,
-    /// Returns a list of fidelity utxos
-    FidelityUtxo,
     /// Returns the total seed balance
     SeedBalance,
     /// Returns the total swap coin balance
     SwapBalance,
     /// Returns the total live contract balance
     ContractBalance,
-    /// Returns the total fidelity balance
-    FidelityBalance,
     /// Returns the total balance of taker wallet
     TotalBalance,
     /// Returns a new address
@@ -152,16 +148,6 @@ fn main() {
                 .collect();
             println!("{:?}", utxos);
         }
-        Commands::FidelityUtxo => {
-            let utxos: Vec<ListUnspentResultEntry> = taker
-                .get_wallet()
-                .list_fidelity_spend_info(None)
-                .unwrap()
-                .iter()
-                .map(|(l, _)| l.clone())
-                .collect();
-            println!("{:?}", utxos);
-        }
         Commands::ContractBalance => {
             let balance = taker.get_wallet().balance_live_contract(None).unwrap();
             println!("{:?}", balance);
@@ -172,10 +158,6 @@ fn main() {
         }
         Commands::SeedBalance => {
             let balance = taker.get_wallet().balance_descriptor_utxo(None).unwrap();
-            println!("{:?}", balance);
-        }
-        Commands::FidelityBalance => {
-            let balance = taker.get_wallet().balance_fidelity_bonds(None).unwrap();
             println!("{:?}", balance);
         }
         Commands::TotalBalance => {

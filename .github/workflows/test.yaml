@@ -1,7 +1,7 @@
 on:
   push:
     branches:
-    - master
+      - master
   pull_request:
 
 name: test
@@ -9,32 +9,38 @@ name: test
 jobs:
   test_with_codecov:
     name: Run tests with coverage reporting
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@v3
 
       - name: Set default toolchain
         run: rustup default nightly
+
       - name: Set profile
         run: rustup set profile minimal
 
-      # Pin grcov to v0.8.2 because of build failure at 0.8.3
       - name: Install grcov
         run: cargo install grcov --force --version 0.8.2
 
-      # Tests are run with code coverage support
+      - name: Install dependencies on macOS
+        if: matrix.os == 'macos-latest'
+        run: brew install automake libtool zeromq
+
       - name: Run cargo test
         env:
           CARGO_INCREMENTAL: '0'
           RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off'
           RUSTDOCFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off'
         run: cargo test --features=integration-test -- --nocapture
+
       - id: coverage
         name: Generate coverage
         uses: actions-rs/grcov@v0.1.5
-      
-      # Upload coverage report
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v1
         with:
