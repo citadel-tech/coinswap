@@ -16,7 +16,7 @@ pub enum NetError {
     InvalidNetworkAddress,
     Cbor(serde_cbor::Error),
 }
-/// To handle applicaiton related errors at the binary level
+/// Enum to handle applicaiton related errors at the binary level
 #[derive(Debug)]
 pub enum AppError {
     Maker(MakerError),
@@ -51,6 +51,12 @@ impl From<TakerError> for AppError {
 impl From<DirectoryServerError> for AppError {
     fn from(value: DirectoryServerError) -> Self {
         AppError::DNS(value)
+    }
+}
+
+impl From<std::io::Error> for AppError{
+    fn from(value: std::io::Error) -> Self {
+        AppError::Maker(MakerError::IO(value))
     }
 }
 /// Includes all Protocol-level errors.
