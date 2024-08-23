@@ -2,8 +2,9 @@
 
 use bitcoin::Amount;
 
+use crate::maker::MakerError;
+use crate::market::directory::DirectoryServerError;
 use crate::protocol::error::ContractError;
-use crate::maker::error::MakerError;
 use crate::taker::error::TakerError;
 
 /// Includes all network-related errors.
@@ -15,11 +16,12 @@ pub enum NetError {
     InvalidNetworkAddress,
     Cbor(serde_cbor::Error),
 }
-
+/// To handle applicaiton related errors at the binary level
+#[derive(Debug)]
 pub enum AppError {
-    MakerError(MakerError), 
-    TakerError(TakerError),
-    ThreadPanic,
+    Maker(MakerError),
+    Taker(TakerError),
+    DNS(DirectoryServerError),
 }
 
 impl From<std::io::Error> for NetError {
@@ -34,15 +36,21 @@ impl From<serde_cbor::Error> for NetError {
     }
 }
 
-impl From<MakerError> for AppError { // Do we need AppError to directly handle MutexPoisson, walleterror etc? or is this sufficient?
-    fn from(error: MakerError) -> Self {
-        AppError::MakerError(error)
+impl From<MakerError> for AppError {
+    fn from(value: MakerError) -> Self {
+        AppError::Maker(value)
     }
 }
 
 impl From<TakerError> for AppError {
-    fn from(error: TakerError) -> Self {
-        AppError::TakerError(error)
+    fn from(value: TakerError) -> Self {
+        AppError::Taker(value)
+    }
+}
+
+impl From<DirectoryServerError> for AppError {
+    fn from(value: DirectoryServerError) -> Self {
+        AppError::DNS(value)
     }
 }
 /// Includes all Protocol-level errors.

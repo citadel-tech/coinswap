@@ -48,7 +48,6 @@ use crate::{
 };
 
 use super::{config::MakerConfig, error::MakerError};
-use crate::error::AppError;
 
 /// Used to configure the maker for testing purposes.
 #[derive(Debug, Clone, Copy)]
@@ -408,16 +407,15 @@ impl Maker {
 /// unsettled swap.
 ///
 /// If any one of the is ever observed, run the recovery routine.
-pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), AppError> {
+pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut failed_swap_ip = Vec::new();
     loop {
-        if *maker.shutdown.read().map_err(|e| AppError::MakerError(MakerError::from(e)))? { //might be unncessary to map a PoissonError<RwLockReadGuard<'_, bool>> to AppError. Suggestion required !!!
+        if *maker.shutdown.read()? {
             break;
         }
         // An extra scope to release all locks when done.
         {
-            let mut lock_onstate = maker.connection_state.lock()
-                .map_err(|e| AppError::MakerError(MakerError::from(e)))?;
+            let mut lock_onstate = maker.connection_state.lock()?;
             for (ip, (connection_state, _)) in lock_onstate.iter_mut() {
                 let txids_to_watch = connection_state
                     .incoming_swapcoins
@@ -458,17 +456,9 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), AppError
                         {
                             let contract_timelock = og_sc.get_timelock();
                             let next_internal_address =
-                                &maker.wallet.read()?.get_next_internal_addresses(1)
-                                .map_err(|e| AppError::MakerError(MakerError::Wallet(e)))?; // Handling the case of receiving a empty Vec<Address> from get_next_internal_address. 
-                            if let Some(next_internal_address) = next_internal_address.get(0) {
-                                let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
-                            } else {
-                                log::error!(
-                                    "[{}] No internal address available", 
-                                    maker.config.port
-                                );
-                                continue;
-                            }
+                                &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
+                            let time_lock_spend =
+                                og_sc.create_timelock_spend(next_internal_address);
 
                             // Sometimes we might not have other's contact signatures.
                             // This means the protocol have been stopped abruptly.
@@ -504,11 +494,8 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), AppError
                             maker.config.port
                         );
                         std::thread::spawn(move || {
-                            recover_from_swap(maker_clone, outgoings, incomings).map_err(AppError::MakerError)
-                        })
-                            .join()
-                            .map_err(|_| AppError::ThreadPanic)?
-                            .map_err(|e| e)?;
+                            recover_from_swap(maker_clone, outgoings, incomings).unwrap();
+                        });
                         // Clear the state value here
                         *connection_state = ConnectionState::default();
                         break;
@@ -532,18 +519,17 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), AppError
 ///
 /// If a connection remains idle for more than idle timeout time, thats a potential DOS attack.
 /// Broadcast the contract transactions and claim funds via timelock.
-pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), AppError> {
+pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut bad_ip = Vec::new();
     loop {
-        if *maker.shutdown.read().map_err(|e| AppError::MakerError(MakerError::from(e)))? { //might be unncessary to map a PoissonError<RwLockReadGuard<'_, bool>> to AppError. Suggestion required !!!
+        if *maker.shutdown.read()? {
             break;
         }
         let current_time = Instant::now();
 
         // Extra scope to release all locks when done.
         {
-            let mut lock_on_state = maker.connection_state.lock()
-                .map_err(|e| AppError::MakerError(MakerError::from(e)))?;
+            let mut lock_on_state = maker.connection_state.lock()?;
             for (ip, (state, last_connected_time)) in lock_on_state.iter_mut() {
                 let mut outgoings = Vec::new();
                 let mut incomings = Vec::new();
@@ -570,24 +556,15 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), AppError> {
                         .zip(state.incoming_swapcoins.iter())
                     {
                         let contract_timelock = og_sc.get_timelock();
-                        let contract = og_sc.get_fully_signed_contract_tx()
-                            .map_err(|e| AppError::MakerError(MakerError::Wallet(e)))?;
+                        let contract = og_sc.get_fully_signed_contract_tx()?;
                         let next_internal_address =
-                            &maker.wallet.read()?.get_next_internal_addresses(1)
-                            .map_err(|e| AppError::MakerError(MakerError::Wallet(e)))?; // Handling the case of receiving a empty Vec<Address> from get_next_internal_address. 
-                        if let Some(next_internal_address) = next_internal_address.get(0) {
-                            let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
-                            outgoings.push(((og_sc.get_multisig_redeemscript(), contract),(contract_timelock, time_lock_spend),
-                            ));
-                        } else {
-                            log::error!(
-                                "[{}] No internal address available", 
-                                maker.config.port
-                            );
-                            continue;
-                        }
-                        let incoming_contract = ic_sc.get_fully_signed_contract_tx()
-                            .map_err(|e| AppError::MakerError(MakerError::Wallet(e)))?; // Unsure if it is better to handle the wallet error here, log it etc or propagate it using ?
+                            &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
+                        let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
+                        outgoings.push((
+                            (og_sc.get_multisig_redeemscript(), contract),
+                            (contract_timelock, time_lock_spend),
+                        ));
+                        let incoming_contract = ic_sc.get_fully_signed_contract_tx()?;
                         incomings.push((ic_sc.get_multisig_redeemscript(), incoming_contract));
                     }
                     bad_ip.push(*ip);
@@ -598,11 +575,8 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), AppError> {
                         maker.config.port
                     );
                     std::thread::spawn(move || {
-                        recover_from_swap(maker_clone, outgoings, incomings).map_err(AppError::MakerError)
-                    })
-                        .join()
-                        .map_err(|_| AppError::ThreadPanic)?
-                        .map_err(|e| e)?;
+                        recover_from_swap(maker_clone, outgoings, incomings).unwrap();
+                    });
                     // Clear the state values here
                     *state = ConnectionState::default();
                     break;
@@ -629,7 +603,7 @@ pub fn recover_from_swap(
     outgoings: Vec<((ScriptBuf, Transaction), (u16, Transaction))>,
     // Tuple of (Multisig Reedemscript, Contract Tx)
     incomings: Vec<(ScriptBuf, Transaction)>,
-) -> Result<(), AppError> {
+) -> Result<(), MakerError> {
     // broadcast all the incoming contracts and remove them from the wallet.
     for (incoming_reedemscript, tx) in incomings {
         if maker
@@ -649,7 +623,7 @@ pub fn recover_from_swap(
                 .read()?
                 .rpc
                 .send_raw_transaction(&tx)
-                .map_err(|e| AppError::MakerError(MakerError::Wallet(WalletError::Rpc(e))))?;
+                .map_err(WalletError::Rpc)?;
             log::info!(
                 "[{}] Broadcasted Incoming Contract : {}",
                 maker.config.port,
@@ -660,8 +634,8 @@ pub fn recover_from_swap(
         let removed_incoming = maker
             .wallet
             .write()?
-            .remove_incoming_swapcoin(&incoming_reedemscript)
-            .map_err(|e| AppError::MakerError(MakerError::Wallet(e)))?;
+            .remove_incoming_swapcoin(&incoming_reedemscript)?
+            .expect("Incoming swapcoin expected");
         log::info!(
             "[{}] Removed Incoming Swapcoin From Wallet, Contract Txid : {}",
             maker.config.port,
@@ -669,9 +643,7 @@ pub fn recover_from_swap(
         );
     }
 
-    maker.wallet.read()?
-    .save_to_disk()
-    .map_err(|e| AppError::MakerError(MakerError::IO(e)))?;
+    maker.wallet.read()?.save_to_disk()?;
 
     //broadcast all the outgoing contracts
     for ((_, tx), _) in outgoings.iter() {
@@ -692,7 +664,7 @@ pub fn recover_from_swap(
                 .read()?
                 .rpc
                 .send_raw_transaction(tx)
-                .map_err(|e| AppError::MakerError(MakerError::Wallet(WalletError::Rpc(e))))?;
+                .map_err(WalletError::Rpc)?;
             log::info!(
                 "[{}] Broadcasted Outgoing Contract : {}",
                 maker.config.port,
@@ -743,7 +715,7 @@ pub fn recover_from_swap(
                             .read()?
                             .rpc
                             .send_raw_transaction(timelocked_tx)
-                            .map_err(|e| AppError::MakerError(MakerError::Wallet(WalletError::Rpc((e)))))?;
+                            .map_err(WalletError::Rpc)?;
                         timelock_boardcasted.push(timelocked_tx);
                     }
                 }
@@ -752,33 +724,23 @@ pub fn recover_from_swap(
         // Everything is broadcasted. Remove swapcoins from wallet
         if timelock_boardcasted.len() == outgoings.len() {
             for ((outgoing_reedemscript, _), _) in outgoings {
-                if let outgoing_removed = maker
+                let outgoing_removed = maker
                     .wallet
                     .write()?
-                    .remove_outgoing_swapcoin(&outgoing_reedemscript)
-                    .map_err(|e| AppError::MakerError(MakerError::wallet(e)))?
-                {
-                    log::info!(
-                        "[{}] Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
-                        maker.config.port,
-                        outgoing_removed.contract_tx.compute_txid()
-                    );
-                } else {
-                    log::error!(
-                        "[{}] outgoing swapcoin not found for the given redeem script: {:?}",
-                        maker.config.port,
-                        outgoing_redeemscript
-                    );
-                }
+                    .remove_outgoing_swapcoin(&outgoing_reedemscript)?
+                    .expect("outgoing swapcoin expected");
 
+                log::info!(
+                    "[{}] Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
+                    maker.config.port,
+                    outgoing_removed.contract_tx.compute_txid()
+                );
             }
             log::info!("initializing Wallet Sync.");
             {
                 let mut wallet_write = maker.wallet.write()?;
-                wallet_write.sync()
-                    .map_err(|e| AppError::MakerError(MakerError::IO(e)))?;
-                wallet_write.save_to_disk()
-                    .map_err(|e| AppError::MakerError(MakerError::IO(e)))?;
+                wallet_write.sync()?;
+                wallet_write.save_to_disk()?;
             }
             log::info!("Completed Wallet Sync.");
             // For test, shutdown the maker at this stage.

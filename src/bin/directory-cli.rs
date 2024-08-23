@@ -3,6 +3,8 @@ use std::{net::TcpStream, time::Duration};
 use clap::Parser;
 
 use coinswap::{
+    error::AppError,
+    maker::MakerError,
     market::rpc::{RpcMsgReq, RpcMsgResp},
     utill::{read_message, send_message, setup_logger},
 };
@@ -22,30 +24,36 @@ enum Commands {
     ListAddresses,
 }
 
-fn send_rpc_req(req: &RpcMsgReq) {
-    let mut stream = TcpStream::connect("127.0.0.1:4321").unwrap();
+fn send_rpc_req(req: &RpcMsgReq) -> Result<(), AppError> {
+    let mut stream = TcpStream::connect("127.0.0.1:4321")
+        .map_err(MakerError::IO)?;
     stream
         .set_read_timeout(Some(Duration::from_secs(20)))
-        .unwrap();
+        .map_err(MakerError::IO)?;
     stream
         .set_write_timeout(Some(Duration::from_secs(20)))
-        .unwrap();
+        .map_err(MakerError::IO)?;
 
-    send_message(&mut stream, &req).unwrap();
+    send_message(&mut stream, &req)
+        .map_err(MakerError::Net)?;
 
-    let resp_bytes = read_message(&mut stream).unwrap();
-    let resp: RpcMsgResp = serde_cbor::from_slice(&resp_bytes).unwrap();
+    let resp_bytes = read_message(&mut stream)
+        .map_err(MakerError::Net)?;
+    let resp: RpcMsgResp = serde_cbor::from_slice(&resp_bytes)
+        .map_err(MakerError::Deserialize)?;
 
     println!("{:?}", resp);
+    Ok(())
 }
 
-fn main() {
+fn main() -> Result<(), AppError>{
     setup_logger();
     let cli = App::parse();
 
     match cli.command {
         Commands::ListAddresses => {
-            send_rpc_req(&RpcMsgReq::ListAddresses);
+            send_rpc_req(&RpcMsgReq::ListAddresses)?;
         }
     }
+    Ok(())
 }
