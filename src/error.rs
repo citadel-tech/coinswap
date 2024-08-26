@@ -54,7 +54,7 @@ impl From<DirectoryServerError> for AppError {
     }
 }
 
-impl From<std::io::Error> for AppError{
+impl From<std::io::Error> for AppError {
     fn from(value: std::io::Error) -> Self {
         AppError::Maker(MakerError::IO(value))
     }
