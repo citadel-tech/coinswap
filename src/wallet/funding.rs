@@ -126,8 +126,6 @@ impl Wallet {
         destinations: &[Address],
         fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
-        let change_addresses = self.get_next_internal_addresses(destinations.len() as u32)?;
-
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
         self.lock_unspendable_utxos()?;
@@ -135,11 +133,7 @@ impl Wallet {
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
         let mut total_miner_fee = 0;
-        for ((address, &output_value), change_address) in destinations
-            .iter()
-            .zip(output_values.iter())
-            .zip(change_addresses.iter())
-        {
+        for (address, &output_value) in destinations.iter().zip(output_values.iter()) {
             let mut outputs = HashMap::<String, Amount>::new();
             outputs.insert(address.to_string(), Amount::from_sat(output_value));
 
@@ -150,6 +144,9 @@ impl Wallet {
                 acc.checked_add(unspet.amount)
                     .expect("Amount sum overflowed")
             });
+
+            let internal_spk = self.get_next_internal_address()?.script_pubkey();
+
             let change_amount = total_input_amount.checked_sub(remaining + fee);
             let mut tx_outs = vec![TxOut {
                 value: Amount::from_sat(output_value),
@@ -159,7 +156,7 @@ impl Wallet {
             if let Some(change) = change_amount {
                 tx_outs.push(TxOut {
                     value: change,
-                    script_pubkey: change_address.script_pubkey(),
+                    script_pubkey: internal_spk,
                 });
             }
             let tx_inputs = selected_utxo
@@ -366,7 +363,7 @@ impl Wallet {
 
         let mut outputs = HashMap::<&Address, u64>::new();
         outputs.insert(&destinations[0], coinswap_amount.to_sat());
-        let change_address = self.get_next_internal_addresses(1)?[0].clone();
+        let change_address = self.get_next_internal_address()?.clone();
 
         self.lock_unspendable_utxos()?;
 
@@ -493,7 +490,7 @@ impl Wallet {
         } else {
             //at most one utxo bigger than the coinswap amount
 
-            let change_address = &self.get_next_internal_addresses(1)?[0];
+            let change_address = &self.get_next_internal_address()?;
             self.create_mostly_sweep_txes_with_one_tx_having_change(
                 coinswap_amount,
                 destinations,

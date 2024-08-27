@@ -656,8 +656,8 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
                 .wallet
                 .read()
                 .unwrap()
-                .get_next_internal_addresses(1)
-                .unwrap()[0];
+                .get_next_internal_address()
+                .unwrap();
             let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
             outgoings.push((
                 (og_sc.get_multisig_redeemscript(), contract),

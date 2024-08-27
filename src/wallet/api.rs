@@ -919,22 +919,20 @@ impl Wallet {
         Ok(receive_address.assume_checked())
     }
 
-    /// Gets the next internal addresses from the HD keychain.
-    pub fn get_next_internal_addresses(&self, count: u32) -> Result<Vec<Address>, WalletError> {
+    /// Gets the next internal address from the HD keychain.
+    pub fn get_next_internal_address(&self) -> Result<Address, WalletError> {
         let next_change_addr_index = self.find_hd_next_index(KeychainKind::Internal)?;
         let descriptors = self.get_wallet_descriptors()?;
         let change_branch_descriptor = descriptors
             .get(&KeychainKind::Internal)
             .expect("Internal Keychain expected");
-        let addresses = self.rpc.derive_addresses(
+        let change_address = self.rpc.derive_addresses(
             change_branch_descriptor,
-            Some([next_change_addr_index, next_change_addr_index + count]),
-        )?;
+            Some([next_change_addr_index, next_change_addr_index]),
+        )?[0]
+            .clone();
 
-        Ok(addresses
-            .into_iter()
-            .map(|addrs| addrs.assume_checked())
-            .collect())
+        Ok(change_address.assume_checked())
     }
 
     /// Refreshes the offer maximum size cache based on the current wallet's unspent transaction outputs (UTXOs).

@@ -461,7 +461,7 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                         {
                             let contract_timelock = og_sc.get_timelock();
                             let next_internal_address =
-                                &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
+                                &maker.wallet.read()?.get_next_internal_address()?;
                             let time_lock_spend =
                                 og_sc.create_timelock_spend(next_internal_address);
 
@@ -563,7 +563,7 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
                         let contract_timelock = og_sc.get_timelock();
                         let contract = og_sc.get_fully_signed_contract_tx()?;
                         let next_internal_address =
-                            &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
+                            &maker.wallet.read()?.get_next_internal_address()?;
                         let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
                         outgoings.push((
                             (og_sc.get_multisig_redeemscript(), contract),

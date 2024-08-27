@@ -344,7 +344,7 @@ impl Wallet {
         }];
 
         if let Some(change) = change_amount {
-            let change_addrs = self.get_next_internal_addresses(1)?[0].script_pubkey();
+            let change_addrs = self.get_next_internal_address()?.script_pubkey();
             tx_outs.push(TxOut {
                 value: change,
                 script_pubkey: change_addrs,
@@ -436,7 +436,7 @@ impl Wallet {
         // TODO take feerate as user input
         let fee = Amount::from_sat(1000);
 
-        let change_addr = &self.get_next_internal_addresses(1)?[0];
+        let change_addr = &self.get_next_internal_address()?;
 
         let txout = TxOut {
             script_pubkey: change_addr.script_pubkey(),

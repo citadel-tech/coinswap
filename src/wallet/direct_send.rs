@@ -203,7 +203,7 @@ impl Wallet {
 
         // Only include change if remaining > dust
         if let SendAmount::Amount(amount) = send_amount {
-            let internal_spk = self.get_next_internal_addresses(1)?[0].script_pubkey();
+            let internal_spk = self.get_next_internal_address()?.script_pubkey();
             let remaining = total_input_value - amount - fee;
             if remaining > internal_spk.minimal_non_dust() {
                 log::info!("Adding Change {}:{}", internal_spk, remaining);
