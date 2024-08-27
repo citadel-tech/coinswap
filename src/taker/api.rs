@@ -57,6 +57,7 @@ use crate::{
 
 /// Swap specific parameters. These are user's policy and can differ among swaps.
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
+///
 /// If no maker matches with a given SwapParam, that coinswap round will fail.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SwapParams {
@@ -135,6 +136,7 @@ pub enum TakerBehavior {
 
 /// The Taker structure that performs bulk of the coinswap protocol. Taker connects
 /// to multiple Makers and send protocol messages sequentially to them. The communication
+///
 /// sequence and corresponding SwapCoin infos are stored in `ongoing_swap_state`.
 pub struct Taker {
     wallet: Wallet,

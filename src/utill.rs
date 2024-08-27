@@ -193,8 +193,9 @@ pub fn check_and_apply_maker_private_keys<S: SwapCoin>(
 }
 
 /// Generate The Maker's Multisig and HashLock keys and respective nonce values.
-/// Nonce values are random integers and resulting Pubkeys are derived by tweaking the
-/// Maker's advertised Pubkey with these two nonces.
+/// Nonce values are random integers and resulting Pubkeys are derived by tweaking
+///
+/// the Maker's advertised Pubkey with these two nonces.
 pub fn generate_maker_keys(
     tweakable_point: &PublicKey,
     count: u32,
