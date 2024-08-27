@@ -264,7 +264,9 @@ pub struct SenderContractTxInfo {
     pub funding_amount: Amount,
 }
 
-/// This message is sent by a Maker to a Taker, which is a request to the Taker for gathering signatures for the Maker as both Sender and Receiver of Coinswaps.
+/// This message is sent by a Maker to a Taker, which is a request to the Taker for gathering signatures
+/// for the Maker as both Sender and Receiver of Coinswaps.
+///
 /// This message is sent by a Maker after a [`ProofOfFunding`] has been received.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ContractSigsAsRecvrAndSender {
