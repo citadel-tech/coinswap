@@ -177,41 +177,43 @@ pub fn fetch_addresses_from_dns(
     // TODO: Make the communication in serde_encoded bytes.
 
     loop {
-        let mut stream = match connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(directory_server_address.as_str())?,
-            ConnectionType::TOR => {
-                let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
-                Socks5Stream::connect(socket_addrs, directory_server_address.as_str())?.into_inner()
-            }
-        };
+        let result: Result<Vec<MakerAddress>, DirectoryServerError> = (async {
+            let mut stream = match connection_type {
+                ConnectionType::CLEARNET => TcpStream::connect(directory_server_address.as_str())
+                    .await
+                    .unwrap(),
+                ConnectionType::TOR => Socks5Stream::connect(
+                    format!("127.0.0.1:{}", socks_port.unwrap_or(19050)).as_str(),
+                    directory_server_address.as_str(),
+                )
+                .await
+                .map_err(|e| {
+                    DirectoryServerError::Socks5ConnectionError(format!(
+                        "Issue with fetching maker address from directory server: {}",
+                        e
+                    ))
+                })?
+                .into_inner(),
+            };
 
-        stream.set_read_timeout(Some(NET_TIMEOUT))?;
-        stream.set_write_timeout(Some(NET_TIMEOUT))?;
-        stream.flush()?;
+            let request_line = "GET\n";
+            stream.write_all(request_line.as_bytes()).await?; // Are custom messages required here ?
 
-        // TODO: Handle timeout cases like the Taker/Maker comms, with attempt count and variable delays.
-        if let Err(e) = stream
-            .write_all("GET\n".as_bytes())
-            .and_then(|_| stream.flush())
-        {
-            log::error!("Error sending GET request to DNS {}.\nRe-attempting...", e);
-            thread::sleep(GLOBAL_PAUSE);
-            continue;
-        }
+            let mut response = String::new();
+            stream.read_to_string(&mut response).await?;
 
-        let mut response = String::new();
+            let addresses: Vec<MakerAddress> = response
+                .lines()
+                .map(|addr| MakerAddress::new(addr.to_string()).expect("Malformed maker address"))
+                .collect();
 
-        if let Err(e) = stream.read_to_string(&mut response) {
-            log::error!("Error reading DNS response: {}. \nRe-attempting...", e);
-            thread::sleep(GLOBAL_PAUSE);
-            continue;
-        }
+            log::info!("Maker addresses received from DNS: {:?}", addresses);
 
-        match response
-            .lines()
-            .map(MakerAddress::new)
-            .collect::<Result<Vec<MakerAddress>, _>>()
-        {
+            Ok(addresses)
+        })
+        .await;
+
+        match result {
             Ok(addresses) => {
                 if addresses.len() < number_of_makers {
                     log::info!(

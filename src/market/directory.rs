@@ -25,7 +25,9 @@ use crate::utill::{
 /// Represents errors that can occur during directory server operations.
 #[derive(Debug)]
 pub enum DirectoryServerError {
-    Other(&'static str),
+    PoissonError(&'static str),
+    Socks5ConnectionError(String),
+    IO(std::io::Error),
 }
 
 /// Directory Configuration,
@@ -118,9 +120,15 @@ impl DirectoryServer {
         let mut flag = self
             .shutdown
             .write()
-            .map_err(|_| DirectoryServerError::Other("Rwlock write error!"))?;
+            .map_err(|_| DirectoryServerError::PoissonError("Rwlock write error!"))?;
         *flag = true;
         Ok(())
+    }
+}
+
+impl From<std::io::Error> for DirectoryServerError {
+    fn from(value: std::io::Error) -> Self {
+        Self::IO(value)
     }
 }
 
