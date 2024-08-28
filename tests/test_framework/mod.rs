@@ -66,7 +66,8 @@ impl TestFramework {
     /// Returns ([TestFramework], [Taker], [`Vec<Maker>`]).
     /// Maker's config will follow the pattern given the input HashMap.
     /// If no bitcoind conf is provide a default value will be used.
-    pub async fn init(
+    #[allow(clippy::type_complexity)]
+    pub fn init(
         bitcoind_conf: Option<Conf<'_>>,
         makers_config_map: HashMap<(u16, Option<u16>), MakerBehavior>,
         taker_behavior: Option<TakerBehavior>,

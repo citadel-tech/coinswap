@@ -222,11 +222,6 @@ impl Maker {
 
     /// Triggers a shutdown event for the Maker.
     pub fn shutdown(&self) -> Result<(), MakerError> {
-        log::info!("Shutdown wallet sync initiated.");
-        self.wallet.write()?.sync()?;
-        log::info!("Shutdown wallet syncing completed.");
-        self.wallet.read()?.save_to_disk()?;
-        log::info!("Wallet file saved to disk.");
         let mut flag = self.shutdown.write()?;
         *flag = true;
         Ok(())

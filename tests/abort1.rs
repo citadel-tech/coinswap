@@ -19,8 +19,8 @@ use test_framework::*;
 ///
 /// The Taker after coming live again will see unfinished coinswaps in his wallet. He can reclaim his funds via
 /// broadcasting his contract transactions and claiming via timelock.
-#[tokio::test]
-async fn test_stop_taker_after_setup() {
+#[test]
+fn test_stop_taker_after_setup() {
     // ---- Setup ----
 
     // 2 Makers with Normal behavior.
@@ -36,8 +36,7 @@ async fn test_stop_taker_after_setup() {
         makers_config_map.into(),
         Some(TakerBehavior::DropConnectionAfterFullSetup),
         ConnectionType::CLEARNET,
-    )
-    .await;
+    );
 
     warn!("Running Test: Taker Cheats on Everybody.");
 

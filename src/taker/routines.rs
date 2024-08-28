@@ -7,7 +7,8 @@
 //! for communication between taker and maker.
 
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use socks::Socks5Stream;
+use std::{io::ErrorKind, net::TcpStream, thread::sleep, time::Duration};
 
 use crate::{
     error::ProtocolError,
@@ -25,19 +26,9 @@ use crate::{
         },
         Hash160,
     },
-    utill::{read_maker_message, send_message, ConnectionType},
+    utill::{read_message, send_message, ConnectionType},
 };
 use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
-use tokio::{
-    io::BufReader,
-    net::{
-        tcp::{ReadHalf, WriteHalf},
-        TcpStream,
-    },
-    select,
-    time::sleep,
-};
-use tokio_socks::tcp::Socks5Stream;
 
 use super::{
     config::TakerConfig,
@@ -62,56 +53,59 @@ pub struct ContractsInfo {
     pub wallet_label: String,
 }
 
-/// Performs a handshake with a Maker and returns and Reader and Writer halves.
-pub async fn handshake_maker(
-    socket: &mut TcpStream,
-) -> Result<(BufReader<ReadHalf>, WriteHalf), TakerError> {
-    let (reader, mut socket_writer) = socket.split();
-    let mut socket_reader = BufReader::new(reader);
+/// Make a handshake with a maker.
+/// Ensures that the Maker is alive and responding.
+///
+// In future, handshake can be used to find protocol compatibility across multiple versions.
+pub fn handshake_maker(socket: &mut TcpStream) -> Result<(), TakerError> {
     send_message(
-        &mut socket_writer,
+        socket,
         &TakerToMakerMessage::TakerHello(TakerHello {
-            protocol_version_min: 0,
-            protocol_version_max: 0,
+            protocol_version_min: 1,
+            protocol_version_max: 1,
         }),
-    )
-    .await?;
-    let _makerhello = match read_maker_message(&mut socket_reader).await {
-        Ok(MakerToTakerMessage::MakerHello(m)) => m,
-        Ok(any) => {
-            return Err((ProtocolError::WrongMessage {
-                expected: "MakerHello".to_string(),
-                received: format!("{}", any),
-            })
-            .into());
+    )?;
+    let msg_bytes = read_message(socket)?;
+    let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+
+    // Check that protocol version is always 1.
+    match msg {
+        MakerToTakerMessage::MakerHello(m) => {
+            if m.protocol_version_max == 1 && m.protocol_version_min == 1 {
+                Ok(())
+            } else {
+                Err(ProtocolError::WrongMessage {
+                    expected: "Only protocol version 1 is allowed".to_string(),
+                    received: format!(
+                        "min/max version  = {}/{}",
+                        m.protocol_version_min, m.protocol_version_max
+                    ),
+                }
+                .into())
+            }
         }
-        Err(e) => {
-            return Err(e.into());
-        }
-    };
-    Ok((socket_reader, socket_writer))
+        any => Err((ProtocolError::WrongMessage {
+            expected: "MakerHello".to_string(),
+            received: format!("{}", any),
+        })
+        .into()),
+    }
 }
 
 /// Request signatures for sender side of the hop. Attempt once.
-pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
-    connection_type: ConnectionType,
-    maker_address: &MakerAddress,
+pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
+    socket: &mut TcpStream,
     outgoing_swapcoins: &[S],
     maker_multisig_nonces: &[SecretKey],
     maker_hashlock_nonces: &[SecretKey],
     locktime: u16,
 ) -> Result<ContractSigsForSender, TakerError> {
-    log::info!("Connecting to {}", maker_address);
-    let address = maker_address.to_string();
-
-    let mut socket = match connection_type {
-        ConnectionType::CLEARNET => TcpStream::connect(address).await?,
-        ConnectionType::TOR => Socks5Stream::connect("127.0.0.1:19050", address)
-            .await?
-            .into_inner(),
-    };
-    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
-    log::info!("===> Sending ReqContractSigsForSender to {}", maker_address);
+    log::info!("Connecting to {}", socket.peer_addr()?);
+    handshake_maker(socket)?;
+    log::info!(
+        "===> Sending ReqContractSigsForSender to {}",
+        socket.peer_addr()?
+    );
 
     // TODO: Take this construction out of function body.
     let txs_info = maker_multisig_nonces
@@ -133,16 +127,18 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
         .collect::<Vec<ContractTxInfoForSender>>();
 
     send_message(
-        &mut socket_writer,
+        socket,
         &TakerToMakerMessage::ReqContractSigsForSender(ReqContractSigsForSender {
             txs_info,
             hashvalue: outgoing_swapcoins[0].get_hashvalue(),
             locktime,
         }),
-    )
-    .await?;
-    let contract_sigs_for_sender = match read_maker_message(&mut socket_reader).await {
-        Ok(MakerToTakerMessage::RespContractSigsForSender(m)) => {
+    )?;
+
+    let msg_bytes = read_message(socket)?;
+    let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+    let contract_sigs_for_sender = match msg {
+        MakerToTakerMessage::RespContractSigsForSender(m) => {
             if m.sigs.len() != outgoing_swapcoins.len() {
                 return Err((ProtocolError::WrongNumOfSigs {
                     expected: outgoing_swapcoins.len(),
@@ -153,15 +149,12 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
                 m
             }
         }
-        Ok(any) => {
+        any => {
             return Err((ProtocolError::WrongMessage {
                 expected: "RespContractSigsForSender".to_string(),
                 received: format!("{}", any),
             })
             .into());
-        }
-        Err(e) => {
-            return Err(e.into());
         }
     };
 
@@ -172,31 +165,25 @@ pub(crate) async fn req_sigs_for_sender_once<S: SwapCoin>(
     {
         outgoing_swapcoin.verify_contract_tx_sender_sig(sig)?;
     }
-    log::info!("<=== Received ContractSigsForSender from {}", maker_address);
+    log::info!(
+        "<=== Received ContractSigsForSender from {}",
+        socket.peer_addr()?
+    );
     Ok(contract_sigs_for_sender)
 }
 
 /// Request signatures for receiver side of the hop. Attempt once.
-pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
-    connection_type: ConnectionType,
-    maker_address: &MakerAddress,
+pub(crate) fn req_sigs_for_recvr_once<S: SwapCoin>(
+    socket: &mut TcpStream,
     incoming_swapcoins: &[S],
     receivers_contract_txes: &[Transaction],
 ) -> Result<ContractSigsForRecvr, TakerError> {
-    log::info!("Connecting to {}", maker_address);
-    let address = maker_address.to_string();
-    let mut socket = match connection_type {
-        ConnectionType::CLEARNET => TcpStream::connect(address).await?,
-        ConnectionType::TOR => Socks5Stream::connect("127.0.0.1:19050", address)
-            .await?
-            .into_inner(),
-    };
-
-    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
+    log::info!("Connecting to {}", socket.peer_addr()?);
+    handshake_maker(socket)?;
 
     // TODO: Take the message construction out of function body.
     send_message(
-        &mut socket_writer,
+        socket,
         &TakerToMakerMessage::ReqContractSigsForRecvr(ReqContractSigsForRecvr {
             txs: incoming_swapcoins
                 .iter()
@@ -207,10 +194,12 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
                 })
                 .collect::<Vec<ContractTxInfoForRecvr>>(),
         }),
-    )
-    .await?;
-    let contract_sigs_for_recvr = match read_maker_message(&mut socket_reader).await {
-        Ok(MakerToTakerMessage::RespContractSigsForRecvr(m)) => {
+    )?;
+
+    let msg_bytes = read_message(socket)?;
+    let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+    let contract_sigs_for_recvr = match msg {
+        MakerToTakerMessage::RespContractSigsForRecvr(m) => {
             if m.sigs.len() != incoming_swapcoins.len() {
                 return Err((ProtocolError::WrongNumOfSigs {
                     expected: incoming_swapcoins.len(),
@@ -221,15 +210,12 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
                 m
             }
         }
-        Ok(any) => {
+        any => {
             return Err((ProtocolError::WrongMessage {
                 expected: "ContractSigsForRecvr".to_string(),
                 received: format!("{}", any),
             })
             .into());
-        }
-        Err(e) => {
-            return Err(e.into());
         }
     };
 
@@ -241,7 +227,10 @@ pub(crate) async fn req_sigs_for_recvr_once<S: SwapCoin>(
         swapcoin.verify_contract_tx_receiver_sig(sig)?;
     }
 
-    log::info!("<=== Received ContractSigsForRecvr from {}", maker_address);
+    log::info!(
+        "<=== Received ContractSigsForRecvr from {}",
+        socket.peer_addr()?
+    );
     Ok(contract_sigs_for_recvr)
 }
 
@@ -264,35 +253,39 @@ pub struct NextPeerInfoArgs {
 }
 
 /// [Internal] Send a Proof funding to the maker and init next hop.
-pub(crate) async fn send_proof_of_funding_and_init_next_hop(
-    socket_reader: &mut BufReader<ReadHalf<'_>>,
-    socket_writer: &mut WriteHalf<'_>,
+pub(crate) fn send_proof_of_funding_and_init_next_hop(
+    socket: &mut TcpStream,
     tmi: ThisMakerInfo,
     npi: NextPeerInfoArgs,
     hashvalue: Hash160,
 ) -> Result<(ContractSigsAsRecvrAndSender, Vec<ScriptBuf>), TakerError> {
-    send_message(
-        socket_writer,
-        &TakerToMakerMessage::RespProofOfFunding(ProofOfFunding {
-            confirmed_funding_txes: tmi.funding_tx_infos.clone(),
-            next_coinswap_info: npi
-                .next_peer_multisig_pubkeys
-                .iter()
-                .zip(npi.next_peer_hashlock_pubkeys.iter())
-                .map(
-                    |(&next_coinswap_multisig_pubkey, &next_hashlock_pubkey)| NextHopInfo {
-                        next_multisig_pubkey: next_coinswap_multisig_pubkey,
-                        next_hashlock_pubkey,
-                    },
-                )
-                .collect::<Vec<NextHopInfo>>(),
-            next_locktime: npi.next_maker_refund_locktime,
-            next_fee_rate: npi.next_maker_fee_rate.to_sat(),
-        }),
-    )
-    .await?;
-    let contract_sigs_as_recvr_and_sender = match read_maker_message(socket_reader).await {
-        Ok(MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(m)) => {
+    // Send POF
+    let next_coinswap_info = npi
+        .next_peer_multisig_pubkeys
+        .iter()
+        .zip(npi.next_peer_hashlock_pubkeys.iter())
+        .map(
+            |(&next_coinswap_multisig_pubkey, &next_hashlock_pubkey)| NextHopInfo {
+                next_multisig_pubkey: next_coinswap_multisig_pubkey,
+                next_hashlock_pubkey,
+            },
+        )
+        .collect::<Vec<NextHopInfo>>();
+
+    let pof_msg = TakerToMakerMessage::RespProofOfFunding(ProofOfFunding {
+        confirmed_funding_txes: tmi.funding_tx_infos.clone(),
+        next_coinswap_info,
+        next_locktime: npi.next_maker_refund_locktime,
+        next_fee_rate: npi.next_maker_fee_rate.to_sat(),
+    });
+
+    send_message(socket, &pof_msg)?;
+
+    // Recv ContractSigsAsRecvrAndSender.
+    let msg_bytes = read_message(socket)?;
+    let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+    let contract_sigs_as_recvr_and_sender = match msg {
+        MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(m) => {
             if m.receivers_contract_txs.len() != tmi.funding_tx_infos.len() {
                 return Err((ProtocolError::WrongNumOfContractTxs {
                     expected: tmi.funding_tx_infos.len(),
@@ -309,15 +302,12 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
                 m
             }
         }
-        Ok(any) => {
+        any => {
             return Err((ProtocolError::WrongMessage {
                 expected: "ContractSigsAsRecvrAndSender".to_string(),
                 received: format!("{}", any),
             })
             .into());
-        }
-        Err(e) => {
-            return Err(e.into());
         }
     };
 
@@ -413,24 +403,24 @@ pub(crate) async fn send_proof_of_funding_and_init_next_hop(
 }
 
 /// Send hash preimage via the writer and read the response.
-pub(crate) async fn send_hash_preimage_and_get_private_keys(
-    socket_reader: &mut BufReader<ReadHalf<'_>>,
-    socket_writer: &mut WriteHalf<'_>,
+pub(crate) fn send_hash_preimage_and_get_private_keys(
+    socket: &mut TcpStream,
     senders_multisig_redeemscripts: &[ScriptBuf],
     receivers_multisig_redeemscripts: &[ScriptBuf],
     preimage: &Preimage,
 ) -> Result<PrivKeyHandover, TakerError> {
-    send_message(
-        socket_writer,
-        &TakerToMakerMessage::RespHashPreimage(HashPreimage {
-            senders_multisig_redeemscripts: senders_multisig_redeemscripts.to_vec(),
-            receivers_multisig_redeemscripts: receivers_multisig_redeemscripts.to_vec(),
-            preimage: *preimage,
-        }),
-    )
-    .await?;
-    let privkey_handover = match read_maker_message(socket_reader).await {
-        Ok(MakerToTakerMessage::RespPrivKeyHandover(m)) => {
+    let hash_preimage_msg = TakerToMakerMessage::RespHashPreimage(HashPreimage {
+        senders_multisig_redeemscripts: senders_multisig_redeemscripts.to_vec(),
+        receivers_multisig_redeemscripts: receivers_multisig_redeemscripts.to_vec(),
+        preimage: *preimage,
+    });
+
+    send_message(socket, &hash_preimage_msg)?;
+
+    let msg_bytes = read_message(socket)?;
+    let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+    let privkey_handover = match msg {
+        MakerToTakerMessage::RespPrivKeyHandover(m) => {
             if m.multisig_privkeys.len() != receivers_multisig_redeemscripts.len() {
                 return Err((ProtocolError::WrongNumOfPrivkeys {
                     expected: receivers_multisig_redeemscripts.len(),
@@ -441,42 +431,45 @@ pub(crate) async fn send_hash_preimage_and_get_private_keys(
                 m
             }
         }
-        Ok(any) => {
+        any => {
             return Err((ProtocolError::WrongMessage {
                 expected: "PrivkeyHandover".to_string(),
                 received: format!("{}", any),
             })
             .into());
         }
-        Err(e) => {
-            return Err(e.into());
-        }
     };
 
     Ok(privkey_handover)
 }
 
-async fn download_maker_offer_attempt_once(
+fn download_maker_offer_attempt_once(
     addr: &MakerAddress,
-    connection_type: ConnectionType,
+    config: &TakerConfig,
 ) -> Result<Offer, TakerError> {
     let address = addr.to_string();
-
-    let mut socket = match connection_type {
-        ConnectionType::CLEARNET => TcpStream::connect(address).await?,
-        ConnectionType::TOR => Socks5Stream::connect("127.0.0.1:19050", address)
-            .await?
-            .into_inner(),
+    let mut socket = match config.connection_type {
+        ConnectionType::CLEARNET => TcpStream::connect(address)?,
+        ConnectionType::TOR => Socks5Stream::connect(
+            format!("127.0.0.1:{}", config.socks_port).as_str(),
+            address.as_ref(),
+        )?
+        .into_inner(),
     };
-    let (mut socket_reader, mut socket_writer) = handshake_maker(&mut socket).await?;
 
-    send_message(
-        &mut socket_writer,
-        &TakerToMakerMessage::ReqGiveOffer(GiveOffer),
-    )
-    .await?;
+    socket.set_read_timeout(Some(Duration::from_secs(
+        config.first_connect_attempt_timeout_sec,
+    )))?;
+    socket.set_write_timeout(Some(Duration::from_secs(
+        config.first_connect_attempt_timeout_sec,
+    )))?;
 
-    let msg = read_maker_message(&mut socket_reader).await?;
+    handshake_maker(&mut socket)?;
+
+    send_message(&mut socket, &TakerToMakerMessage::ReqGiveOffer(GiveOffer))?;
+
+    let msg_bytes = read_message(&mut socket)?;
+    let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
     let offer = match msg {
         MakerToTakerMessage::RespOffer(offer) => offer,
         msg => {
@@ -490,44 +483,48 @@ async fn download_maker_offer_attempt_once(
     Ok(*offer)
 }
 
-pub async fn download_maker_offer(
-    address: MakerAddress,
-    config: TakerConfig,
-) -> Option<OfferAndAddress> {
+pub fn download_maker_offer(address: MakerAddress, config: TakerConfig) -> Option<OfferAndAddress> {
     let mut ii = 0;
+
     loop {
         ii += 1;
-        select! {
-            ret = download_maker_offer_attempt_once(&address, config.connection_type) => {
-                match ret {
-                    Ok(offer) => return Some(OfferAndAddress { offer, address }),
-                    Err(e) => {
+        match download_maker_offer_attempt_once(&address, &config) {
+            Ok(offer) => return Some(OfferAndAddress { offer, address }),
+            Err(TakerError::IO(e)) => {
+                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut {
+                    if ii <= config.first_connect_attempts {
                         log::warn!(
-                            "Failed to request offer from maker {}, \
-                            reattempting... error={:?}",
-                            address,
-                            e
+                            "Timeout for request offer from maker {}, reattempting...",
+                            address
                         );
-                        if ii <= config.first_connect_attempts {
-                            sleep(Duration::from_secs(config.first_connect_sleep_delay_sec)).await;
-                            continue;
-                        } else {
-                            return None;
-                        }
+                        continue;
+                    } else {
+                        log::error!(
+                            "Timeout attempt exceeded for request offer from maker {}, ",
+                            address
+                        );
+                        return None;
                     }
                 }
-            },
-            _ = sleep(Duration::from_secs(config.first_connect_attempt_timeout_sec)) => {
-                log::warn!(
-                    "Timeout for request offer from maker {}, reattempting...",
-                    address
-                );
+            }
+
+            Err(e) => {
                 if ii <= config.first_connect_attempts {
+                    log::warn!(
+                        "Failed to request offer from maker {}, reattempting... error={:?}",
+                        address,
+                        e
+                    );
+                    sleep(Duration::from_secs(config.first_connect_sleep_delay_sec));
                     continue;
                 } else {
+                    log::error!(
+                        "Connection attempt exceeded for request offer from maker {}",
+                        address
+                    );
                     return None;
                 }
-            },
+            }
         }
     }
 }

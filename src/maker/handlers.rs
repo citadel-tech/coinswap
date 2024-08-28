@@ -17,9 +17,10 @@ use bitcoin::{
 use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
+    error::ProtocolError,
     maker::api::recover_from_swap,
     protocol::{
-        messages::{MultisigPrivkey, PrivKeyHandover},
+        messages::{MakerHello, MultisigPrivkey, PrivKeyHandover},
         Hash160,
     },
     wallet::WalletSwapCoin,
@@ -48,7 +49,7 @@ use crate::{
 
 /// The Global Handle Message function. Takes in a [`Arc<Maker>`] and handle messages
 /// according to a [ConnectionState].
-pub async fn handle_message(
+pub fn handle_message(
     maker: &Arc<Maker>,
     connection_state: &mut ConnectionState,
     message: TakerToMakerMessage,
@@ -56,9 +57,23 @@ pub async fn handle_message(
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     let outgoing_message = match connection_state.allowed_message {
         ExpectedMessage::TakerHello => {
-            if let TakerToMakerMessage::TakerHello(_) = message {
+            if let TakerToMakerMessage::TakerHello(m) = message {
+                if m.protocol_version_min != 1 && m.protocol_version_max != 1 {
+                    return Err(ProtocolError::WrongMessage {
+                        expected: "Only protocol version 1 is allowed".to_string(),
+                        received: format!(
+                            "min/max version  = {}/{}",
+                            m.protocol_version_min, m.protocol_version_max
+                        ),
+                    }
+                    .into());
+                }
                 connection_state.allowed_message = ExpectedMessage::NewlyConnectedTaker;
-                None
+                let reply = MakerToTakerMessage::MakerHello(MakerHello {
+                    protocol_version_min: 1,
+                    protocol_version_max: 1,
+                });
+                Some(reply)
             } else {
                 return Err(MakerError::UnexpectedMessage {
                     expected: "TakerHello".to_string(),
@@ -146,14 +161,14 @@ pub async fn handle_message(
                 TakerToMakerMessage::RespContractSigsForRecvrAndSender(message) => {
                     // Nothing to send. Maker now creates and broadcasts his funding Txs
                     connection_state.allowed_message = ExpectedMessage::ReqContractSigsForRecvr;
-                    maker
-                        .handle_contract_sigs_for_recvr_and_sender(connection_state, message, ip)
-                        .await?;
+                    maker.handle_contract_sigs_for_recvr_and_sender(
+                        connection_state,
+                        message,
+                        ip,
+                    )?;
                     if let MakerBehavior::BroadcastContractAfterSetup = maker.behavior {
                         unexpected_recovery(maker.clone())?;
-                        return Err(MakerError::General(
-                            "Special Maker Behavior BroadcastContractAfterSetup",
-                        ));
+                        return Err(maker.behavior.into());
                     } else {
                         None
                     }
@@ -207,9 +222,7 @@ impl Maker {
         message: ReqContractSigsForSender,
     ) -> Result<MakerToTakerMessage, MakerError> {
         if let MakerBehavior::CloseAtReqContractSigsForSender = self.behavior {
-            return Err(MakerError::General(
-                "Special Behavior: CloseAtReqContractSigsForSender",
-            ));
+            return Err(self.behavior.into());
         }
 
         // Verify and sign the contract transaction, check function definition for all the checks.
@@ -251,9 +264,7 @@ impl Maker {
         ip: IpAddr,
     ) -> Result<MakerToTakerMessage, MakerError> {
         if let MakerBehavior::CloseAtProofOfFunding = self.behavior {
-            return Err(MakerError::General(
-                "Special Behavior: CloseAtProofOfFunding",
-            ));
+            return Err(self.behavior.into());
         }
 
         // Basic verification of ProofOfFunding Message.
@@ -458,16 +469,14 @@ impl Maker {
     }
 
     /// Handles [ContractSigsForRecvrAndSender] message and updates the wallet state
-    pub async fn handle_contract_sigs_for_recvr_and_sender(
+    pub fn handle_contract_sigs_for_recvr_and_sender(
         &self,
         connection_state: &mut ConnectionState,
         message: ContractSigsForRecvrAndSender,
         ip: IpAddr,
     ) -> Result<(), MakerError> {
         if let MakerBehavior::CloseAtContractSigsForRecvrAndSender = self.behavior {
-            return Err(MakerError::General(
-                "Special Behavior: CloseAtContractSigsForRecvrAndSender",
-            ));
+            return Err(self.behavior.into());
         }
 
         if message.receivers_sigs.len() != connection_state.incoming_swapcoins.len() {
@@ -542,9 +551,7 @@ impl Maker {
         message: ReqContractSigsForRecvr,
     ) -> Result<MakerToTakerMessage, MakerError> {
         if let MakerBehavior::CloseAtContractSigsForRecvr = self.behavior {
-            return Err(MakerError::General(
-                "Speacial Behavior: CloseAtContractSigsForRecvr",
-            ));
+            return Err(self.behavior.into());
         }
 
         let sigs = message
@@ -571,7 +578,7 @@ impl Maker {
         message: HashPreimage,
     ) -> Result<MakerToTakerMessage, MakerError> {
         if let MakerBehavior::CloseAtHashPreimage = self.behavior {
-            return Err(MakerError::General("Special Behavior: CloseAtHashPreimage"));
+            return Err(self.behavior.into());
         }
 
         let hashvalue = Hash160::hash(&message.preimage);

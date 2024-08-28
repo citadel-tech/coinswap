@@ -3,6 +3,7 @@
 use std::{
     env,
     io::{ErrorKind, Read},
+    net::TcpStream,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Once,
@@ -30,20 +31,12 @@ use std::{
     time::Duration,
 };
 
-use serde_json::Value;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, BufReader},
-    net::tcp::{ReadHalf, WriteHalf},
-};
-
 use crate::{
     error::NetError,
-    protocol::{
-        contract::derive_maker_pubkey_and_nonce,
-        messages::{MakerToTakerMessage, MultisigPrivkey},
-    },
+    protocol::{contract::derive_maker_pubkey_and_nonce, messages::MultisigPrivkey},
     wallet::{SwapCoin, WalletError},
 };
+use serde_json::Value;
 
 const INPUT_CHARSET: &str =
     "0123456789()[],'/*abcdefgh@:$%{}IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~ijklmnopqrstuvwxyzABCDEFGH`#\"\\ ";
@@ -52,6 +45,15 @@ const CHECKSUM_CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 const MASK_LOW_35_BITS: u64 = 0x7ffffffff;
 const SHIFT_FOR_C0: u64 = 35;
 const CHECKSUM_FINAL_XOR_VALUE: u64 = 1;
+
+/// Global timeout for all network connections.
+pub const NET_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Used as delays on reattempting some network communications.
+pub const GLOBAL_PAUSE: Duration = Duration::from_secs(10);
+
+/// Global heartbeat interval for internal server threads.
+pub const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectionType {
@@ -159,26 +161,34 @@ pub fn setup_logger() {
     });
 }
 
-/// Can send both Taker and Maker messages.
-pub async fn send_message(
-    socket_writer: &mut WriteHalf<'_>,
+/// Send a length-appended Protocol or RPC Message through a stream.
+/// The first byte sent is the length of the actual message.
+pub fn send_message(
+    socket_writer: &mut TcpStream,
     message: &impl serde::Serialize,
 ) -> Result<(), NetError> {
-    let message_cbor = serde_cbor::ser::to_vec(message).map_err(NetError::Cbor)?;
-    socket_writer.write_u32(message_cbor.len() as u32).await?;
-    socket_writer.write_all(&message_cbor).await?;
+    let msg_bytes = serde_cbor::ser::to_vec(message).map_err(NetError::Cbor)?;
+    let msg_len = (msg_bytes.len() as u32).to_be_bytes();
+    let mut to_send = Vec::with_capacity(msg_bytes.len() + msg_len.len());
+    to_send.extend(msg_len);
+    to_send.extend(msg_bytes);
+    socket_writer.write_all(&to_send)?;
+    socket_writer.flush()?;
     Ok(())
 }
 
-/// Read a Maker Message.
-pub async fn read_maker_message(
-    reader: &mut BufReader<ReadHalf<'_>>,
-) -> Result<MakerToTakerMessage, NetError> {
-    let length = reader.read_u32().await?;
+/// Reads a response byte_array from a given stream.
+/// Response can be any length-appended data, where the first byte is the length of the actual message.
+pub fn read_message(reader: &mut TcpStream) -> Result<Vec<u8>, NetError> {
+    // length of incoming data
+    let mut len_buff = [0u8; 4];
+    reader.read_exact(&mut len_buff)?; // This can give UnexpectedEOF error if theres no data to read
+    let length = u32::from_be_bytes(len_buff);
+
+    // the actual data
     let mut buffer = vec![0; length as usize];
-    reader.read_exact(&mut buffer).await?;
-    let message: MakerToTakerMessage = serde_cbor::from_slice(&buffer)?;
-    Ok(message)
+    reader.read_exact(&mut buffer)?;
+    Ok(buffer)
 }
 
 /// Apply the maker's privatekey to swapcoins, and check it's the correct privkey for corresponding pubkey.
@@ -483,6 +493,8 @@ pub fn read_connection_network_string(network: &str) -> Result<ConnectionType, S
 
 #[cfg(test)]
 mod tests {
+    use std::net::TcpListener;
+
     use bitcoin::{
         blockdata::{opcodes::all, script::Builder},
         secp256k1::Scalar,
@@ -490,7 +502,8 @@ mod tests {
     };
 
     use serde_json::json;
-    use tokio::net::{TcpListener, TcpStream};
+
+    use crate::protocol::messages::{MakerHello, MakerToTakerMessage};
 
     use super::*;
 
@@ -505,25 +518,30 @@ mod tests {
         fs::remove_file(path).unwrap();
     }
 
-    #[allow(clippy::read_zero_byte_vec)]
-    #[tokio::test]
-    async fn test_send_message() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    #[test]
+    fn test_send_message() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
 
-        tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buffer = Vec::new();
-            let nbytes = socket.read(&mut buffer).await.unwrap();
-            buffer.truncate(nbytes);
-            assert_eq!(buffer, b"\"Hello, teleport!\"\n");
+        let message = MakerToTakerMessage::MakerHello(MakerHello {
+            protocol_version_min: 1,
+            protocol_version_max: 100,
+        });
+        thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let msg_bytes = read_message(&mut socket).unwrap();
+            let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes).unwrap();
+            assert_eq!(
+                msg,
+                MakerToTakerMessage::MakerHello(MakerHello {
+                    protocol_version_min: 1,
+                    protocol_version_max: 100
+                })
+            );
         });
 
-        let mut stream = TcpStream::connect(address).await.unwrap();
-        let (_, mut write_half) = stream.split();
-
-        let message = "Hello, teleport!";
-        send_message(&mut write_half, &message).await.unwrap();
+        let mut stream = TcpStream::connect(address).unwrap();
+        send_message(&mut stream, &message).unwrap();
     }
 
     #[test]

@@ -46,7 +46,7 @@ struct Cli {
     pub wallet_name: String,
     /// Sets the maker count to initiate coinswap with.
     #[clap(name = "maker_count", default_value = "2")]
-    pub maker_count: u16,
+    pub maker_count: usize,
     /// Sets the send amount.
     #[clap(name = "send_amount", default_value = "500000")]
     pub send_amount: u64,
@@ -178,14 +178,10 @@ fn main() {
             )
             .unwrap();
             let config = taker2.config.clone();
-            let _ = futures::executor::block_on(taker.sync_offerbook(
-                read_bitcoin_network_string(&args.network).unwrap(),
-                &config,
-                args.maker_count,
-            ));
+            taker.sync_offerbook(&config, args.maker_count).unwrap();
         }
         Commands::DoCoinswap => {
-            let _ = taker.do_coinswap(swap_params);
+            taker.do_coinswap(swap_params).unwrap();
         }
     }
 }

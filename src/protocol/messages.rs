@@ -170,14 +170,14 @@ pub struct HashPreimage {
 }
 
 /// Multisig Privatekeys used in the last step of coinswap to perform privatekey handover.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct MultisigPrivkey {
     pub multisig_redeemscript: ScriptBuf,
     pub key: SecretKey,
 }
 
 /// Message to perform the final Privatekey Handover. This is the last message of the Coinswap Protocol.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PrivKeyHandover {
     pub multisig_privkeys: Vec<MultisigPrivkey>,
 }
@@ -221,7 +221,7 @@ impl Display for TakerToMakerMessage {
 }
 
 /// Represents the initial handshake message sent from Maker to Taker.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MakerHello {
     pub protocol_version_min: u32,
     pub protocol_version_max: u32,
@@ -250,13 +250,13 @@ pub struct Offer {
 }
 
 /// Contract Tx signatures provided by a Sender of a Coinswap.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractSigsForSender {
     pub sigs: Vec<Signature>,
 }
 
 /// Contract Tx and extra metadata from a Sender of a Coinswap
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SenderContractTxInfo {
     pub contract_tx: Transaction,
     pub timelock_pubkey: PublicKey,
@@ -268,7 +268,7 @@ pub struct SenderContractTxInfo {
 /// for the Maker as both Sender and Receiver of Coinswaps.
 ///
 /// This message is sent by a Maker after a [`ProofOfFunding`] has been received.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractSigsAsRecvrAndSender {
     /// Contract Tx by which this maker is receiving Coinswap.
     pub receivers_contract_txs: Vec<Transaction>,
@@ -277,13 +277,13 @@ pub struct ContractSigsAsRecvrAndSender {
 }
 
 /// Contract Tx signatures a Maker sends as a Receiver of CoinSwap.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractSigsForRecvr {
     pub sigs: Vec<Signature>,
 }
 
 /// All messages sent from Maker to Taker.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MakerToTakerMessage {
     /// Protocol Handshake.
     MakerHello(MakerHello),

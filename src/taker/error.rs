@@ -20,7 +20,6 @@ pub enum TakerError {
     Wallet(WalletError),
     Directory(DirectoryServerError),
     Net(NetError),
-    Socks(tokio_socks::Error),
     Protocol(ProtocolError),
     SendAmountNotSet,
     FundingTxWaitTimeOut,
@@ -60,12 +59,6 @@ impl From<std::io::Error> for TakerError {
 impl From<NetError> for TakerError {
     fn from(value: NetError) -> Self {
         Self::Net(value)
-    }
-}
-
-impl From<tokio_socks::Error> for TakerError {
-    fn from(value: tokio_socks::Error) -> Self {
-        Self::Socks(value)
     }
 }
 

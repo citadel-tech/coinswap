@@ -5,23 +5,24 @@
 //! The module handles the syncing of the offer book with addresses obtained from directory servers and local configurations.
 //! It uses asynchronous channels for concurrent processing of maker offers.
 
-use std::{fmt, thread, time::Duration};
-
-use serde::{Deserialize, Serialize};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+use std::{
+    fmt,
+    io::{Read, Write},
     net::TcpStream,
     sync::mpsc,
+    thread::{self, Builder},
 };
 
-use bitcoin::Network;
+use serde::{Deserialize, Serialize};
+use socks::Socks5Stream;
 
-use crate::{protocol::messages::Offer, utill::ConnectionType};
+use crate::{
+    error::NetError,
+    protocol::messages::Offer,
+    utill::{ConnectionType, GLOBAL_PAUSE, NET_TIMEOUT},
+};
 
-use crate::market::directory::DirectoryServerError;
-
-use super::{config::TakerConfig, routines::download_maker_offer};
-use tokio_socks::tcp::Socks5Stream;
+use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
 
 /// Represents an offer along with the corresponding maker address.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
@@ -37,19 +38,20 @@ struct OnionAddress {
     port: String,
     onion_addr: String,
 }
+
 /// Enum representing maker addresses.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MakerAddress(OnionAddress);
 
 impl MakerAddress {
-    pub fn new(address: String) -> Option<Self> {
+    pub fn new(address: &str) -> Result<Self, TakerError> {
         if let Some((onion_addr, port)) = address.split_once(':') {
-            Some(Self(OnionAddress {
+            Ok(Self(OnionAddress {
                 port: port.to_string(),
                 onion_addr: onion_addr.to_string(),
             }))
         } else {
-            None
+            Err(NetError::InvalidNetworkAddress.into())
         }
     }
 }
@@ -57,6 +59,16 @@ impl MakerAddress {
 impl fmt::Display for MakerAddress {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}:{}", self.0.onion_addr, self.0.port)
+    }
+}
+
+impl From<&mut TcpStream> for MakerAddress {
+    fn from(value: &mut TcpStream) -> Self {
+        let socket_addr = value.peer_addr().unwrap();
+        MakerAddress(OnionAddress {
+            port: socket_addr.port().to_string(),
+            onion_addr: socket_addr.ip().to_string(),
+        })
     }
 }
 
@@ -116,92 +128,105 @@ impl OfferBook {
 }
 
 /// Synchronizes the offer book with specific maker addresses.
-pub async fn fetch_offer_from_makers(
+pub fn fetch_offer_from_makers(
     maker_addresses: Vec<MakerAddress>,
     config: &TakerConfig,
 ) -> Vec<OfferAndAddress> {
-    let (offers_writer_m, mut offers_reader) = mpsc::channel::<Option<OfferAndAddress>>(100);
-    //unbounded_channel makes more sense here, but results in a compile
-    //error i cant figure out
+    let (offers_writer, offers_reader) = mpsc::channel::<Option<OfferAndAddress>>();
+    // Thread pool for all connections to fetch maker offers.
+    let mut thread_pool = Vec::new();
     let maker_addresses_len = maker_addresses.len();
     for addr in maker_addresses {
-        let offers_writer = offers_writer_m.clone();
+        let offers_writer = offers_writer.clone();
         let taker_config: TakerConfig = config.clone();
-        tokio::spawn(async move {
-            let offer = download_maker_offer(addr, taker_config).await;
-            offers_writer.send(offer).await.unwrap();
-        });
+        let thread = Builder::new()
+            .name(format!("maker_offer_fecth_thread_{}", addr))
+            .spawn(move || {
+                let offer = download_maker_offer(addr, taker_config);
+                offers_writer.send(offer).unwrap();
+            })
+            .unwrap();
+
+        thread_pool.push(thread);
     }
     let mut result = Vec::<OfferAndAddress>::new();
     for _ in 0..maker_addresses_len {
-        if let Some(offer_addr) = offers_reader.recv().await.unwrap() {
+        // TODO: Remove all unwraps and return TakerError.
+        if let Some(offer_addr) = offers_reader.recv().unwrap() {
             result.push(offer_addr);
         }
+    }
+
+    for thread in thread_pool {
+        log::debug!(
+            "Joining thread : {}",
+            thread.thread().name().expect("thread names expected")
+        );
+        thread.join().unwrap();
     }
     result
 }
 
 /// Retrieves advertised maker addresses from directory servers based on the specified network.
-pub async fn fetch_addresses_from_dns(
+pub fn fetch_addresses_from_dns(
     socks_port: Option<u16>,
     directory_server_address: String,
-    _network: Network,
-    number_of_makers: u16,
+    number_of_makers: usize,
     connection_type: ConnectionType,
-) -> Result<Vec<MakerAddress>, DirectoryServerError> {
+) -> Result<Vec<MakerAddress>, TakerError> {
+    // TODO: Make the communication in serde_encoded bytes.
+
     loop {
-        let result: Result<Vec<MakerAddress>, DirectoryServerError> = (async {
-            let mut stream = match connection_type {
-                ConnectionType::CLEARNET => TcpStream::connect(directory_server_address.as_str())
-                    .await
-                    .unwrap(),
-                ConnectionType::TOR => Socks5Stream::connect(
-                    format!("127.0.0.1:{}", socks_port.unwrap_or(19050)).as_str(),
-                    directory_server_address.as_str(),
-                )
-                .await
-                .map_err(|_e| {
-                    DirectoryServerError::Other(
-                        "Issue with fetching maker address from directory server",
-                    )
-                })?
-                .into_inner(),
-            };
+        let mut stream = match connection_type {
+            ConnectionType::CLEARNET => TcpStream::connect(directory_server_address.as_str())?,
+            ConnectionType::TOR => {
+                let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
+                Socks5Stream::connect(socket_addrs, directory_server_address.as_str())?.into_inner()
+            }
+        };
 
-            let request_line = "GET\n";
-            stream
-                .write_all(request_line.as_bytes())
-                .await
-                .map_err(|_e| DirectoryServerError::Other("Error sending the request"))?;
+        stream.set_read_timeout(Some(NET_TIMEOUT))?;
+        stream.set_write_timeout(Some(NET_TIMEOUT))?;
+        stream.flush()?;
 
-            let mut response = String::new();
-            stream
-                .read_to_string(&mut response)
-                .await
-                .map_err(|_e| DirectoryServerError::Other("Error receiving the response"))?;
+        // TODO: Handle timeout cases like the Taker/Maker comms, with attempt count and variable delays.
+        if let Err(e) = stream
+            .write_all("GET\n".as_bytes())
+            .and_then(|_| stream.flush())
+        {
+            log::error!("Error sending GET request to DNS {}.\nRe-attempting...", e);
+            thread::sleep(GLOBAL_PAUSE);
+            continue;
+        }
 
-            let addresses: Vec<MakerAddress> = response
-                .lines()
-                .map(|addr| MakerAddress::new(addr.to_string()).expect("Malformed maker address"))
-                .collect();
+        let mut response = String::new();
 
-            log::info!("Maker addresses received from DNS: {:?}", addresses);
+        if let Err(e) = stream.read_to_string(&mut response) {
+            log::error!("Error reading DNS response: {}. \nRe-attempting...", e);
+            thread::sleep(GLOBAL_PAUSE);
+            continue;
+        }
 
-            Ok(addresses)
-        })
-        .await;
-
-        match result {
+        match response
+            .lines()
+            .map(MakerAddress::new)
+            .collect::<Result<Vec<MakerAddress>, _>>()
+        {
             Ok(addresses) => {
-                if addresses.len() < (number_of_makers as usize) {
-                    thread::sleep(Duration::from_secs(10));
-                    continue;
+                if addresses.len() < number_of_makers {
+                    log::info!(
+                        "Didn't receive enough addresses. Need: {}, Got : {}, Attempting again...",
+                        number_of_makers,
+                        addresses.len()
+                    );
+                    thread::sleep(GLOBAL_PAUSE);
+                } else {
+                    return Ok(addresses);
                 }
-                return Ok(addresses);
             }
             Err(e) => {
-                log::error!("An error occurred: {:?}", e);
-                thread::sleep(Duration::from_secs(10));
+                log::error!("Error decoding DNS response: {:?}. Re-attempting...", e);
+                thread::sleep(GLOBAL_PAUSE);
                 continue;
             }
         }
