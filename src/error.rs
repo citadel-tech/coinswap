@@ -53,12 +53,6 @@ impl From<DirectoryServerError> for AppError {
         AppError::DNS(value)
     }
 }
-
-impl From<std::io::Error> for AppError {
-    fn from(value: std::io::Error) -> Self {
-        AppError::Maker(MakerError::IO(value))
-    }
-}
 /// Includes all Protocol-level errors.
 #[derive(Debug)]
 pub enum ProtocolError {
