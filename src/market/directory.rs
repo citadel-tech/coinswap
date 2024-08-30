@@ -9,7 +9,7 @@ use std::{
     io::{self, BufRead, BufReader, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
     path::Path,
-    sync::{Arc, RwLock},
+    sync::{Arc, PoisonError, RwLock, RwLockWriteGuard},
     thread::{self, sleep},
     time::Duration,
 };
@@ -25,7 +25,7 @@ use crate::utill::{
 /// Represents errors that can occur during directory server operations.
 #[derive(Debug)]
 pub enum DirectoryServerError {
-    PoissonError(&'static str),
+    MutexPossion,
     Socks5ConnectionError(String),
     IO(std::io::Error),
 }
@@ -117,10 +117,7 @@ impl DirectoryServer {
     }
 
     pub fn shutdown(&self) -> Result<(), DirectoryServerError> {
-        let mut flag = self
-            .shutdown
-            .write()
-            .map_err(|_| DirectoryServerError::PoissonError("Rwlock write error!"))?;
+        let mut flag = self.shutdown.write()?;
         *flag = true;
         Ok(())
     }
@@ -129,6 +126,12 @@ impl DirectoryServer {
 impl From<std::io::Error> for DirectoryServerError {
     fn from(value: std::io::Error) -> Self {
         Self::IO(value)
+    }
+}
+
+impl<'a, T> From<PoisonError<RwLockWriteGuard<'a, T>>> for DirectoryServerError {
+    fn from(_: PoisonError<RwLockWriteGuard<'a, T>>) -> Self {
+        Self::MutexPossion
     }
 }
 
