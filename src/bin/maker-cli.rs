@@ -81,20 +81,19 @@ fn main() -> Result<(), AppError> {
 }
 
 fn send_rpc_req(req: &RpcMsgReq) -> Result<(), AppError> {
-    let mut stream = TcpStream::connect("127.0.0.1:8080")
+    let mut stream = TcpStream::connect("127.0.0.1:8080").map_err(MakerError::IO)?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(20)))
         .map_err(MakerError::IO)?;
-    stream.set_read_timeout(Some(Duration::from_secs(20)))
-        .map_err(MakerError::IO)?;
-    stream.set_write_timeout(Some(Duration::from_secs(20)))
+    stream
+        .set_write_timeout(Some(Duration::from_secs(20)))
         .map_err(MakerError::IO)?;
 
-    send_message(&mut stream, &req)
-        .map_err(MakerError::Net)?;
+    send_message(&mut stream, &req).map_err(MakerError::Net)?;
 
-    let response_bytes = read_message(&mut stream)
-        .map_err(MakerError::Net)?;
-    let response: RpcMsgResp = serde_cbor::from_slice(&response_bytes)
-        .map_err(MakerError::Deserialize)?;
+    let response_bytes = read_message(&mut stream).map_err(MakerError::Net)?;
+    let response: RpcMsgResp =
+        serde_cbor::from_slice(&response_bytes).map_err(MakerError::Deserialize)?;
 
     println!("{:?}", response);
 

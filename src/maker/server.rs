@@ -100,7 +100,7 @@ fn network_bootstrap(
                 let maker_hs_path_str =
                     format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
                 let maker_hs_path = PathBuf::from(maker_hs_path_str);
-                let mut maker_file = fs::File::open(&maker_hs_path).unwrap();
+                let mut maker_file = fs::File::open(maker_hs_path).unwrap();
                 let mut maker_onion_addr: String = String::new();
                 maker_file.read_to_string(&mut maker_onion_addr).unwrap();
                 maker_onion_addr.pop();

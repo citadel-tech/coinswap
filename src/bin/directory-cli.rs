@@ -25,8 +25,7 @@ enum Commands {
 }
 
 fn send_rpc_req(req: &RpcMsgReq) -> Result<(), AppError> {
-    let mut stream = TcpStream::connect("127.0.0.1:4321")
-        .map_err(MakerError::IO)?;
+    let mut stream = TcpStream::connect("127.0.0.1:4321").map_err(MakerError::IO)?;
     stream
         .set_read_timeout(Some(Duration::from_secs(20)))
         .map_err(MakerError::IO)?;
@@ -34,19 +33,16 @@ fn send_rpc_req(req: &RpcMsgReq) -> Result<(), AppError> {
         .set_write_timeout(Some(Duration::from_secs(20)))
         .map_err(MakerError::IO)?;
 
-    send_message(&mut stream, &req)
-        .map_err(MakerError::Net)?;
+    send_message(&mut stream, &req).map_err(MakerError::Net)?;
 
-    let resp_bytes = read_message(&mut stream)
-        .map_err(MakerError::Net)?;
-    let resp: RpcMsgResp = serde_cbor::from_slice(&resp_bytes)
-        .map_err(MakerError::Deserialize)?;
+    let resp_bytes = read_message(&mut stream).map_err(MakerError::Net)?;
+    let resp: RpcMsgResp = serde_cbor::from_slice(&resp_bytes).map_err(MakerError::Deserialize)?;
 
     println!("{:?}", resp);
     Ok(())
 }
 
-fn main() -> Result<(), AppError>{
+fn main() -> Result<(), AppError> {
     setup_logger();
     let cli = App::parse();
 
