@@ -215,7 +215,8 @@ impl Wallet {
         }
 
         // Set the Anti-Fee-Snipping locktime
-        let lock_time = LockTime::from_height(self.rpc.get_block_count().unwrap() as u32).unwrap();
+        let current_height = self.rpc.get_block_count()?;
+        let lock_time = LockTime::from_height(current_height as u32)?;
 
         let mut tx = Transaction {
             input: tx_inputs,

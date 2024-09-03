@@ -521,6 +521,8 @@ mod test {
     use core::panic;
     use std::str::FromStr;
 
+    const TEST_CURRENT_HEIGHT: u32 = 100;
+
     fn read_pubkeys_from_contract_reedimscript(
         contract_script: &Script,
     ) -> Result<(PublicKey, PublicKey), &'static str> {
@@ -677,7 +679,7 @@ mod test {
                     value: Amount::from_sat(3000),
                 },
             ],
-            lock_time: LockTime::ZERO,
+            lock_time: LockTime::from_height(TEST_CURRENT_HEIGHT).unwrap(),
             version: Version::TWO,
         };
 
@@ -841,7 +843,7 @@ mod test {
                 script_pubkey: funding_spk,
                 value: Amount::from_sat(2000),
             }],
-            lock_time: LockTime::ZERO,
+            lock_time: LockTime::from_height(TEST_CURRENT_HEIGHT).unwrap(),
             version: Version::TWO,
         };
 
@@ -1250,7 +1252,7 @@ mod test {
                     value: Amount::from_sat(3000),
                 },
             ],
-            lock_time: LockTime::ZERO,
+            lock_time: LockTime::from_height(TEST_CURRENT_HEIGHT).unwrap(),
             version: Version::TWO,
         };
 

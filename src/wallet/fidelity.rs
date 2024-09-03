@@ -350,14 +350,16 @@ impl Wallet {
                 script_pubkey: change_addrs,
             });
         }
+
+        // Set the Anti-Fee Snipping Locktime
         let current_height = self.rpc.get_block_count()?;
-        let anti_fee_snipping_locktime = LockTime::from_height(current_height as u32)?;
+        let lock_time = LockTime::from_height(current_height as u32)?;
 
         let mut tx = Transaction {
             input: tx_inputs,
             output: tx_outs,
-            lock_time: anti_fee_snipping_locktime,
-            version: Version::TWO, // anti-fee-snipping
+            lock_time,
+            version: Version::TWO,
         };
 
         let mut input_info = selected_utxo
