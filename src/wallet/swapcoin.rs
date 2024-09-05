@@ -671,6 +671,8 @@ mod tests {
     use super::*;
     use bitcoin::{NetworkKind, PrivateKey};
 
+    const TEST_CURRENT_HEIGHT: u32 = 100;
+
     #[test]
     fn test_apply_privkey_watchonly_swapcoin() {
         let secp = Secp256k1::new();
@@ -844,7 +846,7 @@ mod tests {
         let tx = Transaction {
             input: vec![input.clone()],
             output: vec![],
-            lock_time: LockTime::ZERO,
+            lock_time: LockTime::from_height(TEST_CURRENT_HEIGHT).unwrap(),
             version: Version::TWO,
         };
 
@@ -879,7 +881,7 @@ mod tests {
         };
         // Intentionally failing to sign with incomplete swapcoin
         assert!(incoming_swapcoin
-            .sign_transaction_input(index, &tx, &mut input, &contract_redeemscript,)
+            .sign_transaction_input(index, &tx, &mut input, &contract_redeemscript)
             .is_err());
         let sign = bitcoin::ecdsa::Signature {
             signature: secp256k1::ecdsa::Signature::from_compact(&[0; 64]).unwrap(),
@@ -954,7 +956,7 @@ mod tests {
                     incoming_swapcoin.contract_tx.output[0].value.to_sat() - miner_fee,
                 ),
             }],
-            lock_time: LockTime::ZERO,
+            lock_time: LockTime::from_height(TEST_CURRENT_HEIGHT).unwrap(),
             version: Version::TWO,
         };
         let index = 0;
@@ -1034,7 +1036,7 @@ mod tests {
                     incoming_swapcoin.contract_tx.output[0].value.to_sat() - miner_fee,
                 ),
             }],
-            lock_time: LockTime::ZERO,
+            lock_time: LockTime::from_height(TEST_CURRENT_HEIGHT).unwrap(),
             version: Version::TWO,
         };
         let index = 0;

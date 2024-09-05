@@ -171,10 +171,16 @@ impl Wallet {
                     script_sig: ScriptBuf::new(),
                 })
                 .collect::<Vec<_>>();
+
+            // Set the Anti-Fee-Snipping locktime
+            let current_height = self.rpc.get_block_count()?;
+
+            let lock_time = LockTime::from_height(current_height as u32)?;
+
             let mut funding_tx = Transaction {
                 input: tx_inputs,
                 output: tx_outs,
-                lock_time: LockTime::ZERO,
+                lock_time,
                 version: Version::TWO,
             };
             let mut input_info = selected_utxo
@@ -221,6 +227,10 @@ impl Wallet {
         let mut destinations_iter = destinations.iter();
         let first_tx_input = utxos.next().unwrap();
 
+        // Set the Anti-Fee-Snipping locktime
+        let current_height = self.rpc.get_block_count()?;
+        let lock_time = LockTime::from_height(current_height as u32)?;
+
         for _ in 0..destinations.len() - 2 {
             let (txid, vout, value) = utxos.next().unwrap();
 
@@ -241,10 +251,11 @@ impl Wallet {
                     script_pubkey: address.script_pubkey(),
                 });
             }
+
             let mut funding_tx = Transaction {
                 input: tx_inputs,
                 output: tx_outs,
-                lock_time: LockTime::ZERO,
+                lock_time,
                 version: Version::TWO,
             };
             self.sign_transaction(&mut funding_tx, &mut input_info)?;
@@ -289,10 +300,11 @@ impl Wallet {
                 script_pubkey: address.script_pubkey(),
             });
         }
+
         let mut funding_tx = Transaction {
             input: tx_inputs,
             output: tx_outs,
-            lock_time: LockTime::ZERO,
+            lock_time,
             version: Version::TWO,
         };
         let mut info = input_info.iter().cloned();
@@ -335,7 +347,7 @@ impl Wallet {
         let mut funding_tx = Transaction {
             input: tx_inputs,
             output: tx_outs,
-            lock_time: LockTime::ZERO,
+            lock_time,
             version: Version::TWO,
         };
         let mut info = iter::once(self.get_utxo((first_txid, first_vout))?.unwrap());
@@ -405,10 +417,14 @@ impl Wallet {
             })
             .collect::<Vec<_>>();
 
+        // Set the Anti-Fee-Snipping locktime
+        let current_height = self.rpc.get_block_count()?;
+        let lock_time = LockTime::from_height(current_height as u32)?;
+
         let mut funding_tx = Transaction {
             input: tx_inputs,
             output: tx_outs,
-            lock_time: LockTime::ZERO,
+            lock_time,
             version: Version::TWO,
         };
 
