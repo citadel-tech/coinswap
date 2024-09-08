@@ -299,9 +299,7 @@ impl Taker {
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         log::info!("Syncing Offerbook");
-        let config = self.config.clone();
-        self.sync_offerbook(&config, swap_params.maker_count)?;
-
+        self.sync_offerbook(swap_params.maker_count)?;
         // Generate new random preimage and initiate the first hop.
         let mut preimage = [0u8; 32];
         OsRng.fill_bytes(&mut preimage);
@@ -1909,21 +1907,17 @@ impl Taker {
     }
 
     /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
-    pub fn sync_offerbook(
-        &mut self,
-        config: &TakerConfig,
-        maker_count: usize,
-    ) -> Result<(), TakerError> {
+    pub fn sync_offerbook(&mut self, maker_count: usize) -> Result<(), TakerError> {
         let directory_address = match self.config.connection_type {
             ConnectionType::CLEARNET => {
-                let mut address = config.directory_server_clearnet_address.clone();
+                let mut address = self.config.directory_server_clearnet_address.clone();
                 if cfg!(feature = "integration-test") {
                     address = format!("127.0.0.1:{}", 8080);
                 }
                 address
             }
             ConnectionType::TOR => {
-                let mut address = config.directory_server_onion_address.clone();
+                let mut address = self.config.directory_server_onion_address.clone();
                 if cfg!(feature = "integration-test") {
                     let directory_hs_path_str =
                         "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
@@ -1951,9 +1945,9 @@ impl Taker {
             socks_port,
             directory_address,
             maker_count,
-            config.connection_type,
+            self.config.connection_type,
         )?;
-        let offers = fetch_offer_from_makers(addresses_from_dns, config);
+        let offers = fetch_offer_from_makers(addresses_from_dns, &self.config);
 
         let new_offers = offers
             .into_iter()

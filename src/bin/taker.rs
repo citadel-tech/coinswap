@@ -169,16 +169,7 @@ fn main() {
             println!("{:?}", address);
         }
         Commands::SyncOfferBook => {
-            let taker2 = Taker::init(
-                args.data_directory,
-                Some(args.wallet_name),
-                Some(rpc_config),
-                TakerBehavior::Normal,
-                Some(connection_type),
-            )
-            .unwrap();
-            let config = taker2.config.clone();
-            taker.sync_offerbook(&config, args.maker_count).unwrap();
+            taker.sync_offerbook(args.maker_count).unwrap();
         }
         Commands::DoCoinswap => {
             taker.do_coinswap(swap_params).unwrap();
