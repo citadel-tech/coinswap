@@ -27,6 +27,7 @@ use crate::{
         Hash160,
     },
     utill::{read_message, send_message, ConnectionType},
+    wallet::WalletError,
 };
 use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
 
@@ -114,23 +115,23 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
         .zip(outgoing_swapcoins.iter())
         .map(
             |((&multisig_key_nonce, &hashlock_key_nonce), outgoing_swapcoin)| {
-                ContractTxInfoForSender {
+                Ok(ContractTxInfoForSender {
                     multisig_nonce: multisig_key_nonce,
                     hashlock_nonce: hashlock_key_nonce,
-                    timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey(),
+                    timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey()?,
                     senders_contract_tx: outgoing_swapcoin.get_contract_tx(),
                     multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
                     funding_input_value: outgoing_swapcoin.get_funding_amount(),
-                }
+                })
             },
         )
-        .collect::<Vec<ContractTxInfoForSender>>();
+        .collect::<Result<Vec<ContractTxInfoForSender>, WalletError>>()?;
 
     send_message(
         socket,
         &TakerToMakerMessage::ReqContractSigsForSender(ReqContractSigsForSender {
             txs_info,
-            hashvalue: outgoing_swapcoins[0].get_hashvalue(),
+            hashvalue: outgoing_swapcoins[0].get_hashvalue()?,
             locktime,
         }),
     )?;

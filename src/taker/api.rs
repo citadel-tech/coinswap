@@ -1267,7 +1267,7 @@ impl Taker {
                 next_contract_redeemscript.clone(),
                 hashlock_privkey,
                 maker_funding_tx_value,
-            );
+            )?;
             incoming_swapcoin.hash_preimage = Some(self.ongoing_swap_state.active_preimage);
             incoming_swapcoins.push(incoming_swapcoin);
         }
@@ -1827,9 +1827,9 @@ impl Taker {
                 );
             }
             let reedemscript = outgoing.get_multisig_redeemscript();
-            let timelock = outgoing.get_timelock();
+            let timelock = outgoing.get_timelock()?;
             let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
-            let timelock_spend = outgoing.create_timelock_spend(next_internal);
+            let timelock_spend = outgoing.create_timelock_spend(next_internal)?;
             outgoing_infos.push(((reedemscript, contract_tx), (timelock, timelock_spend)));
         }
 

@@ -23,7 +23,7 @@ use crate::{
         messages::{MakerHello, MultisigPrivkey, PrivKeyHandover},
         Hash160,
     },
-    wallet::WalletSwapCoin,
+    wallet::{WalletError, WalletSwapCoin},
 };
 
 use crate::{
@@ -86,7 +86,7 @@ pub fn handle_message(
                 let (tweakable_point, max_size) = {
                     let wallet_reader = maker.wallet.read()?;
                     let max_size = wallet_reader.store.offer_maxsize;
-                    let tweakable_point = wallet_reader.get_tweakable_keypair().1;
+                    let tweakable_point = wallet_reader.get_tweakable_keypair()?.1;
                     (tweakable_point, max_size)
                 };
                 connection_state.allowed_message = ExpectedMessage::ReqContractSigsForSender;
@@ -300,7 +300,7 @@ impl Maker {
                 Amount::from_sat(message.next_fee_rate),
             );
 
-            let (tweakable_privkey, _) = self.wallet.read()?.get_tweakable_keypair();
+            let (tweakable_privkey, _) = self.wallet.read()?.get_tweakable_keypair()?;
             let multisig_privkey =
                 tweakable_privkey.add_tweak(&funding_info.multisig_nonce.into())?;
 
@@ -327,7 +327,7 @@ impl Maker {
                 funding_info.contract_redeemscript.clone(),
                 hashlock_privkey,
                 funding_output.value,
-            );
+            )?;
             if !connection_state
                 .incoming_swapcoins
                 .contains(&incoming_swapcoin)
@@ -447,13 +447,15 @@ impl Maker {
         let senders_contract_txs_info = connection_state
             .outgoing_swapcoins
             .iter()
-            .map(|outgoing_swapcoin| SenderContractTxInfo {
-                contract_tx: outgoing_swapcoin.contract_tx.clone(),
-                timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey(),
-                multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
-                funding_amount: outgoing_swapcoin.funding_amount,
+            .map(|outgoing_swapcoin| {
+                Ok(SenderContractTxInfo {
+                    contract_tx: outgoing_swapcoin.contract_tx.clone(),
+                    timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey()?,
+                    multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
+                    funding_amount: outgoing_swapcoin.funding_amount,
+                })
             })
-            .collect::<Vec<SenderContractTxInfo>>();
+            .collect::<Result<Vec<SenderContractTxInfo>, WalletError>>()?;
 
         // Update the connection state.
         self.connection_state
@@ -657,7 +659,7 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
             .iter()
             .zip(state.incoming_swapcoins.iter())
         {
-            let contract_timelock = og_sc.get_timelock();
+            let contract_timelock = og_sc.get_timelock()?;
             let contract = og_sc.get_fully_signed_contract_tx()?;
             let next_internal_address = &maker
                 .wallet
@@ -665,7 +667,7 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
                 .unwrap()
                 .get_next_internal_addresses(1)
                 .unwrap()[0];
-            let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
+            let time_lock_spend = og_sc.create_timelock_spend(next_internal_address)?;
             outgoings.push((
                 (og_sc.get_multisig_redeemscript(), contract),
                 (contract_timelock, time_lock_spend),

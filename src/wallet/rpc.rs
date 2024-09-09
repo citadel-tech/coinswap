@@ -178,10 +178,7 @@ impl Wallet {
                 })
             })
             .collect();
-        let _res: Vec<Value> = self
-            .rpc
-            .call("importdescriptors", &[import_requests])
-            .unwrap();
+        let _res: Vec<Value> = self.rpc.call("importdescriptors", &[import_requests])?;
         Ok(())
     }
 }

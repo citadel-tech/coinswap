@@ -300,7 +300,7 @@ impl Maker {
 
             check_reedemscript_is_multisig(&funding_info.multisig_redeemscript)?;
 
-            let (_, tweabale_pubkey) = self.wallet.read()?.get_tweakable_keypair();
+            let (_, tweabale_pubkey) = self.wallet.read()?.get_tweakable_keypair()?;
 
             check_multisig_has_pubkey(
                 &funding_info.multisig_redeemscript,
@@ -358,7 +358,8 @@ impl Maker {
                 ));
             }
 
-            let (tweakable_privkey, tweakable_pubkey) = self.wallet.read()?.get_tweakable_keypair();
+            let (tweakable_privkey, tweakable_pubkey) =
+                self.wallet.read()?.get_tweakable_keypair()?;
 
             check_multisig_has_pubkey(
                 &txinfo.multisig_redeemscript,
@@ -454,11 +455,11 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                             .iter()
                             .zip(connection_state.incoming_swapcoins.iter())
                         {
-                            let contract_timelock = og_sc.get_timelock();
+                            let contract_timelock = og_sc.get_timelock()?;
                             let next_internal_address =
                                 &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
                             let time_lock_spend =
-                                og_sc.create_timelock_spend(next_internal_address);
+                                og_sc.create_timelock_spend(next_internal_address)?;
 
                             // Sometimes we might not have other's contact signatures.
                             // This means the protocol have been stopped abruptly.
@@ -555,11 +556,11 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
                         .iter()
                         .zip(state.incoming_swapcoins.iter())
                     {
-                        let contract_timelock = og_sc.get_timelock();
+                        let contract_timelock = og_sc.get_timelock()?;
                         let contract = og_sc.get_fully_signed_contract_tx()?;
                         let next_internal_address =
                             &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
-                        let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
+                        let time_lock_spend = og_sc.create_timelock_spend(next_internal_address)?;
                         outgoings.push((
                             (og_sc.get_multisig_redeemscript(), contract),
                             (contract_timelock, time_lock_spend),
