@@ -54,58 +54,6 @@ impl FromStr for Destination {
     }
 }
 
-/// Enum representing different ways to identify a coin to spend.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CoinToSpend {
-    LongForm(OutPoint),
-    ShortForm {
-        prefix: String,
-        suffix: String,
-        vout: u32,
-    },
-}
-
-fn parse_short_form_coin(s: &str) -> Option<CoinToSpend> {
-    //example short form: 568a4e..83a2e8:0
-    if s.len() < 15 {
-        return None;
-    }
-    let dots = &s[6..8];
-    if dots != ".." {
-        return None;
-    }
-    let colon = s.chars().nth(14).unwrap();
-    if colon != ':' {
-        return None;
-    }
-    let prefix = String::from(&s[0..6]);
-    let suffix = String::from(&s[8..14]);
-    let vout = s[15..].parse::<u32>().ok()?;
-    Some(CoinToSpend::ShortForm {
-        prefix,
-        suffix,
-        vout,
-    })
-}
-
-impl FromStr for CoinToSpend {
-    type Err = bitcoin::blockdata::transaction::ParseOutPointError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parsed_outpoint = OutPoint::from_str(s);
-        if let Ok(op) = parsed_outpoint {
-            Ok(CoinToSpend::LongForm(op))
-        } else {
-            let short_form = parse_short_form_coin(s);
-            if let Some(cointospend) = short_form {
-                Ok(cointospend)
-            } else {
-                Err(parsed_outpoint.err().unwrap())
-            }
-        }
-    }
-}
-
 impl Wallet {
     /// API to perform spending from wallet utxos, Including descriptor coins, swap coins or contract outputs (timelock/hashlock).
     /// This should not be used to spend the Fidelity Bond. Check [Wallet::redeem_fidelity] for fidelity spending.
@@ -136,8 +84,8 @@ impl Wallet {
                     input_value: _,
                 } => self
                     .find_outgoing_swapcoin(swapcoin_multisig_redeemscript)
-                    .unwrap()
-                    .get_timelock() as u32,
+                    .expect("Outgoing swapcoin expected")
+                    .get_timelock()? as u32,
                 UTXOSpendInfo::HashlockContract {
                     swapcoin_multisig_redeemscript: _,
                     input_value: _,
@@ -276,43 +224,5 @@ mod tests {
         );
         assert_ne!(address1, address2);
         assert!(Destination::from_str("invalid address").is_err());
-    }
-
-    #[test]
-    fn test_coin_to_spend_long_form_and_short_form_parsing() {
-        let valid_outpoint_str =
-            "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:0";
-        let coin_to_spend_long_form = CoinToSpend::LongForm(OutPoint {
-            txid: "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
-                .parse()
-                .unwrap(),
-            vout: 0,
-        });
-        assert_eq!(
-            CoinToSpend::from_str(valid_outpoint_str).unwrap(),
-            coin_to_spend_long_form
-        );
-        let valid_outpoint_str =
-            "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:1";
-        assert_ne!(
-            CoinToSpend::from_str(valid_outpoint_str).unwrap(),
-            coin_to_spend_long_form
-        );
-
-        let valid_short_form_str = "123abc..def456:0";
-        assert!(matches!(
-            CoinToSpend::from_str(valid_short_form_str),
-            Ok(CoinToSpend::ShortForm { .. })
-        ));
-        let mut invalid_short_form_str = "123ab..def456:0";
-        assert!(CoinToSpend::from_str(invalid_short_form_str).is_err());
-
-        invalid_short_form_str = "123abc.def456:0";
-        assert!(CoinToSpend::from_str(invalid_short_form_str).is_err());
-
-        invalid_short_form_str = "123abc..def4560";
-        assert!(CoinToSpend::from_str(invalid_short_form_str).is_err());
-
-        assert!(CoinToSpend::from_str("invalid").is_err());
     }
 }
