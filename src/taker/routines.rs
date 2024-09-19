@@ -27,6 +27,7 @@ use crate::{
         Hash160,
     },
     utill::{read_message, send_message, ConnectionType},
+    wallet::WalletError,
 };
 use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
 
@@ -92,30 +93,6 @@ pub fn handshake_maker(socket: &mut TcpStream) -> Result<(), TakerError> {
     }
 }
 
-fn build_contract_tx_info_for_sender<S: SwapCoin>(
-    maker_multisig_nonces: &[SecretKey],
-    maker_hashlock_nonces: &[SecretKey],
-    outgoing_swapcoins: &[S],
-) -> Vec<ContractTxInfoForSender> {
-    maker_multisig_nonces
-        .iter()
-        .zip(maker_hashlock_nonces.iter())
-        .zip(outgoing_swapcoins.iter())
-        .map(
-            |((&multisig_key_nonce, &hashlock_key_nonce), outgoing_swapcoin)| {
-                ContractTxInfoForSender {
-                    multisig_nonce: multisig_key_nonce,
-                    hashlock_nonce: hashlock_key_nonce,
-                    timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey(),
-                    senders_contract_tx: outgoing_swapcoin.get_contract_tx(),
-                    multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
-                    funding_input_value: outgoing_swapcoin.get_funding_amount(),
-                }
-            },
-        )
-        .collect()
-}
-
 /// Request signatures for sender side of the hop. Attempt once.
 pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
     socket: &mut TcpStream,
@@ -131,18 +108,29 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
         socket.peer_addr()?
     );
 
-    // TODO: Take this construction out of function body.
-    let txs_info = build_contract_tx_info_for_sender(
-        maker_multisig_nonces,
-        maker_hashlock_nonces,
-        outgoing_swapcoins,
-    );
+    let txs_info = maker_multisig_nonces
+        .iter()
+        .zip(maker_hashlock_nonces.iter())
+        .zip(outgoing_swapcoins.iter())
+        .map(
+            |((&multisig_key_nonce, &hashlock_key_nonce), outgoing_swapcoin)| {
+                Ok(ContractTxInfoForSender {
+                    multisig_nonce: multisig_key_nonce,
+                    hashlock_nonce: hashlock_key_nonce,
+                    timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey()?,
+                    senders_contract_tx: outgoing_swapcoin.get_contract_tx(),
+                    multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
+                    funding_input_value: outgoing_swapcoin.get_funding_amount(),
+                })
+            },
+        )
+        .collect::<Result<Vec<ContractTxInfoForSender>, WalletError>>()?;
 
     send_message(
         socket,
         &TakerToMakerMessage::ReqContractSigsForSender(ReqContractSigsForSender {
             txs_info,
-            hashvalue: outgoing_swapcoins[0].get_hashvalue(),
+            hashvalue: outgoing_swapcoins[0].get_hashvalue()?,
             locktime,
         }),
     )?;
@@ -184,20 +172,6 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
     Ok(contract_sigs_for_sender)
 }
 
-fn build_contract_tx_info_for_recvr<S: SwapCoin>(
-    incoming_swapcoins: &[S],
-    receivers_contract_txes: &[Transaction],
-) -> Vec<ContractTxInfoForRecvr> {
-    incoming_swapcoins
-        .iter()
-        .zip(receivers_contract_txes.iter())
-        .map(|(swapcoin, receivers_contract_tx)| ContractTxInfoForRecvr {
-            multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
-            contract_tx: receivers_contract_tx.clone(),
-        })
-        .collect()
-}
-
 /// Request signatures for receiver side of the hop. Attempt once.
 pub(crate) fn req_sigs_for_recvr_once<S: SwapCoin>(
     socket: &mut TcpStream,
@@ -207,11 +181,18 @@ pub(crate) fn req_sigs_for_recvr_once<S: SwapCoin>(
     log::info!("Connecting to {}", socket.peer_addr()?);
     handshake_maker(socket)?;
 
-    let txs = build_contract_tx_info_for_recvr(incoming_swapcoins, receivers_contract_txes);
-    // TODO: Take the message construction out of function body.
+    let txs_info = incoming_swapcoins
+        .iter()
+        .zip(receivers_contract_txes.iter())
+        .map(|(swapcoin, receivers_contract_tx)| ContractTxInfoForRecvr {
+            multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
+            contract_tx: receivers_contract_tx.clone(),
+        })
+        .collect::<Vec<ContractTxInfoForRecvr>>();
+
     send_message(
         socket,
-        &TakerToMakerMessage::ReqContractSigsForRecvr(ReqContractSigsForRecvr { txs }),
+        &TakerToMakerMessage::ReqContractSigsForRecvr(ReqContractSigsForRecvr { txs: txs_info }),
     )?;
 
     let msg_bytes = read_message(socket)?;

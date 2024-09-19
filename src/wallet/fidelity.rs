@@ -51,6 +51,7 @@ pub enum FidelityError {
     BondAlreadySpent,
     CertExpired,
     InsufficientFund { available: u64, required: u64 },
+    General(String),
 }
 
 // ------- Fidelity Helper Scripts -------------
@@ -87,7 +88,8 @@ pub fn read_locktime_from_fidelity_script(
 /// Reads the public key from a fidelity redeemscript.
 fn read_pubkey_from_fidelity_script(redeemscript: &ScriptBuf) -> Result<PublicKey, FidelityError> {
     if let Some(Ok(Instruction::PushBytes(pubkey_bytes))) = redeemscript.instructions().next() {
-        Ok(PublicKey::from_slice(pubkey_bytes.as_bytes()).unwrap())
+        Ok(PublicKey::from_slice(pubkey_bytes.as_bytes())
+            .map_err(|e| FidelityError::General(e.to_string()))?)
     } else {
         Err(FidelityError::WrongScriptType)
     }
@@ -181,6 +183,7 @@ impl Wallet {
             .max_by(|a, b| a.1.cmp(&b.1))
             .map(|(i, _)| *i))
     }
+
     /// Get the [KeyPair] for the fidelity bond at given index.
     pub fn get_fidelity_keypair(&self, index: u32) -> Result<Keypair, WalletError> {
         let secp = Secp256k1::new();
@@ -350,14 +353,16 @@ impl Wallet {
                 script_pubkey: change_addrs,
             });
         }
+
+        // Set the Anti-Fee Snipping Locktime
         let current_height = self.rpc.get_block_count()?;
-        let anti_fee_snipping_locktime = LockTime::from_height(current_height as u32)?;
+        let lock_time = LockTime::from_height(current_height as u32)?;
 
         let mut tx = Transaction {
             input: tx_inputs,
             output: tx_outs,
-            lock_time: anti_fee_snipping_locktime,
-            version: Version::TWO, // anti-fee-snipping
+            lock_time,
+            version: Version::TWO,
         };
 
         let mut input_info = selected_utxo
