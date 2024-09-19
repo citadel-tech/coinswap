@@ -108,7 +108,6 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
         socket.peer_addr()?
     );
 
-    // TODO: Take this construction out of function body.
     let txs_info = maker_multisig_nonces
         .iter()
         .zip(maker_hashlock_nonces.iter())
@@ -182,19 +181,18 @@ pub(crate) fn req_sigs_for_recvr_once<S: SwapCoin>(
     log::info!("Connecting to {}", socket.peer_addr()?);
     handshake_maker(socket)?;
 
-    // TODO: Take the message construction out of function body.
+    let txs_info = incoming_swapcoins
+        .iter()
+        .zip(receivers_contract_txes.iter())
+        .map(|(swapcoin, receivers_contract_tx)| ContractTxInfoForRecvr {
+            multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
+            contract_tx: receivers_contract_tx.clone(),
+        })
+        .collect::<Vec<ContractTxInfoForRecvr>>();
+
     send_message(
         socket,
-        &TakerToMakerMessage::ReqContractSigsForRecvr(ReqContractSigsForRecvr {
-            txs: incoming_swapcoins
-                .iter()
-                .zip(receivers_contract_txes.iter())
-                .map(|(swapcoin, receivers_contract_tx)| ContractTxInfoForRecvr {
-                    multisig_redeemscript: swapcoin.get_multisig_redeemscript(),
-                    contract_tx: receivers_contract_tx.clone(),
-                })
-                .collect::<Vec<ContractTxInfoForRecvr>>(),
-        }),
+        &TakerToMakerMessage::ReqContractSigsForRecvr(ReqContractSigsForRecvr { txs: txs_info }),
     )?;
 
     let msg_bytes = read_message(socket)?;
