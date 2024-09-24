@@ -2,7 +2,7 @@ use std::{net::TcpStream, time::Duration};
 
 use clap::Parser;
 use coinswap::{
-    error::AppError,
+    error::{AppError, NetError},
     maker::{MakerError, RpcMsgReq, RpcMsgResp},
     utill::{read_message, send_message, setup_logger},
 };
@@ -81,19 +81,20 @@ fn main() -> Result<(), AppError> {
 }
 
 fn send_rpc_req(req: &RpcMsgReq) -> Result<(), AppError> {
-    let mut stream = TcpStream::connect("127.0.0.1:8080").map_err(MakerError::IO)?;
+    let mut stream =
+        TcpStream::connect("127.0.0.1:8080").map_err(|e| MakerError::Net(NetError::IO(e)))?;
     stream
         .set_read_timeout(Some(Duration::from_secs(20)))
-        .map_err(MakerError::IO)?;
+        .map_err(|e| MakerError::Net(NetError::IO(e)))?;
     stream
         .set_write_timeout(Some(Duration::from_secs(20)))
-        .map_err(MakerError::IO)?;
+        .map_err(|e| MakerError::Net(NetError::IO(e)))?;
 
     send_message(&mut stream, &req).map_err(MakerError::Net)?;
 
     let response_bytes = read_message(&mut stream).map_err(MakerError::Net)?;
     let response: RpcMsgResp =
-        serde_cbor::from_slice(&response_bytes).map_err(MakerError::Deserialize)?;
+        serde_cbor::from_slice(&response_bytes).map_err(|e| MakerError::Net(NetError::Cbor(e)))?;
 
     println!("{:?}", response);
 

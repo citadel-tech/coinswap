@@ -15,28 +15,25 @@ use super::MakerBehavior;
 /// Enum to handle Maker related errors.
 #[derive(Debug)]
 pub enum MakerError {
-    IO(std::io::Error),
     UnexpectedMessage { expected: String, got: String },
     General(&'static str),
     MutexPossion,
     Secp(secp256k1::Error),
-    ContractError(ContractError),
     Wallet(WalletError),
     Net(NetError),
-    Deserialize(serde_cbor::Error),
     SpecialBehaviour(MakerBehavior),
     Protocol(ProtocolError),
 }
 
 impl From<std::io::Error> for MakerError {
     fn from(value: std::io::Error) -> Self {
-        Self::IO(value)
+        Self::Net(NetError::IO(value))
     }
 }
 
 impl From<serde_cbor::Error> for MakerError {
     fn from(value: serde_cbor::Error) -> Self {
-        Self::Deserialize(value)
+        Self::Net(NetError::Cbor(value))
     }
 }
 
@@ -66,7 +63,7 @@ impl From<secp256k1::Error> for MakerError {
 
 impl From<ContractError> for MakerError {
     fn from(value: ContractError) -> Self {
-        Self::ContractError(value)
+        MakerError::Protocol(ProtocolError::from(value))
     }
 }
 

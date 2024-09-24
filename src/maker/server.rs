@@ -514,7 +514,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                         maker.config.port,
                         e
                     );
-                    return Err(MakerError::IO(e));
+                    return Err(MakerError::Net(NetError::IO(e)));
                 }
             }
         };
