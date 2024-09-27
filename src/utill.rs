@@ -17,6 +17,7 @@ use bitcoin::{
     },
     Network, PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
 };
+use log::LevelFilter;
 use log4rs::{
     append::{console::ConsoleAppender, file::FileAppender},
     config::{Appender, Logger, Root},
@@ -120,7 +121,8 @@ pub fn seed_phrase_to_unique_id(seed: &str) -> String {
 }
 
 /// Setup function that will only run once, even if called multiple times.
-pub fn setup_logger() {
+/// Takes an optional log level to set the desired logging verbosity for taker binary.
+pub fn setup_logger(taker_log_level: LevelFilter) {
     Once::new().call_once(|| {
         env::set_var("RUST_LOG", "coinswap=info");
         let taker_log_dir = get_taker_dir().join("debug.log");
@@ -139,7 +141,7 @@ pub fn setup_logger() {
             .logger(
                 Logger::builder()
                     .appender("taker")
-                    .build("coinswap::taker", log::LevelFilter::Info),
+                    .build("coinswap::taker", taker_log_level),
             )
             .logger(
                 Logger::builder()
@@ -151,11 +153,7 @@ pub fn setup_logger() {
                     .appender("directory")
                     .build("coinswap::market", log::LevelFilter::Info),
             )
-            .build(
-                Root::builder()
-                    .appender("stdout")
-                    .build(log::LevelFilter::Info),
-            )
+            .build(Root::builder().appender("stdout").build(taker_log_level))
             .unwrap();
         log4rs::init_config(config).unwrap();
     });

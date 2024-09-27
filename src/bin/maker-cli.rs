@@ -40,7 +40,7 @@ enum Commands {
 }
 
 fn main() -> Result<(), MakerError> {
-    setup_logger();
+    setup_logger(log::LevelFilter::Info);
     let cli = App::parse();
 
     match cli.command {

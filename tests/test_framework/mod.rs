@@ -81,7 +81,7 @@ impl TestFramework {
         if cfg!(feature = "tor") && connection_type == ConnectionType::TOR {
             coinswap::tor::setup_mitosis();
         }
-        setup_logger();
+        setup_logger(log::LevelFilter::Info);
         // Setup directory
         let temp_dir = get_random_tmp_dir();
         // Remove if previously existing

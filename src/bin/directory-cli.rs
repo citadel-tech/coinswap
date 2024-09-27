@@ -40,7 +40,7 @@ fn send_rpc_req(req: &RpcMsgReq) {
 }
 
 fn main() {
-    setup_logger();
+    setup_logger(log::LevelFilter::Info);
     let cli = App::parse();
 
     match cli.command {

@@ -19,7 +19,7 @@ struct Cli {
 }
 
 fn main() {
-    setup_logger();
+    setup_logger(log::LevelFilter::Info);
 
     let args = Cli::parse();
 
