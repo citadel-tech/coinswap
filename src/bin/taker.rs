@@ -1,6 +1,4 @@
-use std::path::PathBuf;
-
-use bitcoin::Amount;
+use bitcoin::{Address, Amount};
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Auth};
 use clap::Parser;
 use coinswap::{
@@ -8,8 +6,9 @@ use coinswap::{
     utill::{
         parse_proxy_auth, read_bitcoin_network_string, read_connection_network_string, setup_logger,
     },
-    wallet::RPCConfig,
+    wallet::{Destination, RPCConfig, SendAmount},
 };
+use std::{path::PathBuf, str::FromStr};
 
 /// taker-cli is a command line app to use taker client API's.
 #[derive(Parser, Debug)]
@@ -82,6 +81,18 @@ enum Commands {
     TotalBalance,
     /// Returns a new address
     GetNewAddress,
+    /// Send to an external wallet address.
+    SendToAddress {
+        /// Recipient address
+        #[clap(name = "address")]
+        address: String,
+        /// Amount to be sent (in sats)
+        #[clap(name = "amount")]
+        amount: u64,
+        /// Fee of a Tx(in sats)
+        #[clap(name = "fee")]
+        fee: u64,
+    },
     /// Sync the offer book
     SyncOfferBook,
     /// Initiate the coinswap process
@@ -89,8 +100,8 @@ enum Commands {
 }
 
 fn main() {
-    setup_logger();
     let args = Cli::parse();
+
     let rpc_network = read_bitcoin_network_string(&args.rpc_network).unwrap();
     let connection_type = read_connection_network_string(&args.network).unwrap();
     let rpc_config = RPCConfig {
@@ -117,11 +128,20 @@ fn main() {
     )
     .unwrap();
 
+    let log_level = match args.command {
+        Commands::DoCoinswap | Commands::SyncOfferBook | Commands::SendToAddress { .. } => {
+            log::LevelFilter::Info
+        }
+        _ => log::LevelFilter::Off,
+    };
+
+    setup_logger(log_level);
+
     match args.command {
         Commands::SeedUtxo => {
             let utxos: Vec<ListUnspentResultEntry> = taker
                 .get_wallet()
-                .list_live_contract_spend_info(None)
+                .list_descriptor_utxo_spend_info(None)
                 .unwrap()
                 .iter()
                 .map(|(l, _)| l.clone())
@@ -168,6 +188,40 @@ fn main() {
             let address = taker.get_wallet_mut().get_next_external_address().unwrap();
             println!("{:?}", address);
         }
+        Commands::SendToAddress {
+            address,
+            amount,
+            fee,
+        } => {
+            let fee = Amount::from_sat(fee);
+
+            let amount = Amount::from_sat(amount);
+
+            let coins_to_spend = taker.get_wallet().coin_select(amount + fee).unwrap();
+
+            let destination =
+                Destination::Address(Address::from_str(&address).unwrap().assume_checked());
+
+            // create a signed tx
+            let tx = taker
+                .get_wallet_mut()
+                .spend_from_wallet(
+                    fee,
+                    SendAmount::Amount(amount),
+                    destination,
+                    &coins_to_spend,
+                )
+                .unwrap();
+
+            let calculated_fee_rate = fee / (tx.weight());
+
+            println!(
+                "transaction_hex :  {:?}",
+                bitcoin::consensus::encode::serialize_hex(&tx)
+            );
+            println!("Calculated FeeRate : {:#}", calculated_fee_rate);
+        }
+
         Commands::SyncOfferBook => {
             taker.sync_offerbook(args.maker_count).unwrap();
         }
