@@ -121,7 +121,7 @@ pub fn seed_phrase_to_unique_id(seed: &str) -> String {
 }
 
 /// Setup function that will only run once, even if called multiple times.
-/// Takes an optional log level to set the desired logging verbosity for taker binary.
+/// Takes log level to set the desired logging verbosity for taker binary.
 pub fn setup_logger(taker_log_level: LevelFilter) {
     Once::new().call_once(|| {
         env::set_var("RUST_LOG", "coinswap=info");

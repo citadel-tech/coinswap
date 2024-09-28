@@ -246,5 +246,5 @@ fn test_taker_cli() {
     taker_cli.bitcoind.client.stop().unwrap();
 
     // Wait for some time for successfull shutdown of bitcoind.
-    std::thread::sleep(std::time::Duration::from_secs(10));
+    std::thread::sleep(std::time::Duration::from_secs(3));
 }

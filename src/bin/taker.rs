@@ -8,6 +8,7 @@ use coinswap::{
     },
     wallet::{Destination, RPCConfig, SendAmount},
 };
+use log::LevelFilter;
 use std::{path::PathBuf, str::FromStr};
 
 /// taker-cli is a command line app to use taker client API's.
@@ -43,6 +44,10 @@ struct Cli {
     /// Sets the taker wallet's name. If the wallet file already exists at data-directory, it will load that wallet.
     #[clap(name = "WALLET", long, short = 'w', default_value = "taker")]
     pub wallet_name: String,
+    /// Sets the verbosity level of logs.
+    /// Default: Determined by the command passed.
+    #[clap(long, short = 'v', possible_values = &["off", "error", "warn", "info", "debug", "trace"])]
+    pub verbosity: Option<String>,
     /// Sets the maker count to initiate coinswap with.
     #[clap(name = "maker_count", default_value = "2")]
     pub maker_count: usize,
@@ -128,11 +133,18 @@ fn main() {
     )
     .unwrap();
 
-    let log_level = match args.command {
-        Commands::DoCoinswap | Commands::SyncOfferBook | Commands::SendToAddress { .. } => {
-            log::LevelFilter::Info
-        }
-        _ => log::LevelFilter::Off,
+    // Determines the log level based on the verbosity argument or the command.
+    //
+    // If verbosity is provided, it converts the string to a `LevelFilter`.
+    // If verbosity is `None`, the log level is set according to the command.
+    let log_level = match args.verbosity {
+        Some(level) => LevelFilter::from_str(&level).unwrap(),
+        None => match args.command {
+            Commands::DoCoinswap | Commands::SyncOfferBook | Commands::SendToAddress { .. } => {
+                log::LevelFilter::Info
+            }
+            _ => log::LevelFilter::Off,
+        },
     };
 
     setup_logger(log_level);
