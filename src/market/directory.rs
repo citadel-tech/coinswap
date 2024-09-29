@@ -63,7 +63,6 @@ impl DirectoryServer {
     ///
     /// Default data-dir for linux: `~/.coinswap/`
     /// Default config locations: `~/.coinswap/dns/config.toml`.
-
     pub fn new(
         config_path: Option<PathBuf>,
         connection_type: Option<ConnectionType>,
