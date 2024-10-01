@@ -104,8 +104,7 @@ impl DirectoryServer {
 
         let addresses = Arc::new(RwLock::new(HashSet::new()));
         let address_file = data_dir.join("addresses.dat");
-        if address_file.exists() {
-            let file = File::open(&address_file)?;
+        if let Ok(file) = File::open(&address_file) {
             let reader = BufReader::new(file);
             for address in reader.lines().map_while(Result::ok) {
                 addresses
@@ -162,8 +161,6 @@ fn write_default_directory_config(config_path: &PathBuf) -> std::io::Result<()> 
 pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), DirectoryServerError> {
     let address_file = directory.data_dir.join("addresses.dat");
 
-    let addresses = Arc::new(RwLock::new(HashSet::new()));
-
     let mut tor_handle = None;
 
     match directory.connection_type {
@@ -206,9 +203,8 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
     }
 
     let directory_server_arc = directory.clone();
-    let address_arc = addresses.clone();
     let rpc_thread = thread::spawn(|| {
-        start_rpc_server_thread(directory_server_arc, address_arc);
+        start_rpc_server_thread(directory_server_arc);
     });
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port))
@@ -229,7 +225,7 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
                     .set_write_timeout(Some(Duration::from_secs(20)))
                     .map_err(DirectoryServerError::Io)?;
                 if let Err(e) = handle_client(&mut stream, &directory) {
-                    log::error!("Error handling client: {:?}", e);
+                    log::error!("Error handling client request: {:?}", e);
                 }
             }
 
@@ -252,7 +248,8 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
     }
 
     // Write the addresses to file
-    let file_content = addresses
+    let file_content = directory
+        .addresses
         .read()
         .map_err(|_| DirectoryServerError::LockError)?
         .iter()
