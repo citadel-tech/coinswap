@@ -121,8 +121,8 @@ pub fn seed_phrase_to_unique_id(seed: &str) -> String {
 }
 
 /// Setup function that will only run once, even if called multiple times.
-/// Takes log level to set the desired logging verbosity for taker binary.
-pub fn setup_logger(taker_log_level: LevelFilter) {
+/// Takes log level to set the desired logging verbosity
+pub fn setup_logger(filter: LevelFilter) {
     Once::new().call_once(|| {
         env::set_var("RUST_LOG", "coinswap=info");
         let taker_log_dir = get_taker_dir().join("debug.log");
@@ -141,7 +141,7 @@ pub fn setup_logger(taker_log_level: LevelFilter) {
             .logger(
                 Logger::builder()
                     .appender("taker")
-                    .build("coinswap::taker", taker_log_level),
+                    .build("coinswap::taker", filter),
             )
             .logger(
                 Logger::builder()
@@ -153,7 +153,7 @@ pub fn setup_logger(taker_log_level: LevelFilter) {
                     .appender("directory")
                     .build("coinswap::market", log::LevelFilter::Info),
             )
-            .build(Root::builder().appender("stdout").build(taker_log_level))
+            .build(Root::builder().appender("stdout").build(filter))
             .unwrap();
         log4rs::init_config(config).unwrap();
     });

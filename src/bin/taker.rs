@@ -17,8 +17,8 @@ use std::{path::PathBuf, str::FromStr};
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
     /// Optional Connection Network Type
-    #[clap(long, default_value = "clearnet",possible_values = &["tor","clearnet"])]
-    network: String,
+    #[clap(long, default_value = "clearnet",short= 'c', possible_values = &["tor","clearnet"])]
+    connection_type: String,
     /// Optional DNS data directory. Default value : "~/.coinswap/taker"
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
@@ -35,12 +35,11 @@ struct Cli {
     pub auth: (String, String),
     /// Sets the full node network, this should match with the network of the running node.
     #[clap(
-        name = "NETWORK",
         long,
-        short = 'n',
+        short = 'b',
         default_value = "regtest", possible_values = &["regtest", "signet", "mainnet"]
     )]
-    pub rpc_network: String,
+    pub bitcoin_network: String,
     /// Sets the taker wallet's name. If the wallet file already exists at data-directory, it will load that wallet.
     #[clap(name = "WALLET", long, short = 'w', default_value = "taker")]
     pub wallet_name: String,
@@ -88,7 +87,6 @@ enum Commands {
     GetNewAddress,
     /// Send to an external wallet address.
     SendToAddress {
-        /// Recipient address
         #[clap(name = "address")]
         address: String,
         /// Amount to be sent (in sats)
@@ -107,8 +105,8 @@ enum Commands {
 fn main() {
     let args = Cli::parse();
 
-    let rpc_network = read_bitcoin_network_string(&args.rpc_network).unwrap();
-    let connection_type = read_connection_network_string(&args.network).unwrap();
+    let rpc_network = read_bitcoin_network_string(&args.bitcoin_network).unwrap();
+    let connection_type = read_connection_network_string(&args.connection_type).unwrap();
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
@@ -136,7 +134,7 @@ fn main() {
     // Determines the log level based on the verbosity argument or the command.
     //
     // If verbosity is provided, it converts the string to a `LevelFilter`.
-    // If verbosity is `None`, the log level is set according to the command.
+    // Otherwise, the log level is set based on the command.
     let log_level = match args.verbosity {
         Some(level) => LevelFilter::from_str(&level).unwrap(),
         None => match args.command {
@@ -205,6 +203,17 @@ fn main() {
             amount,
             fee,
         } => {
+            // NOTE:
+            //
+            // Currently, we take `fee` instead of `fee_rate` because we cannot calculate the fee for a
+            // transaction that hasn't been created yet when only a `fee_rate` is provided.
+            //
+            // As a result, the user must supply the fee as a parameter, and the function will return the
+            // transaction hex and the calculated `fee_rate`.
+            // This allows the user to infer what fee is needed for a successful transaction.
+            //
+            // This approach will be improved in the future BDK integration.
+
             let fee = Amount::from_sat(fee);
 
             let amount = Amount::from_sat(amount);
@@ -214,7 +223,6 @@ fn main() {
             let destination =
                 Destination::Address(Address::from_str(&address).unwrap().assume_checked());
 
-            // create a signed tx
             let tx = taker
                 .get_wallet_mut()
                 .spend_from_wallet(
@@ -225,6 +233,7 @@ fn main() {
                 )
                 .unwrap();
 
+            // Derive fee rate from given `fee` argument.
             let calculated_fee_rate = fee / (tx.weight());
 
             println!(

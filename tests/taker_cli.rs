@@ -9,10 +9,8 @@ use std::{
 };
 
 /// The taker-cli command struct
-/// Use it to perform all taker-cli operations
 struct TakerCli {
     data_dir: PathBuf,
-    /// Bitcoind instance
     bitcoind: BitcoinD,
 }
 
@@ -63,13 +61,12 @@ impl TakerCli {
             .generate_to_address(101, &mining_address)
             .unwrap();
 
-        // derive data directory
         let data_dir = temp_dir.join("taker");
 
         TakerCli { data_dir, bitcoind }
     }
 
-    // Build a cli-command
+    // Execute a cli-command
     fn execute(&self, cmd: &[&str]) -> String {
         let mut args = vec![
             "--data-directory",
@@ -81,14 +78,8 @@ impl TakerCli {
         ];
 
         // RPC authentication (user:password) from the cookie file
-        //
-        // get rpc_auth
-        // Path to the cookie file
         let cookie_file_path = Path::new(&self.bitcoind.params.cookie_file);
-
-        // Read the contents of the cookie file
         let rpc_auth = fs::read_to_string(cookie_file_path).expect("failed to read from file");
-
         args.push("--USER:PASSWORD");
         args.push(&rpc_auth);
 
@@ -97,11 +88,8 @@ impl TakerCli {
         args.push("--ADDRESS:PORT");
         args.push(&rpc_address);
 
-        // Wallet name
         args.push("--WALLET");
         args.push("test_wallet");
-
-        // Custom arguments for the taker-cli command
 
         // makers count
         args.push("3");
@@ -112,27 +100,28 @@ impl TakerCli {
         // fee_rate
         args.push("1000");
 
-        // Final command to execute
         for arg in cmd {
             args.push(arg);
         }
 
-        // Execute the command
         let output = Command::new("./target/debug/taker")
             .args(args)
             .output()
             .unwrap();
 
+        // Capture the standard output and error from the command execution
         let mut value = output.stdout;
         let error = output.stderr;
 
+        // Panic if there is any error output
         if !error.is_empty() {
             panic!("Error: {:?}", String::from_utf8(error).unwrap());
         }
 
-        value.pop(); // Remove `\n` at the end
+        // Remove the `\n` at the end of the output
+        value.pop();
 
-        // Get the output string from bytes
+        // Convert the output bytes to a UTF-8 string
         let output_string = std::str::from_utf8(&value).unwrap().to_string();
 
         output_string
@@ -156,18 +145,15 @@ impl TakerCli {
 
 #[test]
 fn test_taker_cli() {
-    // create taker_cli instance
     let taker_cli = TakerCli::new();
 
     // Fund the taker with 3 utxos of 1 BTC each.
     for _ in 0..3 {
-        // derive the address
         let taker_address = taker_cli.execute(&["get-new-address"]);
 
         let taker_address: Address<NetworkChecked> =
             Address::from_str(&taker_address).unwrap().assume_checked();
 
-        // fund 1 BTC to derived address
         taker_cli
             .bitcoind
             .client
@@ -184,7 +170,7 @@ fn test_taker_cli() {
             .unwrap();
     }
 
-    // confirm balance( Generate blocks)
+    // confirm balance
     taker_cli.generate_blocks(10);
 
     // Assert that total_balance & seed_balance must be 3 BTC
@@ -200,7 +186,7 @@ fn test_taker_cli() {
     let no_of_seed_utxos = seed_utxos.matches("ListUnspentResultEntry {").count();
     assert_eq!(3, no_of_seed_utxos);
 
-    // Send 100,000 satoshis to a new address within the wallet, with a fee of 1,000 satoshis.
+    // Send 100,000 sats to a new address within the wallet, with a fee of 1,000 sats.
 
     // get new external address
     let new_address = taker_cli.execute(&["get-new-address"]);
@@ -225,7 +211,6 @@ fn test_taker_cli() {
     // broadcast signed transaction
     taker_cli.bitcoind.client.send_raw_transaction(&tx).unwrap();
 
-    // confirm balances
     taker_cli.generate_blocks(10);
 
     // Assert the total_amount & seed_amount must be initial (balance -fee)
@@ -242,7 +227,6 @@ fn test_taker_cli() {
     let no_of_seed_utxos = seed_utxos.matches("ListUnspentResultEntry {").count();
     assert_eq!(4, no_of_seed_utxos);
 
-    // stopping Bitcoind
     taker_cli.bitcoind.client.stop().unwrap();
 
     // Wait for some time for successfull shutdown of bitcoind.
