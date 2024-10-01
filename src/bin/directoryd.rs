@@ -26,5 +26,5 @@ fn main() {
 
     let directory = Arc::new(DirectoryServer::new(args.data_directory, Some(conn_type)).unwrap());
 
-    start_directory_server(directory).expect("Error in starting directory server.");
+    start_directory_server(directory).expect("");
 }
