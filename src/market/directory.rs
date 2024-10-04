@@ -5,11 +5,12 @@
 
 use std::{
     collections::HashSet,
-    fs, io,
-    net::Ipv4Addr,
+    fs::{self, OpenOptions},
+    io::{self, BufRead, BufReader, Write},
+    net::{Ipv4Addr, TcpListener, TcpStream},
     path::Path,
     sync::{Arc, RwLock},
-    thread,
+    thread::{self, sleep},
     time::Duration,
 };
 
@@ -19,12 +20,6 @@ use std::path::PathBuf;
 use crate::utill::{
     get_dns_dir, get_tor_addrs, monitor_log_for_completion, parse_field, parse_toml,
     write_default_config, ConnectionType,
-};
-
-use tokio::{
-    fs::OpenOptions,
-    io::{AsyncBufReadExt, AsyncWriteExt},
-    net::TcpListener,
 };
 
 /// Represents errors that can occur during directory server operations.
@@ -143,13 +138,12 @@ fn write_default_directory_config(config_path: &PathBuf) -> std::io::Result<()> 
     write_default_config(config_path, config_string)
 }
 
-#[tokio::main]
-pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
+pub fn start_directory_server(directory: Arc<DirectoryServer>) {
     let address_file = directory.data_dir.join("addresses.dat");
 
     let addresses = Arc::new(RwLock::new(HashSet::new()));
 
-    let mut handle = None;
+    let mut tor_handle = None;
 
     match directory.connection_type {
         ConnectionType::CLEARNET => {}
@@ -165,7 +159,7 @@ pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
 
                 let socks_port = directory.socks_port;
                 let tor_port = directory.port;
-                handle = Some(crate::tor::spawn_tor(
+                tor_handle = Some(crate::tor::spawn_tor(
                     socks_port,
                     tor_port,
                     "/tmp/tor-rust-directory".to_string(),
@@ -191,56 +185,74 @@ pub async fn start_directory_server(directory: Arc<DirectoryServer>) {
     }
 
     let directory_server_arc = directory.clone();
-    let _ = start_rpc_server_thread(directory_server_arc, addresses.clone()).await;
+    let addres_arc = addresses.clone();
+    let rpc_thread = thread::spawn(|| {
+        start_rpc_server_thread(directory_server_arc, addres_arc);
+    });
 
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port))
-        .await
-        .unwrap();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port)).unwrap();
 
-    loop {
-        tokio::select! {
-            accept_result = listener.accept() => {
-                match accept_result {
-                    Ok((stream, _)) => handle_client(stream, addresses.clone()).await,
-                    Err(e) => log::error!("Error accepting connection: {}", e),
-                }
-            }
-            _ = tokio::time::sleep(Duration::from_secs(3)) => {
-                if *directory.shutdown.read().unwrap() {
-                    log::info!("Shutdown signal received. Stopping directory server.");
-                    if directory.connection_type == ConnectionType::TOR && cfg!(feature = "tor"){
-                        crate::tor::kill_tor_handles(handle.unwrap());
-                        log::info!("Directory server and Tor instance terminated successfully");
-                    }
-                    break;
-                } else {
-                     let file_content = addresses.read().unwrap().iter().map(|addr| {
-                        format!("{}\n", addr)
-                    }).collect::<Vec<String>>().join("");
-                    let mut file = OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .append(true)
-                    .open(address_file.to_str().unwrap())
-                    .await
+    while !*directory.shutdown.read().unwrap() {
+        match listener.accept() {
+            Ok((mut stream, addrs)) => {
+                log::debug!("Incoming connection from : {}", addrs);
+                let address_arc = addresses.clone();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(20)))
                     .unwrap();
-                    file.write_all(file_content.as_bytes()).await.unwrap();
-                }
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(20)))
+                    .unwrap();
+                handle_client(&mut stream, address_arc);
+            }
+
+            // If no connection received, check for shutdown or save addresses to disk
+            Err(e) => {
+                log::error!("Error accepting incoming connection: {:?}", e);
             }
         }
+
+        sleep(Duration::from_secs(3));
     }
+
+    log::info!("Shutdown signal received. Stopping directory server.");
+    rpc_thread.join().unwrap();
+    if let Some(handle) = tor_handle {
+        crate::tor::kill_tor_handles(handle);
+        log::info!("Directory server and Tor instance terminated successfully");
+    }
+
+    // Write the addresses to file
+    let file_content = addresses
+        .read()
+        .unwrap()
+        .iter()
+        .map(|addr| format!("{}\n", addr))
+        .collect::<Vec<String>>()
+        .join("");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true) // Override the address file
+        .open(address_file.to_str().unwrap())
+        .unwrap();
+    file.write_all(file_content.as_bytes()).unwrap();
+    file.flush().unwrap();
 }
 
-async fn handle_client(mut stream: tokio::net::TcpStream, addresses: Arc<RwLock<HashSet<String>>>) {
-    let mut reader = tokio::io::BufReader::new(&mut stream);
+// The stream should have read and write timeout set.
+// TODO: Use serde encoded data instead of string.
+fn handle_client(stream: &mut TcpStream, addresses: Arc<RwLock<HashSet<String>>>) {
+    let reader_stream = stream.try_clone().unwrap();
+    let mut reader = BufReader::new(reader_stream);
     let mut request_line = String::new();
-    reader.read_line(&mut request_line).await.unwrap();
-    log::info!("addresses, {:?}", addresses);
+
+    reader.read_line(&mut request_line).unwrap();
 
     if request_line.starts_with("POST") {
-        let onion_address: String = request_line.replace("POST ", "").trim().to_string();
-        addresses.write().unwrap().insert(onion_address.clone());
-        log::info!("Got new maker address: {}", onion_address);
+        let addr: String = request_line.replace("POST ", "").trim().to_string();
+        addresses.write().unwrap().insert(addr.clone());
+        log::info!("Got new maker address: {}", addr);
     } else if request_line.starts_with("GET") {
         log::info!("Taker pinged the directory server");
         let response = addresses
@@ -248,7 +260,8 @@ async fn handle_client(mut stream: tokio::net::TcpStream, addresses: Arc<RwLock<
             .unwrap()
             .iter()
             .fold(String::new(), |acc, addr| acc + addr + "\n");
-        stream.write_all(response.as_bytes()).await.unwrap();
+        stream.write_all(response.as_bytes()).unwrap();
+        stream.flush().unwrap();
     }
 }
 

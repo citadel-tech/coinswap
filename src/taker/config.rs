@@ -9,6 +9,7 @@ use crate::utill::{get_taker_dir, parse_field, parse_toml, write_default_config,
 /// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
+    // TODO: Move all of these to global constants.
     pub refund_locktime: u16,
     pub refund_locktime_step: u16,
 
@@ -22,6 +23,7 @@ pub struct TakerConfig {
     pub short_long_sleep_delay_transition: u32,
     pub reconnect_attempt_timeout_sec: u64,
 
+    // TODO: Only these should be user facing configs.
     pub port: u16,
     pub socks_port: u16,
     pub directory_server_onion_address: String,

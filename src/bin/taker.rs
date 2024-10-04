@@ -46,7 +46,7 @@ struct Cli {
     pub wallet_name: String,
     /// Sets the maker count to initiate coinswap with.
     #[clap(name = "maker_count", default_value = "2")]
-    pub maker_count: u16,
+    pub maker_count: usize,
     /// Sets the send amount.
     #[clap(name = "send_amount", default_value = "500000")]
     pub send_amount: u64,
@@ -72,16 +72,12 @@ enum Commands {
     SwapUtxo,
     /// Returns a list of live contract utxos
     ContractUtxo,
-    /// Returns a list of fidelity utxos
-    FidelityUtxo,
     /// Returns the total seed balance
     SeedBalance,
     /// Returns the total swap coin balance
     SwapBalance,
     /// Returns the total live contract balance
     ContractBalance,
-    /// Returns the total fidelity balance
-    FidelityBalance,
     /// Returns the total balance of taker wallet
     TotalBalance,
     /// Returns a new address
@@ -152,16 +148,6 @@ fn main() {
                 .collect();
             println!("{:?}", utxos);
         }
-        Commands::FidelityUtxo => {
-            let utxos: Vec<ListUnspentResultEntry> = taker
-                .get_wallet()
-                .list_fidelity_spend_info(None)
-                .unwrap()
-                .iter()
-                .map(|(l, _)| l.clone())
-                .collect();
-            println!("{:?}", utxos);
-        }
         Commands::ContractBalance => {
             let balance = taker.get_wallet().balance_live_contract(None).unwrap();
             println!("{:?}", balance);
@@ -174,10 +160,6 @@ fn main() {
             let balance = taker.get_wallet().balance_descriptor_utxo(None).unwrap();
             println!("{:?}", balance);
         }
-        Commands::FidelityBalance => {
-            let balance = taker.get_wallet().balance_fidelity_bonds(None).unwrap();
-            println!("{:?}", balance);
-        }
         Commands::TotalBalance => {
             let balance = taker.get_wallet().balance().unwrap();
             println!("{:?}", balance);
@@ -187,23 +169,10 @@ fn main() {
             println!("{:?}", address);
         }
         Commands::SyncOfferBook => {
-            let taker2 = Taker::init(
-                args.data_directory,
-                Some(args.wallet_name),
-                Some(rpc_config),
-                TakerBehavior::Normal,
-                Some(connection_type),
-            )
-            .unwrap();
-            let config = taker2.config.clone();
-            let _ = futures::executor::block_on(taker.sync_offerbook(
-                read_bitcoin_network_string(&args.network).unwrap(),
-                &config,
-                args.maker_count,
-            ));
+            taker.sync_offerbook(args.maker_count).unwrap();
         }
         Commands::DoCoinswap => {
-            let _ = taker.do_coinswap(swap_params);
+            taker.do_coinswap(swap_params).unwrap();
         }
     }
 }

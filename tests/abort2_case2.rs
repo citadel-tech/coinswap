@@ -19,8 +19,8 @@ use std::{fs::File, io::Read, path::PathBuf, thread, time::Duration};
 /// not swap this maker again.
 ///
 /// CASE 2: Maker Drops Before Sending Sender's Signature, and Taker cannot find a new Maker, recovers from Swap.
-#[tokio::test]
-async fn test_abort_case_2_recover_if_no_makers_found() {
+#[test]
+fn test_abort_case_2_recover_if_no_makers_found() {
     // ---- Setup ----
 
     // 6102 is naughty. And theres not enough makers.
@@ -43,8 +43,7 @@ async fn test_abort_case_2_recover_if_no_makers_found() {
         makers_config_map.into(),
         None,
         ConnectionType::CLEARNET,
-    )
-    .await;
+    );
 
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {

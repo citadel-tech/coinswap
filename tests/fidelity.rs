@@ -1,9 +1,8 @@
 #![cfg(feature = "integration-test")]
 use bitcoin::{absolute::LockTime, Amount};
 use coinswap::{
-    maker::{error::MakerError, start_maker_server, MakerBehavior},
+    maker::{start_maker_server, MakerBehavior},
     utill::ConnectionType,
-    wallet::{FidelityError, WalletError},
 };
 
 mod test_framework;
@@ -24,8 +23,8 @@ use std::{thread, time::Duration};
 ///
 /// Maker server will error if not enough balance is present to create fidelity bond.
 /// A custom fidelity bond can be create using the `create_fidelity()` API.
-#[tokio::test]
-async fn test_fidelity() {
+#[test]
+fn test_fidelity() {
     // ---- Setup ----
 
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
@@ -35,8 +34,7 @@ async fn test_fidelity() {
         makers_config_map.into(),
         None,
         ConnectionType::CLEARNET,
-    )
-    .await;
+    );
 
     let maker = makers.first().unwrap();
 
@@ -56,17 +54,12 @@ async fn test_fidelity() {
     let maker_clone = maker.clone();
     let maker_thread = thread::spawn(move || start_maker_server(maker_clone));
 
-    thread::sleep(Duration::from_secs(5));
+    thread::sleep(Duration::from_secs(20));
     maker.shutdown().unwrap();
-    let expected_error = maker_thread.join().unwrap();
+    let _ = maker_thread.join().unwrap();
 
-    matches!(
-        expected_error.err().unwrap(),
-        MakerError::Wallet(WalletError::Fidelity(FidelityError::InsufficientFund {
-            available: 4000000,
-            required: 5000000,
-        }))
-    );
+    // TODO: Assert that fund request for fidelity is printed in the log.
+    *maker.shutdown.write().unwrap() = false;
 
     // Give Maker more funds and check fidelity bond is created at the restart of server.
     test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.04).unwrap());
@@ -75,7 +68,7 @@ async fn test_fidelity() {
     let maker_clone = maker.clone();
     let maker_thread = thread::spawn(move || start_maker_server(maker_clone));
 
-    thread::sleep(Duration::from_secs(5));
+    thread::sleep(Duration::from_secs(20));
     maker.shutdown().unwrap();
 
     let success = maker_thread.join().unwrap();

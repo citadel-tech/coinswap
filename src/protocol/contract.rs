@@ -144,7 +144,7 @@ pub fn check_reedemscript_is_multisig(redeemscript: &Script) -> Result<(), Contr
     //pattern match to check redeemscript is really a 2of2 multisig
     let mut ms_rs_bytes = redeemscript.to_bytes();
     const PUB_PLACEHOLDER: [u8; 33] = [0x02; 33];
-    let pubkey_placeholder = PublicKey::from_slice(&PUB_PLACEHOLDER).unwrap();
+    let pubkey_placeholder = PublicKey::from_slice(&PUB_PLACEHOLDER)?;
     let template_ms_rs =
         create_multisig_redeemscript(&pubkey_placeholder, &pubkey_placeholder).into_bytes();
     if ms_rs_bytes.len() != template_ms_rs.len() {
@@ -282,10 +282,10 @@ pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<Hash160, Co
     }
     let mut instrs = redeemscript.instructions().skip(2);
     // Unwrap Safety: length is checked
-    let Instruction::Op(opcodes::all::OP_HASH160) = instrs.next().unwrap()? else {
+    let Instruction::Op(opcodes::all::OP_HASH160) = instrs.next().expect("opcode expected")? else {
         return Err(ContractError::Protocol("Hash is not present!"));
     };
-    let Instruction::PushBytes(hash_b) = instrs.next().unwrap()? else {
+    let Instruction::PushBytes(hash_b) = instrs.next().expect("opcode expected")? else {
         return Err(ContractError::Protocol("Invalid script!"));
     };
 
@@ -322,7 +322,9 @@ pub fn read_contract_locktime(redeemscript: &Script) -> Result<u16, ContractErro
                 let (int_bytes, _rest) = locktime_bytes
                     .as_bytes()
                     .split_at(std::mem::size_of::<u16>());
-                Ok(u16::from_le_bytes(int_bytes.try_into().unwrap()))
+                Ok(u16::from_le_bytes(int_bytes.try_into().map_err(|_| {
+                    ContractError::Protocol("Can't read locktime value from contract reedemscript")
+                })?))
             }
             _ => Err(ContractError::Protocol(
                 "Can't read locktime value from contract reedemscript",
@@ -446,11 +448,13 @@ pub fn validate_contract_tx(
             "invalid number of inputs or outputs",
         ));
     }
-    if funding_outpoint.is_some()
-        && receivers_contract_tx.input[0].previous_output != *funding_outpoint.unwrap()
-    {
-        return Err(ContractError::Protocol("not spending the funding outpoint"));
+
+    if let Some(op) = funding_outpoint {
+        if receivers_contract_tx.input[0].previous_output != *op {
+            return Err(ContractError::Protocol("not spending the funding outpoint"));
+        }
     }
+
     if receivers_contract_tx.output[0].script_pubkey
         != redeemscript_to_scriptpubkey(contract_redeemscript)
     {
@@ -520,6 +524,8 @@ mod test {
     };
     use core::panic;
     use std::str::FromStr;
+
+    const TEST_CURRENT_HEIGHT: u32 = 100;
 
     fn read_pubkeys_from_contract_reedimscript(
         contract_script: &Script,
@@ -677,7 +683,7 @@ mod test {
                     value: Amount::from_sat(3000),
                 },
             ],
-            lock_time: LockTime::ZERO,
+            lock_time: LockTime::from_height(TEST_CURRENT_HEIGHT).unwrap(),
             version: Version::TWO,
         };
 
@@ -841,7 +847,7 @@ mod test {
                 script_pubkey: funding_spk,
                 value: Amount::from_sat(2000),
             }],
-            lock_time: LockTime::ZERO,
+            lock_time: LockTime::from_height(TEST_CURRENT_HEIGHT).unwrap(),
             version: Version::TWO,
         };
 
@@ -1250,7 +1256,7 @@ mod test {
                     value: Amount::from_sat(3000),
                 },
             ],
-            lock_time: LockTime::ZERO,
+            lock_time: LockTime::from_height(TEST_CURRENT_HEIGHT).unwrap(),
             version: Version::TWO,
         };
 

@@ -16,8 +16,8 @@ use std::{assert_eq, collections::BTreeSet, thread, time::Duration};
 ///
 /// The Makers identify the situation and gets their money back via contract txs. This is
 /// a potential DOS on Makers. But Taker would loose money too for doing this.
-#[tokio::test]
-async fn malice1_taker_broadcast_contract_prematurely() {
+#[test]
+fn malice1_taker_broadcast_contract_prematurely() {
     // ---- Setup ----
 
     let makers_config_map = [
@@ -32,8 +32,7 @@ async fn malice1_taker_broadcast_contract_prematurely() {
         makers_config_map.into(),
         Some(TakerBehavior::BroadcastContractAfterFullSetup),
         ConnectionType::CLEARNET,
-    )
-    .await;
+    );
 
     warn!("Running Test: Taker broadcasts contract transaction prematurely");
 

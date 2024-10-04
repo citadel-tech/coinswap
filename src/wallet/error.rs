@@ -16,6 +16,7 @@ pub enum WalletError {
     Fidelity(FidelityError),
     Locktime(bitcoin::blockdata::locktime::absolute::ConversionError),
     Secp(bitcoin::secp256k1::Error),
+    Consensus(String),
 }
 
 impl From<std::io::Error> for WalletError {
@@ -69,5 +70,23 @@ impl From<bitcoin::blockdata::locktime::absolute::ConversionError> for WalletErr
 impl From<bitcoin::secp256k1::Error> for WalletError {
     fn from(value: bitcoin::secp256k1::Error) -> Self {
         Self::Secp(value)
+    }
+}
+
+impl From<bitcoin::sighash::P2wpkhError> for WalletError {
+    fn from(value: bitcoin::sighash::P2wpkhError) -> Self {
+        Self::Consensus(value.to_string())
+    }
+}
+
+impl From<bitcoin::key::UncompressedPublicKeyError> for WalletError {
+    fn from(value: bitcoin::key::UncompressedPublicKeyError) -> Self {
+        Self::Consensus(value.to_string())
+    }
+}
+
+impl From<bitcoin::transaction::InputsIndexError> for WalletError {
+    fn from(value: bitcoin::transaction::InputsIndexError) -> Self {
+        Self::Consensus(value.to_string())
     }
 }
