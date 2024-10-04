@@ -157,10 +157,45 @@ fn write_default_directory_config(config_path: &PathBuf) -> std::io::Result<()> 
 
     write_default_config(config_path, config_string)
 }
-
-pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), DirectoryServerError> {
+pub fn start_address_writer_thread(directory: Arc<DirectoryServer>) {
     let address_file = directory.data_dir.join("addresses.dat");
+    loop {
+        sleep(Duration::from_secs(60)); // Write every 60 seconds to the file
 
+        if let Err(e) = write_addresses_to_file(&directory, &address_file) {
+            log::error!("Error writing addresses: {:?}", e);
+        }
+    }
+}
+
+pub fn write_addresses_to_file(
+    directory: &Arc<DirectoryServer>,
+    address_file: &Path,
+) -> Result<(), DirectoryServerError> {
+    let file_content = directory
+        .addresses
+        .read()
+        .map_err(|_| DirectoryServerError::LockError)?
+        .iter()
+        .map(|addr| format!("{}\n", addr))
+        .collect::<Vec<String>>()
+        .join("");
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(
+            address_file
+                .to_str()
+                .ok_or(DirectoryServerError::Other("Invalid address file path"))?,
+        )?;
+
+    file.write_all(file_content.as_bytes())?;
+    file.flush()?;
+    Ok(())
+}
+pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), DirectoryServerError> {
     let mut tor_handle = None;
 
     match directory.connection_type {
@@ -183,7 +218,7 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
                     "/tmp/tor-rust-directory".to_string(),
                 ));
 
-                thread::sleep(Duration::from_secs(10));
+                sleep(Duration::from_secs(10));
 
                 if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
                     log::error!("Error monitoring Directory log file: {}", e);
@@ -205,6 +240,12 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
     let directory_server_arc = directory.clone();
     let rpc_thread = thread::spawn(|| {
         start_rpc_server_thread(directory_server_arc);
+    });
+
+    let address_file = directory.data_dir.join("addresses.dat");
+    let directory_clone = directory.clone();
+    let address_writer_thread = thread::spawn(move || {
+        start_address_writer_thread(directory_clone);
     });
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port))
@@ -242,31 +283,15 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
     rpc_thread
         .join()
         .map_err(|_| DirectoryServerError::Other("Failed to join RPC thread"))?;
+    address_writer_thread
+        .join()
+        .map_err(|_| DirectoryServerError::Other("Failed to join address writer"))?;
     if let Some(handle) = tor_handle {
         crate::tor::kill_tor_handles(handle);
         log::info!("Directory server and Tor instance terminated successfully");
     }
 
-    // Write the addresses to file
-    let file_content = directory
-        .addresses
-        .read()
-        .map_err(|_| DirectoryServerError::LockError)?
-        .iter()
-        .map(|addr| format!("{}\n", addr))
-        .collect::<Vec<String>>()
-        .join("");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true) // Override the address file
-        .open(
-            address_file
-                .to_str()
-                .ok_or(DirectoryServerError::Other("Invalid address file path"))?,
-        )?;
-    file.write_all(file_content.as_bytes())?;
-    file.flush()?;
+    write_addresses_to_file(&directory, &address_file)?;
 
     Ok(())
 }
@@ -293,15 +318,6 @@ fn handle_client(
             .map_err(|_| DirectoryServerError::LockError)?
             .insert(addr.clone());
         log::info!("Got new maker address: {}", addr);
-
-        let address_file = directory.data_dir.join("addresses.dat");
-        // Expensive i/o operations below; Implement drop trait for directory server objects
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(address_file)
-            .map_err(DirectoryServerError::Io)?;
-        writeln!(file, "{}", addr).map_err(DirectoryServerError::Io)?;
     } else if request_line.starts_with("GET") {
         log::info!("Taker pinged the directory server");
         let response = directory
@@ -317,7 +333,6 @@ fn handle_client(
     }
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
