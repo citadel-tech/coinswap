@@ -952,12 +952,9 @@ impl Wallet {
 
     /// Refreshes the offer maximum size cache based on the current wallet's unspent transaction outputs (UTXOs).
     pub fn refresh_offer_maxsize_cache(&mut self) -> Result<(), WalletError> {
-        let all_utxos = self.get_all_utxo()?;
-        let mut utxos = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
-        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
-        utxos.append(&mut swap_coin_utxo);
-        let balance: Amount = utxos.iter().fold(Amount::ZERO, |acc, u| acc + u.0.amount);
-        self.store.offer_maxsize = balance.to_sat();
+        let swap_balance = self.balance_swap_coins(None)?;
+        let seed_balance = self.balance_descriptor_utxo(None)?;
+        self.store.offer_maxsize = (seed_balance + swap_balance).to_sat();
         Ok(())
     }
 
