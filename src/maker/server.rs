@@ -380,6 +380,7 @@ fn handle_client(
 
 // The main Maker Server process.
 pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
+    log::info!("Starting Maker Server");
     // Initialize network connections.
     let (maker_address, tor_thread) = network_bootstrap(maker.clone())?;
     let port = maker.config.port;
@@ -414,62 +415,62 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     // All thread handles are stored in the thread_pool, which are all joined at server shutdown.
     let mut thread_pool = Vec::new();
 
-    // 1. Bitcoin Core Connection checker thread.
-    // Ensures that Bitcoin Core connection is live.
-    // If not, it will block p2p connections until Core works again.
-    let maker_clone = maker.clone();
-    let acc_client_clone = accepting_clients.clone();
-    let conn_check_thread: thread::JoinHandle<Result<(), MakerError>> = thread::Builder::new()
-        .name("Bitcoin Core Connection Checker Thread".to_string())
-        .spawn(move || {
-            log::info!("[{}] Spawning Bitcoin Core connection checker thread", port);
-            check_connection_with_core(maker_clone, acc_client_clone)
-        })?;
-    thread_pool.push(conn_check_thread);
+    if !*maker.shutdown.read()? {
+        // 1. Bitcoin Core Connection checker thread.
+        // Ensures that Bitcoin Core connection is live.
+        // If not, it will block p2p connections until Core works again.
+        let maker_clone = maker.clone();
+        let acc_client_clone = accepting_clients.clone();
+        let conn_check_thread: thread::JoinHandle<Result<(), MakerError>> = thread::Builder::new()
+            .name("Bitcoin Core Connection Checker Thread".to_string())
+            .spawn(move || {
+                log::info!("[{}] Spawning Bitcoin Core connection checker thread", port);
+                check_connection_with_core(maker_clone, acc_client_clone)
+            })?;
+        thread_pool.push(conn_check_thread);
 
-    // 2. Idle Client connection checker thread.
-    // This threads check idelness of peer in live swaps.
-    // And takes recovery measure if the peer seems to have disappeared in middlle of a swap.
-    let maker_clone = maker.clone();
-    let idle_conn_check_thread = thread::Builder::new()
-        .name("Idle Client Checker Thread".to_string())
-        .spawn(move || {
-            log::info!(
-                "[{}] Spawning Client connection status checker thread",
-                port
-            );
-            check_for_idle_states(maker_clone.clone())
-        })?;
-    thread_pool.push(idle_conn_check_thread);
+        // 2. Idle Client connection checker thread.
+        // This threads check idelness of peer in live swaps.
+        // And takes recovery measure if the peer seems to have disappeared in middlle of a swap.
+        let maker_clone = maker.clone();
+        let idle_conn_check_thread = thread::Builder::new()
+            .name("Idle Client Checker Thread".to_string())
+            .spawn(move || {
+                log::info!(
+                    "[{}] Spawning Client connection status checker thread",
+                    port
+                );
+                check_for_idle_states(maker_clone.clone())
+            })?;
+        thread_pool.push(idle_conn_check_thread);
 
-    // 3. Watchtower thread.
-    // This thread checks for broadcasted contract transactions, which usually means violation of the protocol.
-    // When contract transaction detected in mempool it will attempt recovery.
-    // This can get triggered even when contracts of adjacent hops are published. Implying the whole swap route is disrupted.
-    let maker_clone = maker.clone();
-    let contract_watcher_thread = thread::Builder::new()
-        .name("Contract Watcher Thread".to_string())
-        .spawn(move || {
-            log::info!("[{}] Spawning contract-watcher thread", port);
-            check_for_broadcasted_contracts(maker_clone.clone())
-        })?;
-    thread_pool.push(contract_watcher_thread);
+        // 3. Watchtower thread.
+        // This thread checks for broadcasted contract transactions, which usually means violation of the protocol.
+        // When contract transaction detected in mempool it will attempt recovery.
+        // This can get triggered even when contracts of adjacent hops are published. Implying the whole swap route is disrupted.
+        let maker_clone = maker.clone();
+        let contract_watcher_thread = thread::Builder::new()
+            .name("Contract Watcher Thread".to_string())
+            .spawn(move || {
+                log::info!("[{}] Spawning contract-watcher thread", port);
+                check_for_broadcasted_contracts(maker_clone.clone())
+            })?;
+        thread_pool.push(contract_watcher_thread);
 
-    // 4: The RPC server thread.
-    // User for responding back to `maker-cli` apps.
-    let maker_clone = maker.clone();
-    let rpc_thread = thread::Builder::new()
-        .name("RPC Thread".to_string())
-        .spawn(move || {
-            log::info!("[{}] Spawning RPC server", port);
-            start_rpc_server(maker_clone)
-        })?;
+        // 4: The RPC server thread.
+        // User for responding back to `maker-cli` apps.
+        let maker_clone = maker.clone();
+        let rpc_thread = thread::Builder::new()
+            .name("RPC Thread".to_string())
+            .spawn(move || {
+                log::info!("[{}] Spawning RPC server", port);
+                start_rpc_server(maker_clone)
+            })?;
 
-    thread_pool.push(rpc_thread);
-
-    maker.setup_complete()?;
-
-    log::info!("[{}] Maker setup is ready", maker.config.port);
+        thread_pool.push(rpc_thread);
+        maker.setup_complete()?;
+        log::info!("[{}] Maker setup is ready", maker.config.port);
+    }
 
     // The P2P Client connection loop.
     // Each client connection will spawn a new handler thread, which is added back in the global thread_pool.
@@ -548,6 +549,6 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Shutdown wallet syncing completed.");
     maker.get_wallet().read()?.save_to_disk()?;
     log::info!("Wallet file saved to disk.");
-
+    log::info!("Maker Server is shut down successfully");
     Ok(())
 }
