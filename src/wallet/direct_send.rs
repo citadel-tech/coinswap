@@ -12,7 +12,7 @@ use bitcoin::{
 };
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RawTx, RpcApi};
 
-use crate::wallet::{api::UTXOSpendInfo, SwapCoin};
+use crate::wallet::api::UTXOSpendInfo;
 
 use super::{error::WalletError, Wallet};
 
@@ -55,15 +55,24 @@ impl FromStr for Destination {
 }
 
 impl Wallet {
-    /// API to perform spending from wallet utxos, Including descriptor coins, swap coins or contract outputs (timelock/hashlock).
-    /// This should not be used to spend the Fidelity Bond. Check [Wallet::redeem_fidelity] for fidelity spending.
+    /// API to perform spending from wallet UTXOs, including descriptor coins and swap coins.
     ///
-    /// The caller needs to specify the list of utxo data and their corresponding spend_info. These can be extracted by various `list_utxo_*` Wallet APIs.
+    /// The caller needs to specify a list of UTXO data and their corresponding `spend_info`.
+    /// These can be extracted using various `list_utxo_*` Wallet APIs.
     ///
-    /// Caller needs to specify a total Fee and Destination address. Using [Destination::Wallet] will create a transaction to an internal wallet change address.
+    /// The caller must also specify a total fee and a destination address.
+    /// Using [Destination::Wallet] will create a transaction to an internal wallet change address.
     ///
-    /// Using [SendAmount::Max] will sweep all the inputs, creating a transaction of max possible value to destination. To send custom value and hold remaining in
-    /// a change address, use [SendAmount::Amount].
+    /// ### Note
+    /// This function should not be used to spend Fidelity Bonds or contract UTXOs
+    /// (e.g., Hashlock or Timelock contracts). These UTXOs will be automatically skipped
+    /// and not considered when creating the transaction.
+    ///
+    /// ### Behavior
+    /// - If [SendAmount::Max] is used, the function creates a transaction for the maximum possible
+    ///   value to the specified destination.
+    /// - If [SendAmount::Amount] is used, a custom value is sent, and any remaining funds
+    ///    are held in a change address, if applicable.
     pub fn spend_from_wallet(
         &mut self,
         fee: Amount,
@@ -72,49 +81,56 @@ impl Wallet {
         coins_to_spend: &[(ListUnspentResultEntry, UTXOSpendInfo)],
     ) -> Result<Transaction, WalletError> {
         log::info!("Creating Direct-Spend from Wallet.");
-        let mut tx_inputs = Vec::<TxIn>::new();
-        let mut spend_infos = Vec::new();
+
+        // Set the Anti-Fee-Snipping locktime
+        let current_height = self.rpc.get_block_count()?;
+        let lock_time = LockTime::from_height(current_height as u32)?;
+
+        let mut tx = Transaction {
+            version: Version::TWO,
+            lock_time,
+            input: vec![],
+            output: vec![],
+        };
+
         let mut total_input_value = Amount::ZERO;
 
         for (utxo_data, spend_info) in coins_to_spend {
-            // Sequence value required if utxo is timelock/hashlock
-            let sequence = match spend_info {
-                UTXOSpendInfo::TimelockContract {
-                    ref swapcoin_multisig_redeemscript,
-                    input_value: _,
-                } => self
-                    .find_outgoing_swapcoin(swapcoin_multisig_redeemscript)
-                    .expect("Outgoing swapcoin expected")
-                    .get_timelock()? as u32,
-                UTXOSpendInfo::HashlockContract {
-                    swapcoin_multisig_redeemscript: _,
-                    input_value: _,
-                } => 1, //hashlock spends must have 1 because of the `OP_CSV 1`
-                _ => 0,
-            };
+            // filter all contract and fidelity utxos.
+            if let UTXOSpendInfo::FidelityBondCoin { .. }
+            | UTXOSpendInfo::HashlockContract { .. }
+            | UTXOSpendInfo::TimelockContract { .. } = spend_info
+            {
+                log::warn!("Skipping Fidelity Bond or Contract UTXO.");
+                continue;
+            }
 
-            tx_inputs.push(TxIn {
+            tx.input.push(TxIn {
                 previous_output: OutPoint::new(utxo_data.txid, utxo_data.vout),
-                sequence: Sequence(sequence),
+                sequence: Sequence::ZERO,
                 witness: Witness::new(),
                 script_sig: ScriptBuf::new(),
             });
 
-            spend_infos.push(spend_info);
-
             total_input_value += utxo_data.amount;
         }
 
-        if tx_inputs.len() != coins_to_spend.len() {
-            return Err(WalletError::Protocol(
-                "Could not fetch all inputs.".to_string(),
-            ));
+        if let SendAmount::Amount(a) = send_amount {
+            if a + fee > total_input_value {
+                return Err(WalletError::Protocol(format!(
+
+                    "Insufficient funds: Required (send_amount + fee): {} sats | Available: {} sats | Deficit: {} sats.",
+                    (a + fee).to_sat(),
+                    total_input_value.to_sat(),
+                    (a + fee - total_input_value).to_sat(),
+                )));
+            }
         }
 
         log::info!("Total Input Amount: {} | Fees: {}", total_input_value, fee);
 
         let dest_addr = match destination {
-            Destination::Wallet => self.get_next_external_address()?,
+            Destination::Wallet => self.get_next_internal_addresses(1)?[0].clone(),
             Destination::Address(a) => {
                 //testnet and signet addresses have the same vbyte
                 //so a.network is always testnet even if the address is signet
@@ -133,45 +149,39 @@ impl Wallet {
             }
         };
 
-        let mut output = Vec::<TxOut>::new();
-
         let txout = {
             let value = match send_amount {
-                SendAmount::Max => (total_input_value - fee).to_sat(),
-                SendAmount::Amount(a) => a.to_sat(),
+                SendAmount::Max => total_input_value - fee,
+
+                SendAmount::Amount(a) => a,
             };
             log::info!("Sending {} to {}.", value, dest_addr);
             TxOut {
                 script_pubkey: dest_addr.script_pubkey(),
-                value: Amount::from_sat(value),
+                value,
             }
         };
 
-        output.push(txout);
+        tx.output.push(txout);
 
         // Only include change if remaining > dust
         if let SendAmount::Amount(amount) = send_amount {
             let internal_spk = self.get_next_internal_addresses(1)?[0].script_pubkey();
             let remaining = total_input_value - amount - fee;
             if remaining > internal_spk.minimal_non_dust() {
-                log::info!("Adding Change {}:{}", internal_spk, remaining);
-                output.push(TxOut {
+                log::info!("Adding Change {}: {}", internal_spk, remaining);
+                tx.output.push(TxOut {
                     script_pubkey: internal_spk,
                     value: remaining,
                 });
+            } else {
+                log::info!(
+                    "Remaining change {} sats is below dust threshold. Skipping change output.",
+                    remaining
+                );
             }
         }
 
-        // Set the Anti-Fee-Snipping locktime
-        let current_height = self.rpc.get_block_count()?;
-        let lock_time = LockTime::from_height(current_height as u32)?;
-
-        let mut tx = Transaction {
-            input: tx_inputs,
-            output,
-            lock_time,
-            version: Version::TWO,
-        };
         self.sign_transaction(
             &mut tx,
             &mut coins_to_spend.iter().map(|(_, usi)| usi.clone()),
