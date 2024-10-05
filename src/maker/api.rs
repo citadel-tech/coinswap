@@ -239,25 +239,6 @@ impl Maker {
         &self.wallet
     }
 
-    /// Generates Fidelity bond from existing utxos
-    /// Errors if not enough balance
-    pub fn create_fidelity_bond(&self) -> Result<(), MakerError> {
-        let mut wallet = self.wallet.write()?;
-        log::info!("Creating Fidelity Bond.");
-        let fidelity_index = wallet.create_fidelity(
-            Amount::from_sat(self.config.fidelity_value),
-            LockTime::from_height(self.config.fidelity_timelock).unwrap(),
-        )?;
-
-        log::info!("Created new fidelity bond at index: {} ", fidelity_index);
-        let bond = wallet
-            .get_fidelity_bonds()
-            .get(&fidelity_index)
-            .expect("bond expected");
-        log::info!("Bond: {:?}", bond);
-        Ok(())
-    }
-
     /// Checks consistency of the [ProofOfFunding] message and return the Hashvalue
     /// used in hashlock transaction.
     pub fn verify_proof_of_funding(&self, message: &ProofOfFunding) -> Result<Hash160, MakerError> {
