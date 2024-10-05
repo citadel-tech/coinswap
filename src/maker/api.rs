@@ -16,10 +16,9 @@ use std::{
 
 use bip39::Mnemonic;
 use bitcoin::{
-    absolute::LockTime,
     ecdsa::Signature,
     secp256k1::{self, Secp256k1},
-    Amount, OutPoint, PublicKey, ScriptBuf, Transaction,
+    OutPoint, PublicKey, ScriptBuf, Transaction,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use std::time::Duration;

@@ -46,10 +46,12 @@ const FIDELITY_DERIVATION_PATH: &str = "m/84'/0'/0'/2";
 #[derive(Debug)]
 pub enum FidelityError {
     WrongScriptType,
+    // TODO: Do we require this unused error variant?
     BondAlreadyExists(u32),
     BondDoesNotExist,
     BondAlreadySpent,
     CertExpired,
+    // TODO: Include this variant in WalletError instead.
     InsufficientFund { available: u64, required: u64 },
     General(String),
 }
