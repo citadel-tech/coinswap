@@ -117,13 +117,10 @@ impl Wallet {
 
         if let SendAmount::Amount(a) = send_amount {
             if a + fee > total_input_value {
-                return Err(WalletError::Protocol(format!(
-
-                    "Insufficient funds: Required (send_amount + fee): {} sats | Available: {} sats | Deficit: {} sats.",
-                    (a + fee).to_sat(),
-                    total_input_value.to_sat(),
-                    (a + fee - total_input_value).to_sat(),
-                )));
+                return Err(WalletError::InsufficientFund {
+                    available: total_input_value.to_sat(),
+                    required: (a + fee).to_sat(),
+                });
             }
         }
 

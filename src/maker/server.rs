@@ -30,7 +30,7 @@ use crate::{
     },
     protocol::messages::TakerToMakerMessage,
     utill::{monitor_log_for_completion, read_message, send_message, ConnectionType},
-    wallet::{FidelityError, WalletError},
+    wallet::WalletError,
 };
 
 use crate::maker::error::MakerError;
@@ -228,10 +228,10 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
                 // Wait for sufficient fund to create fidelity bond.
                 // Hard error if fidelity still can't be created.
                 Err(e) => {
-                    if let WalletError::Fidelity(FidelityError::InsufficientFund {
+                    if let WalletError::InsufficientFund {
                         available,
                         required,
-                    }) = e
+                    } = e
                     {
                         log::warn!("Insufficient fund to create fidelity bond.");
                         let amount = required - available;
