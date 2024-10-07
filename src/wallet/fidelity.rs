@@ -5,6 +5,11 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::{
+    protocol::messages::FidelityProof,
+    utill::redeemscript_to_scriptpubkey,
+    wallet::{UTXOSpendInfo, Wallet},
+};
 use bitcoin::{
     absolute::LockTime,
     bip32::{ChildNumber, DerivationPath},
@@ -18,12 +23,6 @@ use bitcoin::{
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Deserialize, Serialize};
-
-use crate::{
-    protocol::messages::FidelityProof,
-    utill::redeemscript_to_scriptpubkey,
-    wallet::{UTXOSpendInfo, Wallet},
-};
 
 use super::WalletError;
 
@@ -46,11 +45,9 @@ const FIDELITY_DERIVATION_PATH: &str = "m/84'/0'/0'/2";
 #[derive(Debug)]
 pub enum FidelityError {
     WrongScriptType,
-    BondAlreadyExists(u32),
     BondDoesNotExist,
     BondAlreadySpent,
     CertExpired,
-    InsufficientFund { available: u64, required: u64 },
     General(String),
 }
 
@@ -323,11 +320,10 @@ impl Wallet {
         });
 
         if total_input_amount < amount {
-            return Err((FidelityError::InsufficientFund {
+            return Err(WalletError::InsufficientFund {
                 available: total_input_amount.to_sat(),
                 required: amount.to_sat(),
-            })
-            .into());
+            });
         }
 
         let change_amount = total_input_amount.checked_sub(amount + fee);
