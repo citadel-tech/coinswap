@@ -202,7 +202,7 @@ impl Maker {
             config.connection_type = connection_type;
         }
 
-        // TODO: Write the modified config back to the file.
+        config.update_maker_config(&data_dir.join("config.toml"));
 
         log::info!("Initializing wallet sync");
         wallet.sync()?;

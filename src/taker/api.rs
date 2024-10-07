@@ -222,6 +222,8 @@ impl Taker {
             config.connection_type = connection_type;
         }
 
+        config.update_taker_config(&data_dir.join("config.toml"));
+
         log::info!("Initializing wallet sync");
         wallet.sync()?;
         log::info!("Completed wallet sync");

@@ -3,9 +3,8 @@
 //!  Represents the configuration options for the Taker module, controlling behaviors
 //! such as refund locktime, connection attempts, sleep delays, and timeouts.
 
-use std::{io, path::PathBuf};
-
 use crate::utill::{get_taker_dir, parse_field, parse_toml, write_default_config, ConnectionType};
+use std::{io, path::PathBuf};
 /// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
@@ -165,6 +164,49 @@ impl TakerConfig {
             )
             .unwrap_or(default_config.rpc_port),
         })
+    }
+
+    // Method to manually serialize the Taker Config into a TOML string
+    pub fn update_taker_config(&self, file_path: &std::path::Path) {
+        let updated_string = format!(
+            r#"
+            refund_locktime = {}
+            refund_locktime_step = {}
+            first_connect_attempts = {}
+            first_connect_sleep_delay_sec = {}
+            first_connect_attempt_timeout_sec = {}
+            reconnect_attempts = {}
+            reconnect_short_sleep_delay = {}
+            reconnect_long_sleep_delay = {}
+            short_long_sleep_delay_transition = {}
+            reconnect_attempt_timeout_sec = {}
+            port = {}
+            socks_port = {}
+            directory_server_onion_address = "{}"
+            directory_server_clearnet_address = "{}"
+            connection_type = "{:?}"
+            rpc_port = {}
+            "#,
+            self.refund_locktime,
+            self.refund_locktime_step,
+            self.first_connect_attempts,
+            self.first_connect_sleep_delay_sec,
+            self.first_connect_attempt_timeout_sec,
+            self.reconnect_attempts,
+            self.reconnect_short_sleep_delay,
+            self.reconnect_long_sleep_delay,
+            self.short_long_sleep_delay_transition,
+            self.reconnect_attempt_timeout_sec,
+            self.port,
+            self.socks_port,
+            self.directory_server_onion_address,
+            self.directory_server_clearnet_address,
+            self.connection_type,
+            self.rpc_port
+        );
+        std::fs::write(file_path, updated_string).expect(
+            "Error while writing the updated configuration to the Maker's config.toml file!",
+        );
     }
 }
 
