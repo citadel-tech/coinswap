@@ -29,10 +29,7 @@ fn handle_request(socket: &mut TcpStream, address: Arc<RwLock<HashSet<String>>>)
     }
 }
 
-pub fn start_rpc_server_thread(
-    directory: Arc<DirectoryServer>,
-    address: Arc<RwLock<HashSet<String>>>,
-) {
+pub fn start_rpc_server_thread(directory: Arc<DirectoryServer>) {
     let rpc_port = directory.rpc_port;
     let rpc_socket = format!("127.0.0.1:{}", rpc_port);
     let listener = Arc::new(TcpListener::bind(&rpc_socket).unwrap());
@@ -54,7 +51,7 @@ pub fn start_rpc_server_thread(
                 stream
                     .set_write_timeout(Some(Duration::from_secs(20)))
                     .unwrap();
-                handle_request(&mut stream, address.clone());
+                handle_request(&mut stream, directory.addresses.clone());
             }
             Err(e) => {
                 if e.kind() == ErrorKind::WouldBlock {
