@@ -8,7 +8,7 @@ use coinswap::{
 mod test_framework;
 use test_framework::*;
 
-use std::{assert_eq, thread, time::Duration};
+use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// Test Fidelity Bond Creation and Redemption
 ///
@@ -56,8 +56,8 @@ fn test_fidelity() {
     maker.shutdown().unwrap();
     let _ = maker_thread.join().unwrap();
 
-    // TODO: Assert that a request for fidelity funds is printed in the logs.
-    *maker.shutdown.write().unwrap() = false;
+    // TODO: Assert that fund request for fidelity is printed in the log.
+    maker.shutdown.store(false, Relaxed);
 
     // Provide the maker with more funds.
     test_framework.send_to_address(&maker_addrs, Amount::ONE_BTC);

@@ -10,8 +10,11 @@ use std::{
     collections::HashMap,
     net::IpAddr,
     path::PathBuf,
-    sync::{Arc, Mutex, RwLock},
-    time::Instant,
+    sync::{
+        atomic::{AtomicBool, Ordering::Relaxed},
+        Arc, Mutex, RwLock,
+    },
+    time::{Duration, Instant},
 };
 
 use bip39::Mnemonic;
@@ -21,7 +24,6 @@ use bitcoin::{
     OutPoint, PublicKey, ScriptBuf, Transaction,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
-use std::time::Duration;
 
 use crate::{
     protocol::{
@@ -95,7 +97,7 @@ pub struct Maker {
     /// Maker's underlying wallet
     pub wallet: RwLock<Wallet>,
     /// A flag to trigger shutdown event
-    pub shutdown: RwLock<bool>,
+    pub shutdown: AtomicBool,
     /// Map of IP address to Connection State + last Connected instant
     pub connection_state: Mutex<HashMap<IpAddr, (ConnectionState, Instant)>>,
     /// Highest Value Fidelity Proof
@@ -212,7 +214,7 @@ impl Maker {
             behavior,
             config,
             wallet: RwLock::new(wallet),
-            shutdown: RwLock::new(false),
+            shutdown: AtomicBool::new(false),
             connection_state: Mutex::new(HashMap::new()),
             highest_fidelity_proof: RwLock::new(None),
             is_setup_complete: RwLock::new(false),
@@ -221,8 +223,7 @@ impl Maker {
 
     /// Triggers a shutdown event for the Maker.
     pub fn shutdown(&self) -> Result<(), MakerError> {
-        let mut flag = self.shutdown.write()?;
-        *flag = true;
+        self.shutdown.store(true, Relaxed);
         Ok(())
     }
 
@@ -391,7 +392,7 @@ impl Maker {
 pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut failed_swap_ip = Vec::new();
     loop {
-        if *maker.shutdown.read()? {
+        if maker.shutdown.load(Relaxed) {
             break;
         }
         // An extra scope to release all locks when done.
@@ -503,7 +504,7 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
 pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut bad_ip = Vec::new();
     loop {
-        if *maker.shutdown.read()? {
+        if maker.shutdown.load(Relaxed) {
             break;
         }
         let current_time = Instant::now();
