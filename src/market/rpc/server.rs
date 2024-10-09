@@ -2,7 +2,7 @@ use std::{
     collections::HashSet,
     io::ErrorKind,
     net::{TcpListener, TcpStream},
-    sync::{Arc, RwLock},
+    sync::{atomic::Ordering::Relaxed, Arc, RwLock},
     thread::sleep,
     time::Duration,
 };
@@ -41,7 +41,7 @@ pub fn start_rpc_server_thread(directory: Arc<DirectoryServer>) {
 
     listener.set_nonblocking(true).unwrap();
 
-    while !*directory.shutdown.read().unwrap() {
+    while !directory.shutdown.load(Relaxed) {
         match listener.accept() {
             Ok((mut stream, addr)) => {
                 log::info!("Got RPC request from: {}", addr);

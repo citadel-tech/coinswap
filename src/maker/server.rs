@@ -9,7 +9,7 @@ use std::{
     io::{ErrorKind, Read, Write},
     net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{atomic::Ordering::Relaxed, Arc, Mutex},
     thread::{self, sleep},
     time::Duration,
 };
@@ -219,7 +219,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
         } else {
             LockTime::from_height(maker.config.fidelity_timelock + current_height).unwrap()
         };
-        while !*maker.shutdown.read()? {
+        while !maker.shutdown.load(Relaxed) {
             let fidelity_result = maker
                 .get_wallet()
                 .write()?
@@ -283,7 +283,7 @@ fn check_connection_with_core(
     accepting_clients: Arc<Mutex<bool>>,
 ) -> Result<(), MakerError> {
     let mut rpc_ping_success = false;
-    while !*maker.shutdown.read()? {
+    while !maker.shutdown.load(Relaxed) {
         // If connection is disrupted keep trying at heart_beat_interval (3 sec).
         // If connection is live, keep tring at rpc_ping_interval (60 sec).
         match rpc_ping_success {
@@ -321,7 +321,7 @@ fn handle_client(
 
     let mut connection_state = ConnectionState::default();
 
-    while !*maker.shutdown.read()? {
+    while !maker.shutdown.load(Relaxed) {
         let mut taker_msg_bytes = Vec::new();
         match read_message(stream) {
             Ok(b) => taker_msg_bytes = b,
@@ -415,7 +415,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     // All thread handles are stored in the thread_pool, which are all joined at server shutdown.
     let mut thread_pool = Vec::new();
 
-    if !*maker.shutdown.read()? {
+    if !maker.shutdown.load(Relaxed) {
         // 1. Bitcoin Core Connection checker thread.
         // Ensures that Bitcoin Core connection is live.
         // If not, it will block p2p connections until Core works again.
@@ -475,7 +475,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     // The P2P Client connection loop.
     // Each client connection will spawn a new handler thread, which is added back in the global thread_pool.
     // This loop beats at `maker.config.heart_beat_interval_secs`
-    while !*maker.shutdown.read()? {
+    while !maker.shutdown.load(Relaxed) {
         let maker = maker.clone(); // This clone is needed to avoid moving the Arc<Maker> in each iterations.
         let heart_beat_interval = maker.config.heart_beat_interval_secs;
 
