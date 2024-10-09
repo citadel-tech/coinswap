@@ -12,7 +12,7 @@
 
 mod api;
 mod config;
-mod error;
+pub mod error;
 mod handlers;
 mod rpc;
 mod server;
