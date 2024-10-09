@@ -133,8 +133,13 @@ impl TestFramework {
 
         log::info!("Initiating Directory Server .....");
 
-        let directory_server_instance =
-            Arc::new(DirectoryServer::new(None, Some(connection_type)).unwrap());
+        let directory_server_instance = Arc::new(
+            DirectoryServer::new(
+                Some(temp_dir.clone().join("directory_server")),
+                Some(connection_type),
+            )
+            .unwrap(),
+        );
         let directory_server_instance_clone = directory_server_instance.clone();
         thread::spawn(move || {
             start_directory_server(directory_server_instance_clone);
