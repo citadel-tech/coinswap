@@ -137,7 +137,7 @@ impl TestFramework {
             Arc::new(DirectoryServer::new(None, Some(connection_type)).unwrap());
         let directory_server_instance_clone = directory_server_instance.clone();
         thread::spawn(move || {
-            start_directory_server(directory_server_instance_clone);
+            start_directory_server(directory_server_instance_clone).unwrap();
         });
 
         // Translate a RpcConfig from the test framework.
