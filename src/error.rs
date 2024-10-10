@@ -1,5 +1,7 @@
 //! High-level network and protocol errors.
 
+use std::error::Error;
+
 use bitcoin::Amount;
 
 use crate::protocol::error::ContractError;
@@ -12,6 +14,19 @@ pub enum NetError {
     ConnectionTimedOut,
     InvalidNetworkAddress,
     Cbor(serde_cbor::Error),
+    InvalidAppNetwork,
+}
+
+impl std::fmt::Display for NetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl Error for NetError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
 }
 
 impl From<std::io::Error> for NetError {

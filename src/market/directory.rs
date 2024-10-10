@@ -5,16 +5,16 @@
 
 use std::{
     collections::HashSet,
-    fs::{self, OpenOptions},
-    io::{self, BufRead, BufReader, Write},
+    fs::OpenOptions,
+    io::{BufRead, BufReader, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
     path::Path,
-    sync::{Arc, RwLock},
+    sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard},
     thread::{self, sleep},
     time::Duration,
 };
 
-use crate::market::rpc::start_rpc_server_thread;
+use crate::{error::NetError, market::rpc::start_rpc_server_thread};
 use std::path::PathBuf;
 
 use crate::utill::{
@@ -25,7 +25,33 @@ use crate::utill::{
 /// Represents errors that can occur during directory server operations.
 #[derive(Debug)]
 pub enum DirectoryServerError {
-    Other(&'static str),
+    IO(std::io::Error),
+    Net(NetError),
+    MutexPossion,
+}
+
+impl From<std::io::Error> for DirectoryServerError {
+    fn from(value: std::io::Error) -> Self {
+        Self::IO(value)
+    }
+}
+
+impl From<NetError> for DirectoryServerError {
+    fn from(value: NetError) -> Self {
+        Self::Net(value)
+    }
+}
+
+impl<'a, T> From<PoisonError<RwLockReadGuard<'a, T>>> for DirectoryServerError {
+    fn from(_: PoisonError<RwLockReadGuard<'a, T>>) -> Self {
+        Self::MutexPossion
+    }
+}
+
+impl<'a, T> From<PoisonError<RwLockWriteGuard<'a, T>>> for DirectoryServerError {
+    fn from(_: PoisonError<RwLockWriteGuard<'a, T>>) -> Self {
+        Self::MutexPossion
+    }
 }
 
 /// Directory Configuration,
@@ -66,7 +92,7 @@ impl DirectoryServer {
     pub fn new(
         config_path: Option<PathBuf>,
         connection_type: Option<ConnectionType>,
-    ) -> io::Result<Self> {
+    ) -> Result<Self, DirectoryServerError> {
         let default_config = Self::default();
 
         let default_config_path = get_dns_dir().join("config.toml");
@@ -81,8 +107,10 @@ impl DirectoryServer {
             );
         }
 
-        // Its okay to unwrap as we just created the parent directory above
-        let data_dir = config_path.parent().unwrap().to_path_buf();
+        let data_dir = config_path
+            .parent()
+            .expect("Parent directory should exist")
+            .to_path_buf();
 
         let section = parse_toml(&config_path)?;
         log::info!(
@@ -114,16 +142,13 @@ impl DirectoryServer {
     }
 
     pub fn shutdown(&self) -> Result<(), DirectoryServerError> {
-        let mut flag = self
-            .shutdown
-            .write()
-            .map_err(|_| DirectoryServerError::Other("Rwlock write error!"))?;
+        let mut flag = self.shutdown.write()?;
         *flag = true;
         Ok(())
     }
 }
 
-fn write_default_directory_config(config_path: &PathBuf) -> std::io::Result<()> {
+fn write_default_directory_config(config_path: &PathBuf) -> Result<(), DirectoryServerError> {
     let config_string = String::from(
         "\
             [directory_config]\n\
@@ -134,10 +159,10 @@ fn write_default_directory_config(config_path: &PathBuf) -> std::io::Result<()> 
             ",
     );
 
-    write_default_config(config_path, config_string)
+    Ok(write_default_config(config_path, config_string)?)
 }
 
-pub fn start_directory_server(directory: Arc<DirectoryServer>) {
+pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), DirectoryServerError> {
     let address_file = directory.data_dir.join("addresses.dat");
 
     let addresses = Arc::new(RwLock::new(HashSet::new()));
@@ -150,7 +175,7 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) {
             if cfg!(feature = "tor") {
                 let tor_log_dir = "/tmp/tor-rust-directory/log".to_string();
                 if Path::new(tor_log_dir.as_str()).exists() {
-                    match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
+                    match std::fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
                         Ok(_) => log::info!("Previous directory log file deleted successfully"),
                         Err(_) => log::error!("Error deleting directory log file"),
                     }
@@ -184,25 +209,20 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) {
     }
 
     let directory_server_arc = directory.clone();
-    let addres_arc = addresses.clone();
-    let rpc_thread = thread::spawn(|| {
-        start_rpc_server_thread(directory_server_arc, addres_arc);
-    });
+    let address_arc = addresses.clone();
+    let rpc_thread = thread::spawn(|| start_rpc_server_thread(directory_server_arc, address_arc));
 
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port)).unwrap();
+    let listener =
+        TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port)).map_err(NetError::IO)?;
 
-    while !*directory.shutdown.read().unwrap() {
+    while !*directory.shutdown.read()? {
         match listener.accept() {
             Ok((mut stream, addrs)) => {
                 log::debug!("Incoming connection from : {}", addrs);
                 let address_arc = addresses.clone();
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(20)))
-                    .unwrap();
-                stream
-                    .set_write_timeout(Some(Duration::from_secs(20)))
-                    .unwrap();
-                handle_client(&mut stream, address_arc);
+                stream.set_read_timeout(Some(Duration::from_secs(20)))?;
+                stream.set_write_timeout(Some(Duration::from_secs(20)))?;
+                handle_client(&mut stream, address_arc)?;
             }
 
             // If no connection received, check for shutdown or save addresses to disk
@@ -215,7 +235,13 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) {
     }
 
     log::info!("Shutdown signal received. Stopping directory server.");
-    rpc_thread.join().unwrap();
+    let rpc_thread_joining_result = rpc_thread.join().unwrap();
+
+    match rpc_thread_joining_result {
+        Ok(_) => log::info!("DNS RPC thread Closed"),
+        Err(e) => log::error!("DNS RPC Thread error : {:?}", e),
+    }
+
     if let Some(handle) = tor_handle {
         crate::tor::kill_tor_handles(handle);
         log::info!("Directory server and Tor instance terminated successfully");
@@ -223,8 +249,7 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) {
 
     // Write the addresses to file
     let file_content = addresses
-        .read()
-        .unwrap()
+        .read()?
         .iter()
         .map(|addr| format!("{}\n", addr))
         .collect::<Vec<String>>()
@@ -233,35 +258,44 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) {
         .write(true)
         .create(true)
         .truncate(true) // Override the address file
-        .open(address_file.to_str().unwrap())
-        .unwrap();
-    file.write_all(file_content.as_bytes()).unwrap();
-    file.flush().unwrap();
+        .open(
+            address_file
+                .to_str()
+                .expect("address file path must be valid"),
+        )?;
+    file.write_all(file_content.as_bytes())?;
+    file.flush()?;
+
+    Ok(())
 }
 
 // The stream should have read and write timeout set.
 // TODO: Use serde encoded data instead of string.
-fn handle_client(stream: &mut TcpStream, addresses: Arc<RwLock<HashSet<String>>>) {
-    let reader_stream = stream.try_clone().unwrap();
+fn handle_client(
+    stream: &mut TcpStream,
+    addresses: Arc<RwLock<HashSet<String>>>,
+) -> Result<(), DirectoryServerError> {
+    let reader_stream = stream.try_clone()?;
     let mut reader = BufReader::new(reader_stream);
     let mut request_line = String::new();
 
-    reader.read_line(&mut request_line).unwrap();
+    reader.read_line(&mut request_line)?;
 
     if request_line.starts_with("POST") {
         let addr: String = request_line.replace("POST ", "").trim().to_string();
-        addresses.write().unwrap().insert(addr.clone());
+        addresses.write()?.insert(addr.clone());
         log::info!("Got new maker address: {}", addr);
     } else if request_line.starts_with("GET") {
         log::info!("Taker pinged the directory server");
         let response = addresses
-            .read()
-            .unwrap()
+            .read()?
             .iter()
             .fold(String::new(), |acc, addr| acc + addr + "\n");
-        stream.write_all(response.as_bytes()).unwrap();
-        stream.flush().unwrap();
+        stream.write_all(response.as_bytes())?;
+        stream.flush()?;
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -277,7 +311,7 @@ mod tests {
     }
 
     fn remove_temp_config(path: &PathBuf) {
-        fs::remove_file(path).unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
