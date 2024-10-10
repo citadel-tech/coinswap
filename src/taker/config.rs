@@ -9,46 +9,24 @@ use crate::utill::{get_taker_dir, parse_field, parse_toml, write_default_config,
 /// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
-    // TODO: Move all of these to global constants.
-    pub refund_locktime: u16,
-    pub refund_locktime_step: u16,
-
-    pub first_connect_attempts: u32,
-    pub first_connect_sleep_delay_sec: u64,
-    pub first_connect_attempt_timeout_sec: u64,
-
-    pub reconnect_attempts: u32,
-    pub reconnect_short_sleep_delay: u64,
-    pub reconnect_long_sleep_delay: u64,
-    pub short_long_sleep_delay_transition: u32,
-    pub reconnect_attempt_timeout_sec: u64,
-
-    // TODO: Only these should be user facing configs.
+    /// Network listening port
     pub port: u16,
+    /// Socks port
     pub socks_port: u16,
-    pub directory_server_onion_address: String,
-    pub directory_server_clearnet_address: String,
+    /// Directory server address (can be clearnet or onion)
+    pub directory_server_address: String,
+    /// Connection type
     pub connection_type: ConnectionType,
+    /// RPC port
     pub rpc_port: u16,
 }
 
 impl Default for TakerConfig {
     fn default() -> Self {
         Self {
-            refund_locktime: 48,
-            refund_locktime_step: 48,
-            first_connect_attempts: 5,
-            first_connect_sleep_delay_sec: 1,
-            first_connect_attempt_timeout_sec: 60,
-            reconnect_attempts: 3200,
-            reconnect_short_sleep_delay: 10,
-            reconnect_long_sleep_delay: 60,
-            short_long_sleep_delay_transition: 60,
-            reconnect_attempt_timeout_sec: 300,
             port: 8000,
             socks_port: 19050,
-            directory_server_onion_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
-            directory_server_clearnet_address: "127.0.0.1:8080".to_string(),
+            directory_server_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
             connection_type: ConnectionType::TOR,
             rpc_port: 8081,
         }

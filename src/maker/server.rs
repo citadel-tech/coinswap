@@ -35,6 +35,13 @@ use crate::{
 
 use crate::maker::error::MakerError;
 
+// Default values for Maker configurations
+pub const DEFAULT_HEART_BEAT_INTERVAL_SECS: u64 = 3;
+pub const DEFAULT_RPC_PING_INTERVAL_SECS: u64 = 60;
+pub const DEFAULT_DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 60 * 12; // 12 Hours
+pub const DEFAULT_IDLE_CONNECTION_TIMEOUT: u64 = 300;
+pub const DEFAULT_REQUIRED_CONFIRMS: u64 = 1;
+
 /// Fetches the Maker and DNS address, and sends maker address to the DNS server.
 /// Depending upon ConnectionType and test/prod environment, different maker address and DNS addresses are returned.
 /// Return the Maker address and an optional tor thread handle.
