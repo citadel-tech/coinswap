@@ -1,6 +1,4 @@
-use std::path::PathBuf;
-
-use bitcoin::Amount;
+use bitcoin::{Address, Amount};
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Auth};
 use clap::Parser;
 use coinswap::{
@@ -8,8 +6,10 @@ use coinswap::{
     utill::{
         parse_proxy_auth, read_bitcoin_network_string, read_connection_network_string, setup_logger,
     },
-    wallet::RPCConfig,
+    wallet::{Destination, RPCConfig, SendAmount},
 };
+use log::LevelFilter;
+use std::{path::PathBuf, str::FromStr};
 
 /// taker-cli is a command line app to use taker client API's.
 #[derive(Parser, Debug)]
@@ -17,8 +17,8 @@ use coinswap::{
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
     /// Optional Connection Network Type
-    #[clap(long, default_value = "clearnet",possible_values = &["tor","clearnet"])]
-    network: String,
+    #[clap(long, default_value = "clearnet",short= 'c', possible_values = &["tor","clearnet"])]
+    connection_type: String,
     /// Optional DNS data directory. Default value : "~/.coinswap/taker"
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
@@ -35,15 +35,18 @@ struct Cli {
     pub auth: (String, String),
     /// Sets the full node network, this should match with the network of the running node.
     #[clap(
-        name = "NETWORK",
         long,
-        short = 'n',
+        short = 'b',
         default_value = "regtest", possible_values = &["regtest", "signet", "mainnet"]
     )]
-    pub rpc_network: String,
+    pub bitcoin_network: String,
     /// Sets the taker wallet's name. If the wallet file already exists at data-directory, it will load that wallet.
     #[clap(name = "WALLET", long, short = 'w', default_value = "taker")]
     pub wallet_name: String,
+    /// Sets the verbosity level of logs.
+    /// Default: Determined by the command passed.
+    #[clap(long, short = 'v', possible_values = &["off", "error", "warn", "info", "debug", "trace"])]
+    pub verbosity: Option<String>,
     /// Sets the maker count to initiate coinswap with.
     #[clap(name = "maker_count", default_value = "2")]
     pub maker_count: usize,
@@ -82,6 +85,17 @@ enum Commands {
     TotalBalance,
     /// Returns a new address
     GetNewAddress,
+    /// Send to an external wallet address.
+    SendToAddress {
+        #[clap(name = "address")]
+        address: String,
+        /// Amount to be sent (in sats)
+        #[clap(name = "amount")]
+        amount: u64,
+        /// Fee of a Tx(in sats)
+        #[clap(name = "fee")]
+        fee: u64,
+    },
     /// Sync the offer book
     SyncOfferBook,
     /// Initiate the coinswap process
@@ -89,10 +103,10 @@ enum Commands {
 }
 
 fn main() {
-    setup_logger();
     let args = Cli::parse();
-    let rpc_network = read_bitcoin_network_string(&args.rpc_network).unwrap();
-    let connection_type = read_connection_network_string(&args.network).unwrap();
+
+    let rpc_network = read_bitcoin_network_string(&args.bitcoin_network).unwrap();
+    let connection_type = read_connection_network_string(&args.connection_type).unwrap();
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
@@ -117,11 +131,27 @@ fn main() {
     )
     .unwrap();
 
+    // Determines the log level based on the verbosity argument or the command.
+    //
+    // If verbosity is provided, it converts the string to a `LevelFilter`.
+    // Otherwise, the log level is set based on the command.
+    let log_level = match args.verbosity {
+        Some(level) => LevelFilter::from_str(&level).unwrap(),
+        None => match args.command {
+            Commands::DoCoinswap | Commands::SyncOfferBook | Commands::SendToAddress { .. } => {
+                log::LevelFilter::Info
+            }
+            _ => log::LevelFilter::Off,
+        },
+    };
+
+    setup_logger(log_level);
+
     match args.command {
         Commands::SeedUtxo => {
             let utxos: Vec<ListUnspentResultEntry> = taker
                 .get_wallet()
-                .list_live_contract_spend_info(None)
+                .list_descriptor_utxo_spend_info(None)
                 .unwrap()
                 .iter()
                 .map(|(l, _)| l.clone())
@@ -168,6 +198,51 @@ fn main() {
             let address = taker.get_wallet_mut().get_next_external_address().unwrap();
             println!("{:?}", address);
         }
+        Commands::SendToAddress {
+            address,
+            amount,
+            fee,
+        } => {
+            // NOTE:
+            //
+            // Currently, we take `fee` instead of `fee_rate` because we cannot calculate the fee for a
+            // transaction that hasn't been created yet when only a `fee_rate` is provided.
+            //
+            // As a result, the user must supply the fee as a parameter, and the function will return the
+            // transaction hex and the calculated `fee_rate`.
+            // This allows the user to infer what fee is needed for a successful transaction.
+            //
+            // This approach will be improved in the future BDK integration.
+
+            let fee = Amount::from_sat(fee);
+
+            let amount = Amount::from_sat(amount);
+
+            let coins_to_spend = taker.get_wallet().coin_select(amount + fee).unwrap();
+
+            let destination =
+                Destination::Address(Address::from_str(&address).unwrap().assume_checked());
+
+            let tx = taker
+                .get_wallet_mut()
+                .spend_from_wallet(
+                    fee,
+                    SendAmount::Amount(amount),
+                    destination,
+                    &coins_to_spend,
+                )
+                .unwrap();
+
+            // Derive fee rate from given `fee` argument.
+            let calculated_fee_rate = fee / (tx.weight());
+
+            println!(
+                "transaction_hex :  {:?}",
+                bitcoin::consensus::encode::serialize_hex(&tx)
+            );
+            println!("Calculated FeeRate : {:#}", calculated_fee_rate);
+        }
+
         Commands::SyncOfferBook => {
             taker.sync_offerbook(args.maker_count).unwrap();
         }
