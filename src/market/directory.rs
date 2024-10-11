@@ -267,71 +267,75 @@ fn handle_client(stream: &mut TcpStream, addresses: Arc<RwLock<HashSet<String>>>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs::File, io::Write};
+    use bitcoind::tempfile::TempDir;
 
-    fn create_temp_config(contents: &str, file_name: &str) -> PathBuf {
-        let file_path = PathBuf::from(file_name);
-        let mut file = File::create(&file_path).unwrap();
-        writeln!(file, "{}", contents).unwrap();
-        file_path
-    }
-
-    fn remove_temp_config(path: &PathBuf) {
-        fs::remove_file(path).unwrap();
+    fn create_temp_config(contents: &str, temp_dir: &TempDir) -> PathBuf {
+        let config_path = temp_dir.path().join("config.toml");
+        fs::write(&config_path, contents).unwrap();
+        config_path
     }
 
     #[test]
     fn test_valid_config() {
+        let temp_dir = TempDir::new().unwrap();
         let contents = r#"
             [directory_config]
             port = 8080
             socks_port = 19060
         "#;
-        let config_path = create_temp_config(contents, "valid_directory_config.toml");
-        let config = DirectoryServer::new(Some(config_path.clone()), None).unwrap();
-        remove_temp_config(&config_path);
+        create_temp_config(contents, &temp_dir);
+        let config = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
 
         let default_config = DirectoryServer::default();
         assert_eq!(config.port, default_config.port);
         assert_eq!(config.socks_port, default_config.socks_port);
+
+        temp_dir.close().unwrap();
     }
 
     #[test]
     fn test_missing_fields() {
+        let temp_dir = TempDir::new().unwrap();
         let contents = r#"
             [directory_config]
             port = 8080
         "#;
-        let config_path = create_temp_config(contents, "missing_fields_directory_config.toml");
-        let config = DirectoryServer::new(Some(config_path.clone()), None).unwrap();
-        remove_temp_config(&config_path);
+        create_temp_config(contents, &temp_dir);
+        let config = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
 
         assert_eq!(config.port, 8080);
         assert_eq!(config.socks_port, DirectoryServer::default().socks_port);
+
+        temp_dir.close().unwrap();
     }
 
     #[test]
     fn test_incorrect_data_type() {
+        let temp_dir = TempDir::new().unwrap();
         let contents = r#"
             [directory_config]
             port = "not_a_number"
         "#;
-        let config_path = create_temp_config(contents, "incorrect_type_directory_config.toml");
-        let config = DirectoryServer::new(Some(config_path.clone()), None).unwrap();
-        remove_temp_config(&config_path);
+        create_temp_config(contents, &temp_dir);
+        let config = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
 
         let default_config = DirectoryServer::default();
         assert_eq!(config.port, default_config.port);
         assert_eq!(config.socks_port, default_config.socks_port);
+
+        temp_dir.close().unwrap();
     }
 
     #[test]
     fn test_missing_file() {
-        let config_path = get_dns_dir().join("config.toml");
-        let config = DirectoryServer::new(Some(config_path.clone()), None).unwrap();
-        remove_temp_config(&config_path);
+        let temp_dir = TempDir::new().unwrap();
+
+        let config = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
+
         let default_config = DirectoryServer::default();
         assert_eq!(config.port, default_config.port);
         assert_eq!(config.socks_port, default_config.socks_port);
+
+        temp_dir.close().unwrap();
     }
 }
