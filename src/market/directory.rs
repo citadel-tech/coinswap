@@ -90,13 +90,13 @@ impl DirectoryServer {
     /// Default data-dir for linux: `~/.coinswap/`
     /// Default config locations: `~/.coinswap/dns/config.toml`.
     pub fn new(
-        config_path: Option<PathBuf>,
+        directory: Option<PathBuf>,
         connection_type: Option<ConnectionType>,
     ) -> Result<Self, DirectoryServerError> {
         let default_config = Self::default();
 
-        let default_config_path = get_dns_dir().join("config.toml");
-        let config_path = config_path.unwrap_or(default_config_path);
+        let data_dir = directory.unwrap_or(get_dns_dir());
+        let config_path = data_dir.join("config.toml");
 
         // This will create parent directories if they don't exist
         if !config_path.exists() {
