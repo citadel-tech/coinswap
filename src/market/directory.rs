@@ -8,18 +8,18 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, BufRead, BufReader, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, RwLock},
     thread::{self, sleep},
     time::Duration,
 };
 
-use crate::market::rpc::start_rpc_server_thread;
-use std::path::PathBuf;
-
-use crate::utill::{
-    get_dns_dir, get_tor_addrs, monitor_log_for_completion, parse_field, parse_toml,
-    write_default_config, ConnectionType,
+use crate::{
+    market::rpc::start_rpc_server_thread,
+    utill::{
+        get_dns_dir, get_tor_addrs, monitor_log_for_completion, parse_field, parse_toml,
+        write_default_config, ConnectionType,
+    },
 };
 
 /// Represents errors that can occur during directory server operations.
@@ -64,13 +64,13 @@ impl DirectoryServer {
     /// Default data-dir for linux: `~/.coinswap/`
     /// Default config locations: `~/.coinswap/dns/config.toml`.
     pub fn new(
-        config_path: Option<PathBuf>,
+        directory: Option<PathBuf>,
         connection_type: Option<ConnectionType>,
     ) -> io::Result<Self> {
         let default_config = Self::default();
 
-        let default_config_path = get_dns_dir().join("config.toml");
-        let config_path = config_path.unwrap_or(default_config_path);
+        let data_dir = directory.unwrap_or(get_dns_dir());
+        let config_path = data_dir.join("config.toml");
 
         // This will create parent directories if they don't exist
         if !config_path.exists() {
@@ -82,7 +82,7 @@ impl DirectoryServer {
         }
 
         // Its okay to unwrap as we just created the parent directory above
-        let data_dir = config_path.parent().unwrap().to_path_buf();
+        // let data_dir = config_path.parent().unwrap().to_path_buf();
 
         let section = parse_toml(&config_path)?;
         log::info!(
