@@ -159,8 +159,14 @@ fn write_default_directory_config(config_path: &PathBuf) -> std::io::Result<()> 
 }
 pub fn start_address_writer_thread(directory: Arc<DirectoryServer>) {
     let address_file = directory.data_dir.join("addresses.dat");
+
+    let interval = if cfg!(feature = "integration-test") {
+        60 // 1 minute for tests
+    } else {
+        600 // 10 minutes for production
+    };
     loop {
-        sleep(Duration::from_secs(60)); // Write every 60 seconds to the file
+        sleep(Duration::from_secs(interval));
 
         if let Err(e) = write_addresses_to_file(&directory, &address_file) {
             log::error!("Error writing addresses: {:?}", e);
