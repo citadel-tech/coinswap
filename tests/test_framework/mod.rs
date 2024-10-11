@@ -142,7 +142,7 @@ impl TestFramework {
         );
         let directory_server_instance_clone = directory_server_instance.clone();
         thread::spawn(move || {
-            start_directory_server(directory_server_instance_clone);
+            start_directory_server(directory_server_instance_clone).expect("TODO: panic message");
         });
 
         // Translate a RpcConfig from the test framework.
