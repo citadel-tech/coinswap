@@ -13,7 +13,7 @@ use crate::{
 
 use std::{
     collections::HashSet,
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
     path::{Path, PathBuf},
@@ -21,15 +21,11 @@ use std::{
     thread::{self, sleep},
     time::Duration,
 };
-use std::fs::File;
 
 /// Represents errors that can occur during directory server operations.
 #[derive(Debug)]
 pub enum DirectoryServerError {
     Other(&'static str),
-    Io(io::Error),
-    LockError,
-    ParseError,
 }
 
 /// Directory Configuration,
@@ -44,11 +40,6 @@ pub struct DirectoryServer {
     pub addresses: Arc<RwLock<HashSet<String>>>,
 }
 
-impl From<io::Error> for DirectoryServerError {
-    fn from(error: io::Error) -> Self {
-        DirectoryServerError::Io(error)
-    }
-}
 impl Default for DirectoryServer {
     fn default() -> Self {
         Self {
@@ -77,7 +68,7 @@ impl DirectoryServer {
     pub fn new(
         data_dir: Option<PathBuf>,
         connection_type: Option<ConnectionType>,
-    ) -> Result<Self, DirectoryServerError> {
+    ) -> io::Result<Self> {
         let default_config = Self::default();
 
         let data_dir = data_dir.unwrap_or(get_dns_dir());
@@ -107,10 +98,7 @@ impl DirectoryServer {
         if let Ok(file) = File::open(&address_file) {
             let reader = BufReader::new(file);
             for address in reader.lines().map_while(Result::ok) {
-                addresses
-                    .write()
-                    .map_err(|_| DirectoryServerError::LockError)?
-                    .insert(address);
+                addresses.write().unwrap().insert(address);
             }
         }
 
@@ -181,7 +169,7 @@ pub fn write_addresses_to_file(
     let file_content = directory
         .addresses
         .read()
-        .map_err(|_| DirectoryServerError::LockError)?
+        .unwrap()
         .iter()
         .map(|addr| format!("{}\n", addr))
         .collect::<Vec<String>>()
@@ -195,10 +183,11 @@ pub fn write_addresses_to_file(
             address_file
                 .to_str()
                 .ok_or(DirectoryServerError::Other("Invalid address file path"))?,
-        )?;
+        )
+        .unwrap();
 
-    file.write_all(file_content.as_bytes())?;
-    file.flush()?;
+    file.write_all(file_content.as_bytes()).unwrap();
+    file.flush().unwrap();
     Ok(())
 }
 pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), DirectoryServerError> {
@@ -254,23 +243,18 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
         start_address_writer_thread(directory_clone);
     });
 
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port))
-        .map_err(DirectoryServerError::Io)?;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port)).unwrap();
 
-    while !*directory
-        .shutdown
-        .read()
-        .map_err(|_| DirectoryServerError::LockError)?
-    {
+    while !*directory.shutdown.read().unwrap() {
         match listener.accept() {
             Ok((mut stream, addrs)) => {
                 log::debug!("Incoming connection from : {}", addrs);
                 stream
                     .set_read_timeout(Some(Duration::from_secs(20)))
-                    .map_err(DirectoryServerError::Io)?;
+                    .unwrap();
                 stream
                     .set_write_timeout(Some(Duration::from_secs(20)))
-                    .map_err(DirectoryServerError::Io)?;
+                    .unwrap();
                 if let Err(e) = handle_client(&mut stream, &directory) {
                     log::error!("Error handling client request: {:?}", e);
                 }
@@ -308,34 +292,25 @@ fn handle_client(
     stream: &mut TcpStream,
     directory: &Arc<DirectoryServer>,
 ) -> Result<(), DirectoryServerError> {
-    let reader_stream = stream.try_clone().map_err(DirectoryServerError::Io)?;
+    let reader_stream = stream.try_clone().unwrap();
     let mut reader = BufReader::new(reader_stream);
     let mut request_line = String::new();
 
-    reader
-        .read_line(&mut request_line)
-        .map_err(DirectoryServerError::Io)?;
-
+    reader.read_line(&mut request_line).unwrap();
     if request_line.starts_with("POST") {
         let addr: String = request_line.replace("POST ", "").trim().to_string();
-        directory
-            .addresses
-            .write()
-            .map_err(|_| DirectoryServerError::LockError)?
-            .insert(addr.clone());
+        directory.addresses.write().unwrap().insert(addr.clone());
         log::info!("Got new maker address: {}", addr);
     } else if request_line.starts_with("GET") {
         log::info!("Taker pinged the directory server");
         let response = directory
             .addresses
             .read()
-            .map_err(|_| DirectoryServerError::LockError)?
+            .unwrap()
             .iter()
             .fold(String::new(), |acc, addr| acc + addr + "\n");
-        stream
-            .write_all(response.as_bytes())
-            .map_err(DirectoryServerError::Io)?;
-        stream.flush().map_err(DirectoryServerError::Io)?;
+        stream.write_all(response.as_bytes()).unwrap();
+        stream.flush().unwrap();
     }
     Ok(())
 }
