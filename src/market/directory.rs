@@ -90,12 +90,12 @@ impl DirectoryServer {
     /// Default data-dir for linux: `~/.coinswap/`
     /// Default config locations: `~/.coinswap/dns/config.toml`.
     pub fn new(
-        directory: Option<PathBuf>,
+        data_dir: Option<PathBuf>,
         connection_type: Option<ConnectionType>,
     ) -> Result<Self, DirectoryServerError> {
         let default_config = Self::default();
 
-        let data_dir = directory.unwrap_or(get_dns_dir());
+        let data_dir = data_dir.unwrap_or(get_dns_dir());
         let config_path = data_dir.join("config.toml");
 
         // This will create parent directories if they don't exist
@@ -319,8 +319,8 @@ mod tests {
         "#;
         create_temp_config(contents, &temp_dir);
         let config = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
-
         let default_config = DirectoryServer::default();
+
         assert_eq!(config.port, default_config.port);
         assert_eq!(config.socks_port, default_config.socks_port);
 
@@ -352,8 +352,8 @@ mod tests {
         "#;
         create_temp_config(contents, &temp_dir);
         let config = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
-
         let default_config = DirectoryServer::default();
+
         assert_eq!(config.port, default_config.port);
         assert_eq!(config.socks_port, default_config.socks_port);
 
@@ -363,10 +363,9 @@ mod tests {
     #[test]
     fn test_missing_file() {
         let temp_dir = TempDir::new().unwrap();
-
         let config = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
-
         let default_config = DirectoryServer::default();
+
         assert_eq!(config.port, default_config.port);
         assert_eq!(config.socks_port, default_config.socks_port);
 
