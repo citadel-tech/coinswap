@@ -8,18 +8,21 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, BufRead, BufReader, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
-    path::Path,
-    sync::{Arc, RwLock},
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering::Relaxed},
+        Arc, RwLock,
+    },
     thread::{self, sleep},
     time::Duration,
 };
 
-use crate::market::rpc::start_rpc_server_thread;
-use std::path::PathBuf;
-
-use crate::utill::{
-    get_dns_dir, get_tor_addrs, monitor_log_for_completion, parse_field, parse_toml,
-    write_default_config, ConnectionType,
+use crate::{
+    market::rpc::start_rpc_server_thread,
+    utill::{
+        get_dns_dir, get_tor_addrs, monitor_log_for_completion, parse_field, parse_toml,
+        write_default_config, ConnectionType,
+    },
 };
 
 /// Represents errors that can occur during directory server operations.
@@ -36,7 +39,7 @@ pub struct DirectoryServer {
     pub socks_port: u16,
     pub connection_type: ConnectionType,
     pub data_dir: PathBuf,
-    pub shutdown: RwLock<bool>,
+    pub shutdown: AtomicBool,
 }
 
 impl Default for DirectoryServer {
@@ -47,7 +50,7 @@ impl Default for DirectoryServer {
             socks_port: 19060,
             connection_type: ConnectionType::TOR,
             data_dir: get_dns_dir(),
-            shutdown: RwLock::new(false),
+            shutdown: AtomicBool::new(false),
         }
     }
 }
@@ -104,7 +107,7 @@ impl DirectoryServer {
             )
             .unwrap_or(default_config.socks_port),
             data_dir,
-            shutdown: RwLock::new(false),
+            shutdown: AtomicBool::new(false),
             connection_type: parse_field(
                 directory_config_section.get("connection_type"),
                 connection_type_value,
@@ -114,11 +117,7 @@ impl DirectoryServer {
     }
 
     pub fn shutdown(&self) -> Result<(), DirectoryServerError> {
-        let mut flag = self
-            .shutdown
-            .write()
-            .map_err(|_| DirectoryServerError::Other("Rwlock write error!"))?;
-        *flag = true;
+        self.shutdown.store(true, Relaxed);
         Ok(())
     }
 }
@@ -191,7 +190,7 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) {
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port)).unwrap();
 
-    while !*directory.shutdown.read().unwrap() {
+    while !directory.shutdown.load(Relaxed) {
         match listener.accept() {
             Ok((mut stream, addrs)) => {
                 log::debug!("Incoming connection from : {}", addrs);
