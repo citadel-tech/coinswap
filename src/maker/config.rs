@@ -90,7 +90,7 @@ impl MakerConfig {
         let config_path = config_path.unwrap_or(&default_config_path);
 
         if !config_path.exists() {
-            write_default_maker_config(config_path);
+            write_default_maker_config(config_path)?;
             log::warn!(
                 "Maker config file not found, creating default config file at path: {}",
                 config_path.display()
@@ -195,7 +195,7 @@ impl MakerConfig {
     }
 }
 
-fn write_default_maker_config(config_path: &PathBuf) {
+fn write_default_maker_config(config_path: &PathBuf) -> io::Result<()> {
     let config_string = String::from(
         "\
             [maker_config]\n\
@@ -219,7 +219,9 @@ fn write_default_maker_config(config_path: &PathBuf) {
             ",
     );
 
-    write_default_config(config_path, config_string).unwrap();
+    write_default_config(config_path, config_string)?;
+
+    Ok(())
 }
 
 #[cfg(test)]

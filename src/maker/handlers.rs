@@ -408,7 +408,7 @@ impl Maker {
             Amount::from_sat(incoming_amount),
             read_contract_locktime(
                 &message.confirmed_funding_txes[0].contract_redeemscript
-            ).unwrap(),
+            )?,
             Amount::from_sat(outgoing_amount),
             message.next_locktime
         );
@@ -661,18 +661,13 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
         {
             let contract_timelock = og_sc.get_timelock()?;
             let contract = og_sc.get_fully_signed_contract_tx()?;
-            let next_internal_address = &maker
-                .wallet
-                .read()
-                .unwrap()
-                .get_next_internal_addresses(1)
-                .unwrap()[0];
+            let next_internal_address = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
             let time_lock_spend = og_sc.create_timelock_spend(next_internal_address)?;
             outgoings.push((
                 (og_sc.get_multisig_redeemscript(), contract),
                 (contract_timelock, time_lock_spend),
             ));
-            let incoming_contract = ic_sc.get_fully_signed_contract_tx().unwrap();
+            let incoming_contract = ic_sc.get_fully_signed_contract_tx()?;
             incomings.push((ic_sc.get_multisig_redeemscript(), incoming_contract));
         }
         // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
