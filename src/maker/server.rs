@@ -100,9 +100,9 @@ fn network_bootstrap(
                 let maker_hs_path_str =
                     format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
                 let maker_hs_path = PathBuf::from(maker_hs_path_str);
-                let mut maker_file = fs::File::open(&maker_hs_path).unwrap();
+                let mut maker_file = fs::File::open(maker_hs_path)?;
                 let mut maker_onion_addr: String = String::new();
-                maker_file.read_to_string(&mut maker_onion_addr).unwrap();
+                maker_file.read_to_string(&mut maker_onion_addr)?;
                 maker_onion_addr.pop();
                 let maker_address = format!("{}:{}", maker_onion_addr, maker.config.port);
 
@@ -110,11 +110,9 @@ fn network_bootstrap(
                     let directory_hs_path_str =
                         "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
                     let directory_hs_path = PathBuf::from(directory_hs_path_str);
-                    let mut directory_file = fs::File::open(directory_hs_path).unwrap();
+                    let mut directory_file = fs::File::open(directory_hs_path)?;
                     let mut directory_onion_addr: String = String::new();
-                    directory_file
-                        .read_to_string(&mut directory_onion_addr)
-                        .unwrap();
+                    directory_file.read_to_string(&mut directory_onion_addr)?;
                     directory_onion_addr.pop();
                     format!("{}:{}", directory_onion_addr, 8080)
                 } else {
@@ -215,9 +213,10 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
 
         // Set 100 blocks locktime for test
         let locktime = if cfg!(feature = "integration-test") {
-            LockTime::from_height(current_height + 100).unwrap()
+            LockTime::from_height(current_height + 100).map_err(WalletError::Locktime)?
         } else {
-            LockTime::from_height(maker.config.fidelity_timelock + current_height).unwrap()
+            LockTime::from_height(maker.config.fidelity_timelock + current_height)
+                .map_err(WalletError::Locktime)?
         };
         while !maker.shutdown.load(Relaxed) {
             let fidelity_result = maker
@@ -385,7 +384,8 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let (maker_address, tor_thread) = network_bootstrap(maker.clone())?;
     let port = maker.config.port;
 
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.port))?;
+    let listener =
+        TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.port)).map_err(NetError::IO)?;
     log::info!(
         "[{}] Listening for client conns at: {}",
         maker.config.port,
@@ -515,7 +515,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                         maker.config.port,
                         e
                     );
-                    return Err(MakerError::IO(e));
+                    return Err(NetError::IO(e).into());
                 }
             }
         };
@@ -541,7 +541,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     }
 
     if maker.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {
-        crate::tor::kill_tor_handles(tor_thread.unwrap());
+        crate::tor::kill_tor_handles(tor_thread.expect("Tor thread expected"));
     }
 
     log::info!("Shutdown wallet sync initiated.");
