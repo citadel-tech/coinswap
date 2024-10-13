@@ -6,7 +6,7 @@ use crate::protocol::error::ContractError;
 /// Enum for handling wallet-related errors.
 #[derive(Debug)]
 pub enum WalletError {
-    File(std::io::Error),
+    IO(std::io::Error),
     Cbor(serde_cbor::Error),
     Rpc(bitcoind::bitcoincore_rpc::Error),
     Protocol(String),
@@ -22,7 +22,7 @@ pub enum WalletError {
 
 impl From<std::io::Error> for WalletError {
     fn from(e: std::io::Error) -> Self {
-        Self::File(e)
+        Self::IO(e)
     }
 }
 

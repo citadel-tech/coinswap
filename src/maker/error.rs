@@ -20,10 +20,8 @@ pub enum MakerError {
     General(&'static str),
     MutexPossion,
     Secp(secp256k1::Error),
-    ContractError(ContractError),
     Wallet(WalletError),
     Net(NetError),
-    Deserialize(serde_cbor::Error),
     SpecialBehaviour(MakerBehavior),
     Protocol(ProtocolError),
 }
@@ -36,7 +34,7 @@ impl From<std::io::Error> for MakerError {
 
 impl From<serde_cbor::Error> for MakerError {
     fn from(value: serde_cbor::Error) -> Self {
-        Self::Deserialize(value)
+        Self::Net(NetError::Cbor(value))
     }
 }
 
@@ -66,7 +64,7 @@ impl From<secp256k1::Error> for MakerError {
 
 impl From<ContractError> for MakerError {
     fn from(value: ContractError) -> Self {
-        Self::ContractError(value)
+        Self::Protocol(ProtocolError::from(value))
     }
 }
 

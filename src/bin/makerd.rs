@@ -1,13 +1,11 @@
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
-    maker::{start_maker_server, Maker, MakerBehavior},
-    utill::{
-        parse_proxy_auth, read_bitcoin_network_string, read_connection_network_string, setup_logger,
-    },
+    maker::{start_maker_server, Maker, MakerBehavior, MakerError},
+    utill::{parse_proxy_auth, read_connection_network_string, setup_logger},
     wallet::RPCConfig,
 };
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 /// The Maker Server.
 ///
@@ -52,14 +50,14 @@ struct Cli {
     pub wallet_name: String,
 }
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), MakerError> {
     setup_logger(log::LevelFilter::Info);
 
     let args = Cli::parse();
 
-    let rpc_network = read_bitcoin_network_string(&args.rpc_network).unwrap();
+    let rpc_network = bitcoin::Network::from_str(&args.rpc_network).unwrap();
 
-    let conn_type = read_connection_network_string(&args.network).unwrap();
+    let conn_type = read_connection_network_string(&args.network)?;
 
     let rpc_config = RPCConfig {
         url: args.rpc,
@@ -68,21 +66,18 @@ fn main() -> std::io::Result<()> {
         wallet_name: args.wallet_name.clone(),
     };
 
-    let maker = Arc::new(
-        Maker::init(
-            args.data_directory,
-            Some(args.wallet_name),
-            Some(rpc_config),
-            None,
-            None,
-            None,
-            Some(conn_type),
-            MakerBehavior::Normal,
-        )
-        .unwrap(),
-    );
+    let maker = Arc::new(Maker::init(
+        args.data_directory,
+        Some(args.wallet_name),
+        Some(rpc_config),
+        None,
+        None,
+        None,
+        Some(conn_type),
+        MakerBehavior::Normal,
+    )?);
 
-    start_maker_server(maker).unwrap();
+    start_maker_server(maker)?;
 
     Ok(())
 }

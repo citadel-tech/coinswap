@@ -2,10 +2,8 @@ use bitcoin::{Address, Amount};
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Auth};
 use clap::Parser;
 use coinswap::{
-    taker::{SwapParams, Taker, TakerBehavior},
-    utill::{
-        parse_proxy_auth, read_bitcoin_network_string, read_connection_network_string, setup_logger,
-    },
+    taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
+    utill::{parse_proxy_auth, read_connection_network_string, setup_logger},
     wallet::{Destination, RPCConfig, SendAmount},
 };
 use log::LevelFilter;
@@ -102,11 +100,11 @@ enum Commands {
     DoCoinswap,
 }
 
-fn main() {
+fn main() -> Result<(), TakerError> {
     let args = Cli::parse();
 
-    let rpc_network = read_bitcoin_network_string(&args.bitcoin_network).unwrap();
-    let connection_type = read_connection_network_string(&args.connection_type).unwrap();
+    let rpc_network = bitcoin::Network::from_str(&args.bitcoin_network).unwrap();
+    let connection_type = read_connection_network_string(&args.connection_type)?;
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
@@ -128,8 +126,7 @@ fn main() {
         Some(rpc_config.clone()),
         TakerBehavior::Normal,
         Some(connection_type),
-    )
-    .unwrap();
+    )?;
 
     // Determines the log level based on the verbosity argument or the command.
     //
@@ -151,8 +148,7 @@ fn main() {
         Commands::SeedUtxo => {
             let utxos: Vec<ListUnspentResultEntry> = taker
                 .get_wallet()
-                .list_descriptor_utxo_spend_info(None)
-                .unwrap()
+                .list_descriptor_utxo_spend_info(None)?
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect();
@@ -161,8 +157,7 @@ fn main() {
         Commands::SwapUtxo => {
             let utxos: Vec<ListUnspentResultEntry> = taker
                 .get_wallet()
-                .list_swap_coin_utxo_spend_info(None)
-                .unwrap()
+                .list_swap_coin_utxo_spend_info(None)?
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect();
@@ -171,31 +166,30 @@ fn main() {
         Commands::ContractUtxo => {
             let utxos: Vec<ListUnspentResultEntry> = taker
                 .get_wallet()
-                .list_live_contract_spend_info(None)
-                .unwrap()
+                .list_live_contract_spend_info(None)?
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect();
             println!("{:?}", utxos);
         }
         Commands::ContractBalance => {
-            let balance = taker.get_wallet().balance_live_contract(None).unwrap();
+            let balance = taker.get_wallet().balance_live_contract(None)?;
             println!("{:?}", balance);
         }
         Commands::SwapBalance => {
-            let balance = taker.get_wallet().balance_swap_coins(None).unwrap();
+            let balance = taker.get_wallet().balance_swap_coins(None)?;
             println!("{:?}", balance);
         }
         Commands::SeedBalance => {
-            let balance = taker.get_wallet().balance_descriptor_utxo(None).unwrap();
+            let balance = taker.get_wallet().balance_descriptor_utxo(None)?;
             println!("{:?}", balance);
         }
         Commands::TotalBalance => {
-            let balance = taker.get_wallet().balance().unwrap();
+            let balance = taker.get_wallet().balance()?;
             println!("{:?}", balance);
         }
         Commands::GetNewAddress => {
-            let address = taker.get_wallet_mut().get_next_external_address().unwrap();
+            let address = taker.get_wallet_mut().get_next_external_address()?;
             println!("{:?}", address);
         }
         Commands::SendToAddress {
@@ -218,20 +212,17 @@ fn main() {
 
             let amount = Amount::from_sat(amount);
 
-            let coins_to_spend = taker.get_wallet().coin_select(amount + fee).unwrap();
+            let coins_to_spend = taker.get_wallet().coin_select(amount + fee)?;
 
             let destination =
                 Destination::Address(Address::from_str(&address).unwrap().assume_checked());
 
-            let tx = taker
-                .get_wallet_mut()
-                .spend_from_wallet(
-                    fee,
-                    SendAmount::Amount(amount),
-                    destination,
-                    &coins_to_spend,
-                )
-                .unwrap();
+            let tx = taker.get_wallet_mut().spend_from_wallet(
+                fee,
+                SendAmount::Amount(amount),
+                destination,
+                &coins_to_spend,
+            )?;
 
             // Derive fee rate from given `fee` argument.
             let calculated_fee_rate = fee / (tx.weight());
@@ -244,10 +235,12 @@ fn main() {
         }
 
         Commands::SyncOfferBook => {
-            taker.sync_offerbook(args.maker_count).unwrap();
+            taker.sync_offerbook(args.maker_count)?;
         }
         Commands::DoCoinswap => {
-            taker.do_coinswap(swap_params).unwrap();
+            taker.do_coinswap(swap_params)?;
         }
     }
+
+    Ok(())
 }
