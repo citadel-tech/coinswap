@@ -3,23 +3,23 @@
 //! Handles market-related logic where Makers post their offers. Also provides functions to synchronize
 //! maker addresses from directory servers, post maker addresses to directory servers,
 
-use std::{
-    collections::HashSet,
-    fs::{self, OpenOptions},
-    io::{self, BufRead, BufReader, Write},
-    net::{Ipv4Addr, TcpListener, TcpStream},
-    path::{Path, PathBuf},
-    sync::{Arc, RwLock},
-    thread::{self, sleep},
-    time::Duration,
-};
-
 use crate::{
     market::rpc::start_rpc_server_thread,
     utill::{
         get_dns_dir, get_tor_addrs, monitor_log_for_completion, parse_field, parse_toml,
         write_default_config, ConnectionType,
     },
+};
+
+use std::{
+    collections::HashSet,
+    fs::{self, File, OpenOptions},
+    io::{self, BufRead, BufReader, Write},
+    net::{Ipv4Addr, TcpListener, TcpStream},
+    path::{Path, PathBuf},
+    sync::{Arc, RwLock},
+    thread::{self, sleep},
+    time::Duration,
 };
 
 /// Represents errors that can occur during directory server operations.
@@ -37,6 +37,7 @@ pub struct DirectoryServer {
     pub connection_type: ConnectionType,
     pub data_dir: PathBuf,
     pub shutdown: RwLock<bool>,
+    pub addresses: Arc<RwLock<HashSet<String>>>,
 }
 
 impl Default for DirectoryServer {
@@ -48,6 +49,7 @@ impl Default for DirectoryServer {
             connection_type: ConnectionType::TOR,
             data_dir: get_dns_dir(),
             shutdown: RwLock::new(false),
+            addresses: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 }
@@ -91,6 +93,15 @@ impl DirectoryServer {
 
         let connection_type_value = connection_type.unwrap_or(ConnectionType::TOR);
 
+        let addresses = Arc::new(RwLock::new(HashSet::new()));
+        let address_file = data_dir.join("addresses.dat");
+        if let Ok(file) = File::open(&address_file) {
+            let reader = BufReader::new(file);
+            for address in reader.lines().map_while(Result::ok) {
+                addresses.write().unwrap().insert(address);
+            }
+        }
+
         Ok(DirectoryServer {
             rpc_port: 4321,
             port: parse_field(directory_config_section.get("port"), default_config.port)
@@ -107,6 +118,7 @@ impl DirectoryServer {
                 connection_type_value,
             )
             .unwrap_or(connection_type_value),
+            addresses,
         })
     }
 
@@ -133,12 +145,52 @@ fn write_default_directory_config(config_path: &PathBuf) -> std::io::Result<()> 
 
     write_default_config(config_path, config_string)
 }
-
-pub fn start_directory_server(directory: Arc<DirectoryServer>) {
+pub fn start_address_writer_thread(directory: Arc<DirectoryServer>) {
     let address_file = directory.data_dir.join("addresses.dat");
 
-    let addresses = Arc::new(RwLock::new(HashSet::new()));
+    let interval = if cfg!(feature = "integration-test") {
+        60 // 1 minute for tests
+    } else {
+        600 // 10 minutes for production
+    };
+    loop {
+        sleep(Duration::from_secs(interval));
 
+        if let Err(e) = write_addresses_to_file(&directory, &address_file) {
+            log::error!("Error writing addresses: {:?}", e);
+        }
+    }
+}
+
+pub fn write_addresses_to_file(
+    directory: &Arc<DirectoryServer>,
+    address_file: &Path,
+) -> Result<(), DirectoryServerError> {
+    let file_content = directory
+        .addresses
+        .read()
+        .unwrap()
+        .iter()
+        .map(|addr| format!("{}\n", addr))
+        .collect::<Vec<String>>()
+        .join("");
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(
+            address_file
+                .to_str()
+                .ok_or(DirectoryServerError::Other("Invalid address file path"))?,
+        )
+        .unwrap();
+
+    file.write_all(file_content.as_bytes()).unwrap();
+    file.flush().unwrap();
+    Ok(())
+}
+pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), DirectoryServerError> {
     let mut tor_handle = None;
 
     match directory.connection_type {
@@ -161,7 +213,7 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) {
                     "/tmp/tor-rust-directory".to_string(),
                 ));
 
-                thread::sleep(Duration::from_secs(10));
+                sleep(Duration::from_secs(10));
 
                 if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
                     log::error!("Error monitoring Directory log file: {}", e);
@@ -181,9 +233,14 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) {
     }
 
     let directory_server_arc = directory.clone();
-    let addres_arc = addresses.clone();
     let rpc_thread = thread::spawn(|| {
-        start_rpc_server_thread(directory_server_arc, addres_arc);
+        start_rpc_server_thread(directory_server_arc);
+    });
+
+    let address_file = directory.data_dir.join("addresses.dat");
+    let directory_clone = directory.clone();
+    let address_writer_thread = thread::spawn(move || {
+        start_address_writer_thread(directory_clone);
     });
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port)).unwrap();
@@ -192,14 +249,15 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) {
         match listener.accept() {
             Ok((mut stream, addrs)) => {
                 log::debug!("Incoming connection from : {}", addrs);
-                let address_arc = addresses.clone();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(20)))
                     .unwrap();
                 stream
                     .set_write_timeout(Some(Duration::from_secs(20)))
                     .unwrap();
-                handle_client(&mut stream, address_arc);
+                if let Err(e) = handle_client(&mut stream, &directory) {
+                    log::error!("Error handling client request: {:?}", e);
+                }
             }
 
             // If no connection received, check for shutdown or save addresses to disk
@@ -212,46 +270,41 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) {
     }
 
     log::info!("Shutdown signal received. Stopping directory server.");
-    rpc_thread.join().unwrap();
+    rpc_thread
+        .join()
+        .map_err(|_| DirectoryServerError::Other("Failed to join RPC thread"))?;
+    address_writer_thread
+        .join()
+        .map_err(|_| DirectoryServerError::Other("Failed to join address writer"))?;
     if let Some(handle) = tor_handle {
         crate::tor::kill_tor_handles(handle);
         log::info!("Directory server and Tor instance terminated successfully");
     }
 
-    // Write the addresses to file
-    let file_content = addresses
-        .read()
-        .unwrap()
-        .iter()
-        .map(|addr| format!("{}\n", addr))
-        .collect::<Vec<String>>()
-        .join("");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true) // Override the address file
-        .open(address_file.to_str().unwrap())
-        .unwrap();
-    file.write_all(file_content.as_bytes()).unwrap();
-    file.flush().unwrap();
+    write_addresses_to_file(&directory, &address_file)?;
+
+    Ok(())
 }
 
 // The stream should have read and write timeout set.
 // TODO: Use serde encoded data instead of string.
-fn handle_client(stream: &mut TcpStream, addresses: Arc<RwLock<HashSet<String>>>) {
+fn handle_client(
+    stream: &mut TcpStream,
+    directory: &Arc<DirectoryServer>,
+) -> Result<(), DirectoryServerError> {
     let reader_stream = stream.try_clone().unwrap();
     let mut reader = BufReader::new(reader_stream);
     let mut request_line = String::new();
 
     reader.read_line(&mut request_line).unwrap();
-
     if request_line.starts_with("POST") {
         let addr: String = request_line.replace("POST ", "").trim().to_string();
-        addresses.write().unwrap().insert(addr.clone());
+        directory.addresses.write().unwrap().insert(addr.clone());
         log::info!("Got new maker address: {}", addr);
     } else if request_line.starts_with("GET") {
         log::info!("Taker pinged the directory server");
-        let response = addresses
+        let response = directory
+            .addresses
             .read()
             .unwrap()
             .iter()
@@ -259,8 +312,8 @@ fn handle_client(stream: &mut TcpStream, addresses: Arc<RwLock<HashSet<String>>>
         stream.write_all(response.as_bytes()).unwrap();
         stream.flush().unwrap();
     }
+    Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
