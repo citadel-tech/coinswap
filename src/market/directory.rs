@@ -306,6 +306,7 @@ mod tests {
     fn create_temp_config(contents: &str, temp_dir: &TempDir) -> PathBuf {
         let config_path = temp_dir.path().join("config.toml");
         std::fs::write(&config_path, contents).unwrap();
+
         config_path
     }
 
