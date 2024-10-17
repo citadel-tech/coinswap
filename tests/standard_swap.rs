@@ -17,24 +17,25 @@ use std::{assert_eq, thread, time::Duration};
 
 /// This test demonstrates a standard coinswap round between a Taker and 2 Makers. Nothing goes wrong
 /// and the coinswap completes successfully.
-#[tokio::test]
-async fn test_standard_coinswap() {
+#[test]
+fn test_standard_coinswap() {
     // ---- Setup ----
 
     // 2 Makers with Normal behavior.
     let makers_config_map = [
-        ((6102, None), MakerBehavior::Normal),
-        ((16102, None), MakerBehavior::Normal),
+        ((6102, Some(19051)), MakerBehavior::Normal),
+        ((16102, Some(19052)), MakerBehavior::Normal),
     ];
 
+    let connection_type = if cfg!(target_os = "macos") {
+        ConnectionType::CLEARNET
+    } else {
+        ConnectionType::TOR
+    };
+
     // Initiate test framework, Makers and a Taker with default behavior.
-    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
-        None,
-        makers_config_map.into(),
-        None,
-        ConnectionType::CLEARNET,
-    )
-    .await;
+    let (test_framework, taker, makers, directory_server_instance) =
+        TestFramework::init(None, makers_config_map.into(), None, connection_type);
 
     warn!("Running Test: Standard Coinswap Procedure");
 

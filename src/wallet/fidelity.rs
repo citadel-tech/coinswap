@@ -5,6 +5,11 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::{
+    protocol::messages::FidelityProof,
+    utill::redeemscript_to_scriptpubkey,
+    wallet::{UTXOSpendInfo, Wallet},
+};
 use bitcoin::{
     absolute::LockTime,
     bip32::{ChildNumber, DerivationPath},
@@ -18,12 +23,6 @@ use bitcoin::{
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Deserialize, Serialize};
-
-use crate::{
-    protocol::messages::FidelityProof,
-    utill::redeemscript_to_scriptpubkey,
-    wallet::{UTXOSpendInfo, Wallet},
-};
 
 use super::WalletError;
 
@@ -46,11 +45,10 @@ const FIDELITY_DERIVATION_PATH: &str = "m/84'/0'/0'/2";
 #[derive(Debug)]
 pub enum FidelityError {
     WrongScriptType,
-    BondAlreadyExists(u32),
     BondDoesNotExist,
     BondAlreadySpent,
     CertExpired,
-    InsufficientFund { available: u64, required: u64 },
+    General(String),
 }
 
 // ------- Fidelity Helper Scripts -------------
@@ -87,7 +85,8 @@ pub fn read_locktime_from_fidelity_script(
 /// Reads the public key from a fidelity redeemscript.
 fn read_pubkey_from_fidelity_script(redeemscript: &ScriptBuf) -> Result<PublicKey, FidelityError> {
     if let Some(Ok(Instruction::PushBytes(pubkey_bytes))) = redeemscript.instructions().next() {
-        Ok(PublicKey::from_slice(pubkey_bytes.as_bytes()).unwrap())
+        Ok(PublicKey::from_slice(pubkey_bytes.as_bytes())
+            .map_err(|e| FidelityError::General(e.to_string()))?)
     } else {
         Err(FidelityError::WrongScriptType)
     }
@@ -143,7 +142,7 @@ impl FidelityBond {
     }
 
     /// Generate the bond's certificate hash.
-    pub fn generate_cert_hash(&self, onion_addr: String) -> sha256d::Hash {
+    pub fn generate_cert_hash(&self, onion_addr: &str) -> sha256d::Hash {
         let cert_msg_str = format!(
             "fidelity-bond-cert|{}|{}|{}|{}|{}|{}",
             self.outpoint, self.pubkey, self.cert_expiry, self.lock_time, self.amount, onion_addr
@@ -181,6 +180,7 @@ impl Wallet {
             .max_by(|a, b| a.1.cmp(&b.1))
             .map(|(i, _)| *i))
     }
+
     /// Get the [KeyPair] for the fidelity bond at given index.
     pub fn get_fidelity_keypair(&self, index: u32) -> Result<Keypair, WalletError> {
         let secp = Secp256k1::new();
@@ -320,11 +320,10 @@ impl Wallet {
         });
 
         if total_input_amount < amount {
-            return Err((FidelityError::InsufficientFund {
+            return Err(WalletError::InsufficientFund {
                 available: total_input_amount.to_sat(),
                 required: amount.to_sat(),
-            })
-            .into());
+            });
         }
 
         let change_amount = total_input_amount.checked_sub(amount + fee);
@@ -350,14 +349,16 @@ impl Wallet {
                 script_pubkey: change_addrs,
             });
         }
+
+        // Set the Anti-Fee Snipping Locktime
         let current_height = self.rpc.get_block_count()?;
-        let anti_fee_snipping_locktime = LockTime::from_height(current_height as u32)?;
+        let lock_time = LockTime::from_height(current_height as u32)?;
 
         let mut tx = Transaction {
             input: tx_inputs,
             output: tx_outs,
-            lock_time: anti_fee_snipping_locktime,
-            version: Version::TWO, // anti-fee-snipping
+            lock_time,
+            version: Version::TWO,
         };
 
         let mut input_info = selected_utxo
@@ -508,7 +509,7 @@ impl Wallet {
     pub fn generate_fidelity_proof(
         &self,
         index: u32,
-        maker_addr: String,
+        maker_addr: &str,
     ) -> Result<FidelityProof, WalletError> {
         // Generate a fidelity bond proof from the fidelity data.
         let (bond, _, is_spent) = self
@@ -542,7 +543,7 @@ impl Wallet {
     pub fn verify_fidelity_proof(
         &self,
         proof: &FidelityProof,
-        onion_addr: String,
+        onion_addr: &str,
     ) -> Result<(), WalletError> {
         if self.is_fidelity_expired(&proof.bond)? {
             return Err(FidelityError::CertExpired.into());

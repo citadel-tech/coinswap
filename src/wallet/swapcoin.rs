@@ -109,13 +109,13 @@ pub trait SwapCoin {
     /// Get the contract redeem script.
     fn get_contract_redeemscript(&self) -> ScriptBuf;
     /// Get the timelock public key.
-    fn get_timelock_pubkey(&self) -> PublicKey;
+    fn get_timelock_pubkey(&self) -> Result<PublicKey, WalletError>;
     /// Get the timelock value.
-    fn get_timelock(&self) -> u16;
+    fn get_timelock(&self) -> Result<u16, WalletError>;
     /// Get the hashlock public key.
-    fn get_hashlock_pubkey(&self) -> PublicKey;
+    fn get_hashlock_pubkey(&self) -> Result<PublicKey, WalletError>;
     /// Get the hash value.
-    fn get_hashvalue(&self) -> Hash160;
+    fn get_hashvalue(&self) -> Result<Hash160, WalletError>;
     /// Get the funding amount.
     fn get_funding_amount(&self) -> Amount;
     /// Verify the receiver's signature on the contract transaction.
@@ -181,7 +181,9 @@ macro_rules! impl_walletswapcoin {
                     &my_pubkey,
                     &self.other_pubkey,
                     &sig_mine,
-                    &self.others_contract_sig.unwrap(),
+                    &self
+                        .others_contract_sig
+                        .expect("others contract sig expeccted"),
                     &mut signed_contract_tx.input[index],
                     &multisig_redeemscript,
                 );
@@ -198,20 +200,24 @@ macro_rules! impl_walletswapcoin {
 macro_rules! impl_swapcoin_getters {
     () => {
         //unwrap() here because previously checked that contract_redeemscript is good
-        fn get_timelock_pubkey(&self) -> PublicKey {
-            read_timelock_pubkey_from_contract(&self.contract_redeemscript).unwrap()
+        fn get_timelock_pubkey(&self) -> Result<PublicKey, WalletError> {
+            Ok(read_timelock_pubkey_from_contract(
+                &self.contract_redeemscript,
+            )?)
         }
 
-        fn get_timelock(&self) -> u16 {
-            read_contract_locktime(&self.contract_redeemscript).unwrap()
+        fn get_timelock(&self) -> Result<u16, WalletError> {
+            Ok(read_contract_locktime(&self.contract_redeemscript)?)
         }
 
-        fn get_hashlock_pubkey(&self) -> PublicKey {
-            read_hashlock_pubkey_from_contract(&self.contract_redeemscript).unwrap()
+        fn get_hashlock_pubkey(&self) -> Result<PublicKey, WalletError> {
+            Ok(read_hashlock_pubkey_from_contract(
+                &self.contract_redeemscript,
+            )?)
         }
 
-        fn get_hashvalue(&self) -> Hash160 {
-            read_hashvalue_from_contract(&self.contract_redeemscript).unwrap()
+        fn get_hashvalue(&self) -> Result<Hash160, WalletError> {
+            Ok(read_hashvalue_from_contract(&self.contract_redeemscript)?)
         }
 
         fn get_contract_tx(&self) -> Transaction {
@@ -236,16 +242,14 @@ impl IncomingSwapCoin {
         contract_redeemscript: ScriptBuf,
         hashlock_privkey: SecretKey,
         funding_amount: Amount,
-    ) -> Self {
+    ) -> Result<Self, WalletError> {
         let secp = Secp256k1::new();
         let hashlock_pubkey = PublicKey {
             compressed: true,
             inner: secp256k1::PublicKey::from_secret_key(&secp, &hashlock_privkey),
         };
-        assert!(
-            hashlock_pubkey == read_hashlock_pubkey_from_contract(&contract_redeemscript).unwrap()
-        );
-        Self {
+        assert!(hashlock_pubkey == read_hashlock_pubkey_from_contract(&contract_redeemscript)?);
+        Ok(Self {
             my_privkey,
             other_pubkey,
             other_privkey: None,
@@ -255,7 +259,7 @@ impl IncomingSwapCoin {
             funding_amount,
             others_contract_sig: None,
             hash_preimage: None,
-        }
+        })
     }
 
     pub fn sign_transaction_input(
@@ -290,7 +294,10 @@ impl IncomingSwapCoin {
             sighash_type: EcdsaSighashType::All,
         };
         let sig_other = Signature {
-            signature: secp.sign_ecdsa(&sighash, &self.other_privkey.unwrap()),
+            signature: secp.sign_ecdsa(
+                &sighash,
+                &self.other_privkey.expect("other's privatekey expected"),
+            ),
             sighash_type: EcdsaSighashType::All,
         };
 
@@ -350,14 +357,14 @@ impl IncomingSwapCoin {
             tx,
             input,
             input_value,
-            &self.hash_preimage.unwrap(),
+            &self.hash_preimage.expect("hash preimage expected"),
         )
     }
 
     pub fn create_hashlock_spend_without_preimage(
         &self,
         destination_address: &Address,
-    ) -> Transaction {
+    ) -> Result<Transaction, WalletError> {
         let miner_fee = 136 * 10; //126 vbytes x 10 sat/vb, size calculated using testmempoolaccept
         let mut tx = Transaction {
             input: vec![TxIn {
@@ -384,9 +391,8 @@ impl IncomingSwapCoin {
             &mut tx.input[0],
             self.contract_tx.output[0].value,
             &preimage,
-        )
-        .unwrap();
-        tx
+        )?;
+        Ok(tx)
     }
 
     pub fn verify_contract_tx_sig(&self, sig: &Signature) -> Result<(), WalletError> {
@@ -408,16 +414,14 @@ impl OutgoingSwapCoin {
         contract_redeemscript: ScriptBuf,
         timelock_privkey: SecretKey,
         funding_amount: Amount,
-    ) -> Self {
+    ) -> Result<Self, WalletError> {
         let secp = Secp256k1::new();
         let timelock_pubkey = PublicKey {
             compressed: true,
             inner: secp256k1::PublicKey::from_secret_key(&secp, &timelock_privkey),
         };
-        assert!(
-            timelock_pubkey == read_timelock_pubkey_from_contract(&contract_redeemscript).unwrap()
-        );
-        Self {
+        assert!(timelock_pubkey == read_timelock_pubkey_from_contract(&contract_redeemscript)?);
+        Ok(Self {
             my_privkey,
             other_pubkey,
             contract_tx,
@@ -426,7 +430,7 @@ impl OutgoingSwapCoin {
             funding_amount,
             others_contract_sig: None,
             hash_preimage: None,
-        }
+        })
     }
 
     pub fn sign_timelocked_transaction_input(
@@ -459,7 +463,10 @@ impl OutgoingSwapCoin {
         Ok(())
     }
 
-    pub fn create_timelock_spend(&self, destination_address: &Address) -> Transaction {
+    pub fn create_timelock_spend(
+        &self,
+        destination_address: &Address,
+    ) -> Result<Transaction, WalletError> {
         let miner_fee = 128 * 2; //128 vbytes x 2 sat/vb, size calculated using testmempoolaccept
         let mut tx = Transaction {
             input: vec![TxIn {
@@ -467,7 +474,7 @@ impl OutgoingSwapCoin {
                     txid: self.contract_tx.compute_txid(),
                     vout: 0, //contract_tx is one-input-one-output
                 },
-                sequence: Sequence(self.get_timelock() as u32),
+                sequence: Sequence(self.get_timelock()? as u32),
                 witness: Witness::new(),
                 script_sig: ScriptBuf::new(),
             }],
@@ -484,9 +491,8 @@ impl OutgoingSwapCoin {
             &tx.clone(),
             &mut tx.input[0],
             self.contract_tx.output[0].value,
-        )
-        .unwrap();
-        tx
+        )?;
+        Ok(tx)
     }
 
     //"_with_my_privkey" as opposed to with other_privkey
@@ -671,6 +677,8 @@ mod tests {
     use super::*;
     use bitcoin::{NetworkKind, PrivateKey};
 
+    const TEST_CURRENT_HEIGHT: u32 = 100;
+
     #[test]
     fn test_apply_privkey_watchonly_swapcoin() {
         let secp = Secp256k1::new();
@@ -844,7 +852,7 @@ mod tests {
         let tx = Transaction {
             input: vec![input.clone()],
             output: vec![],
-            lock_time: LockTime::ZERO,
+            lock_time: LockTime::from_height(TEST_CURRENT_HEIGHT).unwrap(),
             version: Version::TWO,
         };
 
@@ -879,7 +887,7 @@ mod tests {
         };
         // Intentionally failing to sign with incomplete swapcoin
         assert!(incoming_swapcoin
-            .sign_transaction_input(index, &tx, &mut input, &contract_redeemscript,)
+            .sign_transaction_input(index, &tx, &mut input, &contract_redeemscript)
             .is_err());
         let sign = bitcoin::ecdsa::Signature {
             signature: secp256k1::ecdsa::Signature::from_compact(&[0; 64]).unwrap(),
@@ -954,7 +962,7 @@ mod tests {
                     incoming_swapcoin.contract_tx.output[0].value.to_sat() - miner_fee,
                 ),
             }],
-            lock_time: LockTime::ZERO,
+            lock_time: LockTime::from_height(TEST_CURRENT_HEIGHT).unwrap(),
             version: Version::TWO,
         };
         let index = 0;
@@ -1034,7 +1042,7 @@ mod tests {
                     incoming_swapcoin.contract_tx.output[0].value.to_sat() - miner_fee,
                 ),
             }],
-            lock_time: LockTime::ZERO,
+            lock_time: LockTime::from_height(TEST_CURRENT_HEIGHT).unwrap(),
             version: Version::TWO,
         };
         let index = 0;

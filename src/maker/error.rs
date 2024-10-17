@@ -4,7 +4,13 @@ use std::sync::{MutexGuard, PoisonError, RwLockReadGuard, RwLockWriteGuard};
 
 use bitcoin::secp256k1;
 
-use crate::{protocol::error::ContractError, wallet::WalletError};
+use crate::{
+    error::{NetError, ProtocolError},
+    protocol::error::ContractError,
+    wallet::WalletError,
+};
+
+use super::MakerBehavior;
 
 /// Enum to handle Maker related errors.
 #[derive(Debug)]
@@ -16,7 +22,10 @@ pub enum MakerError {
     Secp(secp256k1::Error),
     ContractError(ContractError),
     Wallet(WalletError),
+    Net(NetError),
     Deserialize(serde_cbor::Error),
+    SpecialBehaviour(MakerBehavior),
+    Protocol(ProtocolError),
 }
 
 impl From<std::io::Error> for MakerError {
@@ -64,5 +73,23 @@ impl From<ContractError> for MakerError {
 impl From<WalletError> for MakerError {
     fn from(value: WalletError) -> Self {
         Self::Wallet(value)
+    }
+}
+
+impl From<MakerBehavior> for MakerError {
+    fn from(value: MakerBehavior) -> Self {
+        Self::SpecialBehaviour(value)
+    }
+}
+
+impl From<NetError> for MakerError {
+    fn from(value: NetError) -> Self {
+        Self::Net(value)
+    }
+}
+
+impl From<ProtocolError> for MakerError {
+    fn from(value: ProtocolError) -> Self {
+        Self::Protocol(value)
     }
 }

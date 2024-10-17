@@ -16,10 +16,9 @@ use std::{
 
 use bip39::Mnemonic;
 use bitcoin::{
-    absolute::LockTime,
     ecdsa::Signature,
     secp256k1::{self, Secp256k1},
-    Amount, OutPoint, PublicKey, ScriptBuf, Transaction,
+    OutPoint, PublicKey, ScriptBuf, Transaction,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use std::time::Duration;
@@ -203,18 +202,52 @@ impl Maker {
             config.connection_type = connection_type;
         }
 
-        // Writing the new modified config back to the `config.toml` file:
-        let config_toml = format!(
+        // Manually serialize the MakerConfig into a TOML string
+        let toml_data = format!(
             r#"
             port = {}
             rpc_port = {}
+            heart_beat_interval_secs = {}
+            rpc_ping_interval_secs = {}
+            directory_servers_refresh_interval_secs = {}
+            idle_connection_timeout = {}
+            absolute_fee_sats = {}
+            amount_relative_fee_ppb = {}
+            time_relative_fee_ppb = {}
+            required_confirms = {}
+            min_contract_reaction_time = {}
+            min_size = {}
             socks_port = {}
-            connection_type = {:?}
+            directory_server_onion_address = "{}"
+            directory_server_clearnet_address = "{}"
+            fidelity_value = {}
+            fidelity_timelock = {}
+            connection_type = "{:?}"
             "#,
-            config.port, config.rpc_port, config.socks_port, config.connection_type
+            config.port,
+            config.rpc_port,
+            config.heart_beat_interval_secs,
+            config.rpc_ping_interval_secs,
+            config.directory_servers_refresh_interval_secs,
+            config.idle_connection_timeout,
+            config.absolute_fee_sats,
+            config.amount_relative_fee_ppb,
+            config.time_relative_fee_ppb,
+            config.required_confirms,
+            config.min_contract_reaction_time,
+            config.min_size,
+            config.socks_port,
+            config.directory_server_onion_address,
+            config.directory_server_clearnet_address,
+            config.fidelity_value,
+            config.fidelity_timelock,
+            config.connection_type,
         );
-        std::fs::write(data_dir.join("config.toml"), config_toml)
-            .expect("Error while writing the configuration to the config.toml!");
+
+        // Update the config file
+        config
+            .clone()
+            .write_to_file(&data_dir.join("config.toml"), toml_data)?;
 
         log::info!("Initializing wallet sync");
         wallet.sync()?;
@@ -233,11 +266,6 @@ impl Maker {
 
     /// Triggers a shutdown event for the Maker.
     pub fn shutdown(&self) -> Result<(), MakerError> {
-        log::info!("Shutdown wallet sync initiated.");
-        self.wallet.write()?.sync()?;
-        log::info!("Shutdown wallet syncing completed.");
-        self.wallet.read()?.save_to_disk()?;
-        log::info!("Wallet file saved to disk.");
         let mut flag = self.shutdown.write()?;
         *flag = true;
         Ok(())
@@ -253,25 +281,6 @@ impl Maker {
     /// Returns a reference to the Maker's wallet.
     pub fn get_wallet(&self) -> &RwLock<Wallet> {
         &self.wallet
-    }
-
-    /// Generates Fidelity bond from existing utxos
-    /// Errors if not enough balance
-    pub fn create_fidelity_bond(&self) -> Result<(), MakerError> {
-        let mut wallet = self.wallet.write()?;
-        log::info!("Creating Fidelity Bond.");
-        let fidelity_index = wallet.create_fidelity(
-            Amount::from_sat(self.config.fidelity_value),
-            LockTime::from_height(self.config.fidelity_timelock).unwrap(),
-        )?;
-
-        log::info!("Created new fidelity bond at index: {} ", fidelity_index);
-        let bond = wallet
-            .get_fidelity_bonds()
-            .get(&fidelity_index)
-            .expect("bond expected");
-        log::info!("Bond: {:?}", bond);
-        Ok(())
     }
 
     /// Checks consistency of the [ProofOfFunding] message and return the Hashvalue
@@ -316,7 +325,7 @@ impl Maker {
 
             check_reedemscript_is_multisig(&funding_info.multisig_redeemscript)?;
 
-            let (_, tweabale_pubkey) = self.wallet.read()?.get_tweakable_keypair();
+            let (_, tweabale_pubkey) = self.wallet.read()?.get_tweakable_keypair()?;
 
             check_multisig_has_pubkey(
                 &funding_info.multisig_redeemscript,
@@ -374,7 +383,8 @@ impl Maker {
                 ));
             }
 
-            let (tweakable_privkey, tweakable_pubkey) = self.wallet.read()?.get_tweakable_keypair();
+            let (tweakable_privkey, tweakable_pubkey) =
+                self.wallet.read()?.get_tweakable_keypair()?;
 
             check_multisig_has_pubkey(
                 &txinfo.multisig_redeemscript,
@@ -470,11 +480,11 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                             .iter()
                             .zip(connection_state.incoming_swapcoins.iter())
                         {
-                            let contract_timelock = og_sc.get_timelock();
+                            let contract_timelock = og_sc.get_timelock()?;
                             let next_internal_address =
                                 &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
                             let time_lock_spend =
-                                og_sc.create_timelock_spend(next_internal_address);
+                                og_sc.create_timelock_spend(next_internal_address)?;
 
                             // Sometimes we might not have other's contact signatures.
                             // This means the protocol have been stopped abruptly.
@@ -571,11 +581,11 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
                         .iter()
                         .zip(state.incoming_swapcoins.iter())
                     {
-                        let contract_timelock = og_sc.get_timelock();
+                        let contract_timelock = og_sc.get_timelock()?;
                         let contract = og_sc.get_fully_signed_contract_tx()?;
                         let next_internal_address =
                             &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
-                        let time_lock_spend = og_sc.create_timelock_spend(next_internal_address);
+                        let time_lock_spend = og_sc.create_timelock_spend(next_internal_address)?;
                         outgoings.push((
                             (og_sc.get_multisig_redeemscript(), contract),
                             (contract_timelock, time_lock_spend),

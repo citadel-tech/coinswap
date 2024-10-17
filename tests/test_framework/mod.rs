@@ -66,7 +66,8 @@ impl TestFramework {
     /// Returns ([TestFramework], [Taker], [`Vec<Maker>`]).
     /// Maker's config will follow the pattern given the input HashMap.
     /// If no bitcoind conf is provide a default value will be used.
-    pub async fn init(
+    #[allow(clippy::type_complexity)]
+    pub fn init(
         bitcoind_conf: Option<Conf<'_>>,
         makers_config_map: HashMap<(u16, Option<u16>), MakerBehavior>,
         taker_behavior: Option<TakerBehavior>,
@@ -80,7 +81,7 @@ impl TestFramework {
         if cfg!(feature = "tor") && connection_type == ConnectionType::TOR {
             coinswap::tor::setup_mitosis();
         }
-        setup_logger();
+        setup_logger(log::LevelFilter::Info);
         // Setup directory
         let temp_dir = get_random_tmp_dir();
         // Remove if previously existing
@@ -132,11 +133,16 @@ impl TestFramework {
 
         log::info!("Initiating Directory Server .....");
 
-        let directory_server_instance =
-            Arc::new(DirectoryServer::new(None, Some(connection_type)).unwrap());
+        let directory_server_instance = Arc::new(
+            DirectoryServer::new(
+                Some(temp_dir.clone().join("directory_server")),
+                Some(connection_type),
+            )
+            .unwrap(),
+        );
         let directory_server_instance_clone = directory_server_instance.clone();
         thread::spawn(move || {
-            start_directory_server(directory_server_instance_clone);
+            start_directory_server(directory_server_instance_clone).expect("TODO: panic message");
         });
 
         // Translate a RpcConfig from the test framework.

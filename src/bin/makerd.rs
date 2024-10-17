@@ -53,7 +53,7 @@ struct Cli {
 }
 
 fn main() -> std::io::Result<()> {
-    setup_logger();
+    setup_logger(log::LevelFilter::Info);
 
     let args = Cli::parse();
 

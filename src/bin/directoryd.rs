@@ -8,7 +8,6 @@ use std::{path::PathBuf, sync::Arc};
 #[derive(Parser)]
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
-
 struct Cli {
     /// Optional network type.
     #[clap(long, short = 'n', default_value = "clearnet", possible_values = &["tor", "clearnet"])]
@@ -19,7 +18,7 @@ struct Cli {
 }
 
 fn main() {
-    setup_logger();
+    setup_logger(log::LevelFilter::Info);
 
     let args = Cli::parse();
 
@@ -27,5 +26,5 @@ fn main() {
 
     let directory = Arc::new(DirectoryServer::new(args.data_directory, Some(conn_type)).unwrap());
 
-    start_directory_server(directory);
+    start_directory_server(directory).expect("");
 }
