@@ -3,9 +3,8 @@
 //!  Represents the configuration options for the Taker module, controlling behaviors
 //! such as refund locktime, connection attempts, sleep delays, and timeouts.
 
-use std::{io, path::PathBuf};
-
-use crate::utill::{get_taker_dir, parse_field, parse_toml, write_default_config, ConnectionType};
+use crate::utill::{get_taker_dir, parse_field, parse_toml, ConnectionType};
+use std::{io, io::Write, path::PathBuf};
 /// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
@@ -166,6 +165,17 @@ impl TakerConfig {
             .unwrap_or(default_config.rpc_port),
         })
     }
+
+    // Method to manually serialize the Taker Config into a TOML string
+    pub fn write_to_file(self, path: &PathBuf, toml_data: String) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::File::create(path)?;
+        file.write_all(toml_data.as_bytes())?;
+        file.flush()?;
+        Ok(())
+    }
 }
 
 fn write_default_taker_config(config_path: &PathBuf) {
@@ -190,7 +200,8 @@ fn write_default_taker_config(config_path: &PathBuf) {
                         rpc_port = 8081\n
                         ",
     );
-    write_default_config(config_path, config_string).unwrap();
+    let config = TakerConfig::default();
+    config.write_to_file(config_path, config_string).unwrap();
 }
 
 #[cfg(test)]

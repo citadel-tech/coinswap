@@ -221,6 +221,48 @@ impl Taker {
         if let Some(connection_type) = connection_type {
             config.connection_type = connection_type;
         }
+        // Manually serialize the TakerConfig into a TOML string
+        let toml_data = format!(
+            r#"
+            refund_locktime = {}
+            refund_locktime_step = {}
+            first_connect_attempts = {}
+            first_connect_sleep_delay_sec = {}
+            first_connect_attempt_timeout_sec = {}
+            reconnect_attempts = {}
+            reconnect_short_sleep_delay = {}
+            reconnect_long_sleep_delay = {}
+            short_long_sleep_delay_transition = {}
+            reconnect_attempt_timeout_sec = {}
+            port = {}
+            socks_port = {}
+            directory_server_onion_address = "{:?}"
+            directory_server_clearnet_address = "{:?}"
+            connection_type = "{:?}"
+            rpc_port = {}
+            "#,
+            config.refund_locktime,
+            config.refund_locktime_step,
+            config.first_connect_attempts,
+            config.first_connect_sleep_delay_sec,
+            config.first_connect_attempt_timeout_sec,
+            config.reconnect_attempts,
+            config.reconnect_short_sleep_delay,
+            config.reconnect_long_sleep_delay,
+            config.short_long_sleep_delay_transition,
+            config.reconnect_attempt_timeout_sec,
+            config.port,
+            config.socks_port,
+            config.directory_server_onion_address,
+            config.directory_server_clearnet_address,
+            config.connection_type,
+            config.rpc_port
+        );
+
+        // Update the config file
+        config
+            .clone()
+            .write_to_file(&data_dir.join("config.toml"), toml_data)?;
 
         log::info!("Initializing wallet sync");
         wallet.sync()?;

@@ -202,7 +202,52 @@ impl Maker {
             config.connection_type = connection_type;
         }
 
-        // TODO: Write the modified config back to the file.
+        // Manually serialize the MakerConfig into a TOML string
+        let toml_data = format!(
+            r#"
+            port = {}
+            rpc_port = {}
+            heart_beat_interval_secs = {}
+            rpc_ping_interval_secs = {}
+            directory_servers_refresh_interval_secs = {}
+            idle_connection_timeout = {}
+            absolute_fee_sats = {}
+            amount_relative_fee_ppb = {}
+            time_relative_fee_ppb = {}
+            required_confirms = {}
+            min_contract_reaction_time = {}
+            min_size = {}
+            socks_port = {}
+            directory_server_onion_address = "{}"
+            directory_server_clearnet_address = "{}"
+            fidelity_value = {}
+            fidelity_timelock = {}
+            connection_type = "{:?}"
+            "#,
+            config.port,
+            config.rpc_port,
+            config.heart_beat_interval_secs,
+            config.rpc_ping_interval_secs,
+            config.directory_servers_refresh_interval_secs,
+            config.idle_connection_timeout,
+            config.absolute_fee_sats,
+            config.amount_relative_fee_ppb,
+            config.time_relative_fee_ppb,
+            config.required_confirms,
+            config.min_contract_reaction_time,
+            config.min_size,
+            config.socks_port,
+            config.directory_server_onion_address,
+            config.directory_server_clearnet_address,
+            config.fidelity_value,
+            config.fidelity_timelock,
+            config.connection_type,
+        );
+
+        // Update the config file
+        config
+            .clone()
+            .write_to_file(&data_dir.join("config.toml"), toml_data)?;
 
         log::info!("Initializing wallet sync");
         wallet.sync()?;

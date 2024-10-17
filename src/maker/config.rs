@@ -3,8 +3,9 @@
 use std::{io, path::PathBuf};
 
 use bitcoin::Amount;
+use std::io::Write;
 
-use crate::utill::{get_maker_dir, parse_field, parse_toml, write_default_config, ConnectionType};
+use crate::utill::{get_maker_dir, parse_field, parse_toml, ConnectionType};
 
 /// Maker Configuration, controlling various maker behavior.
 #[derive(Debug, Clone, PartialEq)]
@@ -193,6 +194,17 @@ impl MakerConfig {
             .unwrap_or(default_config.connection_type),
         })
     }
+
+    // Method to write the provided TOML string to a file
+    pub fn write_to_file(self, path: &PathBuf, toml_data: String) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::File::create(path)?;
+        file.write_all(toml_data.as_bytes())?;
+        file.flush()?;
+        Ok(())
+    }
 }
 
 fn write_default_maker_config(config_path: &PathBuf) {
@@ -218,8 +230,8 @@ fn write_default_maker_config(config_path: &PathBuf) {
             connection_type = tor
             ",
     );
-
-    write_default_config(config_path, config_string).unwrap();
+    let config = MakerConfig::default();
+    config.write_to_file(config_path, config_string).unwrap();
 }
 
 #[cfg(test)]

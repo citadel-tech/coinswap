@@ -7,7 +7,7 @@ use crate::{
     market::rpc::start_rpc_server_thread,
     utill::{
         get_dns_dir, get_tor_addrs, monitor_log_for_completion, parse_field, parse_toml,
-        write_default_config, ConnectionType,
+        ConnectionType,
     },
 };
 
@@ -121,6 +121,19 @@ impl DirectoryServer {
             addresses,
         })
     }
+    pub fn update_directory_config(
+        &self,
+        path: &PathBuf,
+        toml_data: String,
+    ) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::File::create(path)?;
+        file.write_all(toml_data.as_bytes())?;
+        file.flush()?;
+        Ok(())
+    }
 
     pub fn shutdown(&self) -> Result<(), DirectoryServerError> {
         let mut flag = self
@@ -142,8 +155,16 @@ fn write_default_directory_config(config_path: &PathBuf) -> std::io::Result<()> 
             rpc_port= 4321\n\
             ",
     );
-
-    write_default_config(config_path, config_string)
+    let directory_server = DirectoryServer {
+        rpc_port: 4321,
+        port: 8080,
+        socks_port: 19060,
+        connection_type: ConnectionType::TOR,
+        data_dir: PathBuf::new(),
+        shutdown: RwLock::new(false),
+        addresses: Arc::new(RwLock::new(HashSet::new())),
+    };
+    directory_server.update_directory_config(config_path, config_string)
 }
 pub fn start_address_writer_thread(directory: Arc<DirectoryServer>) {
     let address_file = directory.data_dir.join("addresses.dat");
