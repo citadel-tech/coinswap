@@ -3,9 +3,8 @@
 //!  Represents the configuration options for the Taker module, controlling behaviors
 //! such as refund locktime, connection attempts, sleep delays, and timeouts.
 
-use std::{io, path::PathBuf};
-
-use crate::utill::{get_taker_dir, parse_field, parse_toml, write_default_config, ConnectionType};
+use crate::utill::{get_taker_dir, parse_field, parse_toml, ConnectionType};
+use std::{io, io::Write, path::PathBuf};
 /// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
@@ -166,31 +165,59 @@ impl TakerConfig {
             .unwrap_or(default_config.rpc_port),
         })
     }
+
+    // Method to manually serialize the Taker Config into a TOML string
+    pub fn write_to_file(self, path: &PathBuf) -> std::io::Result<()> {
+        let toml_data = format!(
+            r#"
+            [taker_config]
+            refund_locktime = {}
+            refund_locktime_step = {}
+            first_connect_attempts = {}
+            first_connect_sleep_delay_sec = {}
+            first_connect_attempt_timeout_sec = {}
+            reconnect_attempts = {}
+            reconnect_short_sleep_delay = {}
+            reconnect_long_sleep_delay = {}
+            short_long_sleep_delay_transition = {}
+            reconnect_attempt_timeout_sec = {}
+            port = {}
+            socks_port = {}
+            directory_server_onion_address = {}
+            directory_server_clearnet_address = {}
+            connection_type = "{:?}"
+            rpc_port = {}
+            "#,
+            self.refund_locktime,
+            self.refund_locktime_step,
+            self.first_connect_attempts,
+            self.first_connect_sleep_delay_sec,
+            self.first_connect_attempt_timeout_sec,
+            self.reconnect_attempts,
+            self.reconnect_short_sleep_delay,
+            self.reconnect_long_sleep_delay,
+            self.short_long_sleep_delay_transition,
+            self.reconnect_attempt_timeout_sec,
+            self.port,
+            self.socks_port,
+            self.directory_server_onion_address,
+            self.directory_server_clearnet_address,
+            self.connection_type,
+            self.rpc_port
+        );
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::File::create(path)?;
+        file.write_all(toml_data.as_bytes())?;
+        file.flush()?;
+        Ok(())
+    }
 }
 
 fn write_default_taker_config(config_path: &PathBuf) {
-    let config_string = String::from(
-        "\
-                        [taker_config]\n\
-                        refund_locktime = 48\n\
-                        refund_locktime_step = 48\n\
-                        first_connect_attempts = 5\n\
-                        first_connect_sleep_delay_sec = 1\n\
-                        first_connect_attempt_timeout_sec = 60\n\
-                        reconnect_attempts = 3200\n\
-                        reconnect_short_sleep_delay = 10\n\
-                        reconnect_long_sleep_delay = 60\n\
-                        short_long_sleep_delay_transition = 60\n\
-                        reconnect_attempt_timeout_sec = 300\n\
-                        port = 8000\n\
-                        socks_port = 19050\n\
-                        directory_server_onion_address = directoryhiddenserviceaddress.onion:8080\n\
-                        directory_server_clearnet_address = 127.0.0.1:8080\n\
-                        connection_type = tor\n\
-                        rpc_port = 8081\n
-                        ",
-    );
-    write_default_config(config_path, config_string).unwrap();
+    let config = TakerConfig::default();
+    config.write_to_file(config_path).unwrap();
 }
 
 #[cfg(test)]
