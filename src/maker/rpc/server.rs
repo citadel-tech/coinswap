@@ -1,7 +1,7 @@
 use std::{
     io::ErrorKind,
     net::{TcpListener, TcpStream},
-    sync::Arc,
+    sync::{atomic::Ordering::Relaxed, Arc},
     thread::sleep,
     time::Duration,
 };
@@ -128,7 +128,7 @@ pub fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     listener.set_nonblocking(true)?;
 
-    while !*maker.shutdown.read()? {
+    while !maker.shutdown.load(Relaxed) {
         match listener.accept() {
             Ok((mut stream, addr)) => {
                 log::info!("Got RPC request from: {}", addr);
