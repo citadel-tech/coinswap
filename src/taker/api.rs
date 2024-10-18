@@ -55,6 +55,18 @@ use crate::{
     },
 };
 
+// Default values for Taker configurations
+pub const DEFAULT_REFUND_LOCKTIME: u16 = 48;
+pub const DEFAULT_REFUND_LOCKTIME_STEP: u16 = 48;
+pub const DEFAULT_FIRST_CONNECT_ATTEMPTS: u32 = 5;
+pub const DEFAULT_FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1;
+pub const DEFAULT_FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 60;
+pub const DEFAULT_RECONNECT_ATTEMPTS: u32 = 3200;
+pub const DEFAULT_RECONNECT_SHORT_SLEEP_DELAY: u64 = 10;
+pub const DEFAULT_RECONNECT_LONG_SLEEP_DELAY: u64 = 60;
+pub const DEFAULT_SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 60;
+pub const DEFAULT_RECONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 300;
+
 /// Swap specific parameters. These are user's policy and can differ among swaps.
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
 ///
