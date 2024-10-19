@@ -223,28 +223,66 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
                 .get_wallet()
                 .write()?
                 .create_fidelity(amount, locktime);
+
             match fidelity_result {
                 // Wait for sufficient fund to create fidelity bond.
                 // Hard error if fidelity still can't be created.
                 Err(e) => {
+
                     if let WalletError::InsufficientFund {
                         available,
                         required,
                     } = e
                     {
-                        log::warn!("Insufficient fund to create fidelity bond.");
-                        let amount = required - available;
-                        let (_, addr, _) = maker
-                            .get_wallet()
-                            .read()?
-                            .get_next_fidelity_address(locktime)?;
-                        log::info!("Send {} sats to {}", amount, addr);
-                        if cfg!(feature = "integration-test") {
-                            sleep(Duration::from_secs(3));
-                        } else {
-                            sleep(Duration::from_secs(300)); // Wait for 5 mins in production
+                        
+                        loop {
+
+                            let (_, addr, _) = maker
+                                .get_wallet()
+                                .read()?
+                                .get_next_fidelity_address(locktime)?;
+
+                            let incoming_utxo = maker
+                                .get_wallet()
+                                .read()?
+                                .rpc
+                                .list_unspent(Some(0), Some(9999999), Some(&[&addr]), None, None)
+                                .map_err(|e| WalletError::Rpc(e))?;
+
+                            log::info!("incomming utxo: {:?}", incoming_utxo);
+                            log::info!("balance: {:?}", maker.get_wallet().read()?.balance());
+                            
+                            //  No transaction is pointing to this address
+                            if incoming_utxo.is_empty() {
+                                log::warn!("Insufficient fund to create fidelity bond.");
+
+                                let amount = required - available;
+                                log::info!("Send {} sats to {}", amount, addr);
+                            }
+                            
+                            // Tx funding to that address is created.
+                            else {
+                                let utxo = incoming_utxo[0].clone();
+
+                                if utxo.confirmations == 0 {
+                                    log::info!("Transaction: {:?} seen in mempool, waiting for confirmation.", utxo.txid);
+                                } else {
+                                    //  Tx is confirmed.
+                                    log::info!(
+                                        "Transaction: {:?} confirmed at blockheight:",
+                                        utxo.txid
+                                    );
+                                    break;
+                                }
+                            }
+
+                            // TODO: Use better delay logic here 
+                            thread::sleep(Duration::from_secs(5));
+
+                            // wallet sync
+                            maker.get_wallet().write()?.sync()?;
+                            maker.get_wallet().read()?.save_to_disk()?;
                         }
-                        continue;
                     } else {
                         log::error!(
                             "[{}] Fidelity Bond Creation failed: {:?}. Shutting Down Maker server",
@@ -262,11 +300,6 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
                         .generate_fidelity_proof(i, maker_address)?;
                     let mut proof = maker.highest_fidelity_proof.write()?;
                     *proof = Some(highest_proof);
-                    log::info!("[{}] Syncing and saving wallet data", maker.config.port);
-                    maker.get_wallet().write()?.sync()?;
-                    maker.get_wallet().read()?.save_to_disk()?;
-                    log::info!("[{}] Sync and save successful", maker.config.port);
-                    break;
                 }
             }
         }
