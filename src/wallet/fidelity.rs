@@ -392,6 +392,11 @@ impl Wallet {
             }
         };
 
+        // sync the wallet
+        log::info!("Initializing wallet sync");
+        self.sync()?;
+        log::info!("Completed wallet sync");
+
         let cert_expiry = self.get_fidelity_expiry()?;
 
         let bond = FidelityBond {
