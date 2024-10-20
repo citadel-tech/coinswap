@@ -30,7 +30,7 @@ use crate::{
     },
     protocol::messages::TakerToMakerMessage,
     utill::{monitor_log_for_completion, read_message, send_message, ConnectionType},
-    wallet::WalletError,
+    wallet::{Wallet, WalletError},
 };
 
 use crate::maker::error::MakerError;
@@ -219,12 +219,17 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
         } else {
             LockTime::from_height(maker.config.fidelity_timelock + current_height).unwrap()
         };
+
         while !*maker.shutdown.read()? {
+            // try to create fidelity bond.
             let fidelity_result = maker
                 .get_wallet()
                 .write()?
                 .create_fidelity(amount, locktime);
+
+            // do as per the result.
             match fidelity_result {
+                // TODO: change this docs
                 // Wait for sufficient fund to create fidelity bond.
                 // Hard error if fidelity still can't be created.
                 Err(e) => {
@@ -233,25 +238,55 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
                         required,
                     } = e
                     {
-                        log::warn!("Insufficient fund to create fidelity bond.");
-                        let amount = required - available;
-                        let (_, addr, _) = maker
-                            .get_wallet()
-                            .read()?
-                            .get_next_fidelity_address(locktime)?;
-                        log::info!("Send {} sats to {}", amount, addr);
-                        if cfg!(feature = "integration-test") {
-                            sleep(Duration::from_secs(3));
-                        } else {
-                            sleep(Duration::from_secs(300)); // Wait for 5 mins in production
+                        loop {
+                            // get the external address for recieving funds.
+                            let addr = maker.get_wallet().write()?.get_next_external_address()?;
+
+                            // get all the utxos which are funded to given address.
+                            let utxos = maker
+                                .get_wallet()
+                                .read()?
+                                .rpc
+                                .list_unspent(Some(0), Some(9999999), Some(&[&addr]), None, None)
+                                .map_err(|e| WalletError::Rpc(e))?;
+
+                            // if there are no utxos for that address -> no funding tx is created
+                            if utxos.is_empty() {
+                                // log that fund the maker wallet on the given address
+
+                                log::warn!("Insufficient fund to create fidelity bond.");
+                                let amount = required - available;
+                                log::info!("Send {} sats to {}", amount, addr);
+
+                                // TODO: add some delay with some smart logic
+                                sleep(Duration::from_secs(5));
+
+                                // sync here
+                                maker.get_wallet().write()?.sync()?;
+                                maker.get_wallet().read()?.save_to_disk()?;
+                            } else {
+                                // that means a funding tx is created and present in mempool
+                                // though we don't know whether it is confirmed or not
+                                // but we will break here and start proceeding with creating
+                                // fidelity bond
+
+                                // get the txid
+                                log::info!(
+                                    "Transaction :{} seen in mempool, waiting for confirmation.",
+                                    utxos[0].txid
+                                );
+
+                                log::info!("Starting creating fidelity bond now regardless of the status of funding tx");
+                                break;
+                            }
                         }
-                        continue;
                     } else {
                         log::error!(
                             "[{}] Fidelity Bond Creation failed: {:?}. Shutting Down Maker server",
                             maker.config.port,
                             e
                         );
+                        // TODO: are we really shutting down maker server on getting this error?
                         return Err(e.into());
                     }
                 }
