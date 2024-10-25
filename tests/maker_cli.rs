@@ -1,244 +1,167 @@
+use std::{fs::File, net::Shutdown};
 use std::str::FromStr;
-
 use bitcoin::{address::NetworkChecked, Address, Amount, Transaction};
+use bitcoind::{
+    bitcoincore_rpc::{Auth, RpcApi},
+    tempfile::tempdir,
+    BitcoinD, Conf, DataDir,
+};
+use coinswap::{
+    maker::{rpc, start_maker_server, Maker, MakerBehavior},
+    market::directory::{start_directory_server, DirectoryServer},
+    taker::{Taker, TakerBehavior},
+    utill::{read_connection_network_string, ConnectionType},
+    wallet::RPCConfig,
+};
 
-mod test {
-    use bitcoin::{address::NetworkChecked, Address, Amount, Network};
-    use bitcoind::{
-        bitcoincore_rpc::{Auth, RpcApi},
-        tempfile::tempdir,
-        BitcoinD, Conf, DataDir,
-    };
-    use coinswap::{
-        maker::{rpc, start_maker_server, Maker, MakerBehavior},
-        market::directory::{start_directory_server, DirectoryServer},
-        taker::{Taker, TakerBehavior},
-        utill::{read_connection_network_string, ConnectionType},
-        wallet::RPCConfig,
-    };
-    use serde_json::Value;
+use std::{path::PathBuf, process::Command, sync::{Arc, RwLock}};
+// /// Testing errors for integration tests
+// #[derive(Debug)]
+// enum IntTestError {
+//     // IO error
+//     IO(std::io::Error),
+//     // Command execution error
+//     CmdExec(String),
+// }
 
-    use std::{path::PathBuf, process::Command, str::FromStr, sync::Arc, thread};
-    /// Testing errors for integration tests
-    #[derive(Debug)]
-    enum IntTestError {
-        // IO error
-        IO(std::io::Error),
-        // Command execution error
-        CmdExec(String),
+struct MakerCli {
+    data_dir: Option<PathBuf>,
+    bitcoind: BitcoinD,
+    shutdown: Arc<RwLock<bool>>,
+}
+
+struct MakerConfig {
+    port: u16,
+    heart_beat_interval_secs: u64,
+    rpc_ping_interval_secs: u64,
+    directory_servers_refresh_interval_secs: u64,
+    idle_connection_timeout: u64,
+    absolute_fee_sats: u64,
+    amount_relative_fee_ppb: u64,
+    time_relative_fee_ppb: u64,
+    required_confirms: u32,
+    min_contract_reaction_time: u64,
+    min_size: u64,
+    socks_part: u16,
+    directory_server_onion_address: String,
+    connection_type: String,
+}
+
+fn parse_maker_toml(file_path: &str) -> Result<MakerConfig, Box<dyn std::error::Error>> {
+    let mut file = fs::File::open(file_path)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+
+    let config: MakerConfig = toml::from_str(&contents)?;
+    Ok(config)
+}
+
+fn build_cli_from_config(config: MakerConfig, data_dir: DataDir) -> Cli {
+    Cli {
+        network: config.connection_type,
+        data_directory: Some(DataDir),
+        rpc: "127.0.0.1:18443".to_string(), // Default or set dynamically as needed
+        auth: ("user".to_string(), "password".to_string()), // Set based on actual auth
+        rpc_network: "regtest".to_string(), // Default or from config
+        wallet_name: "maker".to_string(), // Default or set dynamically
     }
+}
 
-    struct MakerCli {
-        data_dir: Option<PathBuf>,
-        bitcoind: BitcoinD,
-    }
+impl MakerCli {
+    fn new() -> MakerCli {
+        // Initiate bitcoind instance
 
-    struct MakerConfig {
-        port: u16,
-        heart_beat_interval_secs: u64,
-        rpc_ping_interval_secs: u64,
-        directory_servers_refresh_interval_secs: u64,
-        idle_connection_timeout: u64,
-        absolute_fee_sats: u64,
-        amount_relative_fee_ppb: u64,
-        time_relative_fee_ppb: u64,
-        required_confirms: u32,
-        min_contract_reaction_time: u64,
-        min_size: u64,
-        socks_part: u16,
-        directory_server_onion_address: String,
-        connection_type: String,
+        let temp_dir = tempdir().unwrap().into_path();
+        let mut conf = Conf::default();
+        conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
+        conf.staticdir = Some(temp_dir.join(".bitcoin"));
+
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+        let key = "BITCOIND_EXE";
+        let curr_dir_path = std::env::current_dir().unwrap();
+
+        let bitcoind_path = match (os, arch) {
+            ("macos", "aarch64") => curr_dir_path.join("bin").join("bitcoind_macos"),
+            _ => curr_dir_path.join("bin").join("bitcoind"),
+        };
+        std::env::set_var(key, bitcoind_path);
+        let exe_path = bitcoind::exe_path().unwrap();
+        log::info!("Executable path: {:?}", exe_path);
+
+        let bitcoind = BitcoinD::with_conf(exe_path, &conf).unwrap();
+
+        let mining_address = bitcoind
+                .client
+            .get_new_address(None, None)
+            .unwrap()
+            .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
+            .unwrap();
+        bitcoind
+            .client
+            .generate_to_address(101, &mining_address)
+            .unwrap();
+        log::info!("bitcoind initiated!!");
+        
+        // setup directoryd and get the address.
+        let data_dir = temp_dir.join("maker");
+        let shutdown = Arc::new(RwLock::new(false));
+        MakerCli {
+            data_dir: Some(data_dir),
+            bitcoind,
+            shutdown,
+        }
+
     }
     
-    fn parse_maker_toml(file_path: &str) -> Result<MakerConfig, Box<dyn std::error::Error>> {
-        let mut file = fs::File::open(file_path)?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-    
-        let config: MakerConfig = toml::from_str(&contents)?;
-        Ok(config)
-    }
-
-    fn build_cli_from_config(config: MakerConfig, data_dir: DataDir) -> Cli {
-        Cli {
-            network: config.connection_type,
-            data_directory: Some(DataDir),
-            rpc: "127.0.0.1:18443".to_string(), // Default or set dynamically as needed
-            auth: ("user".to_string(), "password".to_string()), // Set based on actual auth
-            rpc_network: "regtest".to_string(), // Default or from config
-            wallet_name: "maker".to_string(), // Default or set dynamically
-        }
-    }
-
-    impl MakerCli {
-        fn new() -> MakerCli {
-            // Initiate bitcoind instance
-
-            let temp_dir = tempdir().unwrap().into_path();
-            let mut conf = Conf::default();
-            conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
-            conf.staticdir = Some(temp_dir.join(".bitcoin"));
-
-            let os = std::env::consts::OS;
-            let arch = std::env::consts::ARCH;
-            let key = "BITCOIND_EXE";
-            let curr_dir_path = std::env::current_dir().unwrap();
-
-            let bitcoind_path = match (os, arch) {
-                ("macos", "aarch64") => curr_dir_path.join("bin").join("bitcoind_macos"),
-                _ => curr_dir_path.join("bin").join("bitcoind"),
-            };
-            std::env::set_var(key, bitcoind_path);
-            let exe_path = bitcoind::exe_path().unwrap();
-            let bitcoind = BitcoinD::with_conf(exe_path, &conf).unwrap();
-
-            let mining_address = bitcoind
-                .client
-                .get_new_address(None, None)
-                .unwrap()
-                .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
-                .unwrap();
-            bitcoind
-                .client
-                .generate_to_address(101, &mining_address)
-                .unwrap();
-
-            // setup directoryd and get the address.
-            let data_dir = temp_dir.join("maker");
-
-            MakerCli {
-                data_dir: Some(data_dir),
-                bitcoind,
-            };
-            
-            // setup the makerd datadir with maker.toml config values. (especially the dns).
-            // Gather all the relevant args for makerd and maker-cli. Maybe in two different structs.
-
-            // Generate initial 101 blocks
-            let mining_address = bitcoind
-                .client
-                .get_new_address(None, None)
-                .unwrap()
-                .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
-                .unwrap();
-            bitcoind
-                .client
-                .generate_to_address(101, &mining_address)
-                .unwrap();
-
-            // fund 1 BTC to each maker.
-
-            makers.iter().for_each(|maker| {
-                let address = maker
-                    .get_wallet()
-                    .write()
-                    .unwrap()
-                    .get_next_external_address()
-                    .unwrap();
-
-                bitcoind
-                    .client
-                    .send_to_address(
-                        &address,
-                        Amount::ONE_BTC,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
-                    .unwrap();
-            });
-
-            // confirm balances
-            let mining_address = bitcoind
-                .client
-                .get_new_address(None, None)
-                .unwrap()
-                .require_network(Network::from_str(rpc_network).unwrap())
-                .unwrap();
-
-            bitcoind
-                .client
-                .generate_to_address(1, &mining_address)
-                .unwrap();
+    fn execute(&self, cmd: &str) -> Result<String> {
         
+        // setup the makerd datadir with maker.toml config values. (especially the dns).
+        let mut args = vec![
+            "--data-directory",
+            self.data_dir.as_os_str().to_str().unwrap(),
+            "--bitcoin-network",
+            "regtest",
+            "--connection-type",
+            "clearnet",
+        ];
+
+        // Gather all the relevant args for makerd and maker-cli. Maybe in two different structs.
+
+        // spawn the makerd thread and get a feed of the log via a mpsc channel. This will give fidelity address:amount to fund.
+
+        // Fund the fidelity address.
+
+        // wait for makerd to complete setup.
+
+        // push  the arguments
+        let makers_count = self.makers.len();
+        let makers_count_string = makers_count.to_string();
+
+        args.push(&makers_count_string); // makers count
+        args.push(&tx_count);
+
+        // add final command
+        args.push(cmd);
+
+        let output = Command::new(&self.target).args(args).output().unwrap(); // Return Error
+
+        let mut value = output.stdout;
+        let error = output.stderr;
+        // Note: The value & error are in bytes format
+
+        if value.len() == 0 {
+            return Err(IntTestError::CmdExec(String::from_utf8(error).unwrap()));
         }
 
-        fn execute(&self, cmd: &str) -> Result<String, IntTestError> {
-            println!("bitcoind :{:?}", self.bitcoind);
+        value.pop(); // remove `\n` at end
 
-            let mut args = if let Some(datadir) = &self.data_dir {
-                let datadir = datadir.as_os_str().to_str().unwrap();
-                [
-                    "--data-directory",
-                    datadir,
-                    "--NETWORK",
-                    &self.rpc_network,
-                    "--network",
-                    &self.network,
-                    "--WALLET",
-                    "test_wallet",
-                ]
-                .to_vec()
-            } else {
-                [
-                    "--NETWORK",
-                    &self.rpc_network,
-                    "--network",
-                    &self.network,
-                    "--WALLET",
-                    "test_wallet",
-                ]
-                .to_vec()
-            };
+        // get the output string from bytes
+        let output_string = std::str::from_utf8(&value).unwrap().to_string();
 
-            // push  the arguments
-            let makers_count = self.makers.len();
-            let makers_count_string = makers_count.to_string();
-
-            args.push(&makers_count_string); // makers count
-            args.push(&tx_count);
-
-            // add final command
-            args.push(cmd);
-
-            let output = Command::new(&self.target).args(args).output().unwrap(); // Return Error
-
-            let mut value = output.stdout;
-            let error = output.stderr;
-            // Note: The value & error are in bytes format
-
-            if value.len() == 0 {
-                return Err(IntTestError::CmdExec(String::from_utf8(error).unwrap()));
-            }
-
-            value.pop(); // remove `\n` at end
-
-            // get the output string from bytes
-            let output_string = std::str::from_utf8(&value).unwrap().to_string();
-
-            Ok(output_string)
-        }
-            // spawn the makerd thread and get a feed of the log via a mpsc channel. This will give fidelity address:amount to fund.
-
-            // Fund the fidelity address.
-
-            // wait for makerd to complete setup.
-
-            // Issue the maker-cli with suitable args
-
-            // hold the output
-
-            // assert the output.
-
-            // issue directory-cli to get the maker address and assert it.
-
+        Ok(output_string)
     }
 
-        // Runs a system command with given args
-        
 }
 
 fn test_maker_coinswap() {
