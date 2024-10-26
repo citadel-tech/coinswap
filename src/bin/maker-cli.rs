@@ -37,6 +37,12 @@ enum Commands {
     FidelityBalance,
     /// Gets a new address
     NewAddress,
+    // Send to an external wallet address.
+    SendToAddress {
+        address: String,
+        amount: u64,
+        fee: u64,
+    },
 }
 
 fn main() -> Result<(), MakerError> {
@@ -73,6 +79,17 @@ fn main() -> Result<(), MakerError> {
         }
         Commands::NewAddress => {
             send_rpc_req(&RpcMsgReq::NewAddress)?;
+        }
+        Commands::SendToAddress {
+            address,
+            amount,
+            fee,
+        } => {
+            send_rpc_req(&RpcMsgReq::SendToAddress {
+                address,
+                amount,
+                fee,
+            })?;
         }
     }
 

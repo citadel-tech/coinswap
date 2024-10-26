@@ -13,6 +13,11 @@ pub enum RpcMsgReq {
     ContractBalance,
     FidelityBalance,
     NewAddress,
+    SendToAddress {
+        address: String,
+        amount: u64,
+        fee: u64,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -27,4 +32,5 @@ pub enum RpcMsgResp {
     ContractBalanceResp(u64),
     FidelityBalanceResp(u64),
     NewAddressResp(String),
+    SendToAddressResp(String),
 }
