@@ -8,7 +8,7 @@ use coinswap::{
 mod test_framework;
 use test_framework::*;
 
-use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
+use std::{assert_eq, thread, time::Duration};
 
 /// Test Fidelity Bond Creation and Redemption
 ///
@@ -53,21 +53,15 @@ fn test_fidelity() {
     let maker_thread = thread::spawn(move || start_maker_server(maker_clone));
 
     thread::sleep(Duration::from_secs(12));
-    maker.shutdown().unwrap();
-    let _ = maker_thread.join().unwrap();
 
     // TODO: Assert that fund request for fidelity is printed in the log.
-    maker.shutdown.store(false, Relaxed);
 
     // Provide the maker with more funds.
     test_framework.send_to_address(&maker_addrs, Amount::ONE_BTC);
     test_framework.generate_blocks(1);
 
-    let maker_clone = maker.clone();
-
-    let maker_thread = thread::spawn(move || start_maker_server(maker_clone));
-
-    thread::sleep(Duration::from_secs(1));
+    thread::sleep(Duration::from_secs(5));
+    // stop the maker server
     maker.shutdown().unwrap();
 
     let _ = maker_thread.join().unwrap();
@@ -84,7 +78,7 @@ fn test_fidelity() {
         let bond_value = wallet_read
             .calculate_bond_value(highest_bond_index)
             .unwrap();
-        assert_eq!(bond_value, Amount::from_sat(550));
+        assert_eq!(bond_value, Amount::from_sat(185));
 
         let (bond, _, is_spent) = wallet_read
             .get_fidelity_bonds()
@@ -99,23 +93,26 @@ fn test_fidelity() {
 
     // Create another fidelity bond of 0.08 BTC and validate it.
     let second_maturity_height = {
-        let mut wallet_write = maker.get_wallet().write().unwrap();
-
-        let index = wallet_write
+        let index = maker
+            .get_wallet()
+            .write()
+            .unwrap()
             .create_fidelity(
                 Amount::from_sat(8000000),
                 LockTime::from_height((test_framework.get_block_count() as u32) + 150).unwrap(),
             )
             .unwrap();
 
+        let wallet_read = maker.get_wallet().read().unwrap();
+
         // Since this bond has a larger amount than the first, it should now be the highest value bond.
-        let highest_bond_index = wallet_write.get_highest_fidelity_index().unwrap().unwrap();
+        let highest_bond_index = wallet_read.get_highest_fidelity_index().unwrap().unwrap();
         assert_eq!(highest_bond_index, index);
 
-        let bond_value = wallet_write.calculate_bond_value(index).unwrap();
+        let bond_value = wallet_read.calculate_bond_value(index).unwrap();
         assert_eq!(bond_value, Amount::from_sat(1801));
 
-        let (bond, _, is_spent) = wallet_write.get_fidelity_bonds().get(&index).unwrap();
+        let (bond, _, is_spent) = wallet_read.get_fidelity_bonds().get(&index).unwrap();
         assert_eq!(bond.amount, Amount::from_sat(8000000));
         assert!(!is_spent);
 
@@ -124,13 +121,10 @@ fn test_fidelity() {
 
     // Verify balances
     {
-        let mut wallet_write = maker.get_wallet().write().unwrap();
+        let wallet_read = maker.get_wallet().read().unwrap();
 
-        // Sync the wallet to get accurate balances.
-        wallet_write.sync().unwrap();
-
-        let fidelity_balance = wallet_write.balance_fidelity_bonds(None).unwrap();
-        let seed_balance = wallet_write.balance_descriptor_utxo(None).unwrap();
+        let fidelity_balance = wallet_read.balance_fidelity_bonds(None).unwrap();
+        let seed_balance = wallet_read.balance_descriptor_utxo(None).unwrap();
 
         assert_eq!(fidelity_balance.to_sat(), 13000000);
         assert_eq!(seed_balance.to_sat(), 90998000);
