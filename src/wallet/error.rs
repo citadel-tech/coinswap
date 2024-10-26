@@ -17,7 +17,7 @@ pub enum WalletError {
     Locktime(bitcoin::blockdata::locktime::absolute::ConversionError),
     Secp(bitcoin::secp256k1::Error),
     Consensus(String),
-    InsufficientFund { available: u64, required: u64 },
+    InsufficientFund { available: f64, required: f64 },
 }
 
 impl From<std::io::Error> for WalletError {
