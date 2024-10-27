@@ -185,7 +185,18 @@ pub fn read_message(reader: &mut TcpStream) -> Result<Vec<u8>, NetError> {
 
     // the actual data
     let mut buffer = vec![0; length as usize];
-    reader.read_exact(&mut buffer)?;
+    let mut total_read = 0;
+
+    while total_read < length as usize {
+        match reader.read(&mut buffer[total_read..]) {
+            Ok(0) => return Err(NetError::ReachedEOF), // Connection closed
+            Ok(n) => total_read += n,
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted) => {
+                continue
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
     Ok(buffer)
 }
 

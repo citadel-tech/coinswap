@@ -1,3 +1,9 @@
+use super::{RpcMsgReq, RpcMsgResp};
+use crate::{
+    error::NetError,
+    market::directory::{DirectoryServer, DirectoryServerError},
+    utill::{read_message, send_message},
+};
 use std::{
     collections::HashSet,
     io::ErrorKind,
@@ -6,14 +12,6 @@ use std::{
     thread::sleep,
     time::Duration,
 };
-
-use crate::{
-    error::NetError,
-    market::directory::{DirectoryServer, DirectoryServerError},
-    utill::{read_message, send_message},
-};
-
-use super::{RpcMsgReq, RpcMsgResp};
 
 fn handle_request(
     socket: &mut TcpStream,
