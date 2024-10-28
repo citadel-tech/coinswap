@@ -335,17 +335,6 @@ pub fn parse_field<T: std::str::FromStr>(value: Option<&String>, default: T) -> 
     }
 }
 
-/// Function to write data to default toml files
-pub fn write_default_config(path: &PathBuf, toml_data: String) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut file = File::create(path)?;
-    file.write_all(toml_data.as_bytes())?;
-    file.flush()?;
-    Ok(())
-}
-
 /// Function to check if tor log contains a pattern
 pub fn monitor_log_for_completion(log_file: &PathBuf, pattern: &str) -> io::Result<()> {
     let mut last_size = 0;
