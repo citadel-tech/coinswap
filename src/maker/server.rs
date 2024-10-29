@@ -9,7 +9,7 @@ use std::{
     io::{ErrorKind, Read, Write},
     net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{atomic::Ordering::Relaxed, Arc, Mutex},
     thread::{self, sleep},
     time::Duration,
 };
@@ -107,9 +107,9 @@ fn network_bootstrap(
                 let maker_hs_path_str =
                     format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
                 let maker_hs_path = PathBuf::from(maker_hs_path_str);
-                let mut maker_file = fs::File::open(&maker_hs_path).unwrap();
+                let mut maker_file = fs::File::open(maker_hs_path)?;
                 let mut maker_onion_addr: String = String::new();
-                maker_file.read_to_string(&mut maker_onion_addr).unwrap();
+                maker_file.read_to_string(&mut maker_onion_addr)?;
                 maker_onion_addr.pop();
                 let maker_address = format!("{}:{}", maker_onion_addr, maker.config.port);
 
@@ -117,11 +117,9 @@ fn network_bootstrap(
                     let directory_hs_path_str =
                         "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
                     let directory_hs_path = PathBuf::from(directory_hs_path_str);
-                    let mut directory_file = fs::File::open(directory_hs_path).unwrap();
+                    let mut directory_file = fs::File::open(directory_hs_path)?;
                     let mut directory_onion_addr: String = String::new();
-                    directory_file
-                        .read_to_string(&mut directory_onion_addr)
-                        .unwrap();
+                    directory_file.read_to_string(&mut directory_onion_addr)?;
                     directory_onion_addr.pop();
                     format!("{}:{}", directory_onion_addr, 8080)
                 } else {
@@ -222,11 +220,12 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
 
         // Set 100 blocks locktime for test
         let locktime = if cfg!(feature = "integration-test") {
-            LockTime::from_height(current_height + 100).unwrap()
+            LockTime::from_height(current_height + 100).map_err(WalletError::Locktime)?
         } else {
-            LockTime::from_height(maker.config.fidelity_timelock + current_height).unwrap()
+            LockTime::from_height(maker.config.fidelity_timelock + current_height)
+                .map_err(WalletError::Locktime)?
         };
-        while !*maker.shutdown.read()? {
+        while !maker.shutdown.load(Relaxed) {
             let fidelity_result = maker
                 .get_wallet()
                 .write()?
@@ -290,7 +289,7 @@ fn check_connection_with_core(
     accepting_clients: Arc<Mutex<bool>>,
 ) -> Result<(), MakerError> {
     let mut rpc_ping_success = false;
-    while !*maker.shutdown.read()? {
+    while !maker.shutdown.load(Relaxed) {
         // If connection is disrupted keep trying at heart_beat_interval (3 sec).
         // If connection is live, keep tring at rpc_ping_interval (60 sec).
         match rpc_ping_success {
@@ -328,7 +327,7 @@ fn handle_client(
 
     let mut connection_state = ConnectionState::default();
 
-    while !*maker.shutdown.read()? {
+    while !maker.shutdown.load(Relaxed) {
         let mut taker_msg_bytes = Vec::new();
         match read_message(stream) {
             Ok(b) => taker_msg_bytes = b,
@@ -392,7 +391,8 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let (maker_address, tor_thread) = network_bootstrap(maker.clone())?;
     let port = maker.config.port;
 
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.port))?;
+    let listener =
+        TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.port)).map_err(NetError::IO)?;
     log::info!(
         "[{}] Listening for client conns at: {}",
         maker.config.port,
@@ -422,7 +422,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     // All thread handles are stored in the thread_pool, which are all joined at server shutdown.
     let mut thread_pool = Vec::new();
 
-    if !*maker.shutdown.read()? {
+    if !maker.shutdown.load(Relaxed) {
         // 1. Bitcoin Core Connection checker thread.
         // Ensures that Bitcoin Core connection is live.
         // If not, it will block p2p connections until Core works again.
@@ -482,7 +482,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     // The P2P Client connection loop.
     // Each client connection will spawn a new handler thread, which is added back in the global thread_pool.
     // This loop beats at `maker.config.heart_beat_interval_secs`
-    while !*maker.shutdown.read()? {
+    while !maker.shutdown.load(Relaxed) {
         let maker = maker.clone(); // This clone is needed to avoid moving the Arc<Maker> in each iterations.
         let heart_beat_interval = maker.config.heart_beat_interval_secs;
 
@@ -522,7 +522,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                         maker.config.port,
                         e
                     );
-                    return Err(MakerError::IO(e));
+                    return Err(NetError::IO(e).into());
                 }
             }
         };
@@ -548,7 +548,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     }
 
     if maker.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {
-        crate::tor::kill_tor_handles(tor_thread.unwrap());
+        crate::tor::kill_tor_handles(tor_thread.expect("Tor thread expected"));
     }
 
     log::info!("Shutdown wallet sync initiated.");

@@ -19,7 +19,10 @@ use std::{
     collections::HashMap,
     fs,
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicBool, Ordering::Relaxed},
+        Arc, RwLock,
+    },
     thread,
     time::Duration,
 };
@@ -53,7 +56,7 @@ fn get_random_tmp_dir() -> PathBuf {
 pub struct TestFramework {
     bitcoind: BitcoinD,
     temp_dir: PathBuf,
-    shutdown: Arc<RwLock<bool>>,
+    shutdown: AtomicBool,
 }
 
 impl TestFramework {
@@ -124,7 +127,7 @@ impl TestFramework {
             .generate_to_address(101, &mining_address)
             .unwrap();
         log::info!("bitcoind initiated!!");
-        let shutdown = Arc::new(RwLock::new(false));
+        let shutdown = AtomicBool::new(false);
         let test_framework = Arc::new(Self {
             bitcoind,
             temp_dir: temp_dir.clone(),
@@ -133,11 +136,16 @@ impl TestFramework {
 
         log::info!("Initiating Directory Server .....");
 
-        let directory_server_instance =
-            Arc::new(DirectoryServer::new(None, Some(connection_type)).unwrap());
+        let directory_server_instance = Arc::new(
+            DirectoryServer::new(
+                Some(temp_dir.clone().join("directory_server")),
+                Some(connection_type),
+            )
+            .unwrap(),
+        );
         let directory_server_instance_clone = directory_server_instance.clone();
         thread::spawn(move || {
-            start_directory_server(directory_server_instance_clone);
+            start_directory_server(directory_server_instance_clone).unwrap();
         });
 
         // Translate a RpcConfig from the test framework.
@@ -187,7 +195,7 @@ impl TestFramework {
         thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(3));
             tf_clone.generate_blocks(10);
-            if *tf_clone.shutdown.read().unwrap() {
+            if tf_clone.shutdown.load(Relaxed) {
                 log::info!("ending block generation thread");
                 return;
             }
@@ -228,7 +236,7 @@ impl TestFramework {
     pub fn stop(&self) {
         log::info!("Stopping Test Framework");
         // stop all framework threads.
-        *self.shutdown.write().unwrap() = true;
+        self.shutdown.store(true, Relaxed);
         // stop bitcoind
         let _ = self.bitcoind.client.stop().unwrap();
     }

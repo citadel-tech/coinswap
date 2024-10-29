@@ -11,7 +11,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::{self, Read},
+    io::Read,
     net::TcpStream,
     path::{Path, PathBuf},
     thread::{self, sleep},
@@ -25,6 +25,7 @@ use socks::Socks5Stream;
 use bitcoin::{
     consensus::encode::deserialize,
     hashes::{hash160::Hash as Hash160, Hash},
+    hex::DisplayHex,
     secp256k1::{
         rand::{rngs::OsRng, RngCore},
         SecretKey,
@@ -38,7 +39,7 @@ use super::{
     routines::*,
 };
 use crate::{
-    error::{NetError, ProtocolError},
+    error::ProtocolError,
     protocol::{
         error::ContractError,
         messages::{
@@ -233,6 +234,8 @@ impl Taker {
         if let Some(connection_type) = connection_type {
             config.connection_type = connection_type;
         }
+
+        config.write_to_file(&data_dir.join("config.toml"))?;
 
         log::info!("Initializing wallet sync");
         wallet.sync()?;
@@ -677,7 +680,7 @@ impl Taker {
                         self.wallet
                             .rpc
                             .get_tx_out_proof(&[txid], Some(txid_blockhash_map.get(&txid).unwrap()))
-                            .map(|gettxoutproof_result| to_hex(&gettxoutproof_result))
+                            .map(|gettxoutproof_result| gettxoutproof_result.to_lower_hex_string())
                     })
                     .collect::<Result<Vec<String>, _>>()?;
                 return Ok((txes, merkleproofs));
@@ -818,44 +821,24 @@ impl Taker {
             match self.send_sigs_init_next_hop_once(maker_refund_locktime, funding_tx_infos) {
                 Ok(ret) => return Ok(ret),
                 Err(e) => {
-                    // Re attempt upto reconnect_attempts tries, if timedout error
-                    if let TakerError::Net(NetError::IO(error)) = e {
-                        if error.kind() == io::ErrorKind::WouldBlock
-                            || error.kind() == io::ErrorKind::TimedOut
-                        {
-                            if ii <= reconnect_attempts {
-                                log::warn!(
-                                    "Timeout for settling coinswap with maker {}, reattempting...",
-                                    maker_oa.address
-                                );
-                                continue;
-                            } else {
-                                log::warn!("Timeout Reattempt exceeded. Adding malicious Maker");
-                                self.offerbook.add_bad_maker(&maker_oa);
-                                return Err(NetError::ConnectionTimedOut.into());
-                            }
-                        }
-                    } else {
-                        // Re attempt with transitory delay for all other errors
-                        log::warn!(
-                            "Failed to connect to maker {} to send signatures and init next hop, \
+                    log::warn!(
+                        "Failed to connect to maker {} to send signatures and init next hop, \
                             reattempting... error={:?}",
-                            &maker_oa.address,
-                            e
-                        );
-                        if ii <= reconnect_attempts {
-                            sleep(Duration::from_secs(
-                                if ii <= self.config.short_long_sleep_delay_transition {
-                                    sleep_delay
-                                } else {
-                                    self.config.reconnect_long_sleep_delay
-                                },
-                            ));
-                            continue;
-                        } else {
-                            self.offerbook.add_bad_maker(&maker_oa);
-                            return Err(e);
-                        }
+                        &maker_oa.address,
+                        e
+                    );
+                    if ii <= reconnect_attempts {
+                        sleep(Duration::from_secs(
+                            if ii <= self.config.short_long_sleep_delay_transition {
+                                sleep_delay
+                            } else {
+                                self.config.reconnect_long_sleep_delay
+                            },
+                        ));
+                        continue;
+                    } else {
+                        self.offerbook.add_bad_maker(&maker_oa);
+                        return Err(e);
                     }
                 }
             }
@@ -877,7 +860,10 @@ impl Taker {
 
         let previous_maker = self.ongoing_swap_state.peer_infos.iter().rev().nth(1);
 
-        log::info!("Connecting to {}", this_maker.address);
+        log::info!(
+            "Connecting to {} | Send Sigs Init Next Hop",
+            this_maker.address
+        );
         let address = this_maker.address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(address)?,
@@ -1363,7 +1349,7 @@ impl Taker {
         let mut ii = 0;
 
         let maker_addr_str = maker_address.to_string();
-        log::info!("Connecting to {}", maker_addr_str);
+
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
             ConnectionType::TOR => Socks5Stream::connect(
@@ -1378,7 +1364,7 @@ impl Taker {
 
         loop {
             ii += 1;
-
+            log::info!("Connecting to {} | Req Sigs for Sender", maker_addr_str);
             match req_sigs_for_sender_once(
                 &mut socket,
                 outgoing_swapcoins,
@@ -1445,7 +1431,6 @@ impl Taker {
         let mut ii = 0;
 
         let maker_addr_str = maker_address.to_string();
-        log::info!("Connecting to {}", maker_addr_str);
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
             ConnectionType::TOR => Socks5Stream::connect(
@@ -1460,6 +1445,7 @@ impl Taker {
 
         loop {
             ii += 1;
+            log::info!("Connecting to {} | Req Sigs for Receiver", maker_addr_str);
             match req_sigs_for_recvr_once(&mut socket, incoming_swapcoins, receivers_contract_txes)
             {
                 Ok(ret) => return Ok(ret),
@@ -1552,7 +1538,6 @@ impl Taker {
             let mut ii = 0;
 
             let maker_addr_str = maker_address.address.to_string();
-            log::info!("Connecting to {}", maker_addr_str);
             let mut socket = match self.config.connection_type {
                 ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
                 ConnectionType::TOR => Socks5Stream::connect(
@@ -1581,6 +1566,7 @@ impl Taker {
 
             loop {
                 ii += 1;
+                log::info!("Connecting to {} || Settle Swap", maker_addr_str);
                 match self.settle_one_coinswap(
                     &mut socket,
                     index,
@@ -1934,12 +1920,9 @@ impl Taker {
                     let directory_hs_path_str =
                         "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
                     let directory_hs_path = PathBuf::from(directory_hs_path_str);
-                    let mut directory_file =
-                        fs::File::open(directory_hs_path).map_err(TakerError::IO)?;
+                    let mut directory_file = fs::File::open(directory_hs_path)?;
                     let mut directory_onion_addr = String::new();
-                    directory_file
-                        .read_to_string(&mut directory_onion_addr)
-                        .map_err(TakerError::IO)?;
+                    directory_file.read_to_string(&mut directory_onion_addr)?;
                     directory_onion_addr.pop();
                     address = format!("{}:{}", directory_onion_addr, 8080);
                 }

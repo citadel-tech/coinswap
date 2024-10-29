@@ -15,7 +15,7 @@ use bitcoin::{
         rand::{rngs::OsRng, RngCore},
         Secp256k1, SecretKey,
     },
-    Network, PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
+    PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
 };
 use log::LevelFilter;
 use log4rs::{
@@ -165,7 +165,7 @@ pub fn send_message(
     socket_writer: &mut TcpStream,
     message: &impl serde::Serialize,
 ) -> Result<(), NetError> {
-    let msg_bytes = serde_cbor::ser::to_vec(message).map_err(NetError::Cbor)?;
+    let msg_bytes = serde_cbor::ser::to_vec(message)?;
     let msg_len = (msg_bytes.len() as u32).to_be_bytes();
     let mut to_send = Vec::with_capacity(msg_bytes.len() + msg_len.len());
     to_send.extend(msg_len);
@@ -185,7 +185,18 @@ pub fn read_message(reader: &mut TcpStream) -> Result<Vec<u8>, NetError> {
 
     // the actual data
     let mut buffer = vec![0; length as usize];
-    reader.read_exact(&mut buffer)?;
+    let mut total_read = 0;
+
+    while total_read < length as usize {
+        match reader.read(&mut buffer[total_read..]) {
+            Ok(0) => return Err(NetError::ReachedEOF), // Connection closed
+            Ok(n) => total_read += n,
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted) => {
+                continue
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
     Ok(buffer)
 }
 
@@ -296,21 +307,6 @@ pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> ScriptBuf {
     ScriptBuf::new_witness_program(&witness_program)
 }
 
-/// Converts a byte vector to a hexadecimal string representation.
-pub fn to_hex(bytes: &[u8]) -> String {
-    let hex_chars: Vec<char> = "0123456789abcdef".chars().collect();
-    let mut hex_string = String::new();
-
-    for &byte in bytes {
-        let high_nibble = (byte >> 4) & 0xf;
-        let low_nibble = byte & 0xf;
-        hex_string.push(hex_chars[high_nibble as usize]);
-        hex_string.push(hex_chars[low_nibble as usize]);
-    }
-
-    hex_string
-}
-
 /// Parse TOML file into key-value pair.
 pub fn parse_toml(file_path: &PathBuf) -> io::Result<HashMap<String, HashMap<String, String>>> {
     let file = File::open(file_path)?;
@@ -348,17 +344,6 @@ pub fn parse_field<T: std::str::FromStr>(value: Option<&String>, default: T) -> 
             .map_err(|_e| io::Error::new(ErrorKind::InvalidData, "parsing failed")),
         None => Ok(default),
     }
-}
-
-/// Function to write data to default toml files
-pub fn write_default_config(path: &PathBuf, toml_data: String) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut file = File::create(path)?;
-    file.write_all(toml_data.as_bytes())?;
-    file.flush()?;
-    Ok(())
 }
 
 /// Function to check if tor log contains a pattern
@@ -458,10 +443,10 @@ pub fn compute_checksum(descriptor: &str) -> Result<String, WalletError> {
 }
 
 /// Parse the proxy (Socket:Port) argument from the cli input.
-pub fn parse_proxy_auth(s: &str) -> Result<(String, String), String> {
+pub fn parse_proxy_auth(s: &str) -> Result<(String, String), NetError> {
     let parts: Vec<_> = s.split(':').collect();
     if parts.len() != 2 {
-        return Err("Invalid format".to_string());
+        return Err(NetError::InvalidNetworkAddress);
     }
 
     let user = parts[0].to_string();
@@ -470,22 +455,12 @@ pub fn parse_proxy_auth(s: &str) -> Result<(String, String), String> {
     Ok((user, passwd))
 }
 
-/// Parse the network string for Bitcoin Backend. Used in CLI apps.
-pub fn read_bitcoin_network_string(network: &str) -> Result<Network, String> {
-    match network {
-        "regtest" => Ok(Network::Regtest),
-        "mainnet" => Ok(Network::Bitcoin),
-        "signet" => Ok(Network::Signet),
-        _ => Err("Invalid Bitcoin Network".to_string()),
-    }
-}
-
 /// Parse the network string for Connection Type. Used in CLI apps.
-pub fn read_connection_network_string(network: &str) -> Result<ConnectionType, String> {
+pub fn read_connection_network_string(network: &str) -> Result<ConnectionType, NetError> {
     match network {
         "clearnet" => Ok(ConnectionType::CLEARNET),
         "tor" => Ok(ConnectionType::TOR),
-        _ => Err("Invalid Connection Network".to_string()),
+        _ => Err(NetError::InvalidAppNetwork),
     }
 }
 
@@ -496,7 +471,7 @@ mod tests {
     use bitcoin::{
         blockdata::{opcodes::all, script::Builder},
         secp256k1::Scalar,
-        PubkeyHash, Txid,
+        PubkeyHash,
     };
 
     use serde_json::json;
@@ -554,27 +529,6 @@ mod tests {
             convert_json_rpc_bitcoin_to_satoshis(&amount),
             1_234_567_812_345_678
         );
-    }
-    #[test]
-    fn test_to_hex() {
-        let mut txid_test_vector = [
-            vec![
-                0x5a, 0x4e, 0xbf, 0x66, 0x82, 0x2b, 0x0b, 0x2d, 0x56, 0xbd, 0x9d, 0xc6, 0x4e, 0xce,
-                0x0b, 0xc3, 0x8e, 0xe7, 0x84, 0x4a, 0x23, 0xff, 0x1d, 0x73, 0x20, 0xa8, 0x8c, 0x5f,
-                0xdb, 0x2a, 0xd3, 0xe2,
-            ],
-            vec![
-                0x6d, 0x69, 0x37, 0x2e, 0x3e, 0x59, 0x28, 0xa7, 0x3c, 0x98, 0x38, 0x18, 0xbd, 0x19,
-                0x27, 0xe1, 0x90, 0x8f, 0x51, 0xa6, 0xc2, 0xcd, 0x32, 0x58, 0x98, 0xb3, 0xb4, 0x16,
-                0x90, 0xd4, 0xfa, 0x7b,
-            ],
-        ];
-        for i in txid_test_vector.iter_mut() {
-            let txid1 = Txid::from_str(to_hex(i).as_str()).unwrap();
-            i.reverse();
-            let txid2 = Txid::from_slice(i).unwrap();
-            assert_eq!(txid1, txid2);
-        }
     }
     #[test]
     fn test_redeemscript_to_scriptpubkey_custom() {
