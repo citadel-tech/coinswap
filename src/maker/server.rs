@@ -38,8 +38,8 @@ use crate::maker::error::MakerError;
 // Default values for Maker configurations
 pub const DEFAULT_HEART_BEAT_INTERVAL_SECS: u64 = 3;
 pub const DEFAULT_RPC_PING_INTERVAL_SECS: u64 = 60;
-pub const DEFAULT_DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 60 * 12; // 12 Hours
-pub const DEFAULT_IDLE_CONNECTION_TIMEOUT: u64 = 300;
+pub const _DEFAULT_DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 60 * 12; // 12 Hours
+pub const _DEFAULT_IDLE_CONNECTION_TIMEOUT: u64 = 300;
 pub const DEFAULT_REQUIRED_CONFIRMS: u64 = 1;
 
 /// Fetches the Maker and DNS address, and sends maker address to the DNS server.
@@ -59,7 +59,7 @@ fn network_bootstrap(
             let dns_address = if cfg!(feature = "integration-test") {
                 format!("127.0.0.1:{}", 8080)
             } else {
-                maker.config.directory_server_clearnet_address.clone()
+                maker.config.directory_server_address.clone()
             };
             log::info!("[{}] Maker server address : {}", maker_port, maker_address);
 
@@ -123,7 +123,7 @@ fn network_bootstrap(
                     directory_onion_addr.pop();
                     format!("{}:{}", directory_onion_addr, 8080)
                 } else {
-                    maker.config.directory_server_onion_address.clone()
+                    maker.config.directory_server_address.clone()
                 };
 
                 log::info!("[{}] Maker server address : {}", maker_port, maker_address);
@@ -150,7 +150,7 @@ fn network_bootstrap(
                         maker_port,
                         e
                     );
-                    thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
+                    thread::sleep(Duration::from_secs(DEFAULT_HEART_BEAT_INTERVAL_SECS));
                     continue;
                 }
             },
@@ -166,7 +166,7 @@ fn network_bootstrap(
                             maker_port,
                             e
                         );
-                        thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
+                        thread::sleep(Duration::from_secs(DEFAULT_HEART_BEAT_INTERVAL_SECS));
                         continue;
                     }
                 }
@@ -184,7 +184,7 @@ fn network_bootstrap(
                 maker_port,
                 e
             );
-            thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
+            thread::sleep(Duration::from_secs(DEFAULT_HEART_BEAT_INTERVAL_SECS));
             continue;
         }
         // Payload sent successfully, exit the loop
@@ -294,10 +294,10 @@ fn check_connection_with_core(
         // If connection is live, keep tring at rpc_ping_interval (60 sec).
         match rpc_ping_success {
             true => {
-                sleep(Duration::from_secs(maker.config.rpc_ping_interval_secs));
+                sleep(Duration::from_secs(DEFAULT_RPC_PING_INTERVAL_SECS));
             }
             false => {
-                sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
+                sleep(Duration::from_secs(DEFAULT_HEART_BEAT_INTERVAL_SECS));
             }
         }
         if let Err(e) = maker.wallet.read()?.rpc.get_blockchain_info() {
@@ -484,7 +484,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     // This loop beats at `maker.config.heart_beat_interval_secs`
     while !maker.shutdown.load(Relaxed) {
         let maker = maker.clone(); // This clone is needed to avoid moving the Arc<Maker> in each iterations.
-        let heart_beat_interval = maker.config.heart_beat_interval_secs;
+        let heart_beat_interval = DEFAULT_HEART_BEAT_INTERVAL_SECS;
 
         // Block client connections if accepting_client=false
         if !*accepting_clients.lock()? {

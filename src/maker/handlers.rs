@@ -47,6 +47,7 @@ use crate::{
     wallet::{IncomingSwapCoin, SwapCoin},
 };
 
+use crate::maker::server::DEFAULT_REQUIRED_CONFIRMS;
 /// The Global Handle Message function. Takes in a [`Arc<Maker>`] and handle messages
 /// according to a [ConnectionState].
 pub fn handle_message(
@@ -96,7 +97,7 @@ pub fn handle_message(
                     absolute_fee_sat: maker.config.absolute_fee_sats,
                     amount_relative_fee_ppb: maker.config.amount_relative_fee_ppb,
                     time_relative_fee_ppb: maker.config.time_relative_fee_ppb,
-                    required_confirms: maker.config.required_confirms,
+                    required_confirms: DEFAULT_REQUIRED_CONFIRMS,
                     minimum_locktime: maker.config.min_contract_reaction_time,
                     max_size,
                     min_size: maker.config.min_size,
@@ -357,7 +358,7 @@ impl Maker {
             self.config.amount_relative_fee_ppb,
             self.config.time_relative_fee_ppb,
             Amount::from_sat(incoming_amount),
-            self.config.required_confirms, //time_in_blocks just 1 for now
+            DEFAULT_REQUIRED_CONFIRMS, //time_in_blocks just 1 for now
         );
 
         let calc_funding_tx_fees = (FUNDING_TX_VBYTE_SIZE

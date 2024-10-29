@@ -50,6 +50,8 @@ use crate::{
 
 use super::{config::MakerConfig, error::MakerError};
 
+use crate::maker::server::{DEFAULT_HEART_BEAT_INTERVAL_SECS, DEFAULT_REQUIRED_CONFIRMS};
+
 /// Used to configure the maker for testing purposes.
 #[derive(Debug, Clone, Copy)]
 pub enum MakerBehavior {
@@ -270,7 +272,7 @@ impl Maker {
                 )
                 .map_err(WalletError::Rpc)?
             {
-                if txout.confirmations < (self.config.required_confirms as u32) {
+                if txout.confirmations < (DEFAULT_REQUIRED_CONFIRMS as u32) {
                     return Err(MakerError::General(
                         "funding tx not confirmed to required depth",
                     ));
@@ -491,7 +493,7 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
             }
         } // All locks are cleared here.
 
-        std::thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
+        std::thread::sleep(Duration::from_secs(DEFAULT_HEART_BEAT_INTERVAL_SECS));
     }
 
     Ok(())
@@ -571,7 +573,7 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
             }
         } // All locks are cleared here
 
-        std::thread::sleep(Duration::from_secs(maker.config.heart_beat_interval_secs));
+        std::thread::sleep(Duration::from_secs(DEFAULT_HEART_BEAT_INTERVAL_SECS));
     }
 
     Ok(())

@@ -96,26 +96,6 @@ impl MakerConfig {
                 default_config.rpc_port,
             )
             .unwrap_or(default_config.rpc_port),
-            heart_beat_interval_secs: parse_field(
-                maker_config_section.get("heart_beat_interval_secs"),
-                default_config.heart_beat_interval_secs,
-            )
-            .unwrap_or(default_config.heart_beat_interval_secs),
-            rpc_ping_interval_secs: parse_field(
-                maker_config_section.get("rpc_ping_interval_secs"),
-                default_config.rpc_ping_interval_secs,
-            )
-            .unwrap_or(default_config.rpc_ping_interval_secs),
-            directory_servers_refresh_interval_secs: parse_field(
-                maker_config_section.get("directory_servers_refresh_interval_secs"),
-                default_config.directory_servers_refresh_interval_secs,
-            )
-            .unwrap_or(default_config.directory_servers_refresh_interval_secs),
-            idle_connection_timeout: parse_field(
-                maker_config_section.get("idle_connection_timeout"),
-                default_config.idle_connection_timeout,
-            )
-            .unwrap_or(default_config.idle_connection_timeout),
             absolute_fee_sats: parse_field(
                 maker_config_section.get("absolute_fee_sats"),
                 default_config.absolute_fee_sats,
@@ -131,11 +111,6 @@ impl MakerConfig {
                 default_config.time_relative_fee_ppb,
             )
             .unwrap_or(default_config.time_relative_fee_ppb),
-            required_confirms: parse_field(
-                maker_config_section.get("required_confirms"),
-                default_config.required_confirms,
-            )
-            .unwrap_or(default_config.required_confirms),
             min_contract_reaction_time: parse_field(
                 maker_config_section.get("min_contract_reaction_time"),
                 default_config.min_contract_reaction_time,
@@ -151,14 +126,10 @@ impl MakerConfig {
                 default_config.socks_port,
             )
             .unwrap_or(default_config.socks_port),
-            directory_server_onion_address: maker_config_section
+            directory_server_address: maker_config_section
                 .get("directory_server_onion_address")
                 .map(|s| s.to_string())
-                .unwrap_or(default_config.directory_server_onion_address),
-            directory_server_clearnet_address: maker_config_section
-                .get("directory_server_clearnet_address")
-                .map(|s| s.to_string())
-                .unwrap_or(default_config.directory_server_clearnet_address),
+                .unwrap_or(default_config.directory_server_address),
             fidelity_value: parse_field(
                 maker_config_section.get("fidelity_value"),
                 default_config.fidelity_value,
@@ -183,38 +154,26 @@ impl MakerConfig {
             r#"
             port = {}
             rpc_port = {}
-            heart_beat_interval_secs = {}
-            rpc_ping_interval_secs = {}
-            directory_servers_refresh_interval_secs = {}
-            idle_connection_timeout = {}
             absolute_fee_sats = {}
             amount_relative_fee_ppb = {}
             time_relative_fee_ppb = {}
-            required_confirms = {}
             min_contract_reaction_time = {}
             min_size = {}
             socks_port = {}
-            directory_server_onion_address = "{}"
-            directory_server_clearnet_address = "{}"
+            directory_server_address = "{}"
             fidelity_value = {}
             fidelity_timelock = {}
             connection_type = "{:?}"
             "#,
             self.port,
             self.rpc_port,
-            self.heart_beat_interval_secs,
-            self.rpc_ping_interval_secs,
-            self.directory_servers_refresh_interval_secs,
-            self.idle_connection_timeout,
             self.absolute_fee_sats,
             self.amount_relative_fee_ppb,
             self.time_relative_fee_ppb,
-            self.required_confirms,
             self.min_contract_reaction_time,
             self.min_size,
             self.socks_port,
-            self.directory_server_onion_address,
-            self.directory_server_clearnet_address,
+            self.directory_server_address,
             self.fidelity_value,
             self.fidelity_timelock,
             self.connection_type,
@@ -258,11 +217,6 @@ mod tests {
             [maker_config]
             port = 6102
             rpc_port = 6103
-            heart_beat_interval_secs = 3
-            rpc_ping_interval_secs = 60
-            watchtower_ping_interval_secs = 300
-            directory_servers_refresh_interval_secs = 43200
-            idle_connection_timeout = 300
             absolute_fee_sats = 1000
             amount_relative_fee_ppb = 10000000
             time_relative_fee_ppb = 100000

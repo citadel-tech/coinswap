@@ -67,56 +67,6 @@ impl TakerConfig {
         let taker_config_section = section.get("taker_config").cloned().unwrap_or_default();
 
         Ok(TakerConfig {
-            refund_locktime: parse_field(
-                taker_config_section.get("refund_locktime"),
-                default_config.refund_locktime,
-            )
-            .unwrap_or(default_config.refund_locktime),
-            refund_locktime_step: parse_field(
-                taker_config_section.get("refund_locktime_step"),
-                default_config.refund_locktime_step,
-            )
-            .unwrap_or(default_config.refund_locktime_step),
-            first_connect_attempts: parse_field(
-                taker_config_section.get("first_connect_attempts"),
-                default_config.first_connect_attempts,
-            )
-            .unwrap_or(default_config.first_connect_attempts),
-            first_connect_sleep_delay_sec: parse_field(
-                taker_config_section.get("first_connect_sleep_delay_sec"),
-                default_config.first_connect_sleep_delay_sec,
-            )
-            .unwrap_or(default_config.first_connect_sleep_delay_sec),
-            first_connect_attempt_timeout_sec: parse_field(
-                taker_config_section.get("first_connect_attempt_timeout_sec"),
-                default_config.first_connect_attempt_timeout_sec,
-            )
-            .unwrap_or(default_config.first_connect_attempt_timeout_sec),
-            reconnect_attempts: parse_field(
-                taker_config_section.get("reconnect_attempts"),
-                default_config.reconnect_attempts,
-            )
-            .unwrap_or(default_config.reconnect_attempts),
-            reconnect_short_sleep_delay: parse_field(
-                taker_config_section.get("reconnect_short_sleep_delay"),
-                default_config.reconnect_short_sleep_delay,
-            )
-            .unwrap_or(default_config.reconnect_short_sleep_delay),
-            reconnect_long_sleep_delay: parse_field(
-                taker_config_section.get("reconnect_long_sleep_delay"),
-                default_config.reconnect_long_sleep_delay,
-            )
-            .unwrap_or(default_config.reconnect_long_sleep_delay),
-            short_long_sleep_delay_transition: parse_field(
-                taker_config_section.get("short_long_sleep_delay_transition"),
-                default_config.short_long_sleep_delay_transition,
-            )
-            .unwrap_or(default_config.short_long_sleep_delay_transition),
-            reconnect_attempt_timeout_sec: parse_field(
-                taker_config_section.get("reconnect_attempt_timeout_sec"),
-                default_config.reconnect_attempt_timeout_sec,
-            )
-            .unwrap_or(default_config.reconnect_attempt_timeout_sec),
             port: parse_field(taker_config_section.get("port"), default_config.port)
                 .unwrap_or(default_config.port),
             socks_port: parse_field(
@@ -124,14 +74,10 @@ impl TakerConfig {
                 default_config.socks_port,
             )
             .unwrap_or(default_config.socks_port),
-            directory_server_onion_address: taker_config_section
+            directory_server_address: taker_config_section
                 .get("directory_server_onion_address")
                 .map(|s| s.to_string())
-                .unwrap_or(default_config.directory_server_onion_address),
-            directory_server_clearnet_address: taker_config_section
-                .get("directory_server_clearnet_address")
-                .map(|s| s.to_string())
-                .unwrap_or(default_config.directory_server_clearnet_address),
+                .unwrap_or(default_config.directory_server_address),
             connection_type: parse_field(
                 taker_config_section.get("connection_type"),
                 default_config.connection_type,
@@ -150,37 +96,15 @@ impl TakerConfig {
         let toml_data = format!(
             r#"
             [taker_config]
-            refund_locktime = {}
-            refund_locktime_step = {}
-            first_connect_attempts = {}
-            first_connect_sleep_delay_sec = {}
-            first_connect_attempt_timeout_sec = {}
-            reconnect_attempts = {}
-            reconnect_short_sleep_delay = {}
-            reconnect_long_sleep_delay = {}
-            short_long_sleep_delay_transition = {}
-            reconnect_attempt_timeout_sec = {}
             port = {}
             socks_port = {}
-            directory_server_onion_address = {}
-            directory_server_clearnet_address = {}
+            directory_server_address = {}
             connection_type = "{:?}"
             rpc_port = {}
             "#,
-            self.refund_locktime,
-            self.refund_locktime_step,
-            self.first_connect_attempts,
-            self.first_connect_sleep_delay_sec,
-            self.first_connect_attempt_timeout_sec,
-            self.reconnect_attempts,
-            self.reconnect_short_sleep_delay,
-            self.reconnect_long_sleep_delay,
-            self.short_long_sleep_delay_transition,
-            self.reconnect_attempt_timeout_sec,
             self.port,
             self.socks_port,
-            self.directory_server_onion_address,
-            self.directory_server_clearnet_address,
+            self.directory_server_address,
             self.connection_type,
             self.rpc_port
         );
@@ -194,6 +118,8 @@ impl TakerConfig {
 
 #[cfg(test)]
 mod tests {
+
+    use crate::taker::api::DEFAULT_REFUND_LOCKTIME;
 
     use super::*;
     use std::{
@@ -216,18 +142,11 @@ mod tests {
     fn test_valid_config() {
         let contents = r#"
         [taker_config]
-        refund_locktime = 48
-        refund_locktime_step = 48
-        first_connect_attempts = 5
-        first_connect_sleep_delay_sec = 1
-        first_connect_attempt_timeout_sec = 60
-        reconnect_attempts = 3200
-        reconnect_short_sleep_delay = 10
-        reconnect_long_sleep_delay = 60
-        short_long_sleep_delay_transition = 60
-        reconnect_attempt_timeout_sec = 300
         port = 8000
         socks_port = 19050
+        directory_server_address = "directoryhiddenserviceaddress.onion:8080"
+        connection_type = "TOR"
+        rpc_port = 8081
         "#;
         let config_path = create_temp_config(contents, "valid_taker_config.toml");
         let config = TakerConfig::new(Some(&config_path)).unwrap();
@@ -247,7 +166,7 @@ mod tests {
         let config = TakerConfig::new(Some(&config_path)).unwrap();
         remove_temp_config(&config_path);
 
-        assert_eq!(config.refund_locktime, 48);
+        assert_eq!(DEFAULT_REFUND_LOCKTIME, 48);
         assert_eq!(config, TakerConfig::default());
     }
 
@@ -268,19 +187,19 @@ mod tests {
     fn test_different_data() {
         let contents = r#"
             [taker_config]
-            refund_locktime = 49
+            socks_port = 19051
         "#;
         let config_path = create_temp_config(contents, "different_data_taker_config.toml");
         let config = TakerConfig::new(Some(&config_path)).unwrap();
         remove_temp_config(&config_path);
-        assert_eq!(config.refund_locktime, 49);
+        assert_eq!(DEFAULT_REFUND_LOCKTIME, 48);
         assert_eq!(
             TakerConfig {
-                refund_locktime: 48,
-                ..config
+                socks_port: 19051,        // Configurable via TOML.
+                ..TakerConfig::default()  // Use default for other values.
             },
-            TakerConfig::default()
-        )
+            config
+        );
     }
 
     #[test]
