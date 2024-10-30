@@ -3,30 +3,11 @@ use std::str::FromStr;
 use bitcoin::{Address, Amount, Network};
 use bitcoind::{bitcoincore_rpc::RpcApi, tempfile, BitcoinD, Conf};
 use std::sync::mpsc;
-use serde::{Serialize, Deserialize};
 
 struct MakerCli {
     data_dir: PathBuf,
     bitcoind: BitcoinD,
     shutdown: Arc<RwLock<bool>>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct MakerConfig {
-    port: u16,
-    heart_beat_interval_secs: u64,
-    rpc_ping_interval_secs: u64,
-    directory_servers_refresh_interval_secs: u64,
-    idle_connection_timeout: u64,
-    absolute_fee_sats: u64,
-    amount_relative_fee_ppb: u64,
-    time_relative_fee_ppb: u64,
-    required_confirms: u32,
-    min_contract_reaction_time: u64,
-    min_size: u64,
-    socks_port: u16,
-    directory_server_onion_address: String,
-    connection_type: String,
 }
 
 impl MakerCli {
@@ -50,31 +31,6 @@ impl MakerCli {
             bitcoind,
             shutdown: Arc::new(RwLock::new(false)),
         })
-    }
-
-    fn setup_maker_config(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let config = MakerConfig {
-            port: 8080,
-            heart_beat_interval_secs: 60,
-            rpc_ping_interval_secs: 30,
-            directory_servers_refresh_interval_secs: 300,
-            idle_connection_timeout: 600,
-            absolute_fee_sats: 1000,
-            amount_relative_fee_ppb: 1000,
-            time_relative_fee_ppb: 100,
-            required_confirms: 2,
-            min_contract_reaction_time: 300,
-            min_size: 100000,
-            socks_port: 9050,
-            directory_server_onion_address: "http://localhost:8081".to_string(),
-            connection_type: "clearnet".to_string(),
-        };
-
-        let config_toml = toml::to_string(&config)?;
-        let config_path = self.data_dir.join("maker.toml");
-        fs::write(config_path, config_toml)?;
-
-        Ok(())
     }
 
     fn start_makerd(&self) -> Result<mpsc::Receiver<String>, Box<dyn std::error::Error>> {
@@ -116,12 +72,6 @@ impl MakerCli {
         Err("Fidelity bond address not found in makerd output".into())
     }
 
-    fn fund_fidelity_address(&self, address: &str, amount: u64) -> Result<(), Box<dyn std::error::Error>> {
-        let address = Address::from_str(address)?.require_network(Network::Regtest)?;
-        self.bitcoind.client.send_to_address(&address, Amount::from_sat(amount), None, None, None, None, None, None)?;
-        Ok(())
-    }
-
     fn execute_maker_cli(&self, args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
         let output = Command::new("cargo")
             .args(&["run", "--bin", "maker-cli", "--"])
@@ -144,22 +94,25 @@ impl MakerCli {
 #[test]
 fn test_makecli_get_new_address() -> Result<(), Box<dyn std::error::Error>> {
     let maker_cli = MakerCli::new()?;
-
-    maker_cli.setup_maker_config()?;
-
     let rx = maker_cli.start_makerd()?;
-
     let fidelity_address = maker_cli.wait_for_maker_setup(rx)?;
+    let checked_address = Address::from_str(&fidelity_address)?.require_network(Network::Regtest)?;
+    
+    maker_cli.bitcoind.client.send_to_address(
+        &checked_address,
+        Amount::from_sat(100_000_000),
+        None, None, None, None, None, None
+    )?;
 
-    maker_cli.fund_fidelity_address(&fidelity_address, 100_000_000)?; // Fund with 1 BTC
-
-    maker_cli.bitcoind.client.generate_to_address(6, &maker_cli.bitcoind.client.get_new_address(None, None)?)?;
+    let new_address = maker_cli.bitcoind.client.get_new_address(None, None)?;
+    let new_address_str = new_address.to_string();
+    let checked_new_address = Address::from_str(&new_address_str)?.require_network(Network::Regtest)?;
+    maker_cli.bitcoind.client.generate_to_address(6, &checked_new_address)?;
 
     // Wait for makerd to complete setup
     thread::sleep(Duration::from_secs(10));
 
     let new_address = maker_cli.execute_maker_cli(&["get-new-address"])?;
-
     assert!(Address::from_str(&new_address).is_ok());
 
     let directory_addresses = maker_cli.execute_directory_cli(&["list-addresses"])?;
