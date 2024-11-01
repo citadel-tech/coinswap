@@ -5,10 +5,9 @@ use coinswap::{
     taker::{SwapParams, TakerBehavior},
     utill::ConnectionType,
 };
-
 mod test_framework;
 use log::{info, warn};
-use std::{assert_eq, thread, time::Duration};
+use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
 use test_framework::*;
 
 /// Abort 1: TAKER Drops After Full Setup.
@@ -122,7 +121,7 @@ fn test_stop_taker_after_setup() {
 
     // Makers take time to fully setup.
     makers.iter().for_each(|maker| {
-        while !*maker.is_setup_complete.read().unwrap() {
+        while !maker.is_setup_complete.load(Relaxed) {
             log::info!("Waiting for maker setup completion");
             // Introduce a delay of 10 seconds to prevent write lock starvation.
             thread::sleep(Duration::from_secs(10));
@@ -195,14 +194,13 @@ fn test_stop_taker_after_setup() {
     taker_thread.join().unwrap();
 
     // Wait for Maker threads to conclude.
-    //makers.iter().for_each(|maker| maker.shutdown().unwrap());
     maker_threads
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
     // ---- After Swap checks ----
 
-    let _ = directory_server_instance.shutdown();
+    directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
 

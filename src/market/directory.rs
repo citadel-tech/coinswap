@@ -152,11 +152,6 @@ impl DirectoryServer {
             addresses,
         })
     }
-
-    pub fn shutdown(&self) -> Result<(), DirectoryServerError> {
-        self.shutdown.store(true, Relaxed);
-        Ok(())
-    }
 }
 
 fn write_default_directory_config(config_path: &PathBuf) -> Result<(), DirectoryServerError> {
