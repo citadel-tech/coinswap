@@ -414,9 +414,7 @@ impl Wallet {
             .fidelity_bond
             .insert(index, (bond, bond_spk, false));
 
-        log::info!("Syncing wallet");
         self.sync()?;
-        log::info!("Sync successful");
 
         Ok(index)
     }
