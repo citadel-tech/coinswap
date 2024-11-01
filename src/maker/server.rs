@@ -222,7 +222,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
         let sleep_delay = if cfg!(feature = "integration-test") {
             3 // Wait for 3 sec in tests
         } else {
-            600 // Wait for 5 mins in production
+            300 // Wait for 5 mins in production
         };
 
         log::info!("Fidelity value chosen = {:?} BTC", amount.to_btc());
@@ -271,6 +271,9 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
                         .generate_fidelity_proof(i, maker_address)?;
                     let mut proof = maker.highest_fidelity_proof.write()?;
                     *proof = Some(highest_proof);
+
+                    // save the wallet data to disk
+                    maker.get_wallet().read()?.save_to_disk()?;
                     break;
                 }
             }
@@ -404,7 +407,6 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     );
 
     // Setup the wallet with fidelity bond.
-    maker.get_wallet().write()?.sync()?;
     let network = maker.get_wallet().read()?.store.network;
     let balance = maker.get_wallet().read()?.balance()?;
     log::info!("[{}] Currency Network: {:?}", port, network);
@@ -468,7 +470,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         let rpc_thread = thread::Builder::new()
             .name("RPC Thread".to_string())
             .spawn(move || {
-                log::info!("Spawning RPC server thread");
+                log::info!("[{}] Spawning RPC server thread", port);
                 start_rpc_server(maker_clone)
             })?;
 
