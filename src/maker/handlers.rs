@@ -345,15 +345,18 @@ impl Maker {
         }
 
         // Calculate output amounts for the next hop
-        let incoming_amount = message.confirmed_funding_txes.iter().fold(0u64, |acc, fi| {
-            let index = find_funding_output_index(fi).unwrap();
-            let txout = fi
-                .funding_tx
-                .output
-                .get(index as usize)
-                .expect("output at index expected");
-            acc + txout.value.to_sat()
-        });
+        let incoming_amount = message
+            .confirmed_funding_txes
+            .iter()
+            .try_fold(0u64, |acc, fi| {
+                let index = find_funding_output_index(fi)?;
+                let txout = fi
+                    .funding_tx
+                    .output
+                    .get(index as usize)
+                    .expect("output at index expected");
+                Ok::<_, MakerError>(acc + txout.value.to_sat())
+            })?;
 
         let calc_coinswap_fees = calculate_coinswap_fee(
             self.config.absolute_fee_sats,
