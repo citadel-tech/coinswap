@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::{fs, path::PathBuf, process::Command, sync::{Arc, RwLock}, thread, time::Duration};
 use std::str::FromStr;
 use bitcoin::{Address, Amount, Network};
@@ -105,8 +106,7 @@ fn test_makecli_get_new_address() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let new_address = maker_cli.bitcoind.client.get_new_address(None, None)?;
-    let new_address_str = new_address.to_string();
-    let checked_new_address = Address::from_str(&new_address_str)?.require_network(Network::Regtest)?;
+    let checked_new_address = Address::assume_checked(new_address);
     maker_cli.bitcoind.client.generate_to_address(6, &checked_new_address)?;
 
     // Wait for makerd to complete setup
