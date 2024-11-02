@@ -11,10 +11,8 @@ use std::{
 
 use bitcoin::{
     hashes::{sha256, Hash},
-    secp256k1::{
-        rand::{rngs::OsRng, RngCore},
-        Secp256k1, SecretKey,
-    },
+    key::{rand::thread_rng, Keypair},
+    secp256k1::{Secp256k1, SecretKey},
     PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
 };
 use log::LevelFilter;
@@ -34,10 +32,11 @@ use std::{
 
 use crate::{
     error::NetError,
-    protocol::{contract::derive_maker_pubkey_and_nonce, messages::MultisigPrivkey},
+    protocol::{
+        contract::derive_maker_pubkey_and_nonce, error::ContractError, messages::MultisigPrivkey,
+    },
     wallet::{SwapCoin, WalletError},
 };
-use serde_json::Value;
 
 const INPUT_CHARSET: &str =
     "0123456789()[],'/*abcdefgh@:$%{}IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~ijklmnopqrstuvwxyzABCDEFGH`#\"\\ ";
@@ -75,12 +74,12 @@ impl FromStr for ConnectionType {
 }
 
 /// Read the tor address given an hidden_service directory path
-pub fn get_tor_addrs(hs_dir: &Path) -> String {
+pub fn get_tor_addrs(hs_dir: &Path) -> io::Result<String> {
     let hostname_file_path = hs_dir.join("hs-dir").join("hostname");
     let mut hostname_file = File::open(hostname_file_path).unwrap();
     let mut tor_addrs: String = String::new();
-    hostname_file.read_to_string(&mut tor_addrs).unwrap();
-    tor_addrs
+    hostname_file.read_to_string(&mut tor_addrs)?;
+    Ok(tor_addrs)
 }
 
 /// Get the system specific home directory.
@@ -215,85 +214,81 @@ pub fn check_and_apply_maker_private_keys<S: SwapCoin>(
 /// Nonce values are random integers and resulting Pubkeys are derived by tweaking
 ///
 /// the Maker's advertised Pubkey with these two nonces.
+#[allow(clippy::type_complexity)]
 pub fn generate_maker_keys(
     tweakable_point: &PublicKey,
     count: u32,
-) -> (
-    Vec<PublicKey>,
-    Vec<SecretKey>,
-    Vec<PublicKey>,
-    Vec<SecretKey>,
-) {
-    let (multisig_pubkeys, multisig_nonces): (Vec<_>, Vec<_>) = (0..count)
-        .map(|_| derive_maker_pubkey_and_nonce(tweakable_point).unwrap())
-        .unzip();
-    let (hashlock_pubkeys, hashlock_nonces): (Vec<_>, Vec<_>) = (0..count)
-        .map(|_| derive_maker_pubkey_and_nonce(tweakable_point).unwrap())
-        .unzip();
+) -> Result<
     (
+        Vec<PublicKey>,
+        Vec<SecretKey>,
+        Vec<PublicKey>,
+        Vec<SecretKey>,
+    ),
+    ContractError,
+> {
+    // Closure to derive public keys and nonces
+    let derive_keys = |count: u32| {
+        (0..count)
+            .map(|_| derive_maker_pubkey_and_nonce(tweakable_point))
+            .collect::<Result<Vec<_>, _>>()
+    };
+
+    // Generate multisig and hashlock keys.
+    let (multisig_pubkeys, multisig_nonces): (Vec<_>, Vec<_>) =
+        derive_keys(count)?.into_iter().unzip();
+    let (hashlock_pubkeys, hashlock_nonces): (Vec<_>, Vec<_>) =
+        derive_keys(count)?.into_iter().unzip();
+
+    Ok((
         multisig_pubkeys,
         multisig_nonces,
         hashlock_pubkeys,
         hashlock_nonces,
-    )
-}
-
-/// Converts a Bitcoin amount from JSON-RPC representation to satoshis.
-pub fn convert_json_rpc_bitcoin_to_satoshis(amount: &Value) -> u64 {
-    //to avoid floating point arithmetic, convert the bitcoin amount to
-    //string with 8 decimal places, then remove the decimal point to
-    //obtain the value in satoshi
-    //this is necessary because the json rpc represents bitcoin values
-    //as floats :(
-    format!("{:.8}", amount.as_f64().unwrap())
-        .replace('.', "")
-        .parse::<u64>()
-        .unwrap()
+    ))
 }
 
 /// Extracts hierarchical deterministic (HD) path components from a descriptor.
 ///
 /// Parses an input descriptor string and returns `Some` with a tuple containing the HD path
-/// components if it's an HD descriptor. If it's not an HD descriptor, it returns `None`.
+/// components if it's an HD descriptor. If the descriptor doesn't have path info, it returns `None`.
+/// This method only works for single key descriptors.
 pub fn get_hd_path_from_descriptor(descriptor: &str) -> Option<(&str, u32, i32)> {
-    //e.g
-    //"desc": "wpkh([a945b5ca/1/1]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9",
     let open = descriptor.find('[');
     let close = descriptor.find(']');
-    if open.is_none() || close.is_none() {
-        //unexpected, so printing it to stdout
-        log::error!("unknown descriptor = {}", descriptor);
+
+    let path = if let (Some(open), Some(close)) = (open, close) {
+        &descriptor[open + 1..close]
+    } else {
+        // No hard error. Just print it to stdout.
+        log::error!("Descriptor doesn't have path = {}", descriptor);
         return None;
-    }
-    let path = &descriptor[open.unwrap() + 1..close.unwrap()];
+    };
+
     let path_chunks: Vec<&str> = path.split('/').collect();
     if path_chunks.len() != 3 {
-        return None;
-        //unexpected descriptor = wsh(multi(2,[f67b69a3]0245ddf535f08a04fd86d794b76f8e3949f27f7ae039b641bf277c6a4552b4c387,[dbcd3c6e]030f781e9d2a6d3a823cee56be2d062ed4269f5a6294b20cb8817eb540c641d9a2))#8f70vn2q
-    }
-    let addr_type = path_chunks[1].parse::<u32>();
-    if addr_type.is_err() {
-        log::error!(target: "wallet", "unexpected address_type = {}", path);
+        // No hard error. Just print it to stdout.
+        log::error!("Path is not a triplet. Path chunks = {:?}", path_chunks);
         return None;
     }
-    let index = path_chunks[2].parse::<i32>();
-    if index.is_err() {
-        return None;
+
+    if let (Ok(addr_type), Ok(index)) =
+        (path_chunks[1].parse::<u32>(), path_chunks[2].parse::<i32>())
+    {
+        Some((path_chunks[0], addr_type, index))
+    } else {
+        None
     }
-    Some((path_chunks[0], addr_type.unwrap(), index.unwrap()))
 }
 
 /// Generates a keypair using the secp256k1 elliptic curve.
 pub fn generate_keypair() -> (PublicKey, SecretKey) {
-    let mut privkey = [0u8; 32];
-    OsRng.fill_bytes(&mut privkey);
-    let secp = Secp256k1::new();
-    let privkey = SecretKey::from_slice(&privkey).unwrap();
+    let keypair = Keypair::new(&Secp256k1::new(), &mut thread_rng());
     let pubkey = PublicKey {
         compressed: true,
-        inner: bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &privkey),
+        inner: keypair.public_key(),
     };
-    (pubkey, privkey)
+    (pubkey, keypair.secret_key())
 }
 
 /// Convert a redeemscript into p2wsh scriptpubkey.
@@ -303,7 +298,6 @@ pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> ScriptBuf {
         &redeemscript.wscript_hash().to_byte_array(),
     )
     .unwrap();
-    //p2wsh address
     ScriptBuf::new_witness_program(&witness_program)
 }
 
@@ -418,7 +412,7 @@ pub fn compute_checksum(descriptor: &str) -> Result<String, WalletError> {
             CHECKSUM_CHARSET
                 .chars()
                 .nth(((checksum >> (5 * (7 - i))) & 31) as usize)
-                .unwrap()
+                .expect("checksum character expected")
         })
         .collect::<String>();
 
@@ -447,8 +441,6 @@ mod tests {
         secp256k1::Scalar,
         PubkeyHash,
     };
-
-    use serde_json::json;
 
     use crate::protocol::messages::{MakerHello, MakerToTakerMessage};
 
@@ -480,19 +472,6 @@ mod tests {
         send_message(&mut stream, &message).unwrap();
     }
 
-    #[test]
-    fn test_convert_json_rpc_bitcoin_to_satoshis() {
-        // Test with an integer value
-        let amount = json!(1);
-        assert_eq!(convert_json_rpc_bitcoin_to_satoshis(&amount), 100_000_000);
-
-        // Test with a very large value
-        let amount = json!(12345678.12345678);
-        assert_eq!(
-            convert_json_rpc_bitcoin_to_satoshis(&amount),
-            1_234_567_812_345_678
-        );
-    }
     #[test]
     fn test_redeemscript_to_scriptpubkey_custom() {
         // Create a custom puzzle script
@@ -596,7 +575,7 @@ mod tests {
         )
         .unwrap();
         let (multisig_pubkeys, multisig_nonces, hashlock_pubkeys, hashlock_nonces) =
-            generate_maker_keys(&tweak_point, 1);
+            generate_maker_keys(&tweak_point, 1).unwrap();
         // test returned multisg part
         let returned_nonce = multisig_nonces[0];
         let returned_pubkey = multisig_pubkeys[0];
