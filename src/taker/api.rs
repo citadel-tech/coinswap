@@ -51,8 +51,8 @@ use crate::{
     taker::{config::TakerConfig, offers::OfferBook},
     utill::*,
     wallet::{
-        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletSwapCoin,
-        WatchOnlySwapCoin,
+        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
+        WalletSwapCoin, WatchOnlySwapCoin,
     },
 };
 
@@ -205,7 +205,7 @@ impl Taker {
                 wallet
             } else {
                 // Create wallet with the given name.
-                let mnemonic = Mnemonic::generate(12).unwrap();
+                let mnemonic = Mnemonic::generate(12).map_err(WalletError::BIP39)?;
                 let seedphrase = mnemonic.to_string();
 
                 let wallet = Wallet::init(&wallet_path, &rpc_config, seedphrase, "".to_string())?;
@@ -214,7 +214,7 @@ impl Taker {
             }
         } else {
             // Create default wallet
-            let mnemonic = Mnemonic::generate(12).unwrap();
+            let mnemonic = Mnemonic::generate(12).map_err(WalletError::BIP39)?;
             let seedphrase = mnemonic.to_string();
 
             // File names are unique for default wallets
@@ -298,7 +298,7 @@ impl Taker {
         self.send_coinswap(swap_params)?;
 
         if self.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {
-            crate::tor::kill_tor_handles(handle.unwrap());
+            crate::tor::kill_tor_handles(handle.expect("tor handle expected"));
         }
         Ok(())
     }
@@ -473,7 +473,8 @@ impl Taker {
                 generate_maker_keys(
                     &maker.offer.tweakable_point,
                     self.ongoing_swap_state.swap_params.tx_count,
-                );
+                )
+                .map_err(ProtocolError::Contract)?;
             let (funding_txs, mut outgoing_swapcoins, funding_fee) =
                 self.wallet.initalize_coinswap(
                     self.ongoing_swap_state.swap_params.send_amount,
@@ -549,7 +550,11 @@ impl Taker {
         let funding_txids = funding_txs
             .iter()
             .map(|tx| {
-                let txid = self.wallet.rpc.send_raw_transaction(tx)?;
+                let txid = self
+                    .wallet
+                    .rpc
+                    .send_raw_transaction(tx)
+                    .map_err(WalletError::Rpc)?;
                 log::info!("Funding Txid: {}", txid);
                 assert_eq!(txid, tx.compute_txid());
                 Ok(txid)
@@ -663,25 +668,41 @@ impl Taker {
                 }
                 //TODO handle confirm<0
                 if gettx.confirmations >= Some(required_confirmations as u32) {
-                    txid_tx_map.insert(*txid, deserialize::<Transaction>(&gettx.hex).unwrap());
-                    txid_blockhash_map.insert(*txid, gettx.blockhash.unwrap());
+                    txid_tx_map.insert(
+                        *txid,
+                        deserialize::<Transaction>(&gettx.hex).map_err(WalletError::from)?,
+                    );
+                    txid_blockhash_map.insert(*txid, gettx.blockhash.expect("Blockhash expected"));
                     log::info!("Tx {} | Confirmed at {}", txid, required_confirmations);
                 }
             }
             if txid_tx_map.len() == funding_txids.len() {
                 let txes = funding_txids
                     .iter()
-                    .map(|txid| txid_tx_map.get(txid).unwrap().clone())
+                    .map(|txid| {
+                        txid_tx_map
+                            .get(txid)
+                            .expect("txid expected in the map")
+                            .clone()
+                    })
                     .collect::<Vec<Transaction>>();
                 let merkleproofs = funding_txids
                     .iter()
                     .map(|&txid| {
                         self.wallet
                             .rpc
-                            .get_tx_out_proof(&[txid], Some(txid_blockhash_map.get(&txid).unwrap()))
+                            .get_tx_out_proof(
+                                &[txid],
+                                Some(
+                                    txid_blockhash_map
+                                        .get(&txid)
+                                        .expect("txid expected in the map"),
+                                ),
+                            )
                             .map(|gettxoutproof_result| gettxoutproof_result.to_lower_hex_string())
                     })
-                    .collect::<Result<Vec<String>, _>>()?;
+                    .collect::<Result<Vec<String>, _>>()
+                    .map_err(WalletError::from)?;
                 return Ok((txes, merkleproofs));
             }
             sleep(Duration::from_millis(1000));
@@ -711,14 +732,14 @@ impl Taker {
                     self.ongoing_swap_state
                         .watchonly_swapcoins
                         .last()
-                        .unwrap()
+                        .expect("swapcoin expected")
                         .iter()
                         .map(|s| s.get_multisig_redeemscript())
                         .collect::<Vec<_>>(),
                     self.ongoing_swap_state
                         .watchonly_swapcoins
                         .last()
-                        .unwrap()
+                        .expect("swapcoin expected")
                         .iter()
                         .map(|s| s.get_contract_redeemscript())
                         .collect::<Vec<_>>(),
@@ -918,6 +939,7 @@ impl Taker {
                     &next_maker.offer.tweakable_point,
                     self.ongoing_swap_state.swap_params.tx_count,
                 )
+                .map_err(ProtocolError::Contract)?
             };
 
             let this_maker_contract_txs =
@@ -1060,7 +1082,10 @@ impl Taker {
             );
             let previous_maker_watchonly_swapcoins =
                 if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
-                    self.ongoing_swap_state.watchonly_swapcoins.last().unwrap()
+                    self.ongoing_swap_state
+                        .watchonly_swapcoins
+                        .last()
+                        .expect("swapcoin expected")
                 } else {
                     //if the next peer is a maker not a taker, then that maker's swapcoins are last
                     &self.ongoing_swap_state.watchonly_swapcoins
@@ -1640,7 +1665,10 @@ impl Taker {
                 .collect::<Vec<MultisigPrivkey>>()
         } else {
             assert!(outgoing_privkeys.is_some());
-            let reply = outgoing_privkeys.as_ref().unwrap().to_vec();
+            let reply = outgoing_privkeys
+                .as_ref()
+                .expect("outgoing privkey expected")
+                .to_vec();
             *outgoing_privkeys = None;
             reply
         };
@@ -1721,7 +1749,7 @@ impl Taker {
         for incoming_swapcoin in &self.ongoing_swap_state.incoming_swapcoins {
             self.wallet
                 .find_incoming_swapcoin_mut(&incoming_swapcoin.get_multisig_redeemscript())
-                .unwrap()
+                .expect("Incoming swapcoin expeted")
                 .other_privkey = incoming_swapcoin.other_privkey;
         }
         self.wallet.save_to_disk()?;
@@ -1789,7 +1817,10 @@ impl Taker {
             {
                 log::info!("Incoming Contract already broadacsted");
             } else {
-                self.wallet.rpc.send_raw_transaction(contract_tx)?;
+                self.wallet
+                    .rpc
+                    .send_raw_transaction(contract_tx)
+                    .map_err(WalletError::from)?;
                 log::info!(
                     "Broadcasted Incoming Contract. Removing from wallet. Contract Txid {}",
                     contract_tx.compute_txid()
@@ -1815,7 +1846,10 @@ impl Taker {
             {
                 log::info!("Outgoing Contract already broadcasted");
             } else {
-                self.wallet.rpc.send_raw_transaction(&contract_tx)?;
+                self.wallet
+                    .rpc
+                    .send_raw_transaction(&contract_tx)
+                    .map_err(WalletError::Rpc)?;
                 log::info!(
                     "Broadcasted Outgoing Contract, Contract txid : {}",
                     contract_tx.compute_txid()
@@ -1868,13 +1902,15 @@ impl Taker {
                                 "Broadcasting timelocked tx: {}",
                                 timelocked_tx.compute_txid()
                             );
-                            self.wallet.rpc.send_raw_transaction(timelocked_tx).unwrap();
+                            self.wallet
+                                .rpc
+                                .send_raw_transaction(timelocked_tx)
+                                .map_err(WalletError::from)?;
                             timelock_boardcasted.push(timelocked_tx);
 
                             let outgoing_removed = self
                                 .wallet
-                                .remove_outgoing_swapcoin(reedemscript)
-                                .unwrap()
+                                .remove_outgoing_swapcoin(reedemscript)?
                                 .expect("outgoing swapcoin expected");
                             log::info!(
                                 "Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
@@ -1941,7 +1977,7 @@ impl Taker {
             maker_count,
             self.config.connection_type,
         )?;
-        let offers = fetch_offer_from_makers(addresses_from_dns, &self.config);
+        let offers = fetch_offer_from_makers(addresses_from_dns, &self.config)?;
 
         let new_offers = offers
             .into_iter()

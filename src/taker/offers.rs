@@ -6,6 +6,7 @@
 //! It uses asynchronous channels for concurrent processing of maker offers.
 
 use std::{
+    convert::TryFrom,
     fmt,
     io::{Read, Write},
     net::TcpStream,
@@ -62,13 +63,14 @@ impl fmt::Display for MakerAddress {
     }
 }
 
-impl From<&mut TcpStream> for MakerAddress {
-    fn from(value: &mut TcpStream) -> Self {
-        let socket_addr = value.peer_addr().unwrap();
-        MakerAddress(OnionAddress {
+impl TryFrom<&mut TcpStream> for MakerAddress {
+    type Error = std::io::Error;
+    fn try_from(value: &mut TcpStream) -> Result<Self, Self::Error> {
+        let socket_addr = value.peer_addr()?;
+        Ok(MakerAddress(OnionAddress {
             port: socket_addr.port().to_string(),
             onion_addr: socket_addr.ip().to_string(),
-        })
+        }))
     }
 }
 
@@ -131,7 +133,7 @@ impl OfferBook {
 pub fn fetch_offer_from_makers(
     maker_addresses: Vec<MakerAddress>,
     config: &TakerConfig,
-) -> Vec<OfferAndAddress> {
+) -> Result<Vec<OfferAndAddress>, TakerError> {
     let (offers_writer, offers_reader) = mpsc::channel::<Option<OfferAndAddress>>();
     // Thread pool for all connections to fetch maker offers.
     let mut thread_pool = Vec::new();
@@ -141,18 +143,16 @@ pub fn fetch_offer_from_makers(
         let taker_config: TakerConfig = config.clone();
         let thread = Builder::new()
             .name(format!("maker_offer_fecth_thread_{}", addr))
-            .spawn(move || {
+            .spawn(move || -> Result<(), TakerError> {
                 let offer = download_maker_offer(addr, taker_config);
-                offers_writer.send(offer).unwrap();
-            })
-            .unwrap();
+                Ok(offers_writer.send(offer)?)
+            })?;
 
         thread_pool.push(thread);
     }
     let mut result = Vec::<OfferAndAddress>::new();
     for _ in 0..maker_addresses_len {
-        // TODO: Remove all unwraps and return TakerError.
-        if let Some(offer_addr) = offers_reader.recv().unwrap() {
+        if let Some(offer_addr) = offers_reader.recv()? {
             result.push(offer_addr);
         }
     }
@@ -162,9 +162,14 @@ pub fn fetch_offer_from_makers(
             "Joining thread : {}",
             thread.thread().name().expect("thread names expected")
         );
-        thread.join().unwrap();
+        let join_result = thread.join();
+        if let Ok(r) = join_result {
+            log::info!("Thread closing result: {:?}", r)
+        } else if let Err(e) = join_result {
+            log::info!("Error in internal thread: {:?}", e);
+        }
     }
-    result
+    Ok(result)
 }
 
 /// Retrieves advertised maker addresses from directory servers based on the specified network.

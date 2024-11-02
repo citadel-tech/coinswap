@@ -91,3 +91,9 @@ impl From<bitcoin::transaction::InputsIndexError> for WalletError {
         Self::Consensus(value.to_string())
     }
 }
+
+impl From<bitcoin::consensus::encode::Error> for WalletError {
+    fn from(value: bitcoin::consensus::encode::Error) -> Self {
+        Self::Consensus(value.to_string())
+    }
+}
