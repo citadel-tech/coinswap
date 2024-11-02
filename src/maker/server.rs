@@ -218,11 +218,25 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
             LockTime::from_height(maker.config.fidelity_timelock + current_height)
                 .map_err(WalletError::Locktime)?
         };
+
+        let sleep_delay = if cfg!(feature = "integration-test") {
+            3 // Wait for 3 sec in tests
+        } else {
+            300 // Wait for 5 mins in production
+        };
+
+        log::info!("Fidelity value chosen = {:?} BTC", amount.to_btc());
+        log::info!("Fidelity Tx fee = 1000 sats");
+
         while !maker.shutdown.load(Relaxed) {
+            // sync the wallet
+            maker.get_wallet().write()?.sync()?;
+
             let fidelity_result = maker
                 .get_wallet()
                 .write()?
                 .create_fidelity(amount, locktime);
+
             match fidelity_result {
                 // Wait for sufficient fund to create fidelity bond.
                 // Hard error if fidelity still can't be created.
@@ -234,17 +248,12 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
                     {
                         log::warn!("Insufficient fund to create fidelity bond.");
                         let amount = required - available;
-                        let (_, addr, _) = maker
-                            .get_wallet()
-                            .read()?
-                            .get_next_fidelity_address(locktime)?;
-                        log::info!("Send {} sats to {}", amount, addr);
-                        if cfg!(feature = "integration-test") {
-                            sleep(Duration::from_secs(3));
-                        } else {
-                            sleep(Duration::from_secs(300)); // Wait for 5 mins in production
-                        }
-                        continue;
+                        let addr = maker.get_wallet().write()?.get_next_external_address()?;
+
+                        log::info!("Send > {:?} BTC to {:?}. Extra will be used for swaps after fidelity creation.", amount, addr);
+                        log::info!("Next sync in {:?} secs", sleep_delay);
+
+                        thread::sleep(Duration::from_secs(sleep_delay));
                     } else {
                         log::error!(
                             "[{}] Fidelity Bond Creation failed: {:?}. Shutting Down Maker server",
@@ -262,10 +271,9 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
                         .generate_fidelity_proof(i, maker_address)?;
                     let mut proof = maker.highest_fidelity_proof.write()?;
                     *proof = Some(highest_proof);
-                    log::info!("[{}] Syncing and saving wallet data", maker.config.port);
-                    maker.get_wallet().write()?.sync()?;
+
+                    // save the wallet data to disk
                     maker.get_wallet().read()?.save_to_disk()?;
-                    log::info!("[{}] Sync and save successful", maker.config.port);
                     break;
                 }
             }
@@ -399,7 +407,6 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     );
 
     // Setup the wallet with fidelity bond.
-    maker.get_wallet().write()?.sync()?;
     let network = maker.get_wallet().read()?.store.network;
     let balance = maker.get_wallet().read()?.balance()?;
     log::info!("[{}] Currency Network: {:?}", port, network);
@@ -463,7 +470,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         let rpc_thread = thread::Builder::new()
             .name("RPC Thread".to_string())
             .spawn(move || {
-                log::info!("[{}] Spawning RPC server", port);
+                log::info!("[{}] Spawning RPC server thread", port);
                 start_rpc_server(maker_clone)
             })?;
 
