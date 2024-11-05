@@ -263,7 +263,7 @@ impl Wallet {
                     (info.height, info.time as u64)
                 };
                 // Estimated locktime from block height = [current-time + (maturity-height - block-count) * 10 * 60] sec
-                tip_time + (((blocks.to_consensus_u32() - (tip_height as u32)) * 10 * 60) as u64)
+                tip_time + ((blocks.to_consensus_u32() as u64 - tip_height as u64) * 10 * 60)
             }
             LockTime::Seconds(sec) => sec.to_consensus_u32() as u64,
         };
