@@ -33,8 +33,7 @@ const BOND_VALUE_EXPONENT: f64 = 1.3;
 
 // Interest rate used when calculating the value of fidelity bonds created
 // by locking bitcoins in timelocked addresses
-// See also:
-// https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#determining-interest-rate-r
+// Also see [this](https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#determining-interest-rate-r)
 // Set as a real number, i.e. 1 = 100% and 0.01 = 1%
 const BOND_VALUE_INTEREST_RATE: f64 = 0.015;
 
@@ -92,8 +91,7 @@ fn read_pubkey_from_fidelity_script(redeemscript: &ScriptBuf) -> Result<PublicKe
     }
 }
 
-/// Calculates the theoretical fidelity bond value. Bond value calculation is described in the doc below.
-/// https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds
+/// Calculates the theoretical fidelity bond value. Bond value calculation is described in the [this doc](https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds)
 pub fn calculate_fidelity_value(
     value: Amount,          // Bond amount in sats
     locktime: u64,          // Bond locktime timestamp
@@ -117,7 +115,7 @@ pub fn calculate_fidelity_value(
 }
 
 /// Structure describing a Fidelity Bond.
-/// Fidelity Bonds are described in https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md
+/// Fidelity Bonds are described [here](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Hash)]
 pub struct FidelityBond {
     pub outpoint: OutPoint,
@@ -238,8 +236,7 @@ impl Wallet {
     }
 
     /// Calculate the theoretical fidelity bond value.
-    /// Bond value calculation is described in the document below.
-    /// https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds
+    /// Bond value calculation is described in [this document](https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds).
     pub fn calculate_bond_value(&self, index: u32) -> Result<Amount, WalletError> {
         let (bond, _, _) = self
             .store
