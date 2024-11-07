@@ -16,13 +16,10 @@ pub struct MakerConfig {
     pub rpc_port: u16,
     /// Absolute coinswap fee
     pub absolute_fee_sats: Amount,
-    /// Fee rate per swap amount in ppb.
-    pub amount_relative_fee_ppb: Amount,
-    /// Fee rate for timelocked contract in ppb
+    /// Fee rate for timelocked contract in parts per billion (PPB).
+    /// Similar to `DEFAULT_AMOUNT_RELATIVE_FEE_PPB`, calculated as (amount * fee_ppb) / 1_000_000_000.
     pub time_relative_fee_ppb: Amount,
     /// Minimum timelock difference between contract transaction of two hops
-    pub min_contract_reaction_time: u16,
-    /// Minimum coinswap amount size in sats
     pub min_size: u64,
     /// Socks port
     pub socks_port: u16,
@@ -42,9 +39,7 @@ impl Default for MakerConfig {
             port: 6102,
             rpc_port: 6103,
             absolute_fee_sats: Amount::from_sat(1000),
-            amount_relative_fee_ppb: Amount::from_sat(10_000_000),
             time_relative_fee_ppb: Amount::from_sat(100_000),
-            min_contract_reaction_time: 48,
             min_size: 10_000,
             socks_port: 19050,
             directory_server_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
@@ -101,21 +96,11 @@ impl MakerConfig {
                 default_config.absolute_fee_sats,
             )
             .unwrap_or(default_config.absolute_fee_sats),
-            amount_relative_fee_ppb: parse_field(
-                maker_config_section.get("amount_relative_fee_ppb"),
-                default_config.amount_relative_fee_ppb,
-            )
-            .unwrap_or(default_config.amount_relative_fee_ppb),
             time_relative_fee_ppb: parse_field(
                 maker_config_section.get("time_relative_fee_ppb"),
                 default_config.time_relative_fee_ppb,
             )
             .unwrap_or(default_config.time_relative_fee_ppb),
-            min_contract_reaction_time: parse_field(
-                maker_config_section.get("min_contract_reaction_time"),
-                default_config.min_contract_reaction_time,
-            )
-            .unwrap_or(default_config.min_contract_reaction_time),
             min_size: parse_field(
                 maker_config_section.get("min_size"),
                 default_config.min_size,
@@ -155,9 +140,7 @@ impl MakerConfig {
             port = {}
             rpc_port = {}
             absolute_fee_sats = {}
-            amount_relative_fee_ppb = {}
             time_relative_fee_ppb = {}
-            min_contract_reaction_time = {}
             min_size = {}
             socks_port = {}
             directory_server_address = "{}"
@@ -168,9 +151,7 @@ impl MakerConfig {
             self.port,
             self.rpc_port,
             self.absolute_fee_sats,
-            self.amount_relative_fee_ppb,
             self.time_relative_fee_ppb,
-            self.min_contract_reaction_time,
             self.min_size,
             self.socks_port,
             self.directory_server_address,

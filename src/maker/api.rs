@@ -50,7 +50,9 @@ use crate::{
 
 use super::{config::MakerConfig, error::MakerError};
 
-use crate::maker::server::{DEFAULT_HEART_BEAT_INTERVAL_SECS, DEFAULT_REQUIRED_CONFIRMS};
+use crate::maker::server::{
+    DEFAULT_HEART_BEAT_INTERVAL_SECS, DEFAULT_MIN_CONTRACT_REACTION_TIME, DEFAULT_REQUIRED_CONFIRMS,
+};
 
 /// Used to configure the maker for testing purposes.
 #[derive(Debug, Clone, Copy)]
@@ -252,7 +254,7 @@ impl Maker {
             // check that the new locktime is sufficently short enough compared to the
             // locktime in the provided funding tx
             let locktime = read_contract_locktime(&funding_info.contract_redeemscript)?;
-            if locktime - message.next_locktime < self.config.min_contract_reaction_time {
+            if locktime - message.next_locktime < DEFAULT_MIN_CONTRACT_REACTION_TIME {
                 return Err(MakerError::General(
                     "Next hop locktime too close to current hop locktime",
                 ));
@@ -365,7 +367,7 @@ impl Maker {
                 &txinfo.timelock_pubkey,
                 &message.hashvalue,
                 &message.locktime,
-                &self.config.min_contract_reaction_time,
+                &DEFAULT_MIN_CONTRACT_REACTION_TIME,
             )?;
 
             self.wallet.write()?.cache_prevout_to_contract(

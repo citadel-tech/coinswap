@@ -41,6 +41,11 @@ pub const DEFAULT_RPC_PING_INTERVAL_SECS: u64 = 60;
 pub const _DEFAULT_DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 60 * 12; // 12 Hours
 pub const _DEFAULT_IDLE_CONNECTION_TIMEOUT: u64 = 300;
 pub const DEFAULT_REQUIRED_CONFIRMS: u64 = 1;
+pub const DEFAULT_MIN_CONTRACT_REACTION_TIME: u16 = 48;
+
+/// Fee rate per swap amount in parts per billion (PPB).
+/// E.g., for 1 billion sats (0.01 BTC), a value of 10_000 would result in a 0.1% fee.
+pub const DEFAULT_AMOUNT_RELATIVE_FEE_PPB: Amount = Amount::from_sat(0);
 
 /// Fetches the Maker and DNS address, and sends maker address to the DNS server.
 /// Depending upon ConnectionType and test/prod environment, different maker address and DNS addresses are returned.
