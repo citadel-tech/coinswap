@@ -50,15 +50,34 @@ use crate::{
 
 use super::{config::MakerConfig, error::MakerError};
 
-/// Used to configure the maker for testing purposes.
+/// Defines maker behavior variants for testing protocol edge cases.
+///
+/// Controls when to simulate connection drops or contract broadcasts:
+/// - Normal operation
+/// - During contract signature exchange
+/// - At funding confirmation
+/// - At hash preimage reveal
+/// - After initial setup
 #[derive(Debug, Clone, Copy)]
 pub enum MakerBehavior {
+    /// Standard behavior, no simulated failures.
     Normal,
+    /// Closes connection after requesting contract signatures from sender.
     CloseAtReqContractSigsForSender,
+
+    /// Closes connection after receiving proof of funding.
     CloseAtProofOfFunding,
+
+    /// Closes connection after receiving contract signatures from both parties.
     CloseAtContractSigsForRecvrAndSender,
+
+    /// Closes connection after receiving contract signatures from receiver.
     CloseAtContractSigsForRecvr,
+
+    /// Closes connection after receiving hash preimage.
     CloseAtHashPreimage,
+
+    /// Broadcasts contract transaction immediately after setup.
     BroadcastContractAfterSetup,
 }
 
@@ -89,20 +108,27 @@ pub struct ConnectionState {
 }
 
 /// Represents the maker in the swap protocol.
+///
+/// Handles trade matching, execution, and manages maker's state and connections.
 pub struct Maker {
-    /// Defines special maker behavior, only applicable for testing
+    /// Modifies maker behavior for testing scenarios. Not used in production.
     pub behavior: MakerBehavior,
-    /// Maker configurations
+    /// Configuration for network settings, fees, and trade parameters.
     pub config: MakerConfig,
-    /// Maker's underlying wallet
+
+    ///Maker's underlying wallet.
     pub wallet: RwLock<Wallet>,
-    /// A flag to trigger shutdown event
+
+    /// Flag to signal graceful shutdown across all maker threads.
     pub shutdown: AtomicBool,
+
     /// Map of IP address to Connection State + last Connected instant
     pub connection_state: Mutex<HashMap<IpAddr, (ConnectionState, Instant)>>,
-    /// Highest Value Fidelity Proof
+
+    /// Stores the highest value fidelity proof received during trade negotiations.
     pub highest_fidelity_proof: RwLock<Option<FidelityProof>>,
-    /// Is setup complete
+
+    /// Indicates if initial wallet sync and connection setup is complete.
     pub is_setup_complete: RwLock<bool>,
 }
 

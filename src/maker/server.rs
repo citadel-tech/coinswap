@@ -385,7 +385,26 @@ fn handle_client(
     Ok(())
 }
 
-// The main Maker Server process.
+/// Starts and manages the main Maker server process.
+///
+/// Initializes core components and spawns supporting threads:
+/// - Bitcoin Core connection checker
+/// - Idle client checker
+/// - Watchtower for contract monitoring
+/// - RPC server for CLI commands
+/// - P2P connection handler
+///
+/// # Shutdown
+/// Server runs until shutdown flag is set, then:
+/// - Joins all threads
+/// - Syncs and saves wallet state
+/// - Terminates Tor if running
+///
+/// # Errors
+/// - Network initialization failures
+/// - Thread spawning errors
+/// - Bitcoin Core connection issues
+/// - Wallet operation errors
 pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Starting Maker Server");
     // Initialize network connections.
