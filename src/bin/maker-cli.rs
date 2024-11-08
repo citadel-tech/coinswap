@@ -43,6 +43,10 @@ enum Commands {
         amount: u64,
         fee: u64,
     },
+    /// Returns the tor address
+    GetTorAddress,
+    /// Returns the data dir
+    GetDataDir,
 }
 
 fn main() -> Result<(), MakerError> {
@@ -90,6 +94,12 @@ fn main() -> Result<(), MakerError> {
                 amount,
                 fee,
             })?;
+        }
+        Commands::GetTorAddress => {
+            send_rpc_req(&RpcMsgReq::GetTorAddress)?;
+        }
+        Commands::GetDataDir => {
+            send_rpc_req(&RpcMsgReq::GetDataDir)?;
         }
     }
 

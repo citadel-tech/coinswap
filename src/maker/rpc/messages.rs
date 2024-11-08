@@ -18,6 +18,8 @@ pub enum RpcMsgReq {
         amount: u64,
         fee: u64,
     },
+    GetTorAddress,
+    GetDataDir,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -33,4 +35,6 @@ pub enum RpcMsgResp {
     FidelityBalanceResp(u64),
     NewAddressResp(String),
     SendToAddressResp(String),
+    GetTorAddressResp(String),
+    GetDataDirResp(String),
 }
