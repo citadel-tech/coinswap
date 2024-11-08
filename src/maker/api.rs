@@ -115,19 +115,14 @@ pub struct Maker {
     pub behavior: MakerBehavior,
     /// Configuration for network settings, fees, and trade parameters.
     pub config: MakerConfig,
-
     ///Maker's underlying wallet.
     pub wallet: RwLock<Wallet>,
-
     /// Flag to signal graceful shutdown across all maker threads.
     pub shutdown: AtomicBool,
-
     /// Map of IP address to Connection State + last Connected instant
     pub connection_state: Mutex<HashMap<IpAddr, (ConnectionState, Instant)>>,
-
     /// Stores the highest value fidelity proof received during trade negotiations.
     pub highest_fidelity_proof: RwLock<Option<FidelityProof>>,
-
     /// Indicates if initial wallet sync and connection setup is complete.
     pub is_setup_complete: RwLock<bool>,
 }

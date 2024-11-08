@@ -24,10 +24,14 @@ use crate::{
 
 use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
 
-/// Represents an offer along with the corresponding maker address.
+/// Pairs a maker's swap offer with their network address.
+///
+/// Links available offers to their source maker for routing.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct OfferAndAddress {
+    /// Swap terms offered by the maker.
     pub offer: Offer,
+    /// Network address of the offering maker.
     pub address: MakerAddress,
 }
 
@@ -39,7 +43,9 @@ struct OnionAddress {
     onion_addr: String,
 }
 
-/// Enum representing maker addresses.
+/// Network address of a maker node on the coinswap network.
+///
+/// Wraps an onion address for Tor-based maker communication.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MakerAddress(OnionAddress);
 
@@ -72,13 +78,22 @@ impl From<&mut TcpStream> for MakerAddress {
     }
 }
 
-/// An ephemeral Offerbook tracking good and bad makers. Currently, Offerbook is initiated
-/// at start of every swap. So good and bad maker list will ot be persisted.
+/// Tracks maker offers and their status during swap execution.
+///
+/// Maintains ephemeral lists of:
+/// - All discovered makers
+/// - Successfully communicating makers
+/// - Failed or misbehaving makers
+///
+// Note: Lists are not persisted between swaps.
 // TODO: Persist the offerbook in disk.
 #[derive(Debug, Default)]
 pub struct OfferBook {
+    /// All known maker offers and addresses.
     pub(super) all_makers: Vec<OfferAndAddress>,
+    /// Makers with successful communication.
     pub(super) good_makers: Vec<OfferAndAddress>,
+    /// Makers that failed or misbehaved.
     pub(super) bad_makers: Vec<OfferAndAddress>,
 }
 
@@ -127,7 +142,12 @@ impl OfferBook {
     }
 }
 
-/// Synchronizes the offer book with specific maker addresses.
+/// Updates offerbook by fetching current offers from multiple makers.
+///
+/// Spawns threads to concurrently:
+/// - Download offers from each maker
+/// - Collect successful responses
+/// - Handle connection timeouts
 pub fn fetch_offer_from_makers(
     maker_addresses: Vec<MakerAddress>,
     config: &TakerConfig,
@@ -167,7 +187,18 @@ pub fn fetch_offer_from_makers(
     result
 }
 
-/// Retrieves advertised maker addresses from directory servers based on the specified network.
+/// Retrieves maker addresses from directory servers until enough are found.
+///
+/// Continuously queries directory servers for maker addresses:
+/// - Supports both clearnet and Tor connections
+/// - Retries on timeouts or insufficient addresses
+/// - Sets connection timeouts for reliability
+///
+/// # Errors
+/// - Network connection failures
+/// - Invalid address format
+/// - Read/write timeouts
+/// - Insufficient makers available
 pub fn fetch_addresses_from_dns(
     socks_port: Option<u16>,
     directory_server_address: String,
