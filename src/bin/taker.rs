@@ -39,8 +39,8 @@ struct Cli {
     )]
     pub bitcoin_network: String,
     /// Sets the taker wallet's name. If the wallet file already exists at data-directory, it will load that wallet.
-    #[clap(name = "WALLET", long, short = 'w', default_value = "taker")]
-    pub wallet_name: String,
+    #[clap(name = "WALLET", long, short = 'w')]
+    pub wallet_name: Option<String>,
     /// Sets the verbosity level of logs.
     /// Default: Determined by the command passed.
     #[clap(long, short = 'v', possible_values = &["off", "error", "warn", "info", "debug", "trace"])]
@@ -109,7 +109,7 @@ fn main() -> Result<(), TakerError> {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
         network: rpc_network,
-        wallet_name: args.wallet_name.clone(),
+        wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
 
     let swap_params = SwapParams {
@@ -122,7 +122,7 @@ fn main() -> Result<(), TakerError> {
 
     let mut taker = Taker::init(
         args.data_directory.clone(),
-        Some(args.wallet_name.clone()),
+        args.wallet_name.clone(),
         Some(rpc_config.clone()),
         TakerBehavior::Normal,
         Some(connection_type),
