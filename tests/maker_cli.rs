@@ -4,6 +4,7 @@ use std::str::FromStr;
 use bitcoin::{Address, Amount, Network};
 use bitcoind::{bitcoincore_rpc::RpcApi, tempfile, BitcoinD, Conf};
 use std::sync::mpsc;
+use std::io::BufRead;
 
 struct MakerCli {
     data_dir: PathBuf,
@@ -17,6 +18,10 @@ impl MakerCli {
         let mut conf = Conf::default();
         conf.args.push("-txindex=1");
         conf.network = "regtest";
+        
+        // Use cookie authentication instead of rpcuser/rpcpassword
+        conf.args.push("-rpcport=18443");
+        conf.args.push("-server=1");
 
         let bitcoind = BitcoinD::with_conf(bitcoind::exe_path()?, &conf)?;
 
@@ -26,6 +31,28 @@ impl MakerCli {
 
         let data_dir = temp_dir.join("maker");
         fs::create_dir_all(&data_dir)?;
+        // Get the cookie file path from bitcoind's data directory
+        // let cookie_file = bitcoind.conf.datadir.join(".cookie");
+        let cookie_file = bitcoind.params.cookie_file.clone();
+        let cookie_contents = fs::read_to_string(&cookie_file)?;
+        let auth: Vec<&str> = cookie_contents.split(':').collect();
+
+        // Create maker config file with cookie auth
+        let config_contents = format!(r#"
+            [maker_config]
+            port = 6102
+            rpc_port = 18443
+            network = "clearnet"
+            rpc_url = "127.0.0.1:18443"
+            rpc_user = "{}"
+            rpc_pass = "{}"
+            rpc_network = "regtest"
+            wallet_name = "maker"
+            data_directory = "{}"
+        "#, auth[0], auth[1], data_dir.display());
+        
+        let config_path = data_dir.join("config.toml");
+        fs::write(&config_path, config_contents)?;
 
         Ok(MakerCli {
             data_dir,
@@ -39,25 +66,38 @@ impl MakerCli {
         let data_dir = self.data_dir.clone();
 
         thread::spawn(move || {
-            let output = Command::new("cargo")
+            let mut child = Command::new("cargo")
                 .args(&[
                     "run",
                     "--bin",
                     "makerd",
                     "--",
                     "--data-directory", data_dir.to_str().unwrap(),
-                    "--network", "clearnet",
-                    "--rpc", "127.0.0.1:18443",
-                    "--auth", "user:password",
-                    "--rpc-network", "regtest",
-                    "--wallet-name", "maker",
+                    "--network", "clearnet"
                 ])
-                .output()
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
                 .expect("Failed to execute makerd");
 
-            let output_str = String::from_utf8_lossy(&output.stdout);
-            for line in output_str.lines() {
-                tx.send(line.to_string()).unwrap();
+            let stdout = child.stdout.take().unwrap();
+            let stderr = child.stderr.take().unwrap();
+            
+            let stdout_reader = std::io::BufReader::new(stdout);
+            let stderr_reader = std::io::BufReader::new(stderr);
+
+            for line in stdout_reader.lines() {
+                if let Ok(line) = line {
+                    println!("stdout: {}", line);
+                    tx.send(line).unwrap();
+                }
+            }
+
+            for line in stderr_reader.lines() {
+                if let Ok(line) = line {
+                    println!("stderr: {}", line);
+                    tx.send(line).unwrap();
+                }
             }
         });
 
@@ -65,12 +105,27 @@ impl MakerCli {
     }
 
     fn wait_for_maker_setup(&self, rx: mpsc::Receiver<String>) -> Result<String, Box<dyn std::error::Error>> {
-        for line in rx.iter() {
-            if line.contains("Fidelity bond address:") {
-                return Ok(line.split(":").last().unwrap().trim().to_string());
+        let timeout = Duration::from_secs(30);
+        let start = std::time::Instant::now();
+        
+        while start.elapsed() < timeout {
+            match rx.try_recv() {
+                Ok(line) => {
+                    println!("makerd output: {}", line);
+                    if line.contains("Fidelity bond address:") {
+                        return Ok(line.split(":").last().unwrap().trim().to_string());
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    thread::sleep(Duration::from_millis(100));
+                    continue;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err("makerd process terminated unexpectedly".into());
+                }
             }
         }
-        Err("Fidelity bond address not found in makerd output".into())
+        Err("Timeout waiting for fidelity bond address".into())
     }
 
     fn execute_maker_cli(&self, args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
