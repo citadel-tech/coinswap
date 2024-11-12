@@ -47,6 +47,7 @@ pub enum FidelityError {
     WrongScriptType,
     BondDoesNotExist,
     BondAlreadySpent,
+    BondLocktimeExpired,
     CertExpired,
     General(String),
 }
@@ -263,7 +264,14 @@ impl Wallet {
                     (info.height, info.time as u64)
                 };
                 // Estimated locktime from block height = [current-time + (maturity-height - block-count) * 10 * 60] sec
-                tip_time + (((blocks.to_consensus_u32() - (tip_height as u32)) * 10 * 60) as u64)
+                let height_diff =
+                    if let Some(x) = blocks.to_consensus_u32().checked_sub(tip_height as u32) {
+                        x as u64
+                    } else {
+                        return Err(FidelityError::BondLocktimeExpired.into());
+                    };
+
+                tip_time + (height_diff * 10 * 60)
             }
             LockTime::Seconds(sec) => sec.to_consensus_u32() as u64,
         };
@@ -319,10 +327,10 @@ impl Wallet {
                 .expect("Amount sum overflowed")
         });
 
-        if total_input_amount < amount {
+        if total_input_amount < amount + fee {
             return Err(WalletError::InsufficientFund {
-                available: total_input_amount.to_sat(),
-                required: amount.to_sat(),
+                available: total_input_amount.to_btc(),
+                required: (amount + fee).to_btc(),
             });
         }
 
@@ -344,10 +352,13 @@ impl Wallet {
 
         if let Some(change) = change_amount {
             let change_addrs = self.get_next_internal_addresses(1)?[0].script_pubkey();
-            tx_outs.push(TxOut {
-                value: change,
-                script_pubkey: change_addrs,
-            });
+            // check for dust
+            if change > change_addrs.minimal_non_dust() {
+                tx_outs.push(TxOut {
+                    value: change,
+                    script_pubkey: change_addrs,
+                });
+            }
         }
 
         // Set the Anti-Fee Snipping Locktime
@@ -368,27 +379,29 @@ impl Wallet {
 
         let txid = self.rpc.send_raw_transaction(&tx)?;
 
-        let conf_height = loop {
-            if let Ok(get_tx_result) = self.rpc.get_transaction(&txid, None) {
-                if let Some(ht) = get_tx_result.info.blockheight {
-                    log::info!("Fidelity Bond confirmed at blockheight: {}", ht);
-                    break ht;
-                } else {
-                    log::info!(
-                        "Fildelity Transaction {} seen in mempool, waiting for confirmation.",
-                        txid
-                    );
-                    if cfg!(feature = "integration-test") {
-                        thread::sleep(Duration::from_secs(1)); // wait for 1 sec in tests
-                    } else {
-                        thread::sleep(Duration::from_secs(60 * 10)); // wait for 10 mins in prod
-                    }
+        let sleep_increment = 10;
+        let mut sleep_multiplier = 0;
 
-                    continue;
-                }
+        let conf_height = loop {
+            sleep_multiplier += 1;
+
+            let get_tx_result = self.rpc.get_transaction(&txid, None)?;
+            if let Some(ht) = get_tx_result.info.blockheight {
+                log::info!(
+                    "Fidelity Transaction {} confirmed at blockheight: {}",
+                    txid,
+                    ht
+                );
+                break ht;
             } else {
-                log::info!("Waiting for {} in mempool", txid);
-                continue;
+                log::info!(
+                    "Fildelity Transaction {} seen in mempool, waiting for confirmation.",
+                    txid
+                );
+
+                let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60); // Caps at 1 Block interval i.e 10 mins
+                log::info!("Next sync in {:?} secs", total_sleep);
+                thread::sleep(Duration::from_secs(total_sleep));
             }
         };
 
@@ -408,6 +421,8 @@ impl Wallet {
         self.store
             .fidelity_bond
             .insert(index, (bond, bond_spk, false));
+
+        self.sync()?;
 
         Ok(index)
     }
@@ -460,36 +475,31 @@ impl Wallet {
 
         let txid = self.rpc.send_raw_transaction(&tx)?;
 
-        let conf_height = loop {
-            if let Ok(get_tx_result) = self.rpc.get_transaction(&txid, None) {
-                if let Some(ht) = get_tx_result.info.blockheight {
-                    log::info!("Fidelity Bond confirmed at blockheight: {}", ht);
-                    break ht;
-                } else {
-                    log::info!(
-                        "Fildelity Transaction {} seen in mempool, waiting for confirmation.",
-                        txid
-                    );
+        let sleep_increment = 10;
+        let mut sleep_multiplier = 0;
 
-                    if cfg!(feature = "integration-test") {
-                        thread::sleep(Duration::from_secs(1)); // wait for 1 sec in tests
-                    } else {
-                        thread::sleep(Duration::from_secs(60 * 10)); // wait for 10 mins in prod
-                    }
-
-                    continue;
-                }
+        loop {
+            sleep_multiplier += 1;
+            let get_tx_result = self.rpc.get_transaction(&txid, None)?;
+            if let Some(ht) = get_tx_result.info.blockheight {
+                log::info!(
+                    "Redeem fidelity transaction {} confirmed at blockheight: {}",
+                    txid,
+                    ht
+                );
+                break;
             } else {
-                log::info!("Waiting for {} in mempool", txid);
+                log::info!(
+                    "Redeem fildelity transaction {} seen in mempool, waiting for confirmation.",
+                    txid
+                );
+
+                let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60); // Caps at 1 Block interval i.e 10 mins
+                log::info!("Next sync in {:?} secs", total_sleep);
+                thread::sleep(Duration::from_secs(total_sleep));
                 continue;
             }
-        };
-
-        log::info!(
-            "Fidleity spend txid: {}, confirmed at height : {}",
-            txid,
-            conf_height
-        );
+        }
 
         // mark is_spent
         {

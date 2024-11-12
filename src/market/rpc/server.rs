@@ -39,11 +39,7 @@ pub fn start_rpc_server_thread(
     let rpc_port = directory.rpc_port;
     let rpc_socket = format!("127.0.0.1:{}", rpc_port);
     let listener = Arc::new(TcpListener::bind(&rpc_socket)?);
-    log::info!(
-        "[{}] RPC socket binding successful at {}",
-        directory.rpc_port,
-        rpc_socket
-    );
+    log::info!("RPC socket binding successful at {}", rpc_socket);
 
     listener.set_nonblocking(true)?;
 

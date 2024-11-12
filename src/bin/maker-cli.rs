@@ -80,7 +80,7 @@ fn main() -> Result<(), MakerError> {
 }
 
 fn send_rpc_req(req: &RpcMsgReq) -> Result<(), MakerError> {
-    let mut stream = TcpStream::connect("127.0.0.1:8080")?;
+    let mut stream = TcpStream::connect("127.0.0.1:6103")?;
     stream.set_read_timeout(Some(Duration::from_secs(20)))?;
     stream.set_write_timeout(Some(Duration::from_secs(20)))?;
 

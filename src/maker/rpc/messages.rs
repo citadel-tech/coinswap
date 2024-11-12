@@ -25,6 +25,6 @@ pub enum RpcMsgResp {
     SeedBalanceResp(u64),
     SwapBalanceResp(u64),
     ContractBalanceResp(u64),
-    FidleityBalanceResp(u64),
+    FidelityBalanceResp(u64),
     NewAddressResp(String),
 }
