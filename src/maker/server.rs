@@ -417,7 +417,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         maker_address
     );
 
-    let heart_beat_interval = maker.config.heart_beat_interval_secs; // All maker internal threads loops at this frequency.
+    let heart_beat_interval = DEFAULT_HEART_BEAT_INTERVAL_SECS; // All maker internal threads loops at this frequency.
 
     // Setup the wallet with fidelity bond.
     let network = maker.get_wallet().read()?.store.network;
