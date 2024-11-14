@@ -46,8 +46,6 @@ From test implementation:
 
 ### 2. Message Flow Sequence
 
-Based on the logs, here's the complete message exchange sequence:
-
 #### A. Directory Server Registration
 ```plaintext
 MAKER -> DNS: POST /register
