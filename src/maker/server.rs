@@ -36,16 +36,16 @@ use crate::{
 use crate::maker::error::MakerError;
 
 // Default values for Maker configurations
-pub const DEFAULT_HEART_BEAT_INTERVAL_SECS: u64 = 3;
-pub const DEFAULT_RPC_PING_INTERVAL_SECS: u64 = 60;
-pub const _DEFAULT_DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 60 * 12; // 12 Hours
-pub const _DEFAULT_IDLE_CONNECTION_TIMEOUT: u64 = 300;
-pub const DEFAULT_REQUIRED_CONFIRMS: u64 = 1;
-pub const DEFAULT_MIN_CONTRACT_REACTION_TIME: u16 = 48;
+pub const HEART_BEAT_INTERVAL_SECS: u64 = 3;
+pub const RPC_PING_INTERVAL_SECS: u64 = 60;
+pub const _DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 60 * 12; // 12 Hours
+pub const _IDLE_CONNECTION_TIMEOUT: u64 = 300;
+pub const REQUIRED_CONFIRMS: u64 = 1;
+pub const MIN_CONTRACT_REACTION_TIME: u16 = 48;
 
 /// Fee rate per swap amount in parts per billion (PPB).
 /// E.g., for 1 billion sats (0.01 BTC), a value of 10_000 would result in a 0.1% fee.
-pub const DEFAULT_AMOUNT_RELATIVE_FEE_PPB: Amount = Amount::from_sat(0);
+pub const AMOUNT_RELATIVE_FEE_PPB: Amount = Amount::from_sat(10_000_000);
 
 /// Fetches the Maker and DNS address, and sends maker address to the DNS server.
 /// Depending upon ConnectionType and test/prod environment, different maker address and DNS addresses are returned.
@@ -155,7 +155,7 @@ fn network_bootstrap(
                         maker_port,
                         e
                     );
-                    thread::sleep(Duration::from_secs(DEFAULT_HEART_BEAT_INTERVAL_SECS));
+                    thread::sleep(Duration::from_secs(HEART_BEAT_INTERVAL_SECS));
                     continue;
                 }
             },
@@ -171,7 +171,7 @@ fn network_bootstrap(
                             maker_port,
                             e
                         );
-                        thread::sleep(Duration::from_secs(DEFAULT_HEART_BEAT_INTERVAL_SECS));
+                        thread::sleep(Duration::from_secs(HEART_BEAT_INTERVAL_SECS));
                         continue;
                     }
                 }
@@ -189,7 +189,7 @@ fn network_bootstrap(
                 maker_port,
                 e
             );
-            thread::sleep(Duration::from_secs(DEFAULT_HEART_BEAT_INTERVAL_SECS));
+            thread::sleep(Duration::from_secs(HEART_BEAT_INTERVAL_SECS));
             continue;
         }
         // Payload sent successfully, exit the loop
@@ -306,10 +306,10 @@ fn check_connection_with_core(
         // If connection is live, keep tring at rpc_ping_interval (60 sec).
         match rpc_ping_success {
             true => {
-                sleep(Duration::from_secs(DEFAULT_RPC_PING_INTERVAL_SECS));
+                sleep(Duration::from_secs(RPC_PING_INTERVAL_SECS));
             }
             false => {
-                sleep(Duration::from_secs(DEFAULT_HEART_BEAT_INTERVAL_SECS));
+                sleep(Duration::from_secs(HEART_BEAT_INTERVAL_SECS));
             }
         }
         if let Err(e) = maker.wallet.read()?.rpc.get_blockchain_info() {
@@ -417,7 +417,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         maker_address
     );
 
-    let heart_beat_interval = DEFAULT_HEART_BEAT_INTERVAL_SECS; // All maker internal threads loops at this frequency.
+    let heart_beat_interval = HEART_BEAT_INTERVAL_SECS; // All maker internal threads loops at this frequency.
 
     // Setup the wallet with fidelity bond.
     let network = maker.get_wallet().read()?.store.network;
@@ -499,7 +499,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     // This loop beats at `maker.config.heart_beat_interval_secs`
     while !maker.shutdown.load(Relaxed) {
         let maker = maker.clone(); // This clone is needed to avoid moving the Arc<Maker> in each iterations.
-        let heart_beat_interval = DEFAULT_HEART_BEAT_INTERVAL_SECS;
+        let heart_beat_interval = HEART_BEAT_INTERVAL_SECS;
 
         // Block client connections if accepting_client=false
         if !*accepting_clients.lock()? {
