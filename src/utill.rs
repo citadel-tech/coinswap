@@ -56,9 +56,16 @@ pub const GLOBAL_PAUSE: Duration = Duration::from_secs(10);
 /// Global heartbeat interval for internal server threads.
 pub const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 
+/// Represents the type of network connection used for communication.
+///
+/// Controls whether to:
+/// - Use Tor for anonymous routing
+/// - Use clearnet for direct connections
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectionType {
+    /// Route all traffic through Tor network.
     TOR,
+    /// Direct connection without anonymization.
     CLEARNET,
 }
 
@@ -74,7 +81,9 @@ impl FromStr for ConnectionType {
     }
 }
 
-/// Read the tor address given an hidden_service directory path
+/// Returns Tor onion address from hidden service hostname file.
+///
+/// Reads address from 'hs-dir/hostname' in the given directory.
 pub fn get_tor_addrs(hs_dir: &Path) -> String {
     let hostname_file_path = hs_dir.join("hs-dir").join("hostname");
     let mut hostname_file = fs::File::open(hostname_file_path).unwrap();
@@ -114,14 +123,23 @@ pub fn get_dns_dir() -> PathBuf {
 }
 
 /// Generate an unique identifier from the seedphrase.
+///
+/// Takes SHA256 hash of seed phrase and keeps first 8 characters.
 pub fn seed_phrase_to_unique_id(seed: &str) -> String {
     let mut hash = sha256::Hash::hash(seed.as_bytes()).to_string();
     let _ = hash.split_off(9);
     hash
 }
 
-/// Setup function that will only run once, even if called multiple times.
-/// Takes log level to set the desired logging verbosity
+/// Initializes logging system with file and console output.
+///
+/// Sets up loggers for:
+/// - Taker (at debug.log in taker dir)
+/// - Maker (at debug.log in maker dir)
+/// - Directory (at debug.log in dns dir)
+/// - Console output
+///
+/// Note: Only runs once even if called multiple times.
 pub fn setup_logger(filter: LevelFilter) {
     Once::new().call_once(|| {
         env::set_var("RUST_LOG", "coinswap=info");
@@ -159,8 +177,17 @@ pub fn setup_logger(filter: LevelFilter) {
     });
 }
 
-/// Send a length-appended Protocol or RPC Message through a stream.
-/// The first byte sent is the length of the actual message.
+/// Sends length-prefixed serialized message over TCP stream.
+///
+/// Message format:
+/// - 4 bytes: message length
+/// - N bytes: CBOR serialized message content
+/// - The first byte sent is the length of the actual message.
+///
+/// # Errors
+/// - Serialization failures
+/// - Write errors
+/// - Flush errors
 pub fn send_message(
     socket_writer: &mut TcpStream,
     message: &impl serde::Serialize,
@@ -175,8 +202,14 @@ pub fn send_message(
     Ok(())
 }
 
-/// Reads a response byte_array from a given stream.
+/// Reads length-prefixed message from TCP stream.
+///
 /// Response can be any length-appended data, where the first byte is the length of the actual message.
+///
+/// # Errors
+/// - EOF on connection close
+/// - Incomplete message
+/// - IO errors during read
 pub fn read_message(reader: &mut TcpStream) -> Result<Vec<u8>, NetError> {
     // length of incoming data
     let mut len_buff = [0u8; 4];
@@ -200,7 +233,15 @@ pub fn read_message(reader: &mut TcpStream) -> Result<Vec<u8>, NetError> {
     Ok(buffer)
 }
 
-/// Apply the maker's privatekey to swapcoins, and check it's the correct privkey for corresponding pubkey.
+/// Verifies and applies maker's private keys to swap coins.
+///
+/// For each swap coin:
+/// - Applies corresponding private key
+/// - Verifies key matches expected pubkey
+///
+/// # Errors
+/// - Key mismatch
+/// - Invalid key format
 pub fn check_and_apply_maker_private_keys<S: SwapCoin>(
     swapcoins: &mut [S],
     swapcoin_private_keys: &[MultisigPrivkey],
@@ -211,10 +252,13 @@ pub fn check_and_apply_maker_private_keys<S: SwapCoin>(
     Ok(())
 }
 
-/// Generate The Maker's Multisig and HashLock keys and respective nonce values.
-/// Nonce values are random integers and resulting Pubkeys are derived by tweaking
+/// Generates maker's multsig and hashlock keypairs and respective nonce values from a base public key.
 ///
+/// Nonce values are random integers and resulting Pubkeys are derived by tweaking
 /// the Maker's advertised Pubkey with these two nonces.
+/// - Derives tweaked multisig keys
+/// - Derives tweaked hashlock keys
+/// - Uses random nonces for tweaking
 pub fn generate_maker_keys(
     tweakable_point: &PublicKey,
     count: u32,
@@ -238,7 +282,12 @@ pub fn generate_maker_keys(
     )
 }
 
-/// Converts a Bitcoin amount from JSON-RPC representation to satoshis.
+/// Converts Bitcoin amount from JSON-RPC float to satoshis.
+///
+/// Due to JSON-RPC's float representation:
+/// - Formats amount to 8 decimal places
+/// - Removes decimal point
+/// - Parses resulting string as satoshis
 pub fn convert_json_rpc_bitcoin_to_satoshis(amount: &Value) -> u64 {
     //to avoid floating point arithmetic, convert the bitcoin amount to
     //string with 8 decimal places, then remove the decimal point to
@@ -255,6 +304,11 @@ pub fn convert_json_rpc_bitcoin_to_satoshis(amount: &Value) -> u64 {
 ///
 /// Parses an input descriptor string and returns `Some` with a tuple containing the HD path
 /// components if it's an HD descriptor. If it's not an HD descriptor, it returns `None`.
+///
+/// Returns None for:
+/// - Non-HD descriptors
+/// - Invalid path formats
+/// - Unparseable address types or indices
 pub fn get_hd_path_from_descriptor(descriptor: &str) -> Option<(&str, u32, i32)> {
     //e.g
     //"desc": "wpkh([a945b5ca/1/1]029b77637989868dcd502dbc07d6304dc2150301693ae84a60b379c3b696b289ad)#aq759em9",
@@ -283,7 +337,11 @@ pub fn get_hd_path_from_descriptor(descriptor: &str) -> Option<(&str, u32, i32)>
     Some((path_chunks[0], addr_type.unwrap(), index.unwrap()))
 }
 
-/// Generates a keypair using the secp256k1 elliptic curve.
+/// Generates a random secp256k1 keypair using system entropy.
+///
+/// Creates:
+/// - 32-byte random private key
+/// - Corresponding compressed public key
 pub fn generate_keypair() -> (PublicKey, SecretKey) {
     let mut privkey = [0u8; 32];
     OsRng.fill_bytes(&mut privkey);
@@ -296,7 +354,9 @@ pub fn generate_keypair() -> (PublicKey, SecretKey) {
     (pubkey, privkey)
 }
 
-/// Convert a redeemscript into p2wsh scriptpubkey.
+/// Converts a redeem script to P2WSH (Pay-to-Witness-Script-Hash) script pubkey.
+///
+/// Takes witness program hash of redeem script and wraps it in P2WSH format.
 pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> ScriptBuf {
     let witness_program = WitnessProgram::new(
         WitnessVersion::V0,
@@ -307,7 +367,16 @@ pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> ScriptBuf {
     ScriptBuf::new_witness_program(&witness_program)
 }
 
-/// Parse TOML file into key-value pair.
+/// Parses TOML file into nested hashmaps of sections and key-value pairs.
+///
+/// Processes TOML format:
+/// - Sections marked by [section_name]
+/// - Key-value pairs as 'key = value'
+/// - Ignores comment lines starting with #
+///
+/// # Errors
+/// - File access failures
+/// - Line reading errors
 pub fn parse_toml(file_path: &PathBuf) -> io::Result<HashMap<String, HashMap<String, String>>> {
     let file = File::open(file_path)?;
     let reader = io::BufReader::new(file);
@@ -336,7 +405,12 @@ pub fn parse_toml(file_path: &PathBuf) -> io::Result<HashMap<String, HashMap<Str
     Ok(sections)
 }
 
-/// Parse and log errors for each field.
+/// Parses a field from string with error handling and default value.
+///
+/// Returns:
+/// - Parsed value if present and valid
+/// - Default value if field is None
+/// - IO error if parsing fails
 pub fn parse_field<T: std::str::FromStr>(value: Option<&String>, default: T) -> io::Result<T> {
     match value {
         Some(value) => value
@@ -346,7 +420,17 @@ pub fn parse_field<T: std::str::FromStr>(value: Option<&String>, default: T) -> 
     }
 }
 
-/// Function to check if tor log contains a pattern
+/// Monitors Tor log file for a specific pattern indicating completion.
+///
+/// Continuously checks log file:
+/// - Tracks file size changes
+/// - Reads new content when file grows
+/// - Searches for completion pattern
+/// - Sleeps 3 seconds between checks
+///
+/// # Errors
+/// - File access failures
+/// - Line reading errors
 pub fn monitor_log_for_completion(log_file: &PathBuf, pattern: &str) -> io::Result<()> {
     let mut last_size = 0;
 
@@ -397,7 +481,16 @@ fn polynomial_modulus(mut checksum: u64, value: u64) -> u64 {
     checksum
 }
 
-/// Compute the checksum of a descriptor
+/// Computes the checksum for a descriptor string using polynomial modulus.
+///
+/// Processes descriptor characters to generate checksum:
+/// - Maps characters to numeric values
+/// - Applies polynomial modulus operations
+/// - Handles character groups of size 3
+/// - Finalizes with zero padding
+///
+/// # Errors
+/// - Invalid characters in descriptor
 pub fn compute_checksum(descriptor: &str) -> Result<String, WalletError> {
     let mut checksum = CHECKSUM_FINAL_XOR_VALUE;
     let mut accumulated_value = 0;
@@ -442,7 +535,12 @@ pub fn compute_checksum(descriptor: &str) -> Result<String, WalletError> {
     Ok(checksum_chars)
 }
 
-/// Parse the proxy (Socket:Port) argument from the cli input.
+/// Parses proxy authentication string in 'user:password' format.
+///
+/// Returns tuple of username and password strings.
+///
+/// # Errors
+/// - Invalid format (missing ':' separator)
 pub fn parse_proxy_auth(s: &str) -> Result<(String, String), NetError> {
     let parts: Vec<_> = s.split(':').collect();
     if parts.len() != 2 {
@@ -455,7 +553,14 @@ pub fn parse_proxy_auth(s: &str) -> Result<(String, String), NetError> {
     Ok((user, passwd))
 }
 
-/// Parse the network string for Connection Type. Used in CLI apps.
+/// Converts network string to ConnectionType enum.
+///
+/// Accepts:
+/// - "clearnet" for ConnectionType::CLEARNET
+/// - "tor" for ConnectionType::TOR
+///
+/// # Errors
+/// - Invalid network string
 pub fn read_connection_network_string(network: &str) -> Result<ConnectionType, NetError> {
     match network {
         "clearnet" => Ok(ConnectionType::CLEARNET),
