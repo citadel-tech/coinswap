@@ -3,20 +3,39 @@
 use super::fidelity::FidelityError;
 use crate::protocol::error::ContractError;
 
-/// Enum for handling wallet-related errors.
+/// Errors that can occur during wallet operations.
+///
+/// Encapsulates errors from:
+/// - IO operations
+/// - Serialization
+/// - Bitcoin Core RPC
+/// - Key derivation
+/// - Contract handling
 #[derive(Debug)]
 pub enum WalletError {
+    /// Standard IO errors.
     IO(std::io::Error),
+    /// CBOR serialization errors.
     Cbor(serde_cbor::Error),
+    /// Bitcoin Core RPC errors.
     Rpc(bitcoind::bitcoincore_rpc::Error),
+    /// Protocol violation errors with description.
     Protocol(String),
+    /// BIP32 hierarchical key derivation errors.
     BIP32(bitcoin::bip32::Error),
+    /// BIP39 mnemonic handling errors.
     BIP39(bip39::Error),
+    /// Contract creation or validation errors.
     Contract(ContractError),
+    /// Fidelity bond operation errors.
     Fidelity(FidelityError),
+    /// Timelock conversion errors.
     Locktime(bitcoin::blockdata::locktime::absolute::ConversionError),
+    /// Secp256k1 cryptographic errors.
     Secp(bitcoin::secp256k1::Error),
+    /// Consensus rule violation errors.
     Consensus(String),
+    /// Insufficient funds for operation.
     InsufficientFund { available: f64, required: f64 },
 }
 

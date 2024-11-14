@@ -40,13 +40,23 @@ const BOND_VALUE_INTEREST_RATE: f64 = 0.015;
 /// Constant representing the derivation path for fidelity addresses.
 const FIDELITY_DERIVATION_PATH: &str = "m/84'/0'/0'/2";
 
-/// Error structure defining possible fidelity related errors
+/// Errors that can occur during fidelity bond operations.
+///
+/// Encapsulates errors from:
+/// - Script validation
+/// - Bond management
+/// - Certificate handling
 #[derive(Debug)]
 pub enum FidelityError {
+    /// Invalid script type for fidelity bond.
     WrongScriptType,
+    /// Referenced bond doesn't exist.
     BondDoesNotExist,
+    /// Bond has already been spent.
     BondAlreadySpent,
+    /// Bond certificate has expired.
     CertExpired,
+    /// Generic error with description.
     General(String),
 }
 
@@ -114,17 +124,27 @@ pub fn calculate_fidelity_value(
     Amount::from_sat(((value.to_sat() as f64) * timevalue).powf(BOND_VALUE_EXPONENT) as u64)
 }
 
-/// Structure describing a Fidelity Bond.
-/// Fidelity Bonds are described [here](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md)
+/// Represents a time-locked coin commitment used as a fidelity bond.
+///
+/// A fidelity bond proves maker's commitment by locking coins:
+/// - Uses time-locked UTXO as proof
+/// - Amount and locktime determine bond value
+/// - Includes confirmation info for validation
+///
+/// For detailed documentation, see [fidelity bonds](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Hash)]
 pub struct FidelityBond {
+    /// UTXO that contains the bond.
     pub outpoint: OutPoint,
+    /// Amount of coins locked in bond.
     pub amount: Amount,
+    /// Time until which coins are locked.
     pub lock_time: LockTime,
+    /// Public key controlling the bond.
     pub pubkey: PublicKey,
-    // Height at which the bond was confirmed.
+    /// Block height at which the bond was confirmed.
     pub conf_height: u32,
-    // Cert expiry denoted in multiple of difficulty adjustment period (2016 blocks)
+    /// Certificate expiry in difficulty adjustment periods (2016 blocks).
     pub cert_expiry: u64,
 }
 

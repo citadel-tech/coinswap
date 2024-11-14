@@ -39,10 +39,18 @@ use super::{
 
 const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
 
-/// Represents a Bitcoin wallet with associated functionality and data.
+/// Bitcoin wallet managing keys, transactions, and RPC connections.
+///
+/// Handles:
+/// - RPC communication with Bitcoin Core
+/// - Wallet data persistence
+/// - Key and transaction storage
 pub struct Wallet {
+    /// RPC client for Bitcoin Core communication.
     pub(crate) rpc: Client,
+    /// Path to wallet data file.
     wallet_file_path: PathBuf,
+    /// Wallet state and storage.
     pub(crate) store: WalletStore,
 }
 
@@ -110,28 +118,46 @@ impl FromStr for DisplayAddressType {
     }
 }
 
-/// Enum representing additional data needed to spend a UTXO, in addition to `ListUnspentResultEntry`.
-// data needed to find information  in addition to ListUnspentResultEntry
-// about a UTXO required to spend it
+/// Additional spending information required for different UTXO types.
+///
+/// Required data beyond ListUnspentResultEntry for spending:
+/// - HD wallet derivation paths
+/// - Redeem scripts
+/// - Input amounts
+/// - Contract details
 #[derive(Debug, Clone)]
 pub enum UTXOSpendInfo {
+    /// Regular HD wallet coin.
     SeedCoin {
+        /// HD path for key derivation.
         path: String,
+        /// UTXO amount.
         input_value: Amount,
     },
+    /// Multisig swap coin.
     SwapCoin {
+        /// Script for multisig redemption.
         multisig_redeemscript: ScriptBuf,
     },
+    /// Time-locked contract coin.
     TimelockContract {
+        /// Associated swap's multisig script.
         swapcoin_multisig_redeemscript: ScriptBuf,
+        /// UTXO amount.
         input_value: Amount,
     },
+    /// Hash-locked contract coin.
     HashlockContract {
+        /// Associated swap's multisig script.
         swapcoin_multisig_redeemscript: ScriptBuf,
+        /// UTXO amount.
         input_value: Amount,
     },
+    /// Fidelity bond coin.
     FidelityBondCoin {
+        /// Bond index for lookup.
         index: u32,
+        /// UTXO amount.
         input_value: Amount,
     },
 }
