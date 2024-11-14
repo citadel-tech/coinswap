@@ -1,0 +1,1604 @@
+No.     Time           Source                Destination           Protocol Length Info
+      1 0.000000       127.0.0.1             127.0.0.1             TCP      68     54672 → 16102 [SYN] Seq=0 Win=65535 Len=0 MSS=16344 WS=64 TSval=972071852 TSecr=0 SACK_PERM
+
+Frame 1: 68 bytes on wire (544 bits), 68 bytes captured (544 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54672, Dst Port: 16102, Seq: 0, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+      2 0.000051       127.0.0.1             127.0.0.1             TCP      68     16102 → 54672 [SYN, ACK] Seq=0 Ack=1 Win=65535 Len=0 MSS=16344 WS=64 TSval=362523411 TSecr=972071852 SACK_PERM
+
+Frame 2: 68 bytes on wire (544 bits), 68 bytes captured (544 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54672, Seq: 0, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+      3 0.000071       127.0.0.1             127.0.0.1             TCP      56     54672 → 16102 [ACK] Seq=1 Ack=1 Win=408256 Len=0 TSval=972071852 TSecr=362523411
+
+Frame 3: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54672, Dst Port: 16102, Seq: 1, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+      4 0.000082       127.0.0.1             127.0.0.1             TCP      56     [TCP Window Update] 16102 → 54672 [ACK] Seq=1 Ack=1 Win=408256 Len=0 TSval=362523411 TSecr=972071852
+
+Frame 4: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54672, Seq: 1, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+      5 0.001007       127.0.0.1             127.0.0.1             TCP      117    54672 → 16102 [PSH, ACK] Seq=1 Ack=1 Win=408256 Len=61 TSval=972071853 TSecr=362523411
+
+Frame 5: 117 bytes on wire (936 bits), 117 bytes captured (936 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54672, Dst Port: 16102, Seq: 1, Ack: 1, Len: 61
+Data (61 bytes)
+
+0000  00 00 00 39 a1 6a 54 61 6b 65 72 48 65 6c 6c 6f   ...9.jTakerHello
+0010  a2 74 70 72 6f 74 6f 63 6f 6c 5f 76 65 72 73 69   .tprotocol_versi
+0020  6f 6e 5f 6d 69 6e 01 74 70 72 6f 74 6f 63 6f 6c   on_min.tprotocol
+0030  5f 76 65 72 73 69 6f 6e 5f 6d 61 78 01            _version_max.
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+      6 0.001062       127.0.0.1             127.0.0.1             TCP      56     16102 → 54672 [ACK] Seq=1 Ack=62 Win=408192 Len=0 TSval=362523412 TSecr=972071853
+
+Frame 6: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54672, Seq: 1, Ack: 62, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+      7 2.164324       127.0.0.1             127.0.0.1             TCP      117    16102 → 54672 [PSH, ACK] Seq=1 Ack=62 Win=408192 Len=61 TSval=362525576 TSecr=972071853
+
+Frame 7: 117 bytes on wire (936 bits), 117 bytes captured (936 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54672, Seq: 1, Ack: 62, Len: 61
+Data (61 bytes)
+
+0000  00 00 00 39 a1 6a 4d 61 6b 65 72 48 65 6c 6c 6f   ...9.jMakerHello
+0010  a2 74 70 72 6f 74 6f 63 6f 6c 5f 76 65 72 73 69   .tprotocol_versi
+0020  6f 6e 5f 6d 69 6e 01 74 70 72 6f 74 6f 63 6f 6c   on_min.tprotocol
+0030  5f 76 65 72 73 69 6f 6e 5f 6d 61 78 01            _version_max.
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+      8 2.164419       127.0.0.1             127.0.0.1             TCP      56     54672 → 16102 [ACK] Seq=62 Ack=62 Win=408192 Len=0 TSval=972074017 TSecr=362525576
+
+Frame 8: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54672, Dst Port: 16102, Seq: 62, Ack: 62, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+      9 2.165613       127.0.0.1             127.0.0.1             TCP      75     54672 → 16102 [PSH, ACK] Seq=62 Ack=62 Win=408192 Len=19 TSval=972074018 TSecr=362525576
+
+Frame 9: 75 bytes on wire (600 bits), 75 bytes captured (600 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54672, Dst Port: 16102, Seq: 62, Ack: 62, Len: 19
+Data (19 bytes)
+
+0000  00 00 00 0f a1 6c 52 65 71 47 69 76 65 4f 66 66   .....lReqGiveOff
+0010  65 72 f6                                          er.
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     10 2.165639       127.0.0.1             127.0.0.1             TCP      56     16102 → 54672 [ACK] Seq=62 Ack=81 Win=408192 Len=0 TSval=362525577 TSecr=972074018
+
+Frame 10: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54672, Seq: 62, Ack: 81, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     11 2.173571       127.0.0.1             127.0.0.1             TCP      553    16102 → 54672 [PSH, ACK] Seq=62 Ack=81 Win=408192 Len=497 TSval=362525585 TSecr=972074018
+
+Frame 11: 553 bytes on wire (4424 bits), 553 bytes captured (4424 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54672, Seq: 62, Ack: 81, Len: 497
+Data (497 bytes)
+
+0000  00 00 01 ed a1 69 52 65 73 70 4f 66 66 65 72 a9   .....iRespOffer.
+0010  70 61 62 73 6f 6c 75 74 65 5f 66 65 65 5f 73 61   pabsolute_fee_sa
+0020  74 19 03 e8 77 61 6d 6f 75 6e 74 5f 72 65 6c 61   t...wamount_rela
+0030  74 69 76 65 5f 66 65 65 5f 70 70 62 1a 00 98 96   tive_fee_ppb....
+0040  80 75 74 69 6d 65 5f 72 65 6c 61 74 69 76 65 5f   .utime_relative_
+0050  66 65 65 5f 70 70 62 1a 00 01 86 a0 71 72 65 71   fee_ppb.....qreq
+0060  75 69 72 65 64 5f 63 6f 6e 66 69 72 6d 73 01 70   uired_confirms.p
+0070  6d 69 6e 69 6d 75 6d 5f 6c 6f 63 6b 74 69 6d 65   minimum_locktime
+0080  18 30 68 6d 61 78 5f 73 69 7a 65 1a 00 e4 dd d8   .0hmax_size.....
+0090  68 6d 69 6e 5f 73 69 7a 65 19 27 10 6f 74 77 65   hmin_size.'.otwe
+00a0  61 6b 61 62 6c 65 5f 70 6f 69 6e 74 58 21 02 6d   akable_pointX!.m
+00b0  08 7d 6b 05 0c 96 e7 4d 25 94 98 f3 79 ee 53 55   .}k....M%...y.SU
+00c0  1c 29 f7 37 6a 33 bc 66 0e 08 00 c5 43 8c 37 68   .).7j3.f....C.7h
+00d0  66 69 64 65 6c 69 74 79 a3 64 62 6f 6e 64 a6 68   fidelity.dbond.h
+00e0  6f 75 74 70 6f 69 6e 74 a2 64 74 78 69 64 58 20   outpoint.dtxidX 
+00f0  37 45 94 f6 07 1f 83 01 33 74 84 a4 18 48 d1 37   7E......3t...H.7
+0100  55 c6 6c 7f 0e e0 96 5d dc 3d 07 e1 b1 d1 95 22   U.l....].=....."
+0110  64 76 6f 75 74 00 66 61 6d 6f 75 6e 74 1a 00 4c   dvout.famount..L
+0120  4b 40 69 6c 6f 63 6b 5f 74 69 6d 65 18 fc 66 70   K@ilock_time..fp
+0130  75 62 6b 65 79 58 21 03 8c 3d e8 a6 e1 7e 97 54   ubkeyX!..=...~.T
+0140  10 df 1d 1b f4 f9 05 9a f1 89 73 43 d3 f8 fa e0   ..........sC....
+0150  f5 53 47 06 96 85 ef 84 6b 63 6f 6e 66 5f 68 65   .SG.....kconf_he
+0160  69 67 68 74 18 67 6b 63 65 72 74 5f 65 78 70 69   ight.gkcert_expi
+0170  72 79 05 69 63 65 72 74 5f 68 61 73 68 58 20 62   ry.icert_hashX b
+0180  48 02 3c c5 8f 26 be 91 e6 59 27 57 2d 52 4a 1e   H.<..&...Y'W-RJ.
+0190  e2 48 d4 5a 10 ef 3d 33 d8 9c a2 7f e6 2e fa 68   .H.Z..=3.......h
+01a0  63 65 72 74 5f 73 69 67 58 47 30 45 02 21 00 dc   cert_sigXG0E.!..
+01b0  7d 61 5e a3 7e fa a9 27 87 d5 2e ad d5 87 08 6b   }a^.~..'.......k
+01c0  ed 5b 0f 89 e7 1f 35 f5 a0 a7 c9 49 bd ef 29 02   .[....5....I..).
+01d0  20 22 98 b5 10 3b d8 6c 05 fe f3 69 1a 82 03 6a    "...;.l...i...j
+01e0  d5 15 e8 76 5b 0d 80 56 88 c2 a0 2f 06 ca c4 76   ...v[..V.../...v
+01f0  5c                                                \
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     12 2.173622       127.0.0.1             127.0.0.1             TCP      56     54672 → 16102 [ACK] Seq=81 Ack=559 Win=407680 Len=0 TSval=972074026 TSecr=362525585
+
+Frame 12: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54672, Dst Port: 16102, Seq: 81, Ack: 559, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     13 2.177742       127.0.0.1             127.0.0.1             TCP      56     54672 → 16102 [FIN, ACK] Seq=81 Ack=559 Win=407680 Len=0 TSval=972074030 TSecr=362525585
+
+Frame 13: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54672, Dst Port: 16102, Seq: 81, Ack: 559, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     14 2.177792       127.0.0.1             127.0.0.1             TCP      56     16102 → 54672 [ACK] Seq=559 Ack=82 Win=408192 Len=0 TSval=362525589 TSecr=972074030
+
+Frame 14: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54672, Seq: 559, Ack: 82, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     15 2.286434       127.0.0.1             127.0.0.1             TCP      68     54675 → 16102 [SYN] Seq=0 Win=65535 Len=0 MSS=16344 WS=64 TSval=2305706426 TSecr=0 SACK_PERM
+
+Frame 15: 68 bytes on wire (544 bits), 68 bytes captured (544 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54675, Dst Port: 16102, Seq: 0, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     16 2.286461       127.0.0.1             127.0.0.1             TCP      68     16102 → 54675 [SYN, ACK] Seq=0 Ack=1 Win=65535 Len=0 MSS=16344 WS=64 TSval=3384207588 TSecr=2305706426 SACK_PERM
+
+Frame 16: 68 bytes on wire (544 bits), 68 bytes captured (544 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54675, Seq: 0, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     17 2.286466       127.0.0.1             127.0.0.1             TCP      56     54675 → 16102 [ACK] Seq=1 Ack=1 Win=408256 Len=0 TSval=2305706426 TSecr=3384207588
+
+Frame 17: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54675, Dst Port: 16102, Seq: 1, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     18 2.286468       127.0.0.1             127.0.0.1             TCP      56     [TCP Window Update] 16102 → 54675 [ACK] Seq=1 Ack=1 Win=408256 Len=0 TSval=3384207588 TSecr=2305706426
+
+Frame 18: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54675, Seq: 1, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     19 2.286557       127.0.0.1             127.0.0.1             TCP      117    54675 → 16102 [PSH, ACK] Seq=1 Ack=1 Win=408256 Len=61 TSval=2305706426 TSecr=3384207588
+
+Frame 19: 117 bytes on wire (936 bits), 117 bytes captured (936 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54675, Dst Port: 16102, Seq: 1, Ack: 1, Len: 61
+Data (61 bytes)
+
+0000  00 00 00 39 a1 6a 54 61 6b 65 72 48 65 6c 6c 6f   ...9.jTakerHello
+0010  a2 74 70 72 6f 74 6f 63 6f 6c 5f 76 65 72 73 69   .tprotocol_versi
+0020  6f 6e 5f 6d 69 6e 01 74 70 72 6f 74 6f 63 6f 6c   on_min.tprotocol
+0030  5f 76 65 72 73 69 6f 6e 5f 6d 61 78 01            _version_max.
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     20 2.286566       127.0.0.1             127.0.0.1             TCP      56     16102 → 54675 [ACK] Seq=1 Ack=62 Win=408192 Len=0 TSval=3384207588 TSecr=2305706426
+
+Frame 20: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54675, Seq: 1, Ack: 62, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     21 5.197001       127.0.0.1             127.0.0.1             TCP      117    16102 → 54675 [PSH, ACK] Seq=1 Ack=62 Win=408192 Len=61 TSval=3384210498 TSecr=2305706426
+
+Frame 21: 117 bytes on wire (936 bits), 117 bytes captured (936 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54675, Seq: 1, Ack: 62, Len: 61
+Data (61 bytes)
+
+0000  00 00 00 39 a1 6a 4d 61 6b 65 72 48 65 6c 6c 6f   ...9.jMakerHello
+0010  a2 74 70 72 6f 74 6f 63 6f 6c 5f 76 65 72 73 69   .tprotocol_versi
+0020  6f 6e 5f 6d 69 6e 01 74 70 72 6f 74 6f 63 6f 6c   on_min.tprotocol
+0030  5f 76 65 72 73 69 6f 6e 5f 6d 61 78 01            _version_max.
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     22 5.197023       127.0.0.1             127.0.0.1             TCP      56     54675 → 16102 [ACK] Seq=62 Ack=62 Win=408192 Len=0 TSval=2305709336 TSecr=3384210498
+
+Frame 22: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54675, Dst Port: 16102, Seq: 62, Ack: 62, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     23 5.200401       127.0.0.1             127.0.0.1             TCP      1751   54675 → 16102 [PSH, ACK] Seq=62 Ack=62 Win=408192 Len=1695 TSval=2305709340 TSecr=3384210498
+
+Frame 23: 1751 bytes on wire (14008 bits), 1751 bytes captured (14008 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54675, Dst Port: 16102, Seq: 62, Ack: 62, Len: 1695
+Data (1695 bytes)
+
+0000  00 00 06 9b a1 78 18 52 65 71 43 6f 6e 74 72 61   .....x.ReqContra
+0010  63 74 53 69 67 73 46 6f 72 53 65 6e 64 65 72 a3   ctSigsForSender.
+0020  68 74 78 73 5f 69 6e 66 6f 83 a6 6e 6d 75 6c 74   htxs_info..nmult
+0030  69 73 69 67 5f 6e 6f 6e 63 65 98 20 18 9e 18 b7   isig_nonce. ....
+0040  18 f9 18 9c 18 91 18 8d 18 95 18 5b 18 64 18 9a   ...........[.d..
+0050  05 18 9d 18 89 18 e0 18 df 18 b6 0a 18 26 18 7b   .............&.{
+0060  18 71 18 4a 18 a8 18 6c 18 62 18 35 18 a4 18 c2   .q.J...l.b.5....
+0070  18 3b 18 30 04 18 c2 18 79 6e 68 61 73 68 6c 6f   .;.0....ynhashlo
+0080  63 6b 5f 6e 6f 6e 63 65 98 20 18 b7 08 18 98 18   ck_nonce. ......
+0090  43 18 86 18 1e 18 82 02 18 b6 0a 18 8f 18 e8 18   C...............
+00a0  6e 18 76 18 4c 18 59 18 d5 18 98 18 e1 18 22 18   n.v.L.Y.......".
+00b0  1c 18 3c 18 25 18 e9 14 18 86 18 c5 18 b7 18 dd   ..<.%...........
+00c0  18 23 18 a1 18 2a 6f 74 69 6d 65 6c 6f 63 6b 5f   .#...*otimelock_
+00d0  70 75 62 6b 65 79 58 21 03 f4 37 5f 22 4f 90 ad   pubkeyX!..7_"O..
+00e0  3d 0a 34 50 6b 19 cc 3c f5 ad 8c 87 78 92 d8 0b   =.4Pk..<....x...
+00f0  ec 99 e0 35 5b d5 9c 17 0a 73 73 65 6e 64 65 72   ...5[....ssender
+0100  73 5f 63 6f 6e 74 72 61 63 74 5f 74 78 a4 67 76   s_contract_tx.gv
+0110  65 72 73 69 6f 6e 02 69 6c 6f 63 6b 5f 74 69 6d   ersion.ilock_tim
+0120  65 00 65 69 6e 70 75 74 81 a4 6f 70 72 65 76 69   e.einput..oprevi
+0130  6f 75 73 5f 6f 75 74 70 75 74 a2 64 74 78 69 64   ous_output.dtxid
+0140  58 20 70 2e 78 34 df fb d8 9d a9 a4 f7 9e 7b 90   X p.x4........{.
+0150  e5 1b bc b1 f7 12 aa 5c cf cb c3 ba d7 01 2e 7d   .......\.......}
+0160  0f 5d 64 76 6f 75 74 00 6a 73 63 72 69 70 74 5f   .]dvout.jscript_
+0170  73 69 67 40 68 73 65 71 75 65 6e 63 65 00 67 77   sig@hsequence.gw
+0180  69 74 6e 65 73 73 80 66 6f 75 74 70 75 74 81 a2   itness.foutput..
+0190  65 76 61 6c 75 65 1a 00 02 43 6c 6d 73 63 72 69   evalue...Clmscri
+01a0  70 74 5f 70 75 62 6b 65 79 58 22 00 20 fc 7d e9   pt_pubkeyX". .}.
+01b0  f8 92 0f d6 59 df e8 f6 1a 2b de d1 b3 b7 8c b4   ....Y....+......
+01c0  bf 31 3e cf 33 f5 e8 14 d9 11 8e 2a 5c 75 6d 75   .1>.3......*\umu
+01d0  6c 74 69 73 69 67 5f 72 65 64 65 65 6d 73 63 72   ltisig_redeemscr
+01e0  69 70 74 58 47 52 21 02 2a 3a f1 6d ce a8 71 8e   iptXGR!.*:.m..q.
+01f0  5d f2 9a 28 b9 d9 93 29 88 9d 20 2a 7a f8 8d c7   ]..(...).. *z...
+0200  10 66 f7 ec 41 6c 7d 31 21 02 97 3e 22 9f ef 2d   .f..Al}1!..>"..-
+0210  03 57 63 9e c9 59 bf c6 23 e4 9c cf f7 50 da 01   .Wc..Y..#....P..
+0220  22 10 00 6c e3 21 1d cd 74 c6 52 ae 73 66 75 6e   "..l.!..t.R.sfun
+0230  64 69 6e 67 5f 69 6e 70 75 74 5f 76 61 6c 75 65   ding_input_value
+0240  1a 00 02 47 54 a6 6e 6d 75 6c 74 69 73 69 67 5f   ...GT.nmultisig_
+0250  6e 6f 6e 63 65 98 20 18 b5 18 59 18 77 18 4c 18   nonce. ...Y.w.L.
+0260  57 18 99 18 e1 0a 18 3e 18 fb 18 6f 18 32 18 44   W......>...o.2.D
+0270  18 1b 09 18 ed 18 64 18 43 18 ae 18 64 18 ed 15   ......d.C...d...
+0280  18 2b 18 e5 18 9a 18 3d 18 74 18 d4 18 31 0f 18   .+.....=.t...1..
+0290  55 18 5e 6e 68 61 73 68 6c 6f 63 6b 5f 6e 6f 6e   U.^nhashlock_non
+02a0  63 65 98 20 10 18 bc 18 4e 18 51 18 43 18 97 18   ce. ....N.Q.C...
+02b0  35 18 ee 18 9b 18 7f 18 88 18 ad 07 18 b1 18 b1   5...............
+02c0  18 6a 18 f4 18 83 18 7b 18 99 18 58 18 1c 18 ee   .j.....{...X....
+02d0  18 6a 18 4e 18 b9 18 cf 18 48 04 18 9e 18 62 07   .j.N.....H....b.
+02e0  6f 74 69 6d 65 6c 6f 63 6b 5f 70 75 62 6b 65 79   otimelock_pubkey
+02f0  58 21 02 6e 39 bf f0 22 6b 8d 31 50 63 ae 6d ab   X!.n9.."k.1Pc.m.
+0300  4a d8 6d 96 84 55 61 e7 b7 d9 16 94 c6 ed 2a 88   J.m..Ua.......*.
+0310  20 b0 e2 73 73 65 6e 64 65 72 73 5f 63 6f 6e 74    ..ssenders_cont
+0320  72 61 63 74 5f 74 78 a4 67 76 65 72 73 69 6f 6e   ract_tx.gversion
+0330  02 69 6c 6f 63 6b 5f 74 69 6d 65 00 65 69 6e 70   .ilock_time.einp
+0340  75 74 81 a4 6f 70 72 65 76 69 6f 75 73 5f 6f 75   ut..oprevious_ou
+0350  74 70 75 74 a2 64 74 78 69 64 58 20 33 9f 1e 83   tput.dtxidX 3...
+0360  7a 40 df fe 6e 5b 1d a4 d6 af 74 f9 86 e6 b4 56   z@..n[....t....V
+0370  1b 39 b9 0e 75 89 94 22 00 a7 0a 0e 64 76 6f 75   .9..u.."....dvou
+0380  74 00 6a 73 63 72 69 70 74 5f 73 69 67 40 68 73   t.jscript_sig@hs
+0390  65 71 75 65 6e 63 65 00 67 77 69 74 6e 65 73 73   equence.gwitness
+03a0  80 66 6f 75 74 70 75 74 81 a2 65 76 61 6c 75 65   .foutput..evalue
+03b0  19 e3 f5 6d 73 63 72 69 70 74 5f 70 75 62 6b 65   ...mscript_pubke
+03c0  79 58 22 00 20 3d 0a 8c 83 4f 73 c1 21 58 3e 18   yX". =...Os.!X>.
+03d0  15 95 c1 69 ba 1e d6 c5 2b e5 9a 1e a1 99 7c fe   ...i....+.....|.
+03e0  24 20 9c dc 29 75 6d 75 6c 74 69 73 69 67 5f 72   $ ..)umultisig_r
+03f0  65 64 65 65 6d 73 63 72 69 70 74 58 47 52 21 02   edeemscriptXGR!.
+0400  1f 99 fa ab 4c a9 19 fa 77 0d 15 29 00 14 59 4a   ....L...w..)..YJ
+0410  e1 9c dc 04 5e d5 ac 77 bc b7 cc 7e ec f2 e0 83   ....^..w...~....
+0420  21 03 be af e0 bf 77 7e 76 4c df 89 a2 71 90 95   !.....w~vL...q..
+0430  21 f1 84 6c 8b 36 4a b6 65 b8 1d 0a 33 0e 10 b5   !..l.6J.e...3...
+0440  89 f1 52 ae 73 66 75 6e 64 69 6e 67 5f 69 6e 70   ..R.sfunding_inp
+0450  75 74 5f 76 61 6c 75 65 19 e7 dd a6 6e 6d 75 6c   ut_value....nmul
+0460  74 69 73 69 67 5f 6e 6f 6e 63 65 98 20 18 ee 02   tisig_nonce. ...
+0470  18 f0 0d 18 ff 18 28 18 f5 18 4c 18 55 18 88 18   ......(...L.U...
+0480  a0 18 26 18 1c 18 6f 18 1b 18 c9 18 80 18 60 18   ..&...o.......`.
+0490  d2 18 63 18 a3 18 b5 18 7e 18 b5 18 e9 18 c8 18   ..c.....~.......
+04a0  3f 18 60 0c 18 23 18 7f 04 6e 68 61 73 68 6c 6f   ?.`..#...nhashlo
+04b0  63 6b 5f 6e 6f 6e 63 65 98 20 17 18 57 04 18 8f   ck_nonce. ..W...
+04c0  12 18 9f 18 d5 18 94 18 9a 18 39 18 76 18 42 18   ..........9.v.B.
+04d0  6c 18 5c 18 3d 18 3c 18 64 18 95 18 75 18 50 18   l.\.=.<.d...u.P.
+04e0  d2 18 65 18 6e 18 46 18 2e 18 db 18 6d 18 9c 18   ..e.n.F.....m...
+04f0  d2 08 18 a4 18 98 6f 74 69 6d 65 6c 6f 63 6b 5f   ......otimelock_
+0500  70 75 62 6b 65 79 58 21 02 85 99 d2 0f 49 6c 82   pubkeyX!.....Il.
+0510  06 ec e0 c8 db a0 a6 d5 8c 6e b8 84 1d b3 3c cf   .........n....<.
+0520  90 32 f1 7f 28 32 2b 14 03 73 73 65 6e 64 65 72   .2..(2+..ssender
+0530  73 5f 63 6f 6e 74 72 61 63 74 5f 74 78 a4 67 76   s_contract_tx.gv
+0540  65 72 73 69 6f 6e 02 69 6c 6f 63 6b 5f 74 69 6d   ersion.ilock_tim
+0550  65 00 65 69 6e 70 75 74 81 a4 6f 70 72 65 76 69   e.einput..oprevi
+0560  6f 75 73 5f 6f 75 74 70 75 74 a2 64 74 78 69 64   ous_output.dtxid
+0570  58 20 fe d7 4a 0b 6d 3a 84 f2 2b b7 58 c9 9e b2   X ..J.m:..+.X...
+0580  13 cc f0 1a fa 2c 54 ff b9 ac be 0d a3 f0 77 f0   .....,T.......w.
+0590  c3 32 64 76 6f 75 74 00 6a 73 63 72 69 70 74 5f   .2dvout.jscript_
+05a0  73 69 67 40 68 73 65 71 75 65 6e 63 65 00 67 77   sig@hsequence.gw
+05b0  69 74 6e 65 73 73 80 66 6f 75 74 70 75 74 81 a2   itness.foutput..
+05c0  65 76 61 6c 75 65 1a 00 04 6e 07 6d 73 63 72 69   evalue...n.mscri
+05d0  70 74 5f 70 75 62 6b 65 79 58 22 00 20 c0 7d 6d   pt_pubkeyX". .}m
+05e0  e1 1f 56 30 af 1e cf 48 02 fb 3f 57 59 c1 7e 35   ..V0...H..?WY.~5
+05f0  db 56 16 7f 7d 9a a5 ad 34 0f 75 1b a2 75 6d 75   .V..}...4.u..umu
+0600  6c 74 69 73 69 67 5f 72 65 64 65 65 6d 73 63 72   ltisig_redeemscr
+0610  69 70 74 58 47 52 21 02 2c 2f 31 aa ca 40 7c 50   iptXGR!.,/1..@|P
+0620  68 d1 e9 29 96 04 79 f5 97 aa f9 5b 9a 3d e4 15   h..)..y....[.=..
+0630  e4 58 df 00 c2 6c 4a 39 21 02 40 f9 2c 54 c4 c5   .X...lJ9!.@.,T..
+0640  2f 78 bb 36 f5 05 08 ea cf d2 39 d8 70 9a a7 f5   /x.6......9.p...
+0650  0e 0e b7 80 cd 0a a2 bb 98 2a 52 ae 73 66 75 6e   .........*R.sfun
+0660  64 69 6e 67 5f 69 6e 70 75 74 5f 76 61 6c 75 65   ding_input_value
+0670  1a 00 04 71 ef 69 68 61 73 68 76 61 6c 75 65 54   ...q.ihashvalueT
+0680  e9 82 ee 25 2a ee 99 31 24 ec 5b 9f b0 72 c2 3d   ...%*..1$.[..r.=
+0690  02 35 39 7f 68 6c 6f 63 6b 74 69 6d 65 18 90      .59.hlocktime..
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     24 5.200418       127.0.0.1             127.0.0.1             TCP      56     16102 → 54675 [ACK] Seq=62 Ack=1757 Win=406528 Len=0 TSval=3384210502 TSecr=2305709340
+
+Frame 24: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54675, Seq: 62, Ack: 1757, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     25 5.219821       127.0.0.1             127.0.0.1             TCP      422    16102 → 54675 [PSH, ACK] Seq=62 Ack=1757 Win=406528 Len=366 TSval=3384210521 TSecr=2305709340
+
+Frame 25: 422 bytes on wire (3376 bits), 422 bytes captured (3376 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54675, Seq: 62, Ack: 1757, Len: 366
+Data (366 bytes)
+
+0000  00 00 01 6a a1 78 19 52 65 73 70 43 6f 6e 74 72   ...j.x.RespContr
+0010  61 63 74 53 69 67 73 46 6f 72 53 65 6e 64 65 72   actSigsForSender
+0020  a1 64 73 69 67 73 83 a2 69 73 69 67 6e 61 74 75   .dsigs..isignatu
+0030  72 65 58 47 30 45 02 21 00 b3 c7 bb 62 aa 49 cf   reXG0E.!....b.I.
+0040  8e 5b 84 d2 22 d9 e6 f9 75 1a 15 16 6c e0 dd 88   .[.."...u...l...
+0050  7b 83 88 60 df b9 28 e5 f9 02 20 27 9c 90 ba b9   {..`..(... '....
+0060  4d b2 b7 ee 96 56 d5 2b 4a d8 5a 22 75 6a 49 c7   M....V.+J.Z"ujI.
+0070  ec d9 00 d1 58 4e 0b 71 0d 6c 6f 6c 73 69 67 68   ....XN.q.lolsigh
+0080  61 73 68 5f 74 79 70 65 6b 53 49 47 48 41 53 48   ash_typekSIGHASH
+0090  5f 41 4c 4c a2 69 73 69 67 6e 61 74 75 72 65 58   _ALL.isignatureX
+00a0  47 30 45 02 21 00 a8 30 83 2d bd c1 81 27 77 9e   G0E.!..0.-...'w.
+00b0  8f 59 d8 28 41 29 29 a8 2a 1c fb a5 a6 db f0 93   .Y.(A)).*.......
+00c0  1d a0 e6 1d cd df 02 20 6e 31 41 8e 40 89 d3 70   ....... n1A.@..p
+00d0  ab 23 e5 55 d0 07 1f 62 18 b5 0e 38 dd 84 c5 ee   .#.U...b...8....
+00e0  39 d5 c7 71 5f f4 ab ee 6c 73 69 67 68 61 73 68   9..q_...lsighash
+00f0  5f 74 79 70 65 6b 53 49 47 48 41 53 48 5f 41 4c   _typekSIGHASH_AL
+0100  4c a2 69 73 69 67 6e 61 74 75 72 65 58 47 30 45   L.isignatureXG0E
+0110  02 21 00 84 0c 6a 1f 53 c6 95 e3 ce da dc 1d 35   .!...j.S.......5
+0120  80 ea 92 5d 3a 1c 17 33 28 99 24 c5 64 6e ae 03   ...]:..3(.$.dn..
+0130  2e c2 34 02 20 77 c9 b0 6f 94 00 f2 0b 6d 30 e6   ..4. w..o....m0.
+0140  04 47 37 55 fd 64 bd 11 a5 1f 7d 36 c2 e8 d6 a1   .G7U.d....}6....
+0150  64 1b fe 5b 49 6c 73 69 67 68 61 73 68 5f 74 79   d..[Ilsighash_ty
+0160  70 65 6b 53 49 47 48 41 53 48 5f 41 4c 4c         pekSIGHASH_ALL
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     26 5.219836       127.0.0.1             127.0.0.1             TCP      56     54675 → 16102 [ACK] Seq=1757 Ack=428 Win=407872 Len=0 TSval=2305709359 TSecr=3384210521
+
+Frame 26: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54675, Dst Port: 16102, Seq: 1757, Ack: 428, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     27 5.223166       127.0.0.1             127.0.0.1             TCP      56     54675 → 16102 [FIN, ACK] Seq=1757 Ack=428 Win=407872 Len=0 TSval=2305709363 TSecr=3384210521
+
+Frame 27: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54675, Dst Port: 16102, Seq: 1757, Ack: 428, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     28 5.223174       127.0.0.1             127.0.0.1             TCP      56     16102 → 54675 [ACK] Seq=428 Ack=1758 Win=406528 Len=0 TSval=3384210525 TSecr=2305709363
+
+Frame 28: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54675, Seq: 428, Ack: 1758, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     29 7.282457       127.0.0.1             127.0.0.1             TCP      68     54676 → 16102 [SYN] Seq=0 Win=65535 Len=0 MSS=16344 WS=64 TSval=4066781740 TSecr=0 SACK_PERM
+
+Frame 29: 68 bytes on wire (544 bits), 68 bytes captured (544 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54676, Dst Port: 16102, Seq: 0, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     30 7.282499       127.0.0.1             127.0.0.1             TCP      68     16102 → 54676 [SYN, ACK] Seq=0 Ack=1 Win=65535 Len=0 MSS=16344 WS=64 TSval=3936839769 TSecr=4066781740 SACK_PERM
+
+Frame 30: 68 bytes on wire (544 bits), 68 bytes captured (544 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54676, Seq: 0, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     31 7.282505       127.0.0.1             127.0.0.1             TCP      56     54676 → 16102 [ACK] Seq=1 Ack=1 Win=408256 Len=0 TSval=4066781740 TSecr=3936839769
+
+Frame 31: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54676, Dst Port: 16102, Seq: 1, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     32 7.282508       127.0.0.1             127.0.0.1             TCP      56     [TCP Window Update] 16102 → 54676 [ACK] Seq=1 Ack=1 Win=408256 Len=0 TSval=3936839769 TSecr=4066781740
+
+Frame 32: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54676, Seq: 1, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     33 7.282666       127.0.0.1             127.0.0.1             TCP      117    54676 → 16102 [PSH, ACK] Seq=1 Ack=1 Win=408256 Len=61 TSval=4066781740 TSecr=3936839769
+
+Frame 33: 117 bytes on wire (936 bits), 117 bytes captured (936 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54676, Dst Port: 16102, Seq: 1, Ack: 1, Len: 61
+Data (61 bytes)
+
+0000  00 00 00 39 a1 6a 54 61 6b 65 72 48 65 6c 6c 6f   ...9.jTakerHello
+0010  a2 74 70 72 6f 74 6f 63 6f 6c 5f 76 65 72 73 69   .tprotocol_versi
+0020  6f 6e 5f 6d 69 6e 01 74 70 72 6f 74 6f 63 6f 6c   on_min.tprotocol
+0030  5f 76 65 72 73 69 6f 6e 5f 6d 61 78 01            _version_max.
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     34 7.282673       127.0.0.1             127.0.0.1             TCP      56     16102 → 54676 [ACK] Seq=1 Ack=62 Win=408192 Len=0 TSval=3936839769 TSecr=4066781740
+
+Frame 34: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54676, Seq: 1, Ack: 62, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     35 8.200858       127.0.0.1             127.0.0.1             TCP      117    16102 → 54676 [PSH, ACK] Seq=1 Ack=62 Win=408192 Len=61 TSval=3936840686 TSecr=4066781740
+
+Frame 35: 117 bytes on wire (936 bits), 117 bytes captured (936 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54676, Seq: 1, Ack: 62, Len: 61
+Data (61 bytes)
+
+0000  00 00 00 39 a1 6a 4d 61 6b 65 72 48 65 6c 6c 6f   ...9.jMakerHello
+0010  a2 74 70 72 6f 74 6f 63 6f 6c 5f 76 65 72 73 69   .tprotocol_versi
+0020  6f 6e 5f 6d 69 6e 01 74 70 72 6f 74 6f 63 6f 6c   on_min.tprotocol
+0030  5f 76 65 72 73 69 6f 6e 5f 6d 61 78 01            _version_max.
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     36 8.200892       127.0.0.1             127.0.0.1             TCP      56     54676 → 16102 [ACK] Seq=62 Ack=62 Win=408192 Len=0 TSval=4066782657 TSecr=3936840686
+
+Frame 36: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54676, Dst Port: 16102, Seq: 62, Ack: 62, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     37 8.204290       127.0.0.1             127.0.0.1             TCP      4172   54676 → 16102 [PSH, ACK] Seq=62 Ack=62 Win=408192 Len=4116 TSval=4066782662 TSecr=3936840686
+
+Frame 37: 4172 bytes on wire (33376 bits), 4172 bytes captured (33376 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54676, Dst Port: 16102, Seq: 62, Ack: 62, Len: 4116
+Data (4116 bytes)
+
+0000  00 00 10 10 a1 72 52 65 73 70 50 72 6f 6f 66 4f   .....rRespProofO
+0010  66 46 75 6e 64 69 6e 67 a4 76 63 6f 6e 66 69 72   fFunding.vconfir
+0020  6d 65 64 5f 66 75 6e 64 69 6e 67 5f 74 78 65 73   med_funding_txes
+0030  83 a6 6a 66 75 6e 64 69 6e 67 5f 74 78 a4 67 76   ..jfunding_tx.gv
+0040  65 72 73 69 6f 6e 02 69 6c 6f 63 6b 5f 74 69 6d   ersion.ilock_tim
+0050  65 18 ac 65 69 6e 70 75 74 81 a4 6f 70 72 65 76   e..einput..oprev
+0060  69 6f 75 73 5f 6f 75 74 70 75 74 a2 64 74 78 69   ious_output.dtxi
+0070  64 58 20 63 46 34 62 3f 54 6e ba 10 01 30 4b b6   dX cF4b?Tn...0K.
+0080  41 9b c0 46 25 82 3e 01 84 bd 05 76 b9 be 15 d3   A..F%.>....v....
+0090  94 ee ff 64 76 6f 75 74 01 6a 73 63 72 69 70 74   ...dvout.jscript
+00a0  5f 73 69 67 40 68 73 65 71 75 65 6e 63 65 00 67   _sig@hsequence.g
+00b0  77 69 74 6e 65 73 73 82 98 47 18 30 18 44 02 18   witness..G.0.D..
+00c0  20 06 18 ee 0e 18 e2 18 6e 18 6a 14 18 62 18 3d    .......n.j..b.=
+00d0  18 93 18 cf 18 d6 18 19 18 bf 18 79 18 89 18 92   ...........y....
+00e0  18 e3 18 92 18 3c 18 ee 18 1e 18 4c 18 ff 18 f2   .....<.....L....
+00f0  18 79 18 77 18 f3 02 18 65 18 da 18 47 02 18 20   .y.w....e...G.. 
+0100  18 29 18 a2 18 69 18 51 18 b6 18 1a 18 45 18 48   .)...i.Q.....E.H
+0110  07 18 42 18 72 18 50 18 90 18 b4 18 98 18 82 18   ..B.r.P.........
+0120  b6 18 3c 18 5d 18 43 18 57 18 9a 18 1d 18 36 18   ..<.].C.W.....6.
+0130  a4 18 db 18 37 18 ca 18 83 18 2d 18 36 18 95 01   ....7.....-.6...
+0140  98 21 02 18 5a 18 8b 18 ac 18 af 18 64 18 87 18   .!..Z.......d...
+0150  dc 18 7b 18 f0 18 7b 18 91 18 c1 18 c5 0b 17 18   ..{...{.........
+0160  31 18 9a 18 9e 18 d2 18 36 18 36 18 d5 18 af 18   1.......6.6.....
+0170  92 18 1c 18 93 18 81 18 62 18 49 18 5e 18 9d 18   ........b.I.^...
+0180  1a 66 6f 75 74 70 75 74 82 a2 65 76 61 6c 75 65   .foutput..evalue
+0190  1a 00 02 47 54 6d 73 63 72 69 70 74 5f 70 75 62   ...GTmscript_pub
+01a0  6b 65 79 58 22 00 20 b6 03 2d dc a7 5b e4 d7 6b   keyX". ..-..[..k
+01b0  d1 96 24 b5 45 6b c0 a9 48 f2 07 9d 2e fb da 65   ..$.Ek..H......e
+01c0  e9 45 ab 2a 09 58 66 a2 65 76 61 6c 75 65 1a 00   .E.*.Xf.evalue..
+01d0  4a 00 04 6d 73 63 72 69 70 74 5f 70 75 62 6b 65   J..mscript_pubke
+01e0  79 56 00 14 5c 72 13 aa 68 9a 63 39 c1 ef e8 d2   yV..\r..h.c9....
+01f0  61 02 8b a5 7e 40 1d 8e 76 66 75 6e 64 69 6e 67   a...~@..vfunding
+0200  5f 74 78 5f 6d 65 72 6b 6c 65 70 72 6f 6f 66 79   _tx_merkleproofy
+0210  01 6e 30 30 30 30 30 30 33 30 62 61 35 33 31 33   .n00000030ba5313
+0220  39 38 37 39 31 31 64 32 32 64 31 32 66 30 31 62   987911d22d12f01b
+0230  36 61 62 39 34 66 65 38 33 34 39 30 65 35 39 62   6ab94fe83490e59b
+0240  66 34 61 63 37 66 66 34 66 62 37 30 61 33 63 61   f4ac7ff4fb70a3ca
+0250  39 65 33 36 32 31 32 61 32 66 61 39 62 38 64 65   9e36212a2fa9b8de
+0260  33 61 35 34 39 30 37 61 61 31 32 32 35 35 66 39   3a54907aa12255f9
+0270  61 36 36 61 61 63 37 37 34 32 63 62 32 35 66 34   a66aac7742cb25f4
+0280  37 66 39 61 63 33 37 65 37 32 30 34 35 64 35 37   7f9ac37e72045d57
+0290  36 32 32 66 39 66 38 32 38 35 37 66 63 61 33 35   622f9f82857fca35
+02a0  36 37 66 66 66 66 37 66 32 30 30 30 30 30 30 30   67ffff7f20000000
+02b0  30 30 30 34 30 30 30 30 30 30 30 33 65 66 36 39   000400000003ef69
+02c0  65 37 64 65 38 34 63 39 34 65 65 34 64 35 32 38   e7de84c94ee4d528
+02d0  37 63 35 62 33 62 32 63 38 65 31 37 31 62 64 31   7c5b3b2c8e171bd1
+02e0  34 37 62 38 39 35 66 35 64 63 63 30 64 37 66 37   47b895f5dcc0d7f7
+02f0  30 66 63 65 65 65 39 31 35 65 63 64 37 30 32 65   0fceee915ecd702e
+0300  37 38 33 34 64 66 66 62 64 38 39 64 61 39 61 34   7834dffbd89da9a4
+0310  66 37 39 65 37 62 39 30 65 35 31 62 62 63 62 31   f79e7b90e51bbcb1
+0320  66 37 31 32 61 61 35 63 63 66 63 62 63 33 62 61   f712aa5ccfcbc3ba
+0330  64 37 30 31 32 65 37 64 30 66 35 64 66 65 64 37   d7012e7d0f5dfed7
+0340  34 61 30 62 36 64 33 61 38 34 66 32 32 62 62 37   4a0b6d3a84f22bb7
+0350  35 38 63 39 39 65 62 32 31 33 63 63 66 30 31 61   58c99eb213ccf01a
+0360  66 61 32 63 35 34 66 66 62 39 61 63 62 65 30 64   fa2c54ffb9acbe0d
+0370  61 33 66 30 37 37 66 30 63 33 33 32 30 31 30 64   a3f077f0c332010d
+0380  75 6d 75 6c 74 69 73 69 67 5f 72 65 64 65 65 6d   umultisig_redeem
+0390  73 63 72 69 70 74 58 47 52 21 02 2a 3a f1 6d ce   scriptXGR!.*:.m.
+03a0  a8 71 8e 5d f2 9a 28 b9 d9 93 29 88 9d 20 2a 7a   .q.]..(...).. *z
+03b0  f8 8d c7 10 66 f7 ec 41 6c 7d 31 21 02 97 3e 22   ....f..Al}1!..>"
+03c0  9f ef 2d 03 57 63 9e c9 59 bf c6 23 e4 9c cf f7   ..-.Wc..Y..#....
+03d0  50 da 01 22 10 00 6c e3 21 1d cd 74 c6 52 ae 6e   P.."..l.!..t.R.n
+03e0  6d 75 6c 74 69 73 69 67 5f 6e 6f 6e 63 65 98 20   multisig_nonce. 
+03f0  18 9e 18 b7 18 f9 18 9c 18 91 18 8d 18 95 18 5b   ...............[
+0400  18 64 18 9a 05 18 9d 18 89 18 e0 18 df 18 b6 0a   .d..............
+0410  18 26 18 7b 18 71 18 4a 18 a8 18 6c 18 62 18 35   .&.{.q.J...l.b.5
+0420  18 a4 18 c2 18 3b 18 30 04 18 c2 18 79 75 63 6f   .....;.0....yuco
+0430  6e 74 72 61 63 74 5f 72 65 64 65 65 6d 73 63 72   ntract_redeemscr
+0440  69 70 74 58 6c 82 7c a9 14 e9 82 ee 25 2a ee 99   iptXl.|.....%*..
+0450  31 24 ec 5b 9f b0 72 c2 3d 02 35 39 7f 87 63 21   1$.[..r.=.59..c!
+0460  02 75 67 79 48 a5 1d 52 1f 64 71 c1 5b dd f4 16   .ugyH..R.dq.[...
+0470  dc 50 13 35 e6 9f 14 70 92 db 33 2a d4 9d 0a ef   .P.5...p..3*....
+0480  17 01 20 51 67 21 03 f4 37 5f 22 4f 90 ad 3d 0a   .. Qg!..7_"O..=.
+0490  34 50 6b 19 cc 3c f5 ad 8c 87 78 92 d8 0b ec 99   4Pk..<....x.....
+04a0  e0 35 5b d5 9c 17 0a 00 02 90 00 68 b2 75 7b 88   .5[........h.u{.
+04b0  ac 6e 68 61 73 68 6c 6f 63 6b 5f 6e 6f 6e 63 65   .nhashlock_nonce
+04c0  98 20 18 b7 08 18 98 18 43 18 86 18 1e 18 82 02   . ......C.......
+04d0  18 b6 0a 18 8f 18 e8 18 6e 18 76 18 4c 18 59 18   ........n.v.L.Y.
+04e0  d5 18 98 18 e1 18 22 18 1c 18 3c 18 25 18 e9 14   ......"...<.%...
+04f0  18 86 18 c5 18 b7 18 dd 18 23 18 a1 18 2a a6 6a   .........#...*.j
+0500  66 75 6e 64 69 6e 67 5f 74 78 a4 67 76 65 72 73   funding_tx.gvers
+0510  69 6f 6e 02 69 6c 6f 63 6b 5f 74 69 6d 65 18 ac   ion.ilock_time..
+0520  65 69 6e 70 75 74 81 a4 6f 70 72 65 76 69 6f 75   einput..opreviou
+0530  73 5f 6f 75 74 70 75 74 a2 64 74 78 69 64 58 20   s_output.dtxidX 
+0540  e5 0f d2 7b 12 ea c0 ac 6d 3d 74 57 17 59 04 7d   ...{....m=tW.Y.}
+0550  4a 92 5c 6c 7e 3f 71 3c 4e 16 fd 7b 1a 5d 4e f0   J.\l~?q<N..{.]N.
+0560  64 76 6f 75 74 01 6a 73 63 72 69 70 74 5f 73 69   dvout.jscript_si
+0570  67 40 68 73 65 71 75 65 6e 63 65 00 67 77 69 74   g@hsequence.gwit
+0580  6e 65 73 73 82 98 47 18 30 18 44 02 18 20 18 40   ness..G.0.D.. .@
+0590  18 e1 18 c5 18 d5 0f 18 71 18 20 18 1d 18 87 18   ........q. .....
+05a0  7f 18 89 0e 18 e7 18 fd 18 d1 18 c7 18 53 02 18   .............S..
+05b0  e4 18 58 18 bc 12 18 22 18 5a 18 b3 18 be 18 d6   ..X....".Z......
+05c0  18 3e 18 5d 18 80 18 a4 17 02 18 20 18 63 02 18   .>.]....... .c..
+05d0  d1 18 a5 18 36 18 2a 18 c5 0c 18 68 18 70 18 67   ....6.*....h.p.g
+05e0  18 89 18 d3 18 fc 18 5a 18 91 18 d7 18 f4 18 97   .......Z........
+05f0  18 af 18 cf 18 f4 18 3f 18 9a 18 70 18 5c 18 a6   .......?...p.\..
+0600  18 55 16 18 30 18 26 18 58 01 98 21 02 18 20 18   .U..0.&.X..!.. .
+0610  4c 18 d6 18 2b 18 25 18 3a 18 9b 18 41 18 80 18   L...+.%.:...A...
+0620  57 18 4e 18 6f 16 18 51 18 30 18 3f 18 81 18 a3   W.N.o..Q.0.?....
+0630  18 35 18 f6 18 4e 18 d7 18 c2 18 ff 18 68 18 37   .5...N.......h.7
+0640  18 c5 18 21 0a 18 62 18 66 18 7c 66 6f 75 74 70   ...!..b.f.|foutp
+0650  75 74 82 a2 65 76 61 6c 75 65 19 e7 dd 6d 73 63   ut..evalue...msc
+0660  72 69 70 74 5f 70 75 62 6b 65 79 58 22 00 20 50   ript_pubkeyX". P
+0670  64 ac 19 4a b0 f7 02 63 8f 52 6a 4b 7b a2 cb 7c   d..J...c.RjK{..|
+0680  79 96 72 53 ff 80 4b a1 a2 1f d9 3d c7 a3 0c a2   y.rS..K....=....
+0690  65 76 61 6c 75 65 1a 00 4b 5f 7b 6d 73 63 72 69   evalue..K_{mscri
+06a0  70 74 5f 70 75 62 6b 65 79 56 00 14 1d 74 2b 71   pt_pubkeyV...t+q
+06b0  8c 58 1c 7a cc 34 31 96 91 95 12 b7 48 ab 67 92   .X.z.41.....H.g.
+06c0  76 66 75 6e 64 69 6e 67 5f 74 78 5f 6d 65 72 6b   vfunding_tx_merk
+06d0  6c 65 70 72 6f 6f 66 79 01 6e 30 30 30 30 30 30   leproofy.n000000
+06e0  33 30 62 61 35 33 31 33 39 38 37 39 31 31 64 32   30ba5313987911d2
+06f0  32 64 31 32 66 30 31 62 36 61 62 39 34 66 65 38   2d12f01b6ab94fe8
+0700  33 34 39 30 65 35 39 62 66 34 61 63 37 66 66 34   3490e59bf4ac7ff4
+0710  66 62 37 30 61 33 63 61 39 65 33 36 32 31 32 61   fb70a3ca9e36212a
+0720  32 66 61 39 62 38 64 65 33 61 35 34 39 30 37 61   2fa9b8de3a54907a
+0730  61 31 32 32 35 35 66 39 61 36 36 61 61 63 37 37   a12255f9a66aac77
+0740  34 32 63 62 32 35 66 34 37 66 39 61 63 33 37 65   42cb25f47f9ac37e
+0750  37 32 30 34 35 64 35 37 36 32 32 66 39 66 38 32   72045d57622f9f82
+0760  38 35 37 66 63 61 33 35 36 37 66 66 66 66 37 66   857fca3567ffff7f
+0770  32 30 30 30 30 30 30 30 30 30 30 34 30 30 30 30   2000000000040000
+0780  30 30 30 33 34 35 31 63 63 33 35 38 33 63 65 36   0003451cc3583ce6
+0790  38 65 61 63 38 65 39 34 35 36 66 34 32 65 30 38   8eac8e9456f42e08
+07a0  64 63 34 64 32 65 30 63 61 32 33 61 36 37 66 38   dc4d2e0ca23a67f8
+07b0  62 38 36 30 61 36 33 64 39 61 34 63 34 65 62 66   b860a63d9a4c4ebf
+07c0  62 32 31 34 33 33 39 66 31 65 38 33 37 61 34 30   b214339f1e837a40
+07d0  64 66 66 65 36 65 35 62 31 64 61 34 64 36 61 66   dffe6e5b1da4d6af
+07e0  37 34 66 39 38 36 65 36 62 34 35 36 31 62 33 39   74f986e6b4561b39
+07f0  62 39 30 65 37 35 38 39 39 34 32 32 30 30 61 37   b90e7589942200a7
+0800  30 61 30 65 65 64 62 64 65 30 35 30 34 36 31 66   0a0eedbde050461f
+0810  39 33 39 39 62 62 62 38 30 64 66 63 35 66 35 39   9399bbb80dfc5f59
+0820  39 66 35 30 30 36 63 36 30 34 38 63 63 37 33 38   9f5006c6048cc738
+0830  31 35 65 61 35 34 38 38 63 65 65 64 32 35 33 36   15ea5488ceed2536
+0840  37 30 32 65 30 31 30 62 75 6d 75 6c 74 69 73 69   702e010bumultisi
+0850  67 5f 72 65 64 65 65 6d 73 63 72 69 70 74 58 47   g_redeemscriptXG
+0860  52 21 02 1f 99 fa ab 4c a9 19 fa 77 0d 15 29 00   R!.....L...w..).
+0870  14 59 4a e1 9c dc 04 5e d5 ac 77 bc b7 cc 7e ec   .YJ....^..w...~.
+0880  f2 e0 83 21 03 be af e0 bf 77 7e 76 4c df 89 a2   ...!.....w~vL...
+0890  71 90 95 21 f1 84 6c 8b 36 4a b6 65 b8 1d 0a 33   q..!..l.6J.e...3
+08a0  0e 10 b5 89 f1 52 ae 6e 6d 75 6c 74 69 73 69 67   .....R.nmultisig
+08b0  5f 6e 6f 6e 63 65 98 20 18 b5 18 59 18 77 18 4c   _nonce. ...Y.w.L
+08c0  18 57 18 99 18 e1 0a 18 3e 18 fb 18 6f 18 32 18   .W......>...o.2.
+08d0  44 18 1b 09 18 ed 18 64 18 43 18 ae 18 64 18 ed   D......d.C...d..
+08e0  15 18 2b 18 e5 18 9a 18 3d 18 74 18 d4 18 31 0f   ..+.....=.t...1.
+08f0  18 55 18 5e 75 63 6f 6e 74 72 61 63 74 5f 72 65   .U.^ucontract_re
+0900  64 65 65 6d 73 63 72 69 70 74 58 6c 82 7c a9 14   deemscriptXl.|..
+0910  e9 82 ee 25 2a ee 99 31 24 ec 5b 9f b0 72 c2 3d   ...%*..1$.[..r.=
+0920  02 35 39 7f 87 63 21 02 65 db a7 97 30 9b 10 b5   .59..c!.e...0...
+0930  b8 6d a5 be 15 54 a7 ec 53 aa a9 97 4a d2 b3 43   .m...T..S...J..C
+0940  8f 6c 8c b7 14 74 d5 4f 01 20 51 67 21 02 6e 39   .l...t.O. Qg!.n9
+0950  bf f0 22 6b 8d 31 50 63 ae 6d ab 4a d8 6d 96 84   .."k.1Pc.m.J.m..
+0960  55 61 e7 b7 d9 16 94 c6 ed 2a 88 20 b0 e2 00 02   Ua.......*. ....
+0970  90 00 68 b2 75 7b 88 ac 6e 68 61 73 68 6c 6f 63   ..h.u{..nhashloc
+0980  6b 5f 6e 6f 6e 63 65 98 20 10 18 bc 18 4e 18 51   k_nonce. ....N.Q
+0990  18 43 18 97 18 35 18 ee 18 9b 18 7f 18 88 18 ad   .C...5..........
+09a0  07 18 b1 18 b1 18 6a 18 f4 18 83 18 7b 18 99 18   ......j.....{...
+09b0  58 18 1c 18 ee 18 6a 18 4e 18 b9 18 cf 18 48 04   X.....j.N.....H.
+09c0  18 9e 18 62 07 a6 6a 66 75 6e 64 69 6e 67 5f 74   ...b..jfunding_t
+09d0  78 a4 67 76 65 72 73 69 6f 6e 02 69 6c 6f 63 6b   x.gversion.ilock
+09e0  5f 74 69 6d 65 18 ac 65 69 6e 70 75 74 81 a4 6f   _time..einput..o
+09f0  70 72 65 76 69 6f 75 73 5f 6f 75 74 70 75 74 a2   previous_output.
+0a00  64 74 78 69 64 58 20 29 7e 7b 91 ce 74 8e e0 34   dtxidX )~{..t..4
+0a10  2c c5 70 ee c4 ba db 92 43 1d 42 c8 c0 7f c7 c9   ,.p.....C.B.....
+0a20  04 3c 8b 88 9f d3 75 64 76 6f 75 74 01 6a 73 63   .<....udvout.jsc
+0a30  72 69 70 74 5f 73 69 67 40 68 73 65 71 75 65 6e   ript_sig@hsequen
+0a40  63 65 00 67 77 69 74 6e 65 73 73 82 98 47 18 30   ce.gwitness..G.0
+0a50  18 44 02 18 20 18 38 18 76 18 de 18 bf 11 18 be   .D.. .8.v.......
+0a60  18 47 18 22 12 18 3d 18 7a 18 a3 18 b1 18 f4 18   .G."..=.z.......
+0a70  85 18 d1 18 f1 18 c9 18 b2 18 52 0d 18 1a 18 fd   ..........R.....
+0a80  18 1f 18 bc 18 81 17 18 d7 18 d4 18 fa 18 62 18   ..............b.
+0a90  26 02 18 20 04 18 84 18 ca 18 42 13 18 ed 0f 18   &.. ......B.....
+0aa0  46 18 c3 18 8f 18 c1 18 5f 18 8a 18 59 18 d5 18   F......._...Y...
+0ab0  39 18 91 18 19 18 c2 18 f9 18 61 14 18 fc 18 bc   9.........a.....
+0ac0  18 b0 18 4c 18 c0 18 bb 18 43 18 2c 18 b2 18 9b   ...L.....C.,....
+0ad0  01 98 21 03 0e 18 45 18 77 18 cc 18 41 18 1e 07   ..!...E.w...A...
+0ae0  18 c0 18 2c 18 92 18 ae 18 c6 18 b9 18 f9 18 c2   ...,............
+0af0  18 e9 18 e3 18 c0 18 37 18 9f 18 26 18 39 18 a3   .......7...&.9..
+0b00  01 18 66 18 2b 18 9c 18 b1 18 d0 18 91 18 bf 07   ..f.+...........
+0b10  66 6f 75 74 70 75 74 82 a2 65 76 61 6c 75 65 1a   foutput..evalue.
+0b20  00 04 71 ef 6d 73 63 72 69 70 74 5f 70 75 62 6b   ..q.mscript_pubk
+0b30  65 79 58 22 00 20 a8 a3 83 a7 25 4d 2e c3 be c5   eyX". ....%M....
+0b40  fd 7b d7 42 e2 ca 87 1b 5d 3d be a3 6d fa 0e 9b   .{.B....]=..m...
+0b50  a7 81 3b 8b 89 a1 a2 65 76 61 6c 75 65 1a 00 47   ..;....evalue..G
+0b60  d5 69 6d 73 63 72 69 70 74 5f 70 75 62 6b 65 79   .imscript_pubkey
+0b70  56 00 14 f2 58 dd 12 3e 30 9f 4b c2 50 f5 72 35   V...X..>0.K.P.r5
+0b80  84 02 4e d9 b4 04 b2 76 66 75 6e 64 69 6e 67 5f   ..N....vfunding_
+0b90  74 78 5f 6d 65 72 6b 6c 65 70 72 6f 6f 66 79 01   tx_merkleproofy.
+0ba0  6e 30 30 30 30 30 30 33 30 62 61 35 33 31 33 39   n00000030ba53139
+0bb0  38 37 39 31 31 64 32 32 64 31 32 66 30 31 62 36   87911d22d12f01b6
+0bc0  61 62 39 34 66 65 38 33 34 39 30 65 35 39 62 66   ab94fe83490e59bf
+0bd0  34 61 63 37 66 66 34 66 62 37 30 61 33 63 61 39   4ac7ff4fb70a3ca9
+0be0  65 33 36 32 31 32 61 32 66 61 39 62 38 64 65 33   e36212a2fa9b8de3
+0bf0  61 35 34 39 30 37 61 61 31 32 32 35 35 66 39 61   a54907aa12255f9a
+0c00  36 36 61 61 63 37 37 34 32 63 62 32 35 66 34 37   66aac7742cb25f47
+0c10  66 39 61 63 33 37 65 37 32 30 34 35 64 35 37 36   f9ac37e72045d576
+0c20  32 32 66 39 66 38 32 38 35 37 66 63 61 33 35 36   22f9f82857fca356
+0c30  37 66 66 66 66 37 66 32 30 30 30 30 30 30 30 30   7ffff7f200000000
+0c40  30 30 34 30 30 30 30 30 30 30 33 65 66 36 39 65   00400000003ef69e
+0c50  37 64 65 38 34 63 39 34 65 65 34 64 35 32 38 37   7de84c94ee4d5287
+0c60  63 35 62 33 62 32 63 38 65 31 37 31 62 64 31 34   c5b3b2c8e171bd14
+0c70  37 62 38 39 35 66 35 64 63 63 30 64 37 66 37 30   7b895f5dcc0d7f70
+0c80  66 63 65 65 65 39 31 35 65 63 64 37 30 32 65 37   fceee915ecd702e7
+0c90  38 33 34 64 66 66 62 64 38 39 64 61 39 61 34 66   834dffbd89da9a4f
+0ca0  37 39 65 37 62 39 30 65 35 31 62 62 63 62 31 66   79e7b90e51bbcb1f
+0cb0  37 31 32 61 61 35 63 63 66 63 62 63 33 62 61 64   712aa5ccfcbc3bad
+0cc0  37 30 31 32 65 37 64 30 66 35 64 66 65 64 37 34   7012e7d0f5dfed74
+0cd0  61 30 62 36 64 33 61 38 34 66 32 32 62 62 37 35   a0b6d3a84f22bb75
+0ce0  38 63 39 39 65 62 32 31 33 63 63 66 30 31 61 66   8c99eb213ccf01af
+0cf0  61 32 63 35 34 66 66 62 39 61 63 62 65 30 64 61   a2c54ffb9acbe0da
+0d00  33 66 30 37 37 66 30 63 33 33 32 30 31 31 35 75   3f077f0c3320115u
+0d10  6d 75 6c 74 69 73 69 67 5f 72 65 64 65 65 6d 73   multisig_redeems
+0d20  63 72 69 70 74 58 47 52 21 02 2c 2f 31 aa ca 40   criptXGR!.,/1..@
+0d30  7c 50 68 d1 e9 29 96 04 79 f5 97 aa f9 5b 9a 3d   |Ph..)..y....[.=
+0d40  e4 15 e4 58 df 00 c2 6c 4a 39 21 02 40 f9 2c 54   ...X...lJ9!.@.,T
+0d50  c4 c5 2f 78 bb 36 f5 05 08 ea cf d2 39 d8 70 9a   ../x.6......9.p.
+0d60  a7 f5 0e 0e b7 80 cd 0a a2 bb 98 2a 52 ae 6e 6d   ...........*R.nm
+0d70  75 6c 74 69 73 69 67 5f 6e 6f 6e 63 65 98 20 18   ultisig_nonce. .
+0d80  ee 02 18 f0 0d 18 ff 18 28 18 f5 18 4c 18 55 18   ........(...L.U.
+0d90  88 18 a0 18 26 18 1c 18 6f 18 1b 18 c9 18 80 18   ....&...o.......
+0da0  60 18 d2 18 63 18 a3 18 b5 18 7e 18 b5 18 e9 18   `...c.....~.....
+0db0  c8 18 3f 18 60 0c 18 23 18 7f 04 75 63 6f 6e 74   ..?.`..#...ucont
+0dc0  72 61 63 74 5f 72 65 64 65 65 6d 73 63 72 69 70   ract_redeemscrip
+0dd0  74 58 6c 82 7c a9 14 e9 82 ee 25 2a ee 99 31 24   tXl.|.....%*..1$
+0de0  ec 5b 9f b0 72 c2 3d 02 35 39 7f 87 63 21 02 2b   .[..r.=.59..c!.+
+0df0  42 89 59 ee ee fc 88 4c 25 0e a6 ae 8b d4 c0 d0   B.Y....L%.......
+0e00  4f ed 7f c0 15 3e 19 76 0e 45 6f 1d 7b 53 ee 01   O....>.v.Eo.{S..
+0e10  20 51 67 21 02 85 99 d2 0f 49 6c 82 06 ec e0 c8    Qg!.....Il.....
+0e20  db a0 a6 d5 8c 6e b8 84 1d b3 3c cf 90 32 f1 7f   .....n....<..2..
+0e30  28 32 2b 14 03 00 02 90 00 68 b2 75 7b 88 ac 6e   (2+......h.u{..n
+0e40  68 61 73 68 6c 6f 63 6b 5f 6e 6f 6e 63 65 98 20   hashlock_nonce. 
+0e50  17 18 57 04 18 8f 12 18 9f 18 d5 18 94 18 9a 18   ..W.............
+0e60  39 18 76 18 42 18 6c 18 5c 18 3d 18 3c 18 64 18   9.v.B.l.\.=.<.d.
+0e70  95 18 75 18 50 18 d2 18 65 18 6e 18 46 18 2e 18   ..u.P...e.n.F...
+0e80  db 18 6d 18 9c 18 d2 08 18 a4 18 98 72 6e 65 78   ..m.........rnex
+0e90  74 5f 63 6f 69 6e 73 77 61 70 5f 69 6e 66 6f 83   t_coinswap_info.
+0ea0  a2 74 6e 65 78 74 5f 6d 75 6c 74 69 73 69 67 5f   .tnext_multisig_
+0eb0  70 75 62 6b 65 79 58 21 02 ed 5e bc 86 4a 58 9e   pubkeyX!..^..JX.
+0ec0  d5 7d 0e 30 a0 5d a9 75 25 a8 fa 04 a2 48 02 44   .}.0.].u%....H.D
+0ed0  b9 e6 76 ea b9 7d 7c d3 3b 74 6e 65 78 74 5f 68   ..v..}|.;tnext_h
+0ee0  61 73 68 6c 6f 63 6b 5f 70 75 62 6b 65 79 58 21   ashlock_pubkeyX!
+0ef0  03 f4 fd f2 53 0c 7c c6 20 4b f5 4e 19 d1 f3 1b   ....S.|. K.N....
+0f00  68 57 58 47 1c c0 55 be ae fb 4d a3 c5 0f d3 13   hWXG..U...M.....
+0f10  1f a2 74 6e 65 78 74 5f 6d 75 6c 74 69 73 69 67   ..tnext_multisig
+0f20  5f 70 75 62 6b 65 79 58 21 02 ad ea bf 85 6a 70   _pubkeyX!.....jp
+0f30  21 28 a0 52 2c 68 2a 81 8c 0b 08 47 06 f4 17 31   !(.R,h*....G...1
+0f40  3f fe 67 9b ae 9e 12 2d 86 97 74 6e 65 78 74 5f   ?.g....-..tnext_
+0f50  68 61 73 68 6c 6f 63 6b 5f 70 75 62 6b 65 79 58   hashlock_pubkeyX
+0f60  21 02 cf 41 48 0f e7 ed 6e 08 33 0c 1d 5f 4f d5   !..AH...n.3.._O.
+0f70  78 79 22 75 a6 7b 60 6e fd 98 90 10 c4 d0 ab 0e   xy"u.{`n........
+0f80  41 60 a2 74 6e 65 78 74 5f 6d 75 6c 74 69 73 69   A`.tnext_multisi
+0f90  67 5f 70 75 62 6b 65 79 58 21 03 f7 25 bb 37 1b   g_pubkeyX!..%.7.
+0fa0  07 65 05 7e 52 f8 3b 11 74 50 af d8 7f 8d 3f d8   .e.~R.;.tP....?.
+0fb0  06 97 6f c4 36 a4 00 cd 15 64 65 74 6e 65 78 74   ..o.6....detnext
+0fc0  5f 68 61 73 68 6c 6f 63 6b 5f 70 75 62 6b 65 79   _hashlock_pubkey
+0fd0  58 21 03 dc fb 98 ca 01 4a 7f bb d3 74 dc 0d 9f   X!......J...t...
+0fe0  27 d8 7f 89 93 bc 77 77 bc fc a0 8d 20 42 8e bd   '.....ww.... B..
+0ff0  7c d4 86 6d 6e 65 78 74 5f 6c 6f 63 6b 74 69 6d   |..mnext_locktim
+1000  65 18 60 6d 6e 65 78 74 5f 66 65 65 5f 72 61 74   e.`mnext_fee_rat
+1010  65 19 03 e8                                       e...
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     38 8.204345       127.0.0.1             127.0.0.1             TCP      56     16102 → 54676 [ACK] Seq=62 Ack=4178 Win=404096 Len=0 TSval=3936840691 TSecr=4066782662
+
+Frame 38: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54676, Seq: 62, Ack: 4178, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     39 8.388067       127.0.0.1             127.0.0.1             TCP      1830   16102 → 54676 [PSH, ACK] Seq=62 Ack=4178 Win=404096 Len=1774 TSval=3936840875 TSecr=4066782662
+
+Frame 39: 1830 bytes on wire (14640 bits), 1830 bytes captured (14640 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54676, Seq: 62, Ack: 4178, Len: 1774
+Data (1774 bytes)
+
+0000  00 00 06 ea a1 78 1f 52 65 71 43 6f 6e 74 72 61   .....x.ReqContra
+0010  63 74 53 69 67 73 41 73 52 65 63 76 72 41 6e 64   ctSigsAsRecvrAnd
+0020  53 65 6e 64 65 72 a2 76 72 65 63 65 69 76 65 72   Sender.vreceiver
+0030  73 5f 63 6f 6e 74 72 61 63 74 5f 74 78 73 83 a4   s_contract_txs..
+0040  67 76 65 72 73 69 6f 6e 02 69 6c 6f 63 6b 5f 74   gversion.ilock_t
+0050  69 6d 65 00 65 69 6e 70 75 74 81 a4 6f 70 72 65   ime.einput..opre
+0060  76 69 6f 75 73 5f 6f 75 74 70 75 74 a2 64 74 78   vious_output.dtx
+0070  69 64 58 20 70 2e 78 34 df fb d8 9d a9 a4 f7 9e   idX p.x4........
+0080  7b 90 e5 1b bc b1 f7 12 aa 5c cf cb c3 ba d7 01   {........\......
+0090  2e 7d 0f 5d 64 76 6f 75 74 00 6a 73 63 72 69 70   .}.]dvout.jscrip
+00a0  74 5f 73 69 67 40 68 73 65 71 75 65 6e 63 65 00   t_sig@hsequence.
+00b0  67 77 69 74 6e 65 73 73 80 66 6f 75 74 70 75 74   gwitness.foutput
+00c0  81 a2 65 76 61 6c 75 65 1a 00 02 43 6c 6d 73 63   ..evalue...Clmsc
+00d0  72 69 70 74 5f 70 75 62 6b 65 79 58 22 00 20 fc   ript_pubkeyX". .
+00e0  7d e9 f8 92 0f d6 59 df e8 f6 1a 2b de d1 b3 b7   }.....Y....+....
+00f0  8c b4 bf 31 3e cf 33 f5 e8 14 d9 11 8e 2a 5c a4   ...1>.3......*\.
+0100  67 76 65 72 73 69 6f 6e 02 69 6c 6f 63 6b 5f 74   gversion.ilock_t
+0110  69 6d 65 00 65 69 6e 70 75 74 81 a4 6f 70 72 65   ime.einput..opre
+0120  76 69 6f 75 73 5f 6f 75 74 70 75 74 a2 64 74 78   vious_output.dtx
+0130  69 64 58 20 33 9f 1e 83 7a 40 df fe 6e 5b 1d a4   idX 3...z@..n[..
+0140  d6 af 74 f9 86 e6 b4 56 1b 39 b9 0e 75 89 94 22   ..t....V.9..u.."
+0150  00 a7 0a 0e 64 76 6f 75 74 00 6a 73 63 72 69 70   ....dvout.jscrip
+0160  74 5f 73 69 67 40 68 73 65 71 75 65 6e 63 65 00   t_sig@hsequence.
+0170  67 77 69 74 6e 65 73 73 80 66 6f 75 74 70 75 74   gwitness.foutput
+0180  81 a2 65 76 61 6c 75 65 19 e3 f5 6d 73 63 72 69   ..evalue...mscri
+0190  70 74 5f 70 75 62 6b 65 79 58 22 00 20 3d 0a 8c   pt_pubkeyX". =..
+01a0  83 4f 73 c1 21 58 3e 18 15 95 c1 69 ba 1e d6 c5   .Os.!X>....i....
+01b0  2b e5 9a 1e a1 99 7c fe 24 20 9c dc 29 a4 67 76   +.....|.$ ..).gv
+01c0  65 72 73 69 6f 6e 02 69 6c 6f 63 6b 5f 74 69 6d   ersion.ilock_tim
+01d0  65 00 65 69 6e 70 75 74 81 a4 6f 70 72 65 76 69   e.einput..oprevi
+01e0  6f 75 73 5f 6f 75 74 70 75 74 a2 64 74 78 69 64   ous_output.dtxid
+01f0  58 20 fe d7 4a 0b 6d 3a 84 f2 2b b7 58 c9 9e b2   X ..J.m:..+.X...
+0200  13 cc f0 1a fa 2c 54 ff b9 ac be 0d a3 f0 77 f0   .....,T.......w.
+0210  c3 32 64 76 6f 75 74 00 6a 73 63 72 69 70 74 5f   .2dvout.jscript_
+0220  73 69 67 40 68 73 65 71 75 65 6e 63 65 00 67 77   sig@hsequence.gw
+0230  69 74 6e 65 73 73 80 66 6f 75 74 70 75 74 81 a2   itness.foutput..
+0240  65 76 61 6c 75 65 1a 00 04 6e 07 6d 73 63 72 69   evalue...n.mscri
+0250  70 74 5f 70 75 62 6b 65 79 58 22 00 20 c0 7d 6d   pt_pubkeyX". .}m
+0260  e1 1f 56 30 af 1e cf 48 02 fb 3f 57 59 c1 7e 35   ..V0...H..?WY.~5
+0270  db 56 16 7f 7d 9a a5 ad 34 0f 75 1b a2 78 19 73   .V..}...4.u..x.s
+0280  65 6e 64 65 72 73 5f 63 6f 6e 74 72 61 63 74 5f   enders_contract_
+0290  74 78 73 5f 69 6e 66 6f 83 a4 6b 63 6f 6e 74 72   txs_info..kcontr
+02a0  61 63 74 5f 74 78 a4 67 76 65 72 73 69 6f 6e 02   act_tx.gversion.
+02b0  69 6c 6f 63 6b 5f 74 69 6d 65 00 65 69 6e 70 75   ilock_time.einpu
+02c0  74 81 a4 6f 70 72 65 76 69 6f 75 73 5f 6f 75 74   t..oprevious_out
+02d0  70 75 74 a2 64 74 78 69 64 58 20 b9 55 1d 73 05   put.dtxidX .U.s.
+02e0  28 6c bd 2c a5 81 15 df 1c 3e 5b 01 fb 97 0f 93   (l.,.....>[.....
+02f0  2c 82 0f a5 be f3 85 18 0b c0 11 64 76 6f 75 74   ,..........dvout
+0300  00 6a 73 63 72 69 70 74 5f 73 69 67 40 68 73 65   .jscript_sig@hse
+0310  71 75 65 6e 63 65 00 67 77 69 74 6e 65 73 73 80   quence.gwitness.
+0320  66 6f 75 74 70 75 74 81 a2 65 76 61 6c 75 65 1a   foutput..evalue.
+0330  00 04 e0 b4 6d 73 63 72 69 70 74 5f 70 75 62 6b   ....mscript_pubk
+0340  65 79 58 22 00 20 46 8f a8 11 56 b4 75 70 84 4e   eyX". F...V.up.N
+0350  a0 e8 3b 61 13 f9 40 9b d2 97 0e c1 04 d9 07 c1   ..;a..@.........
+0360  8c 31 dc e7 51 2b 6f 74 69 6d 65 6c 6f 63 6b 5f   .1..Q+otimelock_
+0370  70 75 62 6b 65 79 58 21 02 b8 4c 85 4c 07 a0 f5   pubkeyX!..L.L...
+0380  23 b6 39 12 28 22 b4 5d 07 55 20 31 1f 99 42 3f   #.9.(".].U 1..B?
+0390  72 60 9f a9 47 eb ff 30 e4 75 6d 75 6c 74 69 73   r`..G..0.umultis
+03a0  69 67 5f 72 65 64 65 65 6d 73 63 72 69 70 74 58   ig_redeemscriptX
+03b0  47 52 21 02 ed 5e bc 86 4a 58 9e d5 7d 0e 30 a0   GR!..^..JX..}.0.
+03c0  5d a9 75 25 a8 fa 04 a2 48 02 44 b9 e6 76 ea b9   ].u%....H.D..v..
+03d0  7d 7c d3 3b 21 03 45 43 85 a0 cd 9c ea 47 32 6e   }|.;!.EC.....G2n
+03e0  89 aa ea dd 3c 95 5c 24 40 29 84 14 32 ba bf 12   ....<.\$@)..2...
+03f0  7a 38 35 b3 be 36 52 ae 6e 66 75 6e 64 69 6e 67   z85..6R.nfunding
+0400  5f 61 6d 6f 75 6e 74 1a 00 04 e4 9c a4 6b 63 6f   _amount......kco
+0410  6e 74 72 61 63 74 5f 74 78 a4 67 76 65 72 73 69   ntract_tx.gversi
+0420  6f 6e 02 69 6c 6f 63 6b 5f 74 69 6d 65 00 65 69   on.ilock_time.ei
+0430  6e 70 75 74 81 a4 6f 70 72 65 76 69 6f 75 73 5f   nput..oprevious_
+0440  6f 75 74 70 75 74 a2 64 74 78 69 64 58 20 45 6f   output.dtxidX Eo
+0450  7c 55 01 0e 4b 07 1e 75 20 48 31 2e 5e 54 32 1c   |U..K..u H1.^T2.
+0460  5c 3a bc 55 c4 ff a3 1b 4c ce 17 5e d0 79 64 76   \:.U....L..^.ydv
+0470  6f 75 74 00 6a 73 63 72 69 70 74 5f 73 69 67 40   out.jscript_sig@
+0480  68 73 65 71 75 65 6e 63 65 00 67 77 69 74 6e 65   hsequence.gwitne
+0490  73 73 80 66 6f 75 74 70 75 74 81 a2 65 76 61 6c   ss.foutput..eval
+04a0  75 65 19 2e 43 6d 73 63 72 69 70 74 5f 70 75 62   ue..Cmscript_pub
+04b0  6b 65 79 58 22 00 20 49 54 5e 53 3d e8 c1 81 19   keyX". IT^S=....
+04c0  1d 7a 5e 2e 04 b9 92 29 dd 3e 75 b4 84 19 07 2f   .z^....).>u..../
+04d0  c5 b1 6d ff a8 e3 6d 6f 74 69 6d 65 6c 6f 63 6b   ..m...motimelock
+04e0  5f 70 75 62 6b 65 79 58 21 03 c0 7c 70 93 ab b7   _pubkeyX!..|p...
+04f0  83 3a 7b 9e 68 fb bb 38 e3 b4 07 73 4e f5 93 5c   .:{.h..8...sN..\
+0500  7d ed 2a 14 6b d5 17 55 31 ad 75 6d 75 6c 74 69   }.*.k..U1.umulti
+0510  73 69 67 5f 72 65 64 65 65 6d 73 63 72 69 70 74   sig_redeemscript
+0520  58 47 52 21 02 5c 73 ab de 39 1e 3e e9 c8 9b ce   XGR!.\s..9.>....
+0530  95 c2 ee 5e 6d be cd 56 d3 63 de 1c 1c 29 cd 8d   ...^m..V.c...)..
+0540  11 bc 3b e9 e0 21 02 ad ea bf 85 6a 70 21 28 a0   ..;..!.....jp!(.
+0550  52 2c 68 2a 81 8c 0b 08 47 06 f4 17 31 3f fe 67   R,h*....G...1?.g
+0560  9b ae 9e 12 2d 86 97 52 ae 6e 66 75 6e 64 69 6e   ....-..R.nfundin
+0570  67 5f 61 6d 6f 75 6e 74 19 32 2b a4 6b 63 6f 6e   g_amount.2+.kcon
+0580  74 72 61 63 74 5f 74 78 a4 67 76 65 72 73 69 6f   tract_tx.gversio
+0590  6e 02 69 6c 6f 63 6b 5f 74 69 6d 65 00 65 69 6e   n.ilock_time.ein
+05a0  70 75 74 81 a4 6f 70 72 65 76 69 6f 75 73 5f 6f   put..oprevious_o
+05b0  75 74 70 75 74 a2 64 74 78 69 64 58 20 5a 5f 55   utput.dtxidX Z_U
+05c0  29 0e 2d 63 7b c2 d6 8d ab 24 dd 5f f9 79 7e 85   ).-c{....$._.y~.
+05d0  62 d4 3d 1f 75 9c f6 ba a8 bb 9e ec e4 64 76 6f   b.=.u........dvo
+05e0  75 74 00 6a 73 63 72 69 70 74 5f 73 69 67 40 68   ut.jscript_sig@h
+05f0  73 65 71 75 65 6e 63 65 00 67 77 69 74 6e 65 73   sequence.gwitnes
+0600  73 80 66 6f 75 74 70 75 74 81 a2 65 76 61 6c 75   s.foutput..evalu
+0610  65 1a 00 02 6a a5 6d 73 63 72 69 70 74 5f 70 75   e...j.mscript_pu
+0620  62 6b 65 79 58 22 00 20 18 88 ef 85 78 5c 2a 7a   bkeyX". ....x\*z
+0630  48 4f 90 63 bf bf 69 7c b3 a4 a4 9c 92 dd 05 25   HO.c..i|.......%
+0640  fe 0b 14 01 d1 5e 0e d0 6f 74 69 6d 65 6c 6f 63   .....^..otimeloc
+0650  6b 5f 70 75 62 6b 65 79 58 21 02 46 64 c9 98 9a   k_pubkeyX!.Fd...
+0660  cc 52 76 1f c3 52 f1 3a c3 5e b7 1a 1d 6d 67 60   .Rv..R.:.^...mg`
+0670  5c be 8e 7c e6 61 b3 37 b7 7b d1 75 6d 75 6c 74   \..|.a.7.{.umult
+0680  69 73 69 67 5f 72 65 64 65 65 6d 73 63 72 69 70   isig_redeemscrip
+0690  74 58 47 52 21 02 50 e6 fd d0 a9 63 f7 56 33 a8   tXGR!.P....c.V3.
+06a0  9c 2b 1f 36 e5 07 2b 49 5d a1 8c 4f f4 32 b9 1e   .+.6..+I]..O.2..
+06b0  1b cb 9c 08 be c4 21 03 f7 25 bb 37 1b 07 65 05   ......!..%.7..e.
+06c0  7e 52 f8 3b 11 74 50 af d8 7f 8d 3f d8 06 97 6f   ~R.;.tP....?...o
+06d0  c4 36 a4 00 cd 15 64 65 52 ae 6e 66 75 6e 64 69   .6....deR.nfundi
+06e0  6e 67 5f 61 6d 6f 75 6e 74 1a 00 02 6e 8d         ng_amount...n.
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     40 8.388074       127.0.0.1             127.0.0.1             TCP      56     54676 → 16102 [ACK] Seq=4178 Ack=1836 Win=406464 Len=0 TSval=4066782846 TSecr=3936840875
+
+Frame 40: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54676, Dst Port: 16102, Seq: 4178, Ack: 1836, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     41 11.187424      127.0.0.1             127.0.0.1             TCP      780    54676 → 16102 [PSH, ACK] Seq=4178 Ack=1836 Win=406464 Len=724 TSval=4066785645 TSecr=3936840875
+
+Frame 41: 780 bytes on wire (6240 bits), 780 bytes captured (6240 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54676, Dst Port: 16102, Seq: 4178, Ack: 1836, Len: 724
+Data (724 bytes)
+
+0000  00 00 02 d0 a1 78 21 52 65 73 70 43 6f 6e 74 72   .....x!RespContr
+0010  61 63 74 53 69 67 73 46 6f 72 52 65 63 76 72 41   actSigsForRecvrA
+0020  6e 64 53 65 6e 64 65 72 a2 6e 72 65 63 65 69 76   ndSender.nreceiv
+0030  65 72 73 5f 73 69 67 73 83 a2 69 73 69 67 6e 61   ers_sigs..isigna
+0040  74 75 72 65 58 47 30 45 02 21 00 cb e0 dd 22 26   tureXG0E.!...."&
+0050  c5 76 0c 3e cf 6b de 7a 90 6b 82 fa 52 2f d3 c9   .v.>.k.z.k..R/..
+0060  0d c6 3f e6 92 ff 65 9e f5 0a 0c 02 20 32 49 6d   ..?...e..... 2Im
+0070  ec 2c 8a 2a 7c 58 ca 7a 26 45 52 ee 19 d7 1c b9   .,.*|X.z&ER.....
+0080  9d b4 42 fe 50 7f a4 3e 27 78 d2 c0 9b 6c 73 69   ..B.P..>'x...lsi
+0090  67 68 61 73 68 5f 74 79 70 65 6b 53 49 47 48 41   ghash_typekSIGHA
+00a0  53 48 5f 41 4c 4c a2 69 73 69 67 6e 61 74 75 72   SH_ALL.isignatur
+00b0  65 58 47 30 45 02 21 00 b4 9f d5 0c 4a e2 a3 3e   eXG0E.!.....J..>
+00c0  8a 42 b5 6d fa ac 3c 70 b1 a3 9e a0 3a bd 2a 05   .B.m..<p....:.*.
+00d0  a1 61 6c 21 53 e3 6f ec 02 20 10 65 b9 49 9c b7   .al!S.o.. .e.I..
+00e0  91 28 59 89 b1 1b 33 7a b2 5e 9b ea d5 6e 51 27   .(Y...3z.^...nQ'
+00f0  e6 10 1b c7 34 34 ea 8d e0 92 6c 73 69 67 68 61   ....44....lsigha
+0100  73 68 5f 74 79 70 65 6b 53 49 47 48 41 53 48 5f   sh_typekSIGHASH_
+0110  41 4c 4c a2 69 73 69 67 6e 61 74 75 72 65 58 46   ALL.isignatureXF
+0120  30 44 02 20 76 81 55 df 33 34 9f 5f 5f f5 4b 85   0D. v.U.34.__.K.
+0130  7c f6 3b 1d b3 37 34 d8 0d 52 43 d1 fc da bc fd   |.;..74..RC.....
+0140  7c 14 e0 50 02 20 0d 3d 9c 4a f5 55 d3 05 3d d8   |..P. .=.J.U..=.
+0150  47 4d 91 62 e6 86 d4 6a ce 7e a4 b9 2c 77 3e 0c   GM.b...j.~..,w>.
+0160  e7 39 4b 98 f6 d7 6c 73 69 67 68 61 73 68 5f 74   .9K...lsighash_t
+0170  79 70 65 6b 53 49 47 48 41 53 48 5f 41 4c 4c 6c   ypekSIGHASH_ALLl
+0180  73 65 6e 64 65 72 73 5f 73 69 67 73 83 a2 69 73   senders_sigs..is
+0190  69 67 6e 61 74 75 72 65 58 47 30 45 02 21 00 d2   ignatureXG0E.!..
+01a0  6e 29 27 6e 3d b5 d5 74 ae 0f e4 31 56 8e 96 4d   n)'n=..t...1V..M
+01b0  21 3a b9 a3 ca ff 9c 99 eb bb 2b 46 14 de 04 02   !:........+F....
+01c0  20 2e b1 a9 0b 7f 46 fb f9 38 e8 ae db b4 67 fd    .....F..8....g.
+01d0  b3 1a 17 89 d4 35 0c 54 8a 8d 3b b1 78 52 be 2c   .....5.T..;.xR.,
+01e0  d3 6c 73 69 67 68 61 73 68 5f 74 79 70 65 6b 53   .lsighash_typekS
+01f0  49 47 48 41 53 48 5f 41 4c 4c a2 69 73 69 67 6e   IGHASH_ALL.isign
+0200  61 74 75 72 65 58 47 30 45 02 21 00 ce e7 1e 13   atureXG0E.!.....
+0210  73 8e 32 14 bd 96 2a a0 5d b6 ab 1c b8 b0 34 d6   s.2...*.].....4.
+0220  46 64 98 da f5 3a b7 32 d9 65 dd 87 02 20 4d ff   Fd...:.2.e... M.
+0230  49 32 45 78 f7 30 6a ce 1a b6 b6 13 ba f4 58 83   I2Ex.0j.......X.
+0240  d4 14 3d 5d 4b f3 db 6e 07 06 14 11 ae 7b 6c 73   ..=]K..n.....{ls
+0250  69 67 68 61 73 68 5f 74 79 70 65 6b 53 49 47 48   ighash_typekSIGH
+0260  41 53 48 5f 41 4c 4c a2 69 73 69 67 6e 61 74 75   ASH_ALL.isignatu
+0270  72 65 58 47 30 45 02 21 00 b1 fd da 83 00 6b 3c   reXG0E.!......k<
+0280  92 00 84 ee a3 e5 e3 3a 6f 31 38 e6 48 df 64 34   .......:o18.H.d4
+0290  f5 bf ca 93 96 b8 a8 d4 69 02 20 76 82 cf a8 86   ........i. v....
+02a0  e4 f2 b3 15 c4 06 71 d1 a7 e0 b9 e9 93 9d 16 32   ......q........2
+02b0  a8 9b f4 96 c6 88 41 c2 64 06 00 6c 73 69 67 68   ......A.d..lsigh
+02c0  61 73 68 5f 74 79 70 65 6b 53 49 47 48 41 53 48   ash_typekSIGHASH
+02d0  5f 41 4c 4c                                       _ALL
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     42 11.187434      127.0.0.1             127.0.0.1             TCP      56     54676 → 16102 [FIN, ACK] Seq=4902 Ack=1836 Win=406464 Len=0 TSval=4066785645 TSecr=3936840875
+
+Frame 42: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54676, Dst Port: 16102, Seq: 4902, Ack: 1836, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     43 11.187466      127.0.0.1             127.0.0.1             TCP      56     16102 → 54676 [ACK] Seq=1836 Ack=4902 Win=403392 Len=0 TSval=3936843674 TSecr=4066785645
+
+Frame 43: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54676, Seq: 1836, Ack: 4902, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     44 11.187481      127.0.0.1             127.0.0.1             TCP      56     16102 → 54676 [ACK] Seq=1836 Ack=4903 Win=403392 Len=0 TSval=3936843674 TSecr=4066785645
+
+Frame 44: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54676, Seq: 1836, Ack: 4903, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     45 17.579158      127.0.0.1             127.0.0.1             TCP      68     54691 → 16102 [SYN] Seq=0 Win=65535 Len=0 MSS=16344 WS=64 TSval=2203471784 TSecr=0 SACK_PERM
+
+Frame 45: 68 bytes on wire (544 bits), 68 bytes captured (544 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54691, Dst Port: 16102, Seq: 0, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     46 17.579190      127.0.0.1             127.0.0.1             TCP      68     16102 → 54691 [SYN, ACK] Seq=0 Ack=1 Win=65535 Len=0 MSS=16344 WS=64 TSval=2266833861 TSecr=2203471784 SACK_PERM
+
+Frame 46: 68 bytes on wire (544 bits), 68 bytes captured (544 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54691, Seq: 0, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     47 17.579196      127.0.0.1             127.0.0.1             TCP      56     54691 → 16102 [ACK] Seq=1 Ack=1 Win=408256 Len=0 TSval=2203471784 TSecr=2266833861
+
+Frame 47: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54691, Dst Port: 16102, Seq: 1, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     48 17.579198      127.0.0.1             127.0.0.1             TCP      56     [TCP Window Update] 16102 → 54691 [ACK] Seq=1 Ack=1 Win=408256 Len=0 TSval=2266833861 TSecr=2203471784
+
+Frame 48: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54691, Seq: 1, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     49 17.579430      127.0.0.1             127.0.0.1             TCP      117    54691 → 16102 [PSH, ACK] Seq=1 Ack=1 Win=408256 Len=61 TSval=2203471784 TSecr=2266833861
+
+Frame 49: 117 bytes on wire (936 bits), 117 bytes captured (936 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54691, Dst Port: 16102, Seq: 1, Ack: 1, Len: 61
+Data (61 bytes)
+
+0000  00 00 00 39 a1 6a 54 61 6b 65 72 48 65 6c 6c 6f   ...9.jTakerHello
+0010  a2 74 70 72 6f 74 6f 63 6f 6c 5f 76 65 72 73 69   .tprotocol_versi
+0020  6f 6e 5f 6d 69 6e 01 74 70 72 6f 74 6f 63 6f 6c   on_min.tprotocol
+0030  5f 76 65 72 73 69 6f 6e 5f 6d 61 78 01            _version_max.
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     50 17.579440      127.0.0.1             127.0.0.1             TCP      56     16102 → 54691 [ACK] Seq=1 Ack=62 Win=408192 Len=0 TSval=2266833861 TSecr=2203471784
+
+Frame 50: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54691, Seq: 1, Ack: 62, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     51 20.211625      127.0.0.1             127.0.0.1             TCP      117    16102 → 54691 [PSH, ACK] Seq=1 Ack=62 Win=408192 Len=61 TSval=2266836493 TSecr=2203471784
+
+Frame 51: 117 bytes on wire (936 bits), 117 bytes captured (936 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54691, Seq: 1, Ack: 62, Len: 61
+Data (61 bytes)
+
+0000  00 00 00 39 a1 6a 4d 61 6b 65 72 48 65 6c 6c 6f   ...9.jMakerHello
+0010  a2 74 70 72 6f 74 6f 63 6f 6c 5f 76 65 72 73 69   .tprotocol_versi
+0020  6f 6e 5f 6d 69 6e 01 74 70 72 6f 74 6f 63 6f 6c   on_min.tprotocol
+0030  5f 76 65 72 73 69 6f 6e 5f 6d 61 78 01            _version_max.
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     52 20.211645      127.0.0.1             127.0.0.1             TCP      56     54691 → 16102 [ACK] Seq=62 Ack=62 Win=408192 Len=0 TSval=2203474416 TSecr=2266836493
+
+Frame 52: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54691, Dst Port: 16102, Seq: 62, Ack: 62, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     53 20.211917      127.0.0.1             127.0.0.1             TCP      989    54691 → 16102 [PSH, ACK] Seq=62 Ack=62 Win=408192 Len=933 TSval=2203474416 TSecr=2266836493
+
+Frame 53: 989 bytes on wire (7912 bits), 989 bytes captured (7912 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54691, Dst Port: 16102, Seq: 62, Ack: 62, Len: 933
+Data (933 bytes)
+
+0000  00 00 03 a1 a1 77 52 65 71 43 6f 6e 74 72 61 63   .....wReqContrac
+0010  74 53 69 67 73 46 6f 72 52 65 63 76 72 a1 63 74   tSigsForRecvr.ct
+0020  78 73 83 a2 75 6d 75 6c 74 69 73 69 67 5f 72 65   xs..umultisig_re
+0030  64 65 65 6d 73 63 72 69 70 74 58 47 52 21 02 ed   deemscriptXGR!..
+0040  5e bc 86 4a 58 9e d5 7d 0e 30 a0 5d a9 75 25 a8   ^..JX..}.0.].u%.
+0050  fa 04 a2 48 02 44 b9 e6 76 ea b9 7d 7c d3 3b 21   ...H.D..v..}|.;!
+0060  03 45 43 85 a0 cd 9c ea 47 32 6e 89 aa ea dd 3c   .EC.....G2n....<
+0070  95 5c 24 40 29 84 14 32 ba bf 12 7a 38 35 b3 be   .\$@)..2...z85..
+0080  36 52 ae 6b 63 6f 6e 74 72 61 63 74 5f 74 78 a4   6R.kcontract_tx.
+0090  67 76 65 72 73 69 6f 6e 02 69 6c 6f 63 6b 5f 74   gversion.ilock_t
+00a0  69 6d 65 00 65 69 6e 70 75 74 81 a4 6f 70 72 65   ime.einput..opre
+00b0  76 69 6f 75 73 5f 6f 75 74 70 75 74 a2 64 74 78   vious_output.dtx
+00c0  69 64 58 20 b9 55 1d 73 05 28 6c bd 2c a5 81 15   idX .U.s.(l.,...
+00d0  df 1c 3e 5b 01 fb 97 0f 93 2c 82 0f a5 be f3 85   ..>[.....,......
+00e0  18 0b c0 11 64 76 6f 75 74 00 6a 73 63 72 69 70   ....dvout.jscrip
+00f0  74 5f 73 69 67 40 68 73 65 71 75 65 6e 63 65 00   t_sig@hsequence.
+0100  67 77 69 74 6e 65 73 73 80 66 6f 75 74 70 75 74   gwitness.foutput
+0110  81 a2 65 76 61 6c 75 65 1a 00 04 e0 b4 6d 73 63   ..evalue.....msc
+0120  72 69 70 74 5f 70 75 62 6b 65 79 58 22 00 20 46   ript_pubkeyX". F
+0130  8f a8 11 56 b4 75 70 84 4e a0 e8 3b 61 13 f9 40   ...V.up.N..;a..@
+0140  9b d2 97 0e c1 04 d9 07 c1 8c 31 dc e7 51 2b a2   ..........1..Q+.
+0150  75 6d 75 6c 74 69 73 69 67 5f 72 65 64 65 65 6d   umultisig_redeem
+0160  73 63 72 69 70 74 58 47 52 21 02 5c 73 ab de 39   scriptXGR!.\s..9
+0170  1e 3e e9 c8 9b ce 95 c2 ee 5e 6d be cd 56 d3 63   .>.......^m..V.c
+0180  de 1c 1c 29 cd 8d 11 bc 3b e9 e0 21 02 ad ea bf   ...)....;..!....
+0190  85 6a 70 21 28 a0 52 2c 68 2a 81 8c 0b 08 47 06   .jp!(.R,h*....G.
+01a0  f4 17 31 3f fe 67 9b ae 9e 12 2d 86 97 52 ae 6b   ..1?.g....-..R.k
+01b0  63 6f 6e 74 72 61 63 74 5f 74 78 a4 67 76 65 72   contract_tx.gver
+01c0  73 69 6f 6e 02 69 6c 6f 63 6b 5f 74 69 6d 65 00   sion.ilock_time.
+01d0  65 69 6e 70 75 74 81 a4 6f 70 72 65 76 69 6f 75   einput..opreviou
+01e0  73 5f 6f 75 74 70 75 74 a2 64 74 78 69 64 58 20   s_output.dtxidX 
+01f0  45 6f 7c 55 01 0e 4b 07 1e 75 20 48 31 2e 5e 54   Eo|U..K..u H1.^T
+0200  32 1c 5c 3a bc 55 c4 ff a3 1b 4c ce 17 5e d0 79   2.\:.U....L..^.y
+0210  64 76 6f 75 74 00 6a 73 63 72 69 70 74 5f 73 69   dvout.jscript_si
+0220  67 40 68 73 65 71 75 65 6e 63 65 00 67 77 69 74   g@hsequence.gwit
+0230  6e 65 73 73 80 66 6f 75 74 70 75 74 81 a2 65 76   ness.foutput..ev
+0240  61 6c 75 65 19 2e 43 6d 73 63 72 69 70 74 5f 70   alue..Cmscript_p
+0250  75 62 6b 65 79 58 22 00 20 49 54 5e 53 3d e8 c1   ubkeyX". IT^S=..
+0260  81 19 1d 7a 5e 2e 04 b9 92 29 dd 3e 75 b4 84 19   ...z^....).>u...
+0270  07 2f c5 b1 6d ff a8 e3 6d a2 75 6d 75 6c 74 69   ./..m...m.umulti
+0280  73 69 67 5f 72 65 64 65 65 6d 73 63 72 69 70 74   sig_redeemscript
+0290  58 47 52 21 02 50 e6 fd d0 a9 63 f7 56 33 a8 9c   XGR!.P....c.V3..
+02a0  2b 1f 36 e5 07 2b 49 5d a1 8c 4f f4 32 b9 1e 1b   +.6..+I]..O.2...
+02b0  cb 9c 08 be c4 21 03 f7 25 bb 37 1b 07 65 05 7e   .....!..%.7..e.~
+02c0  52 f8 3b 11 74 50 af d8 7f 8d 3f d8 06 97 6f c4   R.;.tP....?...o.
+02d0  36 a4 00 cd 15 64 65 52 ae 6b 63 6f 6e 74 72 61   6....deR.kcontra
+02e0  63 74 5f 74 78 a4 67 76 65 72 73 69 6f 6e 02 69   ct_tx.gversion.i
+02f0  6c 6f 63 6b 5f 74 69 6d 65 00 65 69 6e 70 75 74   lock_time.einput
+0300  81 a4 6f 70 72 65 76 69 6f 75 73 5f 6f 75 74 70   ..oprevious_outp
+0310  75 74 a2 64 74 78 69 64 58 20 5a 5f 55 29 0e 2d   ut.dtxidX Z_U).-
+0320  63 7b c2 d6 8d ab 24 dd 5f f9 79 7e 85 62 d4 3d   c{....$._.y~.b.=
+0330  1f 75 9c f6 ba a8 bb 9e ec e4 64 76 6f 75 74 00   .u........dvout.
+0340  6a 73 63 72 69 70 74 5f 73 69 67 40 68 73 65 71   jscript_sig@hseq
+0350  75 65 6e 63 65 00 67 77 69 74 6e 65 73 73 80 66   uence.gwitness.f
+0360  6f 75 74 70 75 74 81 a2 65 76 61 6c 75 65 1a 00   output..evalue..
+0370  02 6a a5 6d 73 63 72 69 70 74 5f 70 75 62 6b 65   .j.mscript_pubke
+0380  79 58 22 00 20 18 88 ef 85 78 5c 2a 7a 48 4f 90   yX". ....x\*zHO.
+0390  63 bf bf 69 7c b3 a4 a4 9c 92 dd 05 25 fe 0b 14   c..i|.......%...
+03a0  01 d1 5e 0e d0                                    ..^..
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     54 20.211929      127.0.0.1             127.0.0.1             TCP      56     16102 → 54691 [ACK] Seq=62 Ack=995 Win=407296 Len=0 TSval=2266836493 TSecr=2203474416
+
+Frame 54: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54691, Seq: 62, Ack: 995, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     55 20.214622      127.0.0.1             127.0.0.1             TCP      418    16102 → 54691 [PSH, ACK] Seq=62 Ack=995 Win=407296 Len=362 TSval=2266836497 TSecr=2203474416
+
+Frame 55: 418 bytes on wire (3344 bits), 418 bytes captured (3344 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54691, Seq: 62, Ack: 995, Len: 362
+Data (362 bytes)
+
+0000  00 00 01 66 a1 78 18 52 65 73 70 43 6f 6e 74 72   ...f.x.RespContr
+0010  61 63 74 53 69 67 73 46 6f 72 52 65 63 76 72 a1   actSigsForRecvr.
+0020  64 73 69 67 73 83 a2 69 73 69 67 6e 61 74 75 72   dsigs..isignatur
+0030  65 58 46 30 44 02 20 07 e8 8f 17 a1 10 28 fc c2   eXF0D. ......(..
+0040  14 5d 39 3e 78 14 ce 97 de a5 a9 52 ec 2e 15 05   .]9>x......R....
+0050  e9 5f 71 3f c6 75 91 02 20 7f a3 e3 59 d2 1f b2   ._q?.u.. ...Y...
+0060  98 e5 9a 3c 50 85 86 46 62 16 a1 03 a2 04 d9 04   ...<P..Fb.......
+0070  b4 a7 58 e3 fa 41 b7 b7 86 6c 73 69 67 68 61 73   ..X..A...lsighas
+0080  68 5f 74 79 70 65 6b 53 49 47 48 41 53 48 5f 41   h_typekSIGHASH_A
+0090  4c 4c a2 69 73 69 67 6e 61 74 75 72 65 58 46 30   LL.isignatureXF0
+00a0  44 02 20 40 78 4c 97 3e 6a fb 1d 91 07 cf 70 80   D. @xL.>j.....p.
+00b0  9d eb 37 01 f7 bf 44 12 01 01 d8 db 1a 7d 64 f2   ..7...D......}d.
+00c0  2b 3c df 02 20 31 f5 4a 44 76 93 36 51 33 34 c8   +<.. 1.JDv.6Q34.
+00d0  f2 6c cf a1 1f f2 5e c7 e9 1e 32 d0 11 68 fa 34   .l....^...2..h.4
+00e0  9c 30 ef 1e 31 6c 73 69 67 68 61 73 68 5f 74 79   .0..1lsighash_ty
+00f0  70 65 6b 53 49 47 48 41 53 48 5f 41 4c 4c a2 69   pekSIGHASH_ALL.i
+0100  73 69 67 6e 61 74 75 72 65 58 46 30 44 02 20 4f   signatureXF0D. O
+0110  b6 ed d5 8b 65 6e 3e 15 9c 97 1e bc 6a 25 aa fd   ....en>.....j%..
+0120  93 f6 50 2f 97 3f e8 72 cd 18 69 62 cd 60 f5 02   ..P/.?.r..ib.`..
+0130  20 47 49 76 8d 3c 48 86 73 aa 39 bc fd 84 12 8a    GIv.<H.s.9.....
+0140  89 d1 44 0b 9f e8 e1 1b 90 41 96 86 10 e2 24 bc   ..D......A....$.
+0150  2c 6c 73 69 67 68 61 73 68 5f 74 79 70 65 6b 53   ,lsighash_typekS
+0160  49 47 48 41 53 48 5f 41 4c 4c                     IGHASH_ALL
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     56 20.214654      127.0.0.1             127.0.0.1             TCP      56     54691 → 16102 [ACK] Seq=995 Ack=424 Win=407872 Len=0 TSval=2203474420 TSecr=2266836497
+
+Frame 56: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54691, Dst Port: 16102, Seq: 995, Ack: 424, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     57 20.218910      127.0.0.1             127.0.0.1             TCP      56     54691 → 16102 [FIN, ACK] Seq=995 Ack=424 Win=407872 Len=0 TSval=2203474424 TSecr=2266836497
+
+Frame 57: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54691, Dst Port: 16102, Seq: 995, Ack: 424, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     58 20.218945      127.0.0.1             127.0.0.1             TCP      56     16102 → 54691 [ACK] Seq=424 Ack=996 Win=407296 Len=0 TSval=2266836501 TSecr=2203474424
+
+Frame 58: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54691, Seq: 424, Ack: 996, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     59 26.227715      127.0.0.1             127.0.0.1             TCP      68     54705 → 16102 [SYN] Seq=0 Win=65535 Len=0 MSS=16344 WS=64 TSval=3165459496 TSecr=0 SACK_PERM
+
+Frame 59: 68 bytes on wire (544 bits), 68 bytes captured (544 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54705, Dst Port: 16102, Seq: 0, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     60 26.227763      127.0.0.1             127.0.0.1             TCP      68     16102 → 54705 [SYN, ACK] Seq=0 Ack=1 Win=65535 Len=0 MSS=16344 WS=64 TSval=2804659681 TSecr=3165459496 SACK_PERM
+
+Frame 60: 68 bytes on wire (544 bits), 68 bytes captured (544 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54705, Seq: 0, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     61 26.227774      127.0.0.1             127.0.0.1             TCP      56     54705 → 16102 [ACK] Seq=1 Ack=1 Win=408256 Len=0 TSval=3165459496 TSecr=2804659681
+
+Frame 61: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54705, Dst Port: 16102, Seq: 1, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     62 26.227781      127.0.0.1             127.0.0.1             TCP      56     [TCP Window Update] 16102 → 54705 [ACK] Seq=1 Ack=1 Win=408256 Len=0 TSval=2804659681 TSecr=3165459496
+
+Frame 62: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54705, Seq: 1, Ack: 1, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     63 26.233065      127.0.0.1             127.0.0.1             TCP      117    54705 → 16102 [PSH, ACK] Seq=1 Ack=1 Win=408256 Len=61 TSval=3165459501 TSecr=2804659681
+
+Frame 63: 117 bytes on wire (936 bits), 117 bytes captured (936 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54705, Dst Port: 16102, Seq: 1, Ack: 1, Len: 61
+Data (61 bytes)
+
+0000  00 00 00 39 a1 6a 54 61 6b 65 72 48 65 6c 6c 6f   ...9.jTakerHello
+0010  a2 74 70 72 6f 74 6f 63 6f 6c 5f 76 65 72 73 69   .tprotocol_versi
+0020  6f 6e 5f 6d 69 6e 01 74 70 72 6f 74 6f 63 6f 6c   on_min.tprotocol
+0030  5f 76 65 72 73 69 6f 6e 5f 6d 61 78 01            _version_max.
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     64 26.233083      127.0.0.1             127.0.0.1             TCP      56     16102 → 54705 [ACK] Seq=1 Ack=62 Win=408192 Len=0 TSval=2804659686 TSecr=3165459501
+
+Frame 64: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54705, Seq: 1, Ack: 62, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     65 29.230320      127.0.0.1             127.0.0.1             TCP      117    16102 → 54705 [PSH, ACK] Seq=1 Ack=62 Win=408192 Len=61 TSval=2804662683 TSecr=3165459501
+
+Frame 65: 117 bytes on wire (936 bits), 117 bytes captured (936 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54705, Seq: 1, Ack: 62, Len: 61
+Data (61 bytes)
+
+0000  00 00 00 39 a1 6a 4d 61 6b 65 72 48 65 6c 6c 6f   ...9.jMakerHello
+0010  a2 74 70 72 6f 74 6f 63 6f 6c 5f 76 65 72 73 69   .tprotocol_versi
+0020  6f 6e 5f 6d 69 6e 01 74 70 72 6f 74 6f 63 6f 6c   on_min.tprotocol
+0030  5f 76 65 72 73 69 6f 6e 5f 6d 61 78 01            _version_max.
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     66 29.230353      127.0.0.1             127.0.0.1             TCP      56     54705 → 16102 [ACK] Seq=62 Ack=62 Win=408192 Len=0 TSval=3165462498 TSecr=2804662683
+
+Frame 66: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54705, Dst Port: 16102, Seq: 62, Ack: 62, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     67 29.242390      127.0.0.1             127.0.0.1             TCP      657    54705 → 16102 [PSH, ACK] Seq=62 Ack=62 Win=408192 Len=601 TSval=3165462511 TSecr=2804662683
+
+Frame 67: 657 bytes on wire (5256 bits), 657 bytes captured (5256 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54705, Dst Port: 16102, Seq: 62, Ack: 62, Len: 601
+Data (601 bytes)
+
+0000  00 00 02 55 a1 70 52 65 73 70 48 61 73 68 50 72   ...U.pRespHashPr
+0010  65 69 6d 61 67 65 a3 78 1e 73 65 6e 64 65 72 73   eimage.x.senders
+0020  5f 6d 75 6c 74 69 73 69 67 5f 72 65 64 65 65 6d   _multisig_redeem
+0030  73 63 72 69 70 74 73 83 58 47 52 21 02 2a 3a f1   scripts.XGR!.*:.
+0040  6d ce a8 71 8e 5d f2 9a 28 b9 d9 93 29 88 9d 20   m..q.]..(...).. 
+0050  2a 7a f8 8d c7 10 66 f7 ec 41 6c 7d 31 21 02 97   *z....f..Al}1!..
+0060  3e 22 9f ef 2d 03 57 63 9e c9 59 bf c6 23 e4 9c   >"..-.Wc..Y..#..
+0070  cf f7 50 da 01 22 10 00 6c e3 21 1d cd 74 c6 52   ..P.."..l.!..t.R
+0080  ae 58 47 52 21 02 1f 99 fa ab 4c a9 19 fa 77 0d   .XGR!.....L...w.
+0090  15 29 00 14 59 4a e1 9c dc 04 5e d5 ac 77 bc b7   .)..YJ....^..w..
+00a0  cc 7e ec f2 e0 83 21 03 be af e0 bf 77 7e 76 4c   .~....!.....w~vL
+00b0  df 89 a2 71 90 95 21 f1 84 6c 8b 36 4a b6 65 b8   ...q..!..l.6J.e.
+00c0  1d 0a 33 0e 10 b5 89 f1 52 ae 58 47 52 21 02 2c   ..3.....R.XGR!.,
+00d0  2f 31 aa ca 40 7c 50 68 d1 e9 29 96 04 79 f5 97   /1..@|Ph..)..y..
+00e0  aa f9 5b 9a 3d e4 15 e4 58 df 00 c2 6c 4a 39 21   ..[.=...X...lJ9!
+00f0  02 40 f9 2c 54 c4 c5 2f 78 bb 36 f5 05 08 ea cf   .@.,T../x.6.....
+0100  d2 39 d8 70 9a a7 f5 0e 0e b7 80 cd 0a a2 bb 98   .9.p............
+0110  2a 52 ae 78 20 72 65 63 65 69 76 65 72 73 5f 6d   *R.x receivers_m
+0120  75 6c 74 69 73 69 67 5f 72 65 64 65 65 6d 73 63   ultisig_redeemsc
+0130  72 69 70 74 73 83 58 47 52 21 02 ed 5e bc 86 4a   ripts.XGR!..^..J
+0140  58 9e d5 7d 0e 30 a0 5d a9 75 25 a8 fa 04 a2 48   X..}.0.].u%....H
+0150  02 44 b9 e6 76 ea b9 7d 7c d3 3b 21 03 45 43 85   .D..v..}|.;!.EC.
+0160  a0 cd 9c ea 47 32 6e 89 aa ea dd 3c 95 5c 24 40   ....G2n....<.\$@
+0170  29 84 14 32 ba bf 12 7a 38 35 b3 be 36 52 ae 58   )..2...z85..6R.X
+0180  47 52 21 02 5c 73 ab de 39 1e 3e e9 c8 9b ce 95   GR!.\s..9.>.....
+0190  c2 ee 5e 6d be cd 56 d3 63 de 1c 1c 29 cd 8d 11   ..^m..V.c...)...
+01a0  bc 3b e9 e0 21 02 ad ea bf 85 6a 70 21 28 a0 52   .;..!.....jp!(.R
+01b0  2c 68 2a 81 8c 0b 08 47 06 f4 17 31 3f fe 67 9b   ,h*....G...1?.g.
+01c0  ae 9e 12 2d 86 97 52 ae 58 47 52 21 02 50 e6 fd   ...-..R.XGR!.P..
+01d0  d0 a9 63 f7 56 33 a8 9c 2b 1f 36 e5 07 2b 49 5d   ..c.V3..+.6..+I]
+01e0  a1 8c 4f f4 32 b9 1e 1b cb 9c 08 be c4 21 03 f7   ..O.2........!..
+01f0  25 bb 37 1b 07 65 05 7e 52 f8 3b 11 74 50 af d8   %.7..e.~R.;.tP..
+0200  7f 8d 3f d8 06 97 6f c4 36 a4 00 cd 15 64 65 52   ..?...o.6....deR
+0210  ae 68 70 72 65 69 6d 61 67 65 98 20 18 63 18 32   .hpreimage. .c.2
+0220  18 ca 0f 18 a3 18 c0 18 de 18 21 18 48 18 ba 18   ..........!.H...
+0230  8c 18 30 18 cf 18 af 18 9e 18 35 18 a4 18 1c 08   ..0.......5.....
+0240  18 bb 18 57 18 2c 18 ab 18 4f 18 ab 10 18 ba 18   ...W.,...O......
+0250  4b 18 c3 18 be 18 b8 18 c6                        K........
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     68 29.242428      127.0.0.1             127.0.0.1             TCP      56     16102 → 54705 [ACK] Seq=62 Ack=663 Win=407616 Len=0 TSval=2804662696 TSecr=3165462511
+
+Frame 68: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54705, Seq: 62, Ack: 663, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     69 29.257722      127.0.0.1             127.0.0.1             TCP      585    16102 → 54705 [PSH, ACK] Seq=62 Ack=663 Win=407616 Len=529 TSval=2804662711 TSecr=3165462511
+
+Frame 69: 585 bytes on wire (4680 bits), 585 bytes captured (4680 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54705, Seq: 62, Ack: 663, Len: 529
+Data (529 bytes)
+
+0000  00 00 02 0d a1 73 52 65 73 70 50 72 69 76 4b 65   .....sRespPrivKe
+0010  79 48 61 6e 64 6f 76 65 72 a1 71 6d 75 6c 74 69   yHandover.qmulti
+0020  73 69 67 5f 70 72 69 76 6b 65 79 73 83 a2 75 6d   sig_privkeys..um
+0030  75 6c 74 69 73 69 67 5f 72 65 64 65 65 6d 73 63   ultisig_redeemsc
+0040  72 69 70 74 58 47 52 21 02 ed 5e bc 86 4a 58 9e   riptXGR!..^..JX.
+0050  d5 7d 0e 30 a0 5d a9 75 25 a8 fa 04 a2 48 02 44   .}.0.].u%....H.D
+0060  b9 e6 76 ea b9 7d 7c d3 3b 21 03 45 43 85 a0 cd   ..v..}|.;!.EC...
+0070  9c ea 47 32 6e 89 aa ea dd 3c 95 5c 24 40 29 84   ..G2n....<.\$@).
+0080  14 32 ba bf 12 7a 38 35 b3 be 36 52 ae 63 6b 65   .2...z85..6R.cke
+0090  79 98 20 05 18 8c 18 db 18 85 18 8c 01 18 f2 18   y. .............
+00a0  ff 18 dc 18 cd 18 9b 18 e9 18 69 18 55 18 9e 18   ..........i.U...
+00b0  5e 18 1d 18 32 18 39 18 d4 18 4f 17 18 3b 18 34   ^...2.9...O..;.4
+00c0  18 68 18 8c 18 4b 18 48 04 16 18 61 18 d6 a2 75   .h...K.H...a...u
+00d0  6d 75 6c 74 69 73 69 67 5f 72 65 64 65 65 6d 73   multisig_redeems
+00e0  63 72 69 70 74 58 47 52 21 02 5c 73 ab de 39 1e   criptXGR!.\s..9.
+00f0  3e e9 c8 9b ce 95 c2 ee 5e 6d be cd 56 d3 63 de   >.......^m..V.c.
+0100  1c 1c 29 cd 8d 11 bc 3b e9 e0 21 02 ad ea bf 85   ..)....;..!.....
+0110  6a 70 21 28 a0 52 2c 68 2a 81 8c 0b 08 47 06 f4   jp!(.R,h*....G..
+0120  17 31 3f fe 67 9b ae 9e 12 2d 86 97 52 ae 63 6b   .1?.g....-..R.ck
+0130  65 79 98 20 18 49 18 c3 18 b4 18 54 18 4d 18 32   ey. .I.....T.M.2
+0140  18 34 18 ab 05 18 66 18 8b 18 6c 18 19 18 77 18   .4....f...l...w.
+0150  2f 18 3e 18 e6 18 56 18 6f 11 18 5c 04 11 18 8d   /.>...V.o..\....
+0160  18 fe 18 ca 18 8a 18 b7 18 d5 18 66 14 18 fd a2   ...........f....
+0170  75 6d 75 6c 74 69 73 69 67 5f 72 65 64 65 65 6d   umultisig_redeem
+0180  73 63 72 69 70 74 58 47 52 21 02 50 e6 fd d0 a9   scriptXGR!.P....
+0190  63 f7 56 33 a8 9c 2b 1f 36 e5 07 2b 49 5d a1 8c   c.V3..+.6..+I]..
+01a0  4f f4 32 b9 1e 1b cb 9c 08 be c4 21 03 f7 25 bb   O.2........!..%.
+01b0  37 1b 07 65 05 7e 52 f8 3b 11 74 50 af d8 7f 8d   7..e.~R.;.tP....
+01c0  3f d8 06 97 6f c4 36 a4 00 cd 15 64 65 52 ae 63   ?...o.6....deR.c
+01d0  6b 65 79 98 20 18 39 18 bf 04 18 f8 18 c4 0e 08   key. .9.........
+01e0  18 e3 18 e7 18 8b 18 81 18 6d 18 fe 18 ae 18 67   .........m.....g
+01f0  18 b3 18 2f 18 70 18 1f 18 5c 18 f8 18 b5 18 37   .../.p...\.....7
+0200  18 23 18 3e 18 bd 18 dd 18 ad 18 96 18 d6 03 18   .#.>............
+0210  d0                                                .
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     70 29.257755      127.0.0.1             127.0.0.1             TCP      56     54705 → 16102 [ACK] Seq=663 Ack=591 Win=407680 Len=0 TSval=3165462526 TSecr=2804662711
+
+Frame 70: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54705, Dst Port: 16102, Seq: 663, Ack: 591, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     71 29.264643      127.0.0.1             127.0.0.1             TCP      584    54705 → 16102 [PSH, ACK] Seq=663 Ack=591 Win=407680 Len=528 TSval=3165462533 TSecr=2804662711
+
+Frame 71: 584 bytes on wire (4672 bits), 584 bytes captured (4672 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54705, Dst Port: 16102, Seq: 663, Ack: 591, Len: 528
+Data (528 bytes)
+
+0000  00 00 02 0c a1 73 52 65 73 70 50 72 69 76 4b 65   .....sRespPrivKe
+0010  79 48 61 6e 64 6f 76 65 72 a1 71 6d 75 6c 74 69   yHandover.qmulti
+0020  73 69 67 5f 70 72 69 76 6b 65 79 73 83 a2 75 6d   sig_privkeys..um
+0030  75 6c 74 69 73 69 67 5f 72 65 64 65 65 6d 73 63   ultisig_redeemsc
+0040  72 69 70 74 58 47 52 21 02 2a 3a f1 6d ce a8 71   riptXGR!.*:.m..q
+0050  8e 5d f2 9a 28 b9 d9 93 29 88 9d 20 2a 7a f8 8d   .]..(...).. *z..
+0060  c7 10 66 f7 ec 41 6c 7d 31 21 02 97 3e 22 9f ef   ..f..Al}1!..>"..
+0070  2d 03 57 63 9e c9 59 bf c6 23 e4 9c cf f7 50 da   -.Wc..Y..#....P.
+0080  01 22 10 00 6c e3 21 1d cd 74 c6 52 ae 63 6b 65   ."..l.!..t.R.cke
+0090  79 98 20 01 18 4d 18 f3 18 28 18 66 18 c8 18 f4   y. ..M...(.f....
+00a0  18 be 18 4e 09 17 18 5a 18 b3 18 5c 18 7d 18 f6   ...N...Z...\.}..
+00b0  18 b7 18 27 18 f2 18 c5 18 ba 18 c7 18 37 18 bf   ...'.........7..
+00c0  09 18 56 18 3f 18 53 18 97 0f 18 68 18 6c a2 75   ..V.?.S....h.l.u
+00d0  6d 75 6c 74 69 73 69 67 5f 72 65 64 65 65 6d 73   multisig_redeems
+00e0  63 72 69 70 74 58 47 52 21 02 1f 99 fa ab 4c a9   criptXGR!.....L.
+00f0  19 fa 77 0d 15 29 00 14 59 4a e1 9c dc 04 5e d5   ..w..)..YJ....^.
+0100  ac 77 bc b7 cc 7e ec f2 e0 83 21 03 be af e0 bf   .w...~....!.....
+0110  77 7e 76 4c df 89 a2 71 90 95 21 f1 84 6c 8b 36   w~vL...q..!..l.6
+0120  4a b6 65 b8 1d 0a 33 0e 10 b5 89 f1 52 ae 63 6b   J.e...3.....R.ck
+0130  65 79 98 20 18 b1 18 ce 18 8b 05 18 c4 18 d7 18   ey. ............
+0140  ed 18 89 18 45 18 d6 18 46 18 d1 18 81 18 52 18   ....E...F.....R.
+0150  e5 0d 0d 18 81 18 c6 18 dc 18 1c 18 34 18 6e 18   ............4.n.
+0160  95 18 fa 18 8e 18 97 18 f9 18 c6 08 18 39 18 1e   .............9..
+0170  a2 75 6d 75 6c 74 69 73 69 67 5f 72 65 64 65 65   .umultisig_redee
+0180  6d 73 63 72 69 70 74 58 47 52 21 02 2c 2f 31 aa   mscriptXGR!.,/1.
+0190  ca 40 7c 50 68 d1 e9 29 96 04 79 f5 97 aa f9 5b   .@|Ph..)..y....[
+01a0  9a 3d e4 15 e4 58 df 00 c2 6c 4a 39 21 02 40 f9   .=...X...lJ9!.@.
+01b0  2c 54 c4 c5 2f 78 bb 36 f5 05 08 ea cf d2 39 d8   ,T../x.6......9.
+01c0  70 9a a7 f5 0e 0e b7 80 cd 0a a2 bb 98 2a 52 ae   p............*R.
+01d0  63 6b 65 79 98 20 18 e1 18 f7 18 fb 0f 0c 18 46   ckey. .........F
+01e0  18 ee 08 18 fb 18 91 18 71 18 94 18 3f 18 68 18   ........q...?.h.
+01f0  d5 18 95 02 07 18 93 17 18 70 18 b1 18 c8 18 be   .........p......
+0200  18 ee 18 82 18 d8 18 5f 18 7d 18 25 18 30 18 1d   ......._.}.%.0..
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     72 29.264659      127.0.0.1             127.0.0.1             TCP      56     54705 → 16102 [FIN, ACK] Seq=1191 Ack=591 Win=407680 Len=0 TSval=3165462533 TSecr=2804662711
+
+Frame 72: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54705, Dst Port: 16102, Seq: 1191, Ack: 591, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     73 29.264685      127.0.0.1             127.0.0.1             TCP      56     16102 → 54705 [ACK] Seq=591 Ack=1191 Win=407104 Len=0 TSval=2804662718 TSecr=3165462533
+
+Frame 73: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54705, Seq: 591, Ack: 1191, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     74 29.264700      127.0.0.1             127.0.0.1             TCP      56     16102 → 54705 [ACK] Seq=591 Ack=1192 Win=407104 Len=0 TSval=2804662718 TSecr=3165462533
+
+Frame 74: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54705, Seq: 591, Ack: 1192, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     75 32.420984      127.0.0.1             127.0.0.1             TCP      56     16102 → 54675 [FIN, ACK] Seq=428 Ack=1758 Win=406528 Len=0 TSval=3384237723 TSecr=2305709363
+
+Frame 75: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54675, Seq: 428, Ack: 1758, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     76 32.420985      127.0.0.1             127.0.0.1             TCP      56     16102 → 54672 [FIN, ACK] Seq=559 Ack=82 Win=408192 Len=0 TSval=362555833 TSecr=972074030
+
+Frame 76: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54672, Seq: 559, Ack: 82, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     77 32.420989      127.0.0.1             127.0.0.1             TCP      56     16102 → 54705 [FIN, ACK] Seq=591 Ack=1192 Win=407104 Len=0 TSval=2804665874 TSecr=3165462533
+
+Frame 77: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54705, Seq: 591, Ack: 1192, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     78 32.421001      127.0.0.1             127.0.0.1             TCP      56     16102 → 54676 [FIN, ACK] Seq=1836 Ack=4903 Win=403392 Len=0 TSval=3936864908 TSecr=4066785645
+
+Frame 78: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54676, Seq: 1836, Ack: 4903, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     79 32.421005      127.0.0.1             127.0.0.1             TCP      56     54675 → 16102 [ACK] Seq=1758 Ack=429 Win=407872 Len=0 TSval=2305736561 TSecr=3384237723
+
+Frame 79: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54675, Dst Port: 16102, Seq: 1758, Ack: 429, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     80 32.421008      127.0.0.1             127.0.0.1             TCP      56     54672 → 16102 [ACK] Seq=82 Ack=560 Win=407680 Len=0 TSval=972104274 TSecr=362555833
+
+Frame 80: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54672, Dst Port: 16102, Seq: 82, Ack: 560, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     81 32.421013      127.0.0.1             127.0.0.1             TCP      56     54705 → 16102 [ACK] Seq=1192 Ack=592 Win=407680 Len=0 TSval=3165465689 TSecr=2804665874
+
+Frame 81: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54705, Dst Port: 16102, Seq: 1192, Ack: 592, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     82 32.421017      127.0.0.1             127.0.0.1             TCP      56     54676 → 16102 [ACK] Seq=4903 Ack=1837 Win=406464 Len=0 TSval=4066806879 TSecr=3936864908
+
+Frame 82: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54676, Dst Port: 16102, Seq: 4903, Ack: 1837, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     83 32.421041      127.0.0.1             127.0.0.1             TCP      56     16102 → 54691 [FIN, ACK] Seq=424 Ack=996 Win=407296 Len=0 TSval=2266848703 TSecr=2203474424
+
+Frame 83: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 16102, Dst Port: 54691, Seq: 424, Ack: 996, Len: 0
+Wireshark Columns
+
+No.     Time           Source                Destination           Protocol Length Info
+     84 32.421048      127.0.0.1             127.0.0.1             TCP      56     54691 → 16102 [ACK] Seq=996 Ack=425 Win=407872 Len=0 TSval=2203486626 TSecr=2266848703
+
+Frame 84: 56 bytes on wire (448 bits), 56 bytes captured (448 bits) on interface lo0, id 0
+Null/Loopback
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 54691, Dst Port: 16102, Seq: 996, Ack: 425, Len: 0
+Wireshark Columns
