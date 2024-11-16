@@ -1,4 +1,10 @@
 //! All Contract related errors.
+//!
+//! Provides error types for:
+//! - Script operations
+//! - Transaction validation
+//! - Key handling
+//! - Protocol violations
 
 use bitcoin::secp256k1;
 

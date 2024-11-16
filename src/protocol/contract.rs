@@ -279,11 +279,6 @@ pub fn check_hashlock_has_pubkey(
 /// Spending conditions:
 /// - Hash path: requires 32-byte preimage and signature
 /// - Time path: requires timelock expiry and signature
-///
-/// Script structure documented at:
-/// - https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-September/000605.html
-/// - https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-May/000529.html
-/// - https://bitcoinops.org/en/topics/transaction-pinning/
 #[rustfmt::skip]
 pub fn create_contract_redeemscript(
     pub_hashlock: &PublicKey,

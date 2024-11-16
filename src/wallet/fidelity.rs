@@ -199,7 +199,7 @@ impl Wallet {
             .map(|(i, _)| *i))
     }
 
-    /// Get the [KeyPair] for the fidelity bond at given index.
+    /// Get the KeyPair for the fidelity bond at given index.
     pub fn get_fidelity_keypair(&self, index: u32) -> Result<Keypair, WalletError> {
         let secp = Secp256k1::new();
 
@@ -225,7 +225,7 @@ impl Wallet {
     }
 
     /// Get the next fidelity bond address. If no fidelity bond is created
-    /// returned address will be derived from index 0, of the [FIDELITY_DERIVATION_PATH]
+    /// returned address will be derived from index 0, of the FIDELITY_DERIVATION_PATH
     pub fn get_next_fidelity_address(
         &self,
         locktime: LockTime,

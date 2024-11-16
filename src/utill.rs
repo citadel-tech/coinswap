@@ -370,7 +370,7 @@ pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> ScriptBuf {
 /// Parses TOML file into nested hashmaps of sections and key-value pairs.
 ///
 /// Processes TOML format:
-/// - Sections marked by [section_name]
+/// - Sections marked by section_name
 /// - Key-value pairs as 'key = value'
 /// - Ignores comment lines starting with #
 ///
