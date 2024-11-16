@@ -46,8 +46,8 @@ struct Cli {
     )]
     pub rpc_network: String,
     /// Sets the maker wallet's name. If the wallet file already exists at data-directory, it will load that wallet.
-    #[clap(name = "WALLET", long, short = 'w', default_value = "maker")]
-    pub wallet_name: String,
+    #[clap(name = "WALLET", long, short = 'w')]
+    pub wallet_name: Option<String>,
 }
 
 fn main() -> Result<(), MakerError> {
@@ -63,12 +63,12 @@ fn main() -> Result<(), MakerError> {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
         network: rpc_network,
-        wallet_name: args.wallet_name.clone(),
+        wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
 
     let maker = Arc::new(Maker::init(
         args.data_directory,
-        Some(args.wallet_name),
+        args.wallet_name,
         Some(rpc_config),
         None,
         None,
