@@ -28,10 +28,14 @@ use std::{
 use crate::error::NetError;
 
 /// Represents errors that can occur during directory server operations.
+///
+/// Encapsulates directory server error types for IO, networking, and concurrency failures from external operations that can occur during operations.
 #[derive(Debug)]
 pub enum DirectoryServerError {
     IO(std::io::Error),
+    /// Network errors during connection establishment, data transfer, or socket operations.
     Net(NetError),
+    /// Threading error when a mutex is poisoned due to a thread panic while holding the lock.
     MutexPossion,
 }
 
@@ -59,15 +63,24 @@ impl<'a, T> From<PoisonError<RwLockWriteGuard<'a, T>>> for DirectoryServerError 
     }
 }
 
-/// Directory Configuration,
+/// This struct is used to store configuration options for the directory server.
+///
+///  Handles both clearnet and Tor connections, maintains network addresses, and manages server lifecycle.
 #[derive(Debug)]
 pub struct DirectoryServer {
+    /// Port for RPC server accepting remote management commands.
     pub rpc_port: u16,
+    /// Main port for accepting client connections.
     pub port: u16,
+    /// SOCKS proxy port when running in Tor mode.
     pub socks_port: u16,
+    /// Determines if server runs in clearnet or Tor mode.
     pub connection_type: ConnectionType,
+    /// Directory for persistent storage of addresses and logs.
     pub data_dir: PathBuf,
+    /// Flag to signal server shutdown across threads.
     pub shutdown: AtomicBool,
+    /// Thread-safe set of network addresses known to this server.
     pub addresses: Arc<RwLock<HashSet<String>>>,
 }
 
@@ -86,16 +99,17 @@ impl Default for DirectoryServer {
 }
 
 impl DirectoryServer {
-    /// Constructs a [DirectoryConfig] from a specified data directory. Or create default configs and load them.
+    /// Creates a new Directory Server with the given data directory and connection type.
     ///
-    /// The directory.toml file should exist at the provided data-dir location.
-    /// Or else, a new default-config will be loaded and created at given data-dir location.
-    /// If no data-dir is provided, a default config will be created at default data-dir location.
+    /// Configuration is loaded from config.toml in the data directory:
+    /// - Uses provided data dir or defaults to ~/.coinswap/dns/
+    /// - Creates default config if none exists (template in ./directory.toml)
+    /// - Loads saved addresses from addresses.dat if present
     ///
-    /// For reference of default config checkout `./directory.toml` in repo folder.
-    ///
-    /// Default data-dir for linux: `~/.coinswap/`
-    /// Default config locations: `~/.coinswap/dns/config.toml`.
+    /// # Errors
+    /// - IO errors when reading/writing config or address files
+    /// - TOML parsing errors
+    /// - Mutex poisoning when loading addresses
     pub fn new(
         data_dir: Option<PathBuf>,
         connection_type: Option<ConnectionType>,
@@ -152,7 +166,9 @@ impl DirectoryServer {
             addresses,
         })
     }
-
+    /// Signals the server to shut down gracefully.
+    ///
+    /// Sets the atomic shutdown flag that triggers cleanup in the main server loop.
     pub fn shutdown(&self) -> Result<(), DirectoryServerError> {
         self.shutdown.store(true, Relaxed);
         Ok(())
@@ -175,7 +191,12 @@ fn write_default_directory_config(config_path: &PathBuf) -> Result<(), Directory
     file.flush()?;
     Ok(())
 }
-
+/// Runs the address persistence loop with configurable interval.
+///
+/// Periodically writes the directory's address state to disk:
+/// - Uses 10 minute intervals in production
+/// - Uses 1 minute intervals in integration-test
+/// - Logs any write errors
 pub fn start_address_writer_thread(
     directory: Arc<DirectoryServer>,
 ) -> Result<(), DirectoryServerError> {
@@ -195,6 +216,12 @@ pub fn start_address_writer_thread(
     }
 }
 
+/// Writes the directory's current address list to disk.
+///
+/// Opens or creates the address file and:
+/// - Formats each address on a new line
+/// - Truncates existing content
+/// - Ensures write is flushed to disk
 pub fn write_addresses_to_file(
     directory: &Arc<DirectoryServer>,
     address_file: &Path,
@@ -221,6 +248,18 @@ pub fn write_addresses_to_file(
     file.flush()?;
     Ok(())
 }
+/// Starts the directory server with optional Tor support, RPC server, and address persistence.
+///
+/// Spawns the main TCP listener and supporting threads:
+/// - Tor daemon (optional: requires ConnectionType::TOR and 'tor' feature)
+/// - RPC server for remote management
+/// - Address writer for state persistence
+///
+/// # Shutdown
+/// Server runs until shutdown flag is set, then:
+/// - Joins all threads
+/// - Persists final address state
+/// - Terminates Tor if running
 pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), DirectoryServerError> {
     let mut tor_handle = None;
 

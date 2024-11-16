@@ -74,10 +74,16 @@ pub const PREIMAGE_LEN: usize = 32;
 /// Type for Preimage.
 pub type Preimage = [u8; PREIMAGE_LEN];
 
-/// Represents the initial handshake message sent from Taker to Maker.
+/// Initial handshake message sent from taker to establish protocol version.
+///
+/// Contains:
+/// - Minimum supported version
+/// - Maximum supported version
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TakerHello {
+    /// Minimum protocol version supported by taker.
     pub protocol_version_min: u32,
+    /// Maximum protocol version supported by taker.
     pub protocol_version_max: u32,
 }
 
@@ -85,67 +91,119 @@ pub struct TakerHello {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GiveOffer;
 
-/// Contract Sigs requesting information for the Sender side of the hop.
+/// Contract details needed to generate sender signatures.
+///
+/// Contains:
+/// - Nonces for key derivation
+/// - Contract parameters
+/// - Transaction details
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ContractTxInfoForSender {
+    /// Nonce for multisig key derivation.
     pub multisig_nonce: SecretKey,
+    /// Nonce for hashlock key derivation.
     pub hashlock_nonce: SecretKey,
+    /// Public key for timelock condition.
     pub timelock_pubkey: PublicKey,
+    /// Contract transaction requiring signatures.
     pub senders_contract_tx: Transaction,
+    /// Script for multisig validation.
     pub multisig_redeemscript: ScriptBuf,
+    /// Amount in the funding input.
     pub funding_input_value: Amount,
 }
-
-/// Request for Contract Sigs **for** the Sender side of the hop.
+/// Request for contract signatures from sender's maker.
+///
+/// Contains:
+/// - Contract transactions needing signatures
+/// - Hash for contract conditions
+/// - Timelock value
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReqContractSigsForSender {
+    /// Contract details for signature generation.
     pub txs_info: Vec<ContractTxInfoForSender>,
+    /// Hash value for contract condition.
     pub hashvalue: Hash160,
+    /// Timelock value for contract.
     pub locktime: u16,
 }
 
-/// Contract Sigs requesting information for the Receiver side of the hop.
+/// Contract details needed to generate receiver signatures.
+///
+/// Contains:
+/// - Multisig script for signing
+/// - Contract transaction to sign
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ContractTxInfoForRecvr {
+    /// Script for multisig validation.
     pub multisig_redeemscript: ScriptBuf,
+    /// Transaction requiring signatures.
     pub contract_tx: Transaction,
 }
 
-/// Request for Contract Sigs **for** the Receiver side of the hop.
+/// Request for contract signatures from receiver's maker.
+///
+/// Contains:
+/// - Contract transactions needing signatures
+/// - Associated multisig scripts
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReqContractSigsForRecvr {
+    /// Contract details for signature generation.
     pub txs: Vec<ContractTxInfoForRecvr>,
 }
 
-/// Confirmed Funding Tx with extra metadata.
+/// Confirmed funding transaction with verification and contract data.
+///
+/// Contains:
+/// - Transaction details
+/// - Merkle proof of inclusion
+/// - Scripts and nonces for contracts
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FundingTxInfo {
+    /// The funding transaction.
     pub funding_tx: Transaction,
+    /// Merkle proof of transaction confirmation.
     pub funding_tx_merkleproof: String,
+    /// Script for multisig validation.
     pub multisig_redeemscript: ScriptBuf,
+    /// Nonce for multisig key derivation.
     pub multisig_nonce: SecretKey,
+    /// Script defining contract conditions.
     pub contract_redeemscript: ScriptBuf,
+    /// Nonce for hashlock key derivation.
     pub hashlock_nonce: SecretKey,
 }
 
-/// PublickKey information for the next hop of Coinswap.
+/// Public keys needed for setting up the next swap hop.
+///
+/// Contains:
+/// - Multisig public key
+/// - Hashlock public key
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NextHopInfo {
+    /// Public key for next hop's multisig.
     pub next_multisig_pubkey: PublicKey,
+    /// Public key for next hop's hashlock.
     pub next_hashlock_pubkey: PublicKey,
 }
-
-/// Message sent to the Coinswap Receiver that funding transaction has been confirmed.
-/// Including information for the next hop of the coinswap.
+/// Funding confirmation message with next hop parameters.
+///
+/// Contains:
+/// - Confirmed funding transactions
+/// - Next hop public keys
+/// - Next contract parameters
+// TODO: Directly use Vec of Pubkeys
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProofOfFunding {
+    /// List of confirmed funding transactions with proofs.
     pub confirmed_funding_txes: Vec<FundingTxInfo>,
-    // TODO: Directly use Vec of Pubkeys.
+    /// Public keys for next swap hops.
     pub next_coinswap_info: Vec<NextHopInfo>,
+    /// Timelock value for next contracts.
     pub next_locktime: u16,
+    /// Fee rate for next transactions.
     pub next_fee_rate: u64,
 }
-
 /// Signatures required for an intermediate Maker to perform receiving and sending of coinswaps.
 /// These are signatures from the peer of this Maker.
 ///
@@ -161,45 +219,70 @@ pub struct ContractSigsForRecvrAndSender {
     pub senders_sigs: Vec<Signature>,
 }
 
-/// Message to Transfer [`HashPreimage`] from Taker to Makers.
+/// Hash preimage reveal message sent from taker to makers.
+///
+/// Contains:
+/// - Multisig scripts for both parties
+/// - 32-byte preimage for contract settlement
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HashPreimage {
+    /// Multisig scripts for sending makers.
     pub senders_multisig_redeemscripts: Vec<ScriptBuf>,
+    /// Multisig scripts for receiving makers.
     pub receivers_multisig_redeemscripts: Vec<ScriptBuf>,
+    /// Preimage that hashes to contract hashlock value.
     pub preimage: [u8; 32],
 }
 
-/// Multisig Privatekeys used in the last step of coinswap to perform privatekey handover.
+/// Private key and script for final coinswap handover step.
+///
+/// Contains:
+/// - Multisig script for verification
+/// - Private key for the multisig
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct MultisigPrivkey {
+    /// Script identifying the multisig.
     pub multisig_redeemscript: ScriptBuf,
+    /// Private key for the multisig.
     pub key: SecretKey,
 }
 
-/// Message to perform the final Privatekey Handover. This is the last message of the Coinswap Protocol.
+/// Final coinswap message containing private keys for swap completion.
+///
+/// Contains:
+/// - List of multisig private keys
+/// - Marks end of swap protocol
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PrivKeyHandover {
+    /// Private keys for all involved multisigs.
     pub multisig_privkeys: Vec<MultisigPrivkey>,
 }
 
-/// All messages sent from Taker to Maker.
+/// All messages sent from Taker to Maker during swap protocol.
+///
+/// Handles communication for:
+/// - Protocol initialization
+/// - Offer requests
+/// - Contract signatures
+/// - Funding proofs
+/// - Contract settlement
 #[derive(Debug, Serialize, Deserialize)]
 pub enum TakerToMakerMessage {
-    /// Protocol Handshake.
+    /// Initial protocol handshake message.
     TakerHello(TakerHello),
-    /// Request the Maker's Offer advertisement.
+    /// Request for maker's current offer.
     ReqGiveOffer(GiveOffer),
-    /// Request Contract Sigs **for** the Sender side of the hop. The Maker receiving this message is the Receiver of the hop.
+    /// Request contract signatures from receiving maker for sender.
     ReqContractSigsForSender(ReqContractSigsForSender),
-    /// Respond with the [ProofOfFunding] message. This is sent when the funding transaction gets confirmed.
+    /// Confirmation that funding transaction is confirmed.
     RespProofOfFunding(ProofOfFunding),
-    /// Request Contract Sigs **for** the Receiver and Sender side of the Hop.
+    /// Contract signatures when maker acts as both receiver and sender.
     RespContractSigsForRecvrAndSender(ContractSigsForRecvrAndSender),
-    /// Request Contract Sigs **for** the Receiver side of the hop. The Maker receiving this message is the Sender of the hop.
+    /// Request contract signatures from sending maker for receiver.
     ReqContractSigsForRecvr(ReqContractSigsForRecvr),
-    /// Respond with the hash preimage. This settles the HTLC contract. The Receiver side will use this preimage unlock the HTLC.
+    /// Hash preimage to settle HTLC contract.
     RespHashPreimage(HashPreimage),
-    /// Respond by handing over the Private Keys of coinswap multisig. This denotes the completion of the whole swap.
+    /// Private key handover indicating swap completion.
     RespPrivKeyHandover(PrivKeyHandover),
 }
 
@@ -220,47 +303,90 @@ impl Display for TakerToMakerMessage {
     }
 }
 
-/// Represents the initial handshake message sent from Maker to Taker.
+/// Initial handshake message sent from maker to establish protocol version.
+///
+/// Contains:
+/// - Minimum supported version
+/// - Maximum supported version
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MakerHello {
+    /// Minimum protocol version supported by maker.
     pub protocol_version_min: u32,
+    /// Maximum protocol version supported by maker.
     pub protocol_version_max: u32,
 }
 
-/// Contains proof data related to fidelity bond.
+/// Proof of fidelity bond ownership and validity.
+///
+/// Contains:
+/// - Bond details
+/// - Certificate hash
+/// - Signature proving ownership
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash)]
 pub struct FidelityProof {
+    /// Details of the fidelity bond.
     pub bond: FidelityBond,
+    /// Hash of the bond certificate.
     pub cert_hash: Hash,
+    /// Signature proving bond ownership.
     pub cert_sig: bitcoin::secp256k1::ecdsa::Signature,
 }
 
-/// Represents an offer in the context of the Coinswap protocol.
+/// Maker's offer parameters for participating in coinswap.
+///
+/// Contains:
+/// - Fee structure (absolute and relative)
+/// - Time and size constraints
+/// - Key derivation base
+/// - Fidelity bond proof
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Offer {
+    /// Base fee in satoshis.
     pub absolute_fee_sat: Amount,
+    /// Fee relative to swap amount in parts per billion.
     pub amount_relative_fee_ppb: Amount,
+    /// Fee relative to timelock in parts per billion per block.
     pub time_relative_fee_ppb: Amount,
+    /// Required confirmations for funding transaction.
     pub required_confirms: u64,
+    /// Minimum timelock period for contracts.
     pub minimum_locktime: u16,
+    /// Maximum swap amount accepted.
     pub max_size: u64,
+    /// Minimum swap amount accepted.
     pub min_size: u64,
+    /// Base point for key derivation.
     pub tweakable_point: PublicKey,
+    /// Proof of maker's fidelity bond.
     pub fidelity: FidelityProof,
 }
 
-/// Contract Tx signatures provided by a Sender of a Coinswap.
+/// Contract transaction signatures from maker acting as swap sender.
+///
+/// Contains signatures for:
+/// - Contract transaction inputs
+/// - Sent to taker for verification
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractSigsForSender {
+    /// Signatures for contract transaction.
     pub sigs: Vec<Signature>,
 }
 
-/// Contract Tx and extra metadata from a Sender of a Coinswap
+/// Contract transaction details from sending party in coinswap.
+///
+/// Contains:
+/// - Contract transaction
+/// - Keys and scripts
+/// - Funding information
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SenderContractTxInfo {
+    /// Contract transaction to be signed.
     pub contract_tx: Transaction,
+    /// Public key for timelock condition.
     pub timelock_pubkey: PublicKey,
+    /// Script for multisig validation.
     pub multisig_redeemscript: ScriptBuf,
+    /// Amount being committed to contract.
     pub funding_amount: Amount,
 }
 
@@ -276,26 +402,37 @@ pub struct ContractSigsAsRecvrAndSender {
     pub senders_contract_txs_info: Vec<SenderContractTxInfo>,
 }
 
-/// Contract Tx signatures a Maker sends as a Receiver of CoinSwap.
+/// Contract transaction signatures from maker acting as swap receiver.
+///
+/// Contains signatures for:
+/// - Contract transaction inputs
+/// - Sent to taker for verification
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractSigsForRecvr {
+    /// Signatures for contract transaction.
     pub sigs: Vec<Signature>,
 }
 
-/// All messages sent from Maker to Taker.
+/// All messages sent from Maker to Taker during swap protocol.
+///
+/// Handles communication for:
+/// - Protocol initialization
+/// - Offer advertisement
+/// - Contract signatures
+/// - Key exchange
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MakerToTakerMessage {
-    /// Protocol Handshake.
+    /// Initial protocol handshake message.
     MakerHello(MakerHello),
-    /// Send the Maker's offer advertisement.
-    RespOffer(Box<Offer>), // Add box as Offer has large size due to fidelity bond
-    /// Send Contract Sigs **for** the Sender side of the hop. The Maker sending this message is the Receiver of the hop.
+    /// Maker's swap offer details and bond.
+    RespOffer(Box<Offer>), // Boxed due to large size from fidelity bond
+    /// Contract signatures for sender from receiving maker.
     RespContractSigsForSender(ContractSigsForSender),
-    /// Request Contract Sigs, **as** both the Sending and Receiving side of the hop.
+    /// Contract signature request when maker is both sender and receiver.
     ReqContractSigsAsRecvrAndSender(ContractSigsAsRecvrAndSender),
-    /// Send Contract Sigs **for** the Receiver side of the hop. The Maker sending this message is the Sender of the hop.
+    /// Contract signatures for receiver from sending maker.
     RespContractSigsForRecvr(ContractSigsForRecvr),
-    /// Send the multisig private keys of the swap, declaring completion of the contract.
+    /// Private key handover indicating contract completion.
     RespPrivKeyHandover(PrivKeyHandover),
 }
 

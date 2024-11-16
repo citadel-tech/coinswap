@@ -33,22 +33,32 @@ const BOND_VALUE_EXPONENT: f64 = 1.3;
 
 // Interest rate used when calculating the value of fidelity bonds created
 // by locking bitcoins in timelocked addresses
-// See also:
-// https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#determining-interest-rate-r
+// Also see [this](https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#determining-interest-rate-r)
 // Set as a real number, i.e. 1 = 100% and 0.01 = 1%
 const BOND_VALUE_INTEREST_RATE: f64 = 0.015;
 
 /// Constant representing the derivation path for fidelity addresses.
 const FIDELITY_DERIVATION_PATH: &str = "m/84'/0'/0'/2";
 
-/// Error structure defining possible fidelity related errors
+/// Errors that can occur during fidelity bond operations.
+///
+/// Encapsulates errors from:
+/// - Script validation
+/// - Bond management
+/// - Certificate handling
 #[derive(Debug)]
 pub enum FidelityError {
+    /// Invalid script type for fidelity bond.
     WrongScriptType,
+    /// Referenced bond doesn't exist.
     BondDoesNotExist,
+    /// Bond has already been spent.
     BondAlreadySpent,
-    BondLocktimeExpired,
+    /// Bond certificate has expired.
     CertExpired,
+    /// Bond's timelock has expired.
+    BondLocktimeExpired,
+    /// Generic error with description.
     General(String),
 }
 
@@ -93,8 +103,7 @@ fn read_pubkey_from_fidelity_script(redeemscript: &ScriptBuf) -> Result<PublicKe
     }
 }
 
-/// Calculates the theoretical fidelity bond value. Bond value calculation is described in the doc below.
-/// https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds
+/// Calculates the theoretical fidelity bond value. Bond value calculation is described in [this document](https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds)
 pub fn calculate_fidelity_value(
     value: Amount,          // Bond amount in sats
     locktime: u64,          // Bond locktime timestamp
@@ -117,17 +126,27 @@ pub fn calculate_fidelity_value(
     Amount::from_sat(((value.to_sat() as f64) * timevalue).powf(BOND_VALUE_EXPONENT) as u64)
 }
 
-/// Structure describing a Fidelity Bond.
-/// Fidelity Bonds are described in https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md
+/// Represents a time-locked coin commitment used as a fidelity bond.
+///
+/// A fidelity bond proves maker's commitment by locking coins:
+/// - Uses time-locked UTXO as proof
+/// - Amount and locktime determine bond value
+/// - Includes confirmation info for validation
+///
+/// For detailed documentation, see [fidelity bonds](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Hash)]
 pub struct FidelityBond {
+    /// UTXO that contains the bond.
     pub outpoint: OutPoint,
+    /// Amount of coins locked in bond.
     pub amount: Amount,
+    /// Time until which coins are locked.
     pub lock_time: LockTime,
+    /// Public key controlling the bond.
     pub pubkey: PublicKey,
-    // Height at which the bond was confirmed.
+    /// Block height at which the bond was confirmed.
     pub conf_height: u32,
-    // Cert expiry denoted in multiple of difficulty adjustment period (2016 blocks)
+    /// Certificate expiry in difficulty adjustment periods (2016 blocks).
     pub cert_expiry: u64,
 }
 
@@ -182,7 +201,7 @@ impl Wallet {
             .map(|(i, _)| *i))
     }
 
-    /// Get the [KeyPair] for the fidelity bond at given index.
+    /// Get the KeyPair for the fidelity bond at given index.
     pub fn get_fidelity_keypair(&self, index: u32) -> Result<Keypair, WalletError> {
         let secp = Secp256k1::new();
 
@@ -208,7 +227,7 @@ impl Wallet {
     }
 
     /// Get the next fidelity bond address. If no fidelity bond is created
-    /// returned address will be derived from index 0, of the [FIDELITY_DERIVATION_PATH]
+    /// returned address will be derived from index 0, of the FIDELITY_DERIVATION_PATH
     pub fn get_next_fidelity_address(
         &self,
         locktime: LockTime,
@@ -239,8 +258,7 @@ impl Wallet {
     }
 
     /// Calculate the theoretical fidelity bond value.
-    /// Bond value calculation is described in the document below.
-    /// https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds
+    /// Bond value calculation is described in [this document](https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds).
     pub fn calculate_bond_value(&self, index: u32) -> Result<Amount, WalletError> {
         let (bond, _, _) = self
             .store

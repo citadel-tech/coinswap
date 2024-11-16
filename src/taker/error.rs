@@ -10,19 +10,37 @@ use crate::{
     wallet::WalletError,
 };
 
-/// Enum for handling taker-related errors.
+/// Represents errors that can occur during taker operations.
+///
+/// Encapsulates errors from:
+/// - Network and IO operations
+/// - Contract handling
+/// - Maker communications
+/// - Wallet operations
+/// - Protocol execution
 #[derive(Debug)]
 pub enum TakerError {
+    /// Standard IO errors during file operations.
     IO(std::io::Error),
+    /// Contract transactions were prematurely broadcast.
     ContractsBroadcasted(Vec<Txid>),
+    /// RPC communication failures.
     RPCError(RpcError),
+    /// Insufficient makers available for swap route.
     NotEnoughMakersInOfferBook,
+    /// Errors from wallet operations like signing or broadcasting.
     Wallet(WalletError),
+    /// Directory server communication failures.
     Directory(DirectoryServerError),
+    /// Network-related errors during connections.
     Net(NetError),
+    /// Protocol violation or swap execution errors.
     Protocol(ProtocolError),
+    /// Swap amount not configured before execution.
     SendAmountNotSet,
+    /// Timeout while waiting for funding transaction.
     FundingTxWaitTimeOut,
+    /// CBOR serialization or deserialization errors.
     Deserialize(serde_cbor::Error),
 }
 

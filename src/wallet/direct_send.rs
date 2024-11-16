@@ -16,13 +16,18 @@ use crate::wallet::api::UTXOSpendInfo;
 
 use super::{error::WalletError, Wallet};
 
-/// Enum representing different options for the amount to be sent in a transaction.
+/// Specifies transaction amount: either maximum available or specific value.
+///
+/// Supports:
+/// - All available funds
+/// - Fixed amount
 #[derive(Debug, Clone, PartialEq)]
 pub enum SendAmount {
+    /// Send all available funds.
     Max,
+    /// Send specific amount.
     Amount(Amount),
 }
-
 impl FromStr for SendAmount {
     type Err = ParseIntError;
 
@@ -35,13 +40,18 @@ impl FromStr for SendAmount {
     }
 }
 
-/// Enum representing different destination options for a transaction.
+/// Specifies where transaction outputs should be sent.
+///
+/// Supports:
+/// - Internal wallet addresses
+/// - External bitcoin addresses
 #[derive(Debug, Clone, PartialEq)]
 pub enum Destination {
+    /// Send to a new address from this wallet.
     Wallet,
+    /// Send to a specific Bitcoin address.
     Address(Address),
 }
-
 impl FromStr for Destination {
     type Err = bitcoin::address::ParseError;
 

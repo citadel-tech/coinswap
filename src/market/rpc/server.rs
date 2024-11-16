@@ -33,6 +33,19 @@ fn handle_request(
     Ok(())
 }
 
+/// Starts the RPC server thread for handling remote management commands.
+///
+/// Sets up a non-blocking TCP listener that:
+/// - Binds to localhost with configured RPC port
+/// - Sets 20 second timeouts for read/write operations
+/// - Accepts RPC connections and handles address list queries
+/// - Sleeps for 3 seconds between connection checks
+/// - Runs continuously until directory server shutdown signal
+///
+/// # Errors
+/// - Socket binding failures
+/// - Connection acceptance errors
+/// - Request handling errors
 pub fn start_rpc_server_thread(
     directory: Arc<DirectoryServer>,
 ) -> Result<(), DirectoryServerError> {

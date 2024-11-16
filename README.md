@@ -22,7 +22,7 @@
   </p>
 </div>
 
-> [!WARNING]
+> \[!WARNING\]
 > This library is currently under beta development and at an experimental stage. There are known and unknown bugs. Mainnet use is strictly NOT recommended.
 
 ## Table of Contents
@@ -50,7 +50,7 @@ CoinSwap is a rust implementation of a variant of atomic-swap protocol, using HT
 The repo contains a fully automated integration testing framework on Bitcoin Regtest. The bitcoin binary used for testing is
 included [here](./bin/bitcoind).
 
-> [!TIP]
+> \[!TIP\]
 > Delete the bitcoind binary to reduce repo size, if you don't intend to run the integration tests.
 
 The integration tests are the best way to look at a working demonstration of the coinswap protocol, involving multiple makers,
@@ -100,7 +100,7 @@ tests/
 | **`src/protocol`**  | Contains utility functions, error handling, and messages for protocol communication. |
 | **`tests`**         | Contains integration tests. Describes behavior of various abort/malice cases.|
 
-> [!IMPORTANT]
+> !IMPORTANT\]
 >  The project currently only compiles in Linux. Mac/Windows is not supported. To compile in Mac/Windows use virtual machines
 
 ## Roadmap

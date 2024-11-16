@@ -12,17 +12,33 @@ use crate::{
 
 use super::MakerBehavior;
 
-/// Enum to handle Maker related errors.
+/// Represents errors that can occur during maker operations.
+///
+/// Encapsulates errors from:
+/// - IO operations
+/// - Protocol message handling
+/// - Wallet operations
+/// - Network operations
+/// - Threading and synchronization
 #[derive(Debug)]
 pub enum MakerError {
+    /// Standard IO errors during file operations.
     IO(std::io::Error),
+    /// Protocol message mismatch between expected and received.
     UnexpectedMessage { expected: String, got: String },
+    /// Static string describing a general error condition.
     General(&'static str),
+    /// Threading error when a mutex is poisoned due to a thread panic.
     MutexPossion,
+    /// Cryptographic operation errors from secp256k1.
     Secp(secp256k1::Error),
+    /// Errors from wallet operations like signing or broadcasting.
     Wallet(WalletError),
+    /// Network-related errors during connections or data transfer.
     Net(NetError),
+    /// Testing-only errors triggered by special behavior modes.
     SpecialBehaviour(MakerBehavior),
+    /// Errors related to swap protocol violations or failures.
     Protocol(ProtocolError),
 }
 

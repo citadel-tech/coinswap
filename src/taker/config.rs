@@ -5,29 +5,47 @@
 
 use crate::utill::{get_taker_dir, parse_field, parse_toml, ConnectionType};
 use std::{io, io::Write, path::PathBuf};
-/// Taker configuration with refund, connection, and sleep settings.
+/// Taker configuration for network,refund, timeouts,connection ,sleep and protocol settings.
+///
+/// Configuration groups:
+/// - Protocol parameters (locktime settings)
+/// - Connection management (retry attempts, timeouts)
+/// - Network settings (ports, addresses)
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
+    /// Blocks until refund transaction becomes valid.
     // TODO: Move all of these to global constants.
     pub refund_locktime: u16,
+    /// Increment in refund locktime between hops.
     pub refund_locktime_step: u16,
-
+    /// Number of initial connection attempts.
     pub first_connect_attempts: u32,
+    /// Delay between initial connection attempts in seconds.
     pub first_connect_sleep_delay_sec: u64,
+    /// Timeout for initial connection attempts in seconds.
     pub first_connect_attempt_timeout_sec: u64,
-
+    /// Number of reconnection attempts.
     pub reconnect_attempts: u32,
+    /// Initial delay between reconnection attempts in seconds.
     pub reconnect_short_sleep_delay: u64,
+    /// Extended delay between reconnection attempts in seconds.
     pub reconnect_long_sleep_delay: u64,
+    /// Attempt count when switching from short to long delay.
     pub short_long_sleep_delay_transition: u32,
+    /// Timeout for reconnection attempts in seconds.
     pub reconnect_attempt_timeout_sec: u64,
-
+    /// Main port for peer connections.
     // TODO: Only these should be user facing configs.
     pub port: u16,
+    /// Port for Tor SOCKS proxy.
     pub socks_port: u16,
+    /// Onion address of directory server.
     pub directory_server_onion_address: String,
+    /// Clearnet address of directory server.
     pub directory_server_clearnet_address: String,
+    /// Connection type (clearnet or Tor).
     pub connection_type: ConnectionType,
+    /// Port for RPC commands.
     pub rpc_port: u16,
 }
 

@@ -1,5 +1,15 @@
-//! The Coinswap Wallet (unsecured). Used by both the Taker and Maker.
-
+//! Bitcoin wallet implementation for Coinswap protocol.
+//!
+//! Provides core wallet functionality for both takers and makers:
+//! - UTXO management
+//! - Transaction creation
+//! - Swap contract handling
+//! - Fidelity bond operations
+//! - Direct bitcoin transfers
+//! - Persistent storage
+//!
+//! Note: This is an unsecured wallet implementation.
+//!
 mod api;
 mod direct_send;
 mod error;

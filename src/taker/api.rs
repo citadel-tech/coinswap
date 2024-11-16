@@ -56,22 +56,29 @@ use crate::{
     },
 };
 
-/// Swap specific parameters. These are user's policy and can differ among swaps.
-/// SwapParams govern the criteria to find suitable set of makers from the offerbook.
+/// Parameters defining user preferences for a specific swap execution.
+///
+/// These are user’s policy and can differ among swaps. SwapParams govern the criteria to find suitable set of makers from the offerbook.
+/// Determines swap routing by:
+/// - Amount to be transferred
+/// - Number of makers (hops) required
+/// - Transaction splitting preferences
+/// - Confirmation and fee requirements
 ///
 /// If no maker matches with a given SwapParam, that coinswap round will fail.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SwapParams {
-    /// Total Amount to Swap.
+    /// Total amount to be swapped.
     pub send_amount: Amount,
-    /// How many hops.
+    /// Number of makers to route through.
     pub maker_count: usize,
-    /// How many splits
+    /// Number of transactions to split the swap into.
     pub tx_count: u32,
-    // TODO: Following two should be moved to TakerConfig as global configuration.
-    /// Confirmation count required for funding txs.
+    /// Required confirmations for funding transactions.
+    // TODO: Move to TakerConfig as global configuration.
     pub required_confirms: u64,
-    /// Fee rate for funding txs.
+    /// Fee rate for funding transactions.
+    // TODO: Move to TakerConfig as global configuration.
     pub fee_rate: Amount,
 }
 
@@ -123,27 +130,40 @@ struct NextPeerInfo {
     contract_reedemscripts: Vec<ScriptBuf>,
 }
 
-/// Enum representing different behaviors of the Taker in a coinswap protocol.
+/// Defines taker behavior variants for testing protocol edge cases.
+///
+/// Controls when to simulate connection drops or contract broadcasts:
+/// - Normal operation
+/// - After swap setup
+/// - Contract transaction handling
 #[derive(Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TakerBehavior {
-    /// No special behavior.
+    /// Standard behavior, no simulated failures.
     #[default]
     Normal,
-    /// This depicts the behavior when the taker drops connections after the full coinswap setup.
+    /// Drops connection after completing swap setup with makers.
     DropConnectionAfterFullSetup,
-    /// Behavior to broadcast the contract after the full coinswap setup.
+    /// Broadcasts contract transaction after full swap setup.
     BroadcastContractAfterFullSetup,
 }
 
-/// The Taker structure that performs bulk of the coinswap protocol. Taker connects
-/// to multiple Makers and send protocol messages sequentially to them. The communication
+/// Manages taker operations and state in the coinswap protocol.
 ///
-/// sequence and corresponding SwapCoin infos are stored in `ongoing_swap_state`.
+/// Handles:
+/// - Multiple maker connections
+/// - Protocol message sequencing
+/// - Swap state management
+/// - Wallet operations
 pub struct Taker {
+    /// Manages transactions and key operations.
     wallet: Wallet,
+    /// Taker configuration parameters.
     pub config: TakerConfig,
+    /// Available maker offers and routes.
     offerbook: OfferBook,
+    /// Current state of in-progress swaps.
     ongoing_swap_state: OngoingSwapState,
+    /// Controls test-specific behaviors.
     behavior: TakerBehavior,
 }
 

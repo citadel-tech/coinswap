@@ -32,108 +32,134 @@ use crate::protocol::{
 
 use super::WalletError;
 
-/// Defines an incoming swapcoin, which can either be currently active or successfully completed.
+/// Represents an incoming swap coin where the party holds the hash lock.
 ///
-/// ### NOTE:
-/// The term `Incoming` imply an Incoming Coin from a swap.
-/// This can be for either a Taker or a Maker, depending on their position in the swap route.
-/// This refers to coins that have been "received" by the party,
-/// i.e. the party holds the hash lock side of the contract.
+/// An 'Incoming' coin refers to the receiving side of a contract, where:
+/// - Party holds the hash lock part of the contract
+/// - Applies to both taker and maker roles
+/// - Can be in-progress or completed
 ///
-/// ### Example:
-/// Consider a swap scenario where Alice and Bob are exchanging assets.
-/// The coin that Bob receives from Alice is referred to as `Incoming` from Bob's perspective.
-/// This designation applies regardless of the swap's status—whether
-/// it is still in progress or has been finalized.
+/// Example: In a swap between Alice and Bob, from Bob's perspective
+/// the coin received from Alice is 'Incoming'.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct IncomingSwapCoin {
+    /// Party's private key for the contract.
     pub my_privkey: SecretKey,
+    /// Counterparty's public key for the contract.
     pub other_pubkey: PublicKey,
+    /// Counterparty's private key (available after swap completion).
     pub other_privkey: Option<SecretKey>,
+    /// Contract transaction containing the coin.
     pub contract_tx: Transaction,
+    /// Script defining contract conditions.
     pub contract_redeemscript: ScriptBuf,
+    /// Private key for hash lock condition.
     pub hashlock_privkey: SecretKey,
+    /// Amount locked in the contract.
     pub funding_amount: Amount,
+    /// Counterparty's contract signature (if provided).
     pub others_contract_sig: Option<Signature>,
+    /// Hash preimage for claiming (available after reveal).
     pub hash_preimage: Option<Preimage>,
 }
 
-/// Describes an outgoing swapcoin, which can either be currently active or successfully completed.
+/// Represents an outgoing swap coin where the party holds the time lock.
 ///
-/// ### NOTE:
-/// The term `Outgoing` imply an Outgoing Coin from a swap.
-/// This can be for either a Taker or a Maker, depending on their position in the swap route.
-/// This refers to coins that have been "sent" by the party,
-/// i.e. the party holds the time lock side of the contract.
+/// An 'Outgoing' coin refers to the sending side of a contract, where:
+/// - Party holds the time lock part of the contract
+/// - Applies to both taker and maker roles
+/// - Can be in-progress or completed
 ///
-/// ### Example:
-/// In a swap transaction between Alice and Bob,
-/// the coin that Alice sends to Bob is referred to as `Outgoing` from Alice's perspective.
-/// This terminology reflects the direction of the asset transfer,
-/// regardless of whether the swap is still ongoing or has been completed.
+/// Example: In a swap between Alice and Bob, from Alice's perspective
+/// the coin sent to Bob is 'Outgoing'.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct OutgoingSwapCoin {
+    /// Party's private key for the contract.
     pub my_privkey: SecretKey,
+    /// Counterparty's public key for the contract.
     pub other_pubkey: PublicKey,
+    /// Contract transaction containing the coin.
     pub contract_tx: Transaction,
+    /// Script defining contract conditions.
     pub contract_redeemscript: ScriptBuf,
+    /// Private key for time lock condition.
     pub timelock_privkey: SecretKey,
+    /// Amount locked in the contract.
     pub funding_amount: Amount,
+    /// Counterparty's contract signature (if provided).
     pub others_contract_sig: Option<Signature>,
+    /// Hash preimage for claims (available after reveal).
     pub hash_preimage: Option<Preimage>,
 }
 
-/// Represents a watch-only view of a coinswap between two makers.
-//like the Incoming/OutgoingSwapCoin structs but no privkey or signature information
-//used by the taker to monitor coinswaps between two makers
+/// Read-only view of a swap between makers for monitoring by taker.
+///
+/// Contains public data only (no private keys or signatures):
+/// - Makers' public keys
+/// - Contract details
+/// - Transaction data
 #[derive(Debug, Clone)]
 pub struct WatchOnlySwapCoin {
-    /// Public key of the sender (maker).
+    /// Public key of the sending maker.
     pub sender_pubkey: PublicKey,
-    /// Public key of the receiver (maker).
+    /// Public key of the receiving maker.
     pub receiver_pubkey: PublicKey,
-    /// Transaction representing the coinswap contract.
+    /// Contract transaction data.
     pub contract_tx: Transaction,
-    /// Redeem script associated with the coinswap contract.
+    /// Script defining contract conditions.
     pub contract_redeemscript: ScriptBuf,
-    /// The funding amount of the coinswap.
+    /// Amount locked in the contract.
     pub funding_amount: Amount,
 }
 
-/// Trait representing common functionality for swap coins.
+/// Core functionality required for all swap coins.
+///
+/// Provides methods for:
+/// - Script and transaction access
+/// - Key and hash operations
+/// - Signature verification
+/// - Private key application
 pub trait SwapCoin {
-    /// Get the multisig redeem script.
+    /// Returns the multisig redeem script.
     fn get_multisig_redeemscript(&self) -> ScriptBuf;
-    /// Get the contract transaction.
+    /// Returns the contract transaction.
     fn get_contract_tx(&self) -> Transaction;
-    /// Get the contract redeem script.
+    /// Returns the contract's redeem script.
     fn get_contract_redeemscript(&self) -> ScriptBuf;
-    /// Get the timelock public key.
+    /// Returns the public key for time lock condition.
     fn get_timelock_pubkey(&self) -> Result<PublicKey, WalletError>;
-    /// Get the timelock value.
+    /// Returns the lock time value.
     fn get_timelock(&self) -> Result<u16, WalletError>;
-    /// Get the hashlock public key.
+    /// Returns the public key for hash lock condition.
     fn get_hashlock_pubkey(&self) -> Result<PublicKey, WalletError>;
-    /// Get the hash value.
+    /// Returns the hash value for the contract.
     fn get_hashvalue(&self) -> Result<Hash160, WalletError>;
-    /// Get the funding amount.
+    /// Returns the amount locked in the contract.
     fn get_funding_amount(&self) -> Amount;
-    /// Verify the receiver's signature on the contract transaction.
+    /// Validates receiver's signature on contract transaction.
     fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> Result<(), WalletError>;
-    /// Verify the sender's signature on the contract transaction.
+    /// Validates sender's signature on contract transaction.
     fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> Result<(), WalletError>;
-    /// Apply a private key to the swap coin.
+    /// Applies private key to the swap coin for signing.
     fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), WalletError>;
 }
 
 /// Trait representing swap coin functionality specific to a wallet.
+///
+/// Provides functionality for:
+/// - Key management
+/// - Transaction signing
+/// - Contract state queries
 pub trait WalletSwapCoin: SwapCoin {
+    /// Returns this party's public key.
     fn get_my_pubkey(&self) -> PublicKey;
+    /// Returns counterparty's public key.
     fn get_other_pubkey(&self) -> &PublicKey;
+    /// Returns contract transaction with all required signatures.
     fn get_fully_signed_contract_tx(&self) -> Result<Transaction, WalletError>;
+    /// Checks if hash preimage is revealed.
     fn is_hash_preimage_known(&self) -> bool;
 }
-
 macro_rules! impl_walletswapcoin {
     ($coin:ident) => {
         impl WalletSwapCoin for $coin {
