@@ -2,14 +2,26 @@
 
 use bitcoin::secp256k1;
 
-/// Enum for handling contract-related errors.
+/// Errors that can occur during contract operations.
+///
+/// Encapsulates errors from:
+/// - Cryptographic operations
+/// - Protocol violations
+/// - Script handling
+/// - Hash computations
 #[derive(Debug)]
 pub enum ContractError {
+    /// Secp256k1 cryptographic errors.
     Secp(secp256k1::Error),
+    /// Protocol violation with static message.
     Protocol(&'static str),
+    /// Bitcoin script parsing or execution errors.
     Script(bitcoin::blockdata::script::Error),
+    /// Hash slice conversion errors.
     Hash(bitcoin::hashes::FromSliceError),
+    /// Key slice conversion errors.
     Key(bitcoin::key::FromSliceError),
+    /// Signature hash computation errors.
     Sighash(bitcoin::transaction::InputsIndexError),
 }
 

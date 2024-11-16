@@ -182,24 +182,31 @@ pub struct PrivKeyHandover {
     pub multisig_privkeys: Vec<MultisigPrivkey>,
 }
 
-/// All messages sent from Taker to Maker.
+/// All messages sent from Taker to Maker during swap protocol.
+///
+/// Handles communication for:
+/// - Protocol initialization
+/// - Offer requests
+/// - Contract signatures
+/// - Funding proofs
+/// - Contract settlement
 #[derive(Debug, Serialize, Deserialize)]
 pub enum TakerToMakerMessage {
-    /// Protocol Handshake.
+    /// Initial protocol handshake message.
     TakerHello(TakerHello),
-    /// Request the Maker's Offer advertisement.
+    /// Request for maker's current offer.
     ReqGiveOffer(GiveOffer),
-    /// Request Contract Sigs **for** the Sender side of the hop. The Maker receiving this message is the Receiver of the hop.
+    /// Request contract signatures from receiving maker for sender.
     ReqContractSigsForSender(ReqContractSigsForSender),
-    /// Respond with the [ProofOfFunding] message. This is sent when the funding transaction gets confirmed.
+    /// Confirmation that funding transaction is confirmed.
     RespProofOfFunding(ProofOfFunding),
-    /// Request Contract Sigs **for** the Receiver and Sender side of the Hop.
+    /// Contract signatures when maker acts as both receiver and sender.
     RespContractSigsForRecvrAndSender(ContractSigsForRecvrAndSender),
-    /// Request Contract Sigs **for** the Receiver side of the hop. The Maker receiving this message is the Sender of the hop.
+    /// Request contract signatures from sending maker for receiver.
     ReqContractSigsForRecvr(ReqContractSigsForRecvr),
-    /// Respond with the hash preimage. This settles the HTLC contract. The Receiver side will use this preimage unlock the HTLC.
+    /// Hash preimage to settle HTLC contract.
     RespHashPreimage(HashPreimage),
-    /// Respond by handing over the Private Keys of coinswap multisig. This denotes the completion of the whole swap.
+    /// Private key handover indicating swap completion.
     RespPrivKeyHandover(PrivKeyHandover),
 }
 
@@ -282,20 +289,26 @@ pub struct ContractSigsForRecvr {
     pub sigs: Vec<Signature>,
 }
 
-/// All messages sent from Maker to Taker.
+/// All messages sent from Maker to Taker during swap protocol.
+///
+/// Handles communication for:
+/// - Protocol initialization
+/// - Offer advertisement
+/// - Contract signatures
+/// - Key exchange
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MakerToTakerMessage {
-    /// Protocol Handshake.
+    /// Initial protocol handshake message.
     MakerHello(MakerHello),
-    /// Send the Maker's offer advertisement.
-    RespOffer(Box<Offer>), // Add box as Offer has large size due to fidelity bond
-    /// Send Contract Sigs **for** the Sender side of the hop. The Maker sending this message is the Receiver of the hop.
+    /// Maker's swap offer details and bond.
+    RespOffer(Box<Offer>), // Boxed due to large size from fidelity bond
+    /// Contract signatures for sender from receiving maker.
     RespContractSigsForSender(ContractSigsForSender),
-    /// Request Contract Sigs, **as** both the Sending and Receiving side of the hop.
+    /// Contract signature request when maker is both sender and receiver.
     ReqContractSigsAsRecvrAndSender(ContractSigsAsRecvrAndSender),
-    /// Send Contract Sigs **for** the Receiver side of the hop. The Maker sending this message is the Sender of the hop.
+    /// Contract signatures for receiver from sending maker.
     RespContractSigsForRecvr(ContractSigsForRecvr),
-    /// Send the multisig private keys of the swap, declaring completion of the contract.
+    /// Private key handover indicating contract completion.
     RespPrivKeyHandover(PrivKeyHandover),
 }
 
