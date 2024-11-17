@@ -37,6 +37,10 @@ use super::{
     offers::{MakerAddress, OfferAndAddress},
 };
 
+use crate::taker::api::{
+    FIRST_CONNECT_ATTEMPTS, FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC, FIRST_CONNECT_SLEEP_DELAY_SEC,
+};
+
 use crate::wallet::SwapCoin;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -456,12 +460,8 @@ fn download_maker_offer_attempt_once(
         .into_inner(),
     };
 
-    socket.set_read_timeout(Some(Duration::from_secs(
-        config.first_connect_attempt_timeout_sec,
-    )))?;
-    socket.set_write_timeout(Some(Duration::from_secs(
-        config.first_connect_attempt_timeout_sec,
-    )))?;
+    socket.set_read_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
+    socket.set_write_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
 
     handshake_maker(&mut socket)?;
 
@@ -491,7 +491,7 @@ pub fn download_maker_offer(address: MakerAddress, config: TakerConfig) -> Optio
             Ok(offer) => return Some(OfferAndAddress { offer, address }),
             Err(TakerError::IO(e)) => {
                 if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut {
-                    if ii <= config.first_connect_attempts {
+                    if ii <= FIRST_CONNECT_ATTEMPTS {
                         log::warn!(
                             "Timeout for request offer from maker {}, reattempting...",
                             address
@@ -508,13 +508,13 @@ pub fn download_maker_offer(address: MakerAddress, config: TakerConfig) -> Optio
             }
 
             Err(e) => {
-                if ii <= config.first_connect_attempts {
+                if ii <= FIRST_CONNECT_ATTEMPTS {
                     log::warn!(
                         "Failed to request offer from maker {}, reattempting... error={:?}",
                         address,
                         e
                     );
-                    sleep(Duration::from_secs(config.first_connect_sleep_delay_sec));
+                    sleep(Duration::from_secs(FIRST_CONNECT_SLEEP_DELAY_SEC));
                     continue;
                 } else {
                     log::error!(

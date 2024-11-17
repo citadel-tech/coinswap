@@ -56,6 +56,18 @@ use crate::{
     },
 };
 
+// Default values for Taker configurations
+pub const REFUND_LOCKTIME: u16 = 48;
+pub const REFUND_LOCKTIME_STEP: u16 = 48;
+pub const FIRST_CONNECT_ATTEMPTS: u32 = 5;
+pub const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1;
+pub const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 60;
+pub const RECONNECT_ATTEMPTS: u32 = 3200;
+pub const RECONNECT_SHORT_SLEEP_DELAY: u64 = 10;
+pub const RECONNECT_LONG_SLEEP_DELAY: u64 = 60;
+pub const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 60;
+pub const RECONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 300;
+
 /// Swap specific parameters. These are user's policy and can differ among swaps.
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
 ///
@@ -328,8 +340,8 @@ impl Taker {
             }
 
             // Refund lock time decreases by `refund_locktime_step` for each hop.
-            let maker_refund_locktime = self.config.refund_locktime
-                + self.config.refund_locktime_step
+            let maker_refund_locktime = REFUND_LOCKTIME
+                + REFUND_LOCKTIME_STEP
                     * (self.ongoing_swap_state.swap_params.maker_count - maker_index - 1) as u16;
 
             let funding_tx_infos = self.funding_info_for_next_maker();
@@ -444,9 +456,8 @@ impl Taker {
         self.ongoing_swap_state.taker_position = TakerPosition::FirstPeer;
 
         // Locktime to be used for this swap.
-        let swap_locktime = self.config.refund_locktime
-            + self.config.refund_locktime_step
-                * self.ongoing_swap_state.swap_params.maker_count as u16;
+        let swap_locktime = REFUND_LOCKTIME
+            + REFUND_LOCKTIME_STEP * self.ongoing_swap_state.swap_params.maker_count as u16;
 
         // Loop until we find a live maker who responded to our signature request.
         let (maker, funding_txs) = loop {
@@ -784,14 +795,14 @@ impl Taker {
         let reconnect_attempts = if cfg!(feature = "integration-test") {
             10
         } else {
-            self.config.reconnect_attempts
+            RECONNECT_ATTEMPTS
         };
 
         // Custom sleep delay for testing.
         let sleep_delay = if cfg!(feature = "integration-test") {
             1
         } else {
-            self.config.reconnect_short_sleep_delay
+            RECONNECT_SHORT_SLEEP_DELAY
         };
 
         let mut ii = 0;
@@ -817,10 +828,10 @@ impl Taker {
                     );
                     if ii <= reconnect_attempts {
                         sleep(Duration::from_secs(
-                            if ii <= self.config.short_long_sleep_delay_transition {
+                            if ii <= SHORT_LONG_SLEEP_DELAY_TRANSITION {
                                 sleep_delay
                             } else {
-                                self.config.reconnect_long_sleep_delay
+                                RECONNECT_LONG_SLEEP_DELAY
                             },
                         ));
                         continue;
@@ -862,7 +873,7 @@ impl Taker {
             .into_inner(),
         };
 
-        let reconnect_timeout = Duration::from_secs(self.config.reconnect_attempt_timeout_sec);
+        let reconnect_timeout = Duration::from_secs(RECONNECT_ATTEMPT_TIMEOUT_SEC);
 
         socket.set_read_timeout(Some(reconnect_timeout))?;
         socket.set_write_timeout(Some(reconnect_timeout))?;
@@ -1319,19 +1330,19 @@ impl Taker {
         maker_hashlock_nonces: &[SecretKey],
         locktime: u16,
     ) -> Result<ContractSigsForSender, TakerError> {
-        let reconnect_time_out = Duration::from_secs(self.config.first_connect_attempt_timeout_sec);
+        let reconnect_time_out = Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC);
         // Configurable reconnection attempts for testing
         let first_connect_attempts = if cfg!(feature = "integration-test") {
             10
         } else {
-            self.config.first_connect_attempts
+            FIRST_CONNECT_ATTEMPTS
         };
 
         // Custom sleep delay for testing.
         let sleep_delay = if cfg!(feature = "integration-test") {
             1
         } else {
-            self.config.first_connect_sleep_delay_sec
+            FIRST_CONNECT_SLEEP_DELAY_SEC
         };
 
         let mut ii = 0;
@@ -1370,10 +1381,10 @@ impl Taker {
                     );
                     if ii <= first_connect_attempts {
                         sleep(Duration::from_secs(
-                            if ii <= self.config.short_long_sleep_delay_transition {
+                            if ii <= SHORT_LONG_SLEEP_DELAY_TRANSITION {
                                 sleep_delay
                             } else {
-                                self.config.reconnect_long_sleep_delay
+                                RECONNECT_LONG_SLEEP_DELAY
                             },
                         ));
                         continue;
@@ -1400,20 +1411,20 @@ impl Taker {
         incoming_swapcoins: &[S],
         receivers_contract_txes: &[Transaction],
     ) -> Result<ContractSigsForRecvr, TakerError> {
-        let reconnect_time_out = Duration::from_secs(self.config.reconnect_attempt_timeout_sec);
+        let reconnect_time_out = Duration::from_secs(RECONNECT_ATTEMPT_TIMEOUT_SEC);
 
         // Configurable reconnection attempts for testing
         let reconnect_attempts = if cfg!(feature = "integration-test") {
             10
         } else {
-            self.config.reconnect_attempts
+            RECONNECT_ATTEMPTS
         };
 
         // Custom sleep delay for testing.
         let sleep_delay = if cfg!(feature = "integration-test") {
             1
         } else {
-            self.config.reconnect_short_sleep_delay
+            RECONNECT_SHORT_SLEEP_DELAY
         };
 
         let mut ii = 0;
@@ -1446,10 +1457,10 @@ impl Taker {
                     );
                     if ii <= reconnect_attempts {
                         sleep(Duration::from_secs(
-                            if ii <= self.config.short_long_sleep_delay_transition {
+                            if ii <= SHORT_LONG_SLEEP_DELAY_TRANSITION {
                                 sleep_delay
                             } else {
-                                self.config.reconnect_long_sleep_delay
+                                RECONNECT_LONG_SLEEP_DELAY
                             },
                         ));
                         continue;
@@ -1521,7 +1532,7 @@ impl Taker {
                         .collect::<Vec<_>>()
                 };
 
-            let reconnect_time_out = Duration::from_secs(self.config.reconnect_attempt_timeout_sec);
+            let reconnect_time_out = Duration::from_secs(RECONNECT_ATTEMPT_TIMEOUT_SEC);
 
             let mut ii = 0;
 
@@ -1542,14 +1553,14 @@ impl Taker {
             let reconnect_attempts = if cfg!(feature = "integration-test") {
                 10
             } else {
-                self.config.reconnect_attempts
+                RECONNECT_ATTEMPTS
             };
 
             // Custom sleep delay for testing.
             let sleep_delay = if cfg!(feature = "integration-test") {
                 1
             } else {
-                self.config.reconnect_short_sleep_delay
+                RECONNECT_SHORT_SLEEP_DELAY
             };
 
             loop {
@@ -1572,10 +1583,10 @@ impl Taker {
                         );
                         if ii <= reconnect_attempts {
                             sleep(Duration::from_secs(
-                                if ii <= self.config.short_long_sleep_delay_transition {
+                                if ii <= SHORT_LONG_SLEEP_DELAY_TRANSITION {
                                     sleep_delay
                                 } else {
-                                    self.config.reconnect_long_sleep_delay
+                                    RECONNECT_LONG_SLEEP_DELAY
                                 },
                             ));
                             continue;
@@ -1896,14 +1907,14 @@ impl Taker {
     pub fn sync_offerbook(&mut self, maker_count: usize) -> Result<(), TakerError> {
         let directory_address = match self.config.connection_type {
             ConnectionType::CLEARNET => {
-                let mut address = self.config.directory_server_clearnet_address.clone();
+                let mut address = self.config.directory_server_address.clone();
                 if cfg!(feature = "integration-test") {
                     address = format!("127.0.0.1:{}", 8080);
                 }
                 address
             }
             ConnectionType::TOR => {
-                let mut address = self.config.directory_server_onion_address.clone();
+                let mut address = self.config.directory_server_address.clone();
                 if cfg!(feature = "integration-test") {
                     let directory_hs_path_str =
                         "/tmp/tor-rust-directory/hs-dir/hostname".to_string();

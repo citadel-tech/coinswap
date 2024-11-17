@@ -47,6 +47,9 @@ use crate::{
     wallet::{IncomingSwapCoin, SwapCoin},
 };
 
+use crate::maker::server::{
+    AMOUNT_RELATIVE_FEE_PPB, MIN_CONTRACT_REACTION_TIME, REQUIRED_CONFIRMS,
+};
 /// The Global Handle Message function. Takes in a [`Arc<Maker>`] and handle messages
 /// according to a [ConnectionState].
 pub fn handle_message(
@@ -94,10 +97,10 @@ pub fn handle_message(
                 let fidelity = fidelity.as_ref().expect("proof expected");
                 Some(MakerToTakerMessage::RespOffer(Box::new(Offer {
                     absolute_fee_sat: maker.config.absolute_fee_sats,
-                    amount_relative_fee_ppb: maker.config.amount_relative_fee_ppb,
+                    amount_relative_fee_ppb: AMOUNT_RELATIVE_FEE_PPB,
                     time_relative_fee_ppb: maker.config.time_relative_fee_ppb,
-                    required_confirms: maker.config.required_confirms,
-                    minimum_locktime: maker.config.min_contract_reaction_time,
+                    required_confirms: REQUIRED_CONFIRMS,
+                    minimum_locktime: MIN_CONTRACT_REACTION_TIME,
                     max_size,
                     min_size: maker.config.min_size,
                     tweakable_point,
@@ -354,10 +357,10 @@ impl Maker {
 
         let calc_coinswap_fees = calculate_coinswap_fee(
             self.config.absolute_fee_sats,
-            self.config.amount_relative_fee_ppb,
+            AMOUNT_RELATIVE_FEE_PPB,
             self.config.time_relative_fee_ppb,
             Amount::from_sat(incoming_amount),
-            self.config.required_confirms, //time_in_blocks just 1 for now
+            REQUIRED_CONFIRMS, //time_in_blocks just 1 for now
         );
 
         let calc_funding_tx_fees = (FUNDING_TX_VBYTE_SIZE
