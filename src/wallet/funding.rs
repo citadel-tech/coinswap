@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Various mechanisms of creating the swap funding transactions.
 //!
 //! This module contains routines for creating funding transactions within a wallet. It leverages
@@ -40,18 +41,20 @@ impl Wallet {
             return ret;
         }
 
-        let ret = self.create_funding_txes_utxo_max_sends(coinswap_amount, destinations, fee_rate);
-        if ret.is_ok() {
-            log::info!(target: "wallet", "created funding txes with fully-spending utxos");
-            return ret;
-        }
+        // TODO: Unlock this code when we are sure that the routines actually works.
 
-        let ret =
-            self.create_funding_txes_use_biggest_utxos(coinswap_amount, destinations, fee_rate);
-        if ret.is_ok() {
-            log::info!(target: "wallet", "created funding txes with using the biggest utxos");
-            return ret;
-        }
+        // let ret = self.create_funding_txes_utxo_max_sends(coinswap_amount, destinations, fee_rate);
+        // if ret.is_ok() {
+        //     log::info!(target: "wallet", "created funding txes with fully-spending utxos");
+        //     return ret;
+        // }
+
+        // let ret =
+        //     self.create_funding_txes_use_biggest_utxos(coinswap_amount, destinations, fee_rate);
+        // if ret.is_ok() {
+        //     log::info!(target: "wallet", "created funding txes with using the biggest utxos");
+        //     return ret;
+        // }
 
         log::info!(target: "wallet", "failed to create funding txes with any method");
         ret
@@ -83,7 +86,7 @@ impl Wallet {
                 return Ok(fractions);
             }
         }
-        Err(WalletError::Protocol(
+        Err(WalletError::General(
             "Unable to generate amount fractions, probably amount too small".to_string(),
         ))
     }
@@ -435,7 +438,7 @@ impl Wallet {
 
         let total_tx_inputs_len = selected_utxo.len();
         if total_tx_inputs_len < destinations.len() {
-            return Err(WalletError::Protocol(
+            return Err(WalletError::General(
                 "not enough UTXOs found, cant use this method".to_string(),
             ));
         }
@@ -468,7 +471,7 @@ impl Wallet {
 
         let mut list_unspent_result = seed_coin_utxo;
         if list_unspent_result.len() < destinations.len() {
-            return Err(WalletError::Protocol(
+            return Err(WalletError::General(
                 "Not enough UTXOs to create this many funding txes".to_string(),
             ));
         }
@@ -490,7 +493,7 @@ impl Wallet {
             }
         }
         if list_unspent_count.is_none() {
-            return Err(WalletError::Protocol(
+            return Err(WalletError::General(
                 "Not enough UTXOs/value to create funding txes".to_string(),
             ));
         }
@@ -503,7 +506,7 @@ impl Wallet {
             .any(|utxo_value| utxo_value > coinswap_amount.to_sat())
         {
             // TODO: Handle this case
-            Err(WalletError::Protocol(
+            Err(WalletError::General(
                 "Some stupid error that will never occur".to_string(),
             ))
         } else {

@@ -152,7 +152,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
         }
         RpcMsgReq::GetTorAddress => {
             let path = get_maker_dir().join("tor");
-            let resp = RpcMsgResp::GetTorAddressResp(get_tor_addrs(&path));
+            let resp = RpcMsgResp::GetTorAddressResp(get_tor_addrs(&path)?);
             if let Err(e) = send_message(socket, &resp) {
                 log::info!("Error sending RPC response {:?}", e);
             };

@@ -51,7 +51,7 @@ impl TryFrom<&RPCConfig> for Client {
             config.auth.clone(),
         )?;
         if config.network != rpc.get_blockchain_info()?.chain {
-            return Err(WalletError::Protocol(
+            return Err(WalletError::General(
                 "RPC Network not mathcing with RPCConfig".to_string(),
             ));
         }

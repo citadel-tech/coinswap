@@ -25,7 +25,7 @@ use crate::protocol::{
         read_pubkeys_from_multisig_redeemscript, read_timelock_pubkey_from_contract,
         sign_contract_tx, verify_contract_tx_sig,
     },
-    error::ContractError,
+    error::ProtocolError,
     messages::Preimage,
     Hash160,
 };
@@ -123,14 +123,14 @@ pub trait SwapCoin {
     /// Verify the sender's signature on the contract transaction.
     fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> Result<(), WalletError>;
     /// Apply a private key to the swap coin.
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), WalletError>;
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), ProtocolError>;
 }
 
 /// Trait representing swap coin functionality specific to a wallet.
 pub trait WalletSwapCoin: SwapCoin {
     fn get_my_pubkey(&self) -> PublicKey;
     fn get_other_pubkey(&self) -> &PublicKey;
-    fn get_fully_signed_contract_tx(&self) -> Result<Transaction, WalletError>;
+    fn get_fully_signed_contract_tx(&self) -> Result<Transaction, ProtocolError>;
     fn is_hash_preimage_known(&self) -> bool;
 }
 
@@ -149,10 +149,10 @@ macro_rules! impl_walletswapcoin {
                 &self.other_pubkey
             }
 
-            fn get_fully_signed_contract_tx(&self) -> Result<Transaction, WalletError> {
+            fn get_fully_signed_contract_tx(&self) -> Result<Transaction, ProtocolError> {
                 if self.others_contract_sig.is_none() {
-                    return Err(WalletError::Protocol(
-                        "Other's contract signature not known".to_string(),
+                    return Err(ProtocolError::General(
+                        "Other's contract signature not known",
                     ));
                 }
                 let my_pubkey = self.get_my_pubkey();
@@ -168,9 +168,9 @@ macro_rules! impl_walletswapcoin {
                             self.funding_amount,
                             EcdsaSighashType::All,
                         )
-                        .map_err(ContractError::Sighash)?[..],
+                        .map_err(ProtocolError::Sighash)?[..],
                 )
-                .map_err(ContractError::Secp)?;
+                .map_err(ProtocolError::Secp)?;
                 let sig_mine = Signature {
                     signature: secp.sign_ecdsa(&sighash, &self.my_privkey),
                     sighash_type: EcdsaSighashType::All,
@@ -268,10 +268,10 @@ impl IncomingSwapCoin {
         tx: &Transaction,
         input: &mut TxIn,
         redeemscript: &Script,
-    ) -> Result<(), WalletError> {
+    ) -> Result<(), ProtocolError> {
         if self.other_privkey.is_none() {
-            return Err(WalletError::Protocol(
-                "Unable to sign: incomplete coinswap for this input".to_string(),
+            return Err(ProtocolError::General(
+                "Unable to sign: incomplete coinswap for this input",
             ));
         }
         let secp = Secp256k1::new();
@@ -285,9 +285,9 @@ impl IncomingSwapCoin {
                     self.funding_amount,
                     EcdsaSighashType::All,
                 )
-                .map_err(ContractError::Sighash)?[..],
+                .map_err(ProtocolError::Sighash)?[..],
         )
-        .map_err(ContractError::Secp)?;
+        .map_err(ProtocolError::Secp)?;
 
         let sig_mine = Signature {
             signature: secp.sign_ecdsa(&sighash, &self.my_privkey),
@@ -329,9 +329,9 @@ impl IncomingSwapCoin {
                     input_value,
                     EcdsaSighashType::All,
                 )
-                .map_err(ContractError::Sighash)?[..],
+                .map_err(ProtocolError::Sighash)?[..],
         )
-        .map_err(ContractError::Secp)?;
+        .map_err(ProtocolError::Secp)?;
 
         let sig_hashlock = secp.sign_ecdsa(&sighash, &self.hashlock_privkey);
         let mut sig_hashlock_bytes = sig_hashlock.serialize_der().to_vec();
@@ -449,9 +449,9 @@ impl OutgoingSwapCoin {
                     input_value,
                     EcdsaSighashType::All,
                 )
-                .map_err(ContractError::Sighash)?[..],
+                .map_err(ProtocolError::Sighash)?[..],
         )
-        .map_err(ContractError::Secp)?;
+        .map_err(ProtocolError::Secp)?;
 
         let sig_timelock = secp.sign_ecdsa(&sighash, &self.timelock_privkey);
 
@@ -527,11 +527,11 @@ impl WatchOnlySwapCoin {
         contract_tx: Transaction,
         contract_redeemscript: ScriptBuf,
         funding_amount: Amount,
-    ) -> Result<WatchOnlySwapCoin, WalletError> {
+    ) -> Result<WatchOnlySwapCoin, ProtocolError> {
         let (pubkey1, pubkey2) = read_pubkeys_from_multisig_redeemscript(multisig_redeemscript)?;
         if pubkey1 != receiver_pubkey && pubkey2 != receiver_pubkey {
-            return Err(WalletError::Protocol(
-                "given sender_pubkey not included in redeemscript".to_string(),
+            return Err(ProtocolError::General(
+                "given sender_pubkey not included in redeemscript",
             ));
         }
         let sender_pubkey = if pubkey1 == receiver_pubkey {
@@ -574,14 +574,14 @@ impl SwapCoin for IncomingSwapCoin {
         self.verify_contract_tx_sig(sig)
     }
 
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), WalletError> {
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), ProtocolError> {
         let secp = Secp256k1::new();
         let pubkey = PublicKey {
             compressed: true,
             inner: secp256k1::PublicKey::from_secret_key(&secp, &privkey),
         };
         if pubkey != self.other_pubkey {
-            return Err(WalletError::Protocol("not correct privkey".to_string()));
+            return Err(ProtocolError::General("not correct privkey"));
         }
         self.other_privkey = Some(privkey);
         Ok(())
@@ -610,7 +610,7 @@ impl SwapCoin for OutgoingSwapCoin {
         self.verify_contract_tx_sig(sig)
     }
 
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), WalletError> {
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), ProtocolError> {
         let secp = Secp256k1::new();
         let pubkey = PublicKey {
             compressed: true,
@@ -619,7 +619,7 @@ impl SwapCoin for OutgoingSwapCoin {
         if pubkey == self.other_pubkey {
             Ok(())
         } else {
-            Err(WalletError::Protocol("not correct privkey".to_string()))
+            Err(ProtocolError::General("not correct privkey"))
         }
     }
 }
@@ -627,7 +627,7 @@ impl SwapCoin for OutgoingSwapCoin {
 impl SwapCoin for WatchOnlySwapCoin {
     impl_swapcoin_getters!();
 
-    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), WalletError> {
+    fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), ProtocolError> {
         let secp = Secp256k1::new();
         let pubkey = PublicKey {
             compressed: true,
@@ -636,7 +636,7 @@ impl SwapCoin for WatchOnlySwapCoin {
         if pubkey == self.sender_pubkey || pubkey == self.receiver_pubkey {
             Ok(())
         } else {
-            Err(WalletError::Protocol("not correct privkey".to_string()))
+            Err(ProtocolError::General("not correct privkey"))
         }
     }
 

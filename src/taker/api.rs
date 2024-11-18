@@ -39,9 +39,8 @@ use super::{
     routines::*,
 };
 use crate::{
-    error::ProtocolError,
     protocol::{
-        error::ContractError,
+        error::ProtocolError,
         messages::{
             ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
             ContractSigsForSender, FundingTxInfo, MultisigPrivkey, Preimage, PrivKeyHandover,
@@ -473,8 +472,7 @@ impl Taker {
                 generate_maker_keys(
                     &maker.offer.tweakable_point,
                     self.ongoing_swap_state.swap_params.tx_count,
-                )
-                .map_err(ProtocolError::Contract)?;
+                )?;
             let (funding_txs, mut outgoing_swapcoins, funding_fee) =
                 self.wallet.initalize_coinswap(
                     self.ongoing_swap_state.swap_params.send_amount,
@@ -938,8 +936,7 @@ impl Taker {
                 generate_maker_keys(
                     &next_maker.offer.tweakable_point,
                     self.ongoing_swap_state.swap_params.tx_count,
-                )
-                .map_err(ProtocolError::Contract)?
+                )?
             };
 
             let this_maker_contract_txs =
@@ -1015,8 +1012,7 @@ impl Taker {
                             )
                         },
                     )
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(ProtocolError::Contract)?
+                    .collect::<Result<Vec<_>, _>>()?
             } else {
                 // If Next Maker is the Receiver, and This Maker is The Sender, Request Sender's Contract Tx Sig to Next Maker.
                 let watchonly_swapcoins = self.create_watch_only_swapcoins(
@@ -1180,7 +1176,7 @@ impl Taker {
             .iter()
             .zip(multisig_redeemscripts.iter())
             .map(|(makers_funding_tx, multisig_redeemscript)| {
-                let multisig_spk = redeemscript_to_scriptpubkey(multisig_redeemscript);
+                let multisig_spk = redeemscript_to_scriptpubkey(multisig_redeemscript)?;
                 let index = makers_funding_tx
                     .output
                     .iter()
@@ -1188,13 +1184,13 @@ impl Taker {
                     .find(|(_i, o)| o.script_pubkey == multisig_spk)
                     .map(|(index, _)| index)
                     .expect("funding txout output doesn't match with mutlsig scriptpubkey");
-                makers_funding_tx
+                Ok(makers_funding_tx
                     .output
                     .get(index)
                     .expect("output expected at that index")
-                    .value
+                    .value)
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, TakerError>>()?;
 
         let my_receivers_contract_txes = funding_outpoints
             .iter()
@@ -1220,7 +1216,7 @@ impl Taker {
                     )
                 },
             )
-            .collect::<Vec<Transaction>>();
+            .collect::<Result<Vec<Transaction>, _>>()?;
 
         let mut incoming_swapcoins = Vec::<IncomingSwapCoin>::new();
         let next_swap_info = self
@@ -1263,17 +1259,13 @@ impl Taker {
             let (o_ms_pubkey1, o_ms_pubkey2) =
                 crate::protocol::contract::read_pubkeys_from_multisig_redeemscript(
                     multisig_redeemscript,
-                )
-                .map_err(ProtocolError::Contract)?;
+                )?;
             let maker_funded_other_multisig_pubkey = if o_ms_pubkey1 == maker_funded_multisig_pubkey
             {
                 o_ms_pubkey2
             } else {
                 if o_ms_pubkey2 != maker_funded_multisig_pubkey {
-                    return Err(ProtocolError::Contract(ContractError::Protocol(
-                        "maker-funded multisig doesnt match",
-                    ))
-                    .into());
+                    return Err(ProtocolError::General("maker-funded multisig doesnt match").into());
                 }
                 o_ms_pubkey1
             };
@@ -1636,7 +1628,7 @@ impl Taker {
         &mut self,
         socket: &mut TcpStream,
         index: usize,
-        outgoing_privkeys: &mut Option<Vec<MultisigPrivkey>>,
+        outgoing_privkeys: &mut Option<Vec<MultisigPrivkey>>, // TODO: Instead of Option, just take a vector, where empty vector denotes the `None` equivalent.
         senders_multisig_redeemscripts: &[ScriptBuf],
         receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {

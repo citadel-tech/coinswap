@@ -288,7 +288,7 @@ impl Maker {
 
             //check that the provided contract matches the scriptpubkey from the
             //cache which was populated when the ReqContractSigsForSender message arrived
-            let contract_spk = redeemscript_to_scriptpubkey(&funding_info.contract_redeemscript);
+            let contract_spk = redeemscript_to_scriptpubkey(&funding_info.contract_redeemscript)?;
 
             if !self.wallet.read()?.does_prevout_match_cached_contract(
                 &(OutPoint {

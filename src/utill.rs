@@ -33,7 +33,7 @@ use std::{
 use crate::{
     error::NetError,
     protocol::{
-        contract::derive_maker_pubkey_and_nonce, error::ContractError, messages::MultisigPrivkey,
+        contract::derive_maker_pubkey_and_nonce, error::ProtocolError, messages::MultisigPrivkey,
     },
     wallet::{SwapCoin, WalletError},
 };
@@ -225,7 +225,7 @@ pub fn generate_maker_keys(
         Vec<PublicKey>,
         Vec<SecretKey>,
     ),
-    ContractError,
+    ProtocolError,
 > {
     // Closure to derive public keys and nonces
     let derive_keys = |count: u32| {
@@ -260,15 +260,15 @@ pub fn get_hd_path_from_descriptor(descriptor: &str) -> Option<(&str, u32, i32)>
     let path = if let (Some(open), Some(close)) = (open, close) {
         &descriptor[open + 1..close]
     } else {
-        // No hard error. Just print it to stdout.
-        log::error!("Descriptor doesn't have path = {}", descriptor);
+        // Debug log, because if it doesn't have path, its not an error.
+        log::debug!("Descriptor doesn't have path = {}", descriptor);
         return None;
     };
 
     let path_chunks: Vec<&str> = path.split('/').collect();
     if path_chunks.len() != 3 {
-        // No hard error. Just print it to stdout.
-        log::error!("Path is not a triplet. Path chunks = {:?}", path_chunks);
+        // Debug log, because if it doesn't have path, its not an error.
+        log::debug!("Path is not a triplet. Path chunks = {:?}", path_chunks);
         return None;
     }
 
@@ -292,13 +292,12 @@ pub fn generate_keypair() -> (PublicKey, SecretKey) {
 }
 
 /// Convert a redeemscript into p2wsh scriptpubkey.
-pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> ScriptBuf {
+pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> Result<ScriptBuf, ProtocolError> {
     let witness_program = WitnessProgram::new(
         WitnessVersion::V0,
         &redeemscript.wscript_hash().to_byte_array(),
-    )
-    .unwrap();
-    ScriptBuf::new_witness_program(&witness_program)
+    )?;
+    Ok(ScriptBuf::new_witness_program(&witness_program))
 }
 
 /// Parses a TOML file into a HashMap of key-value pairs.
@@ -383,8 +382,7 @@ pub fn compute_checksum(descriptor: &str) -> Result<String, WalletError> {
     for character in descriptor.chars() {
         let position = INPUT_CHARSET
             .find(character)
-            .ok_or(WalletError::Protocol("Descriptor invalid".to_string()))?
-            as u64;
+            .ok_or(ProtocolError::General("Descriptor invalid"))? as u64;
         checksum = polynomial_modulus(checksum, position & 31);
         accumulated_value = accumulated_value * 3 + (position >> 5);
         group_count += 1;
@@ -482,7 +480,9 @@ mod tests {
             .into_script();
         // Compare the redeemscript_to_scriptpubkey output with the expected value in hex
         assert_eq!(
-            redeemscript_to_scriptpubkey(&puzzle_script).to_hex_string(),
+            redeemscript_to_scriptpubkey(&puzzle_script)
+                .unwrap()
+                .to_hex_string(),
             "0020c856c4dcad54542f34f0889a0c12acf2951f3104c85409d8b70387bbb2e95261"
         );
     }
@@ -497,7 +497,9 @@ mod tests {
             .push_opcode(all::OP_CHECKSIG)
             .into_script();
         assert_eq!(
-            redeemscript_to_scriptpubkey(&script).to_hex_string(),
+            redeemscript_to_scriptpubkey(&script)
+                .unwrap()
+                .to_hex_string(),
             "0020de4c0f5b48361619b1cf09d5615bc3a2603c412bf4fcbc9acecf6786c854b741"
         );
     }
@@ -520,7 +522,9 @@ mod tests {
             .push_opcode(all::OP_CHECKMULTISIG)
             .into_script();
         assert_eq!(
-            redeemscript_to_scriptpubkey(&script).to_hex_string(),
+            redeemscript_to_scriptpubkey(&script)
+                .unwrap()
+                .to_hex_string(),
             "0020b5954ef36e6bd532c7e90f41927a3556b0fef6416695dbe50ff40c6a55a6232c"
         );
     }
