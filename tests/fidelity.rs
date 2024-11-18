@@ -8,7 +8,7 @@ use coinswap::{
 mod test_framework;
 use test_framework::*;
 
-use std::{assert_eq, thread, time::Duration};
+use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// Test Fidelity Bond Creation and Redemption
 ///
@@ -62,7 +62,7 @@ fn test_fidelity() {
 
     thread::sleep(Duration::from_secs(6));
     // stop the maker server
-    maker.shutdown().unwrap();
+    maker.shutdown.store(true, Relaxed);
 
     let _ = maker_thread.join().unwrap();
 
@@ -189,7 +189,7 @@ fn test_fidelity() {
     }
 
     // Stop the directory server.
-    let _ = directory_server_instance.shutdown();
+    directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
 

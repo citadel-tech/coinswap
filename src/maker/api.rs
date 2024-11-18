@@ -107,7 +107,7 @@ pub struct Maker {
     /// Highest Value Fidelity Proof
     pub highest_fidelity_proof: RwLock<Option<FidelityProof>>,
     /// Is setup complete
-    pub is_setup_complete: RwLock<bool>,
+    pub is_setup_complete: AtomicBool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -221,21 +221,8 @@ impl Maker {
             shutdown: AtomicBool::new(false),
             connection_state: Mutex::new(HashMap::new()),
             highest_fidelity_proof: RwLock::new(None),
-            is_setup_complete: RwLock::new(false),
+            is_setup_complete: AtomicBool::new(false),
         })
-    }
-
-    /// Triggers a shutdown event for the Maker.
-    pub fn shutdown(&self) -> Result<(), MakerError> {
-        self.shutdown.store(true, Relaxed);
-        Ok(())
-    }
-
-    /// Triggers a setup complete event for the Maker.
-    pub fn setup_complete(&self) -> Result<(), MakerError> {
-        let mut flag = self.is_setup_complete.write()?;
-        *flag = true;
-        Ok(())
     }
 
     /// Returns a reference to the Maker's wallet.
@@ -731,7 +718,7 @@ pub fn recover_from_swap(
             log::info!("Completed Wallet Sync.");
             // For test, shutdown the maker at this stage.
             #[cfg(feature = "integration-test")]
-            maker.shutdown()?;
+            maker.shutdown.store(true, Relaxed);
             return Ok(());
         }
         // Sleep before next blockchain scan

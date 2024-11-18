@@ -9,7 +9,7 @@ use coinswap::{
 mod test_framework;
 use test_framework::*;
 
-use std::{collections::BTreeSet, thread, time::Duration};
+use std::{collections::BTreeSet, sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// Malice 2: Maker Broadcasts contract transactions prematurely.
 ///
@@ -116,7 +116,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
 
     // Makers take time to fully setup.
     makers.iter().for_each(|maker| {
-        while !*maker.is_setup_complete.read().unwrap() {
+        while !maker.is_setup_complete.load(Relaxed) {
             log::info!("Waiting for maker setup completion");
             // Introduce a delay of 10 seconds to prevent write lock starvation.
             thread::sleep(Duration::from_secs(10));
@@ -188,14 +188,16 @@ fn malice2_maker_broadcast_contract_prematurely() {
     taker_thread.join().unwrap();
 
     // Wait for Maker threads to conclude.
-    makers.iter().for_each(|maker| maker.shutdown().unwrap());
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
     maker_threads
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
     // ---- After Swap checks ----
 
-    let _ = directory_server_instance.shutdown();
+    directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
 

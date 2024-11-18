@@ -10,7 +10,9 @@ mod test_framework;
 use test_framework::*;
 
 use log::{info, warn};
-use std::{fs::File, io::Read, path::PathBuf, thread, time::Duration};
+use std::{
+    fs::File, io::Read, path::PathBuf, sync::atomic::Ordering::Relaxed, thread, time::Duration,
+};
 
 /// ABORT 2: Maker Drops Before Setup
 /// This test demonstrates the situation where a Maker prematurely drops connections after doing
@@ -95,7 +97,7 @@ fn maker_drops_after_sending_senders_sigs() {
 
     // Makers take time to fully setup.
     makers.iter().for_each(|maker| {
-        while !*maker.is_setup_complete.read().unwrap() {
+        while !maker.is_setup_complete.load(Relaxed) {
             log::info!("Waiting for maker setup completion");
             // Introduce a delay of 10 seconds to prevent write lock starvation.
             thread::sleep(Duration::from_secs(10));
@@ -126,14 +128,16 @@ fn maker_drops_after_sending_senders_sigs() {
     taker_thread.join().unwrap();
 
     // Wait for Maker threads to conclude.
-    makers.iter().for_each(|maker| maker.shutdown().unwrap());
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
     maker_threads
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
     // ---- After Swap checks ----
 
-    let _ = directory_server_instance.shutdown();
+    directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
 

@@ -9,7 +9,10 @@ use std::{
     io::{ErrorKind, Read, Write},
     net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
-    sync::{atomic::Ordering::Relaxed, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering::Relaxed},
+        Arc,
+    },
     thread::{self, sleep},
     time::Duration,
 };
@@ -298,7 +301,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
 /// This will not block. Once Core RPC connection is live, accepting_client will set as `true` again.
 fn check_connection_with_core(
     maker: Arc<Maker>,
-    accepting_clients: Arc<Mutex<bool>>,
+    accepting_clients: Arc<AtomicBool>,
 ) -> Result<(), MakerError> {
     let mut rpc_ping_success = false;
     while !maker.shutdown.load(Relaxed) {
@@ -322,8 +325,7 @@ fn check_connection_with_core(
         } else {
             rpc_ping_success = true;
         }
-        let mut mutex = accepting_clients.lock()?;
-        *mutex = rpc_ping_success;
+        accepting_clients.store(rpc_ping_success, Relaxed);
     }
 
     Ok(())
@@ -378,7 +380,7 @@ fn handle_client(
                     // Shutdown server if special behavior is set
                     MakerError::SpecialBehaviour(sp) => {
                         log::error!("[{}] Maker Special Behavior : {:?}", maker.config.port, sp);
-                        maker.shutdown()?;
+                        maker.shutdown.store(true, Relaxed);
                     }
                     e => {
                         log::error!(
@@ -429,7 +431,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     maker.wallet.write()?.refresh_offer_maxsize_cache()?;
 
     // Global server Mutex, to switch on/off p2p network.
-    let accepting_clients = Arc::new(Mutex::new(false));
+    let accepting_clients = Arc::new(AtomicBool::new(false));
 
     // Spawn Server threads.
     // All thread handles are stored in the thread_pool, which are all joined at server shutdown.
@@ -490,7 +492,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         thread_pool.push(rpc_thread);
 
         sleep(Duration::from_secs(heart_beat_interval)); // wait for 1 beat, to complete spawns of all the threads.
-        maker.setup_complete()?;
+        maker.is_setup_complete.store(true, Relaxed);
         log::info!("[{}] Maker setup is ready", maker.config.port);
     }
 
@@ -502,7 +504,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         let heart_beat_interval = HEART_BEAT_INTERVAL_SECS;
 
         // Block client connections if accepting_client=false
-        if !*accepting_clients.lock()? {
+        if !accepting_clients.load(Relaxed) {
             log::debug!(
                 "[{}] Temporary failure in backend node. Not accepting swap request. Check your node if this error persists",
                 maker.config.port
