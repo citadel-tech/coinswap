@@ -1,7 +1,8 @@
 //! All Wallet-related errors.
 
+use crate::protocol::error::ProtocolError;
+
 use super::fidelity::FidelityError;
-use crate::protocol::error::ContractError;
 
 /// Enum for handling wallet-related errors.
 #[derive(Debug)]
@@ -9,10 +10,10 @@ pub enum WalletError {
     IO(std::io::Error),
     Cbor(serde_cbor::Error),
     Rpc(bitcoind::bitcoincore_rpc::Error),
-    Protocol(String),
     BIP32(bitcoin::bip32::Error),
     BIP39(bip39::Error),
-    Contract(ContractError),
+    General(String),
+    Protocol(ProtocolError),
     Fidelity(FidelityError),
     Locktime(bitcoin::blockdata::locktime::absolute::ConversionError),
     Secp(bitcoin::secp256k1::Error),
@@ -44,9 +45,9 @@ impl From<bip39::Error> for WalletError {
     }
 }
 
-impl From<ContractError> for WalletError {
-    fn from(value: ContractError) -> Self {
-        Self::Contract(value)
+impl From<ProtocolError> for WalletError {
+    fn from(value: ProtocolError) -> Self {
+        Self::Protocol(value)
     }
 }
 

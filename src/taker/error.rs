@@ -1,7 +1,6 @@
 //! All Taker-related errors.
 use crate::{
-    error::{NetError, ProtocolError},
-    market::directory::DirectoryServerError,
+    error::NetError, market::directory::DirectoryServerError, protocol::error::ProtocolError,
     wallet::WalletError,
 };
 
@@ -14,10 +13,10 @@ pub enum TakerError {
     Wallet(WalletError),
     Directory(DirectoryServerError),
     Net(NetError),
-    Protocol(ProtocolError),
     SendAmountNotSet,
     FundingTxWaitTimeOut,
     Deserialize(serde_cbor::Error),
+    // MPSC channel failure error. Only occurs in internal thread communications.
     MPSC(String),
 }
 
@@ -53,7 +52,7 @@ impl From<NetError> for TakerError {
 
 impl From<ProtocolError> for TakerError {
     fn from(value: ProtocolError) -> Self {
-        Self::Protocol(value)
+        Self::Wallet(value.into())
     }
 }
 
