@@ -621,14 +621,14 @@ impl Wallet {
                             .as_ref()
                             .unwrap_or(&ScriptBuf::default()),
                     )
-                    .map_or(false, |sc| sc.other_privkey.is_some())
+                    .is_some_and(|sc| sc.other_privkey.is_some())
                     || self
                         .find_outgoing_swapcoin(
                             utxo.witness_script
                                 .as_ref()
                                 .unwrap_or(&ScriptBuf::default()),
                         )
-                        .map_or(false, |sc| sc.hash_preimage.is_some());
+                        .is_some_and(|sc| sc.hash_preimage.is_some());
                 if found {
                     return Ok(Some(UTXOSpendInfo::SwapCoin {
                         multisig_redeemscript: utxo
