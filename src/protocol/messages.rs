@@ -193,7 +193,7 @@ pub enum TakerToMakerMessage {
     ReqContractSigsForSender(ReqContractSigsForSender),
     /// Respond with the [ProofOfFunding] message. This is sent when the funding transaction gets confirmed.
     RespProofOfFunding(ProofOfFunding),
-    /// Request Contract Sigs **for** the Receiver and Sender side of the Hop.
+    /// Respond with Contract Sigs **for** the Receiver and Sender side of the Hop.
     RespContractSigsForRecvrAndSender(ContractSigsForRecvrAndSender),
     /// Request Contract Sigs **for** the Receiver side of the hop. The Maker receiving this message is the Sender of the hop.
     ReqContractSigsForRecvr(ReqContractSigsForRecvr),
