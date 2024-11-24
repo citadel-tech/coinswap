@@ -30,7 +30,6 @@ fn malice2_maker_broadcast_contract_prematurely() {
     // Initiate test framework, Makers.
     // Taker has normal behavior.
     let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
-        None,
         makers_config_map.into(),
         Some(TakerBehavior::Normal),
         ConnectionType::CLEARNET,

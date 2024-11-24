@@ -35,7 +35,7 @@ fn test_standard_coinswap() {
 
     // Initiate test framework, Makers and a Taker with default behavior.
     let (test_framework, taker, makers, directory_server_instance) =
-        TestFramework::init(None, makers_config_map.into(), None, connection_type);
+        TestFramework::init(makers_config_map.into(), None, connection_type);
 
     warn!("Running Test: Standard Coinswap Procedure");
 

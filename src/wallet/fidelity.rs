@@ -393,7 +393,7 @@ impl Wallet {
                 break ht;
             } else {
                 log::info!(
-                    "Fildelity Transaction {} seen in mempool, waiting for confirmation.",
+                    "Fidelity Transaction {} seen in mempool, waiting for confirmation.",
                     txid
                 );
 
