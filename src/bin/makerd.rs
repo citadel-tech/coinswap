@@ -2,9 +2,10 @@ use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
     maker::{start_maker_server, Maker, MakerBehavior, MakerError},
-    utill::{parse_proxy_auth, read_connection_network_string, setup_logger},
+    utill::{parse_proxy_auth, read_connection_network_string, setup_maker_logger},
     wallet::RPCConfig,
 };
+use log::LevelFilter::Info;
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 /// The Maker Server.
@@ -51,8 +52,7 @@ struct Cli {
 }
 
 fn main() -> Result<(), MakerError> {
-    setup_logger(log::LevelFilter::Info);
-
+    setup_maker_logger(Info);
     let args = Cli::parse();
 
     let rpc_network = bitcoin::Network::from_str(&args.rpc_network).unwrap();

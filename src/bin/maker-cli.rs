@@ -3,8 +3,9 @@ use std::{net::TcpStream, time::Duration};
 use clap::Parser;
 use coinswap::{
     maker::{MakerError, RpcMsgReq, RpcMsgResp},
-    utill::{read_message, send_message, setup_logger},
+    utill::{read_message, send_message, setup_maker_logger},
 };
+use log::LevelFilter::Info;
 
 /// maker-cli is a command line app to send RPC messages to maker server.
 #[derive(Parser, Debug)]
@@ -40,7 +41,7 @@ enum Commands {
 }
 
 fn main() -> Result<(), MakerError> {
-    setup_logger(log::LevelFilter::Info);
+    setup_maker_logger(Info);
     let cli = App::parse();
 
     match cli.command {

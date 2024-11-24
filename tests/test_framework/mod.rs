@@ -35,9 +35,10 @@ use coinswap::{
     maker::{Maker, MakerBehavior},
     market::directory::{start_directory_server, DirectoryServer},
     taker::{Taker, TakerBehavior},
-    utill::{setup_logger, ConnectionType},
+    utill::{setup_directory_logger, setup_maker_logger, setup_taker_logger, ConnectionType},
     wallet::RPCConfig,
 };
+use log::LevelFilter::Info;
 
 fn get_random_tmp_dir() -> PathBuf {
     let s: String = thread_rng()
@@ -84,7 +85,9 @@ impl TestFramework {
         if cfg!(feature = "tor") && connection_type == ConnectionType::TOR {
             coinswap::tor::setup_mitosis();
         }
-        setup_logger(log::LevelFilter::Info);
+        setup_directory_logger(Info);
+        setup_taker_logger(Info);
+        setup_maker_logger(Info);
         // Setup directory
         let temp_dir = get_random_tmp_dir();
         // Remove if previously existing

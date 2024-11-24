@@ -8,7 +8,7 @@ use coinswap::{
         directory::DirectoryServerError,
         rpc::{RpcMsgReq, RpcMsgResp},
     },
-    utill::{read_message, send_message, setup_logger},
+    utill::{read_message, send_message, setup_directory_logger},
 };
 
 /// directory-cli is a command line app to send RPC messages to directory server.
@@ -41,7 +41,7 @@ fn send_rpc_req(req: &RpcMsgReq) -> Result<(), DirectoryServerError> {
 }
 
 fn main() -> Result<(), DirectoryServerError> {
-    setup_logger(log::LevelFilter::Info);
+    setup_directory_logger(log::LevelFilter::Info);
     let cli = App::parse();
 
     match cli.command {

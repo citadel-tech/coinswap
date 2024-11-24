@@ -1,8 +1,9 @@
 use clap::Parser;
 use coinswap::{
     market::directory::{start_directory_server, DirectoryServer, DirectoryServerError},
-    utill::{read_connection_network_string, setup_logger},
+    utill::{read_connection_network_string, setup_directory_logger},
 };
+use log::LevelFilter::Info;
 use std::{path::PathBuf, sync::Arc};
 
 #[derive(Parser)]
@@ -18,8 +19,7 @@ struct Cli {
 }
 
 fn main() -> Result<(), DirectoryServerError> {
-    setup_logger(log::LevelFilter::Info);
-
+    setup_directory_logger(Info);
     let args = Cli::parse();
 
     let conn_type = read_connection_network_string(&args.network)?;
