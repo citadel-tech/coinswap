@@ -1,3 +1,4 @@
+#![cfg(feature = "integration-test")]
 use std::{
     io::{BufRead, BufReader, Write},
     net::TcpStream,
@@ -13,35 +14,42 @@ use std::{
 fn start_server() -> (Child, Receiver<String>) {
     let (log_sender, log_receiver): (Sender<String>, Receiver<String>) = mpsc::channel();
     let mut directoryd_process = Command::new("./target/debug/directoryd")
+        .args(["-n", "clearnet"])
         .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
 
     let stdout = directoryd_process.stdout.take().unwrap();
+    let std_err = directoryd_process.stderr.take().unwrap();
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
         reader.lines().map_while(Result::ok).for_each(|line| {
+            println!("{}", line);
             log_sender.send(line).unwrap_or_else(|e| {
                 println!("Failed to send log: {}", e);
             });
         });
     });
 
+    thread::spawn(move || {
+        let reader = BufReader::new(std_err);
+        reader.lines().map_while(Result::ok).for_each(|line| {
+            panic!("Error : {}", line);
+        })
+    });
+
     (directoryd_process, log_receiver)
 }
 
 fn wait_for_server_start(log_receiver: &Receiver<String>) {
-    let mut server_started = false;
-    while let Ok(log_message) = log_receiver.recv_timeout(Duration::from_secs(5)) {
+    loop {
+        let log_message = log_receiver.recv().unwrap();
         if log_message.contains("RPC socket binding successful") {
-            server_started = true;
+            log::info!("DNS server started");
             break;
         }
     }
-    assert!(
-        server_started,
-        "Server did not start within the expected time"
-    );
 }
 
 fn send_addresses(addresses: &[&str]) {

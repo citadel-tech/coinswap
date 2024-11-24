@@ -25,12 +25,8 @@ fn test_fidelity() {
     // ---- Setup ----
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
 
-    let (test_framework, _, makers, directory_server_instance) = TestFramework::init(
-        None,
-        makers_config_map.into(),
-        None,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, _, makers, directory_server_instance) =
+        TestFramework::init(makers_config_map.into(), None, ConnectionType::CLEARNET);
 
     let maker = makers.first().unwrap();
 
