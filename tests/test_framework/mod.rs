@@ -18,7 +18,7 @@ use bitcoin::{
 use std::{
     collections::HashMap,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc, RwLock,
@@ -29,7 +29,7 @@ use std::{
 
 use bitcoind::{
     bitcoincore_rpc::{Auth, Client, RpcApi},
-    BitcoinD, Conf,
+    BitcoinD,
 };
 use coinswap::{
     maker::{Maker, MakerBehavior},
@@ -39,7 +39,7 @@ use coinswap::{
     wallet::RPCConfig,
 };
 
-fn get_random_tmp_dir() -> PathBuf {
+pub fn get_random_tmp_dir() -> PathBuf {
     let s: String = thread_rng()
         .sample_iter(&Alphanumeric)
         .take(8)
@@ -47,6 +47,46 @@ fn get_random_tmp_dir() -> PathBuf {
         .collect();
     let path = "/tmp/.coinswap/".to_string() + &s;
     PathBuf::from(path)
+}
+
+pub fn init_bitcoind(datadir: &Path) -> BitcoinD {
+    // Initiate the bitcoind backend.
+    let mut conf = bitcoind::Conf::default();
+    conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
+    conf.staticdir = Some(datadir.join(".bitcoin"));
+    log::info!("bitcoind datadir: {:?}", conf.staticdir.as_ref().unwrap());
+    log::info!("bitcoind configuration: {:?}", conf.args);
+
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+    let key = "BITCOIND_EXE";
+    let curr_dir_path = std::env::current_dir().unwrap();
+
+    let bitcoind_path = match (os, arch) {
+        ("macos", "aarch64") => curr_dir_path.join("bin").join("bitcoind_macos"),
+        _ => curr_dir_path.join("bin").join("bitcoind"),
+    };
+    std::env::set_var(key, bitcoind_path);
+    let exe_path = bitcoind::exe_path().unwrap();
+
+    log::info!("Executable path: {:?}", exe_path);
+
+    let bitcoind = BitcoinD::with_conf(exe_path, &conf).unwrap();
+
+    // Generate initial 101 blocks
+    let mining_address = bitcoind
+        .client
+        .get_new_address(None, None)
+        .unwrap()
+        .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
+        .unwrap();
+    bitcoind
+        .client
+        .generate_to_address(101, &mining_address)
+        .unwrap();
+    log::info!("bitcoind initiated!!");
+
+    bitcoind
 }
 
 /// The Test Framework.
@@ -71,7 +111,6 @@ impl TestFramework {
     /// If no bitcoind conf is provide a default value will be used.
     #[allow(clippy::type_complexity)]
     pub fn init(
-        bitcoind_conf: Option<Conf<'_>>,
         makers_config_map: HashMap<(u16, Option<u16>), MakerBehavior>,
         taker_behavior: Option<TakerBehavior>,
         connection_type: ConnectionType,
@@ -93,40 +132,8 @@ impl TestFramework {
         }
         log::info!("temporary directory : {}", temp_dir.display());
 
-        // Initiate the bitcoind backend.
-        let mut conf = bitcoind_conf.unwrap_or_default();
-        conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
-        conf.staticdir = Some(temp_dir.join(".bitcoin"));
-        log::info!("bitcoind configuration: {:?}", conf.args);
+        let bitcoind = init_bitcoind(&temp_dir);
 
-        let os = std::env::consts::OS;
-        let arch = std::env::consts::ARCH;
-        let key = "BITCOIND_EXE";
-        let curr_dir_path = std::env::current_dir().unwrap();
-
-        let bitcoind_path = match (os, arch) {
-            ("macos", "aarch64") => curr_dir_path.join("bin").join("bitcoind_macos"),
-            _ => curr_dir_path.join("bin").join("bitcoind"),
-        };
-        std::env::set_var(key, bitcoind_path);
-        let exe_path = bitcoind::exe_path().unwrap();
-
-        log::info!("Executable path: {:?}", exe_path);
-
-        let bitcoind = BitcoinD::with_conf(exe_path, &conf).unwrap();
-
-        // Generate initial 101 blocks
-        let mining_address = bitcoind
-            .client
-            .get_new_address(None, None)
-            .unwrap()
-            .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
-            .unwrap();
-        bitcoind
-            .client
-            .generate_to_address(101, &mining_address)
-            .unwrap();
-        log::info!("bitcoind initiated!!");
         let shutdown = AtomicBool::new(false);
         let test_framework = Arc::new(Self {
             bitcoind,
@@ -175,7 +182,7 @@ impl TestFramework {
                 thread::sleep(Duration::from_secs(5)); // Sleep for some time avoid resource unavailable error.
                 Arc::new(
                     Maker::init(
-                        Some(temp_dir.clone()),
+                        Some(temp_dir.join(port.0.to_string()).clone()),
                         Some(maker_id),
                         Some(maker_rpc_config),
                         Some(port.0),

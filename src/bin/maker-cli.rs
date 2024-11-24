@@ -37,7 +37,7 @@ enum Commands {
     FidelityBalance,
     /// Gets a new address
     NewAddress,
-    // Send to an external wallet address.
+    // Send to an external address and returns the transaction hex.
     SendToAddress {
         address: String,
         amount: u64,
@@ -45,8 +45,10 @@ enum Commands {
     },
     /// Returns the tor address
     GetTorAddress,
-    /// Returns the data dir
+    /// Returns the data directory path
     GetDataDir,
+    /// Stops the maker server
+    Stop,
 }
 
 fn main() -> Result<(), MakerError> {
@@ -95,11 +97,16 @@ fn main() -> Result<(), MakerError> {
                 fee,
             })?;
         }
+        // TODO: Test Coverage
         Commands::GetTorAddress => {
             send_rpc_req(&RpcMsgReq::GetTorAddress)?;
         }
+        // TODO: Test Coverage
         Commands::GetDataDir => {
             send_rpc_req(&RpcMsgReq::GetDataDir)?;
+        }
+        Commands::Stop => {
+            send_rpc_req(&RpcMsgReq::Stop)?;
         }
     }
 
@@ -116,7 +123,7 @@ fn send_rpc_req(req: &RpcMsgReq) -> Result<(), MakerError> {
     let response_bytes = read_message(&mut stream)?;
     let response: RpcMsgResp = serde_cbor::from_slice(&response_bytes)?;
 
-    println!("{:?}", response);
+    println!("{}", response);
 
     Ok(())
 }
