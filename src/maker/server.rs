@@ -490,7 +490,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         maker.thread_pool.add_thread(rpc_thread);
 
         sleep(Duration::from_secs(HEART_BEAT_INTERVAL_SECS)); // wait for 1 beat, to complete spawns of all the threads.
-        maker.setup_complete()?;
+        maker.is_setup_complete.store(true, Relaxed);
         log::info!("[{}] Maker setup is ready", maker.config.port);
     }
 
