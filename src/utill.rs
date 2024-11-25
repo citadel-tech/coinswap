@@ -55,7 +55,7 @@ pub const NET_TIMEOUT: Duration = Duration::from_secs(60);
 /// Used as delays on reattempting some network communications.
 pub const GLOBAL_PAUSE: Duration = Duration::from_secs(10);
 
-/// Global heartbeat interval for internal server threads.
+/// Global heartbeat interval used during waiting periods in critical situations.
 pub const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -421,7 +421,7 @@ pub fn monitor_log_for_completion(log_file: &Path, pattern: &str) -> io::Result<
 
             last_size = current_size;
         }
-        thread::sleep(Duration::from_secs(3));
+        thread::sleep(HEART_BEAT_INTERVAL);
     }
 }
 

@@ -2,14 +2,14 @@
 //!
 //! It includes functions for handshaking, requesting contract signatures, sending proofs of funding, and downloading maker offers.
 //! It also defines structs for contract transactions and contract information.
-//! Notable types include [ContractTransaction], [ContractsInfo], [ThisMakerInfo], and [NextPeerInfoArgs].
+//! Notable types include [ContractTransaction], [ContractsInfo], [ThisMakerInfo], and [NextMakerInfo].
 //! It also handles downloading maker offers with retry mechanisms and implements the necessary message structures
 //! for communication between taker and maker.
 
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tor")]
 use socks::Socks5Stream;
-use std::{io::ErrorKind, net::TcpStream, thread::sleep, time::Duration};
+use std::{io::ErrorKind, net::TcpStream, thread::sleep, time::Duration, u64::MIN};
 
 use crate::{
     protocol::{
@@ -27,6 +27,7 @@ use crate::{
         },
         Hash160,
     },
+    taker::api::MINER_FEE,
     utill::{read_message, send_message, ConnectionType},
     wallet::WalletError,
 };
@@ -246,10 +247,9 @@ pub struct ThisMakerInfo {
     pub funding_tx_infos: Vec<FundingTxInfo>,
     pub this_maker_contract_txs: Vec<Transaction>,
     pub this_maker_refund_locktime: u16,
-    pub this_maker_fee_rate: Amount, // Applies to both funding and contract transaction
 }
 
-// Type for information related to the next peer
+// Type for information related to the next peer // why not next Maker?
 #[derive(Clone)]
 pub struct NextMakerInfo {
     pub next_peer_multisig_pubkeys: Vec<PublicKey>,
@@ -280,7 +280,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         confirmed_funding_txes: tmi.funding_tx_infos.clone(),
         next_coinswap_info,
         refund_locktime: tmi.this_maker_refund_locktime,
-        contract_feerate: tmi.this_maker_fee_rate.to_sat(),
+        contract_feerate: MINER_FEE,
     });
 
     send_message(socket, &pof_msg)?;
@@ -341,15 +341,13 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
     let coinswap_fees = calculate_coinswap_fee(
         this_amount,
         tmi.this_maker_refund_locktime,
-        tmi.this_maker.offer.absolute_fee,
-        tmi.this_maker.offer.amount_relative_fee,
-        tmi.this_maker.offer.time_relative_fee,
+        tmi.this_maker.offer.base_fee,
+        tmi.this_maker.offer.amount_relative_fee_pct,
+        tmi.this_maker.offer.time_relative_fee_pct,
     );
 
-    let miner_fees_paid_by_taker = (FUNDING_TX_VBYTE_SIZE
-        * tmi.this_maker_fee_rate.to_sat()
-        * (npi.next_peer_multisig_pubkeys.len() as u64))
-        / 1000;
+    let miner_fees_paid_by_taker =
+        (FUNDING_TX_VBYTE_SIZE * MINER_FEE * (npi.next_peer_multisig_pubkeys.len() as u64)) / 1000;
     let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
     if Amount::from_sat(calculated_next_amount) != next_amount {
         return Err((ProtocolError::IncorrectFundingAmount {
@@ -359,11 +357,10 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         .into());
     }
     log::info!(
-        "Next maker's amount = {} | Next maker's fees = {} | Miner fees covered by us = {} | Maker is forwarding = {}",
-        this_amount,
-        coinswap_fees,
+        "This Maker is forwarding = {} to next Maker | Next maker's fees = {} | Miner fees covered by us = {}",
+        next_amount,
+        coinswap_fees, // These are not in Amount..
         miner_fees_paid_by_taker,
-        next_amount
     );
 
     for ((receivers_contract_tx, contract_tx), contract_redeemscript) in
@@ -493,6 +490,7 @@ pub fn download_maker_offer(address: MakerAddress, config: TakerConfig) -> Optio
         match download_maker_offer_attempt_once(&address, &config) {
             Ok(offer) => return Some(OfferAndAddress { offer, address }),
             Err(TakerError::IO(e)) => {
+                // TODO: Think about here for better logic?
                 if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut {
                     if ii <= FIRST_CONNECT_ATTEMPTS {
                         log::warn!(

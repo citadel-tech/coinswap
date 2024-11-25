@@ -14,9 +14,6 @@ use std::{path::PathBuf, str::FromStr};
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
-    /// Optional Connection Network Type
-    #[clap(long, default_value = "clearnet",short= 'c', possible_values = &["tor","clearnet"])]
-    connection_type: String,
     /// Optional DNS data directory. Default value : "~/.coinswap/taker"
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
@@ -56,7 +53,7 @@ struct Cli {
     pub tx_count: u32,
     /// Sets the required on-chain confirmations.
     #[clap(name = "required_confirms", default_value = "1000")]
-    pub required_confirms: u64,
+    pub required_confirms: u32,
     /// List of sub commands to process various endpoints of taker cli app.
     #[clap(subcommand)]
     command: Commands,
@@ -101,7 +98,11 @@ fn main() -> Result<(), TakerError> {
     let args = Cli::parse();
 
     let rpc_network = bitcoin::Network::from_str(&args.bitcoin_network).unwrap();
-    let connection_type = ConnectionType::from_str(&args.connection_type)?;
+    let connection_type = if cfg!(feature = "integration-test") {
+        ConnectionType::CLEARNET
+    } else {
+        ConnectionType::TOR
+    };
 
     let rpc_config = RPCConfig {
         url: args.rpc,

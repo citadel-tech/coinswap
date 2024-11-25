@@ -28,7 +28,7 @@ use crate::{
 use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
 
 /// Represents an offer along with the corresponding maker address.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct OfferAndAddress {
     pub offer: Offer,
     pub address: MakerAddress,
@@ -142,9 +142,9 @@ pub fn fetch_offer_from_makers(
     let maker_addresses_len = maker_addresses.len();
     for addr in maker_addresses {
         let offers_writer = offers_writer.clone();
-        let taker_config: TakerConfig = config.clone();
+        let taker_config = config.clone();
         let thread = Builder::new()
-            .name(format!("maker_offer_fecth_thread_{}", addr))
+            .name(format!("maker_offer_fetch_thread_{}", addr))
             .spawn(move || -> Result<(), TakerError> {
                 let offer = download_maker_offer(addr, taker_config);
                 Ok(offers_writer.send(offer)?)
@@ -152,7 +152,7 @@ pub fn fetch_offer_from_makers(
 
         thread_pool.push(thread);
     }
-    let mut result = Vec::<OfferAndAddress>::new();
+    let mut result = Vec::new();
     for _ in 0..maker_addresses_len {
         if let Some(offer_addr) = offers_reader.recv()? {
             result.push(offer_addr);
@@ -165,8 +165,9 @@ pub fn fetch_offer_from_makers(
             thread.thread().name().expect("thread names expected")
         );
         let join_result = thread.join();
+
         if let Err(e) = join_result {
-            log::error!("Error in internal thread: {:?}", e);
+            log::error!("Error while joining thread: {:?}", e);
         }
     }
     Ok(result)

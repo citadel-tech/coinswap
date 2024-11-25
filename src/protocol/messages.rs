@@ -142,8 +142,8 @@ pub struct ProofOfFunding {
     pub confirmed_funding_txes: Vec<FundingTxInfo>,
     // TODO: Directly use Vec of Pubkeys.
     pub next_coinswap_info: Vec<NextHopInfo>,
-    pub next_locktime: u16,
-    pub next_fee_rate: u64,
+    pub refund_locktime: u16,
+    pub contract_feerate: u64,
 }
 
 /// Signatures required for an intermediate Maker to perform receiving and sending of coinswaps.
@@ -236,18 +236,19 @@ pub struct FidelityProof {
 }
 
 /// Represents an offer in the context of the Coinswap protocol.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, PartialOrd)]
 pub struct Offer {
-    pub absolute_fee_sat: Amount,
-    pub amount_relative_fee_ppb: Amount,
-    pub time_relative_fee_ppb: Amount,
-    pub required_confirms: u64,
+    pub base_fee: u64,                // base fee in sats
+    pub amount_relative_fee_pct: f64, // % fee on total amount
+    pub time_relative_fee_pct: f64, // amount * refund_locktime * TRF% = fees for locking the fund.
+    pub required_confirms: u32,
     pub minimum_locktime: u16,
     pub max_size: u64,
     pub min_size: u64,
     pub tweakable_point: PublicKey,
     pub fidelity: FidelityProof,
 }
+// TODO: Should Offer struct use Amount struct instead of u64?
 
 /// Contract Tx signatures provided by a Sender of a Coinswap.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -283,7 +284,7 @@ pub struct ContractSigsForRecvr {
 }
 
 /// All messages sent from Maker to Taker.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)] // why do we require PartialEq?
 pub enum MakerToTakerMessage {
     /// Protocol Handshake.
     MakerHello(MakerHello),

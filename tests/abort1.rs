@@ -194,7 +194,6 @@ fn test_stop_taker_after_setup() {
             .unwrap();
     });
 
-    // Wait for Taker swap thread to conclude.
     taker_thread.join().unwrap();
 
     // Wait for Maker threads to conclude.
@@ -208,6 +207,8 @@ fn test_stop_taker_after_setup() {
 
     thread::sleep(Duration::from_secs(10));
 
+    // Wait for Taker swap thread to conclude.
+
     // Taker still has 6 swapcoins in its list
     assert_eq!(taker.read().unwrap().get_wallet().get_swapcoins_count(), 6);
 
@@ -219,6 +220,30 @@ fn test_stop_taker_after_setup() {
     assert_eq!(taker.read().unwrap().get_wallet().get_swapcoins_count(), 0);
 
     all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
+
+    //-------- Fee Tracking and Workflow:------------
+    //
+    // | Participant    | Amount Received (Sats) | Amount Forwarded (Sats) | Fee (Sats) | Funding Mining Fees (Sats) | Total Fees (Sats) |
+    // |----------------|------------------------|-------------------------|------------|----------------------------|-------------------|
+    // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
+    // | **Maker16102** | 500,000                | 465,384                 | 31,616     | 3,000                      | 34,616            |
+    // | **Maker6102**  | 465,384                | 442,325                 | 20,059     | 3,000                      | 23,059            |
+    //
+    // ## 3. Final Outcome for Taker (Successful Coinswap):
+    //
+    // | Participant   |  Coinswap Outcome (Sats)                                                |
+    // |---------------|--------------------------------------------------------------------|
+    // | **Taker**     | 442,325 = 500,000 - (Total Fees for Maker16102 + Total Fees for Maker6102) |
+    //
+    // ## Regaining Funds After a Failed Coinswap:
+    //
+    // | Participant    | Mining Fee for Contract txes (Sats) | Timelock Fee (Sats) | Total Recovery Fees (Sats) | Total Loss (Sats) |
+    // |----------------|------------------------------------|---------------------|----------------------------|-------------------|
+    // | **Taker**      | 3,000                              | 768                 | 3,768                      | 6,768             |
+    // | **Maker16102** | 3,000                              | 768                 | 3,768                      | 6,768             |
+    // | **Maker6102**  | 3,000                              | 768                 | 3,768                      | 6,768             |
+    //
+    // - Participants regain their initial funding amounts but incur a total loss of **6,768 sats** due to mining fees (recovery + initial transaction fees).
 
     // Check everybody looses mining fees of contract txs.
     let taker_balance_fidelity = taker
@@ -246,7 +271,7 @@ fn test_stop_taker_after_setup() {
         .balance_live_contract(Some(&all_utxos))
         .unwrap();
     let taker_balance = taker_balance_descriptor_utxo + taker_balance_swap_coins;
-
+    //  This Maker is forwarding = 0.00465384 BTC to next Maker | Next maker's fees = 33500 | Miner fees covered by us = 1116
     assert_eq!(org_taker_balance - taker_balance, Amount::from_sat(6768));
     assert_eq!(org_taker_balance_fidelity, Amount::from_btc(0.0).unwrap());
     assert_eq!(

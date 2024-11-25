@@ -27,19 +27,27 @@ fn test_standard_coinswap() {
         ((16102, Some(19052)), MakerBehavior::Normal),
     ];
 
-    let connection_type = if cfg!(target_os = "macos") {
-        ConnectionType::CLEARNET
-    } else {
-        ConnectionType::TOR
-    };
+    // let connection_type = if cfg!(target_os = "macos") {
+    //     ConnectionType::CLEARNET
+    // } else {
+    //     ConnectionType::TOR
+    // };
 
     // Initiate test framework, Makers and a Taker with default behavior.
+<<<<<<< HEAD
     let (test_framework, taker, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
             TakerBehavior::Normal,
             connection_type,
         );
+=======
+    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
+        makers_config_map.into(),
+        TakerBehavior::Normal,
+        ConnectionType::CLEARNET,
+    );
+>>>>>>> 465bbbc (WIP)
 
     warn!("Running Test: Standard Coinswap Procedure");
 
@@ -260,7 +268,7 @@ fn test_standard_coinswap() {
 
     // Check balances makes sense
     all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
-    assert_eq!(all_utxos.len(), 12);
+    assert_eq!(all_utxos.len(), 12); // how 12?
 
     let taker_spendable_bal = taker
         .read()

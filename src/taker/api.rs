@@ -61,8 +61,8 @@ use crate::{
 };
 
 // Default values for Taker configurations
-pub const REFUND_LOCKTIME: u16 = 48;
-pub const REFUND_LOCKTIME_STEP: u16 = 48;
+pub const REFUND_LOCKTIME: u16 = 20;
+pub const REFUND_LOCKTIME_STEP: u16 = 20;
 pub const FIRST_CONNECT_ATTEMPTS: u32 = 5;
 pub const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1;
 pub const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 60;
@@ -89,7 +89,7 @@ pub struct SwapParams {
     pub tx_count: u32,
     // TODO: Following two should be moved to TakerConfig as global configuration.
     /// Confirmation count required for funding txs.
-    pub required_confirms: u64,
+    pub required_confirms: u32,
 }
 
 // Defines the Taker's position in the current ongoing swap.
@@ -240,10 +240,6 @@ impl Taker {
     }
 
     pub fn do_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
-        let tor_log_dir = "/tmp/tor-rust-taker/log".to_string();
-
-        let taker_port = self.config.port;
-
         #[cfg(feature = "tor")]
         let mut handle = None;
 
@@ -253,6 +249,7 @@ impl Taker {
             ConnectionType::TOR => {
                 let taker_socks_port = self.config.socks_port;
 
+                let tor_log_dir = "/tmp/tor-rust-taker/log".to_string();
                 if Path::new(tor_log_dir.as_str()).exists() {
                     match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
                         Ok(_) => log::info!("Previous taker log file deleted successfully"),
@@ -262,19 +259,22 @@ impl Taker {
 
                 handle = Some(crate::tor::spawn_tor(
                     taker_socks_port,
-                    taker_port,
+                    self.config.port,
                     "/tmp/tor-rust-taker".to_string(),
                 ));
 
-                thread::sleep(Duration::from_secs(10));
+                thread::sleep(Duration::from_secs(10)); // Think about this?
 
+                // when we are getting error while reading the file -> how can we say that taker tor is started?
                 if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
                     log::error!("Error monitoring taker log file: {}", e);
                 }
 
+                // TODO: Think about here?
                 log::info!("Taker tor is instantiated");
             }
         }
+
         self.send_coinswap(swap_params)?;
 
         #[cfg(feature = "tor")]
@@ -451,7 +451,7 @@ impl Taker {
         // Loop until we find a live maker who responded to our signature request.
         let (maker, funding_txs) = loop {
             // Fail early if not enough good makers in the list to satisfy swap requirements.
-            let untried_maker_count = self.offerbook.get_all_untried().len();
+            let untried_maker_count = self.offerbook.get_all_untried().len(); //TODO: why we want to remove good makers?
 
             if untried_maker_count < (self.ongoing_swap_state.swap_params.maker_count) {
                 log::error!("Not enough makers to satisfy swap requirements.");
@@ -655,7 +655,7 @@ impl Taker {
                     }
                 }
                 //TODO handle confirm<0
-                if gettx.confirmations >= Some(required_confirmations as u32) {
+                if gettx.confirmations >= Some(required_confirmations) {
                     txid_tx_map.insert(
                         *txid,
                         deserialize::<Transaction>(&gettx.hex).map_err(WalletError::from)?,
@@ -859,6 +859,7 @@ impl Taker {
         maker_refund_locktime: u16,
         funding_tx_infos: &[FundingTxInfo],
     ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TakerError> {
+        // TODO: WHy we are using this api two times.
         let this_maker = &self
             .ongoing_swap_state
             .peer_infos
@@ -874,7 +875,7 @@ impl Taker {
         );
         let address = this_maker.address.to_string();
         let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(address)?,
+            ConnectionType::CLEARNET => TcpStream::connect(address)?, // Why we give return here instead of trying again?
             #[cfg(feature = "tor")]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
@@ -967,7 +968,6 @@ impl Taker {
                 funding_tx_infos: funding_tx_infos.to_vec(),
                 this_maker_contract_txs,
                 this_maker_refund_locktime: maker_refund_locktime,
-                this_maker_fee_rate: self.ongoing_swap_state.swap_params.fee_rate,
             };
 
             let (contract_sigs_as_recvr_sender, next_swap_contract_redeemscripts) =
@@ -1928,30 +1928,25 @@ impl Taker {
 
     /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
     pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        let directory_address = match self.config.connection_type {
-            ConnectionType::CLEARNET => {
-                let mut address = self.config.directory_server_address.clone();
-                if cfg!(feature = "integration-test") {
-                    address = format!("127.0.0.1:{}", 8080);
+        let mut directory_address = self.config.directory_server_address.clone();
+        if cfg!(feature = "integration-test") {
+            match self.config.connection_type {
+                ConnectionType::CLEARNET => {
+                    directory_address = format!("127.0.0.1:{}", 8080);
                 }
-                address
-            }
-            #[cfg(feature = "tor")]
-            ConnectionType::TOR => {
-                let mut address = self.config.directory_server_address.clone();
-                if cfg!(feature = "integration-test") {
+                #[cfg(feature = "tor")]
+                ConnectionType::TOR => {
                     let directory_hs_path_str =
                         "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
-                    let directory_hs_path = PathBuf::from(directory_hs_path_str);
-                    let mut directory_file = fs::File::open(directory_hs_path)?;
+                    let mut directory_file = fs::File::open(directory_hs_path_str)?;
                     let mut directory_onion_addr = String::new();
                     directory_file.read_to_string(&mut directory_onion_addr)?;
                     directory_onion_addr.pop();
-                    address = format!("{}:{}", directory_onion_addr, 8080);
+                    directory_address = format!("{}:{}", directory_onion_addr, 8080);
                 }
-                address
             }
-        };
+        }
+
         let mut socks_port: Option<u16> = None;
         #[cfg(feature = "tor")]
         {

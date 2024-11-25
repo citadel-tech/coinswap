@@ -1,3 +1,4 @@
+Think about this?
 [maker_config]
 # Listening port  
 port = 6102 
@@ -11,7 +12,7 @@ directory_servers_refresh_interval_secs = 43200
 # Time interval to close a connection if no response is received
 idle_connection_timeout = 300
 # Absolute coinswap fee
-absolute_fee_sats = 1000
+base_fee_sats = 1000
 # Fee rate per swap amount in ppb.
 amount_relative_fee_ppb = 10000000
 # Fee rate for timelocked contract in ppb

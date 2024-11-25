@@ -56,15 +56,17 @@ const PUBKEY2_OFFSET: usize = PUBKEY1_OFFSET + PUBKEY_LENGTH + 1;
 /// Calculate the coin swap fee based on various parameters.
 /// swap_amount in sats, refund_locktime in blocks.
 pub fn calculate_coinswap_fee(
+    // Should we consider value in Amount?
     swap_amount: u64,
     refund_locktime: u16,
-    abs_fee: u64,
-    amt_rel_fee: f64,
-    time_rel_fee: f64,
+    base_fee: u64,
+    amt_rel_fee_pct: f64,
+    time_rel_fee_pct: f64,
 ) -> u64 {
-    let total_fee = abs_fee as f64
-        + (swap_amount as f64 * amt_rel_fee) / 1_00.00
-        + (swap_amount as f64 * refund_locktime as f64 * time_rel_fee) / 1_00.00;
+    // swap_amount as f64 * refund_locktime as f64 -> can  overflow inside f64?
+    let total_fee = base_fee as f64
+        + (swap_amount as f64 * amt_rel_fee_pct) / 1_00.00
+        + (swap_amount as f64 * refund_locktime as f64 * time_rel_fee_pct) / 1_00.00;
 
     total_fee.ceil() as u64
 }
@@ -1095,9 +1097,9 @@ mod test {
     #[test]
     fn calculate_coinswap_fee_normal() {
         // Test with typical values
-        let absolute_fee_sat = 1000;
-        let amount_rel_fee = 2.5;
-        let time_rel_fee = 0.1;
+        let base_fee_sat = 1000;
+        let amt_rel_fee_pct = 2.5;
+        let time_rel_fee_pct = 0.1;
         let swap_amount = 100_000;
         let refund_locktime = 20;
 
@@ -1106,9 +1108,9 @@ mod test {
         let calculated_fee = calculate_coinswap_fee(
             swap_amount,
             refund_locktime,
-            absolute_fee_sat,
-            amount_rel_fee,
-            time_rel_fee,
+            base_fee_sat,
+            amt_rel_fee_pct,
+            time_rel_fee_pct,
         );
 
         assert_eq!(calculated_fee, expected_fee);
@@ -1121,7 +1123,7 @@ mod test {
 
         // Test with only the absolute fee being non-zero
         assert_eq!(
-            calculate_coinswap_fee(swap_amount, refund_locktime, absolute_fee_sat, 0.0, 0.0),
+            calculate_coinswap_fee(swap_amount, refund_locktime, base_fee_sat, 0.0, 0.0),
             1000
         );
 
@@ -1131,8 +1133,8 @@ mod test {
                 swap_amount,
                 refund_locktime,
                 0,
-                amount_rel_fee,
-                time_rel_fee
+                amt_rel_fee_pct,
+                time_rel_fee_pct
             ),
             4500
         );

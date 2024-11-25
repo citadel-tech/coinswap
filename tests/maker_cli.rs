@@ -51,8 +51,6 @@ impl MakerCli {
             .args([
                 "--data-directory",
                 self.data_dir.to_str().unwrap(),
-                "--network",
-                "clearnet",
                 "-a",
                 &rpc_auth,
                 "-r",

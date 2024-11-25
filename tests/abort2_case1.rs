@@ -145,8 +145,33 @@ fn test_abort_case_2_move_on_with_other_makers() {
 
     thread::sleep(Duration::from_secs(10));
 
+     //-------- Fee Tracking and Workflow:------------
+    //
+    // | Participant    | Amount Received (Sats) | Amount Forwarded (Sats) | Fee (Sats) | Funding Mining Fees (Sats) | Total Fees (Sats) |
+    // |----------------|------------------------|-------------------------|------------|----------------------------|-------------------|
+    // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
+    // | **Maker16102** | 500,000                | 465,384                 | 31,616     | 3,000                      | 34,616            |
+    // | **Maker6102**  | 465,384                | 442,325                 | 20,059     | 3,000                      | 23,059            |
+    //
+    // ## 3. Final Outcome for Taker (Successful Coinswap):
+    //
+    // | Participant   | Coinswap Outcome (Sats)                                                |
+    // |---------------|--------------------------------------------------------------------|
+    // | **Taker**     | 442,325 = 500,000 - (Total Fees for Maker16102 + Total Fees for Maker6102) |
+    //
+    // ## 4. Final Outcome for Makers:
+    //
+    // | Participant    | Coinswap Outcome (Sats)                                           |
+    // |----------------|-------------------------------------------------------------------|
+    // | **Maker16102** | 500,000 - 465,384 - 3,000 = +31,616                               |
+    // | **Maker6102**  | 465,384 - 442,325 - 3,000 = +20,059                               |
+
+
+
     // TODO: Do balance assertions.
 
+
+    // TODO: Think that whether this is good?
     // Maker might not get banned as Taker may not try 6102 for swap. If it does then check its 6102.
     if !taker.read().unwrap().get_bad_makers().is_empty() {
         assert_eq!(

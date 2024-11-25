@@ -16,38 +16,33 @@ use bitcoin::{
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 
-use crate::{
-    maker::api::{recover_from_swap, ABSOLUTE_FEE, AMOUNT_RELATIVE_FEE, TIME_RELATIVE_FEE},
-    protocol::{
-        contract::calculate_coinswap_fee,
-        error::ProtocolError,
-        messages::{MakerHello, MultisigPrivkey, PrivKeyHandover},
-        Hash160,
+use super::{
+    api::{
+        recover_from_swap, ConnectionState, ExpectedMessage, Maker, MakerBehavior,
+        AMOUNT_RELATIVE_FEE_PCT, BASE_FEE, MIN_CONTRACT_REACTION_TIME, REQUIRED_CONFIRMS,
+        TIME_RELATIVE_FEE_PCT,
     },
-    wallet::{WalletError, WalletSwapCoin},
+    error::MakerError,
 };
 
 use crate::{
-    maker::{
-        api::{ConnectionState, ExpectedMessage, Maker, MakerBehavior},
-        error::MakerError,
-    },
     protocol::{
         contract::{
-            create_receivers_contract_tx, find_funding_output_index, read_hashvalue_from_contract,
-            read_pubkeys_from_multisig_redeemscript, FUNDING_TX_VBYTE_SIZE,
+            calculate_coinswap_fee, create_receivers_contract_tx, find_funding_output_index,
+            read_hashvalue_from_contract, read_pubkeys_from_multisig_redeemscript,
+            FUNDING_TX_VBYTE_SIZE,
         },
+        error::ProtocolError,
         messages::{
             ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
-            ContractSigsForSender, HashPreimage, MakerToTakerMessage, Offer, ProofOfFunding,
-            ReqContractSigsForRecvr, ReqContractSigsForSender, SenderContractTxInfo,
-            TakerToMakerMessage,
+            ContractSigsForSender, HashPreimage, MakerHello, MakerToTakerMessage, MultisigPrivkey,
+            Offer, PrivKeyHandover, ProofOfFunding, ReqContractSigsForRecvr,
+            ReqContractSigsForSender, SenderContractTxInfo, TakerToMakerMessage,
         },
+        Hash160,
     },
-    wallet::{IncomingSwapCoin, SwapCoin},
+    wallet::{IncomingSwapCoin, SwapCoin, WalletError, WalletSwapCoin},
 };
-
-use super::api::{MIN_CONTRACT_REACTION_TIME, REQUIRED_CONFIRMS};
 
 /// The Global Handle Message function. Takes in a [`Arc<Maker>`] and handle messages
 /// according to a [ConnectionState].
@@ -95,9 +90,9 @@ pub fn handle_message(
                 let fidelity = maker.highest_fidelity_proof.read()?;
                 let fidelity = fidelity.as_ref().expect("proof expected");
                 Some(MakerToTakerMessage::RespOffer(Box::new(Offer {
-                    absolute_fee: ABSOLUTE_FEE,
-                    amount_relative_fee: AMOUNT_RELATIVE_FEE,
-                    time_relative_fee: TIME_RELATIVE_FEE,
+                    base_fee: BASE_FEE,
+                    amount_relative_fee_pct: AMOUNT_RELATIVE_FEE_PCT,
+                    time_relative_fee_pct: TIME_RELATIVE_FEE_PCT,
                     required_confirms: REQUIRED_CONFIRMS,
                     minimum_locktime: MIN_CONTRACT_REACTION_TIME,
                     max_size,
@@ -242,6 +237,8 @@ impl Maker {
 
         if total_funding_amount >= self.config.min_swap_amount
             && total_funding_amount < self.wallet.read()?.store.offer_maxsize
+        // TODO: Taker must not be allowed to send the amount beyond this range?
+        // why can't it be <= ?
         {
             log::info!(
                 "[{}] Total Funding Amount = {} | Funding Txids = {:?}",
@@ -253,6 +250,7 @@ impl Maker {
                 ContractSigsForSender { sigs },
             ))
         } else {
+            // Instead , we must create a MakerToTakerMessage variant stating about it rather than giving error back to Maker itself.
             Err(MakerError::General("not enough funds"))
         }
     }
@@ -360,9 +358,9 @@ impl Maker {
         let calc_coinswap_fees = calculate_coinswap_fee(
             incoming_amount,
             message.refund_locktime,
-            ABSOLUTE_FEE,
-            AMOUNT_RELATIVE_FEE,
-            TIME_RELATIVE_FEE,
+            BASE_FEE,
+            AMOUNT_RELATIVE_FEE_PCT,
+            TIME_RELATIVE_FEE_PCT,
         );
 
         let calc_funding_tx_fees = (FUNDING_TX_VBYTE_SIZE
@@ -403,6 +401,11 @@ impl Maker {
             )?
         };
 
+        log::info!(
+            "cal coinswap fee ______________  : {:?}",
+            calc_coinswap_fees
+        );
+
         let act_coinswap_fees = incoming_amount
             .checked_sub(outgoing_amount + act_funding_txs_fees.to_sat())
             .expect("This should not overflow as we just above.");
@@ -417,17 +420,23 @@ impl Maker {
         );
 
         log::info!(
-            "Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Swap Revenue = {}",
+            "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Swap Revenue = {}
+            /n
+            Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {} | 
+            ",
+            self.config.port,
             Amount::from_sat(incoming_amount),
             Amount::from_sat(outgoing_amount),
-            Amount::from_sat(act_coinswap_fees)
-        );
-
-        log::info!(
-            "Our Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {} | ",
+            Amount::from_sat(act_coinswap_fees),
             message.refund_locktime,
             act_funding_txs_fees
         );
+
+        // log::info!(
+        //     "Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {} | ",
+        //     message.refund_locktime,
+        //     act_funding_txs_fees
+        // );
 
         connection_state.pending_funding_txes = my_funding_txes;
         connection_state.outgoing_swapcoins = outgoing_swapcoins;

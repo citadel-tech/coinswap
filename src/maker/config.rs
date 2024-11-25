@@ -7,6 +7,8 @@ use std::io::Write;
 
 use crate::utill::{get_maker_dir, parse_field, ConnectionType};
 
+use super::api::MIN_SWAP_AMOUNT;
+
 /// Maker Configuration, controlling various maker behavior.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MakerConfig {
@@ -33,7 +35,7 @@ impl Default for MakerConfig {
         Self {
             port: 6102,
             rpc_port: 6103,
-            min_swap_amount: 100_000, // A swap amount lower than this will not be economical.
+            min_swap_amount: MIN_SWAP_AMOUNT,
             socks_port: 19050,
             directory_server_address: "127.0.0.1:8080".to_string(),
             fidelity_value: 5_000_000, // 5 million sats
@@ -117,13 +119,13 @@ impl MakerConfig {
     pub fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
             "port = {}
-            rpc_port = {}
-            min_swap_amount = {}
-            socks_port = {}
-            directory_server_address = {}
-            fidelity_value = {}
-            fidelity_timelock = {}
-            connection_type = {:?}",
+rpc_port = {}
+min_swap_amount = {}
+socks_port = {}
+directory_server_address = {}
+fidelity_value = {}
+fidelity_timelock = {}
+connection_type = {:?}",
             self.port,
             self.rpc_port,
             self.min_swap_amount,

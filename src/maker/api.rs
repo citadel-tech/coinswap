@@ -12,7 +12,7 @@ use crate::{
         messages::{FidelityProof, ReqContractSigsForSender},
         Hash160,
     },
-    utill::{get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType},
+    utill::{get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType, HEART_BEAT_INTERVAL},
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
 };
 use bitcoin::{
@@ -46,51 +46,63 @@ use crate::{
 
 use super::{config::MakerConfig, error::MakerError};
 
-/// The core server process interval. many of the maker server's internal threads "beats" at this frequency.
-pub const HEART_BEAT_INTERVAL_SECS: u64 = 3;
-
-/// RPC Backend health check interval.
-pub const RPC_PING_INTERVAL_SECS: u64 = 60;
+/// Interval for health checks on a stable RPC connection with bitcoind.
+pub const RPC_PING_INTERVAL: Duration = Duration::from_secs(60);
 
 // Currently we don't refresh address at DNS. The Maker only post it once at startup.
 // If the address record gets deleted, or the DNS gets blasted, the Maker won't know.
 // TODO: Make the maker repost their address to DNS once a day in spawned thread.
-// pub const DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 60 * 24; // Once a day.
+// pub const DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = Duartion::from_days(1); // Once a day.
 
 /// Maker triggers the recovery mechanism, if Taker is idle for more than 300 secs.
 pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Number of confirmation required funding transaction.
-pub const REQUIRED_CONFIRMS: u64 = 1;
+pub const REQUIRED_CONFIRMS: u32 = 1;
 
-/// The minimum locktime difference between the incoming and outgoing swaps.
-/// This is the reaction time in blocks a Maker has to claim his refund transaction, in case of recovery.
-/// Bolt2 has an estimate of minimum `cltv_expiry_delta` as 18  blocks. https://github.com/lightning/bolts/blob/aa5207aeaa32d841353dd2df3ce725a4046d528d/02-peer-protocol.md?plain=1#L1798
-/// To be a bit more conservative we use 20 as the default value.
+/// The minimum difference in locktime (in blocks) between the incoming and outgoing swaps.
+///
+/// This value specifies the reaction time, in blocks, available to a Maker
+/// to claim the refund transaction in case of recovery.
+///
+/// According to [BOLT #2](https://github.com/lightning/bolts/blob/aa5207aeaa32d841353dd2df3ce725a4046d528d/02-peer-protocol.md?plain=1#L1798),
+/// the estimated minimum `cltv_expiry_delta` is 18 blocks.
+/// To enhance safety, the default value is set to 20 blocks.
 pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
 
-/// Fee Parameters
+/// # Fee Parameters for Coinswap
 ///
-/// abs_fee = Constant fee for all swaps.
-/// amount_relative_fee = Percentage fee relative to the swap_amount.
-/// time_relative_fee = Percentage fee applied to the refund_locktime, i.e, how long the maker needs to wait for their refund time-lock.
+/// These parameters define the fees charged by Makers in a coinswap transaction.
 ///
-/// Increasing the swap amount and refund timelock, increases the coinswap fee, claimed by the maker.
-/// Check [REFUND_LOCKTIME] and [REFUND_LOCKTIME_STEP] of taker::api.rs.
+/// TODO: These parameters are currently hardcoded. Consider making them configurable for Makers in the future.
+///p
+/// - `BASE_FEE`: A fixed base fee charged by the Maker for providing its services
+/// - `AMOUNT_RELATIVE_FEE_PCT`: A percentage fee based on the swap amount.
+/// - `TIME_RELATIVE_FEE_PCT`: A percentage fee based on the refund locktime (duration the Maker must wait for a refund).
 ///
-/// So Total fee on swap is calculated as
-/// `total_fee = abs_fee + (swap_amount * relative_fee)/100 + (swap_amount * refund_locktime * time_relative_fee)/100`;
+/// The coinswap fee increases with both the swap amount and the refund locktime.
+/// Refer to `REFUND_LOCKTIME` and `REFUND_LOCKTIME_STEP` in `taker::api.rs` for related parameters.
 ///
-/// # Example for default values:
-/// For swap_amount = 100,000 sats, refund_locktime = 20 Blocks;
-/// abs_fee = 1000 sats;
-/// amount_relative_fee = (100,000 * 2.5)/100 = 2500 sats;
-/// time_relative_fee = (100,000 * 20 * 0.1)/100 = 2000 sats;
-/// total_fee = 5500 sats, i.e. 5.5%;
-/// The fee rates are set such a way, that the total % fees reaches 5% asymptotically with increase in swap amount.
-pub const ABSOLUTE_FEE: u64 = 1000;
-pub const AMOUNT_RELATIVE_FEE: f64 = 2.50;
-pub const TIME_RELATIVE_FEE: f64 = 0.10;
+/// ### Fee Calculation
+/// The total fee for a swap is calculated as:
+/// `total_fee = base_fee + (swap_amount * amount_relative_fee_pct) / 100 + (swap_amount * refund_locktime * time_relative_fee_pct) / 100`
+///
+/// ### Example (Default Values)
+/// For a swap amount of 100,000 sats and a refund locktime of 20 blocks:
+/// - `base_fee` = 1,000 sats
+/// - `amount_relative_fee` = (100,000 * 2.5) / 100 = 2,500 sats
+/// - `time_relative_fee` = (100,000 * 20 * 0.1) / 100 = 2,000 sats
+/// - `total_fee` = 5,500 sats (5.5%)
+///
+/// Fee rates are designed to asymptotically approach 5% of the swap amount as the swap amount increases..
+pub const BASE_FEE: u64 = 1000;
+pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 2.50;
+pub const TIME_RELATIVE_FEE_PCT: f64 = 0.10;
+
+/// Minimum Coinswap amount; makers will not accept amounts below this.
+pub const MIN_SWAP_AMOUNT: u64 = 100000;
+
+// What's the use of RefundLocktimeStep?
 
 /// Used to configure the maker for testing purposes.
 #[derive(Debug, Clone, Copy)]
@@ -567,7 +579,7 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
             }
         } // All locks are cleared here.
 
-        std::thread::sleep(Duration::from_secs(HEART_BEAT_INTERVAL_SECS));
+        std::thread::sleep(HEART_BEAT_INTERVAL);
     }
 
     Ok(())
@@ -652,7 +664,7 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
             }
         } // All locks are cleared here
 
-        std::thread::sleep(Duration::from_secs(HEART_BEAT_INTERVAL_SECS));
+        std::thread::sleep(HEART_BEAT_INTERVAL);
     }
 
     Ok(())

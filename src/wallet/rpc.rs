@@ -1,10 +1,10 @@
 //! Manages connection with a Bitcoin Core RPC.
 //!
-use std::{convert::TryFrom, thread, time::Duration};
-
+use crate::utill::HEART_BEAT_INTERVAL;
 use bitcoin::Network;
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 use serde_json::{json, Value};
+use std::{convert::TryFrom, thread, time::Duration};
 
 use crate::wallet::api::KeychainKind;
 
@@ -142,7 +142,7 @@ impl Wallet {
 
                 Err(e) => {
                     log::warn!("Sync Error, Retrying: {}", e);
-                    thread::sleep(Duration::from_secs(3));
+                    thread::sleep(HEART_BEAT_INTERVAL);
                     continue;
                 }
             }

@@ -126,8 +126,6 @@ pub fn start_dns(
     let mut args = vec![
         "--data-directory",
         data_dir.to_str().unwrap(),
-        "--network",
-        &conn_type,
         "--rpc_network",
         "regtest",
     ];
