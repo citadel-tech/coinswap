@@ -30,6 +30,7 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 #[cfg(feature = "tor")]
 use socks::Socks5Stream;
 
+use super::api::{HEART_BEAT_INTERVAL_SECS, RPC_PING_INTERVAL_SECS};
 pub use super::Maker;
 
 use crate::{
@@ -48,18 +49,6 @@ use crate::{
 use crate::utill::monitor_log_for_completion;
 
 use crate::maker::error::MakerError;
-
-// Default values for Maker configurations
-pub const HEART_BEAT_INTERVAL_SECS: u64 = 3;
-pub const RPC_PING_INTERVAL_SECS: u64 = 60;
-pub const _DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 60 * 12; // 12 Hours
-pub const _IDLE_CONNECTION_TIMEOUT: u64 = 300;
-pub const REQUIRED_CONFIRMS: u64 = 1;
-pub const MIN_CONTRACT_REACTION_TIME: u16 = 48;
-
-/// Fee rate per swap amount in parts per billion (PPB).
-/// E.g., for 1 billion sats (0.01 BTC), a value of 10_000 would result in a 0.1% fee.
-pub const AMOUNT_RELATIVE_FEE_PPB: Amount = Amount::from_sat(10_000_000);
 
 #[cfg(feature = "tor")]
 type OptionalJoinHandle = Option<mitosis::JoinHandle<()>>;
@@ -438,8 +427,6 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         maker_address
     );
 
-    let heart_beat_interval = HEART_BEAT_INTERVAL_SECS; // All maker internal threads loops at this frequency.
-
     // Global server Mutex, to switch on/off p2p network.
     let accepting_clients = Arc::new(AtomicBool::new(false));
 
@@ -512,8 +499,8 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
         maker.thread_pool.add_thread(rpc_thread);
 
-        sleep(Duration::from_secs(heart_beat_interval)); // wait for 1 beat, to complete spawns of all the threads.
-        maker.is_setup_complete.store(true, Relaxed);
+        sleep(Duration::from_secs(HEART_BEAT_INTERVAL_SECS)); // wait for 1 beat, to complete spawns of all the threads.
+        maker.setup_complete()?;
         log::info!("[{}] Maker setup is ready", maker.config.port);
     }
 

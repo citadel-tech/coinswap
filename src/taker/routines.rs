@@ -245,22 +245,22 @@ pub struct ThisMakerInfo {
     pub this_maker: OfferAndAddress,
     pub funding_tx_infos: Vec<FundingTxInfo>,
     pub this_maker_contract_txs: Vec<Transaction>,
+    pub this_maker_refund_locktime: u16,
+    pub this_maker_fee_rate: Amount, // Applies to both funding and contract transaction
 }
 
 // Type for information related to the next peer
 #[derive(Clone)]
-pub struct NextPeerInfoArgs {
+pub struct NextMakerInfo {
     pub next_peer_multisig_pubkeys: Vec<PublicKey>,
     pub next_peer_hashlock_pubkeys: Vec<PublicKey>,
-    pub next_maker_refund_locktime: u16,
-    pub next_maker_fee_rate: Amount,
 }
 
 /// [Internal] Send a Proof funding to the maker and init next hop.
 pub(crate) fn send_proof_of_funding_and_init_next_hop(
     socket: &mut TcpStream,
     tmi: ThisMakerInfo,
-    npi: NextPeerInfoArgs,
+    npi: NextMakerInfo,
     hashvalue: Hash160,
 ) -> Result<(ContractSigsAsRecvrAndSender, Vec<ScriptBuf>), TakerError> {
     // Send POF
@@ -279,8 +279,8 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
     let pof_msg = TakerToMakerMessage::RespProofOfFunding(ProofOfFunding {
         confirmed_funding_txes: tmi.funding_tx_infos.clone(),
         next_coinswap_info,
-        next_locktime: npi.next_maker_refund_locktime,
-        next_fee_rate: npi.next_maker_fee_rate.to_sat(),
+        refund_locktime: tmi.this_maker_refund_locktime,
+        contract_feerate: tmi.this_maker_fee_rate.to_sat(),
     });
 
     send_message(socket, &pof_msg)?;
@@ -337,15 +337,17 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         .iter()
         .map(|i| i.funding_amount)
         .sum::<Amount>();
+
     let coinswap_fees = calculate_coinswap_fee(
-        tmi.this_maker.offer.absolute_fee_sat,
-        tmi.this_maker.offer.amount_relative_fee_ppb,
-        tmi.this_maker.offer.time_relative_fee_ppb,
-        Amount::from_sat(this_amount),
-        1, //time_in_blocks just 1 for now
+        this_amount,
+        tmi.this_maker_refund_locktime,
+        tmi.this_maker.offer.absolute_fee,
+        tmi.this_maker.offer.amount_relative_fee,
+        tmi.this_maker.offer.time_relative_fee,
     );
+
     let miner_fees_paid_by_taker = (FUNDING_TX_VBYTE_SIZE
-        * npi.next_maker_fee_rate.to_sat()
+        * tmi.this_maker_fee_rate.to_sat()
         * (npi.next_peer_multisig_pubkeys.len() as u64))
         / 1000;
     let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
@@ -357,7 +359,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         .into());
     }
     log::info!(
-        "this_amount={} coinswap_fees={} miner_fees_paid_by_taker={} next_amount={}",
+        "Next maker's amount = {} | Next maker's fees = {} | Miner fees covered by us = {} | Maker is forwarding = {}",
         this_amount,
         coinswap_fees,
         miner_fees_paid_by_taker,
@@ -394,7 +396,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
                 hashlock_pubkey,
                 &senders_contract_tx_info.timelock_pubkey,
                 &hashvalue,
-                &npi.next_maker_refund_locktime,
+                &tmi.this_maker_refund_locktime,
             )
         })
         .collect::<Vec<_>>();

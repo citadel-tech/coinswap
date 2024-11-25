@@ -54,16 +54,19 @@ const PUBKEY1_OFFSET: usize = 2;
 const PUBKEY2_OFFSET: usize = PUBKEY1_OFFSET + PUBKEY_LENGTH + 1;
 
 /// Calculate the coin swap fee based on various parameters.
+/// swap_amount in sats, refund_locktime in blocks.
 pub fn calculate_coinswap_fee(
-    absolute_fee_sat: Amount,
-    amount_relative_fee_ppb: Amount,
-    time_relative_fee_ppb: Amount,
-    total_funding_amount: Amount,
-    time_in_blocks: u64,
+    swap_amount: u64,
+    refund_locktime: u16,
+    abs_fee: u64,
+    amt_rel_fee: f64,
+    time_rel_fee: f64,
 ) -> u64 {
-    absolute_fee_sat.to_sat()
-        + (total_funding_amount.to_sat() * amount_relative_fee_ppb.to_sat()) / 1_000_000_000
-        + (time_in_blocks * time_relative_fee_ppb.to_sat()) / 1_000_000_000
+    let total_fee = abs_fee as f64
+        + (swap_amount as f64 * amt_rel_fee) / 1_00.00
+        + (swap_amount as f64 * refund_locktime as f64 * time_rel_fee) / 1_00.00;
+
+    total_fee.ceil() as u64
 }
 
 /// Apply two signatures to a 2-of-2 multisig spend.
@@ -1092,54 +1095,46 @@ mod test {
     #[test]
     fn calculate_coinswap_fee_normal() {
         // Test with typical values
-        let absolute_fee_sat = Amount::from_sat(1000);
-        let amount_relative_fee_ppb = Amount::from_sat(500_000_000);
-        let time_relative_fee_ppb = Amount::from_sat(200_000_000);
-        let total_funding_amount = Amount::from_sat(1_000_000_000);
-        let time_in_blocks = 100;
+        let absolute_fee_sat = 1000;
+        let amount_rel_fee = 2.5;
+        let time_rel_fee = 0.1;
+        let swap_amount = 100_000;
+        let refund_locktime = 20;
 
-        let expected_fee = 1000
-            + (1_000_000_000 * 500_000_000) / 1_000_000_000
-            + (100 * 200_000_000) / 1_000_000_000;
+        let expected_fee = 5500;
 
         let calculated_fee = calculate_coinswap_fee(
+            swap_amount,
+            refund_locktime,
             absolute_fee_sat,
-            amount_relative_fee_ppb,
-            time_relative_fee_ppb,
-            total_funding_amount,
-            time_in_blocks,
+            amount_rel_fee,
+            time_rel_fee,
         );
 
         assert_eq!(calculated_fee, expected_fee);
 
         // Test with zero values
         assert_eq!(
-            calculate_coinswap_fee(Amount::ZERO, Amount::ZERO, Amount::ZERO, Amount::ZERO, 0),
+            calculate_coinswap_fee(swap_amount, refund_locktime, 0, 0.0, 0.0),
             0
         );
 
         // Test with only the absolute fee being non-zero
         assert_eq!(
-            calculate_coinswap_fee(
-                Amount::from_sat(1000),
-                Amount::ZERO,
-                Amount::ZERO,
-                Amount::ZERO,
-                0
-            ),
+            calculate_coinswap_fee(swap_amount, refund_locktime, absolute_fee_sat, 0.0, 0.0),
             1000
         );
 
         // Test with only the relative fees being non-zero
         assert_eq!(
             calculate_coinswap_fee(
-                Amount::ZERO,
-                Amount::from_sat(1_000_000_000),
-                Amount::from_sat(1_000_000_000),
-                Amount::from_sat(1000),
-                10
+                swap_amount,
+                refund_locktime,
+                0,
+                amount_rel_fee,
+                time_rel_fee
             ),
-            1010
+            4500
         );
     }
 
@@ -1292,8 +1287,8 @@ mod test {
                 next_hashlock_pubkey: pub_1,
                 next_multisig_pubkey: pub_2,
             }],
-            next_locktime: u16::default(),
-            next_fee_rate: u64::default(),
+            refund_locktime: u16::default(),
+            contract_feerate: u64::default(),
         };
 
         // case with same hash value
@@ -1321,8 +1316,8 @@ mod test {
                 next_hashlock_pubkey: pub_1,
                 next_multisig_pubkey: pub_2,
             }],
-            next_locktime: u16::default(),
-            next_fee_rate: u64::default(),
+            refund_locktime: u16::default(),
+            contract_feerate: u64::default(),
         };
 
         let hash_value_from_fn = check_hashvalues_are_equal(&funding_proof).unwrap_err();

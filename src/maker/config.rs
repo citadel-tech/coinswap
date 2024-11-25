@@ -3,7 +3,6 @@
 use crate::utill::parse_toml;
 use std::{io, path::Path};
 
-use bitcoin::Amount;
 use std::io::Write;
 
 use crate::utill::{get_maker_dir, parse_field, ConnectionType};
@@ -15,13 +14,8 @@ pub struct MakerConfig {
     pub port: u16,
     /// RPC listening port
     pub rpc_port: u16,
-    /// Absolute coinswap fee
-    pub absolute_fee_sats: Amount,
-    /// Fee rate for timelocked contract in parts per billion (PPB).
-    /// Similar to `DEFAULT_AMOUNT_RELATIVE_FEE_PPB`, calculated as (amount * fee_ppb) / 1_000_000_000.
-    pub time_relative_fee_ppb: Amount,
-    /// Minimum timelock difference between contract transaction of two hops
-    pub min_size: u64,
+    /// Minimum swap size.
+    pub min_swap_amount: u64,
     /// Socks port
     pub socks_port: u16,
     /// Directory server address (can be clearnet or onion)
@@ -39,9 +33,7 @@ impl Default for MakerConfig {
         Self {
             port: 6102,
             rpc_port: 6103,
-            absolute_fee_sats: Amount::from_sat(1000),
-            time_relative_fee_ppb: Amount::from_sat(100_000),
-            min_size: 10_000,
+            min_swap_amount: 100_000, // A swap amount lower than this will not be economical.
             socks_port: 19050,
             directory_server_address: "127.0.0.1:8080".to_string(),
             fidelity_value: 5_000_000, // 5 million sats
@@ -97,21 +89,15 @@ impl MakerConfig {
         Ok(MakerConfig {
             port: parse_field(config_map.get("port"), default_config.port),
             rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
-            absolute_fee_sats: parse_field(
-                config_map.get("absolute_fee_sats"),
-                default_config.absolute_fee_sats,
+            min_swap_amount: parse_field(
+                config_map.get("min_swap_amount"),
+                default_config.min_swap_amount,
             ),
-            time_relative_fee_ppb: parse_field(
-                config_map.get("time_relative_fee_ppb"),
-                default_config.time_relative_fee_ppb,
-            ),
-            min_size: parse_field(config_map.get("min_size"), default_config.min_size),
             socks_port: parse_field(config_map.get("socks_port"), default_config.socks_port),
             directory_server_address: parse_field(
                 config_map.get("directory_server_address"),
                 default_config.directory_server_address,
             ),
-
             fidelity_value: parse_field(
                 config_map.get("fidelity_value"),
                 default_config.fidelity_value,
@@ -131,20 +117,16 @@ impl MakerConfig {
     pub fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
             "port = {}
-rpc_port = {}
-absolute_fee_sats = {}
-time_relative_fee_ppb = {}
-min_size = {}
-socks_port = {}
-directory_server_address = {}
-fidelity_value = {}
-fidelity_timelock = {}
-connection_type = {:?}",
+            rpc_port = {}
+            min_swap_amount = {}
+            socks_port = {}
+            directory_server_address = {}
+            fidelity_value = {}
+            fidelity_timelock = {}
+            connection_type = {:?}",
             self.port,
             self.rpc_port,
-            self.absolute_fee_sats,
-            self.time_relative_fee_ppb,
-            self.min_size,
+            self.min_swap_amount,
             self.socks_port,
             self.directory_server_address,
             self.fidelity_value,
@@ -187,12 +169,9 @@ mod tests {
             [maker_config]
             port = 6102
             rpc_port = 6103
-            absolute_fee_sats = 1000
-            amount_relative_fee_ppb = 10000000
-            time_relative_fee_ppb = 100000
             required_confirms = 1
             min_contract_reaction_time = 48
-            min_size = 10000
+            min_swap_amount = 10000
             socks_port = 19050
         "#;
         let config_path = create_temp_config(contents, "valid_maker_config.toml");

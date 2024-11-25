@@ -46,9 +46,51 @@ use crate::{
 
 use super::{config::MakerConfig, error::MakerError};
 
-use crate::maker::server::{
-    HEART_BEAT_INTERVAL_SECS, MIN_CONTRACT_REACTION_TIME, REQUIRED_CONFIRMS,
-};
+/// The core server process interval. many of the maker server's internal threads "beats" at this frequency.
+pub const HEART_BEAT_INTERVAL_SECS: u64 = 3;
+
+/// RPC Backend health check interval.
+pub const RPC_PING_INTERVAL_SECS: u64 = 60;
+
+// Currently we don't refresh address at DNS. The Maker only post it once at startup.
+// If the address record gets deleted, or the DNS gets blasted, the Maker won't know.
+// TODO: Make the maker repost their address to DNS once a day in spawned thread.
+// pub const DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 60 * 24; // Once a day.
+
+/// Maker triggers the recovery mechanism, if Taker is idle for more than 300 secs.
+pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Number of confirmation required funding transaction.
+pub const REQUIRED_CONFIRMS: u64 = 1;
+
+/// The minimum locktime difference between the incoming and outgoing swaps.
+/// This is the reaction time in blocks a Maker has to claim his refund transaction, in case of recovery.
+/// Bolt2 has an estimate of minimum `cltv_expiry_delta` as 18  blocks. https://github.com/lightning/bolts/blob/aa5207aeaa32d841353dd2df3ce725a4046d528d/02-peer-protocol.md?plain=1#L1798
+/// To be a bit more conservative we use 20 as the default value.
+pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
+
+/// Fee Parameters
+///
+/// abs_fee = Constant fee for all swaps.
+/// amount_relative_fee = Percentage fee relative to the swap_amount.
+/// time_relative_fee = Percentage fee applied to the refund_locktime, i.e, how long the maker needs to wait for their refund time-lock.
+///
+/// Increasing the swap amount and refund timelock, increases the coinswap fee, claimed by the maker.
+/// Check [REFUND_LOCKTIME] and [REFUND_LOCKTIME_STEP] of taker::api.rs.
+///
+/// So Total fee on swap is calculated as
+/// `total_fee = abs_fee + (swap_amount * relative_fee)/100 + (swap_amount * refund_locktime * time_relative_fee)/100`;
+///
+/// # Example for default values:
+/// For swap_amount = 100,000 sats, refund_locktime = 20 Blocks;
+/// abs_fee = 1000 sats;
+/// amount_relative_fee = (100,000 * 2.5)/100 = 2500 sats;
+/// time_relative_fee = (100,000 * 20 * 0.1)/100 = 2000 sats;
+/// total_fee = 5500 sats, i.e. 5.5%;
+/// The fee rates are set such a way, that the total % fees reaches 5% asymptotically with increase in swap amount.
+pub const ABSOLUTE_FEE: u64 = 1000;
+pub const AMOUNT_RELATIVE_FEE: f64 = 2.50;
+pub const TIME_RELATIVE_FEE: f64 = 0.10;
 
 /// Used to configure the maker for testing purposes.
 #[derive(Debug, Clone, Copy)]
@@ -278,7 +320,7 @@ impl Maker {
             // check that the new locktime is sufficently short enough compared to the
             // locktime in the provided funding tx
             let locktime = read_contract_locktime(&funding_info.contract_redeemscript)?;
-            if locktime - message.next_locktime < MIN_CONTRACT_REACTION_TIME {
+            if locktime - message.refund_locktime < MIN_CONTRACT_REACTION_TIME {
                 return Err(MakerError::General(
                     "Next hop locktime too close to current hop locktime",
                 ));
@@ -558,7 +600,7 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
                     ip,
                     no_response_since
                 );
-                if no_response_since > std::time::Duration::from_secs(60) {
+                if no_response_since > IDLE_CONNECTION_TIMEOUT {
                     log::error!(
                         "[{}] Potential Dropped Connection from {}",
                         maker.config.port,
