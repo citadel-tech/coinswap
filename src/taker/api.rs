@@ -82,7 +82,12 @@ pub struct SwapParams {
     // TODO: Following two should be moved to TakerConfig as global configuration.
     /// Confirmation count required for funding txs.
     pub required_confirms: u64,
-    /// Fee rate for funding txs.
+
+    /// Fee rate for funding and contract txs.
+    // TODO: This fee rate should be decided by the Makers.
+    // Taker can DOS makers by forcing them to recover at high fee environment, while keeping fee rate low.
+    // Its difficult to decide what should be the correct feerate, and maker's should have some type of fee estimation
+    // mechanism to set this fee dynamically.
     pub fee_rate: Amount,
 }
 
@@ -966,18 +971,19 @@ impl Taker {
             log::info!("Fundix Txids: {:?}", funding_txids);
 
             // Struct for information related to the next peer
-            let next_maker_info = NextPeerInfoArgs {
+            let next_maker_info = NextMakerInfo {
                 next_peer_multisig_pubkeys: next_peer_multisig_pubkeys.clone(),
                 next_peer_hashlock_pubkeys: next_peer_hashlock_pubkeys.clone(),
-                next_maker_refund_locktime: maker_refund_locktime,
-                next_maker_fee_rate: self.ongoing_swap_state.swap_params.fee_rate,
             };
 
             let this_maker_info = ThisMakerInfo {
                 this_maker: this_maker.clone(),
                 funding_tx_infos: funding_tx_infos.to_vec(),
                 this_maker_contract_txs,
+                this_maker_refund_locktime: maker_refund_locktime,
+                this_maker_fee_rate: self.ongoing_swap_state.swap_params.fee_rate,
             };
+
             let (contract_sigs_as_recvr_sender, next_swap_contract_redeemscripts) =
                 send_proof_of_funding_and_init_next_hop(
                     &mut socket,
