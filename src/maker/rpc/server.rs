@@ -6,10 +6,14 @@ use std::{
     time::Duration,
 };
 
+use bitcoin::{Address, Amount};
+
 use crate::{
     maker::{error::MakerError, rpc::messages::RpcMsgResp, Maker},
-    utill::{read_message, send_message},
+    utill::{get_maker_dir, get_tor_addrs, read_message, send_message},
+    wallet::{Destination, SendAmount},
 };
+use std::str::FromStr;
 
 use super::messages::RpcMsgReq;
 
@@ -107,6 +111,48 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
         RpcMsgReq::NewAddress => {
             let new_address = maker.get_wallet().write()?.get_next_external_address()?;
             let resp = RpcMsgResp::NewAddressResp(new_address.to_string());
+            if let Err(e) = send_message(socket, &resp) {
+                log::info!("Error sending RPC response {:?}", e);
+            };
+        }
+        RpcMsgReq::SendToAddress {
+            address,
+            amount,
+            fee,
+        } => {
+            let amount = Amount::from_sat(amount);
+            let fee = Amount::from_sat(fee);
+            let destination =
+                Destination::Address(Address::from_str(&address).unwrap().assume_checked());
+
+            let coins_to_send = maker.get_wallet().read()?.coin_select(amount + fee)?;
+
+            let tx = maker.get_wallet().write()?.spend_from_wallet(
+                fee,
+                SendAmount::Amount(amount),
+                destination,
+                &coins_to_send,
+            )?;
+
+            let calculated_fee_rate = fee / (tx.weight());
+            log::info!("Calculated FeeRate : {:#}", calculated_fee_rate);
+
+            let resp =
+                RpcMsgResp::SendToAddressResp(bitcoin::consensus::encode::serialize_hex(&tx));
+            if let Err(e) = send_message(socket, &resp) {
+                log::info!("Error sending RPC response {:?}", e);
+            };
+        }
+        RpcMsgReq::GetDataDir => {
+            let path = get_maker_dir().display().to_string();
+            let resp = RpcMsgResp::GetDataDirResp(path);
+            if let Err(e) = send_message(socket, &resp) {
+                log::info!("Error sending RPC response {:?}", e);
+            };
+        }
+        RpcMsgReq::GetTorAddress => {
+            let path = get_maker_dir().join("tor");
+            let resp = RpcMsgResp::GetTorAddressResp(get_tor_addrs(&path));
             if let Err(e) = send_message(socket, &resp) {
                 log::info!("Error sending RPC response {:?}", e);
             };
