@@ -6,7 +6,6 @@ use std::{
     net::TcpStream,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Once,
 };
 
 use bitcoin::{
@@ -123,72 +122,66 @@ pub fn seed_phrase_to_unique_id(seed: &str) -> String {
 /// Setup function that will only run once, even if called multiple times.
 /// Takes log level to set the desired logging verbosity
 pub fn setup_taker_logger(filter: LevelFilter) {
-    Once::new().call_once(|| {
-        env::set_var("RUST_LOG", "coinswap=info");
-        let log_dir = get_taker_dir().join("debug.log");
+    env::set_var("RUST_LOG", "coinswap=info");
+    let log_dir = get_taker_dir().join("debug.log");
 
-        let stdout = ConsoleAppender::builder().build();
-        let file_appender = FileAppender::builder().build(log_dir).unwrap();
+    let stdout = ConsoleAppender::builder().build();
+    let file_appender = FileAppender::builder().build(log_dir).unwrap();
 
-        let config = Config::builder()
-            .appender(Appender::builder().build("stdout", Box::new(stdout)))
-            .appender(Appender::builder().build("file", Box::new(file_appender)))
-            .logger(
-                Logger::builder()
-                    .appender("file")
-                    .build("coinswap::taker", filter),
-            )
-            .build(Root::builder().appender("stdout").build(filter))
-            .unwrap();
+    let config = Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .appender(Appender::builder().build("file", Box::new(file_appender)))
+        .logger(
+            Logger::builder()
+                .appender("file")
+                .build("coinswap::taker", filter),
+        )
+        .build(Root::builder().appender("stdout").build(filter))
+        .unwrap();
 
-        log4rs::init_config(config).unwrap();
-    });
+    log4rs::init_config(config).unwrap();
 }
 
 pub fn setup_maker_logger(filter: LevelFilter) {
-    Once::new().call_once(|| {
-        env::set_var("RUST_LOG", "coinswap=info");
-        let log_dir = get_maker_dir().join("debug.log");
+    env::set_var("RUST_LOG", "coinswap=info");
+    let log_dir = get_maker_dir().join("debug.log");
 
-        let stdout = ConsoleAppender::builder().build();
-        let file_appender = FileAppender::builder().build(log_dir).unwrap();
+    let stdout = ConsoleAppender::builder().build();
+    let file_appender = FileAppender::builder().build(log_dir).unwrap();
 
-        let config = Config::builder()
-            .appender(Appender::builder().build("stdout", Box::new(stdout)))
-            .appender(Appender::builder().build("file", Box::new(file_appender)))
-            .logger(
-                Logger::builder()
-                    .appender("file")
-                    .build("coinswap::maker", filter),
-            )
-            .build(Root::builder().appender("stdout").build(filter))
-            .unwrap();
+    let config = Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .appender(Appender::builder().build("file", Box::new(file_appender)))
+        .logger(
+            Logger::builder()
+                .appender("file")
+                .build("coinswap::maker", filter),
+        )
+        .build(Root::builder().appender("stdout").build(filter))
+        .unwrap();
 
-        log4rs::init_config(config).unwrap();
-    });
+    log4rs::init_config(config).unwrap();
 }
 
 pub fn setup_directory_logger(filter: LevelFilter) {
-    Once::new().call_once(|| {
-        env::set_var("RUST_LOG", "coinswap=info");
-        let log_dir = get_dns_dir().join("debug.log");
+    env::set_var("RUST_LOG", "coinswap=info");
+    let log_dir = get_dns_dir().join("debug.log");
 
-        let stdout = ConsoleAppender::builder().build();
-        let file_appender = FileAppender::builder().build(log_dir).unwrap();
+    let stdout = ConsoleAppender::builder().build();
+    let file_appender = FileAppender::builder().build(log_dir).unwrap();
 
-        let config = Config::builder()
-            .appender(Appender::builder().build("stdout", Box::new(stdout)))
-            .appender(Appender::builder().build("file", Box::new(file_appender)))
-            .logger(
-                Logger::builder()
-                    .appender("file")
-                    .build("coinswap::market", filter),
-            )
-            .build(Root::builder().appender("stdout").build(filter))
-            .unwrap();
+    let config = Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .appender(Appender::builder().build("file", Box::new(file_appender)))
+        .logger(
+            Logger::builder()
+                .appender("file")
+                .build("coinswap::market", filter),
+        )
+        .build(Root::builder().appender("stdout").build(filter))
+        .unwrap();
 
-        log4rs::init_config(config).unwrap();
-    });
+    log4rs::init_config(config).unwrap();
 }
 /// Send a length-appended Protocol or RPC Message through a stream.
 /// The first byte sent is the length of the actual message.
