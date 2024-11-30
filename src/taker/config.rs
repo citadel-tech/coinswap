@@ -5,6 +5,7 @@
 
 use crate::utill::{get_taker_dir, parse_field, parse_toml, ConnectionType};
 use std::{io, io::Write, path::PathBuf};
+
 /// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
@@ -41,72 +42,58 @@ impl TakerConfig {
     ///
     /// For reference of default config checkout `./taker.toml` in repo folder.
     ///
-    /// Default data-dir for linux: `~/.coinswap/`
+    /// Default data-dir for linux: `~/.coinswap/taker`
     /// Default config locations: `~/.coinswap/taker/config.toml`.
     pub fn new(config_path: Option<&PathBuf>) -> io::Result<Self> {
-        let default_config = Self::default();
-
         let default_config_path = get_taker_dir().join("config.toml");
+
         let config_path = config_path.unwrap_or(&default_config_path);
 
-        if !config_path.exists() {
-            let config = TakerConfig::default();
-            config.write_to_file(config_path).unwrap();
+        let default_config = Self::default();
+
+        if !config_path.exists() || std::fs::metadata(config_path)?.len() == 0 {
             log::warn!(
                 "Taker config file not found, creating default config file at path: {}",
                 config_path.display()
             );
+            default_config.write_to_file(config_path)?;
         }
 
-        let section = parse_toml(config_path)?;
+        let config_map = parse_toml(config_path)?;
+
         log::info!(
             "Successfully loaded config file from : {}",
             config_path.display()
         );
 
-        let taker_config_section = section.get("taker_config").cloned().unwrap_or_default();
-
         Ok(TakerConfig {
-            port: parse_field(taker_config_section.get("port"), default_config.port)
-                .unwrap_or(default_config.port),
-            socks_port: parse_field(
-                taker_config_section.get("socks_port"),
-                default_config.socks_port,
-            )
-            .unwrap_or(default_config.socks_port),
-            directory_server_address: taker_config_section
-                .get("directory_server_onion_address")
-                .map(|s| s.to_string())
-                .unwrap_or(default_config.directory_server_address),
+            port: parse_field(config_map.get("port"), default_config.port),
+            socks_port: parse_field(config_map.get("socks_port"), default_config.socks_port),
+            directory_server_address: parse_field(
+                config_map.get("directory_server_address"),
+                default_config.directory_server_address,
+            ),
             connection_type: parse_field(
-                taker_config_section.get("connection_type"),
+                config_map.get("connection_type"),
                 default_config.connection_type,
-            )
-            .unwrap_or(default_config.connection_type),
-            rpc_port: parse_field(
-                taker_config_section.get("rpc_port"),
-                default_config.rpc_port,
-            )
-            .unwrap_or(default_config.rpc_port),
+            ),
+            rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
         })
     }
 
     // Method to manually serialize the Taker Config into a TOML string
     pub fn write_to_file(&self, path: &PathBuf) -> std::io::Result<()> {
         let toml_data = format!(
-            r#"
-            [taker_config]
-            port = {}
-            socks_port = {}
-            directory_server_address = {}
-            connection_type = "{:?}"
-            rpc_port = {}
-            "#,
+            "port = {}
+socks_port = {}
+rpc_port = {}
+directory_server_address = {}
+connection_type = {:?}",
             self.port,
             self.socks_port,
+            self.rpc_port,
             self.directory_server_address,
-            self.connection_type,
-            self.rpc_port
+            self.connection_type
         );
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;
@@ -141,10 +128,9 @@ mod tests {
     #[test]
     fn test_valid_config() {
         let contents = r#"
-        [taker_config]
         port = 8000
         socks_port = 19050
-        directory_server_address = "directoryhiddenserviceaddress.onion:8080"
+        directory_server_address = directoryhiddenserviceaddress.onion:8080
         connection_type = "TOR"
         rpc_port = 8081
         "#;

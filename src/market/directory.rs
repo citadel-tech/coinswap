@@ -13,7 +13,7 @@ use crate::{
 
 use std::{
     collections::HashSet,
-    fs::{File, OpenOptions},
+    fs::{self, File},
     io::{BufRead, BufReader, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
     path::{Path, PathBuf},
@@ -94,35 +94,52 @@ impl DirectoryServer {
     ///
     /// For reference of default config checkout `./directory.toml` in repo folder.
     ///
-    /// Default data-dir for linux: `~/.coinswap/`
+    /// Default data-dir for linux: `~/.coinswap/dns`
     /// Default config locations: `~/.coinswap/dns/config.toml`.
     pub fn new(
         data_dir: Option<PathBuf>,
         connection_type: Option<ConnectionType>,
     ) -> Result<Self, DirectoryServerError> {
-        let default_config = Self::default();
-
         let data_dir = data_dir.unwrap_or(get_dns_dir());
         let config_path = data_dir.join("config.toml");
 
         // This will create parent directories if they don't exist
-        if !config_path.exists() {
-            write_default_directory_config(&config_path)?;
+        if !config_path.exists() || fs::metadata(&config_path)?.len() == 0 {
             log::warn!(
                 "Directory config file not found, creating default config file at path: {}",
                 config_path.display()
             );
+            write_default_directory_config(&config_path)?;
         }
 
-        let section = parse_toml(&config_path)?;
+        let mut config_map = parse_toml(&config_path)?;
+
         log::info!(
             "Successfully loaded config file from : {}",
             config_path.display()
         );
 
-        let directory_config_section = section.get("maker_config").cloned().unwrap_or_default();
+        // Update the connection type in config if given.
+        if let Some(conn_type) = connection_type {
+            // update the config map
+            let value = config_map.get_mut("connection_type").expect("must exist");
+            let conn_type_string = format!("{:?}", conn_type);
+            *value = conn_type_string;
 
-        let connection_type_value = connection_type.unwrap_or(ConnectionType::TOR);
+            // Update the file on disk
+            let mut file = File::create(config_path)?;
+            let mut content = String::new();
+
+            for (i, (key, value)) in config_map.iter().enumerate() {
+                // Format each line, adding a newline for all except the last one
+                content.push_str(&format!("{} = {}", key, value));
+                if i < config_map.len() - 1 {
+                    content.push('\n');
+                }
+            }
+
+            file.write_all(content.as_bytes())?;
+        }
 
         let addresses = Arc::new(RwLock::new(HashSet::new()));
         let address_file = data_dir.join("addresses.dat");
@@ -132,23 +149,18 @@ impl DirectoryServer {
                 addresses.write()?.insert(address);
             }
         }
+        let default_dns = Self::default();
 
         Ok(DirectoryServer {
-            rpc_port: 4321,
-            port: parse_field(directory_config_section.get("port"), default_config.port)
-                .unwrap_or(default_config.port),
-            socks_port: parse_field(
-                directory_config_section.get("socks_port"),
-                default_config.socks_port,
-            )
-            .unwrap_or(default_config.socks_port),
+            rpc_port: parse_field(config_map.get("rpc_port"), default_dns.rpc_port),
+            port: parse_field(config_map.get("port"), default_dns.port),
+            socks_port: parse_field(config_map.get("socks_port"), default_dns.socks_port),
             data_dir,
             shutdown: AtomicBool::new(false),
             connection_type: parse_field(
-                directory_config_section.get("connection_type"),
-                connection_type_value,
-            )
-            .unwrap_or(connection_type_value),
+                config_map.get("connection_type"),
+                default_dns.connection_type,
+            ),
             addresses,
         })
     }
@@ -157,7 +169,6 @@ impl DirectoryServer {
 fn write_default_directory_config(config_path: &PathBuf) -> Result<(), DirectoryServerError> {
     let config_string = String::from(
         "\
-            [directory_config]\n\
             port = 8080\n\
             socks_port = 19060\n\
             connection_type = tor\n\
@@ -202,16 +213,7 @@ pub fn write_addresses_to_file(
         .collect::<Vec<String>>()
         .join("");
 
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(
-            address_file
-                .to_str()
-                .expect("address file path must exist at this stage"),
-        )?;
-
+    let mut file = File::create(address_file)?;
     file.write_all(file_content.as_bytes())?;
     file.flush()?;
     Ok(())
@@ -359,11 +361,11 @@ mod tests {
             socks_port = 19060
         "#;
         create_temp_config(contents, &temp_dir);
-        let config = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
-        let default_config = DirectoryServer::default();
+        let dns = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
+        let default_dns = DirectoryServer::default();
 
-        assert_eq!(config.port, default_config.port);
-        assert_eq!(config.socks_port, default_config.socks_port);
+        assert_eq!(dns.port, default_dns.port);
+        assert_eq!(dns.socks_port, default_dns.socks_port);
 
         temp_dir.close().unwrap();
     }
@@ -376,10 +378,10 @@ mod tests {
             port = 8080
         "#;
         create_temp_config(contents, &temp_dir);
-        let config = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
+        let dns = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
 
-        assert_eq!(config.port, 8080);
-        assert_eq!(config.socks_port, DirectoryServer::default().socks_port);
+        assert_eq!(dns.port, 8080);
+        assert_eq!(dns.socks_port, DirectoryServer::default().socks_port);
 
         temp_dir.close().unwrap();
     }
@@ -392,11 +394,11 @@ mod tests {
             port = "not_a_number"
         "#;
         create_temp_config(contents, &temp_dir);
-        let config = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
-        let default_config = DirectoryServer::default();
+        let dns = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
+        let default_dns = DirectoryServer::default();
 
-        assert_eq!(config.port, default_config.port);
-        assert_eq!(config.socks_port, default_config.socks_port);
+        assert_eq!(dns.port, default_dns.port);
+        assert_eq!(dns.socks_port, default_dns.socks_port);
 
         temp_dir.close().unwrap();
     }
@@ -404,11 +406,11 @@ mod tests {
     #[test]
     fn test_missing_file() {
         let temp_dir = TempDir::new().unwrap();
-        let config = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
-        let default_config = DirectoryServer::default();
+        let dns = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
+        let default_dns = DirectoryServer::default();
 
-        assert_eq!(config.port, default_config.port);
-        assert_eq!(config.socks_port, default_config.socks_port);
+        assert_eq!(dns.port, default_dns.port);
+        assert_eq!(dns.socks_port, default_dns.socks_port);
 
         temp_dir.close().unwrap();
     }

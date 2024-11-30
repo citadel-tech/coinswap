@@ -1,11 +1,12 @@
 //! Maker Configuration. Controlling various behaviors.
 
+use crate::utill::parse_toml;
 use std::{io, path::PathBuf};
 
 use bitcoin::Amount;
 use std::io::Write;
 
-use crate::utill::{get_maker_dir, parse_field, parse_toml, ConnectionType};
+use crate::utill::{get_maker_dir, parse_field, ConnectionType};
 
 /// Maker Configuration, controlling various maker behavior.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,95 +60,77 @@ impl MakerConfig {
     ///
     /// For reference of default config checkout `./maker.toml` in repo folder.
     ///
-    /// Default data-dir for linux: `~/.coinswap/`
-    /// Default config locations, for taker for ex: `~/.coinswap/taker/config.toml`.
+    /// Default data-dir for linux: `~/.coinswap/maker`
+    /// Default config locations:`~/.coinswap/maker/config.toml`.
     pub fn new(config_path: Option<&PathBuf>) -> io::Result<Self> {
+        let default_config_path = get_maker_dir().join("config.toml");
+
+        let config_path = config_path.unwrap_or(&default_config_path);
         let default_config = Self::default();
 
-        let default_config_path = get_maker_dir().join("maker.toml");
-        let config_path = config_path.unwrap_or(&default_config_path);
-
-        if !config_path.exists() {
-            write_default_maker_config(config_path);
+        // Creates a default config file at the specified path if it doesn't exist or is empty.
+        if !config_path.exists() || std::fs::metadata(config_path)?.len() == 0 {
             log::warn!(
                 "Maker config file not found, creating default config file at path: {}",
                 config_path.display()
             );
+
+            default_config.write_to_file(config_path)?;
         }
 
-        let section = parse_toml(config_path)?;
+        let config_map = parse_toml(config_path)?;
+
         log::info!(
             "Successfully loaded config file from : {}",
             config_path.display()
         );
 
-        let maker_config_section = section.get("maker_config").cloned().unwrap_or_default();
-
         Ok(MakerConfig {
-            port: parse_field(maker_config_section.get("port"), default_config.port)
-                .unwrap_or(default_config.port),
-            rpc_port: parse_field(
-                maker_config_section.get("rpc_port"),
-                default_config.rpc_port,
-            )
-            .unwrap_or(default_config.rpc_port),
+            port: parse_field(config_map.get("port"), default_config.port),
+            rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
             absolute_fee_sats: parse_field(
-                maker_config_section.get("absolute_fee_sats"),
+                config_map.get("absolute_fee_sats"),
                 default_config.absolute_fee_sats,
-            )
-            .unwrap_or(default_config.absolute_fee_sats),
+            ),
             time_relative_fee_ppb: parse_field(
-                maker_config_section.get("time_relative_fee_ppb"),
+                config_map.get("time_relative_fee_ppb"),
                 default_config.time_relative_fee_ppb,
-            )
-            .unwrap_or(default_config.time_relative_fee_ppb),
-            min_size: parse_field(
-                maker_config_section.get("min_size"),
-                default_config.min_size,
-            )
-            .unwrap_or(default_config.min_size),
-            socks_port: parse_field(
-                maker_config_section.get("socks_port"),
-                default_config.socks_port,
-            )
-            .unwrap_or(default_config.socks_port),
-            directory_server_address: maker_config_section
-                .get("directory_server_onion_address")
-                .map(|s| s.to_string())
-                .unwrap_or(default_config.directory_server_address),
+            ),
+            min_size: parse_field(config_map.get("min_size"), default_config.min_size),
+            socks_port: parse_field(config_map.get("socks_port"), default_config.socks_port),
+            directory_server_address: parse_field(
+                config_map.get("directory_server_address"),
+                default_config.directory_server_address,
+            ),
+
             fidelity_value: parse_field(
-                maker_config_section.get("fidelity_value"),
+                config_map.get("fidelity_value"),
                 default_config.fidelity_value,
-            )
-            .unwrap_or(default_config.fidelity_value),
+            ),
             fidelity_timelock: parse_field(
-                maker_config_section.get("fidelity_timelock"),
+                config_map.get("fidelity_timelock"),
                 default_config.fidelity_timelock,
-            )
-            .unwrap_or(default_config.fidelity_timelock),
+            ),
             connection_type: parse_field(
-                maker_config_section.get("connection_type"),
+                config_map.get("connection_type"),
                 default_config.connection_type,
-            )
-            .unwrap_or(default_config.connection_type),
+            ),
         })
     }
 
     // Method to serialize the MakerConfig into a TOML string and write it to a file
     pub fn write_to_file(&self, path: &PathBuf) -> std::io::Result<()> {
         let toml_data = format!(
-            r#"
-            port = {}
-            rpc_port = {}
-            absolute_fee_sats = {}
-            time_relative_fee_ppb = {}
-            min_size = {}
-            socks_port = {}
-            directory_server_address = "{}"
-            fidelity_value = {}
-            fidelity_timelock = {}
-            connection_type = "{:?}"
-            "#,
+            "port = {}
+rpc_port = {}
+absolute_fee_sats = {}
+time_relative_fee_ppb = {}
+min_size = {}
+socks_port = {}
+directory_server_address = {}
+fidelity_value = {}
+fidelity_timelock = {}
+connection_type = {:?}",
             self.port,
             self.rpc_port,
             self.absolute_fee_sats,
@@ -163,14 +146,10 @@ impl MakerConfig {
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;
         file.write_all(toml_data.as_bytes())?;
+        // TODO: Why we do require Flush?
         file.flush()?;
         Ok(())
     }
-}
-
-fn write_default_maker_config(config_path: &PathBuf) {
-    let config = MakerConfig::default();
-    config.write_to_file(config_path).unwrap();
 }
 
 #[cfg(test)]

@@ -307,43 +307,26 @@ pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> ScriptBuf {
     ScriptBuf::new_witness_program(&witness_program)
 }
 
-/// Parse TOML file into key-value pair.
-pub fn parse_toml(file_path: &PathBuf) -> io::Result<HashMap<String, HashMap<String, String>>> {
-    let file = File::open(file_path)?;
-    let reader = io::BufReader::new(file);
+/// Parses a TOML file into a HashMap of key-value pairs.
+pub fn parse_toml<P: AsRef<Path>>(path: P) -> io::Result<HashMap<String, String>> {
+    let content = fs::read_to_string(path)?;
 
-    let mut sections = HashMap::new();
-    let mut current_section = String::new();
+    let mut config_map = HashMap::new();
 
-    for line in reader.lines() {
-        let line = line?;
-        if line.trim().starts_with('[') {
-            current_section = line
-                .trim()
-                .trim_matches(|p| (p == '[' || p == ']'))
-                .to_string();
-            sections.insert(current_section.clone(), HashMap::new());
-        } else if line.trim().starts_with('#') {
-            continue;
-        } else if let Some(pos) = line.find('=') {
-            let key = line[..pos].trim().to_string();
-            let value = line[pos + 1..].trim().to_string();
-            if let Some(section) = sections.get_mut(&current_section) {
-                section.insert(key, value);
-            }
+    for line in content.lines().filter(|line| !line.is_empty()) {
+        if let Some((key, value)) = line.split_once('=') {
+            config_map.insert(key.trim().to_string(), value.trim().to_string());
         }
     }
-    Ok(sections)
+
+    Ok(config_map)
 }
 
-/// Parse and log errors for each field.
-pub fn parse_field<T: std::str::FromStr>(value: Option<&String>, default: T) -> io::Result<T> {
-    match value {
-        Some(value) => value
-            .parse()
-            .map_err(|_e| io::Error::new(ErrorKind::InvalidData, "parsing failed")),
-        None => Ok(default),
-    }
+/// Parses a value of type T from an Option<&String>, returning the default if parsing fails or is None
+pub fn parse_field<T: std::str::FromStr>(value: Option<&String>, default: T) -> T {
+    value
+        .and_then(|value| value.parse::<T>().ok())
+        .unwrap_or(default)
 }
 
 /// Function to check if tor log contains a pattern
@@ -470,17 +453,6 @@ mod tests {
     use crate::protocol::messages::{MakerHello, MakerToTakerMessage};
 
     use super::*;
-
-    fn create_temp_config(contents: &str, file_name: &str) -> PathBuf {
-        let file_path = PathBuf::from(file_name);
-        let mut file = File::create(&file_path).unwrap();
-        writeln!(file, "{}", contents).unwrap();
-        file_path
-    }
-
-    fn remove_temp_config(path: &PathBuf) {
-        fs::remove_file(path).unwrap();
-    }
 
     #[test]
     fn test_send_message() {
@@ -647,43 +619,5 @@ mod tests {
             .add_exp_tweak(&secp, &scalar_from_nonce)
             .unwrap();
         assert_eq!(returned_pubkey.to_string(), tweaked_pubkey.to_string());
-    }
-
-    #[test]
-    fn test_parse_toml() {
-        let file_content = r#"
-            [section1]
-            key1 = "value1"
-            key2 = "value2"
-            
-            [section2]
-            key3 = "value3"
-            key4 = "value4"
-        "#;
-        let file_path = create_temp_config(file_content, "test.toml");
-
-        let mut result = parse_toml(&file_path).expect("Failed to parse TOML");
-
-        let expected_json = r#"{
-            "section1": {"key1": "value1", "key2": "value3"},
-            "section2": {"key3": "value3", "key4": "value4"}
-        }"#;
-
-        let expected_result: HashMap<String, HashMap<String, String>> =
-            serde_json::from_str(expected_json).expect("Failed to parse JSON");
-
-        for (section_name, right_section) in expected_result.iter() {
-            if let Some(left_section) = result.get_mut(section_name) {
-                for (key, value) in right_section.iter() {
-                    left_section.insert(key.clone(), value.clone());
-                }
-            } else {
-                result.insert(section_name.clone(), right_section.clone());
-            }
-        }
-
-        assert_eq!(result, expected_result);
-
-        remove_temp_config(&file_path);
     }
 }
