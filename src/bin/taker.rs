@@ -3,7 +3,7 @@ use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Auth};
 use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
-    utill::{parse_proxy_auth, read_connection_network_string, setup_logger},
+    utill::{parse_proxy_auth, setup_logger, ConnectionType},
     wallet::{Destination, RPCConfig, SendAmount},
 };
 use log::LevelFilter;
@@ -104,7 +104,8 @@ fn main() -> Result<(), TakerError> {
     let args = Cli::parse();
 
     let rpc_network = bitcoin::Network::from_str(&args.bitcoin_network).unwrap();
-    let connection_type = read_connection_network_string(&args.connection_type)?;
+    let connection_type = ConnectionType::from_str(&args.connection_type)?;
+
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),

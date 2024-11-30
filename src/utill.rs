@@ -63,13 +63,13 @@ pub enum ConnectionType {
 }
 
 impl FromStr for ConnectionType {
-    type Err = String;
+    type Err = NetError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "tor" => Ok(ConnectionType::TOR),
             "clearnet" => Ok(ConnectionType::CLEARNET),
-            _ => Err("Invalid connection type".to_string()),
+            _ => Err(NetError::InvalidAppNetwork),
         }
     }
 }
@@ -453,15 +453,6 @@ pub fn parse_proxy_auth(s: &str) -> Result<(String, String), NetError> {
     let passwd = parts[1].to_string();
 
     Ok((user, passwd))
-}
-
-/// Parse the network string for Connection Type. Used in CLI apps.
-pub fn read_connection_network_string(network: &str) -> Result<ConnectionType, NetError> {
-    match network {
-        "clearnet" => Ok(ConnectionType::CLEARNET),
-        "tor" => Ok(ConnectionType::TOR),
-        _ => Err(NetError::InvalidAppNetwork),
-    }
 }
 
 #[cfg(test)]
