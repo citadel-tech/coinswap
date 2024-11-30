@@ -2,13 +2,13 @@
 //!
 //! Wallet data is currently written in unencrypted CBOR files which are not directly human readable.
 
-use std::{collections::HashMap, path::PathBuf};
-
 use bitcoin::{bip32::Xpriv, Network, OutPoint, ScriptBuf};
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::OpenOptions,
+    collections::HashMap,
+    fs::{self, File},
     io::{BufReader, BufWriter},
+    path::PathBuf,
 };
 
 use super::{error::WalletError, fidelity::FidelityBond};
@@ -68,11 +68,7 @@ impl WalletStore {
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         // write: overwrites existing file.
         // create: creates new file if doesn't exist.
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
+        let file = File::create(path)?;
         let writer = BufWriter::new(file);
         serde_cbor::to_writer(writer, &store)?;
 
@@ -81,14 +77,14 @@ impl WalletStore {
 
     /// Load existing file, updates it, writes it back (errors if path doesn't exist).
     pub fn write_to_disk(&self, path: &PathBuf) -> Result<(), WalletError> {
-        let wallet_file = OpenOptions::new().write(true).open(path)?;
+        let wallet_file = fs::OpenOptions::new().write(true).open(path)?;
         let writer = BufWriter::new(wallet_file);
         Ok(serde_cbor::to_writer(writer, &self)?)
     }
 
     /// Reads from a path (errors if path doesn't exist).
     pub fn read_from_disk(path: &PathBuf) -> Result<Self, WalletError> {
-        let wallet_file = OpenOptions::new().read(true).open(path)?;
+        let wallet_file = File::open(path)?;
         let reader = BufReader::new(wallet_file);
         let store: Self = serde_cbor::from_reader(reader)?;
         Ok(store)

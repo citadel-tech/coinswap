@@ -77,7 +77,7 @@ impl FromStr for ConnectionType {
 /// Read the tor address given an hidden_service directory path
 pub fn get_tor_addrs(hs_dir: &Path) -> String {
     let hostname_file_path = hs_dir.join("hs-dir").join("hostname");
-    let mut hostname_file = fs::File::open(hostname_file_path).unwrap();
+    let mut hostname_file = File::open(hostname_file_path).unwrap();
     let mut tor_addrs: String = String::new();
     hostname_file.read_to_string(&mut tor_addrs).unwrap();
     tor_addrs
@@ -351,7 +351,7 @@ pub fn monitor_log_for_completion(log_file: &PathBuf, pattern: &str) -> io::Resu
     let mut last_size = 0;
 
     loop {
-        let file = fs::File::open(log_file)?;
+        let file = File::open(log_file)?;
         let metadata = file.metadata()?;
         let current_size = metadata.len();
 
