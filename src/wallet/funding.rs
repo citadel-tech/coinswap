@@ -526,3 +526,39 @@ impl Wallet {
         }
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bitcoin::Amount;
+
+    #[test]
+    fn test_amount_fractions() {
+        {
+            let total = 1000000;
+            let result = Wallet::generate_amount_fractions(2, Amount::from_sat(total));
+            assert!(result.is_ok());
+            let values = result.unwrap();
+            assert_eq!(values.iter().sum::<u64>(), total);
+            assert!(values.iter().all(|&x| x >= 5000));
+        }
+        {
+            let result = Wallet::generate_amount_fractions(2, Amount::from_sat(5000));
+            assert!(result.is_err());
+        }
+        {
+            let total = 1000001;
+            let result = Wallet::generate_amount_fractions(2, Amount::from_sat(total));
+            assert!(result.is_ok());
+            let values = result.unwrap();
+            assert_eq!(values.iter().sum::<u64>(), total);
+            assert!(values.iter().all(|&x| x >= 5000));
+        }
+        {
+            let result = Wallet::generate_amount_fractions(2, Amount::from_sat(u64::MAX));
+            assert!(result.is_ok());
+            let values = result.unwrap();
+            assert_eq!(values.iter().sum::<u64>(), u64::MAX);
+            assert!(values.iter().all(|&x| x >= 5000));
+        }
+    }
+}
