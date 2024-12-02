@@ -2,7 +2,7 @@ use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
     maker::{start_maker_server, Maker, MakerBehavior, MakerError},
-    utill::{parse_proxy_auth, read_connection_network_string, setup_logger},
+    utill::{parse_proxy_auth, setup_logger, ConnectionType},
     wallet::RPCConfig,
 };
 use std::{path::PathBuf, str::FromStr, sync::Arc};
@@ -57,7 +57,7 @@ fn main() -> Result<(), MakerError> {
 
     let rpc_network = bitcoin::Network::from_str(&args.rpc_network).unwrap();
 
-    let conn_type = read_connection_network_string(&args.network)?;
+    let conn_type = ConnectionType::from_str(&args.network)?;
 
     let rpc_config = RPCConfig {
         url: args.rpc,
