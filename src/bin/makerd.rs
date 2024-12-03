@@ -2,6 +2,7 @@ use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
     maker::{start_maker_server, Maker, MakerBehavior, MakerError},
+    tor::setup_mitosis,
     utill::{parse_proxy_auth, setup_logger, ConnectionType},
     wallet::RPCConfig,
 };
@@ -65,6 +66,10 @@ fn main() -> Result<(), MakerError> {
         network: rpc_network,
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
+
+    if conn_type == ConnectionType::TOR {
+        setup_mitosis();
+    }
 
     let maker = Arc::new(Maker::init(
         args.data_directory,
