@@ -59,7 +59,7 @@ pub enum FidelityError {
 /// Old script: <locktime> <OP_CLTV> <OP_DROP> <pubkey> <OP_CHECKSIG>
 /// The new script drops the extra byte <OP_DROP>
 /// New script: <pubkey> <OP_CHECKSIGVERIFY> <locktime> <OP_CLTV>
-pub fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> ScriptBuf {
+fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> ScriptBuf {
     Builder::new()
         .push_key(pubkey)
         .push_opcode(OP_CHECKSIGVERIFY)
@@ -70,9 +70,7 @@ pub fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> Script
 
 #[allow(unused)]
 /// Reads the locktime from a fidelity redeemscript.
-pub fn read_locktime_from_fidelity_script(
-    redeemscript: &ScriptBuf,
-) -> Result<LockTime, FidelityError> {
+fn read_locktime_from_fidelity_script(redeemscript: &ScriptBuf) -> Result<LockTime, FidelityError> {
     if let Some(Ok(Instruction::PushBytes(locktime_bytes))) = redeemscript.instructions().nth(2) {
         let mut u4slice: [u8; 4] = [0; 4];
         u4slice[..locktime_bytes.len()].copy_from_slice(locktime_bytes.as_bytes());
@@ -139,7 +137,7 @@ impl FidelityBond {
 
     /// Get the script_pubkey for this bond.
     pub fn script_pub_key(&self) -> ScriptBuf {
-        redeemscript_to_scriptpubkey(&self.redeem_script())
+        redeemscript_to_scriptpubkey(&self.redeem_script()).expect("This can never panic as fidelity redeemscript template is hardcoded in a private function.")
     }
 
     /// Generate the bond's certificate hash.

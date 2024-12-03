@@ -186,7 +186,7 @@ impl Wallet {
     pub fn load(rpc_config: &RPCConfig, path: &PathBuf) -> Result<Wallet, WalletError> {
         let store = WalletStore::read_from_disk(path)?;
         if rpc_config.wallet_name != store.file_name {
-            return Err(WalletError::Protocol(format!(
+            return Err(WalletError::General(format!(
                 "Wallet name of database file and core missmatch, expected {}, found {}",
                 rpc_config.wallet_name, store.file_name
             )));
@@ -491,36 +491,6 @@ impl Wallet {
         m_xpub.fingerprint().to_string()
     }
 
-    fn create_contract_scriptpubkey_outgoing_swapcoin_hashmap(
-        &self,
-    ) -> HashMap<ScriptBuf, &OutgoingSwapCoin> {
-        self.store
-            .outgoing_swapcoins
-            .values()
-            .map(|osc| {
-                (
-                    redeemscript_to_scriptpubkey(&osc.contract_redeemscript),
-                    osc,
-                )
-            })
-            .collect::<HashMap<_, _>>()
-    }
-
-    fn create_contract_scriptpubkey_incoming_swapcoin_hashmap(
-        &self,
-    ) -> HashMap<ScriptBuf, &IncomingSwapCoin> {
-        self.store
-            .incoming_swapcoins
-            .values()
-            .map(|isc| {
-                (
-                    redeemscript_to_scriptpubkey(&isc.contract_redeemscript),
-                    isc,
-                )
-            })
-            .collect::<HashMap<_, _>>()
-    }
-
     /// Locks the fidelity and live_contract utxos which are not considered for spending from the wallet.
     pub fn lock_unspendable_utxos(&self) -> Result<(), WalletError> {
         self.rpc.unlock_unspent_all()?;
@@ -566,12 +536,7 @@ impl Wallet {
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Result<Option<UTXOSpendInfo>, WalletError> {
-        let (contract_scriptpubkeys_outgoing, contract_scriptpubkeys_incoming) = (
-            self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap(),
-            self.create_contract_scriptpubkey_incoming_swapcoin_hashmap(),
-        );
-
-        if let Some(outgoing_swapcoin) = contract_scriptpubkeys_outgoing.get(&utxo.script_pub_key) {
+        if let Some(outgoing_swapcoin) = self.store.outgoing_swapcoins.get(&utxo.script_pub_key) {
             if utxo.confirmations >= outgoing_swapcoin.get_timelock()?.into() {
                 return Ok(Some(UTXOSpendInfo::TimelockContract {
                     swapcoin_multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
@@ -579,7 +544,7 @@ impl Wallet {
                 }));
             }
         } else if let Some(incoming_swapcoin) =
-            contract_scriptpubkeys_incoming.get(&utxo.script_pub_key)
+            self.store.incoming_swapcoins.get(&utxo.script_pub_key)
         {
             if incoming_swapcoin.is_hash_preimage_known() && utxo.confirmations >= 1 {
                 return Ok(Some(UTXOSpendInfo::HashlockContract {
@@ -845,10 +810,10 @@ impl Wallet {
     // i.e. where there are UTXOs protected by contract_redeemscript's that we know about
     pub fn find_live_contract_unspents(&self) -> Result<SwapCoinsInfo, WalletError> {
         // populate hashmaps where key is contract scriptpubkey and value is the swapcoin
-        let contract_scriptpubkeys_incoming_swapcoins =
-            self.create_contract_scriptpubkey_incoming_swapcoin_hashmap();
-        let contract_scriptpubkeys_outgoing_swapcoins =
-            self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap();
+        // let contract_scriptpubkeys_incoming_swapcoins =
+        //     self.create_contract_scriptpubkey_incoming_swapcoin_hashmap();
+        // let contract_scriptpubkeys_outgoing_swapcoins =
+        //     self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap();
 
         self.rpc.unlock_unspent_all()?;
         let listunspent = self
@@ -859,8 +824,8 @@ impl Wallet {
             .iter()
             .map(|u| {
                 (
-                    contract_scriptpubkeys_incoming_swapcoins.get(&u.script_pub_key),
-                    contract_scriptpubkeys_outgoing_swapcoins.get(&u.script_pub_key),
+                    self.store.incoming_swapcoins.get(&u.script_pub_key),
+                    self.store.outgoing_swapcoins.get(&u.script_pub_key),
                     u,
                 )
             })
@@ -872,7 +837,7 @@ impl Wallet {
                 .iter()
                 .map(|isc_osc_u| {
                     (
-                        *isc_osc_u.0.expect("incoming swapcoin expected"),
+                        isc_osc_u.0.expect("incoming swapcoin expected"),
                         isc_osc_u.2.clone(),
                     )
                 })
@@ -881,7 +846,7 @@ impl Wallet {
                 .iter()
                 .map(|isc_osc_u| {
                     (
-                        *isc_osc_u.1.expect("outgoing swapcoin expected"),
+                        isc_osc_u.1.expect("outgoing swapcoin expected"),
                         isc_osc_u.2.clone(),
                     )
                 })
@@ -1202,7 +1167,7 @@ impl Wallet {
                 funding_amount,
                 &contract_redeemscript,
                 fee_rate,
-            );
+            )?;
 
             // self.import_wallet_contract_redeemscript(&contract_redeemscript)?;
             outgoing_swapcoins.push(OutgoingSwapCoin::new(
@@ -1227,7 +1192,7 @@ impl Wallet {
         &self,
         redeemscript: &ScriptBuf,
     ) -> Result<(), WalletError> {
-        let spk = redeemscript_to_scriptpubkey(redeemscript);
+        let spk = redeemscript_to_scriptpubkey(redeemscript)?;
         let descriptor = self
             .rpc
             .get_descriptor_info(&format!("raw({:x})", spk))?
@@ -1283,7 +1248,7 @@ impl Wallet {
                 .incoming_swapcoins
                 .values()
                 .map(|sc| {
-                    let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript);
+                    let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript)?;
                     let descriptor_without_checksum = format!("raw({:x})", contract_spk);
                     Ok(format!(
                         "{}#{}",
@@ -1298,7 +1263,7 @@ impl Wallet {
                 .outgoing_swapcoins
                 .values()
                 .map(|sc| {
-                    let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript);
+                    let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript)?;
                     let descriptor_without_checksum = format!("raw({:x})", contract_spk);
                     Ok(format!(
                         "{}#{}",

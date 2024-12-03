@@ -138,7 +138,7 @@ impl Wallet {
                 if !a.as_unchecked().is_valid_for_network(self.store.network)
                     && !testnet_signet_type
                 {
-                    return Err(WalletError::Protocol(
+                    return Err(WalletError::General(
                         "Wrong address type in destinations.".to_string(),
                     ));
                 }

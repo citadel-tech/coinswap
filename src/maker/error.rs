@@ -4,11 +4,7 @@ use std::sync::{MutexGuard, PoisonError, RwLockReadGuard, RwLockWriteGuard};
 
 use bitcoin::secp256k1;
 
-use crate::{
-    error::{NetError, ProtocolError},
-    protocol::error::ContractError,
-    wallet::WalletError,
-};
+use crate::{error::NetError, protocol::error::ProtocolError, wallet::WalletError};
 
 use super::MakerBehavior;
 
@@ -62,9 +58,9 @@ impl From<secp256k1::Error> for MakerError {
     }
 }
 
-impl From<ContractError> for MakerError {
-    fn from(value: ContractError) -> Self {
-        Self::Protocol(ProtocolError::from(value))
+impl From<ProtocolError> for MakerError {
+    fn from(value: ProtocolError) -> Self {
+        Self::Protocol(value)
     }
 }
 
@@ -83,11 +79,5 @@ impl From<MakerBehavior> for MakerError {
 impl From<NetError> for MakerError {
     fn from(value: NetError) -> Self {
         Self::Net(value)
-    }
-}
-
-impl From<ProtocolError> for MakerError {
-    fn from(value: ProtocolError) -> Self {
-        Self::Protocol(value)
     }
 }

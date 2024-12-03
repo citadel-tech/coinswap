@@ -1,12 +1,6 @@
 //! All Taker-related errors.
-
-use bitcoin::Txid;
-
-use bitcoind::bitcoincore_rpc::Error as RpcError;
-
 use crate::{
-    error::{NetError, ProtocolError},
-    market::directory::DirectoryServerError,
+    error::NetError, market::directory::DirectoryServerError, protocol::error::ProtocolError,
     wallet::WalletError,
 };
 
@@ -14,27 +8,21 @@ use crate::{
 #[derive(Debug)]
 pub enum TakerError {
     IO(std::io::Error),
-    ContractsBroadcasted(Vec<Txid>),
-    RPCError(RpcError),
+    ContractsBroadcasted(Vec<bitcoin::Txid>),
     NotEnoughMakersInOfferBook,
     Wallet(WalletError),
     Directory(DirectoryServerError),
     Net(NetError),
-    Protocol(ProtocolError),
     SendAmountNotSet,
     FundingTxWaitTimeOut,
     Deserialize(serde_cbor::Error),
+    // MPSC channel failure error. Only occurs in internal thread communications.
+    MPSC(String),
 }
 
 impl From<serde_cbor::Error> for TakerError {
     fn from(value: serde_cbor::Error) -> Self {
         Self::Deserialize(value)
-    }
-}
-
-impl From<RpcError> for TakerError {
-    fn from(value: RpcError) -> Self {
-        Self::RPCError(value)
     }
 }
 
@@ -64,6 +52,18 @@ impl From<NetError> for TakerError {
 
 impl From<ProtocolError> for TakerError {
     fn from(value: ProtocolError) -> Self {
-        Self::Protocol(value)
+        Self::Wallet(value.into())
+    }
+}
+
+impl From<std::sync::mpsc::RecvError> for TakerError {
+    fn from(value: std::sync::mpsc::RecvError) -> Self {
+        Self::MPSC(value.to_string())
+    }
+}
+
+impl<T> From<std::sync::mpsc::SendError<T>> for TakerError {
+    fn from(value: std::sync::mpsc::SendError<T>) -> Self {
+        Self::MPSC(value.to_string())
     }
 }

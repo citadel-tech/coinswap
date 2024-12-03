@@ -17,9 +17,9 @@ use bitcoin::{
 use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
-    error::ProtocolError,
     maker::api::recover_from_swap,
     protocol::{
+        error::ProtocolError,
         messages::{MakerHello, MultisigPrivkey, PrivKeyHandover},
         Hash160,
     },
@@ -301,7 +301,7 @@ impl Maker {
                 funding_output.value,
                 &funding_info.contract_redeemscript,
                 Amount::from_sat(message.next_fee_rate),
-            );
+            )?;
 
             let (tweakable_privkey, _) = self.wallet.read()?.get_tweakable_keypair()?;
             let multisig_privkey =
@@ -345,15 +345,18 @@ impl Maker {
         }
 
         // Calculate output amounts for the next hop
-        let incoming_amount = message.confirmed_funding_txes.iter().fold(0u64, |acc, fi| {
-            let index = find_funding_output_index(fi).unwrap();
-            let txout = fi
-                .funding_tx
-                .output
-                .get(index as usize)
-                .expect("output at index expected");
-            acc + txout.value.to_sat()
-        });
+        let incoming_amount = message
+            .confirmed_funding_txes
+            .iter()
+            .try_fold(0u64, |acc, fi| {
+                let index = find_funding_output_index(fi)?;
+                let txout = fi
+                    .funding_tx
+                    .output
+                    .get(index as usize)
+                    .expect("output at index expected");
+                Ok::<_, MakerError>(acc + txout.value.to_sat())
+            })?;
 
         let calc_coinswap_fees = calculate_coinswap_fee(
             self.config.absolute_fee_sats,

@@ -26,7 +26,7 @@ pub use bitcoin::hashes::hash160::Hash as Hash160;
 use crate::utill::redeemscript_to_scriptpubkey;
 
 use super::{
-    error::ContractError,
+    error::ProtocolError,
     messages::{FundingTxInfo, ProofOfFunding},
 };
 
@@ -103,7 +103,7 @@ pub fn create_multisig_redeemscript(key1: &PublicKey, key2: &PublicKey) -> Scrip
 /// Derive the maker's public key and nonce from a tweakable point.
 pub fn derive_maker_pubkey_and_nonce(
     tweakable_point: &PublicKey,
-) -> Result<(PublicKey, SecretKey), ContractError> {
+) -> Result<(PublicKey, SecretKey), ProtocolError> {
     let mut nonce_bytes = [0u8; 32];
     OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = SecretKey::from_slice(&nonce_bytes)?;
@@ -115,7 +115,7 @@ pub fn derive_maker_pubkey_and_nonce(
 pub fn calculate_pubkey_from_nonce(
     tweakable_point: &PublicKey,
     nonce: &SecretKey,
-) -> Result<PublicKey, ContractError> {
+) -> Result<PublicKey, ProtocolError> {
     let secp = Secp256k1::new();
 
     let nonce_point = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, nonce);
@@ -126,21 +126,21 @@ pub fn calculate_pubkey_from_nonce(
 }
 
 /// Find the index of the funding output in the funding transaction.
-pub fn find_funding_output_index(funding_tx_info: &FundingTxInfo) -> Result<u32, ContractError> {
-    let multisig_spk = redeemscript_to_scriptpubkey(&funding_tx_info.multisig_redeemscript);
+pub fn find_funding_output_index(funding_tx_info: &FundingTxInfo) -> Result<u32, ProtocolError> {
+    let multisig_spk = redeemscript_to_scriptpubkey(&funding_tx_info.multisig_redeemscript)?;
     funding_tx_info
         .funding_tx
         .output
         .iter()
         .position(|o| o.script_pubkey == multisig_spk)
         .map(|index| index as u32)
-        .ok_or(ContractError::Protocol(
+        .ok_or(ProtocolError::General(
             "Funding output doesn't match with multisig redeem script",
         ))
 }
 
 /// Check if the given redeem script is a multisig script.
-pub fn check_reedemscript_is_multisig(redeemscript: &Script) -> Result<(), ContractError> {
+pub fn check_reedemscript_is_multisig(redeemscript: &Script) -> Result<(), ProtocolError> {
     //pattern match to check redeemscript is really a 2of2 multisig
     let mut ms_rs_bytes = redeemscript.to_bytes();
     const PUB_PLACEHOLDER: [u8; 33] = [0x02; 33];
@@ -148,14 +148,12 @@ pub fn check_reedemscript_is_multisig(redeemscript: &Script) -> Result<(), Contr
     let template_ms_rs =
         create_multisig_redeemscript(&pubkey_placeholder, &pubkey_placeholder).into_bytes();
     if ms_rs_bytes.len() != template_ms_rs.len() {
-        return Err(ContractError::Protocol(
-            "wrong multisig_redeemscript length",
-        ));
+        return Err(ProtocolError::General("wrong multisig_redeemscript length"));
     }
     ms_rs_bytes.splice(2..35, PUB_PLACEHOLDER.iter().cloned());
     ms_rs_bytes.splice(36..69, PUB_PLACEHOLDER.iter().cloned());
     if ms_rs_bytes != template_ms_rs {
-        Err(ContractError::Protocol(
+        Err(ProtocolError::General(
             "redeemscript not matching multisig template",
         ))
     } else {
@@ -168,11 +166,11 @@ pub fn check_multisig_has_pubkey(
     redeemscript: &Script,
     tweakable_point: &PublicKey,
     nonce: &SecretKey,
-) -> Result<(), ContractError> {
+) -> Result<(), ProtocolError> {
     let (pubkey1, pubkey2) = read_pubkeys_from_multisig_redeemscript(redeemscript)?;
     let my_pubkey = calculate_pubkey_from_nonce(tweakable_point, nonce)?;
     if pubkey1 != my_pubkey && pubkey2 != my_pubkey {
-        Err(ContractError::Protocol(
+        Err(ProtocolError::General(
             "wrong pubkeys in multisig_redeemscript",
         ))
     } else {
@@ -185,11 +183,11 @@ pub fn check_hashlock_has_pubkey(
     contract_redeemscript: &Script,
     tweakable_point: &PublicKey,
     nonce: &SecretKey,
-) -> Result<(), ContractError> {
+) -> Result<(), ProtocolError> {
     let contract_hashlock_pubkey = read_hashlock_pubkey_from_contract(contract_redeemscript)?;
     let derived_hashlock_pubkey = calculate_pubkey_from_nonce(tweakable_point, nonce)?;
     if contract_hashlock_pubkey != derived_hashlock_pubkey {
-        Err(ContractError::Protocol(
+        Err(ProtocolError::General(
             "contract hashlock pubkey doesnt match with key derived from nonce",
         ))
     } else {
@@ -276,32 +274,32 @@ pub fn create_contract_redeemscript(
 }
 
 /// Read the hash value from a contract redeem script.
-pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<Hash160, ContractError> {
+pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<Hash160, ProtocolError> {
     if redeemscript.to_bytes().len() < MIN_HASHV_LEN {
-        return Err(ContractError::Protocol("Contract reedemscript too short!"));
+        return Err(ProtocolError::General("Contract reedemscript too short!"));
     }
     let mut instrs = redeemscript.instructions().skip(2);
     // Unwrap Safety: length is checked
     let Instruction::Op(opcodes::all::OP_HASH160) = instrs.next().expect("opcode expected")? else {
-        return Err(ContractError::Protocol("Hash is not present!"));
+        return Err(ProtocolError::General("Hash is not present!"));
     };
     let Instruction::PushBytes(hash_b) = instrs.next().expect("opcode expected")? else {
-        return Err(ContractError::Protocol("Invalid script!"));
+        return Err(ProtocolError::General("Invalid script!"));
     };
 
     Ok(Hash160::from_slice(hash_b.as_bytes())?)
 }
 
 /// Check that all the contract redeemscripts involve the same hashvalue.
-pub fn check_hashvalues_are_equal(message: &ProofOfFunding) -> Result<Hash160, ContractError> {
+pub fn check_hashvalues_are_equal(message: &ProofOfFunding) -> Result<Hash160, ProtocolError> {
     let hashvalues = message
         .confirmed_funding_txes
         .iter()
         .map(|funding_info| read_hashvalue_from_contract(&funding_info.contract_redeemscript))
-        .collect::<Result<Vec<_>, ContractError>>()?;
+        .collect::<Result<Vec<_>, ProtocolError>>()?;
 
     if !hashvalues.iter().all(|value| value == &hashvalues[0]) {
-        return Err(ContractError::Protocol(
+        return Err(ProtocolError::General(
             "contract reedemscript doesn't have equal hashvalues",
         ));
     }
@@ -310,7 +308,7 @@ pub fn check_hashvalues_are_equal(message: &ProofOfFunding) -> Result<Hash160, C
 }
 
 /// Read the locktime from a contract redeem script.
-pub fn read_contract_locktime(redeemscript: &Script) -> Result<u16, ContractError> {
+pub fn read_contract_locktime(redeemscript: &Script) -> Result<u16, ProtocolError> {
     match redeemscript
         .instructions()
         .nth(12)
@@ -323,20 +321,20 @@ pub fn read_contract_locktime(redeemscript: &Script) -> Result<u16, ContractErro
                     .as_bytes()
                     .split_at(std::mem::size_of::<u16>());
                 Ok(u16::from_le_bytes(int_bytes.try_into().map_err(|_| {
-                    ContractError::Protocol("Can't read locktime value from contract reedemscript")
+                    ProtocolError::General("Can't read locktime value from contract reedemscript")
                 })?))
             }
-            _ => Err(ContractError::Protocol(
+            _ => Err(ProtocolError::General(
                 "Can't read locktime value from contract reedemscript",
             )),
         },
         Instruction::Op(opcode) => {
             if let opcodes::Class::PushNum(n) = opcode.classify(opcodes::ClassifyContext::Legacy) {
                 Ok(n.try_into().map_err(|_| {
-                    ContractError::Protocol("Can't read locktime value from contract reedemscript")
+                    ProtocolError::General("Can't read locktime value from contract reedemscript")
                 })?)
             } else {
-                Err(ContractError::Protocol(
+                Err(ProtocolError::General(
                     "Can't read locktime value from contract reedemscript",
                 ))
             }
@@ -347,9 +345,9 @@ pub fn read_contract_locktime(redeemscript: &Script) -> Result<u16, ContractErro
 /// Read the hashlock pubkey from a contract redeem script.
 pub fn read_hashlock_pubkey_from_contract(
     redeemscript: &Script,
-) -> Result<PublicKey, ContractError> {
+) -> Result<PublicKey, ProtocolError> {
     if redeemscript.to_bytes().len() < 61 {
-        return Err(ContractError::Protocol("contract reedemscript too short"));
+        return Err(ProtocolError::General("contract reedemscript too short"));
     }
     Ok(PublicKey::from_slice(&redeemscript.to_bytes()[27..60])?)
 }
@@ -357,9 +355,9 @@ pub fn read_hashlock_pubkey_from_contract(
 /// Read the timelock pubkey from a contract redeem script.
 pub fn read_timelock_pubkey_from_contract(
     redeemscript: &Script,
-) -> Result<PublicKey, ContractError> {
+) -> Result<PublicKey, ProtocolError> {
     if redeemscript.to_bytes().len() < 99 {
-        return Err(ContractError::Protocol("contract reedemscript too short"));
+        return Err(ProtocolError::General("contract reedemscript too short"));
     }
     Ok(PublicKey::from_slice(&redeemscript.to_bytes()[65..98])?)
 }
@@ -367,7 +365,7 @@ pub fn read_timelock_pubkey_from_contract(
 /// Read the pubkeys from a multisig redeem script.
 pub fn read_pubkeys_from_multisig_redeemscript(
     redeemscript: &Script,
-) -> Result<(PublicKey, PublicKey), ContractError> {
+) -> Result<(PublicKey, PublicKey), ProtocolError> {
     let ms_rs_bytes = redeemscript.to_bytes();
     let pubkey1 =
         PublicKey::from_slice(&ms_rs_bytes[PUBKEY1_OFFSET..PUBKEY1_OFFSET + PUBKEY_LENGTH])?;
@@ -384,8 +382,8 @@ pub fn create_senders_contract_tx(
     input_value: Amount,
     contract_redeemscript: &ScriptBuf,
     fee_rate: Amount,
-) -> Transaction {
-    Transaction {
+) -> Result<Transaction, ProtocolError> {
+    Ok(Transaction {
         input: vec![TxIn {
             previous_output: input,
             sequence: Sequence::ZERO,
@@ -393,12 +391,12 @@ pub fn create_senders_contract_tx(
             script_sig: ScriptBuf::new(),
         }],
         output: vec![TxOut {
-            script_pubkey: redeemscript_to_scriptpubkey(contract_redeemscript),
+            script_pubkey: redeemscript_to_scriptpubkey(contract_redeemscript)?,
             value: input_value - fee_rate,
         }],
         lock_time: LockTime::ZERO,
         version: Version::TWO,
-    }
+    })
 }
 
 /// Create the receiver's contract transaction.
@@ -407,7 +405,7 @@ pub fn create_receivers_contract_tx(
     input_value: Amount,
     contract_redeemscript: &ScriptBuf,
     fee_rate: Amount,
-) -> Transaction {
+) -> Result<Transaction, ProtocolError> {
     //exactly the same thing as senders contract for now, until collateral
     //inputs are implemented
     create_senders_contract_tx(input, input_value, contract_redeemscript, fee_rate)
@@ -421,16 +419,16 @@ pub fn is_contract_out_valid(
     hashvalue: &Hash160,
     locktime: &u16,
     minimum_locktime: &u16,
-) -> Result<(), ContractError> {
+) -> Result<(), ProtocolError> {
     if minimum_locktime > locktime {
-        return Err(ContractError::Protocol("locktime too short"));
+        return Err(ProtocolError::General("locktime too short"));
     }
 
     let redeemscript_from_request =
         create_contract_redeemscript(hashlock_pubkey, timelock_pubkey, hashvalue, locktime);
-    let contract_spk_from_request = redeemscript_to_scriptpubkey(&redeemscript_from_request);
+    let contract_spk_from_request = redeemscript_to_scriptpubkey(&redeemscript_from_request)?;
     if contract_output.script_pubkey != contract_spk_from_request {
-        return Err(ContractError::Protocol(
+        return Err(ProtocolError::General(
             "given transaction does not pay to requested contract",
         ));
     }
@@ -442,23 +440,23 @@ pub fn validate_contract_tx(
     receivers_contract_tx: &Transaction,
     funding_outpoint: Option<&OutPoint>,
     contract_redeemscript: &ScriptBuf,
-) -> Result<(), ContractError> {
+) -> Result<(), ProtocolError> {
     if receivers_contract_tx.input.len() != 1 || receivers_contract_tx.output.len() != 1 {
-        return Err(ContractError::Protocol(
+        return Err(ProtocolError::General(
             "invalid number of inputs or outputs",
         ));
     }
 
     if let Some(op) = funding_outpoint {
         if receivers_contract_tx.input[0].previous_output != *op {
-            return Err(ContractError::Protocol("not spending the funding outpoint"));
+            return Err(ProtocolError::General("not spending the funding outpoint"));
         }
     }
 
     if receivers_contract_tx.output[0].script_pubkey
-        != redeemscript_to_scriptpubkey(contract_redeemscript)
+        != redeemscript_to_scriptpubkey(contract_redeemscript)?
     {
-        return Err(ContractError::Protocol("doesnt pay to requested contract"));
+        return Err(ProtocolError::General("doesnt pay to requested contract"));
     }
     Ok(())
 }
@@ -469,7 +467,7 @@ pub fn sign_contract_tx(
     multisig_redeemscript: &Script,
     funding_amount: Amount,
     privkey: &SecretKey,
-) -> Result<Signature, ContractError> {
+) -> Result<Signature, ProtocolError> {
     let input_index = 0;
     let sighash = Message::from_digest_slice(
         &SighashCache::new(contract_tx).p2wsh_signature_hash(
@@ -494,7 +492,7 @@ pub fn verify_contract_tx_sig(
     funding_amount: Amount,
     pubkey: &PublicKey,
     sig: &bitcoin::secp256k1::ecdsa::Signature,
-) -> Result<(), ContractError> {
+) -> Result<(), ProtocolError> {
     let input_index = 0;
     let sighash = Message::from_digest_slice(
         &SighashCache::new(contract_tx).p2wsh_signature_hash(
@@ -587,7 +585,6 @@ mod test {
 
         // Use an u16 to strictly positive 2 byte integer
         let locktime = random::<u16>();
-        println!("randomly chosen locktime = {}", locktime);
 
         let contract_script =
             create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hashvalue, &locktime);
@@ -659,8 +656,8 @@ mod test {
             ).unwrap()
         );
 
-        let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript);
-        let another_script_pubkey = redeemscript_to_scriptpubkey(&another_script);
+        let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript).unwrap();
+        let another_script_pubkey = redeemscript_to_scriptpubkey(&another_script).unwrap();
 
         // Create the funding transaction
         let funding_tx = Transaction {
@@ -722,7 +719,8 @@ mod test {
             Amount::from_sat(30000),
             &contract_script,
             Amount::from_sat(1000),
-        );
+        )
+        .unwrap();
 
         // Check creation matches expectation
         let expected_tx_hex = String::from(
@@ -755,7 +753,7 @@ mod test {
 
         // Error Cases---------------------------------------------
         // Check validation against wrong spending outpoint
-        if let ContractError::Protocol(message) = validate_contract_tx(
+        if let ProtocolError::General(message) = validate_contract_tx(
             &contract_tx,
             Some(
                 &OutPoint::from_str(
@@ -784,7 +782,7 @@ mod test {
             script_sig: ScriptBuf::new(),
         });
         // Verify validation fails
-        if let ContractError::Protocol(message) =
+        if let ProtocolError::General(message) =
             validate_contract_tx(&contract_tx_err1, Some(&spending_utxo), &contract_script)
                 .unwrap_err()
         {
@@ -800,13 +798,13 @@ mod test {
                 "5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae"
             ).unwrap()
         );
-        let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript);
+        let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript).unwrap();
         contract_tx_err2.output[0] = TxOut {
             script_pubkey: multi_script_pubkey,
             value: Amount::from_sat(3000),
         };
         // Verify validation fails
-        if let ContractError::Protocol(message) =
+        if let ProtocolError::General(message) =
             validate_contract_tx(&contract_tx_err2, Some(&spending_utxo), &contract_script)
                 .unwrap_err()
         {
@@ -830,7 +828,7 @@ mod test {
 
         let funding_outpoint_script = create_multisig_redeemscript(&pub1, &pub2);
 
-        let funding_spk = redeemscript_to_scriptpubkey(&funding_outpoint_script);
+        let funding_spk = redeemscript_to_scriptpubkey(&funding_outpoint_script).unwrap();
 
         let funding_tx = Transaction {
             input: vec![TxIn {
@@ -865,7 +863,8 @@ mod test {
             funding_tx.output[0].value,
             &contract_script,
             Amount::from_sat(1000),
-        );
+        )
+        .unwrap();
 
         // priv1 signs the contract and verify
         let sig1 = sign_contract_tx(
@@ -928,7 +927,7 @@ mod test {
 
         let check_multisig_value_2 = check_multisig_has_pubkey(script, &pubkey_derived_2, &nonce_2);
         let val = match check_multisig_value_2.unwrap_err() {
-            ContractError::Protocol(mess) => mess,
+            ProtocolError::General(mess) => mess,
             _ => "Not in path",
         };
         assert_eq!(val, "wrong pubkeys in multisig_redeemscript");
@@ -962,7 +961,7 @@ mod test {
             check_hashlock_has_pubkey(contract_redeemscript, &pub_hashlock, &nonce).unwrap_err();
 
         let error_description = match error {
-            ContractError::Protocol(message) => message,
+            ProtocolError::General(message) => message,
             _ => "Not the current Path",
         };
 
@@ -1005,7 +1004,7 @@ mod test {
         let test_hashlock_pubkey_2 =
             read_hashlock_pubkey_from_contract(&altered_contract_script).unwrap_err();
         let error_message = match test_hashlock_pubkey_2 {
-            ContractError::Protocol(msg) => msg,
+            ProtocolError::General(msg) => msg,
             _ => "Not the correct Path",
         };
 
@@ -1045,7 +1044,7 @@ mod test {
         let test_timelock_pubkey_2 =
             read_timelock_pubkey_from_contract(&altered_contract_script).unwrap_err();
         let error_message = match test_timelock_pubkey_2 {
-            ContractError::Protocol(msg) => msg,
+            ProtocolError::General(msg) => msg,
             _ => "Not the correct Path",
         };
 
@@ -1069,7 +1068,7 @@ mod test {
         let result_invalid_length =
             check_reedemscript_is_multisig(Script::from_bytes(&invalid_length_script)).unwrap_err();
         let error_message_invalid_length = match result_invalid_length {
-            ContractError::Protocol(msg) => msg,
+            ProtocolError::General(msg) => msg,
             _ => "Not correct path",
         };
         assert_eq!(
@@ -1081,7 +1080,7 @@ mod test {
             check_reedemscript_is_multisig(Script::from_bytes(&invalid_length_script)).unwrap_err();
 
         let error_message_invalid_template = match result_invalid_template {
-            ContractError::Protocol(msg) => msg,
+            ProtocolError::General(msg) => msg,
             _ => "Not correct path",
         };
         assert_eq!(
@@ -1232,8 +1231,8 @@ mod test {
             ).unwrap()
         );
 
-        let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript);
-        let another_script_pubkey = redeemscript_to_scriptpubkey(&another_script);
+        let multi_script_pubkey = redeemscript_to_scriptpubkey(&multisig_redeemscript).unwrap();
+        let another_script_pubkey = redeemscript_to_scriptpubkey(&another_script).unwrap();
 
         // Create the funding transaction
         let funding_tx = Transaction {
@@ -1329,7 +1328,7 @@ mod test {
         let hash_value_from_fn = check_hashvalues_are_equal(&funding_proof).unwrap_err();
 
         let error_message_invalid_length = match hash_value_from_fn {
-            ContractError::Protocol(msg) => msg,
+            ProtocolError::General(msg) => msg,
             _ => "Not correct path",
         };
         assert_eq!(

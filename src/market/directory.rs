@@ -249,7 +249,7 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
 
                 log::info!("Directory tor is instantiated");
 
-                let onion_addr = get_tor_addrs(&PathBuf::from("/tmp/tor-rust-directory"));
+                let onion_addr = get_tor_addrs(&PathBuf::from("/tmp/tor-rust-directory"))?;
 
                 log::info!(
                     "Directory Server is listening at {}:{}",

@@ -11,12 +11,12 @@ use socks::Socks5Stream;
 use std::{io::ErrorKind, net::TcpStream, thread::sleep, time::Duration};
 
 use crate::{
-    error::ProtocolError,
     protocol::{
         contract::{
             calculate_coinswap_fee, create_contract_redeemscript, find_funding_output_index,
             validate_contract_tx, FUNDING_TX_VBYTE_SIZE,
         },
+        error::ProtocolError,
         messages::{
             ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForSender,
             ContractTxInfoForRecvr, ContractTxInfoForSender, FundingTxInfo, GiveOffer,
@@ -318,8 +318,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         .funding_tx_infos
         .iter()
         .map(|funding_info| {
-            let funding_output_index =
-                find_funding_output_index(funding_info).map_err(ProtocolError::Contract)?;
+            let funding_output_index = find_funding_output_index(funding_info)?;
             Ok(funding_info
                 .funding_tx
                 .output
@@ -379,8 +378,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
             receivers_contract_tx,
             Some(&contract_tx.input[0].previous_output),
             contract_redeemscript,
-        )
-        .map_err(ProtocolError::Contract)?;
+        )?;
     }
     let next_swap_contract_redeemscripts = npi
         .next_peer_hashlock_pubkeys
@@ -472,10 +470,11 @@ fn download_maker_offer_attempt_once(
     let offer = match msg {
         MakerToTakerMessage::RespOffer(offer) => offer,
         msg => {
-            return Err(TakerError::Protocol(ProtocolError::WrongMessage {
+            return Err(ProtocolError::WrongMessage {
                 expected: "RespOffer".to_string(),
                 received: format!("{}", msg),
-            }));
+            }
+            .into());
         }
     };
 
