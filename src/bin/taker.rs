@@ -3,7 +3,7 @@ use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Auth};
 use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
-    utill::{parse_proxy_auth, setup_logger, ConnectionType},
+    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType},
     wallet::{Destination, RPCConfig, SendAmount},
 };
 use log::LevelFilter;
@@ -143,7 +143,7 @@ fn main() -> Result<(), TakerError> {
         },
     };
 
-    setup_logger(log_level);
+    setup_taker_logger(log_level);
 
     match args.command {
         Commands::SeedUtxo => {

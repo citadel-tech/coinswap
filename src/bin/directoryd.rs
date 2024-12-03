@@ -2,7 +2,7 @@ use clap::Parser;
 use coinswap::{
     market::directory::{start_directory_server, DirectoryServer, DirectoryServerError},
     tor::setup_mitosis,
-    utill::{setup_logger, ConnectionType},
+    utill::{setup_directory_logger, ConnectionType},
 };
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
@@ -19,7 +19,7 @@ struct Cli {
 }
 
 fn main() -> Result<(), DirectoryServerError> {
-    setup_logger(log::LevelFilter::Info);
+    setup_directory_logger(log::LevelFilter::Info);
 
     let args = Cli::parse();
 
