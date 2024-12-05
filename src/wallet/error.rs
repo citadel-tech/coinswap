@@ -11,7 +11,6 @@ pub enum WalletError {
     Cbor(serde_cbor::Error),
     Rpc(bitcoind::bitcoincore_rpc::Error),
     BIP32(bitcoin::bip32::Error),
-    BIP39(bip39::Error),
     General(String),
     Protocol(ProtocolError),
     Fidelity(FidelityError),
@@ -36,12 +35,6 @@ impl From<bitcoind::bitcoincore_rpc::Error> for WalletError {
 impl From<bitcoin::bip32::Error> for WalletError {
     fn from(value: bitcoin::bip32::Error) -> Self {
         Self::BIP32(value)
-    }
-}
-
-impl From<bip39::Error> for WalletError {
-    fn from(value: bip39::Error) -> Self {
-        Self::BIP39(value)
     }
 }
 

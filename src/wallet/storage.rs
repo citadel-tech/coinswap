@@ -93,20 +93,25 @@ impl WalletStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bip39::Mnemonic;
+    use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
     use bitcoind::tempfile::tempdir;
 
     #[test]
     fn test_write_and_read_wallet_to_disk() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_wallet.cbor");
-        let mnemonic = Mnemonic::generate(12).unwrap().to_string();
+
+        let master_key = {
+            let mut seed = [0u8; 16];
+            OsRng.fill_bytes(&mut seed);
+            Xpriv::new_master(Network::Bitcoin, &seed).unwrap()
+        };
 
         let original_wallet_store = WalletStore::init(
             "test_wallet".to_string(),
             &file_path,
             Network::Bitcoin,
-            Xpriv::new_master(Network::Bitcoin, mnemonic.as_bytes()).unwrap(),
+            master_key,
             None,
         )
         .unwrap();
