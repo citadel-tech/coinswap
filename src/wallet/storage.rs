@@ -8,7 +8,7 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io::{BufReader, BufWriter},
-    path::PathBuf,
+    path::Path,
 };
 
 use super::{error::WalletError, fidelity::FidelityBond};
@@ -46,7 +46,7 @@ impl WalletStore {
     /// Initialize a store at a path (if path already exists, it will overwrite it).
     pub fn init(
         file_name: String,
-        path: &PathBuf,
+        path: impl AsRef<Path>,
         network: Network,
         master_key: Xpriv,
         wallet_birthday: Option<u64>,
@@ -65,8 +65,8 @@ impl WalletStore {
             wallet_birthday,
         };
 
-        std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
-        // write: overwrites existing file.
+        std::fs::create_dir_all(path.as_ref().parent().expect("Path should NOT be root!"))?;
+        // write: overwrites existing. file.
         // create: creates new file if doesn't exist.
         let file = File::create(path)?;
         let writer = BufWriter::new(file);
@@ -76,14 +76,14 @@ impl WalletStore {
     }
 
     /// Load existing file, updates it, writes it back (errors if path doesn't exist).
-    pub fn write_to_disk(&self, path: &PathBuf) -> Result<(), WalletError> {
+    pub fn write_to_disk(&self, path: impl AsRef<Path>) -> Result<(), WalletError> {
         let wallet_file = fs::OpenOptions::new().write(true).open(path)?;
         let writer = BufWriter::new(wallet_file);
         Ok(serde_cbor::to_writer(writer, &self)?)
     }
 
     /// Reads from a path (errors if path doesn't exist).
-    pub fn read_from_disk(path: &PathBuf) -> Result<Self, WalletError> {
+    pub fn read_from_disk(path: impl AsRef<Path>) -> Result<Self, WalletError> {
         let wallet_file = File::open(path)?;
         let reader = BufReader::new(wallet_file);
         let store: Self = serde_cbor::from_reader(reader)?;
