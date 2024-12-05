@@ -10,13 +10,14 @@ use std::collections::{HashMap, HashSet};
 use bitcoin::{
     bip32::{ChildNumber, DerivationPath, Xpriv, Xpub},
     hashes::hash160::Hash as Hash160,
+    key::rand::RngCore,
     secp256k1,
     secp256k1::{Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid,
 };
-
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
+use std::path::Path;
 
 use crate::{
     protocol::contract,
@@ -147,16 +148,15 @@ impl Wallet {
     ///
     /// The path should include the full path for a wallet file.
     /// If the wallet file doesn't exist it will create a new wallet file.
-    pub fn init(
-        path: &PathBuf,
-        rpc_config: &RPCConfig,
-        seedphrase: String,
-        passphrase: String,
-    ) -> Result<Self, WalletError> {
-        // Xpriv Derivation from seedphrase
-        let mnemonic = bip39::Mnemonic::parse(seedphrase.clone())?;
-        let seed = mnemonic.to_seed(passphrase.clone());
-        let master_key = Xpriv::new_master(rpc_config.network, &seed)?;
+    pub fn init(path: impl AsRef<Path>, rpc_config: &RPCConfig) -> Result<Self, WalletError> {
+        // Generate Master key
+        let master_key = {
+            let mut seed = [0u8; 16]; // Using entropy of 128 bits as 12 words Menmonics are standard default.
+            secp256k1::rand::rngs::OsRng.fill_bytes(&mut seed);
+            Xpriv::new_master(rpc_config.network, &seed)?
+        };
+
+        let path = path.as_ref();
 
         // Initialise wallet
         let file_name = path
@@ -174,17 +174,18 @@ impl Wallet {
             master_key,
             Some(wallet_birthday),
         )?;
+
         Ok(Self {
             rpc,
-            wallet_file_path: path.clone(),
+            wallet_file_path: path.to_path_buf(),
             store,
         })
     }
 
     /// Load wallet data from file and connects to a core RPC.
     /// The core rpc wallet name, and wallet_id field in the file should match.
-    pub fn load(rpc_config: &RPCConfig, path: &PathBuf) -> Result<Wallet, WalletError> {
-        let store = WalletStore::read_from_disk(path)?;
+    pub fn load(path: impl AsRef<Path>, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
+        let store = WalletStore::read_from_disk(&path)?;
         if rpc_config.wallet_name != store.file_name {
             return Err(WalletError::General(format!(
                 "Wallet name of database file and core missmatch, expected {}, found {}",
@@ -199,12 +200,12 @@ impl Wallet {
             store.incoming_swapcoins.len(),
             store.outgoing_swapcoins.len()
         );
-        let wallet = Self {
+
+        Ok(Self {
             rpc,
-            wallet_file_path: path.clone(),
+            wallet_file_path: path.as_ref().to_path_buf(),
             store,
-        };
-        Ok(wallet)
+        })
     }
 
     /// Deletes the wallet file and returns the result as `Ok(())` on success.

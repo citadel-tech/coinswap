@@ -32,7 +32,7 @@ fn malice1_taker_broadcast_contract_prematurely() {
     let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
         None,
         makers_config_map.into(),
-        Some(TakerBehavior::BroadcastContractAfterFullSetup),
+        TakerBehavior::BroadcastContractAfterFullSetup,
         ConnectionType::CLEARNET,
     );
 

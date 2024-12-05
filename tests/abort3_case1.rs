@@ -2,7 +2,7 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
-    taker::SwapParams,
+    taker::{SwapParams, TakerBehavior},
     utill::ConnectionType,
 };
 
@@ -38,7 +38,7 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
     let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
         None,
         makers_config_map.into(),
-        None,
+        TakerBehavior::Normal,
         ConnectionType::CLEARNET,
     );
 

@@ -2,7 +2,7 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
-    taker::SwapParams,
+    taker::{SwapParams, TakerBehavior},
     utill::ConnectionType,
 };
 mod test_framework;
@@ -42,7 +42,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
         None,
         makers_config_map.into(),
-        None,
+        TakerBehavior::Normal,
         ConnectionType::CLEARNET,
     );
 

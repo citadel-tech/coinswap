@@ -7,12 +7,12 @@ use coinswap::{
 };
 
 mod test_framework;
-use test_framework::*;
-
+use coinswap::taker::TakerBehavior;
 use log::{info, warn};
 use std::{
     fs::File, io::Read, path::PathBuf, sync::atomic::Ordering::Relaxed, thread, time::Duration,
 };
+use test_framework::*;
 
 /// ABORT 2: Maker Drops Before Setup
 /// This test demonstrates the situation where a Maker prematurely drops connections after doing
@@ -36,7 +36,7 @@ fn maker_drops_after_sending_senders_sigs() {
     let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
         None,
         makers_config_map.into(),
-        None,
+        TakerBehavior::Normal,
         ConnectionType::CLEARNET,
     );
 

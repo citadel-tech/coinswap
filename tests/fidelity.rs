@@ -2,9 +2,9 @@
 use bitcoin::{absolute::LockTime, Amount};
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
+    taker::TakerBehavior,
     utill::ConnectionType,
 };
-
 mod test_framework;
 use test_framework::*;
 
@@ -28,7 +28,7 @@ fn test_fidelity() {
     let (test_framework, _, makers, directory_server_instance) = TestFramework::init(
         None,
         makers_config_map.into(),
-        None,
+        TakerBehavior::Normal,
         ConnectionType::CLEARNET,
     );
 
