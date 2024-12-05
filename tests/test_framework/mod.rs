@@ -62,9 +62,11 @@ pub struct TestFramework {
 impl TestFramework {
     /// Initialize a test-framework environment from given configuration data.
     /// This object holds the reference to backend bitcoind process and RPC.
+    /// It takes:
     /// - bitcoind conf.
     /// - a map of [port, [MakerBehavior]]
     /// - optional taker behavior.
+    /// - connection type
     ///
     /// Returns ([TestFramework], [Taker], [`Vec<Maker>`]).
     /// Maker's config will follow the pattern given the input HashMap.
@@ -73,7 +75,7 @@ impl TestFramework {
     pub fn init(
         bitcoind_conf: Option<Conf<'_>>,
         makers_config_map: HashMap<(u16, Option<u16>), MakerBehavior>,
-        taker_behavior: Option<TakerBehavior>,
+        taker_behavior: TakerBehavior,
         connection_type: ConnectionType,
     ) -> (
         Arc<Self>,
@@ -91,7 +93,7 @@ impl TestFramework {
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
         }
-        log::info!("temporary directory : {}", temp_dir.display());
+        log::info!("temporary directory : {:?}", temp_dir);
 
         // Initiate the bitcoind backend.
         let mut conf = bitcoind_conf.unwrap_or_default();
@@ -137,11 +139,7 @@ impl TestFramework {
         log::info!("Initiating Directory Server .....");
 
         let directory_server_instance = Arc::new(
-            DirectoryServer::new(
-                Some(temp_dir.clone().join("directory_server")),
-                Some(connection_type),
-            )
-            .unwrap(),
+            DirectoryServer::new(Some(temp_dir.join("dns")), Some(connection_type)).unwrap(),
         );
         let directory_server_instance_clone = directory_server_instance.clone();
         thread::spawn(move || {
@@ -156,10 +154,10 @@ impl TestFramework {
         let taker_rpc_config = rpc_config.clone();
         let taker = Arc::new(RwLock::new(
             Taker::init(
-                Some(temp_dir.clone().join("taker")),
+                Some(temp_dir.join("taker")),
                 None,
                 Some(taker_rpc_config),
-                taker_behavior.unwrap_or_default(),
+                taker_behavior,
                 Some(connection_type),
             )
             .unwrap(),
@@ -167,10 +165,10 @@ impl TestFramework {
         let mut base_rpc_port = 3500; // Random port for RPC connection in tests. (Not used)
                                       // Create the Makers as per given configuration map.
         let makers = makers_config_map
-            .iter()
+            .into_iter()
             .map(|(port, behavior)| {
                 base_rpc_port += 1;
-                let maker_id = "maker".to_string() + &port.0.to_string(); // ex: "maker6102"
+                let maker_id = format!("maker{}", port.0); // ex: "maker6102"
                 let maker_rpc_config = rpc_config.clone();
                 thread::sleep(Duration::from_secs(5)); // Sleep for some time avoid resource unavailable error.
                 Arc::new(
@@ -182,7 +180,7 @@ impl TestFramework {
                         Some(base_rpc_port),
                         port.1,
                         Some(connection_type),
-                        *behavior,
+                        behavior,
                     )
                     .unwrap(),
                 )
@@ -211,23 +209,16 @@ impl TestFramework {
 
     /// Generate Blocks in regtest node.
     pub fn generate_blocks(&self, n: u64) {
-        let mining_address = self
-            .bitcoind
-            .client
-            .get_new_address(None, None)
-            .unwrap()
-            .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
-            .unwrap();
-        self.bitcoind
-            .client
-            .generate_to_address(n, &mining_address)
-            .unwrap();
+        let client = self.get_client();
+        let mining_address = client.get_new_address(None, None).unwrap().assume_checked();
+
+        client.generate_to_address(n, &mining_address).unwrap();
     }
 
     /// Send coins to a bitcoin address.
+    // TODO: THink about Address type as It should be Address<NetworkChecked> not Address?
     pub fn send_to_address(&self, addrs: &Address, amount: Amount) {
-        self.bitcoind
-            .client
+        self.get_client()
             .send_to_address(addrs, amount, None, None, None, None, None, None)
             .unwrap();
     }
@@ -238,7 +229,7 @@ impl TestFramework {
         // stop all framework threads.
         self.shutdown.store(true, Relaxed);
         // stop bitcoind
-        let _ = self.bitcoind.client.stop().unwrap();
+        let _ = self.get_client().stop().unwrap();
     }
 
     pub fn get_block_count(&self) -> u64 {

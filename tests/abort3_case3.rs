@@ -2,7 +2,7 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
-    taker::SwapParams,
+    taker::{SwapParams, TakerBehavior},
     utill::ConnectionType,
 };
 
@@ -35,7 +35,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
         None,
         makers_config_map.into(),
-        None,
+        TakerBehavior::Normal,
         ConnectionType::CLEARNET,
     );
 
