@@ -1,6 +1,8 @@
 use std::{
-    io::ErrorKind,
+    fs::File,
+    io::{ErrorKind, Read},
     net::{TcpListener, TcpStream},
+    path::PathBuf,
     sync::{atomic::Ordering::Relaxed, Arc},
     thread::sleep,
     time::Duration,
@@ -10,7 +12,7 @@ use bitcoin::{Address, Amount};
 
 use crate::{
     maker::{error::MakerError, rpc::messages::RpcMsgResp, Maker},
-    utill::{get_maker_dir, get_tor_addrs, read_message, send_message},
+    utill::{read_message, send_message, ConnectionType},
     wallet::{Destination, SendAmount},
 };
 use std::str::FromStr;
@@ -144,16 +146,37 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             };
         }
         RpcMsgReq::GetDataDir => {
-            let path = get_maker_dir().display().to_string();
-            let resp = RpcMsgResp::GetDataDirResp(path);
+            let path = maker.get_data_dir();
+            let resp = RpcMsgResp::GetDataDirResp(path.clone());
             if let Err(e) = send_message(socket, &resp) {
                 log::info!("Error sending RPC response {:?}", e);
             };
         }
         RpcMsgReq::GetTorAddress => {
-            let path = get_maker_dir().join("tor");
-            let resp = RpcMsgResp::GetTorAddressResp(get_tor_addrs(&path)?);
-            if let Err(e) = send_message(socket, &resp) {
+            if maker.config.connection_type == ConnectionType::CLEARNET {
+                let resp = RpcMsgResp::GetTorAddressResp("Maker Tor is not running".to_string());
+                if let Err(e) = send_message(socket, &resp) {
+                    log::info!("Error sending RPC response {:?}", e);
+                };
+            } else {
+                let maker_hs_path_str =
+                    format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
+                let maker_hs_path = PathBuf::from(maker_hs_path_str);
+                let mut maker_file = File::open(maker_hs_path)?;
+                let mut maker_onion_addr: String = String::new();
+                maker_file.read_to_string(&mut maker_onion_addr)?;
+                maker_onion_addr.pop();
+                let maker_address = format!("{}:{}", maker_onion_addr, maker.config.port);
+
+                let resp = RpcMsgResp::GetTorAddressResp(maker_address);
+                if let Err(e) = send_message(socket, &resp) {
+                    log::info!("Error sending RPC response {:?}", e);
+                };
+            }
+        }
+        RpcMsgReq::Stop => {
+            maker.shutdown.store(true, Relaxed);
+            if let Err(e) = send_message(socket, &RpcMsgResp::Shutdown) {
                 log::info!("Error sending RPC response {:?}", e);
             };
         }

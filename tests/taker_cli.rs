@@ -1,3 +1,4 @@
+#![cfg(feature = "integration-test")]
 use bitcoin::{address::NetworkChecked, Address, Amount, Transaction};
 use bitcoind::{bitcoincore_rpc::RpcApi, tempfile::env::temp_dir, BitcoinD, Conf};
 
