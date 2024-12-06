@@ -6,17 +6,24 @@
 //! contract broadcasts and handle idle Taker connections. Additionally, it handles recovery by broadcasting
 //! contract transactions and claiming funds after an unsuccessful swap event.
 
-use std::{
-    collections::HashMap,
-    net::IpAddr,
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering::Relaxed},
-        Arc, Mutex, RwLock,
+use super::{config::MakerConfig, error::MakerError};
+use crate::{
+    protocol::{
+        contract::{
+            check_hashlock_has_pubkey, check_hashvalues_are_equal, check_multisig_has_pubkey,
+            check_reedemscript_is_multisig, find_funding_output_index, read_contract_locktime,
+        },
+        messages::{FidelityProof, ProofOfFunding, ReqContractSigsForSender},
+        Hash160,
     },
-    time::{Duration, Instant},
+    utill::{
+        get_maker_dir, redeemscript_to_scriptpubkey, seed_phrase_to_unique_id, ConnectionType,
+    },
+    wallet::{
+        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
+        WalletSwapCoin,
+    },
 };
-
 use bip39::Mnemonic;
 use bitcoin::{
     ecdsa::Signature,
@@ -24,35 +31,21 @@ use bitcoin::{
     OutPoint, PublicKey, ScriptBuf, Transaction,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
-
-use crate::{
-    protocol::{
-        contract::check_hashvalues_are_equal,
-        messages::{FidelityProof, ReqContractSigsForSender},
-        Hash160,
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering::Relaxed},
     },
-    utill::{
-        get_maker_dir, redeemscript_to_scriptpubkey, seed_phrase_to_unique_id, ConnectionType,
-    },
-    wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
+    thread,
+    time::{Duration, Instant},
 };
-
-use crate::{
-    protocol::{
-        contract::{
-            check_hashlock_has_pubkey, check_multisig_has_pubkey, check_reedemscript_is_multisig,
-            find_funding_output_index, read_contract_locktime,
-        },
-        messages::ProofOfFunding,
-    },
-    wallet::{IncomingSwapCoin, OutgoingSwapCoin, Wallet, WalletError},
-};
-
-use super::{config::MakerConfig, error::MakerError};
 
 use crate::maker::server::{
     HEART_BEAT_INTERVAL_SECS, MIN_CONTRACT_REACTION_TIME, REQUIRED_CONFIRMS,
 };
+use threadpool::ThreadPool;
 
 /// Used to configure the maker for testing purposes.
 #[derive(Debug, Clone, Copy)]
@@ -108,6 +101,8 @@ pub struct Maker {
     pub highest_fidelity_proof: RwLock<Option<FidelityProof>>,
     /// Is setup complete
     pub is_setup_complete: AtomicBool,
+    /// ThreadPool for managing recovery tasks
+    pub threadpool: Arc<ThreadPool>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -139,6 +134,8 @@ impl Maker {
         } else {
             MakerBehavior::Normal
         };
+
+        let pool = ThreadPool::new(4);
 
         // Get provided data directory or the default data directory.
         let data_dir = if cfg!(feature = "integration-test") {
@@ -222,6 +219,7 @@ impl Maker {
             connection_state: Mutex::new(HashMap::new()),
             highest_fidelity_proof: RwLock::new(None),
             is_setup_complete: AtomicBool::new(false),
+            threadpool: Arc::new(pool),
         })
     }
 
@@ -484,7 +482,9 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
 
         std::thread::sleep(Duration::from_secs(HEART_BEAT_INTERVAL_SECS));
     }
-
+    if maker.shutdown.load(Relaxed) {
+        maker.threadpool.join();
+    }
     Ok(())
 }
 
