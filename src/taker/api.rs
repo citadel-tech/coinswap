@@ -1931,6 +1931,9 @@ impl Taker {
         }
     }
 
+    pub fn list_offers(&self) -> &Vec<OfferAndAddress> {
+        &self.offerbook.all_makers
+    }
     /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
     pub fn sync_offerbook(&mut self, maker_count: usize) -> Result<(), TakerError> {
         let directory_address = match self.config.connection_type {
