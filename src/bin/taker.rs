@@ -35,7 +35,7 @@ struct Cli {
     #[clap(
         long,
         short = 'b',
-        default_value = "regtest", possible_values = &["regtest", "signet", "mainnet"]
+        default_value = "regtest", possible_values = &["regtest", "signet"]
     )]
     pub bitcoin_network: String,
     /// Sets the taker wallet's name. If the wallet file already exists at data-directory, it will load that wallet.
@@ -45,21 +45,7 @@ struct Cli {
     /// Default: Determined by the command passed.
     #[clap(long, short = 'v', possible_values = &["off", "error", "warn", "info", "debug", "trace"])]
     pub verbosity: Option<String>,
-    /// Sets the maker count to initiate coinswap with.
-    #[clap(name = "maker_count", default_value = "2")]
-    pub maker_count: usize,
-    /// Sets the send amount.
-    #[clap(name = "send_amount", default_value = "500000")]
-    pub send_amount: u64,
-    /// Sets the transaction count.
-    #[clap(name = "tx_count", default_value = "3")]
-    pub tx_count: u32,
-    /// Sets the fee-rate.
-    #[clap(name = "fee_rate", default_value = "1000")]
-    pub fee_rate: u64,
-    /// Sets the required on-chain confirmations.
-    #[clap(name = "required_confirms", default_value = "1000")]
-    pub required_confirms: u64,
+
     /// List of sub commands to process various endpoints of taker cli app.
     #[clap(subcommand)]
     command: Commands,
@@ -94,10 +80,30 @@ enum Commands {
         #[clap(name = "fee")]
         fee: u64,
     },
-    /// Sync the offer book
-    SyncOfferBook,
+
+    /// List all offers in taker's offerbook
+    ListOffers,
     /// Initiate the coinswap process
-    DoCoinswap,
+    DoCoinswap {
+        /// Sets the send amount.
+        #[clap(name = "send_amount")]
+        send_amount: u64,
+        /// Sets the fee-rate.
+        #[clap(name = "fee_rate")]
+        fee_rate: u64,
+        /// Sets the required on-chain confirmations.
+        #[clap(name = "required_confirms")] // TODO: Should we have default as 1?
+        required_confirms: u64,
+        /// Sets the maker count to initiate coinswap with.
+        #[clap(name = "maker_count", default_value = "2")]
+        // THINK: I do not want to  discard its default value as `maker_count =2`` resembles the coinswap protocol example.
+        // But due to which this arg has to kept after the required ones -> so will it makes sense to have this arg at the end even though
+        // It's the most important aspect of `do-coinswap`?
+        maker_count: usize,
+        /// Sets the transaction count.
+        #[clap(name = "tx_count", default_value = "3")]
+        tx_count: u32,
+    },
 }
 
 fn main() -> Result<(), TakerError> {
@@ -111,14 +117,6 @@ fn main() -> Result<(), TakerError> {
         auth: Auth::UserPass(args.auth.0, args.auth.1),
         network: rpc_network,
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
-    };
-
-    let swap_params = SwapParams {
-        send_amount: Amount::from_sat(args.send_amount),
-        maker_count: args.maker_count,
-        tx_count: args.tx_count,
-        required_confirms: args.required_confirms,
-        fee_rate: Amount::from_sat(args.fee_rate),
     };
 
     let mut taker = Taker::init(
@@ -136,9 +134,7 @@ fn main() -> Result<(), TakerError> {
     let log_level = match args.verbosity {
         Some(level) => LevelFilter::from_str(&level).unwrap(),
         None => match args.command {
-            Commands::DoCoinswap | Commands::SyncOfferBook | Commands::SendToAddress { .. } => {
-                log::LevelFilter::Info
-            }
+            Commands::DoCoinswap { .. } | Commands::SendToAddress { .. } => log::LevelFilter::Info,
             _ => log::LevelFilter::Off,
         },
     };
@@ -235,10 +231,24 @@ fn main() -> Result<(), TakerError> {
             println!("Calculated FeeRate : {:#}", calculated_fee_rate);
         }
 
-        Commands::SyncOfferBook => {
-            taker.sync_offerbook(args.maker_count)?;
+        Commands::ListOffers => {
+            let offers = taker.list_offers();
+            println!("{:?}", offers);
         }
-        Commands::DoCoinswap => {
+        Commands::DoCoinswap {
+            maker_count,
+            send_amount,
+            fee_rate,
+            required_confirms,
+            tx_count,
+        } => {
+            let swap_params = SwapParams {
+                send_amount: Amount::from_sat(send_amount),
+                maker_count,
+                tx_count,
+                required_confirms,
+                fee_rate: Amount::from_sat(fee_rate),
+            };
             taker.do_coinswap(swap_params)?;
         }
     }
