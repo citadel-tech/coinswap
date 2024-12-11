@@ -6,25 +6,6 @@
 //! contract broadcasts and handle idle Taker connections. Additionally, it handles recovery by broadcasting
 //! contract transactions and claiming funds after an unsuccessful swap event.
 
-use std::{
-    collections::HashMap,
-    net::IpAddr,
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering::Relaxed},
-        Arc, Mutex, RwLock,
-    },
-    time::{Duration, Instant},
-};
-
-use bip39::Mnemonic;
-use bitcoin::{
-    ecdsa::Signature,
-    secp256k1::{self, Secp256k1},
-    OutPoint, PublicKey, ScriptBuf, Transaction,
-};
-use bitcoind::bitcoincore_rpc::RpcApi;
-
 use crate::{
     protocol::{
         contract::check_hashvalues_are_equal,
@@ -35,6 +16,24 @@ use crate::{
         get_maker_dir, redeemscript_to_scriptpubkey, seed_phrase_to_unique_id, ConnectionType,
     },
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
+};
+use bip39::Mnemonic;
+use bitcoin::{
+    ecdsa::Signature,
+    secp256k1::{self, Secp256k1},
+    OutPoint, PublicKey, ScriptBuf, Transaction,
+};
+use bitcoind::bitcoincore_rpc::RpcApi;
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering::Relaxed},
+        Arc, Mutex, RwLock,
+    },
+    thread::JoinHandle,
+    time::{Duration, Instant},
 };
 
 use crate::{
@@ -92,6 +91,48 @@ pub struct ConnectionState {
     pub pending_funding_txes: Vec<Transaction>,
 }
 
+pub struct ThreadPool {
+    pub threads: Mutex<Vec<JoinHandle<()>>>,
+}
+
+impl Default for ThreadPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for ThreadPool {
+    fn drop(&mut self) {
+        if let Err(e) = self.join_all_threads() {
+            log::error!("Error joining threads in via drop: {:?}", e);
+        }
+    }
+}
+
+impl ThreadPool {
+    pub fn new() -> Self {
+        Self {
+            threads: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn add_thread(&self, handle: JoinHandle<()>) {
+        let mut threads = self.threads.lock().unwrap();
+        threads.push(handle);
+    }
+    #[inline]
+    fn join_all_threads(&self) -> Result<(), MakerError> {
+        let mut threads = self
+            .threads
+            .lock()
+            .map_err(|_| MakerError::General("Failed to lock threads"))?;
+        while let Some(thread) = threads.pop() {
+            thread.join().unwrap();
+        }
+        Ok(())
+    }
+}
+
 /// Represents the maker in the swap protocol.
 pub struct Maker {
     /// Defines special maker behavior, only applicable for testing
@@ -108,6 +149,8 @@ pub struct Maker {
     pub highest_fidelity_proof: RwLock<Option<FidelityProof>>,
     /// Is setup complete
     pub is_setup_complete: AtomicBool,
+    /// Thread pool for managing all spawned threads
+    pub thread_pool: Arc<ThreadPool>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -222,6 +265,7 @@ impl Maker {
             connection_state: Mutex::new(HashMap::new()),
             highest_fidelity_proof: RwLock::new(None),
             is_setup_complete: AtomicBool::new(false),
+            thread_pool: Arc::new(ThreadPool::new()),
         })
     }
 
@@ -466,9 +510,10 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                             "[{}] Spawning recovery thread after seeing contracts in mempool",
                             maker.config.port
                         );
-                        std::thread::spawn(move || {
+                        let handle = std::thread::spawn(move || {
                             recover_from_swap(maker_clone, outgoings, incomings).unwrap();
                         });
+                        maker.thread_pool.add_thread(handle);
                         // Clear the state value here
                         *connection_state = ConnectionState::default();
                         break;
@@ -547,9 +592,10 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
                         "[{}] Spawning recovery thread after Taker dropped",
                         maker.config.port
                     );
-                    std::thread::spawn(move || {
-                        recover_from_swap(maker_clone, outgoings, incomings).unwrap();
+                    let handle = std::thread::spawn(move || {
+                        recover_from_swap(maker_clone, outgoings, incomings).unwrap()
                     });
+                    maker.thread_pool.add_thread(handle);
                     // Clear the state values here
                     *state = ConnectionState::default();
                     break;
