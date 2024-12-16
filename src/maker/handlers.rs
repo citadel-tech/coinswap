@@ -678,9 +678,9 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
         }
         // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
         let maker_clone = maker.clone();
-        let handle = std::thread::spawn(move || {
-            recover_from_swap(maker_clone, outgoings, incomings).unwrap()
-        });
+        let handle = std::thread::Builder::new()
+            .name("recovery: wait for contract maturity & broadcasting timelocked".to_string())
+            .spawn(move || recover_from_swap(maker_clone, outgoings, incomings).unwrap())?;
         maker.thread_pool.add_thread(handle);
     }
     Ok(())

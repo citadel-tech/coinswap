@@ -510,9 +510,15 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                             "[{}] Spawning recovery thread after seeing contracts in mempool",
                             maker.config.port
                         );
-                        let handle = std::thread::spawn(move || {
-                            recover_from_swap(maker_clone, outgoings, incomings).unwrap();
-                        });
+                        let handle = std::thread::Builder::new()
+                            .name("recovery: saw contracts in mempool".to_string())
+                            .spawn(move || {
+                                if let Err(e) =
+                                    recover_from_swap(maker_clone.clone(), outgoings, incomings)
+                                {
+                                    log::error!("Recovery thread failed with error: {:?}", e);
+                                }
+                            })?;
                         maker.thread_pool.add_thread(handle);
                         // Clear the state value here
                         *connection_state = ConnectionState::default();
@@ -592,9 +598,15 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
                         "[{}] Spawning recovery thread after Taker dropped",
                         maker.config.port
                     );
-                    let handle = std::thread::spawn(move || {
-                        recover_from_swap(maker_clone, outgoings, incomings).unwrap()
-                    });
+                    let handle = std::thread::Builder::new()
+                        .name("recovery: taker dropped".to_string())
+                        .spawn(move || {
+                            if let Err(e) =
+                                recover_from_swap(maker_clone.clone(), outgoings, incomings)
+                            {
+                                log::error!("Recovery thread failed with error: {:?}", e);
+                            }
+                        })?;
                     maker.thread_pool.add_thread(handle);
                     // Clear the state values here
                     *state = ConnectionState::default();
