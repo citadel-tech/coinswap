@@ -9,7 +9,14 @@ use std::{io, io::Write, path::PathBuf};
 /// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
-    /// Network listening port
+    /// Network listening port.
+    /// This port is used by the Tor hidden service to bind and listen for incoming connections.  
+    /// While the taker does not function as a traditional server, this port is crucial for  
+    /// establishing a Tor hidden service. The Tor process leverages this port to create an  
+    /// internal endpoint, enabling secure communication with peers, such as makers, over the  
+    /// Tor network.  
+    /// By binding to this port, the taker facilitates private and anonymous peer-to-peer (P2P)  
+    /// interactions, preventing its real IP address from being exposed.
     pub port: u16,
     /// Socks port
     pub socks_port: u16,
@@ -17,8 +24,6 @@ pub struct TakerConfig {
     pub directory_server_address: String,
     /// Connection type
     pub connection_type: ConnectionType,
-    /// RPC port
-    pub rpc_port: u16,
 }
 
 impl Default for TakerConfig {
@@ -28,7 +33,6 @@ impl Default for TakerConfig {
             socks_port: 19050,
             directory_server_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
             connection_type: ConnectionType::TOR,
-            rpc_port: 8081,
         }
     }
 }
@@ -77,7 +81,6 @@ impl TakerConfig {
                 config_map.get("connection_type"),
                 default_config.connection_type,
             ),
-            rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
         })
     }
 
@@ -86,14 +89,9 @@ impl TakerConfig {
         let toml_data = format!(
             "port = {}
 socks_port = {}
-rpc_port = {}
 directory_server_address = {}
 connection_type = {:?}",
-            self.port,
-            self.socks_port,
-            self.rpc_port,
-            self.directory_server_address,
-            self.connection_type
+            self.port, self.socks_port, self.directory_server_address, self.connection_type
         );
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;
