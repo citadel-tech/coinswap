@@ -126,9 +126,30 @@ impl ThreadPool {
             .threads
             .lock()
             .map_err(|_| MakerError::General("Failed to lock threads"))?;
+
+        let thread_count = threads.len();
+        log::info!("Joining {} threads", thread_count);
+
+        let mut joined_count = 0;
         while let Some(thread) = threads.pop() {
-            thread.join().unwrap();
+            let thread_name = thread.thread().name().unwrap().to_string();
+
+            match thread.join() {
+                Ok(_) => {
+                    log::info!("Thread {} terminated successfully", thread_name);
+                    joined_count += 1;
+                }
+                Err(e) => {
+                    log::error!("Thread {} terminated due to error {:?}", thread_name, e);
+                }
+            }
         }
+
+        log::info!(
+            "Successfully joined {} out of {} threads",
+            joined_count,
+            thread_count
+        );
         Ok(())
     }
 }
