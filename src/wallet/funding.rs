@@ -530,7 +530,7 @@ impl Wallet {
 mod tests {
     use super::*;
     use bitcoin::Amount;
-
+    
     #[test]
     fn test_amount_fractions() {
         {
@@ -559,6 +559,114 @@ mod tests {
             let values = result.unwrap();
             assert_eq!(values.iter().sum::<u64>(), u64::MAX);
             assert!(values.iter().all(|&x| x >= 5000));
+        }
+    }
+
+    #[test]
+    fn test_generate_amount_fractions_without_correction() {
+        {
+            let total = Amount::from_sat(1_000_000);
+            let count = 3;
+            let lower_limit = 5000;
+            let result =
+                Wallet::generate_amount_fractions_without_correction(count, total, lower_limit);
+
+            assert!(result.is_ok());
+            let fractions = result.unwrap();
+
+            assert_eq!(fractions.len(), count);
+            assert!((fractions.iter().sum::<f32>() - 1.0).abs() < 0.000001);
+            assert!(fractions
+                .iter()
+                .all(|&f| f * (total.to_sat() as f32) > lower_limit as f32));
+        }
+
+        {
+            let count = 2;
+            let lower_limit = 5000;
+            let total = Amount::from_sat(11_000);
+            let result =
+                Wallet::generate_amount_fractions_without_correction(count, total, lower_limit);
+
+            assert!(result.is_ok());
+            let fractions = result.unwrap();
+            assert_eq!(fractions.len(), count);
+            assert!(fractions
+                .iter()
+                .all(|&f| f * (total.to_sat() as f32) > lower_limit as f32));
+        }
+
+        {
+            let count = 2;
+            let lower_limit = 5000;
+            let total = Amount::from_sat(9_000);
+            let result =
+                Wallet::generate_amount_fractions_without_correction(count, total, lower_limit);
+
+            assert!(result.is_err());
+            assert!(matches!(result, 
+                Err(WalletError::Protocol(msg)) if msg.contains("amount too small")));
+        }
+
+        {
+            let total = Amount::from_sat(1_000_000);
+            let count = 10;
+            let lower_limit = 5000;
+            let result =
+                Wallet::generate_amount_fractions_without_correction(count, total, lower_limit);
+
+            assert!(result.is_ok());
+            let fractions = result.unwrap();
+            assert_eq!(fractions.len(), count);
+            assert!(fractions
+                .iter()
+                .all(|&f| f * (total.to_sat() as f32) > lower_limit as f32));
+        }
+
+        {
+            let total = Amount::from_sat(100_000);
+            let count = 2;
+            let lower_limit = 1000;
+            let result =
+                Wallet::generate_amount_fractions_without_correction(count, total, lower_limit);
+
+            assert!(result.is_ok());
+            let fractions = result.unwrap();
+            let max_fraction = fractions.iter().fold(0f32, |a, &b| a.max(b));
+            assert!(max_fraction < 0.9);
+        }
+
+        {
+            let total = Amount::from_sat(1_000_000);
+            let count = 3;
+            let lower_limit = 5000;
+
+            let result1 =
+                Wallet::generate_amount_fractions_without_correction(count, total, lower_limit)
+                    .unwrap();
+            let result2 =
+                Wallet::generate_amount_fractions_without_correction(count, total, lower_limit)
+                    .unwrap();
+            assert_ne!(result1, result2);
+        }
+
+        {
+            let total = Amount::from_sat(1_000_000);
+            let lower_limit = 5000;
+
+            let result =
+                Wallet::generate_amount_fractions_without_correction(0, total, lower_limit);
+            assert!(result.is_ok());
+            let fractions = result.unwrap();
+            assert_eq!(fractions.len(), 1);
+            assert!((fractions[0] - 1.0).abs() < 0.000001);
+
+            let result =
+                Wallet::generate_amount_fractions_without_correction(1, total, lower_limit);
+            assert!(result.is_ok());
+            let fractions = result.unwrap();
+            assert_eq!(fractions.len(), 1);
+            assert!((fractions[0] - 1.0).abs() < 0.000001);
         }
     }
 }
