@@ -93,12 +93,7 @@ pub struct ConnectionState {
 
 pub struct ThreadPool {
     pub threads: Mutex<Vec<JoinHandle<()>>>,
-}
-
-impl Default for ThreadPool {
-    fn default() -> Self {
-        Self::new()
-    }
+    pub port: u16,
 }
 
 impl Drop for ThreadPool {
@@ -110,9 +105,10 @@ impl Drop for ThreadPool {
 }
 
 impl ThreadPool {
-    pub fn new() -> Self {
+    pub fn new(port: u16) -> Self {
         Self {
             threads: Mutex::new(Vec::new()),
+            port,
         }
     }
 
@@ -127,8 +123,7 @@ impl ThreadPool {
             .lock()
             .map_err(|_| MakerError::General("Failed to lock threads"))?;
 
-        let thread_count = threads.len();
-        log::info!("Joining {} threads", thread_count);
+        log::info!("Joining {} threads", threads.len());
 
         let mut joined_count = 0;
         while let Some(thread) = threads.pop() {
@@ -136,20 +131,21 @@ impl ThreadPool {
 
             match thread.join() {
                 Ok(_) => {
-                    log::info!("Thread {} terminated successfully", thread_name);
+                    log::info!("[{}] Thread {} joined", self.port, thread_name);
                     joined_count += 1;
                 }
                 Err(e) => {
-                    log::error!("Thread {} terminated due to error {:?}", thread_name, e);
+                    log::error!(
+                        "[{}] Error {:?} while joining thread {}",
+                        self.port,
+                        e,
+                        thread_name
+                    );
                 }
             }
         }
 
-        log::info!(
-            "Successfully joined {} out of {} threads",
-            joined_count,
-            thread_count
-        );
+        log::info!("Successfully joined {} threads", joined_count,);
         Ok(())
     }
 }
@@ -272,6 +268,8 @@ impl Maker {
             config.connection_type = connection_type;
         }
 
+        let thread_pool_port = config.port;
+
         config.write_to_file(&data_dir.join("config.toml"))?;
 
         log::info!("Initializing wallet sync");
@@ -286,7 +284,7 @@ impl Maker {
             connection_state: Mutex::new(HashMap::new()),
             highest_fidelity_proof: RwLock::new(None),
             is_setup_complete: AtomicBool::new(false),
-            thread_pool: Arc::new(ThreadPool::new()),
+            thread_pool: Arc::new(ThreadPool::new(thread_pool_port)),
         })
     }
 
@@ -532,12 +530,11 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                             maker.config.port
                         );
                         let handle = std::thread::Builder::new()
-                            .name("recovery: saw contracts in mempool".to_string())
+                            .name("Swap recovery thread".to_string())
                             .spawn(move || {
-                                if let Err(e) =
-                                    recover_from_swap(maker_clone.clone(), outgoings, incomings)
+                                if let Err(e) = recover_from_swap(maker_clone, outgoings, incomings)
                                 {
-                                    log::error!("Recovery thread failed with error: {:?}", e);
+                                    log::error!("Failed to recover from swap due to: {:?}", e);
                                 }
                             })?;
                         maker.thread_pool.add_thread(handle);
@@ -620,12 +617,10 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
                         maker.config.port
                     );
                     let handle = std::thread::Builder::new()
-                        .name("recovery: taker dropped".to_string())
+                        .name("Swap Recovery Thread".to_string())
                         .spawn(move || {
-                            if let Err(e) =
-                                recover_from_swap(maker_clone.clone(), outgoings, incomings)
-                            {
-                                log::error!("Recovery thread failed with error: {:?}", e);
+                            if let Err(e) = recover_from_swap(maker_clone, outgoings, incomings) {
+                                log::error!("Failed to recover from swap due to: {:?}", e);
                             }
                         })?;
                     maker.thread_pool.add_thread(handle);
