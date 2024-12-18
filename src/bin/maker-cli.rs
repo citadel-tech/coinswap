@@ -37,7 +37,7 @@ enum Commands {
     FidelityBalance,
     /// Gets a new address
     NewAddress,
-    // Send to an external address and returns the transaction hex.
+    /// Send to an external address and returns the transaction hex.
     SendToAddress {
         address: String,
         amount: u64,
@@ -57,63 +57,61 @@ fn main() -> Result<(), MakerError> {
 
     match cli.command {
         Commands::Ping => {
-            send_rpc_req(&RpcMsgReq::Ping)?;
+            send_rpc_req(RpcMsgReq::Ping)?;
         }
         Commands::ContractUtxo => {
-            send_rpc_req(&RpcMsgReq::ContractUtxo)?;
+            send_rpc_req(RpcMsgReq::ContractUtxo)?;
         }
         Commands::ContractBalance => {
-            send_rpc_req(&RpcMsgReq::ContractBalance)?;
+            send_rpc_req(RpcMsgReq::ContractBalance)?;
         }
         Commands::FidelityBalance => {
-            send_rpc_req(&RpcMsgReq::FidelityBalance)?;
+            send_rpc_req(RpcMsgReq::FidelityBalance)?;
         }
         Commands::FidelityUtxo => {
-            send_rpc_req(&RpcMsgReq::FidelityUtxo)?;
+            send_rpc_req(RpcMsgReq::FidelityUtxo)?;
         }
         Commands::SeedBalance => {
-            send_rpc_req(&RpcMsgReq::SeedBalance)?;
+            send_rpc_req(RpcMsgReq::SeedBalance)?;
         }
         Commands::SeedUtxo => {
-            send_rpc_req(&RpcMsgReq::SeedUtxo)?;
+            send_rpc_req(RpcMsgReq::SeedUtxo)?;
         }
         Commands::SwapBalance => {
-            send_rpc_req(&RpcMsgReq::SwapBalance)?;
+            send_rpc_req(RpcMsgReq::SwapBalance)?;
         }
         Commands::SwapUtxo => {
-            send_rpc_req(&RpcMsgReq::SwapUtxo)?;
+            send_rpc_req(RpcMsgReq::SwapUtxo)?;
         }
         Commands::NewAddress => {
-            send_rpc_req(&RpcMsgReq::NewAddress)?;
+            send_rpc_req(RpcMsgReq::NewAddress)?;
         }
         Commands::SendToAddress {
             address,
             amount,
             fee,
         } => {
-            send_rpc_req(&RpcMsgReq::SendToAddress {
+            send_rpc_req(RpcMsgReq::SendToAddress {
                 address,
                 amount,
                 fee,
             })?;
         }
-        // TODO: Test Coverage
         Commands::GetTorAddress => {
-            send_rpc_req(&RpcMsgReq::GetTorAddress)?;
+            send_rpc_req(RpcMsgReq::GetTorAddress)?;
         }
-        // TODO: Test Coverage
         Commands::GetDataDir => {
-            send_rpc_req(&RpcMsgReq::GetDataDir)?;
+            send_rpc_req(RpcMsgReq::GetDataDir)?;
         }
         Commands::Stop => {
-            send_rpc_req(&RpcMsgReq::Stop)?;
+            send_rpc_req(RpcMsgReq::Stop)?;
         }
     }
 
     Ok(())
 }
 
-fn send_rpc_req(req: &RpcMsgReq) -> Result<(), MakerError> {
+fn send_rpc_req(req: RpcMsgReq) -> Result<(), MakerError> {
     let mut stream = TcpStream::connect("127.0.0.1:6103")?;
     stream.set_read_timeout(Some(Duration::from_secs(20)))?;
     stream.set_write_timeout(Some(Duration::from_secs(20)))?;

@@ -36,7 +36,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         TestFramework::init(makers_config_map.into(), None, ConnectionType::CLEARNET);
 
     warn!("Running Test: Maker closes conneciton at hash preimage handling");
-
+    let bitcoind = &test_framework.bitcoind;
     info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
@@ -46,7 +46,8 @@ fn abort3_case3_close_at_hash_preimage_handover() {
             .get_wallet_mut()
             .get_next_external_address()
             .unwrap();
-        test_framework.send_to_address(&taker_address, Amount::from_btc(0.05).unwrap());
+
+        send_to_address(bitcoind, &taker_address, Amount::from_btc(0.05).unwrap());
         makers.iter().for_each(|maker| {
             let maker_addrs = maker
                 .get_wallet()
@@ -54,7 +55,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
                 .unwrap()
                 .get_next_external_address()
                 .unwrap();
-            test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
+            send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.05).unwrap());
         });
     }
 
@@ -66,11 +67,11 @@ fn abort3_case3_close_at_hash_preimage_handover() {
             .unwrap()
             .get_next_external_address()
             .unwrap();
-        test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
+        send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.05).unwrap());
     });
 
     // confirm balances
-    test_framework.generate_blocks(1);
+    generate_blocks(bitcoind, 1);
 
     // ---- Start Servers and attempt Swap ----
 

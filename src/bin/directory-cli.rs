@@ -26,7 +26,7 @@ enum Commands {
     ListAddresses,
 }
 
-fn send_rpc_req(req: &RpcMsgReq) -> Result<(), DirectoryServerError> {
+fn send_rpc_req(req: RpcMsgReq) -> Result<(), DirectoryServerError> {
     let mut stream = TcpStream::connect("127.0.0.1:4321")?;
     stream.set_read_timeout(Some(Duration::from_secs(20)))?;
     stream.set_write_timeout(Some(Duration::from_secs(20)))?;
@@ -46,7 +46,7 @@ fn main() -> Result<(), DirectoryServerError> {
 
     match cli.command {
         Commands::ListAddresses => {
-            send_rpc_req(&RpcMsgReq::ListAddresses)?;
+            send_rpc_req(RpcMsgReq::ListAddresses)?;
         }
     }
     Ok(())
