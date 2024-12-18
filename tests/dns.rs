@@ -1,56 +1,10 @@
 #![cfg(feature = "integration-test")]
-use std::{
-    io::{BufRead, BufReader, Write},
-    net::TcpStream,
-    process::{Child, Command},
-    sync::{
-        mpsc,
-        mpsc::{Receiver, Sender},
-    },
-    thread,
-    time::Duration,
-};
+use std::{io::Write, net::TcpStream, process::Command, thread, time::Duration};
 
-fn start_server() -> (Child, Receiver<String>) {
-    let (log_sender, log_receiver): (Sender<String>, Receiver<String>) = mpsc::channel();
-    let mut directoryd_process = Command::new("./target/debug/directoryd")
-        .args(["-n", "clearnet"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
+mod test_framework;
 
-    let stdout = directoryd_process.stdout.take().unwrap();
-    let std_err = directoryd_process.stderr.take().unwrap();
-    thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        reader.lines().map_while(Result::ok).for_each(|line| {
-            println!("{}", line);
-            log_sender.send(line).unwrap_or_else(|e| {
-                println!("Failed to send log: {}", e);
-            });
-        });
-    });
-
-    thread::spawn(move || {
-        let reader = BufReader::new(std_err);
-        reader.lines().map_while(Result::ok).for_each(|line| {
-            panic!("Error : {}", line);
-        })
-    });
-
-    (directoryd_process, log_receiver)
-}
-
-fn wait_for_server_start(log_receiver: &Receiver<String>) {
-    loop {
-        let log_message = log_receiver.recv().unwrap();
-        if log_message.contains("RPC socket binding successful") {
-            log::info!("DNS server started");
-            break;
-        }
-    }
-}
+use coinswap::utill::ConnectionType;
+use test_framework::start_dns;
 
 fn send_addresses(addresses: &[&str]) {
     for address in addresses {
@@ -84,8 +38,17 @@ fn verify_addresses(addresses: &[&str]) {
 
 #[test]
 fn test_dns() {
-    let (mut process, receiver) = start_server();
-    wait_for_server_start(&receiver);
+    // Setup directory
+    let temp_dir = std::env::temp_dir().join("coinswap");
+    // Remove if previously existing
+    if temp_dir.exists() {
+        std::fs::remove_dir_all(&temp_dir).unwrap();
+    }
+    log::info!("temporary directory : {}", temp_dir.display());
+
+    let data_dir = temp_dir.join("dns");
+
+    let mut process = start_dns(&data_dir, ConnectionType::CLEARNET);
 
     let initial_addresses = vec!["127.0.0.1:8080", "127.0.0.1:8081", "127.0.0.1:8082"];
     send_addresses(&initial_addresses);
@@ -96,8 +59,7 @@ fn test_dns() {
     process.kill().expect("Failed to kill directoryd process");
     process.wait().unwrap();
 
-    let (mut process, receiver) = start_server();
-    wait_for_server_start(&receiver);
+    let mut process = start_dns(&data_dir, ConnectionType::CLEARNET);
 
     let additional_addresses = vec!["127.0.0.1:8083", "127.0.0.1:8084"];
     send_addresses(&additional_addresses);
@@ -106,8 +68,7 @@ fn test_dns() {
     process.kill().expect("Failed to kill directoryd process");
     process.wait().unwrap();
 
-    let (mut process, receiver) = start_server();
-    wait_for_server_start(&receiver);
+    let mut process = start_dns(&data_dir, ConnectionType::CLEARNET);
 
     let all_addresses = vec![
         "127.0.0.1:8080",

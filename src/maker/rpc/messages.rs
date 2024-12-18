@@ -1,8 +1,8 @@
-use std::{fmt::Display, path::PathBuf};
+use std::fmt::Display;
 
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use serde::{Deserialize, Serialize};
-
+use std::path::PathBuf;
 #[derive(Serialize, Deserialize, Debug)]
 pub enum RpcMsgReq {
     Ping,
@@ -56,9 +56,9 @@ impl Display for RpcMsgResp {
             Self::SwapUtxoResp { utxos } => write!(f, "{:?}", utxos),
             Self::FidelityUtxoResp { utxos } => write!(f, "{:?}", utxos),
             Self::ContractUtxoResp { utxos } => write!(f, "{:?}", utxos),
-            Self::SendToAddressResp(tx_hex) => write!(f, "{:?}", tx_hex),
-            Self::GetTorAddressResp(addr) => write!(f, "{:?}", addr),
-            Self::GetDataDirResp(path) => write!(f, "{:?}", path),
+            Self::SendToAddressResp(tx_hex) => write!(f, "{}", tx_hex),
+            Self::GetTorAddressResp(addr) => write!(f, "{}", addr),
+            Self::GetDataDirResp(path) => write!(f, "{}", path.display()),
             Self::Shutdown => write!(f, "Shutdown Initiated"),
         }
     }

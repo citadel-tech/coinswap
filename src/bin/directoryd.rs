@@ -13,7 +13,7 @@ struct Cli {
     /// Optional network type.
     #[clap(long, short = 'n', default_value = "tor", possible_values = &["tor", "clearnet"])]
     network: String,
-    /// Optional DNS data directory. Default value : "~/.coinswap/directory"
+    /// Optional DNS data directory. Default value : "~/.coinswap/dns"
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
 }

@@ -69,13 +69,6 @@ fn network_bootstrap(
             } else {
                 maker.config.directory_server_address.clone()
             };
-            log::info!("[{}] Maker server address : {}", maker_port, maker_address);
-
-            log::info!(
-                "[{}] Directory server address : {}",
-                maker_port,
-                dns_address
-            );
 
             (maker_address, dns_address)
         }
@@ -89,8 +82,8 @@ fn network_bootstrap(
 
                 let tor_log_dir = format!("/tmp/tor-rust-maker{}/log", maker_port);
 
-                if Path::new(tor_log_dir.as_str()).exists() {
-                    match fs::remove_file(Path::new(tor_log_dir.as_str())) {
+                if Path::new(&tor_log_dir).exists() {
+                    match fs::remove_file(&tor_log_dir) {
                         Ok(_) => log::info!(
                             "[{}] Previous Maker log file deleted successfully",
                             maker_port
@@ -114,38 +107,38 @@ fn network_bootstrap(
 
                 let maker_hs_path_str =
                     format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
-                let maker_hs_path = PathBuf::from(maker_hs_path_str);
-                let mut maker_file = fs::File::open(maker_hs_path)?;
+                let mut maker_file = fs::File::open(maker_hs_path_str)?;
                 let mut maker_onion_addr: String = String::new();
                 maker_file.read_to_string(&mut maker_onion_addr)?;
-                maker_onion_addr.pop();
+
+                maker_onion_addr.pop(); // Remove `\n` at the end.
+
                 let maker_address = format!("{}:{}", maker_onion_addr, maker.config.port);
 
                 let directory_onion_address = if cfg!(feature = "integration-test") {
-                    let directory_hs_path_str =
-                        "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
-                    let directory_hs_path = PathBuf::from(directory_hs_path_str);
-                    let mut directory_file = fs::File::open(directory_hs_path)?;
+                    let directory_hs_path_str = "/tmp/tor-rust-directory/hs-dir/hostname";
+                    let mut directory_file = fs::File::open(directory_hs_path_str)?;
                     let mut directory_onion_addr: String = String::new();
+
                     directory_file.read_to_string(&mut directory_onion_addr)?;
-                    directory_onion_addr.pop();
+                    directory_onion_addr.pop(); // Remove `\n` at the end.
                     format!("{}:{}", directory_onion_addr, 8080)
                 } else {
                     maker.config.directory_server_address.clone()
                 };
 
-                log::info!("[{}] Maker server address : {}", maker_port, maker_address);
-
-                log::info!(
-                    "[{}] Directory server address : {}",
-                    maker_port,
-                    directory_onion_address
-                );
-
                 (maker_address, directory_onion_address)
             }
         }
     };
+
+    log::info!("[{}] Maker server address : {}", maker_port, maker_address);
+
+    log::info!(
+        "[{}] Directory server address : {}",
+        maker_port,
+        dns_address
+    );
 
     // Keep trying until send is successful.
     loop {

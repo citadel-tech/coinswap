@@ -15,6 +15,9 @@ use coinswap::{
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct App {
+    /// Sets the rpc-port of DNS
+    #[clap(long, short = 'p', default_value = "127.0.0.1:4321")]
+    rpc_port: String,
     /// The command to execute
     #[clap(subcommand)]
     command: Commands,
@@ -26,8 +29,7 @@ enum Commands {
     ListAddresses,
 }
 
-fn send_rpc_req(req: &RpcMsgReq) -> Result<(), DirectoryServerError> {
-    let mut stream = TcpStream::connect("127.0.0.1:4321")?;
+fn send_rpc_req(mut stream: TcpStream, req: RpcMsgReq) -> Result<(), DirectoryServerError> {
     stream.set_read_timeout(Some(Duration::from_secs(20)))?;
     stream.set_write_timeout(Some(Duration::from_secs(20)))?;
 
@@ -44,9 +46,11 @@ fn main() -> Result<(), DirectoryServerError> {
     setup_directory_logger(log::LevelFilter::Info);
     let cli = App::parse();
 
+    let stream = TcpStream::connect(cli.rpc_port)?;
+
     match cli.command {
         Commands::ListAddresses => {
-            send_rpc_req(&RpcMsgReq::ListAddresses)?;
+            send_rpc_req(stream, RpcMsgReq::ListAddresses)?;
         }
     }
     Ok(())

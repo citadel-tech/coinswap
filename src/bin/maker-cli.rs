@@ -10,6 +10,9 @@ use coinswap::{
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct App {
+    /// Sets the rpc-port of Makerd
+    #[clap(long, short = 'p', default_value = "127.0.0.1:6103")]
+    rpc_port: String,
     /// The command to execute
     #[clap(subcommand)]
     command: Commands,
@@ -37,7 +40,7 @@ enum Commands {
     FidelityBalance,
     /// Gets a new address
     NewAddress,
-    // Send to an external address and returns the transaction hex.
+    /// Send to an external address and returns the transaction hex.
     SendToAddress {
         address: String,
         amount: u64,
@@ -55,66 +58,68 @@ fn main() -> Result<(), MakerError> {
     setup_maker_logger(log::LevelFilter::Info);
     let cli = App::parse();
 
+    let stream = TcpStream::connect(cli.rpc_port)?;
+
     match cli.command {
         Commands::Ping => {
-            send_rpc_req(&RpcMsgReq::Ping)?;
+            send_rpc_req(stream, RpcMsgReq::Ping)?;
         }
         Commands::ContractUtxo => {
-            send_rpc_req(&RpcMsgReq::ContractUtxo)?;
+            send_rpc_req(stream, RpcMsgReq::ContractUtxo)?;
         }
         Commands::ContractBalance => {
-            send_rpc_req(&RpcMsgReq::ContractBalance)?;
+            send_rpc_req(stream, RpcMsgReq::ContractBalance)?;
         }
         Commands::FidelityBalance => {
-            send_rpc_req(&RpcMsgReq::FidelityBalance)?;
+            send_rpc_req(stream, RpcMsgReq::FidelityBalance)?;
         }
         Commands::FidelityUtxo => {
-            send_rpc_req(&RpcMsgReq::FidelityUtxo)?;
+            send_rpc_req(stream, RpcMsgReq::FidelityUtxo)?;
         }
         Commands::SeedBalance => {
-            send_rpc_req(&RpcMsgReq::SeedBalance)?;
+            send_rpc_req(stream, RpcMsgReq::SeedBalance)?;
         }
         Commands::SeedUtxo => {
-            send_rpc_req(&RpcMsgReq::SeedUtxo)?;
+            send_rpc_req(stream, RpcMsgReq::SeedUtxo)?;
         }
         Commands::SwapBalance => {
-            send_rpc_req(&RpcMsgReq::SwapBalance)?;
+            send_rpc_req(stream, RpcMsgReq::SwapBalance)?;
         }
         Commands::SwapUtxo => {
-            send_rpc_req(&RpcMsgReq::SwapUtxo)?;
+            send_rpc_req(stream, RpcMsgReq::SwapUtxo)?;
         }
         Commands::NewAddress => {
-            send_rpc_req(&RpcMsgReq::NewAddress)?;
+            send_rpc_req(stream, RpcMsgReq::NewAddress)?;
         }
         Commands::SendToAddress {
             address,
             amount,
             fee,
         } => {
-            send_rpc_req(&RpcMsgReq::SendToAddress {
-                address,
-                amount,
-                fee,
-            })?;
+            send_rpc_req(
+                stream,
+                RpcMsgReq::SendToAddress {
+                    address,
+                    amount,
+                    fee,
+                },
+            )?;
         }
-        // TODO: Test Coverage
         Commands::GetTorAddress => {
-            send_rpc_req(&RpcMsgReq::GetTorAddress)?;
+            send_rpc_req(stream, RpcMsgReq::GetTorAddress)?;
         }
-        // TODO: Test Coverage
         Commands::GetDataDir => {
-            send_rpc_req(&RpcMsgReq::GetDataDir)?;
+            send_rpc_req(stream, RpcMsgReq::GetDataDir)?;
         }
         Commands::Stop => {
-            send_rpc_req(&RpcMsgReq::Stop)?;
+            send_rpc_req(stream, RpcMsgReq::Stop)?;
         }
     }
 
     Ok(())
 }
 
-fn send_rpc_req(req: &RpcMsgReq) -> Result<(), MakerError> {
-    let mut stream = TcpStream::connect("127.0.0.1:6103")?;
+fn send_rpc_req(mut stream: TcpStream, req: RpcMsgReq) -> Result<(), MakerError> {
     stream.set_read_timeout(Some(Duration::from_secs(20)))?;
     stream.set_write_timeout(Some(Duration::from_secs(20)))?;
 
