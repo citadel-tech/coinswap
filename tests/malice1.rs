@@ -37,6 +37,8 @@ fn malice1_taker_broadcast_contract_prematurely() {
 
     warn!("Running Test: Taker broadcasts contract transaction prematurely");
 
+    let bitcoind = &test_framework.bitcoind;
+
     info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
@@ -46,7 +48,8 @@ fn malice1_taker_broadcast_contract_prematurely() {
             .get_wallet_mut()
             .get_next_external_address()
             .unwrap();
-        test_framework.send_to_address(&taker_address, Amount::from_btc(0.05).unwrap());
+
+        send_to_address(bitcoind, &taker_address, Amount::from_btc(0.05).unwrap());
         makers.iter().for_each(|maker| {
             let maker_addrs = maker
                 .get_wallet()
@@ -54,7 +57,7 @@ fn malice1_taker_broadcast_contract_prematurely() {
                 .unwrap()
                 .get_next_external_address()
                 .unwrap();
-            test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
+            send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.05).unwrap());
         });
     }
 
@@ -66,11 +69,11 @@ fn malice1_taker_broadcast_contract_prematurely() {
             .unwrap()
             .get_next_external_address()
             .unwrap();
-        test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
+        send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.05).unwrap());
     });
 
     // confirm balances
-    test_framework.generate_blocks(1);
+    generate_blocks(bitcoind, 1);
 
     let mut all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
 

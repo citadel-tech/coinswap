@@ -1,10 +1,10 @@
 #![cfg(feature = "integration-test")]
 use bitcoin::{absolute::LockTime, Amount};
+use bitcoind::bitcoincore_rpc::RpcApi;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     utill::ConnectionType,
 };
-
 mod test_framework;
 use test_framework::*;
 
@@ -28,6 +28,8 @@ fn test_fidelity() {
     let (test_framework, _, makers, directory_server_instance) =
         TestFramework::init(makers_config_map.into(), None, ConnectionType::CLEARNET);
 
+    let bitcoind = &test_framework.bitcoind;
+
     let maker = makers.first().unwrap();
 
     // ----- Test -----
@@ -40,9 +42,9 @@ fn test_fidelity() {
         .unwrap()
         .get_next_external_address()
         .unwrap();
-    test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.04).unwrap());
+    send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.04).unwrap());
 
-    test_framework.generate_blocks(1);
+    generate_blocks(bitcoind, 1);
 
     let maker_clone = maker.clone();
 
@@ -53,8 +55,8 @@ fn test_fidelity() {
     // TODO: Assert that fund request for fidelity is printed in the log.
 
     // Provide the maker with more funds.
-    test_framework.send_to_address(&maker_addrs, Amount::ONE_BTC);
-    test_framework.generate_blocks(1);
+    send_to_address(bitcoind, &maker_addrs, Amount::ONE_BTC);
+    generate_blocks(bitcoind, 1);
 
     thread::sleep(Duration::from_secs(6));
     // stop the maker server
@@ -96,7 +98,8 @@ fn test_fidelity() {
             .unwrap()
             .create_fidelity(
                 Amount::from_sat(8000000),
-                LockTime::from_height((test_framework.get_block_count() as u32) + 150).unwrap(),
+                LockTime::from_height((bitcoind.client.get_block_count().unwrap() as u32) + 150)
+                    .unwrap(),
             )
             .unwrap();
 
@@ -132,7 +135,7 @@ fn test_fidelity() {
     let mut required_height = first_maturity_height;
 
     loop {
-        let current_height = test_framework.get_block_count() as u32;
+        let current_height = bitcoind.client.get_block_count().unwrap() as u32;
 
         if current_height < required_height {
             log::info!(

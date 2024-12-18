@@ -2,7 +2,6 @@ use std::{
     fs::File,
     io::{ErrorKind, Read},
     net::{TcpListener, TcpStream},
-    path::PathBuf,
     sync::{atomic::Ordering::Relaxed, Arc},
     thread::sleep,
     time::Duration,
@@ -154,18 +153,17 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
         }
         RpcMsgReq::GetTorAddress => {
             if maker.config.connection_type == ConnectionType::CLEARNET {
-                let resp = RpcMsgResp::GetTorAddressResp("Maker Tor is not running".to_string());
+                let resp = RpcMsgResp::GetTorAddressResp("Maker is not running on TOR".to_string());
                 if let Err(e) = send_message(socket, &resp) {
                     log::info!("Error sending RPC response {:?}", e);
                 };
             } else {
                 let maker_hs_path_str =
                     format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
-                let maker_hs_path = PathBuf::from(maker_hs_path_str);
-                let mut maker_file = File::open(maker_hs_path)?;
+                let mut maker_file = File::open(maker_hs_path_str)?;
                 let mut maker_onion_addr: String = String::new();
                 maker_file.read_to_string(&mut maker_onion_addr)?;
-                maker_onion_addr.pop();
+                maker_onion_addr.pop(); // Remove `\n` at the end.
                 let maker_address = format!("{}:{}", maker_onion_addr, maker.config.port);
 
                 let resp = RpcMsgResp::GetTorAddressResp(maker_address);

@@ -169,7 +169,7 @@ pub struct Maker {
     /// Path for the data directory.
     pub data_dir: PathBuf,
     /// Thread pool for managing all spawned threads
-    pub thread_pool: Arc<ThreadPool>
+    pub thread_pool: Arc<ThreadPool>,
 }
 
 #[allow(clippy::too_many_arguments)]

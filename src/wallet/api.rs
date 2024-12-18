@@ -894,7 +894,7 @@ impl Wallet {
         )?[0]
             .clone();
         self.update_external_index(self.store.external_index + 1)?;
-        Ok(receive_address.assume_checked())
+        Ok(receive_address.assume_checked()) // TODO: should we check the network or just assume_checked?
     }
 
     /// Gets the next internal addresses from the HD keychain.

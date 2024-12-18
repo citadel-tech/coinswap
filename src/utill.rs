@@ -1,14 +1,5 @@
 //! Various utility and helper functions for both Taker and Maker.
 
-use std::{
-    env,
-    io::{ErrorKind, Read},
-    net::TcpStream,
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::Once,
-};
-
 use bitcoin::{
     hashes::{sha256, Hash},
     key::{rand::thread_rng, Keypair},
@@ -20,6 +11,14 @@ use log4rs::{
     append::{console::ConsoleAppender, file::FileAppender},
     config::{Appender, Logger, Root},
     Config,
+};
+use std::{
+    env, fmt,
+    io::{ErrorKind, Read},
+    net::TcpStream,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Once,
 };
 
 use std::{
@@ -69,6 +68,15 @@ impl FromStr for ConnectionType {
             "tor" => Ok(ConnectionType::TOR),
             "clearnet" => Ok(ConnectionType::CLEARNET),
             _ => Err(NetError::InvalidAppNetwork),
+        }
+    }
+}
+
+impl fmt::Display for ConnectionType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConnectionType::TOR => write!(f, "tor"),
+            ConnectionType::CLEARNET => write!(f, "clearnet"),
         }
     }
 }

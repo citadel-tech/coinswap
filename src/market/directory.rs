@@ -225,9 +225,9 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
         ConnectionType::CLEARNET => {}
         ConnectionType::TOR => {
             if cfg!(feature = "tor") {
-                let tor_log_dir = "/tmp/tor-rust-directory/log".to_string();
-                if Path::new(tor_log_dir.as_str()).exists() {
-                    match std::fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
+                let tor_log_dir = "/tmp/tor-rust-directory/log";
+                if Path::new(tor_log_dir).exists() {
+                    match fs::remove_file(tor_log_dir) {
                         Ok(_) => log::info!("Previous directory log file deleted successfully"),
                         Err(_) => log::error!("Error deleting directory log file"),
                     }
