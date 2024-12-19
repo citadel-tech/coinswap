@@ -3,18 +3,28 @@
 //! Handles market-related logic where Makers post their offers. Also provides functions to synchronize
 //! maker addresses from directory servers, post maker addresses to directory servers,
 
+use bip39::Mnemonic;
+use bitcoin::{
+    absolute::LockTime, hashes::Hash, key::Secp256k1, secp256k1::Message,
+    transaction::OutputsIndexError, Address,
+};
+use bitcoind::bitcoincore_rpc::RpcApi;
+use serde::{Deserialize, Serialize};
+
 use crate::{
     market::rpc::start_rpc_server_thread,
+    protocol::messages::FidelityProof,
     utill::{
         get_dns_dir, get_tor_addrs, monitor_log_for_completion, parse_field, parse_toml,
-        ConnectionType,
+        seed_phrase_to_unique_id, ConnectionType,
     },
+    wallet::{fidelity_redeemscript, RPCConfig, Wallet, WalletError},
 };
 
 use std::{
     collections::HashSet,
     fs::{self, File},
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, BufWriter, Read, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     sync::{
@@ -27,12 +37,68 @@ use std::{
 
 use crate::error::NetError;
 
+#[derive(Serialize, Deserialize, Debug)]
+struct OfferMetadata {
+    url: String,
+    proof: FidelityProof,
+}
+
+// Structured requests and responses using serde.
+#[derive(Serialize, Deserialize, Debug)]
+enum Request {
+    Post { metadata: Box<OfferMetadata> },
+    Get { makers: u32 },
+    Dummy { url: String },
+}
+
 /// Represents errors that can occur during directory server operations.
 #[derive(Debug)]
 pub enum DirectoryServerError {
     IO(std::io::Error),
     Net(NetError),
     MutexPossion,
+    Wallet(WalletError),
+    Cbor(serde_cbor::Error),
+    Rpc(bitcoind::bitcoincore_rpc::Error),
+    OutputsIndexError(OutputsIndexError),
+    Locktime(bitcoin::blockdata::locktime::absolute::ConversionError),
+    Secp(bitcoin::secp256k1::Error),
+}
+
+impl From<WalletError> for DirectoryServerError {
+    fn from(value: WalletError) -> Self {
+        Self::Wallet(value)
+    }
+}
+
+impl From<OutputsIndexError> for DirectoryServerError {
+    fn from(value: OutputsIndexError) -> Self {
+        Self::OutputsIndexError(value)
+    }
+}
+
+impl From<serde_cbor::Error> for DirectoryServerError {
+    fn from(value: serde_cbor::Error) -> Self {
+        Self::Cbor(value)
+    }
+}
+
+impl From<bitcoind::bitcoincore_rpc::Error> for DirectoryServerError {
+    fn from(value: bitcoind::bitcoincore_rpc::Error) -> Self {
+        Self::Rpc(value)
+    }
+}
+
+impl From<bitcoin::blockdata::locktime::absolute::ConversionError> for DirectoryServerError {
+    fn from(value: bitcoin::blockdata::locktime::absolute::ConversionError) -> Self {
+        Self::Locktime(value)
+    }
+}
+
+impl From<bitcoin::secp256k1::Error> for DirectoryServerError {
+    fn from(value: bitcoin::secp256k1::Error) -> Self {
+        Self::Secp(value)
+    }
 }
 
 impl From<std::io::Error> for DirectoryServerError {
@@ -218,8 +284,51 @@ pub fn write_addresses_to_file(
     file.flush()?;
     Ok(())
 }
-pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), DirectoryServerError> {
+pub fn start_directory_server(
+    directory: Arc<DirectoryServer>,
+    rpc_config: Option<RPCConfig>,
+) -> Result<(), DirectoryServerError> {
     let mut tor_handle = None;
+
+    let mut rpc_config = rpc_config.unwrap_or_default();
+
+    let wallet_file_name = None;
+    let wallets_dir = PathBuf::from("/tmp/.coinswap/directory");
+    let mut wallet = if let Some(file_name) = wallet_file_name {
+        let wallet_path = wallets_dir.join(&file_name);
+        rpc_config.wallet_name = file_name;
+        if wallet_path.exists() {
+            // Try loading wallet
+            let wallet = Wallet::load(&rpc_config, &wallet_path)?;
+            log::info!("Wallet file at {:?} successfully loaded.", wallet_path);
+            wallet
+        } else {
+            // Create wallet with the given name.
+            let mnemonic = Mnemonic::generate(12).map_err(WalletError::BIP39)?;
+            let seedphrase = mnemonic.to_string();
+
+            let wallet = Wallet::init(&wallet_path, &rpc_config, seedphrase, "".to_string())?;
+            log::info!("New Wallet created at : {:?}", wallet_path);
+            wallet
+        }
+    } else {
+        // Create default wallet
+        let mnemonic = Mnemonic::generate(12).map_err(WalletError::BIP39)?;
+        let seedphrase = mnemonic.to_string();
+
+        // File names are unique for default wallets
+        let unique_id = seed_phrase_to_unique_id(&seedphrase);
+        let file_name = unique_id + "-directory";
+        let wallet_path = wallets_dir.join(&file_name);
+        rpc_config.wallet_name = file_name;
+        let wallet = Wallet::init(&wallet_path, &rpc_config, seedphrase, "".to_string())?;
+        log::info!("New Wallet created at : {:?}", wallet_path);
+        wallet
+    };
+
+    log::info!("Initializing directory wallet sync");
+    wallet.sync()?;
+    log::info!("Completed Directory wallet sync");
 
     match directory.connection_type {
         ConnectionType::CLEARNET => {}
@@ -280,9 +389,9 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
         match listener.accept() {
             Ok((mut stream, addrs)) => {
                 log::debug!("Incoming connection from : {}", addrs);
-                stream.set_read_timeout(Some(Duration::from_secs(20)))?;
-                stream.set_write_timeout(Some(Duration::from_secs(20)))?;
-                handle_client(&mut stream, &directory.clone())?;
+                stream.set_read_timeout(Some(Duration::from_secs(60)))?;
+                stream.set_write_timeout(Some(Duration::from_secs(60)))?;
+                handle_client(&mut stream, &directory.clone(), &wallet)?;
             }
 
             // If no connection received, check for shutdown or save addresses to disk
@@ -315,32 +424,99 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
 }
 
 // The stream should have read and write timeout set.
-// TODO: Use serde encoded data instead of string.
 fn handle_client(
     stream: &mut TcpStream,
     directory: &Arc<DirectoryServer>,
+    wallet: &Wallet,
 ) -> Result<(), DirectoryServerError> {
-    let reader_stream = stream.try_clone()?;
-    let mut reader = BufReader::new(reader_stream);
-    let mut request_line = String::new();
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut writer = BufWriter::new(stream);
+    let mut length_bytes = [0u8; 8];
+    reader.read_exact(&mut length_bytes)?;
+    let length = u64::from_be_bytes(length_bytes);
 
-    reader.read_line(&mut request_line)?;
-    if request_line.starts_with("POST") {
-        let addr: String = request_line.replace("POST ", "").trim().to_string();
-        directory.addresses.write()?.insert(addr.clone());
-        log::info!("Got new maker address: {}", addr);
-    } else if request_line.starts_with("GET") {
-        log::info!("Taker pinged the directory server");
-        let response = directory
-            .addresses
-            .read()?
-            .iter()
-            .fold(String::new(), |acc, addr| acc + addr + "\n");
-        stream.write_all(response.as_bytes())?;
-        stream.flush()?;
+    let mut buf = vec![0; length as usize];
+    reader.read_exact(&mut buf)?;
+    let value: Request = serde_cbor::de::from_reader(&buf[..])?;
+    match value {
+        Request::Post { metadata } => {
+            log::info!("Received new maker address: {}", &metadata.url);
+
+            let fidelity_redeem_script =
+                fidelity_redeemscript(&metadata.proof.bond.lock_time, &metadata.proof.bond.pubkey);
+            let address = Address::p2wsh(
+                fidelity_redeem_script.as_script(),
+                bitcoin::network::Network::Regtest,
+            );
+            let script_pubkey = &address.script_pubkey();
+
+            let txid = metadata.proof.bond.outpoint.txid;
+            let transaction = wallet.rpc.get_raw_transaction(&txid, None)?;
+            let tx_out = transaction.tx_out(0)?;
+            let redeem_script_pubkey = &tx_out.script_pubkey;
+
+            let cert_hash = metadata.proof.cert_hash;
+            let calculated_cert_hash = metadata.proof.bond.generate_cert_hash(&metadata.url);
+
+            let secp = Secp256k1::new();
+            let cert_message = match Message::from_digest_slice(cert_hash.as_byte_array()) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    log::error!("Failed to create ECDSA message: {}", e);
+                    return Err(e.into());
+                }
+            };
+
+            let ecdsa_verified = secp
+                .verify_ecdsa(
+                    &cert_message,
+                    &metadata.proof.cert_sig,
+                    &metadata.proof.bond.pubkey.inner,
+                )
+                .is_ok();
+
+            let current_height = wallet.rpc.get_block_count()?;
+            let lock_time_valid =
+                LockTime::from_height(current_height as u32)? < metadata.proof.bond.lock_time;
+
+            if script_pubkey == redeem_script_pubkey
+                && ecdsa_verified
+                && lock_time_valid
+                && cert_hash == calculated_cert_hash
+            {
+                log::info!("Maker verified successfully.");
+                let mut addresses = directory
+                    .addresses
+                    .write()
+                    .expect("Failed to acquire write lock");
+                addresses.insert(metadata.url);
+            } else {
+                log::warn!("Potentially suspicious maker detected.");
+            }
+        }
+        Request::Get { makers } => {
+            log::info!("Taker pinged the directory server");
+            log::info!("Number of makers requested: {:?}", makers);
+            let addresses = directory.addresses.read()?;
+            let response = if addresses.len() < makers as usize {
+                String::new()
+            } else {
+                addresses
+                    .iter()
+                    .take(makers as usize)
+                    .fold(String::new(), |acc, addr| acc + addr + "\n")
+            };
+            writer.write_all(response.as_bytes())?;
+            writer.flush()?;
+        }
+        Request::Dummy { url } => {
+            log::info!("Got new maker address: {}", &url);
+            directory.addresses.write()?.insert(url);
+        }
     }
     Ok(())
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

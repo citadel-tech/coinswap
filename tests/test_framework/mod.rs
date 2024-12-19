@@ -136,6 +136,12 @@ impl TestFramework {
 
         log::info!("Initiating Directory Server .....");
 
+        // Translate a RpcConfig from the test framework.
+        // a modification of this will be used for taker and makers rpc connections.
+        let rpc_config = RPCConfig::from(test_framework.as_ref());
+
+        let directory_rpc_config = rpc_config.clone();
+
         let directory_server_instance = Arc::new(
             DirectoryServer::new(
                 Some(temp_dir.clone().join("directory_server")),
@@ -145,12 +151,9 @@ impl TestFramework {
         );
         let directory_server_instance_clone = directory_server_instance.clone();
         thread::spawn(move || {
-            start_directory_server(directory_server_instance_clone).unwrap();
+            start_directory_server(directory_server_instance_clone, Some(directory_rpc_config))
+                .unwrap();
         });
-
-        // Translate a RpcConfig from the test framework.
-        // a modification of this will be used for taker and makers rpc connections.
-        let rpc_config = RPCConfig::from(test_framework.as_ref());
 
         // Create the Taker.
         let taker_rpc_config = rpc_config.clone();

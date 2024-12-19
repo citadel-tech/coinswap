@@ -20,6 +20,7 @@ use std::{
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
 
+use serde::{Deserialize, Serialize};
 use socks::Socks5Stream;
 
 pub use super::Maker;
@@ -31,7 +32,7 @@ use crate::{
         handlers::handle_message,
         rpc::start_rpc_server,
     },
-    protocol::messages::TakerToMakerMessage,
+    protocol::messages::{FidelityProof, TakerToMakerMessage},
     utill::{monitor_log_for_completion, read_message, send_message, ConnectionType},
     wallet::WalletError,
 };
@@ -49,6 +50,20 @@ pub const MIN_CONTRACT_REACTION_TIME: u16 = 48;
 /// Fee rate per swap amount in parts per billion (PPB).
 /// E.g., for 1 billion sats (0.01 BTC), a value of 10_000 would result in a 0.1% fee.
 pub const AMOUNT_RELATIVE_FEE_PPB: Amount = Amount::from_sat(10_000_000);
+
+// Structured requests and responses using serde.
+#[derive(Serialize, Deserialize, Debug)]
+enum Request {
+    Post { metadata: Box<OfferMetadata> },
+    Get { makers: u32 },
+    Dummy { url: String },
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct OfferMetadata {
+    url: String,
+    proof: FidelityProof,
+}
 
 /// Fetches the Maker and DNS address, and sends maker address to the DNS server.
 /// Depending upon ConnectionType and test/prod environment, different maker address and DNS addresses are returned.
@@ -147,6 +162,25 @@ fn network_bootstrap(
         }
     };
 
+    setup_fidelity_bond(&maker, &maker_address)?;
+    maker.wallet.write()?.refresh_offer_maxsize_cache()?;
+
+    let proof = maker
+        .highest_fidelity_proof
+        .read()?
+        .as_ref()
+        .unwrap()
+        .clone();
+
+    let offermetadata = OfferMetadata {
+        url: maker_address.clone(),
+        proof,
+    };
+
+    let request = Request::Post {
+        metadata: Box::new(offermetadata),
+    };
+
     // Keep trying until send is successful.
     loop {
         let mut stream = match maker.config.connection_type {
@@ -181,21 +215,26 @@ fn network_bootstrap(
             }
         };
 
-        let request_line = format!("POST {}\n", maker_address);
+        let buffer = serde_cbor::ser::to_vec(&request).unwrap();
+        let length = buffer.len() as u64;
+
+        // Write length and buffer to the stream
         if let Err(e) = stream
-            .write_all(request_line.as_bytes())
+            .write_all(&length.to_be_bytes())
+            .and_then(|_| stream.write_all(&buffer))
             .and_then(|_| stream.flush())
         {
-            // Error sending the payload, log and retry after waiting
             log::warn!(
                 "[{}] Failed to send maker address to directory, reattempting: {}",
                 maker_port,
                 e
             );
-            thread::sleep(Duration::from_secs(HEART_BEAT_INTERVAL_SECS));
+
+            // Wait before reattempting
+            std::thread::sleep(std::time::Duration::from_secs(HEART_BEAT_INTERVAL_SECS));
             continue;
         }
-        // Payload sent successfully, exit the loop
+
         log::info!(
             "[{}] Successfully sent maker address to directory",
             maker_port
@@ -402,8 +441,15 @@ fn handle_client(
 pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Starting Maker Server");
     // Initialize network connections.
-    let (maker_address, tor_thread) = network_bootstrap(maker.clone())?;
+
+    // Setup the wallet with fidelity bond.
     let port = maker.config.port;
+    let network = maker.get_wallet().read()?.store.network;
+    let balance = maker.get_wallet().read()?.balance()?;
+    log::info!("[{}] Currency Network: {:?}", port, network);
+    log::info!("[{}] Total Wallet Balance: {:?}", port, balance);
+
+    let (maker_address, tor_thread) = network_bootstrap(maker.clone())?;
 
     let listener =
         TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.port)).map_err(NetError::IO)?;
@@ -420,15 +466,6 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     );
 
     let heart_beat_interval = HEART_BEAT_INTERVAL_SECS; // All maker internal threads loops at this frequency.
-
-    // Setup the wallet with fidelity bond.
-    let network = maker.get_wallet().read()?.store.network;
-    let balance = maker.get_wallet().read()?.balance()?;
-    log::info!("[{}] Currency Network: {:?}", port, network);
-    log::info!("[{}] Total Wallet Balance: {:?}", port, balance);
-
-    setup_fidelity_bond(&maker, &maker_address)?;
-    maker.wallet.write()?.refresh_offer_maxsize_cache()?;
 
     // Global server Mutex, to switch on/off p2p network.
     let accepting_clients = Arc::new(AtomicBool::new(false));

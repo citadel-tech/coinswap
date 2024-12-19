@@ -59,7 +59,7 @@ pub enum FidelityError {
 /// Old script: <locktime> <OP_CLTV> <OP_DROP> <pubkey> <OP_CHECKSIG>
 /// The new script drops the extra byte <OP_DROP>
 /// New script: <pubkey> <OP_CHECKSIGVERIFY> <locktime> <OP_CLTV>
-fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> ScriptBuf {
+pub fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> ScriptBuf {
     Builder::new()
         .push_key(pubkey)
         .push_opcode(OP_CHECKSIGVERIFY)
@@ -141,10 +141,10 @@ impl FidelityBond {
     }
 
     /// Generate the bond's certificate hash.
-    pub fn generate_cert_hash(&self, onion_addr: &str) -> sha256d::Hash {
+    pub fn generate_cert_hash(&self, addr: &str) -> sha256d::Hash {
         let cert_msg_str = format!(
             "fidelity-bond-cert|{}|{}|{}|{}|{}|{}",
-            self.outpoint, self.pubkey, self.cert_expiry, self.lock_time, self.amount, onion_addr
+            self.outpoint, self.pubkey, self.cert_expiry, self.lock_time, self.amount, addr
         );
         let cert_msg = cert_msg_str.as_bytes();
         let mut btc_signed_msg = Vec::<u8>::new();
