@@ -16,7 +16,7 @@ use std::{path::PathBuf, str::FromStr, sync::Arc};
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
     /// Optional Connection Network Type
-    #[clap(long, default_value = "clearnet", possible_values = &["tor", "clearnet"])]
+    #[clap(long, default_value = "tor", possible_values = &["tor", "clearnet"])]
     network: String,
     /// Optional DNS data directory. Default value : "~/.coinswap/maker"
     #[clap(long, short = 'd')]

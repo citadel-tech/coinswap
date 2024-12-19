@@ -35,10 +35,11 @@ fn test_standard_coinswap() {
 
     // Initiate test framework, Makers and a Taker with default behavior.
     let (test_framework, taker, makers, directory_server_instance) =
-        TestFramework::init(None, makers_config_map.into(), None, connection_type);
+        TestFramework::init(makers_config_map.into(), None, connection_type);
 
     warn!("Running Test: Standard Coinswap Procedure");
 
+    let bitcoind = &test_framework.bitcoind;
     info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
@@ -48,7 +49,8 @@ fn test_standard_coinswap() {
             .get_wallet_mut()
             .get_next_external_address()
             .unwrap();
-        test_framework.send_to_address(&taker_address, Amount::from_btc(0.05).unwrap());
+        send_to_address(bitcoind, &taker_address, Amount::from_btc(0.05).unwrap());
+
         makers.iter().for_each(|maker| {
             let maker_addrs = maker
                 .get_wallet()
@@ -56,7 +58,7 @@ fn test_standard_coinswap() {
                 .unwrap()
                 .get_next_external_address()
                 .unwrap();
-            test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
+            send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.05).unwrap());
         });
     }
 
@@ -68,11 +70,11 @@ fn test_standard_coinswap() {
             .unwrap()
             .get_next_external_address()
             .unwrap();
-        test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
+        send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.05).unwrap());
     });
 
     // confirm balances
-    test_framework.generate_blocks(1);
+    generate_blocks(bitcoind, 1);
 
     // --- Basic Checks ----
 
@@ -403,12 +405,8 @@ fn test_standard_coinswap() {
         "Not all swap coin utxos got included in the spend transaction"
     );
 
-    test_framework
-        .get_client()
-        .send_raw_transaction(&tx)
-        .unwrap();
-
-    test_framework.generate_blocks(1);
+    bitcoind.client.send_raw_transaction(&tx).unwrap();
+    generate_blocks(bitcoind, 1);
 
     taker.write().unwrap().get_wallet_mut().sync().unwrap();
 
