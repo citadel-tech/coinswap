@@ -8,7 +8,7 @@
 use std::{
     convert::TryFrom,
     fmt,
-    io::{Read, Write},
+    io::{BufReader, BufWriter, Read, Write},
     net::TcpStream,
     sync::mpsc,
     thread::{self, Builder},
@@ -19,7 +19,7 @@ use socks::Socks5Stream;
 
 use crate::{
     error::NetError,
-    protocol::messages::Offer,
+    protocol::messages::{FidelityProof, Offer},
     utill::{ConnectionType, GLOBAL_PAUSE, NET_TIMEOUT},
 };
 
@@ -30,6 +30,19 @@ use super::{config::TakerConfig, error::TakerError, routines::download_maker_off
 pub struct OfferAndAddress {
     pub offer: Offer,
     pub address: MakerAddress,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+enum Request {
+    Post { metadata: Box<OfferMetadata> },
+    Get { makers: u32 },
+    Dummy { url: String },
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct OfferMetadata {
+    url: String,
+    proof: FidelityProof,
 }
 
 const _REGTEST_MAKER_ADDRESSES_PORT: &[&str] = &["6102", "16102", "26102", "36102", "46102"];
@@ -192,26 +205,54 @@ pub fn fetch_addresses_from_dns(
 
         stream.set_read_timeout(Some(NET_TIMEOUT))?;
         stream.set_write_timeout(Some(NET_TIMEOUT))?;
+        stream.set_nonblocking(false)?;
         stream.flush()?;
 
-        // TODO: Handle timeout cases like the Taker/Maker comms, with attempt count and variable delays.
-        if let Err(e) = stream
-            .write_all("GET\n".as_bytes())
-            .and_then(|_| stream.flush())
+        let mut reader = BufReader::new(stream.try_clone()?);
+        let mut writer = BufWriter::new(stream);
+
+        // Change datatype of number of makers to u32 from usize
+        let request = Request::Get {
+            makers: number_of_makers as u32,
+        };
+        let buffer = match serde_cbor::ser::to_vec(&request) {
+            Ok(buf) => buf,
+            Err(e) => {
+                log::error!("Failed to serialize request: {}", e);
+                thread::sleep(GLOBAL_PAUSE);
+                continue;
+            }
+        };
+
+        let length = buffer.len() as u64;
+        if writer
+            .write_all(&length.to_be_bytes())
+            .and_then(|_| writer.write_all(&buffer))
+            .is_err()
         {
-            log::error!("Error sending GET request to DNS {}.\nRe-attempting...", e);
+            log::warn!("Failed to send request. Retrying...");
+            thread::sleep(GLOBAL_PAUSE);
+            continue;
+        }
+        if writer.flush().is_err() {
+            log::warn!("Failed to flush writer. Retrying...");
             thread::sleep(GLOBAL_PAUSE);
             continue;
         }
 
+        // Read the response
         let mut response = String::new();
-
-        if let Err(e) = stream.read_to_string(&mut response) {
-            log::error!("Error reading DNS response: {}. \nRe-attempting...", e);
+        if let Err(e) = reader.read_to_string(&mut response) {
+            if e.kind() == std::io::ErrorKind::WouldBlock {
+                log::warn!("Read operation would block, retrying...");
+            } else {
+                log::error!("Error reading DNS response: {}. Retrying...", e);
+            }
             thread::sleep(GLOBAL_PAUSE);
             continue;
         }
 
+        // Parse and validate the response
         match response
             .lines()
             .map(MakerAddress::new)
@@ -220,17 +261,18 @@ pub fn fetch_addresses_from_dns(
             Ok(addresses) => {
                 if addresses.len() < number_of_makers {
                     log::info!(
-                        "Didn't receive enough addresses. Need: {}, Got : {}, Attempting again...",
+                        "Insufficient addresses received. Need: {}, Got: {}. Retrying...",
                         number_of_makers,
                         addresses.len()
                     );
                     thread::sleep(GLOBAL_PAUSE);
+                    continue;
                 } else {
                     return Ok(addresses);
                 }
             }
             Err(e) => {
-                log::error!("Error decoding DNS response: {:?}. Re-attempting...", e);
+                log::error!("Error decoding DNS response: {:?}. Retrying...", e);
                 thread::sleep(GLOBAL_PAUSE);
                 continue;
             }
