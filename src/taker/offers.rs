@@ -26,7 +26,7 @@ use crate::{
 use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
 
 /// Represents an offer along with the corresponding maker address.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct OfferAndAddress {
     pub offer: Offer,
     pub address: MakerAddress,
