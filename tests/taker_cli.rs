@@ -1,13 +1,10 @@
+#![cfg(feature = "integration-test")]
 use bitcoin::{address::NetworkChecked, Address, Amount, Transaction};
-use bitcoind::{bitcoincore_rpc::RpcApi, tempfile::env::temp_dir, BitcoinD, Conf};
+use bitcoind::{bitcoincore_rpc::RpcApi, tempfile::env::temp_dir, BitcoinD};
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-    str::FromStr,
-};
-
+use std::{fs, path::PathBuf, process::Command, str::FromStr};
+mod test_framework;
+use test_framework::{generate_blocks, init_bitcoind, send_to_address};
 /// The taker-cli command struct
 struct TakerCli {
     data_dir: PathBuf,
@@ -19,48 +16,14 @@ impl TakerCli {
     fn new() -> TakerCli {
         // Initiate the bitcoind backend.
 
-        let temp_dir = temp_dir().join(".coinswap");
+        let temp_dir = temp_dir().join("coinswap");
 
         // Remove if previously existing
         if temp_dir.exists() {
-            fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
+            fs::remove_dir_all(&temp_dir).unwrap();
         }
 
-        let mut conf = Conf::default();
-
-        conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
-        conf.staticdir = Some(temp_dir.join(".bitcoin"));
-
-        log::info!("bitcoind configuration: {:?}", conf.args);
-
-        let os = std::env::consts::OS;
-        let arch = std::env::consts::ARCH;
-        let key = "BITCOIND_EXE";
-        let curr_dir_path = std::env::current_dir().unwrap();
-
-        let bitcoind_path = match (os, arch) {
-            ("macos", "aarch64") => curr_dir_path.join("bin").join("bitcoind_macos"),
-            _ => curr_dir_path.join("bin").join("bitcoind"),
-        };
-        std::env::set_var(key, bitcoind_path);
-        let exe_path = bitcoind::exe_path().unwrap();
-
-        log::info!("Executable path: {:?}", exe_path);
-
-        let bitcoind = BitcoinD::with_conf(exe_path, &conf).unwrap();
-
-        // Generate initial 101 blocks
-        let mining_address = bitcoind
-            .client
-            .get_new_address(None, None)
-            .unwrap()
-            .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
-            .unwrap();
-        bitcoind
-            .client
-            .generate_to_address(101, &mining_address)
-            .unwrap();
-
+        let bitcoind = init_bitcoind(&temp_dir);
         let data_dir = temp_dir.join("taker");
 
         TakerCli { data_dir, bitcoind }
@@ -70,7 +33,7 @@ impl TakerCli {
     fn execute(&self, cmd: &[&str]) -> String {
         let mut args = vec![
             "--data-directory",
-            self.data_dir.as_os_str().to_str().unwrap(),
+            self.data_dir.to_str().unwrap(),
             "--bitcoin-network",
             "regtest",
             "--connection-type",
@@ -78,7 +41,7 @@ impl TakerCli {
         ];
 
         // RPC authentication (user:password) from the cookie file
-        let cookie_file_path = Path::new(&self.bitcoind.params.cookie_file);
+        let cookie_file_path = &self.bitcoind.params.cookie_file;
         let rpc_auth = fs::read_to_string(cookie_file_path).expect("failed to read from file");
         args.push("--USER:PASSWORD");
         args.push(&rpc_auth);
@@ -126,27 +89,13 @@ impl TakerCli {
 
         output_string
     }
-
-    /// Generate Blocks in regtest node.
-    pub fn generate_blocks(&self, n: u64) {
-        let mining_address = self
-            .bitcoind
-            .client
-            .get_new_address(None, None)
-            .unwrap()
-            .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
-            .unwrap();
-        self.bitcoind
-            .client
-            .generate_to_address(n, &mining_address)
-            .unwrap();
-    }
 }
 
 #[test]
 fn test_taker_cli() {
     let taker_cli = TakerCli::new();
 
+    let bitcoind = &taker_cli.bitcoind;
     // Fund the taker with 3 utxos of 1 BTC each.
     for _ in 0..3 {
         let taker_address = taker_cli.execute(&["get-new-address"]);
@@ -154,24 +103,11 @@ fn test_taker_cli() {
         let taker_address: Address<NetworkChecked> =
             Address::from_str(&taker_address).unwrap().assume_checked();
 
-        taker_cli
-            .bitcoind
-            .client
-            .send_to_address(
-                &taker_address,
-                Amount::ONE_BTC,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
+        send_to_address(bitcoind, &taker_address, Amount::ONE_BTC);
     }
 
     // confirm balance
-    taker_cli.generate_blocks(10);
+    generate_blocks(bitcoind, 10);
 
     // Assert that total_balance & seed_balance must be 3 BTC
     let seed_balance = taker_cli.execute(&["seed-balance"]);
@@ -209,9 +145,9 @@ fn test_taker_cli() {
     let tx: Transaction = bitcoin::consensus::encode::deserialize_hex(tx_hex).unwrap();
 
     // broadcast signed transaction
-    taker_cli.bitcoind.client.send_raw_transaction(&tx).unwrap();
+    bitcoind.client.send_raw_transaction(&tx).unwrap();
 
-    taker_cli.generate_blocks(10);
+    generate_blocks(bitcoind, 10);
 
     // Assert the total_amount & seed_amount must be initial (balance -fee)
     let seed_balance = taker_cli.execute(&["seed-balance"]);
@@ -227,7 +163,7 @@ fn test_taker_cli() {
     let no_of_seed_utxos = seed_utxos.matches("ListUnspentResultEntry {").count();
     assert_eq!(4, no_of_seed_utxos);
 
-    taker_cli.bitcoind.client.stop().unwrap();
+    bitcoind.client.stop().unwrap();
 
     // Wait for some time for successfull shutdown of bitcoind.
     std::thread::sleep(std::time::Duration::from_secs(3));
