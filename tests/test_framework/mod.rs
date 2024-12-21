@@ -294,6 +294,8 @@ impl TestFramework {
         self.shutdown.store(true, Relaxed);
         // stop bitcoind
         let _ = self.bitcoind.client.stop().unwrap();
+
+        std::thread::sleep(Duration::from_secs(2));
     }
 }
 
