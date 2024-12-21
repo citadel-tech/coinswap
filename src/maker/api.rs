@@ -12,12 +12,9 @@ use crate::{
         messages::{FidelityProof, ReqContractSigsForSender},
         Hash160,
     },
-    utill::{
-        get_maker_dir, redeemscript_to_scriptpubkey, seed_phrase_to_unique_id, ConnectionType,
-    },
+    utill::{get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType},
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
 };
-use bip39::Mnemonic;
 use bitcoin::{
     ecdsa::Signature,
     secp256k1::{self, Secp256k1},
@@ -176,15 +173,17 @@ pub struct Maker {
 impl Maker {
     /// Initializes a Maker structure.
     ///
-    /// The `data_dir` and `wallet_name_path` can be selectively provided to perform wallet load/creation.
-    /// data_dir: Some(value) = Create data directory at given value.
-    /// data_dir: None = Create default data directory. For linux "~/.coinswap"
-    /// wallet_file_name: Some(value) = Try loading wallet file with name "value". If doesn't exist create a new wallet with the given name.
-    /// wallet_file_name: None = Create a new default wallet file. Ex: "9d317f933-maker".
+    /// This function sets up a Maker instance with configurable parameters.  
+    /// It handles the initialization of data directories, wallet files, and RPC configurations.
     ///
-    /// rpc_conf: None = Use the default [RPCConfig].
-    ///
-    /// behavior: Defines special Maker behavior. Only applicable in integration-tests.
+    /// ### Parameters:
+    /// - `data_dir`:  
+    ///   - `Some(value)`: Use the specified directory for storing data.  
+    ///   - `None`: Use the default data directory (e.g., for Linux: `~/.coinswap/maker`).  
+    /// - `wallet_file_name`:  
+    ///   - `Some(value)`: Attempt to load a wallet file named `value`. If it does not exist, a new wallet with the given name will be created.  
+    ///   - `None`: Create a new wallet file with the default name `maker-wallet`.  
+    /// - If `rpc_config` = `None`: Use the default [`RPCConfig`]
     pub fn init(
         data_dir: Option<PathBuf>,
         wallet_file_name: Option<String>,
@@ -195,50 +194,26 @@ impl Maker {
         connection_type: Option<ConnectionType>,
         behavior: MakerBehavior,
     ) -> Result<Self, MakerError> {
-        // Only allow MakerBehavior in functional tests
-        let behavior = if cfg!(feature = "integration-test") {
-            behavior
-        } else {
-            MakerBehavior::Normal
-        };
-
         // Get provided data directory or the default data directory.
         let data_dir = data_dir.unwrap_or(get_maker_dir());
+        let wallets_dir = data_dir.join("wallets");
 
-        let wallet_dir = data_dir.join("wallets");
+        // Use the provided name or default to `maker-wallet` if not specified.
+        let wallet_file_name = wallet_file_name.unwrap_or_else(|| "maker-wallet".to_string());
+        let wallet_path = wallets_dir.join(&wallet_file_name);
 
         let mut rpc_config = rpc_config.unwrap_or_default();
 
-        // Load/Create wallet depending on if a wallet with wallet_file_name exists.
-        let mut wallet = if let Some(file_name) = wallet_file_name {
-            let wallet_path = wallet_dir.join(&file_name);
-            rpc_config.wallet_name = file_name;
-            if wallet_path.exists() {
-                // Try loading wallet
-                let wallet = Wallet::load(&rpc_config, &wallet_path)?;
-                log::info!("Wallet file at {:?} successfully loaded.", wallet_path);
-                wallet
-            } else {
-                // Create wallet with the given name.
-                let mnemonic = Mnemonic::generate(12).map_err(WalletError::BIP39)?;
-                let seedphrase = mnemonic.to_string();
+        rpc_config.wallet_name = wallet_file_name;
 
-                let wallet = Wallet::init(&wallet_path, &rpc_config, seedphrase, "".to_string())?;
-                log::info!("New Wallet created at : {:?}", wallet_path);
-                wallet
-            }
+        let mut wallet = if wallet_path.exists() {
+            // wallet already exists , load the wallet
+            let wallet = Wallet::load(&wallet_path, &rpc_config)?;
+            log::info!("Wallet file at {:?} successfully loaded.", wallet_path);
+            wallet
         } else {
-            // Create default wallet
-            let mnemonic = Mnemonic::generate(12).map_err(WalletError::BIP39)?;
-            let seedphrase = mnemonic.to_string();
-
-            // File names are unique for default wallets
-            let unique_id = seed_phrase_to_unique_id(&seedphrase);
-            let file_name = unique_id + "-maker";
-            let wallet_path = wallet_dir.join(&file_name);
-            rpc_config.wallet_name = file_name;
-
-            let wallet = Wallet::init(&wallet_path, &rpc_config, seedphrase, "".to_string())?;
+            // wallet doesn't exists at the given path , create a new one
+            let wallet = Wallet::init(&wallet_path, &rpc_config)?;
             log::info!("New Wallet created at : {:?}", wallet_path);
             wallet
         };
@@ -262,7 +237,7 @@ impl Maker {
             config.connection_type = connection_type;
         }
 
-        let thread_pool_port = config.port;
+        let port = config.port;
 
         config.write_to_file(&data_dir.join("config.toml"))?;
 
@@ -279,7 +254,7 @@ impl Maker {
             highest_fidelity_proof: RwLock::new(None),
             is_setup_complete: AtomicBool::new(false),
             data_dir,
-            thread_pool: Arc::new(ThreadPool::new(thread_pool_port)),
+            thread_pool: Arc::new(ThreadPool::new(port)),
         })
     }
 

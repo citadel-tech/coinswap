@@ -4,7 +4,7 @@
 //! such as refund locktime, connection attempts, sleep delays, and timeouts.
 
 use crate::utill::{get_taker_dir, parse_field, parse_toml, ConnectionType};
-use std::{io, io::Write, path::PathBuf};
+use std::{io, io::Write, path::Path};
 
 /// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
@@ -44,7 +44,7 @@ impl TakerConfig {
     ///
     /// Default data-dir for linux: `~/.coinswap/taker`
     /// Default config locations: `~/.coinswap/taker/config.toml`.
-    pub fn new(config_path: Option<&PathBuf>) -> io::Result<Self> {
+    pub fn new(config_path: Option<&Path>) -> io::Result<Self> {
         let default_config_path = get_taker_dir().join("config.toml");
 
         let config_path = config_path.unwrap_or(&default_config_path);
@@ -82,7 +82,7 @@ impl TakerConfig {
     }
 
     // Method to manually serialize the Taker Config into a TOML string
-    pub fn write_to_file(&self, path: &PathBuf) -> std::io::Result<()> {
+    pub fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
             "port = {}
 socks_port = {}
@@ -112,6 +112,7 @@ mod tests {
     use std::{
         fs::{self, File},
         io::Write,
+        path::PathBuf,
     };
 
     fn create_temp_config(contents: &str, file_name: &str) -> PathBuf {
@@ -121,7 +122,7 @@ mod tests {
         file_path
     }
 
-    fn remove_temp_config(path: &PathBuf) {
+    fn remove_temp_config(path: &Path) {
         fs::remove_file(path).unwrap();
     }
 

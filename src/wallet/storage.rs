@@ -8,7 +8,7 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io::{BufReader, BufWriter},
-    path::PathBuf,
+    path::Path,
 };
 
 use super::{error::WalletError, fidelity::FidelityBond};
@@ -46,7 +46,7 @@ impl WalletStore {
     /// Initialize a store at a path (if path already exists, it will overwrite it).
     pub fn init(
         file_name: String,
-        path: &PathBuf,
+        path: &Path,
         network: Network,
         master_key: Xpriv,
         wallet_birthday: Option<u64>,
@@ -76,14 +76,14 @@ impl WalletStore {
     }
 
     /// Load existing file, updates it, writes it back (errors if path doesn't exist).
-    pub fn write_to_disk(&self, path: &PathBuf) -> Result<(), WalletError> {
+    pub fn write_to_disk(&self, path: &Path) -> Result<(), WalletError> {
         let wallet_file = fs::OpenOptions::new().write(true).open(path)?;
         let writer = BufWriter::new(wallet_file);
         Ok(serde_cbor::to_writer(writer, &self)?)
     }
 
     /// Reads from a path (errors if path doesn't exist).
-    pub fn read_from_disk(path: &PathBuf) -> Result<Self, WalletError> {
+    pub fn read_from_disk(path: &Path) -> Result<Self, WalletError> {
         let wallet_file = File::open(path)?;
         let reader = BufReader::new(wallet_file);
         let store: Self = serde_cbor::from_reader(reader)?;
@@ -93,20 +93,24 @@ impl WalletStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bip39::Mnemonic;
+    use bip39::rand::{thread_rng, Rng};
     use bitcoind::tempfile::tempdir;
 
     #[test]
     fn test_write_and_read_wallet_to_disk() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_wallet.cbor");
-        let mnemonic = Mnemonic::generate(12).unwrap().to_string();
+
+        let master_key = {
+            let seed: [u8; 16] = thread_rng().gen();
+            Xpriv::new_master(Network::Bitcoin, &seed).unwrap()
+        };
 
         let original_wallet_store = WalletStore::init(
             "test_wallet".to_string(),
             &file_path,
             Network::Bitcoin,
-            Xpriv::new_master(Network::Bitcoin, mnemonic.as_bytes()).unwrap(),
+            master_key,
             None,
         )
         .unwrap();

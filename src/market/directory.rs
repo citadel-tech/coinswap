@@ -166,7 +166,7 @@ impl DirectoryServer {
     }
 }
 
-fn write_default_directory_config(config_path: &PathBuf) -> Result<(), DirectoryServerError> {
+fn write_default_directory_config(config_path: &Path) -> Result<(), DirectoryServerError> {
     let config_string = String::from(
         "\
             port = 8080\n\

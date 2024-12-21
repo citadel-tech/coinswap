@@ -35,8 +35,11 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, taker, makers, directory_server_instance) =
-        TestFramework::init(makers_config_map.into(), TakerBehavior::Normal, ConnectionType::CLEARNET);
+    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
+        makers_config_map.into(),
+        TakerBehavior::Normal,
+        ConnectionType::CLEARNET,
+    );
 
     warn!("Running Test: Maker closes connection after receiving a ContractSigsForRecvrAndSender");
 

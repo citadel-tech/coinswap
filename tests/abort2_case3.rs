@@ -33,8 +33,11 @@ fn maker_drops_after_sending_senders_sigs() {
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, taker, makers, directory_server_instance) =
-        TestFramework::init(makers_config_map.into(), TakerBehavior::Normal, ConnectionType::CLEARNET);
+    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
+        makers_config_map.into(),
+        TakerBehavior::Normal,
+        ConnectionType::CLEARNET,
+    );
 
     warn!(
         "Running Test: Maker 6102 Closes after sending sender's signature. This is really bad. Recovery is the only option."

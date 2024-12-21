@@ -39,8 +39,11 @@ fn test_abort_case_2_recover_if_no_makers_found() {
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, taker, makers, directory_server_instance) =
-        TestFramework::init(makers_config_map.into(), TakerBehavior::Normal, ConnectionType::CLEARNET);
+    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
+        makers_config_map.into(),
+        TakerBehavior::Normal,
+        ConnectionType::CLEARNET,
+    );
 
     let bitcoind = &test_framework.bitcoind;
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.

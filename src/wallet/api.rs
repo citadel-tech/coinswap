@@ -7,6 +7,7 @@ use std::{convert::TryFrom, fs, path::PathBuf, str::FromStr};
 
 use std::collections::{HashMap, HashSet};
 
+use bip39::Mnemonic;
 use bitcoin::{
     bip32::{ChildNumber, DerivationPath, Xpriv, Xpub},
     hashes::hash160::Hash as Hash160,
@@ -15,8 +16,8 @@ use bitcoin::{
     sighash::{EcdsaSighashType, SighashCache},
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid,
 };
-
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
+use std::path::Path;
 
 use crate::{
     protocol::contract,
@@ -147,16 +148,14 @@ impl Wallet {
     ///
     /// The path should include the full path for a wallet file.
     /// If the wallet file doesn't exist it will create a new wallet file.
-    pub fn init(
-        path: &PathBuf,
-        rpc_config: &RPCConfig,
-        seedphrase: String,
-        passphrase: String,
-    ) -> Result<Self, WalletError> {
-        // Xpriv Derivation from seedphrase
-        let mnemonic = bip39::Mnemonic::parse(seedphrase.clone())?;
-        let seed = mnemonic.to_seed(passphrase.clone());
-        let master_key = Xpriv::new_master(rpc_config.network, &seed)?;
+    pub fn init(path: &Path, rpc_config: &RPCConfig) -> Result<Self, WalletError> {
+        // Generate Master key
+        let master_key = {
+            let mnemonic = Mnemonic::generate(12)?;
+            log::info!("Mnemonics: \n {:?}", mnemonic);
+            let seed = mnemonic.to_entropy();
+            Xpriv::new_master(rpc_config.network, &seed)?
+        };
 
         // Initialise wallet
         let file_name = path
@@ -174,16 +173,17 @@ impl Wallet {
             master_key,
             Some(wallet_birthday),
         )?;
+
         Ok(Self {
             rpc,
-            wallet_file_path: path.clone(),
+            wallet_file_path: path.to_path_buf(),
             store,
         })
     }
 
     /// Load wallet data from file and connects to a core RPC.
     /// The core rpc wallet name, and wallet_id field in the file should match.
-    pub fn load(rpc_config: &RPCConfig, path: &PathBuf) -> Result<Wallet, WalletError> {
+    pub fn load(path: &Path, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
         let store = WalletStore::read_from_disk(path)?;
         if rpc_config.wallet_name != store.file_name {
             return Err(WalletError::General(format!(
@@ -199,12 +199,12 @@ impl Wallet {
             store.incoming_swapcoins.len(),
             store.outgoing_swapcoins.len()
         );
-        let wallet = Self {
+
+        Ok(Self {
             rpc,
-            wallet_file_path: path.clone(),
+            wallet_file_path: path.to_path_buf(),
             store,
-        };
-        Ok(wallet)
+        })
     }
 
     /// Deletes the wallet file and returns the result as `Ok(())` on success.
@@ -213,7 +213,7 @@ impl Wallet {
     }
 
     /// Returns a reference to the file path of the wallet.
-    pub fn get_file_path(&self) -> &PathBuf {
+    pub fn get_file_path(&self) -> &Path {
         &self.wallet_file_path
     }
 
