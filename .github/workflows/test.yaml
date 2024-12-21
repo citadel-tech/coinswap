@@ -9,10 +9,7 @@ name: test
 jobs:
   test_with_codecov:
     name: Run tests with coverage reporting
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -22,10 +19,6 @@ jobs:
         with:
           toolchain: stable
           override: true
-      
-      - name: Install dependencies on macOS
-        if: matrix.os == 'macos-latest'
-        run: brew install automake libtool zeromq
 
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin

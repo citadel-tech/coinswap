@@ -9,10 +9,7 @@ name: lint
 jobs:
   fmt:
     name: rust fmt
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -28,10 +25,6 @@ jobs:
 
       - name: Add clippy
         run: rustup component add clippy
-
-      - name: Install dependencies on macOS
-        if: matrix.os == 'macos-latest'
-        run: brew install automake libtool zeromq
 
       - name: Update toolchain
         run: rustup update
