@@ -1,6 +1,8 @@
+use std::fmt::Display;
+
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use serde::{Deserialize, Serialize};
-
+use std::path::PathBuf;
 #[derive(Serialize, Deserialize, Debug)]
 pub enum RpcMsgReq {
     Ping,
@@ -20,6 +22,7 @@ pub enum RpcMsgReq {
     },
     GetTorAddress,
     GetDataDir,
+    Stop,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -36,5 +39,27 @@ pub enum RpcMsgResp {
     NewAddressResp(String),
     SendToAddressResp(String),
     GetTorAddressResp(String),
-    GetDataDirResp(String),
+    GetDataDirResp(PathBuf),
+    Shutdown,
+}
+
+impl Display for RpcMsgResp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pong => write!(f, "Pong"),
+            Self::NewAddressResp(addr) => write!(f, "{}", addr),
+            Self::SeedBalanceResp(bal) => write!(f, "{} sats", bal),
+            Self::ContractBalanceResp(bal) => write!(f, "{} sats", bal),
+            Self::SwapBalanceResp(bal) => write!(f, "{} sats", bal),
+            Self::FidelityBalanceResp(bal) => write!(f, "{} sats", bal),
+            Self::SeedUtxoResp { utxos } => write!(f, "{:?}", utxos),
+            Self::SwapUtxoResp { utxos } => write!(f, "{:?}", utxos),
+            Self::FidelityUtxoResp { utxos } => write!(f, "{:?}", utxos),
+            Self::ContractUtxoResp { utxos } => write!(f, "{:?}", utxos),
+            Self::SendToAddressResp(tx_hex) => write!(f, "{}", tx_hex),
+            Self::GetTorAddressResp(addr) => write!(f, "{}", addr),
+            Self::GetDataDirResp(path) => write!(f, "{}", path.display()),
+            Self::Shutdown => write!(f, "Shutdown Initiated"),
+        }
+    }
 }

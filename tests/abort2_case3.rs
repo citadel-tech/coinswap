@@ -33,17 +33,14 @@ fn maker_drops_after_sending_senders_sigs() {
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
-        None,
-        makers_config_map.into(),
-        None,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, taker, makers, directory_server_instance) =
+        TestFramework::init(makers_config_map.into(), None, ConnectionType::CLEARNET);
 
     warn!(
         "Running Test: Maker 6102 Closes after sending sender's signature. This is really bad. Recovery is the only option."
     );
 
+    let bitcoind = &test_framework.bitcoind;
     info!("Initiating Takers...");
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
@@ -53,7 +50,9 @@ fn maker_drops_after_sending_senders_sigs() {
             .get_wallet_mut()
             .get_next_external_address()
             .unwrap();
-        test_framework.send_to_address(&taker_address, Amount::from_btc(0.05).unwrap());
+
+        send_to_address(bitcoind, &taker_address, Amount::from_btc(0.05).unwrap());
+
         makers.iter().for_each(|maker| {
             let maker_addrs = maker
                 .get_wallet()
@@ -61,7 +60,8 @@ fn maker_drops_after_sending_senders_sigs() {
                 .unwrap()
                 .get_next_external_address()
                 .unwrap();
-            test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
+
+            send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.05).unwrap());
         });
     }
 
@@ -73,11 +73,11 @@ fn maker_drops_after_sending_senders_sigs() {
             .unwrap()
             .get_next_external_address()
             .unwrap();
-        test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
+        send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.05).unwrap());
     });
 
     // confirm balances
-    test_framework.generate_blocks(1);
+    generate_blocks(bitcoind, 1);
 
     // ---- Start Servers and attempt Swap ----
 

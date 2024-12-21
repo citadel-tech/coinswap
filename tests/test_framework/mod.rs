@@ -11,12 +11,9 @@
 //! The test data also includes the backend bitcoind data-directory, which is useful for observing the blockchain states after a swap.
 //!
 //! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
-use bitcoin::{
-    secp256k1::rand::{distributions::Alphanumeric, thread_rng, Rng},
-    Address, Amount,
-};
 use std::{
     collections::HashMap,
+    env::{self, consts},
     fs,
     path::PathBuf,
     sync::{
@@ -27,26 +24,144 @@ use std::{
     time::Duration,
 };
 
-use bitcoind::{
-    bitcoincore_rpc::{Auth, Client, RpcApi},
-    BitcoinD, Conf,
+use bitcoind::{bitcoincore_rpc::RpcApi, BitcoinD};
+use coinswap::utill::ConnectionType;
+use std::{
+    io::{BufRead, BufReader},
+    process,
+    sync::mpsc::{self, Receiver, Sender},
 };
+
+use bitcoind::bitcoincore_rpc::Auth;
+
 use coinswap::{
     maker::{Maker, MakerBehavior},
     market::directory::{start_directory_server, DirectoryServer},
     taker::{Taker, TakerBehavior},
-    utill::{setup_logger, ConnectionType},
+    utill::setup_logger,
     wallet::RPCConfig,
 };
 
-fn get_random_tmp_dir() -> PathBuf {
-    let s: String = thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(8)
-        .map(char::from)
-        .collect();
-    let path = "/tmp/.coinswap/".to_string() + &s;
-    PathBuf::from(path)
+/// Initiate the bitcoind backend.
+pub fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
+    let mut conf = bitcoind::Conf::default();
+    conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
+    conf.staticdir = Some(datadir.join(".bitcoin"));
+    log::info!("bitcoind datadir: {:?}", conf.staticdir.as_ref().unwrap());
+    log::info!("bitcoind configuration: {:?}", conf.args);
+
+    let os = consts::OS;
+    let arch = consts::ARCH;
+
+    let key = "BITCOIND_EXE";
+    let curr_dir_path = env::current_dir().unwrap();
+
+    let bitcoind_path = match (os, arch) {
+        ("macos", "aarch64") => curr_dir_path.join("bin").join("bitcoind_macos"),
+        _ => curr_dir_path.join("bin").join("bitcoind"),
+    };
+    env::set_var(key, bitcoind_path);
+    let exe_path = bitcoind::exe_path().unwrap();
+
+    log::info!("Executable path: {:?}", exe_path);
+
+    let bitcoind = BitcoinD::with_conf(exe_path, &conf).unwrap();
+
+    // Generate initial 101 blocks
+    generate_blocks(&bitcoind, 101);
+    log::info!("bitcoind initiated!!");
+
+    bitcoind
+}
+
+/// Generate Blocks in regtest node.
+pub fn generate_blocks(bitcoind: &BitcoinD, n: u64) {
+    let mining_address = bitcoind
+        .client
+        .get_new_address(None, None)
+        .unwrap()
+        .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
+        .unwrap();
+    bitcoind
+        .client
+        .generate_to_address(n, &mining_address)
+        .unwrap();
+}
+
+/// Send coins to a bitcoin address.
+#[allow(dead_code)]
+pub fn send_to_address(
+    bitcoind: &BitcoinD,
+    addrs: &bitcoin::Address,
+    amount: bitcoin::Amount,
+) -> bitcoin::Txid {
+    bitcoind
+        .client
+        .send_to_address(addrs, amount, None, None, None, None, None, None)
+        .unwrap()
+}
+
+// Waits until the mpsc::Receiver<String> recieves the expected message.
+pub fn await_message(rx: &Receiver<String>, expected_message: &str) {
+    loop {
+        let log_message = rx.recv().expect("Failure from Sender side");
+        if log_message.contains(expected_message) {
+            break;
+        }
+    }
+}
+
+// Start the DNS server based on given connection type and considers data directory for the server.
+#[allow(dead_code)]
+pub fn start_dns(data_dir: &std::path::Path, conn_type: ConnectionType) -> process::Child {
+    let (stdout_sender, stdout_recv): (Sender<String>, Receiver<String>) = mpsc::channel();
+
+    let (stderr_sender, stderr_recv): (Sender<String>, Receiver<String>) = mpsc::channel();
+
+    let mut directoryd_process = process::Command::new("./target/debug/directoryd")
+        .args([
+            "-n",
+            &format!("{}", conn_type),
+            "-d",
+            data_dir.to_str().unwrap(),
+        ]) // THINK: Passing network to avoid mitosis problem..
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let stderr = directoryd_process.stderr.take().unwrap();
+    let stdout = directoryd_process.stdout.take().unwrap();
+
+    // stderr thread
+    thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        if let Some(line) = reader.lines().map_while(Result::ok).next() {
+            let _ = stderr_sender.send(line);
+        }
+    });
+
+    // stdout thread
+    thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+
+        for line in reader.lines().map_while(Result::ok) {
+            log::info!("{line}");
+            if stdout_sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    // wait for some time to check for any stderr
+    if let Ok(stderr) = stderr_recv.recv_timeout(std::time::Duration::from_secs(10)) {
+        panic!("Error: {:?}", stderr)
+    }
+
+    await_message(&stdout_recv, "RPC socket binding successful");
+    log::info!("DNS Server Started");
+
+    directoryd_process
 }
 
 /// The Test Framework.
@@ -54,7 +169,7 @@ fn get_random_tmp_dir() -> PathBuf {
 /// Handles initializing, operating and cleaning up of all backend processes. Bitcoind, Taker and Makers.
 #[allow(dead_code)]
 pub struct TestFramework {
-    bitcoind: BitcoinD,
+    pub(super) bitcoind: BitcoinD,
     temp_dir: PathBuf,
     shutdown: AtomicBool,
 }
@@ -71,7 +186,6 @@ impl TestFramework {
     /// If no bitcoind conf is provide a default value will be used.
     #[allow(clippy::type_complexity)]
     pub fn init(
-        bitcoind_conf: Option<Conf<'_>>,
         makers_config_map: HashMap<(u16, Option<u16>), MakerBehavior>,
         taker_behavior: Option<TakerBehavior>,
         connection_type: ConnectionType,
@@ -86,47 +200,15 @@ impl TestFramework {
         }
         setup_logger(log::LevelFilter::Info);
         // Setup directory
-        let temp_dir = get_random_tmp_dir();
+        let temp_dir = env::temp_dir().join("coinswap");
         // Remove if previously existing
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
         }
         log::info!("temporary directory : {}", temp_dir.display());
 
-        // Initiate the bitcoind backend.
-        let mut conf = bitcoind_conf.unwrap_or_default();
-        conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
-        conf.staticdir = Some(temp_dir.join(".bitcoin"));
-        log::info!("bitcoind configuration: {:?}", conf.args);
+        let bitcoind = init_bitcoind(&temp_dir);
 
-        let os = std::env::consts::OS;
-        let arch = std::env::consts::ARCH;
-        let key = "BITCOIND_EXE";
-        let curr_dir_path = std::env::current_dir().unwrap();
-
-        let bitcoind_path = match (os, arch) {
-            ("macos", "aarch64") => curr_dir_path.join("bin").join("bitcoind_macos"),
-            _ => curr_dir_path.join("bin").join("bitcoind"),
-        };
-        std::env::set_var(key, bitcoind_path);
-        let exe_path = bitcoind::exe_path().unwrap();
-
-        log::info!("Executable path: {:?}", exe_path);
-
-        let bitcoind = BitcoinD::with_conf(exe_path, &conf).unwrap();
-
-        // Generate initial 101 blocks
-        let mining_address = bitcoind
-            .client
-            .get_new_address(None, None)
-            .unwrap()
-            .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
-            .unwrap();
-        bitcoind
-            .client
-            .generate_to_address(101, &mining_address)
-            .unwrap();
-        log::info!("bitcoind initiated!!");
         let shutdown = AtomicBool::new(false);
         let test_framework = Arc::new(Self {
             bitcoind,
@@ -175,7 +257,7 @@ impl TestFramework {
                 thread::sleep(Duration::from_secs(5)); // Sleep for some time avoid resource unavailable error.
                 Arc::new(
                     Maker::init(
-                        Some(temp_dir.clone()),
+                        Some(temp_dir.join(port.0.to_string())),
                         Some(maker_id),
                         Some(maker_rpc_config),
                         Some(port.0),
@@ -194,7 +276,8 @@ impl TestFramework {
         let tf_clone = test_framework.clone();
         thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(3));
-            tf_clone.generate_blocks(10);
+            // tf_clone.generate_blocks(10);
+            generate_blocks(&tf_clone.bitcoind, 10);
             if tf_clone.shutdown.load(Relaxed) {
                 log::info!("ending block generation thread");
                 return;
@@ -204,34 +287,6 @@ impl TestFramework {
         (test_framework, taker, makers, directory_server_instance)
     }
 
-    /// Get the internal bitcoind client reference.
-    pub fn get_client(&self) -> &Client {
-        &self.bitcoind.client
-    }
-
-    /// Generate Blocks in regtest node.
-    pub fn generate_blocks(&self, n: u64) {
-        let mining_address = self
-            .bitcoind
-            .client
-            .get_new_address(None, None)
-            .unwrap()
-            .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
-            .unwrap();
-        self.bitcoind
-            .client
-            .generate_to_address(n, &mining_address)
-            .unwrap();
-    }
-
-    /// Send coins to a bitcoin address.
-    pub fn send_to_address(&self, addrs: &Address, amount: Amount) {
-        self.bitcoind
-            .client
-            .send_to_address(addrs, amount, None, None, None, None, None, None)
-            .unwrap();
-    }
-
     /// Stop bitcoind and clean up all test data.
     pub fn stop(&self) {
         log::info!("Stopping Test Framework");
@@ -239,10 +294,6 @@ impl TestFramework {
         self.shutdown.store(true, Relaxed);
         // stop bitcoind
         let _ = self.bitcoind.client.stop().unwrap();
-    }
-
-    pub fn get_block_count(&self) -> u64 {
-        self.bitcoind.client.get_block_count().unwrap()
     }
 }
 

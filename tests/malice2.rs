@@ -30,11 +30,11 @@ fn malice2_maker_broadcast_contract_prematurely() {
     // Initiate test framework, Makers.
     // Taker has normal behavior.
     let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
-        None,
         makers_config_map.into(),
         Some(TakerBehavior::Normal),
         ConnectionType::CLEARNET,
     );
+    let bitcoind = &test_framework.bitcoind;
 
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
     for _ in 0..3 {
@@ -44,7 +44,8 @@ fn malice2_maker_broadcast_contract_prematurely() {
             .get_wallet_mut()
             .get_next_external_address()
             .unwrap();
-        test_framework.send_to_address(&taker_address, Amount::from_btc(0.05).unwrap());
+        send_to_address(bitcoind, &taker_address, Amount::from_btc(0.05).unwrap());
+
         makers.iter().for_each(|maker| {
             let maker_addrs = maker
                 .get_wallet()
@@ -52,7 +53,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
                 .unwrap()
                 .get_next_external_address()
                 .unwrap();
-            test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
+            send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.05).unwrap());
         });
     }
 
@@ -64,11 +65,11 @@ fn malice2_maker_broadcast_contract_prematurely() {
             .unwrap()
             .get_next_external_address()
             .unwrap();
-        test_framework.send_to_address(&maker_addrs, Amount::from_btc(0.05).unwrap());
+        send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.05).unwrap());
     });
 
     // confirm balances
-    test_framework.generate_blocks(1);
+    generate_blocks(bitcoind, 1);
 
     let mut all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
 

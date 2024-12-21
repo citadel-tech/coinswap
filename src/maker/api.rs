@@ -166,6 +166,8 @@ pub struct Maker {
     pub highest_fidelity_proof: RwLock<Option<FidelityProof>>,
     /// Is setup complete
     pub is_setup_complete: AtomicBool,
+    /// Path for the data directory.
+    pub data_dir: PathBuf,
     /// Thread pool for managing all spawned threads
     pub thread_pool: Arc<ThreadPool>,
 }
@@ -201,15 +203,7 @@ impl Maker {
         };
 
         // Get provided data directory or the default data directory.
-        let data_dir = if cfg!(feature = "integration-test") {
-            // We only append port number in data-dir for integration test
-            let port = port.expect("port value expected in Int tests");
-            data_dir.map_or(get_maker_dir().join(port.to_string()), |d| {
-                d.join("maker").join(port.to_string())
-            })
-        } else {
-            data_dir.unwrap_or(get_maker_dir())
-        };
+        let data_dir = data_dir.unwrap_or(get_maker_dir());
 
         let wallet_dir = data_dir.join("wallets");
 
@@ -284,8 +278,13 @@ impl Maker {
             connection_state: Mutex::new(HashMap::new()),
             highest_fidelity_proof: RwLock::new(None),
             is_setup_complete: AtomicBool::new(false),
+            data_dir,
             thread_pool: Arc::new(ThreadPool::new(thread_pool_port)),
         })
+    }
+
+    pub fn get_data_dir(&self) -> &PathBuf {
+        &self.data_dir
     }
 
     /// Returns a reference to the Maker's wallet.
