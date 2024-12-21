@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> This library is currently under beta development and at an experimental stage. There are known and unknown bugs. Mainnet use is strictly NOT recommended.
+> This library is currently under beta development and at an experimental stage. There are known and unknown bugs. Mainnet use is strictly NOT recommended. Note that this code is currently designed to run exclusively on Linux systems.
 
 ## Table of Contents
 

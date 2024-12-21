@@ -9,18 +9,17 @@ name: build
 jobs:
   build:
     name: Build
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
         rust: [stable, nightly]
         features: [default, integration-test]
     steps:
-      - name: checkout
+      - name: Checkout
         uses: actions/checkout@v3
 
       - name: Generate cache key
-        run: echo "${{ matrix.os }}-${{ matrix.rust }}-${{ matrix.features }}" | tee .cache_key
+        run: echo "${{ runner.os }}-${{ matrix.rust }}-${{ matrix.features }}" | tee .cache_key
 
       - name: cache
         uses: actions/cache@v2
@@ -39,10 +38,6 @@ jobs:
 
       - name: Update toolchain
         run: rustup update
-
-      - name: Install dependencies on macOS
-        if: matrix.os == 'macos-latest'
-        run: brew install automake libtool zeromq
 
       - name: Build for OS
         run: cargo build --features=${{ matrix.features }}
