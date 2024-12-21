@@ -2,7 +2,7 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
-    taker::SwapParams,
+    taker::{SwapParams, TakerBehavior},
     utill::ConnectionType,
     wallet::{Destination, SendAmount},
 };
@@ -35,7 +35,7 @@ fn test_standard_coinswap() {
 
     // Initiate test framework, Makers and a Taker with default behavior.
     let (test_framework, taker, makers, directory_server_instance) =
-        TestFramework::init(makers_config_map.into(), None, connection_type);
+        TestFramework::init(makers_config_map.into(), TakerBehavior::Normal, connection_type);
 
     warn!("Running Test: Standard Coinswap Procedure");
 

@@ -2,7 +2,7 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
-    taker::SwapParams,
+    taker::{SwapParams, TakerBehavior},
     utill::ConnectionType,
 };
 
@@ -33,7 +33,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     // Initiate test framework, Makers.
     // Taker has normal behavior.
     let (test_framework, taker, makers, directory_server_instance) =
-        TestFramework::init(makers_config_map.into(), None, ConnectionType::CLEARNET);
+        TestFramework::init(makers_config_map.into(), TakerBehavior::Normal, ConnectionType::CLEARNET);
 
     warn!("Running Test: Maker closes conneciton at hash preimage handling");
     let bitcoind = &test_framework.bitcoind;

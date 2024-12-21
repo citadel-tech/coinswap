@@ -3,6 +3,7 @@ use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
+    taker::TakerBehavior,
     utill::ConnectionType,
 };
 mod test_framework;
@@ -26,7 +27,7 @@ fn test_fidelity() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
 
     let (test_framework, _, makers, directory_server_instance) =
-        TestFramework::init(makers_config_map.into(), None, ConnectionType::CLEARNET);
+        TestFramework::init(makers_config_map.into(), TakerBehavior::Normal, ConnectionType::CLEARNET);
 
     let bitcoind = &test_framework.bitcoind;
 

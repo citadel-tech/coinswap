@@ -32,7 +32,7 @@ fn test_stop_taker_after_setup() {
     // Taker has a special behavior DropConnectionAfterFullSetup.
     let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
         makers_config_map.into(),
-        Some(TakerBehavior::DropConnectionAfterFullSetup),
+        TakerBehavior::DropConnectionAfterFullSetup,
         ConnectionType::CLEARNET,
     );
 
