@@ -130,7 +130,6 @@ fn test_abort_case_2_recover_if_no_makers_found() {
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
-        fee_rate: Amount::from_sat(1000),
     };
 
     // Calculate Original balance excluding fidelity bonds.

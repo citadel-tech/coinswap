@@ -54,9 +54,6 @@ struct Cli {
     /// Sets the transaction count.
     #[clap(name = "tx_count", default_value = "3")]
     pub tx_count: u32,
-    /// Sets the fee-rate.
-    #[clap(name = "fee_rate", default_value = "1000")]
-    pub fee_rate: u64,
     /// Sets the required on-chain confirmations.
     #[clap(name = "required_confirms", default_value = "1000")]
     pub required_confirms: u64,
@@ -118,7 +115,6 @@ fn main() -> Result<(), TakerError> {
         maker_count: args.maker_count,
         tx_count: args.tx_count,
         required_confirms: args.required_confirms,
-        fee_rate: Amount::from_sat(args.fee_rate),
     };
 
     let mut taker = Taker::init(

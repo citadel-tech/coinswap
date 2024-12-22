@@ -71,6 +71,8 @@ pub const RECONNECT_SHORT_SLEEP_DELAY: u64 = 10;
 pub const RECONNECT_LONG_SLEEP_DELAY: u64 = 60;
 pub const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 60;
 pub const RECONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 300;
+// TODO: Maker should decide this fee_rate
+pub const FEE_RATE: u64 = 1000;
 
 /// Swap specific parameters. These are user's policy and can differ among swaps.
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
@@ -87,8 +89,6 @@ pub struct SwapParams {
     // TODO: Following two should be moved to TakerConfig as global configuration.
     /// Confirmation count required for funding txs.
     pub required_confirms: u64,
-    /// Fee rate for funding txs.
-    pub fee_rate: Amount,
 }
 
 // Defines the Taker's position in the current ongoing swap.
@@ -463,7 +463,7 @@ impl Taker {
                     &hashlock_pubkeys,
                     self.get_preimage_hash(),
                     swap_locktime,
-                    self.ongoing_swap_state.swap_params.fee_rate,
+                    Amount::from_sat(FEE_RATE),
                 )?;
 
             let contract_reedemscripts = outgoing_swapcoins
@@ -954,7 +954,7 @@ impl Taker {
                 next_peer_multisig_pubkeys: next_peer_multisig_pubkeys.clone(),
                 next_peer_hashlock_pubkeys: next_peer_hashlock_pubkeys.clone(),
                 next_maker_refund_locktime: maker_refund_locktime,
-                next_maker_fee_rate: self.ongoing_swap_state.swap_params.fee_rate,
+                next_maker_fee_rate: Amount::from_sat(FEE_RATE),
             };
 
             let this_maker_info = ThisMakerInfo {
@@ -1196,7 +1196,7 @@ impl Taker {
                         previous_funding_output,
                         maker_funding_tx_value,
                         next_contract_redeemscript,
-                        self.ongoing_swap_state.swap_params.fee_rate,
+                        Amount::from_sat(FEE_RATE),
                     )
                 },
             )
