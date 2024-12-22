@@ -1,7 +1,7 @@
 //! Various utility and helper functions for both Taker and Maker.
 
 use bitcoin::{
-    hashes::{sha256, Hash},
+    hashes::Hash,
     key::{rand::thread_rng, Keypair},
     secp256k1::{Secp256k1, SecretKey},
     PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
@@ -118,13 +118,6 @@ pub fn get_taker_dir() -> PathBuf {
 /// Get the DNS Directory
 pub fn get_dns_dir() -> PathBuf {
     get_data_dir().join("dns")
-}
-
-/// Generate an unique identifier from the seedphrase.
-pub fn seed_phrase_to_unique_id(seed: &str) -> String {
-    let mut hash = sha256::Hash::hash(seed.as_bytes()).to_string();
-    let _ = hash.split_off(9);
-    hash
 }
 
 pub fn setup_taker_logger(filter: LevelFilter) {
@@ -394,7 +387,7 @@ pub fn parse_field<T: std::str::FromStr>(value: Option<&String>, default: T) -> 
 }
 
 /// Function to check if tor log contains a pattern
-pub fn monitor_log_for_completion(log_file: &PathBuf, pattern: &str) -> io::Result<()> {
+pub fn monitor_log_for_completion(log_file: &Path, pattern: &str) -> io::Result<()> {
     let mut last_size = 0;
 
     loop {
