@@ -1,10 +1,11 @@
 //! Various utility and helper functions for both Taker and Maker.
 
 use bitcoin::{
+    absolute::LockTime,
     hashes::Hash,
     key::{rand::thread_rng, Keypair},
-    secp256k1::{Secp256k1, SecretKey},
-    PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
+    secp256k1::{Message, Secp256k1, SecretKey},
+    Address, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
 };
 use log::LevelFilter;
 use log4rs::{
@@ -12,9 +13,10 @@ use log4rs::{
     config::{Appender, Logger, Root},
     Config,
 };
+use serde::{Deserialize, Serialize};
 use std::{
     env, fmt,
-    io::{ErrorKind, Read},
+    io::{BufReader, BufWriter, ErrorKind, Read},
     net::TcpStream,
     path::{Path, PathBuf},
     str::FromStr,
@@ -32,9 +34,11 @@ use std::{
 use crate::{
     error::NetError,
     protocol::{
-        contract::derive_maker_pubkey_and_nonce, error::ProtocolError, messages::MultisigPrivkey,
+        contract::derive_maker_pubkey_and_nonce,
+        error::ProtocolError,
+        messages::{FidelityProof, MultisigPrivkey},
     },
-    wallet::{SwapCoin, WalletError},
+    wallet::{fidelity_redeemscript, FidelityError, SwapCoin, WalletError},
 };
 
 const INPUT_CHARSET: &str =
@@ -231,19 +235,21 @@ pub fn send_message(
     socket_writer: &mut TcpStream,
     message: &impl serde::Serialize,
 ) -> Result<(), NetError> {
+    let mut writer = BufWriter::new(socket_writer);
     let msg_bytes = serde_cbor::ser::to_vec(message)?;
     let msg_len = (msg_bytes.len() as u32).to_be_bytes();
     let mut to_send = Vec::with_capacity(msg_bytes.len() + msg_len.len());
     to_send.extend(msg_len);
     to_send.extend(msg_bytes);
-    socket_writer.write_all(&to_send)?;
-    socket_writer.flush()?;
+    writer.write_all(&to_send)?;
+    writer.flush()?;
     Ok(())
 }
 
 /// Reads a response byte_array from a given stream.
 /// Response can be any length-appended data, where the first byte is the length of the actual message.
 pub fn read_message(reader: &mut TcpStream) -> Result<Vec<u8>, NetError> {
+    let mut reader = BufReader::new(reader);
     // length of incoming data
     let mut len_buff = [0u8; 4];
     reader.read_exact(&mut len_buff)?; // This can give UnexpectedEOF error if theres no data to read
@@ -495,6 +501,62 @@ pub fn parse_proxy_auth(s: &str) -> Result<(String, String), NetError> {
     let passwd = parts[1].to_string();
 
     Ok((user, passwd))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DnsMetadata {
+    pub url: String,
+    pub proof: FidelityProof,
+}
+
+// Structured requests and responses using serde.
+#[derive(Serialize, Deserialize, Debug)]
+pub enum DnsRequest {
+    Post { metadata: Box<DnsMetadata> },
+    Get { makers: u32 },
+    Dummy { url: String },
+}
+
+pub fn verify_fidelity_checks(
+    proof: &FidelityProof,
+    addr: &str,
+    tx: Transaction,
+    current_height: u64,
+) -> Result<(), WalletError> {
+    // Check if bond lock time has expired
+    let lock_time = LockTime::from_height(current_height as u32)?;
+    if lock_time > proof.bond.lock_time {
+        return Err(FidelityError::BondLocktimeExpired.into());
+    }
+
+    // Verify certificate hash
+    let expected_cert_hash = proof.bond.generate_cert_hash(addr);
+    if proof.cert_hash != expected_cert_hash {
+        return Err(FidelityError::InvalidCertHash.into());
+    }
+
+    // Validate redeem script and corresponding address
+    let fidelity_redeem_script = fidelity_redeemscript(&proof.bond.lock_time, &proof.bond.pubkey);
+    let expected_address = Address::p2wsh(
+        fidelity_redeem_script.as_script(),
+        bitcoin::network::Network::Regtest,
+    );
+
+    let derived_script_pubkey = expected_address.script_pubkey();
+    let tx_out = tx
+        .tx_out(proof.bond.outpoint.vout as usize)
+        .map_err(|_| WalletError::General("Outputs index error".to_string()))?;
+
+    if tx_out.script_pubkey != derived_script_pubkey {
+        return Err(FidelityError::BondDoesNotExist.into());
+    }
+
+    // Verify ECDSA signature
+    let secp = Secp256k1::new();
+    let cert_message = Message::from_digest_slice(proof.cert_hash.as_byte_array())?;
+    secp.verify_ecdsa(&cert_message, &proof.cert_sig, &proof.bond.pubkey.inner)?;
+
+    Ok(())
 }
 
 #[cfg(test)]

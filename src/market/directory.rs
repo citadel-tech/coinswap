@@ -3,16 +3,24 @@
 //! Handles market-related logic where Makers post their offers. Also provides functions to synchronize
 //! maker addresses from directory servers, post maker addresses to directory servers,
 
+use bitcoind::bitcoincore_rpc::{self, Client, RpcApi};
+
 use crate::{
     market::rpc::start_rpc_server_thread,
-    utill::{get_dns_dir, parse_field, parse_toml, ConnectionType},
+    utill::{
+        get_dns_dir, parse_field, parse_toml, read_message, send_message, verify_fidelity_checks,
+        ConnectionType, DnsRequest,
+    },
+    wallet::{RPCConfig, WalletError},
 };
 
 #[cfg(feature = "tor")]
 use crate::utill::{get_tor_addrs, monitor_log_for_completion};
 
 use std::{
-    collections::HashSet,
+    cmp::Ordering,
+    collections::BTreeSet,
+    convert::TryFrom,
     fs::{self, File},
     io::{BufRead, BufReader, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
@@ -33,6 +41,25 @@ pub enum DirectoryServerError {
     IO(std::io::Error),
     Net(NetError),
     MutexPossion,
+    Wallet(WalletError),
+}
+
+impl From<WalletError> for DirectoryServerError {
+    fn from(value: WalletError) -> Self {
+        Self::Wallet(value)
+    }
+}
+
+impl From<serde_cbor::Error> for DirectoryServerError {
+    fn from(value: serde_cbor::Error) -> Self {
+        Self::Wallet(WalletError::Cbor(value))
+    }
+}
+
+impl From<bitcoind::bitcoincore_rpc::Error> for DirectoryServerError {
+    fn from(value: bitcoind::bitcoincore_rpc::Error) -> Self {
+        Self::Wallet(WalletError::Rpc(value))
+    }
 }
 
 impl From<std::io::Error> for DirectoryServerError {
@@ -59,6 +86,21 @@ impl<'a, T> From<PoisonError<RwLockWriteGuard<'a, T>>> for DirectoryServerError 
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub struct AddressEntry(pub u64, pub String);
+
+impl PartialOrd for AddressEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for AddressEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.0.cmp(&self.0).then_with(|| self.1.cmp(&other.1))
+    }
+}
+
 /// Directory Configuration,
 #[derive(Debug)]
 pub struct DirectoryServer {
@@ -68,7 +110,7 @@ pub struct DirectoryServer {
     pub connection_type: ConnectionType,
     pub data_dir: PathBuf,
     pub shutdown: AtomicBool,
-    pub addresses: Arc<RwLock<HashSet<String>>>,
+    pub addresses: Arc<RwLock<BTreeSet<AddressEntry>>>,
 }
 
 impl Default for DirectoryServer {
@@ -89,7 +131,7 @@ impl Default for DirectoryServer {
             },
             data_dir: get_dns_dir(),
             shutdown: AtomicBool::new(false),
-            addresses: Arc::new(RwLock::new(HashSet::new())),
+            addresses: Arc::new(RwLock::new(BTreeSet::new())),
         }
     }
 }
@@ -150,12 +192,18 @@ impl DirectoryServer {
             file.write_all(content.as_bytes())?;
         }
 
-        let addresses = Arc::new(RwLock::new(HashSet::new()));
+        let addresses = Arc::new(RwLock::new(BTreeSet::new()));
         let address_file = data_dir.join("addresses.dat");
         if let Ok(file) = File::open(&address_file) {
             let reader = BufReader::new(file);
             for address in reader.lines().map_while(Result::ok) {
-                addresses.write()?.insert(address);
+                if let Some((key, value)) = address.split_once(',') {
+                    if let Ok(key) = key.trim().parse::<u64>() {
+                        addresses
+                            .write()?
+                            .insert(AddressEntry(key, value.to_string()));
+                    }
+                }
             }
         }
         let default_dns = Self::default();
@@ -218,7 +266,7 @@ pub fn write_addresses_to_file(
         .addresses
         .read()?
         .iter()
-        .map(|addr| format!("{}\n", addr))
+        .map(|AddressEntry(addr, amount)| format!("{},{}\n", addr, amount))
         .collect::<Vec<String>>()
         .join("");
 
@@ -227,9 +275,16 @@ pub fn write_addresses_to_file(
     file.flush()?;
     Ok(())
 }
-pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), DirectoryServerError> {
+pub fn start_directory_server(
+    directory: Arc<DirectoryServer>,
+    rpc_config: Option<RPCConfig>,
+) -> Result<(), DirectoryServerError> {
     #[cfg(feature = "tor")]
     let mut tor_handle = None;
+
+    let rpc_config = rpc_config.unwrap_or_default();
+
+    let rpc_client = bitcoincore_rpc::Client::try_from(&rpc_config)?;
 
     match directory.connection_type {
         ConnectionType::CLEARNET => {}
@@ -292,9 +347,9 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
         match listener.accept() {
             Ok((mut stream, addrs)) => {
                 log::debug!("Incoming connection from : {}", addrs);
-                stream.set_read_timeout(Some(Duration::from_secs(20)))?;
-                stream.set_write_timeout(Some(Duration::from_secs(20)))?;
-                handle_client(&mut stream, &directory.clone())?;
+                stream.set_read_timeout(Some(Duration::from_secs(60)))?;
+                stream.set_write_timeout(Some(Duration::from_secs(60)))?;
+                handle_client(&mut stream, &directory.clone(), &rpc_client)?;
             }
 
             // If no connection received, check for shutdown or save addresses to disk
@@ -330,32 +385,67 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
 }
 
 // The stream should have read and write timeout set.
-// TODO: Use serde encoded data instead of string.
 fn handle_client(
     stream: &mut TcpStream,
     directory: &Arc<DirectoryServer>,
+    rpc: &Client,
 ) -> Result<(), DirectoryServerError> {
-    let reader_stream = stream.try_clone()?;
-    let mut reader = BufReader::new(reader_stream);
-    let mut request_line = String::new();
+    let buf = read_message(&mut stream.try_clone()?)?;
+    let dns_request: DnsRequest = serde_cbor::de::from_reader(&buf[..])?;
+    match dns_request {
+        DnsRequest::Post { metadata } => {
+            log::info!("Received new maker address: {}", &metadata.url);
 
-    reader.read_line(&mut request_line)?;
-    if request_line.starts_with("POST") {
-        let addr: String = request_line.replace("POST ", "").trim().to_string();
-        directory.addresses.write()?.insert(addr.clone());
-        log::info!("Got new maker address: {}", addr);
-    } else if request_line.starts_with("GET") {
-        log::info!("Taker pinged the directory server");
-        let response = directory
-            .addresses
-            .read()?
-            .iter()
-            .fold(String::new(), |acc, addr| acc + addr + "\n");
-        stream.write_all(response.as_bytes())?;
-        stream.flush()?;
+            let txid = metadata.proof.bond.outpoint.txid;
+            let transaction = rpc.get_raw_transaction(&txid, None)?;
+            let current_height = rpc.get_block_count()?;
+
+            match verify_fidelity_checks(
+                &metadata.proof,
+                &metadata.url,
+                transaction,
+                current_height,
+            ) {
+                Ok(_) => {
+                    log::info!("Maker verified successfully.");
+                    directory.addresses.write()?.insert(AddressEntry(
+                        metadata.proof.bond.amount.to_sat(),
+                        metadata.url.clone(),
+                    ));
+                }
+                Err(e) => {
+                    log::error!(
+                        "Potentially suspicious maker detected: {:?} | {:?}",
+                        metadata.url,
+                        e
+                    );
+                }
+            }
+        }
+        DnsRequest::Get { makers } => {
+            log::info!("Taker pinged the directory server");
+            log::info!("Number of makers requested: {:?}", makers);
+            let addresses = directory.addresses.read()?;
+            let response = if addresses.len() < makers as usize {
+                String::new()
+            } else {
+                addresses
+                    .iter()
+                    .take(makers as usize)
+                    .fold(String::new(), |acc, AddressEntry(_, addr)| {
+                        acc + addr + "\n"
+                    })
+            };
+            send_message(stream, &response)?;
+        }
+        DnsRequest::Dummy { url } => {
+            log::info!("Got new maker address: {}", &url);
+            directory.addresses.write()?.insert(AddressEntry(0, url));
+        }
     }
     Ok(())
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

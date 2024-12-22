@@ -1,11 +1,11 @@
 use super::{RpcMsgReq, RpcMsgResp};
 use crate::{
     error::NetError,
-    market::directory::{DirectoryServer, DirectoryServerError},
+    market::directory::{AddressEntry, DirectoryServer, DirectoryServerError},
     utill::{read_message, send_message},
 };
 use std::{
-    collections::HashSet,
+    collections::BTreeSet,
     io::ErrorKind,
     net::{TcpListener, TcpStream},
     sync::{atomic::Ordering::Relaxed, Arc, RwLock},
@@ -15,7 +15,7 @@ use std::{
 
 fn handle_request(
     socket: &mut TcpStream,
-    address: Arc<RwLock<HashSet<String>>>,
+    address: Arc<RwLock<BTreeSet<AddressEntry>>>,
 ) -> Result<(), DirectoryServerError> {
     let req_bytes = read_message(socket)?;
     let rpc_request: RpcMsgReq = serde_cbor::from_slice(&req_bytes).map_err(NetError::Cbor)?;
@@ -23,7 +23,13 @@ fn handle_request(
     match rpc_request {
         RpcMsgReq::ListAddresses => {
             log::info!("RPC request received: {:?}", rpc_request);
-            let resp = RpcMsgResp::ListAddressesResp(address.read()?.clone());
+            let resp = RpcMsgResp::ListAddressesResp(
+                address
+                    .read()?
+                    .iter()
+                    .map(|AddressEntry(_, address)| address.clone())
+                    .collect::<BTreeSet<_>>(),
+            );
             if let Err(e) = send_message(socket, &resp) {
                 log::info!("Error sending RPC response {:?}", e);
             };

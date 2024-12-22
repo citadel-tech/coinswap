@@ -144,7 +144,7 @@ fn test_maker_cli() {
     let maker_cli = MakerCli::new();
 
     let dns_dir = maker_cli.data_dir.parent().unwrap();
-    let mut directoryd_proc = start_dns(dns_dir, ConnectionType::CLEARNET);
+    let mut directoryd_proc = start_dns(dns_dir, ConnectionType::CLEARNET, &maker_cli.bitcoind);
     let (rx, mut makerd_proc) = maker_cli.start_makerd();
 
     // Ping check
