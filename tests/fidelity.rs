@@ -80,7 +80,7 @@ fn test_fidelity() {
         let bond_value = wallet_read
             .calculate_bond_value(highest_bond_index)
             .unwrap();
-        assert_eq!(bond_value, Amount::from_sat(542));
+        assert_eq!(bond_value, Amount::from_sat(10814));
 
         let (bond, _, is_spent) = wallet_read
             .get_fidelity_bonds()
@@ -102,7 +102,7 @@ fn test_fidelity() {
             .unwrap()
             .create_fidelity(
                 Amount::from_sat(8000000),
-                LockTime::from_height((bitcoind.client.get_block_count().unwrap() as u32) + 150)
+                LockTime::from_height((bitcoind.client.get_block_count().unwrap() as u32) + 950)
                     .unwrap(),
             )
             .unwrap();
