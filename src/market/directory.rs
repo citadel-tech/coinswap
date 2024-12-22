@@ -413,8 +413,12 @@ fn handle_client(
                         metadata.url.clone(),
                     ));
                 }
-                Err(_) => {
-                    log::error!("Potentially suspicious maker detected: {:?}", metadata.url);
+                Err(e) => {
+                    log::error!(
+                        "Potentially suspicious maker detected: {:?} | {:?}",
+                        metadata.url,
+                        e
+                    );
                 }
             }
         }
