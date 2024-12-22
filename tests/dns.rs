@@ -3,14 +3,20 @@ use std::{io::Write, net::TcpStream, process::Command, thread, time::Duration};
 
 mod test_framework;
 
-use coinswap::utill::ConnectionType;
-use test_framework::start_dns;
+use coinswap::utill::{ConnectionType, DnsRequest};
+use test_framework::{init_bitcoind, start_dns};
 
 fn send_addresses(addresses: &[&str]) {
     for address in addresses {
         let mut stream = TcpStream::connect(("127.0.0.1", 8080)).unwrap();
-        let request = format!("POST {}\n", address);
-        stream.write_all(request.as_bytes()).unwrap();
+        let request = DnsRequest::Dummy {
+            url: address.to_string(),
+        };
+        let buffer = serde_cbor::ser::to_vec(&request).unwrap();
+        let length = buffer.len() as u32;
+        stream.write_all(&length.to_be_bytes()).unwrap();
+        stream.write_all(&buffer).unwrap();
+        stream.flush().unwrap();
     }
 }
 
@@ -46,9 +52,11 @@ fn test_dns() {
     }
     log::info!("temporary directory : {}", temp_dir.display());
 
+    let bitcoind = init_bitcoind(&temp_dir);
+
     let data_dir = temp_dir.join("dns");
 
-    let mut process = start_dns(&data_dir, ConnectionType::CLEARNET);
+    let mut process = start_dns(&data_dir, ConnectionType::CLEARNET, &bitcoind);
 
     let initial_addresses = vec!["127.0.0.1:8080", "127.0.0.1:8081", "127.0.0.1:8082"];
     send_addresses(&initial_addresses);
@@ -59,7 +67,7 @@ fn test_dns() {
     process.kill().expect("Failed to kill directoryd process");
     process.wait().unwrap();
 
-    let mut process = start_dns(&data_dir, ConnectionType::CLEARNET);
+    let mut process = start_dns(&data_dir, ConnectionType::CLEARNET, &bitcoind);
 
     let additional_addresses = vec!["127.0.0.1:8083", "127.0.0.1:8084"];
     send_addresses(&additional_addresses);
@@ -68,8 +76,7 @@ fn test_dns() {
     process.kill().expect("Failed to kill directoryd process");
     process.wait().unwrap();
 
-    let mut process = start_dns(&data_dir, ConnectionType::CLEARNET);
-
+    let mut process = start_dns(&data_dir, ConnectionType::CLEARNET, &bitcoind);
     let all_addresses = vec![
         "127.0.0.1:8080",
         "127.0.0.1:8081",
