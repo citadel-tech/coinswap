@@ -155,6 +155,7 @@ fn maker_drops_after_sending_senders_sigs() {
                     .to_string()
             );
         }
+        #[cfg(feature = "tor")]
         ConnectionType::TOR => {
             let onion_addr_path =
                 PathBuf::from(format!("/tmp/tor-rust-maker{}/hs-dir/hostname", 6102));

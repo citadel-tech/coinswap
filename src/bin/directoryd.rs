@@ -1,9 +1,11 @@
 use clap::Parser;
 use coinswap::{
     market::directory::{start_directory_server, DirectoryServer, DirectoryServerError},
-    tor::setup_mitosis,
     utill::{setup_directory_logger, ConnectionType},
 };
+
+#[cfg(feature = "tor")]
+use coinswap::tor::setup_mitosis;
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 #[derive(Parser)]
@@ -25,10 +27,12 @@ fn main() -> Result<(), DirectoryServerError> {
 
     let conn_type = ConnectionType::from_str(&args.network)?;
 
-    if conn_type == ConnectionType::TOR {
-        setup_mitosis();
+    #[cfg(feature = "tor")]
+    {
+        if conn_type == ConnectionType::TOR {
+            setup_mitosis();
+        }
     }
-
     let directory = Arc::new(DirectoryServer::new(args.data_directory, Some(conn_type))?);
 
     start_directory_server(directory)?;

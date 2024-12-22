@@ -155,6 +155,7 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
                     .to_string()
             );
         }
+        #[cfg(feature = "tor")]
         ConnectionType::TOR => {
             let onion_addr_path =
                 PathBuf::from(format!("/tmp/tor-rust-maker{}/hs-dir/hostname", 6102));

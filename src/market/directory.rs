@@ -5,11 +5,11 @@
 
 use crate::{
     market::rpc::start_rpc_server_thread,
-    utill::{
-        get_dns_dir, get_tor_addrs, monitor_log_for_completion, parse_field, parse_toml,
-        ConnectionType,
-    },
+    utill::{get_dns_dir, parse_field, parse_toml, ConnectionType},
 };
+
+#[cfg(feature = "tor")]
+use crate::utill::{get_tor_addrs, monitor_log_for_completion};
 
 use std::{
     collections::HashSet,
@@ -77,7 +77,16 @@ impl Default for DirectoryServer {
             rpc_port: 4321,
             port: 8080,
             socks_port: 19060,
-            connection_type: ConnectionType::TOR,
+            connection_type: {
+                #[cfg(feature = "tor")]
+                {
+                    ConnectionType::TOR
+                }
+                #[cfg(not(feature = "tor"))]
+                {
+                    ConnectionType::CLEARNET
+                }
+            },
             data_dir: get_dns_dir(),
             shutdown: AtomicBool::new(false),
             addresses: Arc::new(RwLock::new(HashSet::new())),
@@ -219,12 +228,15 @@ pub fn write_addresses_to_file(
     Ok(())
 }
 pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), DirectoryServerError> {
+    #[cfg(feature = "tor")]
     let mut tor_handle = None;
 
     match directory.connection_type {
         ConnectionType::CLEARNET => {}
+        #[cfg(feature = "tor")]
         ConnectionType::TOR => {
-            if cfg!(feature = "tor") {
+            #[cfg(feature = "tor")]
+            {
                 let tor_log_dir = "/tmp/tor-rust-directory/log";
                 if Path::new(tor_log_dir).exists() {
                     match fs::remove_file(tor_log_dir) {
@@ -304,9 +316,12 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
         log::error!("Error closing Address Writer Thread : {:?}", e);
     }
 
-    if let Some(handle) = tor_handle {
-        crate::tor::kill_tor_handles(handle);
-        log::info!("Directory server and Tor instance terminated successfully");
+    #[cfg(feature = "tor")]
+    {
+        if let Some(handle) = tor_handle {
+            crate::tor::kill_tor_handles(handle);
+            log::info!("Directory server and Tor instance terminated successfully");
+        }
     }
 
     write_addresses_to_file(&directory, &address_file)?;

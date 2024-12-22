@@ -218,6 +218,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
                     .to_string()
             );
         }
+        #[cfg(feature = "tor")]
         ConnectionType::TOR => {
             let onion_addr_path =
                 PathBuf::from(format!("/tmp/tor-rust-maker{}/hs-dir/hostname", 6102));

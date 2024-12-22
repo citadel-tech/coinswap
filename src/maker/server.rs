@@ -5,10 +5,8 @@
 //! The server listens at two port 6102 for P2P, and 6103 for RPC Client request.
 
 use std::{
-    fs,
-    io::{ErrorKind, Read, Write},
+    io::{ErrorKind, Write},
     net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
-    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc,
@@ -17,9 +15,19 @@ use std::{
     time::Duration,
 };
 
+#[cfg(feature = "tor")]
+use std::io::Read;
+
+#[cfg(feature = "tor")]
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
 
+#[cfg(feature = "tor")]
 use socks::Socks5Stream;
 
 pub use super::Maker;
@@ -32,9 +40,12 @@ use crate::{
         rpc::start_rpc_server,
     },
     protocol::messages::TakerToMakerMessage,
-    utill::{monitor_log_for_completion, read_message, send_message, ConnectionType},
+    utill::{read_message, send_message, ConnectionType},
     wallet::WalletError,
 };
+
+#[cfg(feature = "tor")]
+use crate::utill::monitor_log_for_completion;
 
 use crate::maker::error::MakerError;
 
@@ -50,15 +61,19 @@ pub const MIN_CONTRACT_REACTION_TIME: u16 = 48;
 /// E.g., for 1 billion sats (0.01 BTC), a value of 10_000 would result in a 0.1% fee.
 pub const AMOUNT_RELATIVE_FEE_PPB: Amount = Amount::from_sat(10_000_000);
 
+#[cfg(feature = "tor")]
+type OptionalJoinHandle = Option<mitosis::JoinHandle<()>>;
+
+#[cfg(not(feature = "tor"))]
+type OptionalJoinHandle = Option<()>;
+
 /// Fetches the Maker and DNS address, and sends maker address to the DNS server.
 /// Depending upon ConnectionType and test/prod environment, different maker address and DNS addresses are returned.
 /// Return the Maker address and an optional tor thread handle.
 ///
 /// Tor thread is spawned only if ConnectionType=TOR and --feature=tor is enabled.
 /// Errors if ConncetionType=TOR but, the tor feature is not enabled.
-fn network_bootstrap(
-    maker: Arc<Maker>,
-) -> Result<(String, Option<mitosis::JoinHandle<()>>), MakerError> {
+fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, OptionalJoinHandle), MakerError> {
     let maker_port = maker.config.port;
     let mut tor_handle = None;
     let (maker_address, dns_address) = match maker.config.connection_type {
@@ -72,63 +87,58 @@ fn network_bootstrap(
 
             (maker_address, dns_address)
         }
+        #[cfg(feature = "tor")]
         ConnectionType::TOR => {
-            if !cfg!(feature = "tor") {
-                return Err(MakerError::General(
-                    "Tor setup failure. Please compile with Tor feature enabled.",
-                ));
-            } else {
-                let maker_socks_port = maker.config.socks_port;
+            let maker_socks_port = maker.config.socks_port;
 
-                let tor_log_dir = format!("/tmp/tor-rust-maker{}/log", maker_port);
+            let tor_log_dir = format!("/tmp/tor-rust-maker{}/log", maker_port);
 
-                if Path::new(&tor_log_dir).exists() {
-                    match fs::remove_file(&tor_log_dir) {
-                        Ok(_) => log::info!(
-                            "[{}] Previous Maker log file deleted successfully",
-                            maker_port
-                        ),
-                        Err(_) => log::error!("[{}] Error deleting Maker log file", maker_port),
-                    }
+            if Path::new(&tor_log_dir).exists() {
+                match fs::remove_file(&tor_log_dir) {
+                    Ok(_) => log::info!(
+                        "[{}] Previous Maker log file deleted successfully",
+                        maker_port
+                    ),
+                    Err(_) => log::error!("[{}] Error deleting Maker log file", maker_port),
                 }
-
-                tor_handle = Some(crate::tor::spawn_tor(
-                    maker_socks_port,
-                    maker_port,
-                    format!("/tmp/tor-rust-maker{}", maker_port),
-                ));
-                thread::sleep(Duration::from_secs(10));
-
-                if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
-                    log::error!("[{}] Error monitoring log file: {}", maker_port, e);
-                }
-
-                log::info!("[{}] Maker tor is instantiated", maker_port);
-
-                let maker_hs_path_str =
-                    format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
-                let mut maker_file = fs::File::open(maker_hs_path_str)?;
-                let mut maker_onion_addr: String = String::new();
-                maker_file.read_to_string(&mut maker_onion_addr)?;
-
-                maker_onion_addr.pop(); // Remove `\n` at the end.
-
-                let maker_address = format!("{}:{}", maker_onion_addr, maker.config.port);
-
-                let directory_onion_address = if cfg!(feature = "integration-test") {
-                    let directory_hs_path_str = "/tmp/tor-rust-directory/hs-dir/hostname";
-                    let mut directory_file = fs::File::open(directory_hs_path_str)?;
-                    let mut directory_onion_addr: String = String::new();
-
-                    directory_file.read_to_string(&mut directory_onion_addr)?;
-                    directory_onion_addr.pop(); // Remove `\n` at the end.
-                    format!("{}:{}", directory_onion_addr, 8080)
-                } else {
-                    maker.config.directory_server_address.clone()
-                };
-
-                (maker_address, directory_onion_address)
             }
+
+            tor_handle = Some(crate::tor::spawn_tor(
+                maker_socks_port,
+                maker_port,
+                format!("/tmp/tor-rust-maker{}", maker_port),
+            ));
+            thread::sleep(Duration::from_secs(10));
+
+            if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
+                log::error!("[{}] Error monitoring log file: {}", maker_port, e);
+            }
+
+            log::info!("[{}] Maker tor is instantiated", maker_port);
+
+            let maker_hs_path_str =
+                format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
+            let mut maker_file = fs::File::open(maker_hs_path_str)?;
+            let mut maker_onion_addr: String = String::new();
+            maker_file.read_to_string(&mut maker_onion_addr)?;
+
+            maker_onion_addr.pop(); // Remove `\n` at the end.
+
+            let maker_address = format!("{}:{}", maker_onion_addr, maker.config.port);
+
+            let directory_onion_address = if cfg!(feature = "integration-test") {
+                let directory_hs_path_str = "/tmp/tor-rust-directory/hs-dir/hostname";
+                let mut directory_file = fs::File::open(directory_hs_path_str)?;
+                let mut directory_onion_addr: String = String::new();
+
+                directory_file.read_to_string(&mut directory_onion_addr)?;
+                directory_onion_addr.pop(); // Remove `\n` at the end.
+                format!("{}:{}", directory_onion_addr, 8080)
+            } else {
+                maker.config.directory_server_address.clone()
+            };
+
+            (maker_address, directory_onion_address)
         }
     };
 
@@ -155,6 +165,7 @@ fn network_bootstrap(
                     continue;
                 }
             },
+            #[cfg(feature = "tor")]
             ConnectionType::TOR => {
                 match Socks5Stream::connect(
                     format!("127.0.0.1:{}", maker.config.socks_port),
@@ -549,11 +560,12 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     }
 
     log::info!("[{}] Maker is shutting down.", port);
-
-    if maker.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {
-        crate::tor::kill_tor_handles(tor_thread.expect("Tor thread expected"));
+    #[cfg(feature = "tor")]
+    {
+        if maker.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {
+            crate::tor::kill_tor_handles(tor_thread.expect("Tor thread expected"));
+        }
     }
-
     log::info!("Shutdown wallet sync initiated.");
     maker.get_wallet().write()?.sync()?;
     log::info!("Shutdown wallet syncing completed.");

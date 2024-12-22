@@ -150,6 +150,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
                     .to_string()
             );
         }
+        #[cfg(feature = "tor")]
         ConnectionType::TOR => {
             let onion_addr_path =
                 PathBuf::from(format!("/tmp/tor-rust-maker{}/hs-dir/hostname", 6102));

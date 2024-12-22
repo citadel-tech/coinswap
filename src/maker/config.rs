@@ -46,7 +46,16 @@ impl Default for MakerConfig {
             directory_server_address: "127.0.0.1:8080".to_string(),
             fidelity_value: 5_000_000, // 5 million sats
             fidelity_timelock: 26_000, // Approx 6 months of blocks
-            connection_type: ConnectionType::TOR,
+            connection_type: {
+                #[cfg(feature = "tor")]
+                {
+                    ConnectionType::TOR
+                }
+                #[cfg(not(feature = "tor"))]
+                {
+                    ConnectionType::CLEARNET
+                }
+            },
         }
     }
 }
