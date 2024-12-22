@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum RpcMsgReq {
@@ -8,5 +8,5 @@ pub enum RpcMsgReq {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum RpcMsgResp {
-    ListAddressesResp(HashSet<String>),
+    ListAddressesResp(BTreeSet<String>),
 }

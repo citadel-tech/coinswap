@@ -7,9 +7,10 @@ use std::{
 
 use crate::{
     protocol::messages::FidelityProof,
-    utill::redeemscript_to_scriptpubkey,
+    utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks},
     wallet::{UTXOSpendInfo, Wallet},
 };
+
 use bitcoin::{
     absolute::LockTime,
     bip32::{ChildNumber, DerivationPath},
@@ -49,6 +50,7 @@ pub enum FidelityError {
     BondAlreadySpent,
     BondLocktimeExpired,
     CertExpired,
+    InvalidCertHash,
     General(String),
 }
 
@@ -59,7 +61,7 @@ pub enum FidelityError {
 /// Old script: <locktime> <OP_CLTV> <OP_DROP> <pubkey> <OP_CHECKSIG>
 /// The new script drops the extra byte <OP_DROP>
 /// New script: <pubkey> <OP_CHECKSIGVERIFY> <locktime> <OP_CLTV>
-fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> ScriptBuf {
+pub fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> ScriptBuf {
     Builder::new()
         .push_key(pubkey)
         .push_opcode(OP_CHECKSIGVERIFY)
@@ -141,10 +143,10 @@ impl FidelityBond {
     }
 
     /// Generate the bond's certificate hash.
-    pub fn generate_cert_hash(&self, onion_addr: &str) -> sha256d::Hash {
+    pub fn generate_cert_hash(&self, addr: &str) -> sha256d::Hash {
         let cert_msg_str = format!(
             "fidelity-bond-cert|{}|{}|{}|{}|{}|{}",
-            self.outpoint, self.pubkey, self.cert_expiry, self.lock_time, self.amount, onion_addr
+            self.outpoint, self.pubkey, self.cert_expiry, self.lock_time, self.amount, addr
         );
         let cert_msg = cert_msg_str.as_bytes();
         let mut btc_signed_msg = Vec::<u8>::new();
@@ -553,16 +555,11 @@ impl Wallet {
         proof: &FidelityProof,
         onion_addr: &str,
     ) -> Result<(), WalletError> {
-        if self.is_fidelity_expired(&proof.bond)? {
-            return Err(FidelityError::CertExpired.into());
-        }
+        let txid = proof.bond.outpoint.txid;
+        let transaction = self.rpc.get_raw_transaction(&txid, None)?;
+        let current_height = self.rpc.get_block_count()?;
 
-        let cert_message =
-            Message::from_digest_slice(proof.bond.generate_cert_hash(onion_addr).as_byte_array())?;
-
-        let secp = Secp256k1::new();
-
-        Ok(secp.verify_ecdsa(&cert_message, &proof.cert_sig, &proof.bond.pubkey.inner)?)
+        verify_fidelity_checks(proof, onion_addr, transaction, current_height)
     }
 
     /// Calculate the expiry value. This depends on the current block height.

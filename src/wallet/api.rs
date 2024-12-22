@@ -631,9 +631,9 @@ impl Wallet {
         utxos: Option<&Vec<ListUnspentResultEntry>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
         let all_utxos = if let Some(utxos) = utxos {
-            utxos
+            utxos.clone()
         } else {
-            &self.get_all_utxo()?
+            self.get_all_utxo()?
         };
 
         let processed_utxos = all_utxos

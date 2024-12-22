@@ -12,7 +12,7 @@ mod swapcoin;
 pub use api::{DisplayAddressType, UTXOSpendInfo, Wallet};
 pub use direct_send::{Destination, SendAmount};
 pub use error::WalletError;
-pub use fidelity::{FidelityBond, FidelityError};
+pub use fidelity::{fidelity_redeemscript, FidelityBond, FidelityError};
 pub use rpc::RPCConfig;
 pub use storage::WalletStore;
 pub use swapcoin::{

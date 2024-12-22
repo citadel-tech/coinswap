@@ -8,7 +8,7 @@
 use std::{
     convert::TryFrom,
     fmt,
-    io::{Read, Write},
+    io::Write,
     net::TcpStream,
     sync::mpsc,
     thread::{self, Builder},
@@ -22,7 +22,7 @@ use socks::Socks5Stream;
 use crate::{
     error::NetError,
     protocol::messages::Offer,
-    utill::{ConnectionType, GLOBAL_PAUSE, NET_TIMEOUT},
+    utill::{read_message, send_message, ConnectionType, DnsRequest, GLOBAL_PAUSE, NET_TIMEOUT},
 };
 
 use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
@@ -195,26 +195,30 @@ pub fn fetch_addresses_from_dns(
 
         stream.set_read_timeout(Some(NET_TIMEOUT))?;
         stream.set_write_timeout(Some(NET_TIMEOUT))?;
+        stream.set_nonblocking(false)?;
         stream.flush()?;
 
-        // TODO: Handle timeout cases like the Taker/Maker comms, with attempt count and variable delays.
-        if let Err(e) = stream
-            .write_all("GET\n".as_bytes())
-            .and_then(|_| stream.flush())
-        {
-            log::error!("Error sending GET request to DNS {}.\nRe-attempting...", e);
+        // Change datatype of number of makers to u32 from usize
+        let request = DnsRequest::Get {
+            makers: number_of_makers as u32,
+        };
+        if let Err(e) = send_message(&mut stream, &request) {
+            log::warn!("Failed to send request. Retrying...{}", e);
             thread::sleep(GLOBAL_PAUSE);
             continue;
         }
 
-        let mut response = String::new();
+        // Read the response
+        let response: String = match read_message(&mut stream) {
+            Ok(resp) => serde_cbor::de::from_slice(&resp[..])?,
+            Err(e) => {
+                log::error!("Error reading DNS response: {}. Retrying...", e);
+                thread::sleep(GLOBAL_PAUSE);
+                continue;
+            }
+        };
 
-        if let Err(e) = stream.read_to_string(&mut response) {
-            log::error!("Error reading DNS response: {}. \nRe-attempting...", e);
-            thread::sleep(GLOBAL_PAUSE);
-            continue;
-        }
-
+        // Parse and validate the response
         match response
             .lines()
             .map(MakerAddress::new)
@@ -223,17 +227,18 @@ pub fn fetch_addresses_from_dns(
             Ok(addresses) => {
                 if addresses.len() < number_of_makers {
                     log::info!(
-                        "Didn't receive enough addresses. Need: {}, Got : {}, Attempting again...",
+                        "Insufficient addresses received. Need: {}, Got: {}. Retrying...",
                         number_of_makers,
                         addresses.len()
                     );
                     thread::sleep(GLOBAL_PAUSE);
+                    continue;
                 } else {
                     return Ok(addresses);
                 }
             }
             Err(e) => {
-                log::error!("Error decoding DNS response: {:?}. Re-attempting...", e);
+                log::error!("Error decoding DNS response: {:?}. Retrying...", e);
                 thread::sleep(GLOBAL_PAUSE);
                 continue;
             }
