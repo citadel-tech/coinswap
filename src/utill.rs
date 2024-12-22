@@ -56,6 +56,7 @@ pub const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectionType {
+    #[cfg(feature = "tor")]
     TOR,
     CLEARNET,
 }
@@ -65,6 +66,7 @@ impl FromStr for ConnectionType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
+            #[cfg(feature = "tor")]
             "tor" => Ok(ConnectionType::TOR),
             "clearnet" => Ok(ConnectionType::CLEARNET),
             _ => Err(NetError::InvalidAppNetwork),
@@ -75,6 +77,7 @@ impl FromStr for ConnectionType {
 impl fmt::Display for ConnectionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            #[cfg(feature = "tor")]
             ConnectionType::TOR => write!(f, "tor"),
             ConnectionType::CLEARNET => write!(f, "clearnet"),
         }

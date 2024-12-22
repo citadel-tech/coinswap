@@ -27,7 +27,16 @@ impl Default for TakerConfig {
             port: 8000,
             socks_port: 19050,
             directory_server_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
-            connection_type: ConnectionType::TOR,
+            connection_type: {
+                #[cfg(feature = "tor")]
+                {
+                    ConnectionType::TOR
+                }
+                #[cfg(not(feature = "tor"))]
+                {
+                    ConnectionType::CLEARNET
+                }
+            },
             rpc_port: 8081,
         }
     }

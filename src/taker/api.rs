@@ -10,15 +10,21 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    fs,
-    io::Read,
     net::TcpStream,
-    path::{Path, PathBuf},
+    path::PathBuf,
     thread::{self, sleep},
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "tor")]
+use std::io::Read;
+
+#[cfg(feature = "tor")]
+use std::{fs, path::Path};
+
 use bitcoind::bitcoincore_rpc::RpcApi;
+
+#[cfg(feature = "tor")]
 use socks::Socks5Stream;
 
 use bitcoin::{
@@ -237,42 +243,44 @@ impl Taker {
 
         let taker_port = self.config.port;
 
+        #[cfg(feature = "tor")]
         let mut handle = None;
 
         match self.config.connection_type {
             ConnectionType::CLEARNET => {}
+            #[cfg(feature = "tor")]
             ConnectionType::TOR => {
-                if cfg!(feature = "tor") {
-                    let taker_socks_port = self.config.socks_port;
+                let taker_socks_port = self.config.socks_port;
 
-                    if Path::new(tor_log_dir.as_str()).exists() {
-                        match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
-                            Ok(_) => log::info!("Previous taker log file deleted successfully"),
-                            Err(_) => log::error!("Error deleting taker log file "),
-                        }
+                if Path::new(tor_log_dir.as_str()).exists() {
+                    match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
+                        Ok(_) => log::info!("Previous taker log file deleted successfully"),
+                        Err(_) => log::error!("Error deleting taker log file "),
                     }
-
-                    handle = Some(crate::tor::spawn_tor(
-                        taker_socks_port,
-                        taker_port,
-                        "/tmp/tor-rust-taker".to_string(),
-                    ));
-
-                    thread::sleep(Duration::from_secs(10));
-
-                    if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%")
-                    {
-                        log::error!("Error monitoring taker log file: {}", e);
-                    }
-
-                    log::info!("Taker tor is instantiated");
                 }
+
+                handle = Some(crate::tor::spawn_tor(
+                    taker_socks_port,
+                    taker_port,
+                    "/tmp/tor-rust-taker".to_string(),
+                ));
+
+                thread::sleep(Duration::from_secs(10));
+
+                if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
+                    log::error!("Error monitoring taker log file: {}", e);
+                }
+
+                log::info!("Taker tor is instantiated");
             }
         }
         self.send_coinswap(swap_params)?;
 
-        if self.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {
-            crate::tor::kill_tor_handles(handle.expect("tor handle expected"));
+        #[cfg(feature = "tor")]
+        {
+            if self.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {
+                crate::tor::kill_tor_handles(handle.expect("tor handle expected"));
+            }
         }
         Ok(())
     }
@@ -860,6 +868,7 @@ impl Taker {
         let address = this_maker.address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(address)?,
+            #[cfg(feature = "tor")]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 address.as_str(),
@@ -1343,6 +1352,7 @@ impl Taker {
 
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
+            #[cfg(feature = "tor")]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
@@ -1424,6 +1434,7 @@ impl Taker {
         let maker_addr_str = maker_address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
+            #[cfg(feature = "tor")]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
@@ -1531,6 +1542,7 @@ impl Taker {
             let maker_addr_str = maker_address.address.to_string();
             let mut socket = match self.config.connection_type {
                 ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
+                #[cfg(feature = "tor")]
                 ConnectionType::TOR => Socks5Stream::connect(
                     format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                     &*maker_addr_str,
@@ -1916,6 +1928,7 @@ impl Taker {
                 }
                 address
             }
+            #[cfg(feature = "tor")]
             ConnectionType::TOR => {
                 let mut address = self.config.directory_server_address.clone();
                 if cfg!(feature = "integration-test") {
@@ -1931,13 +1944,13 @@ impl Taker {
                 address
             }
         };
-
-        let socks_port = if self.config.connection_type == ConnectionType::TOR {
-            Some(self.config.socks_port)
-        } else {
-            None
-        };
-
+        let mut socks_port: Option<u16> = None;
+        #[cfg(feature = "tor")]
+        {
+            if self.config.connection_type == ConnectionType::TOR {
+                socks_port = Some(self.config.socks_port);
+            }
+        }
         let addresses_from_dns = fetch_addresses_from_dns(
             socks_port,
             directory_address,
