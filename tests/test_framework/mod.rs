@@ -15,7 +15,7 @@ use std::{
     collections::HashMap,
     env::{self, consts},
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc, RwLock,
@@ -113,18 +113,38 @@ pub fn await_message(rx: &Receiver<String>, expected_message: &str) {
 
 // Start the DNS server based on given connection type and considers data directory for the server.
 #[allow(dead_code)]
-pub fn start_dns(data_dir: &std::path::Path, conn_type: ConnectionType) -> process::Child {
+pub fn start_dns(
+    data_dir: &std::path::Path,
+    conn_type: ConnectionType,
+    bitcoind: &BitcoinD,
+) -> process::Child {
     let (stdout_sender, stdout_recv): (Sender<String>, Receiver<String>) = mpsc::channel();
 
     let (stderr_sender, stderr_recv): (Sender<String>, Receiver<String>) = mpsc::channel();
+    let conn_type = format!("{}", conn_type);
+
+    let mut args = vec![
+        "--data-directory",
+        data_dir.to_str().unwrap(),
+        "--network",
+        &conn_type,
+        "--rpc_network",
+        "regtest",
+    ];
+
+    // RPC authentication (user:password) from the cookie file
+    let cookie_file_path = Path::new(&bitcoind.params.cookie_file);
+    let rpc_auth = fs::read_to_string(cookie_file_path).expect("failed to read from file");
+    args.push("--USER:PASSWORD");
+    args.push(&rpc_auth);
+
+    // Full node address for RPC connection
+    let rpc_address = bitcoind.params.rpc_socket.to_string();
+    args.push("--ADDRESS:PORT");
+    args.push(&rpc_address);
 
     let mut directoryd_process = process::Command::new("./target/debug/directoryd")
-        .args([
-            "-n",
-            &format!("{}", conn_type),
-            "-d",
-            data_dir.to_str().unwrap(),
-        ]) // THINK: Passing network to avoid mitosis problem..
+        .args(args) // THINK: Passing network to avoid mitosis problem..
         .stdout(process::Stdio::piped())
         .stderr(process::Stdio::piped())
         .spawn()
@@ -220,17 +240,20 @@ impl TestFramework {
 
         log::info!("Initiating Directory Server .....");
 
+        // Translate a RpcConfig from the test framework.
+        // a modification of this will be used for taker and makers rpc connections.
+        let rpc_config = RPCConfig::from(test_framework.as_ref());
+
+        let directory_rpc_config = rpc_config.clone();
+
         let directory_server_instance = Arc::new(
             DirectoryServer::new(Some(temp_dir.join("dns")), Some(connection_type)).unwrap(),
         );
         let directory_server_instance_clone = directory_server_instance.clone();
         thread::spawn(move || {
-            start_directory_server(directory_server_instance_clone).unwrap();
+            start_directory_server(directory_server_instance_clone, Some(directory_rpc_config))
+                .unwrap();
         });
-
-        // Translate a RpcConfig from the test framework.
-        // a modification of this will be used for taker and makers rpc connections.
-        let rpc_config = RPCConfig::from(test_framework.as_ref());
 
         // Create the Taker.
         let taker_rpc_config = rpc_config.clone();
