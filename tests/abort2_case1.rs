@@ -114,7 +114,6 @@ fn test_abort_case_2_move_on_with_other_makers() {
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
-        fee_rate: Amount::from_sat(1000),
     };
 
     info!("Initiating coinswap protocol");
