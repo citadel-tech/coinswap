@@ -365,7 +365,7 @@ impl IncomingSwapCoin {
         &self,
         destination_address: &Address,
     ) -> Result<Transaction, WalletError> {
-        let miner_fee = 136 * 10; //126 vbytes x 10 sat/vb, size calculated using testmempoolaccept
+        let miner_fee: Amount= 136 * 10; //126 vbytes x 10 sat/vb, size calculated using testmempoolaccept
         let mut tx = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
@@ -467,7 +467,7 @@ impl OutgoingSwapCoin {
         &self,
         destination_address: &Address,
     ) -> Result<Transaction, WalletError> {
-        let miner_fee = 128 * 2; //128 vbytes x 2 sat/vb, size calculated using testmempoolaccept
+        let miner_fee:Amount = 128 * 2; //128 vbytes x 2 sat/vb, size calculated using testmempoolaccept
         let mut tx = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
@@ -945,7 +945,7 @@ mod tests {
             .require_network(bitcoin::Network::Bitcoin)
             .unwrap();
 
-        let miner_fee = 136 * 10; //126 vbytes x 10 sat/vb, size calculated using testmempoolaccept
+        let miner_fee :Amount= 136 * 10; //126 vbytes x 10 sat/vb, size calculated using testmempoolaccept
         let mut tx = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
@@ -1025,7 +1025,7 @@ mod tests {
             .require_network(bitcoin::Network::Bitcoin)
             .unwrap();
 
-        let miner_fee = 136 * 10;
+        let miner_fee:Amount = 136 * 10;
         let mut tx = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {

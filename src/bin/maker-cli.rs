@@ -46,7 +46,7 @@ enum Commands {
     SendToAddress {
         address: String,
         amount: Amount,
-        fee: u64,
+        fee: Amount,
     },
     /// Returns the tor address
     GetTorAddress,
@@ -96,7 +96,7 @@ fn main() -> Result<(), MakerError> {
         Commands::SendToAddress {
             address,
             amount,
-            fee,
+            fee: Amount,
         } => {
             send_rpc_req(
                 stream,

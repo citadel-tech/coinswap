@@ -12,7 +12,7 @@ use std::{net::IpAddr, sync::Arc, time::Instant};
 use bitcoin::{
     hashes::Hash,
     secp256k1::{self, Secp256k1},
-    Amount, OutPoint, PublicKey, Transaction, Txid,
+    Amount, OutPoint, PublicKey, Transaction, Txid, FeeRate
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 
@@ -300,8 +300,8 @@ impl Maker {
                 },
                 funding_output.value,
                 &funding_info.contract_redeemscript,
-                Amount::from_sat(message.next_fee_rate),
-            )?;
+                FeeRate::from_sat_per_vb(message.next_fee_rate),
+            );
 
             let (tweakable_privkey, _) = self.wallet.read()?.get_tweakable_keypair()?;
             let multisig_privkey =
@@ -358,7 +358,7 @@ impl Maker {
                 Ok::<_, MakerError>(acc + txout.value.to_sat())
             })?;
 
-        let calc_coinswap_fees = calculate_coinswap_fee(
+        let calc_coinswap_fees:Amount = calculate_coinswap_fee(
             self.config.absolute_fee_sats,
             AMOUNT_RELATIVE_FEE_PPB,
             self.config.time_relative_fee_ppb,
@@ -389,7 +389,7 @@ impl Maker {
                     .collect::<Vec<PublicKey>>(),
                 hashvalue,
                 message.next_locktime,
-                Amount::from_sat(message.next_fee_rate),
+                FeeRate::from_sat_per_vb(message.next_fee_rate)
             )?
         };
 

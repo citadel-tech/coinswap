@@ -56,7 +56,7 @@ struct Cli {
     pub tx_count: u32,
     /// Sets the fee-rate.
     #[clap(name = "fee_rate", default_value = "1000")]
-    pub fee_rate: u64,
+    pub fee_rate: FeeRate ,
     /// Sets the required on-chain confirmations.
     #[clap(name = "required_confirms", default_value = "1000")]
     pub required_confirms: u64,
@@ -92,7 +92,7 @@ enum Commands {
         amount: Amount,
         /// Fee of a Tx(in sats)
         #[clap(name = "fee")]
-        fee: u64,
+        fee: Amount,
     },
     /// Sync the offer book
     SyncOfferBook,
@@ -118,7 +118,7 @@ fn main() -> Result<(), TakerError> {
         maker_count: args.maker_count,
         tx_count: args.tx_count,
         required_confirms: args.required_confirms,
-        fee_rate: Amount::from_sat(args.fee_rate),
+        fee_rate: FeeRate::from_sat_per_vb(args.fee_rate),
     };
 
     let mut taker = Taker::init(

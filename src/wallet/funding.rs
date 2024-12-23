@@ -6,6 +6,7 @@
 
 use std::{collections::HashMap, iter};
 
+use bitcoin::FeeRate;
 use bitcoin::{
     absolute::LockTime, transaction::Version, Address, Amount, OutPoint, ScriptBuf, Sequence,
     Transaction, TxIn, TxOut, Txid, Witness,
@@ -23,7 +24,7 @@ use super::error::WalletError;
 pub struct CreateFundingTxesResult {
     pub funding_txes: Vec<Transaction>,
     pub payment_output_positions: Vec<u32>,
-    pub total_miner_fee: u64,
+    pub total_miner_fee: Amount,
 }
 
 impl Wallet {
@@ -33,7 +34,7 @@ impl Wallet {
         &self,
         coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: Amount,
+        fee_rate: FeeRate,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let ret = self.create_funding_txes_random_amounts(coinswap_amount, destinations, fee_rate);
         if ret.is_ok() {
@@ -127,7 +128,7 @@ impl Wallet {
         &self,
         coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: Amount,
+        fee_rate: FeeRate,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let change_addresses = self.get_next_internal_addresses(destinations.len() as u32)?;
 
@@ -217,7 +218,7 @@ impl Wallet {
         &self,
         coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: Amount,
+        fee_rate: FeeRate,
         change_address: &Address,
         utxos: &mut dyn Iterator<Item = (Txid, u32, u64)>, //utxos item is (txid, vout, value)
                                                            //utxos should be sorted by size, largest first
@@ -372,7 +373,7 @@ impl Wallet {
         &self,
         coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: Amount,
+        fee_rate: FeeRate,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         //this function creates funding txes by
         //using walletcreatefundedpsbt for the total amount, and if
@@ -458,7 +459,7 @@ impl Wallet {
         &self,
         coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: Amount,
+        fee_rate: FeeRate,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         //this function will pick the top most valuable UTXOs and use them
         //to create funding transactions

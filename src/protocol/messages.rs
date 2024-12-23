@@ -58,8 +58,7 @@
 use std::fmt::Display;
 
 use bitcoin::{
-    ecdsa::Signature, hashes::sha256d::Hash, secp256k1::SecretKey, Amount, PublicKey, ScriptBuf,
-    Transaction,
+    ecdsa::Signature, hashes::sha256d::Hash, secp256k1::SecretKey, Amount, FeeRate, PublicKey, ScriptBuf, Transaction
 };
 
 use serde::{Deserialize, Serialize};
@@ -143,7 +142,7 @@ pub struct ProofOfFunding {
     // TODO: Directly use Vec of Pubkeys.
     pub next_coinswap_info: Vec<NextHopInfo>,
     pub next_locktime: u16,
-    pub next_fee_rate: u64,
+    pub next_fee_rate: FeeRate,
 }
 
 /// Signatures required for an intermediate Maker to perform receiving and sending of coinswaps.

@@ -19,7 +19,7 @@ pub enum RpcMsgReq {
     SendToAddress {
         address: String,
         amount: Amount,
-        fee: u64,
+        fee: Amount,
     },
     GetTorAddress,
     GetDataDir,

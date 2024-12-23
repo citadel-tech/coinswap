@@ -5,20 +5,13 @@
 use std::convert::TryInto;
 
 use bitcoin::{
-    absolute::LockTime,
-    blockdata::{
+    absolute::LockTime, blockdata::{
         opcodes::{self, all},
         script::{Builder, Instruction, Script},
-    },
-    ecdsa::Signature,
-    hashes::Hash,
-    secp256k1::{
+    }, ecdsa::Signature, hashes::Hash, secp256k1::{
         rand::{rngs::OsRng, RngCore},
         Message, Secp256k1, SecretKey,
-    },
-    sighash::{EcdsaSighashType, SighashCache},
-    transaction::Version,
-    Amount, OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+    }, sighash::{EcdsaSighashType, SighashCache}, transaction::Version, Amount, FeeRate, OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness
 };
 
 pub use bitcoin::hashes::hash160::Hash as Hash160;
@@ -381,7 +374,7 @@ pub fn create_senders_contract_tx(
     input: OutPoint,
     input_value: Amount,
     contract_redeemscript: &ScriptBuf,
-    fee_rate: Amount,
+    fee_rate: FeeRate,
 ) -> Result<Transaction, ProtocolError> {
     Ok(Transaction {
         input: vec![TxIn {
@@ -404,7 +397,7 @@ pub fn create_receivers_contract_tx(
     input: OutPoint,
     input_value: Amount,
     contract_redeemscript: &ScriptBuf,
-    fee_rate: Amount,
+    fee_rate: FeeRate,
 ) -> Result<Transaction, ProtocolError> {
     //exactly the same thing as senders contract for now, until collateral
     //inputs are implemented
@@ -1293,7 +1286,7 @@ mod test {
                 next_multisig_pubkey: pub_2,
             }],
             next_locktime: u16::default(),
-            next_fee_rate: u64::default(),
+            next_fee_rate: FeeRate,
         };
 
         // case with same hash value
@@ -1322,7 +1315,7 @@ mod test {
                 next_multisig_pubkey: pub_2,
             }],
             next_locktime: u16::default(),
-            next_fee_rate: u64::default(),
+            next_fee_rate: FeeRate,
         };
 
         let hash_value_from_fn = check_hashvalues_are_equal(&funding_proof).unwrap_err();

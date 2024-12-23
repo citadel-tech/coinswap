@@ -28,14 +28,10 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 use socks::Socks5Stream;
 
 use bitcoin::{
-    consensus::encode::deserialize,
-    hashes::{hash160::Hash as Hash160, Hash},
-    hex::DisplayHex,
-    secp256k1::{
+    consensus::encode::deserialize, hashes::{hash160::Hash as Hash160, Hash}, hex::DisplayHex, secp256k1::{
         rand::{rngs::OsRng, RngCore},
         SecretKey,
-    },
-    Amount, BlockHash, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
+    }, Amount, BlockHash, FeeRate, OutPoint, PublicKey, ScriptBuf, Transaction, Txid
 };
 
 use super::{
@@ -88,7 +84,7 @@ pub struct SwapParams {
     /// Confirmation count required for funding txs.
     pub required_confirms: u64,
     /// Fee rate for funding txs.
-    pub fee_rate: Amount,
+    pub fee_rate: FeeRate,
 }
 
 // Defines the Taker's position in the current ongoing swap.

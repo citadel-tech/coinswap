@@ -8,6 +8,7 @@ use std::{convert::TryFrom, fs, path::PathBuf, str::FromStr};
 use std::collections::{HashMap, HashSet};
 
 use bip39::Mnemonic;
+use bitcoin::FeeRate;
 use bitcoin::{
     bip32::{ChildNumber, DerivationPath, Xpriv, Xpub},
     hashes::hash160::Hash as Hash160,
@@ -1119,7 +1120,7 @@ impl Wallet {
         hashlock_pubkeys: &[PublicKey],
         hashvalue: Hash160,
         locktime: u16,
-        fee_rate: Amount,
+        fee_rate: FeeRate,
     ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, Amount), WalletError> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
             .iter()

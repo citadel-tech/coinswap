@@ -30,7 +30,7 @@ use crate::{
     utill::{read_message, send_message, ConnectionType},
     wallet::WalletError,
 };
-use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
+use bitcoin::{secp256k1::SecretKey, Amount, FeeRate, PublicKey, ScriptBuf, Transaction};
 
 use super::{
     config::TakerConfig,
@@ -253,7 +253,7 @@ pub struct NextPeerInfoArgs {
     pub next_peer_multisig_pubkeys: Vec<PublicKey>,
     pub next_peer_hashlock_pubkeys: Vec<PublicKey>,
     pub next_maker_refund_locktime: u16,
-    pub next_maker_fee_rate: Amount,
+    pub next_maker_fee_rate: FeeRate,
 }
 
 /// [Internal] Send a Proof funding to the maker and init next hop.
@@ -337,7 +337,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         .iter()
         .map(|i| i.funding_amount)
         .sum::<Amount>();
-    let coinswap_fees = calculate_coinswap_fee(
+    let coinswap_fees :Amount= calculate_coinswap_fee(
         tmi.this_maker.offer.absolute_fee_sat,
         tmi.this_maker.offer.amount_relative_fee_ppb,
         tmi.this_maker.offer.time_relative_fee_ppb,
