@@ -52,7 +52,7 @@ pub fn calculate_coinswap_fee(
     amount_relative_fee_ppb: Amount,
     time_relative_fee_ppb: Amount,
     total_funding_amount: Amount,
-    time_in_blocks: u64,
+    time_in_blocks: BlockHeight,
 ) -> u64 {
     absolute_fee_sat.to_sat()
         + (total_funding_amount.to_sat() * amount_relative_fee_ppb.to_sat()) / 1_000_000_000
@@ -1089,7 +1089,7 @@ mod test {
         let amount_relative_fee_ppb = Amount::from_sat(500_000_000);
         let time_relative_fee_ppb = Amount::from_sat(200_000_000);
         let total_funding_amount = Amount::from_sat(1_000_000_000);
-        let time_in_blocks = 100;
+        let time_in_blocks:BlockHeight = 100;
 
         let expected_fee:Amount = 1000
             + (1_000_000_000 * 500_000_000) / 1_000_000_000

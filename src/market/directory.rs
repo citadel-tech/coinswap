@@ -398,7 +398,7 @@ fn handle_client(
 
             let txid = metadata.proof.bond.outpoint.txid;
             let transaction = rpc.get_raw_transaction(&txid, None)?;
-            let current_height = rpc.get_block_count()?;
+            let current_height: BlockHeight = rpc.get_block_count()?;
 
             match verify_fidelity_checks(
                 &metadata.proof,

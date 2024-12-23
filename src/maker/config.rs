@@ -29,7 +29,7 @@ pub struct MakerConfig {
     /// Fidelity Bond Value
     pub fidelity_value: u64,
     /// Fidelity Bond timelock in Block heights.
-    pub fidelity_timelock: u32,
+    pub fidelity_timelock: BlockHeight,
     /// Connection type
     pub connection_type: ConnectionType,
 }

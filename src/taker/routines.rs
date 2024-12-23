@@ -342,7 +342,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         tmi.this_maker.offer.amount_relative_fee_ppb,
         tmi.this_maker.offer.time_relative_fee_ppb,
         Amount::from_sat(this_amount),
-        1, //time_in_blocks just 1 for now
+        BlockHeight(1), //time_in_blocks just 1 for now
     );
     let miner_fees_paid_by_taker = (FUNDING_TX_VBYTE_SIZE
         * npi.next_maker_fee_rate.to_sat()

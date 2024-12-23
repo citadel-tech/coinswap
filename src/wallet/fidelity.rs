@@ -126,9 +126,9 @@ pub struct FidelityBond {
     pub lock_time: LockTime,
     pub pubkey: PublicKey,
     // Height at which the bond was confirmed.
-    pub conf_height: u32,
+    pub conf_height: BlockHeight,
     // Cert expiry denoted in multiple of difficulty adjustment period (2016 blocks)
-    pub cert_expiry: u64,
+    pub cert_expiry: BlockHeight,
 }
 
 impl FidelityBond {
@@ -265,7 +265,7 @@ impl Wallet {
                 };
                 // Estimated locktime from block height = [current-time + (maturity-height - block-count) * 10 * 60] sec
                 let height_diff =
-                    if let Some(x) = blocks.to_consensus_u32().checked_sub(tip_height as u32) {
+                    if let Some(x) = blocks.to_consensus_u32().checked_sub(tip_height as BlockHeight) {
                         x as u64
                     } else {
                         return Err(FidelityError::BondLocktimeExpired.into());
@@ -362,7 +362,7 @@ impl Wallet {
         }
 
         // Set the Anti-Fee Snipping Locktime
-        let current_height = self.rpc.get_block_count()?;
+        let current_height: BlockHeight = self.rpc.get_block_count()?;
         let lock_time = LockTime::from_height(current_height as u32)?;
 
         let mut tx = Transaction {
@@ -480,7 +480,7 @@ impl Wallet {
 
         loop {
             sleep_multiplier += 1;
-            let get_tx_result = self.rpc.get_transaction(&txid, None)?;
+            let get_tx_result: bitcoind::bitcoincore_rpc::json::GetTransactionResult = self.rpc.get_transaction(&txid, None)?;
             if let Some(ht) = get_tx_result.info.blockheight {
                 log::info!(
                     "Redeem fidelity transaction {} confirmed at blockheight: {}",
@@ -557,14 +557,14 @@ impl Wallet {
     ) -> Result<(), WalletError> {
         let txid = proof.bond.outpoint.txid;
         let transaction = self.rpc.get_raw_transaction(&txid, None)?;
-        let current_height = self.rpc.get_block_count()?;
+        let current_height: BlockHeight = self.rpc.get_block_count()?;
 
         verify_fidelity_checks(proof, onion_addr, transaction, current_height)
     }
 
     /// Calculate the expiry value. This depends on the current block height.
     pub fn get_fidelity_expiry(&self) -> Result<u64, WalletError> {
-        let current_height = self.rpc.get_block_count()?;
+        let current_height: BlockHeight = self.rpc.get_block_count()?;
         Ok((current_height + 2) /* safety buffer */ / 2016 + 5)
     }
 
@@ -586,7 +586,7 @@ impl Wallet {
     pub fn is_fidelity_expired(&self, bond: &FidelityBond) -> Result<bool, WalletError> {
         // Certificate has expired if current height more than the expiry difficulty period target
         // 1 difficulty period = 2016 blocks
-        let current_height = self.rpc.get_block_count()?;
+        let current_height: BlockHeight = self.rpc.get_block_count()?;
         if current_height > bond.cert_expiry * 2016 {
             Ok(true)
         } else {

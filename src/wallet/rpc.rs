@@ -125,7 +125,7 @@ impl Wallet {
                 .last_synced_height
                 .unwrap_or(0)
                 .max(self.store.wallet_birthday.unwrap_or(0));
-            let node_synced = self.rpc.get_block_count()?;
+            let node_synced:BlockHeight = self.rpc.get_block_count()?;
             log::debug!(
                 "rescan_blockchain from:{} to:{}",
                 last_synced_height,

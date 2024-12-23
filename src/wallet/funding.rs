@@ -177,7 +177,7 @@ impl Wallet {
                 .collect::<Vec<_>>();
 
             // Set the Anti-Fee-Snipping locktime
-            let current_height = self.rpc.get_block_count()?;
+            let current_height: BlockHeight = self.rpc.get_block_count()?;
 
             let lock_time = LockTime::from_height(current_height as u32)?;
 
@@ -232,7 +232,7 @@ impl Wallet {
         let first_tx_input = utxos.next().unwrap();
 
         // Set the Anti-Fee-Snipping locktime
-        let current_height = self.rpc.get_block_count()?;
+        let current_height :BlockHeight= self.rpc.get_block_count()?;
         let lock_time = LockTime::from_height(current_height as u32)?;
 
         for _ in 0..destinations.len() - 2 {
@@ -422,7 +422,7 @@ impl Wallet {
             .collect::<Vec<_>>();
 
         // Set the Anti-Fee-Snipping locktime
-        let current_height = self.rpc.get_block_count()?;
+        let current_height: BlockHeight = self.rpc.get_block_count()?;
         let lock_time = LockTime::from_height(current_height as u32)?;
 
         let mut funding_tx = Transaction {

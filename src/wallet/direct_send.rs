@@ -83,7 +83,7 @@ impl Wallet {
         log::info!("Creating Direct-Spend from Wallet.");
 
         // Set the Anti-Fee-Snipping locktime
-        let current_height = self.rpc.get_block_count()?;
+        let current_height: BlockHeight = self.rpc.get_block_count()?;
         let lock_time = LockTime::from_height(current_height as u32)?;
 
         let mut tx = Transaction {

@@ -54,7 +54,7 @@ pub const HEART_BEAT_INTERVAL_SECS: u64 = 3;
 pub const RPC_PING_INTERVAL_SECS: u64 = 60;
 pub const _DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 60 * 12; // 12 Hours
 pub const _IDLE_CONNECTION_TIMEOUT: u64 = 300;
-pub const REQUIRED_CONFIRMS: u64 = 1;
+pub const REQUIRED_CONFIRMS: BlockHeight = 1;
 pub const MIN_CONTRACT_REACTION_TIME: u16 = 48;
 
 /// Fee rate per swap amount in parts per billion (PPB).
@@ -231,7 +231,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
     } else {
         // No bond in the wallet. Lets attempt to create one.
         let amount = Amount::from_sat(maker.config.fidelity_value);
-        let current_height = maker
+        let current_height: BlockHeight = maker
             .get_wallet()
             .read()?
             .rpc
