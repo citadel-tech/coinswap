@@ -449,6 +449,7 @@ fn download_maker_offer_attempt_once(
     config: &TakerConfig,
 ) -> Result<Offer, TakerError> {
     let address = addr.to_string();
+    log::info!("connecting to maker");
     let mut socket = match config.connection_type {
         ConnectionType::CLEARNET => TcpStream::connect(address)?,
         ConnectionType::TOR => Socks5Stream::connect(
@@ -486,7 +487,9 @@ pub fn download_maker_offer(address: MakerAddress, config: TakerConfig) -> Optio
 
     loop {
         ii += 1;
-        match download_maker_offer_attempt_once(&address, &config) {
+        let result = download_maker_offer_attempt_once(&address, &config);
+        log::info!("result :{:?}", result);
+        match result {
             Ok(offer) => return Some(OfferAndAddress { offer, address }),
             Err(TakerError::IO(e)) => {
                 if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut {
@@ -522,6 +525,15 @@ pub fn download_maker_offer(address: MakerAddress, config: TakerConfig) -> Optio
                     );
                     return None;
                 }
+            }
+        }
+
+
+
+        let a= match result{
+            Ok(offer)=>Some(OfferAndAddress { offer, address }), 
+            Err(e) => {
+                
             }
         }
     }

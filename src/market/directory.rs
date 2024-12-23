@@ -241,7 +241,7 @@ pub fn start_directory_server(directory: Arc<DirectoryServer>) -> Result<(), Dir
                     "/tmp/tor-rust-directory".to_string(),
                 ));
 
-                sleep(Duration::from_secs(10));
+                sleep(Duration::from_secs(1));
 
                 if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
                     log::error!("Error monitoring Directory log file: {}", e);

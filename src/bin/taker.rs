@@ -89,16 +89,13 @@ enum Commands {
         #[clap(name = "send_amount")]
         send_amount: u64,
         /// Sets the fee-rate.
-        #[clap(name = "fee_rate")]
+        #[clap(name = "fee_rate")] //TODO: WILL BE REMOVED AFTER MAKER FEE
         fee_rate: u64,
         /// Sets the required on-chain confirmations.
-        #[clap(name = "required_confirms")] // TODO: Should we have default as 1?
+        #[clap(name = "required_confirms")] // TODO: WILL BE REMOVED AFTER MAKER FEE
         required_confirms: u64,
         /// Sets the maker count to initiate coinswap with.
         #[clap(name = "maker_count", default_value = "2")]
-        // THINK: I do not want to  discard its default value as `maker_count =2`` resembles the coinswap protocol example.
-        // But due to which this arg has to kept after the required ones -> so will it makes sense to have this arg at the end even though
-        // It's the most important aspect of `do-coinswap`?
         maker_count: usize,
         /// Sets the transaction count.
         #[clap(name = "tx_count", default_value = "3")]

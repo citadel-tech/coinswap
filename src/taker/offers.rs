@@ -164,9 +164,9 @@ pub fn fetch_offer_from_makers(
         );
         let join_result = thread.join();
         if let Ok(r) = join_result {
-            log::info!("Thread closing result: {:?}", r)
+            log::debug!("Thread closing result: {:?}", r)
         } else if let Err(e) = join_result {
-            log::info!("Error in internal thread: {:?}", e);
+            log::debug!("Error in internal thread: {:?}", e);
         }
     }
     Ok(result)

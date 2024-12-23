@@ -258,7 +258,7 @@ impl Taker {
                         "/tmp/tor-rust-taker".to_string(),
                     ));
 
-                    thread::sleep(Duration::from_secs(10));
+                    thread::sleep(Duration::from_secs(1));
 
                     if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%")
                     {
@@ -438,6 +438,7 @@ impl Taker {
             // Fail early if not enough good makers in the list to satisfy swap requirements.
             let untried_maker_count = self.offerbook.get_all_untried().len();
 
+            log::info!("untried_maker_count {:?}", untried_maker_count);
             if untried_maker_count < (self.ongoing_swap_state.swap_params.maker_count) {
                 log::error!("Not enough makers to satisfy swap requirements.");
                 return Err(TakerError::NotEnoughMakersInOfferBook);
@@ -515,7 +516,7 @@ impl Taker {
         };
 
         log::debug!(
-            "Outgoing SwapCoins: {:?}",
+            "Outgoing SwapCoins: {:#?}",
             self.ongoing_swap_state.outgoing_swapcoins
         );
 
@@ -1947,6 +1948,7 @@ impl Taker {
             maker_count,
             self.config.connection_type,
         )?;
+        log::info!("addresses from file : \n{:?}", addresses_from_dns);
         let offers = fetch_offer_from_makers(addresses_from_dns, &self.config)?;
 
         let new_offers = offers
@@ -1973,6 +1975,7 @@ impl Taker {
                 log::info!("Fideity Bond verification succes. Adding offer to our OfferBook");
                 self.offerbook.add_new_offer(&offer);
             }
+            log::debug!("Offerbook : \n{:?}", self.offerbook);
         }
         Ok(())
     }

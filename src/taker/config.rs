@@ -9,16 +9,10 @@ use std::{io, io::Write, path::Path};
 /// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
-    /// Network listening port.
-    /// This port is used by the Tor hidden service to bind and listen for incoming connections.  
-    /// While the taker does not function as a traditional server, this port is crucial for  
-    /// establishing a Tor hidden service. The Tor process leverages this port to create an  
-    /// internal endpoint, enabling secure communication with peers, such as makers, over the  
-    /// Tor network.  
-    /// By binding to this port, the taker facilitates private and anonymous peer-to-peer (P2P)  
-    /// interactions, preventing its real IP address from being exposed.
+    /// Used by the Tor hidden service to bind and accept connections.
+    /// This port enables secure and private peer-to-peer communication over the Tor network without exposing the taker's real IP address.
     pub port: u16,
-    /// Socks port
+    /// Port for routing traffic through the SOCKS proxy to connect to the Tor network.
     pub socks_port: u16,
     /// Directory server address (can be clearnet or onion)
     pub directory_server_address: String,

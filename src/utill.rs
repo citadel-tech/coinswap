@@ -401,6 +401,7 @@ pub fn monitor_log_for_completion(log_file: &Path, pattern: &str) -> io::Result<
 
             for line in lines {
                 if let Ok(line) = line {
+                    // log::info!("{line}");
                     if line.contains(pattern) {
                         log::info!("Tor instance bootstrapped");
                         return Ok(());

@@ -97,7 +97,7 @@ fn network_bootstrap(
                     maker_port,
                     format!("/tmp/tor-rust-maker{}", maker_port),
                 ));
-                thread::sleep(Duration::from_secs(10));
+                thread::sleep(Duration::from_secs(1));
 
                 if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
                     log::error!("[{}] Error monitoring log file: {}", maker_port, e);
