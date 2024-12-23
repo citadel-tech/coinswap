@@ -299,7 +299,10 @@ impl Taker {
         // Try first hop. Abort if error happens.
         if let Err(e) = self.init_first_hop() {
             log::error!("Could not initiate first hop: {:?}", e);
-            self.recover_from_swap()?;
+            if !self.ongoing_swap_state.funding_txs.is_empty() {
+                self.recover_from_swap()?;
+            }
+
             return Err(e);
         }
 

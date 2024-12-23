@@ -56,7 +56,7 @@ impl Wallet {
         //     return ret;
         // }
 
-        log::info!(target: "wallet", "failed to create funding txes with any method");
+        log::info!(target: "wallet", "failed to create funding txes");
         ret
     }
 
@@ -148,11 +148,14 @@ impl Wallet {
 
             let fee = fee_rate;
             let remaining = Amount::from_sat(output_value);
-            let selected_utxo = self.coin_select(remaining)?;
+            let selected_utxo = self.coin_select(remaining + fee)?;
+            log::info!("selected utxo: {:?}", selected_utxo);
             let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
                 acc.checked_add(unspet.amount)
                     .expect("Amount sum overflowed")
             });
+
+            log::info!("total_input amount : {:?}", total_input_amount);
             let change_amount = total_input_amount.checked_sub(remaining + fee);
             let mut tx_outs = vec![TxOut {
                 value: Amount::from_sat(output_value),

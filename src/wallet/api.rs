@@ -1054,6 +1054,7 @@ impl Wallet {
         // the simplest largest first coinselection.
         for unspent in unspents {
             if remaining.checked_sub(unspent.0.amount).is_none() {
+                remaining = Amount::ZERO;
                 selected_utxo.push(unspent);
                 break;
             } else {
@@ -1061,6 +1062,18 @@ impl Wallet {
                 selected_utxo.push(unspent);
             }
         }
+        log::info!("selected utxo :\n\n {:#?}", selected_utxo);
+
+        log::info!("remainig :{:?}", remaining);
+        if remaining != Amount::ZERO {
+            log::info!("remainig :{:?}", remaining);
+
+            return Err(WalletError::InsufficientFund {
+                available: (amount - remaining).to_btc(),
+                required: amount.to_btc(),
+            });
+        }
+
         Ok(selected_utxo)
     }
 
