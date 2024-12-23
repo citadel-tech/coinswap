@@ -113,7 +113,6 @@ fn maker_drops_after_sending_senders_sigs() {
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
-        fee_rate: Amount::from_sat(1000),
     };
 
     info!("Initiating coinswap protocol");

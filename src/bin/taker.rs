@@ -118,7 +118,7 @@ fn main() -> Result<(), TakerError> {
         maker_count: args.maker_count,
         tx_count: args.tx_count,
         required_confirms: args.required_confirms,
-        fee_rate: FeeRate::from_sat_per_vb(args.fee_rate),
+        fee_rate: Amount::from_sat(args.fee_rate),
     };
 
     let mut taker = Taker::init(

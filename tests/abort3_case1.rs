@@ -114,7 +114,6 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
-        fee_rate: Amount::from_sat(1000),
     };
 
     // Spawn a Taker coinswap thread.
