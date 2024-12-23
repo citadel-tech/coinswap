@@ -1,4 +1,5 @@
 use std::fmt::Display;
+use bitcoin::Amount;
 
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use serde::{Deserialize, Serialize};
@@ -17,7 +18,7 @@ pub enum RpcMsgReq {
     NewAddress,
     SendToAddress {
         address: String,
-        amount: u64,
+        amount: Amount,
         fee: u64,
     },
     GetTorAddress,

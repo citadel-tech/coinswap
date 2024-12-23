@@ -50,7 +50,7 @@ struct Cli {
     pub maker_count: usize,
     /// Sets the send amount.
     #[clap(name = "send_amount", default_value = "500000")]
-    pub send_amount: u64,
+    pub send_amount: Amount,
     /// Sets the transaction count.
     #[clap(name = "tx_count", default_value = "3")]
     pub tx_count: u32,
@@ -89,7 +89,7 @@ enum Commands {
         address: String,
         /// Amount to be sent (in sats)
         #[clap(name = "amount")]
-        amount: u64,
+        amount: Amount,
         /// Fee of a Tx(in sats)
         #[clap(name = "fee")]
         fee: u64,

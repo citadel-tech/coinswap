@@ -329,7 +329,7 @@ impl Wallet {
 
         tx_inputs = Vec::new();
         tx_outs = Vec::new();
-        let mut change_amount = first_value;
+        let mut change_amount:Amount = first_value;
         tx_inputs.push(TxIn {
             previous_output: OutPoint::new(first_txid, first_vout),
             sequence: Sequence(0),

@@ -330,7 +330,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         })
         .collect::<Result<Vec<u64>, TakerError>>()?;
 
-    let this_amount = funding_tx_values.iter().sum::<u64>();
+    let this_amount:Amount= funding_tx_values.iter().sum::<Amount>();
 
     let next_amount = contract_sigs_as_recvr_and_sender
         .senders_contract_txs_info

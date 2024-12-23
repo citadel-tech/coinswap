@@ -1098,11 +1098,11 @@ mod test {
         let total_funding_amount = Amount::from_sat(1_000_000_000);
         let time_in_blocks = 100;
 
-        let expected_fee = 1000
+        let expected_fee:Amount = 1000
             + (1_000_000_000 * 500_000_000) / 1_000_000_000
             + (100 * 200_000_000) / 1_000_000_000;
 
-        let calculated_fee = calculate_coinswap_fee(
+        let calculated_fee:Amount = calculate_coinswap_fee(
             absolute_fee_sat,
             amount_relative_fee_ppb,
             time_relative_fee_ppb,

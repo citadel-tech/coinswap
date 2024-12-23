@@ -237,7 +237,7 @@ impl Maker {
             .map(|txinfo| txinfo.senders_contract_tx.input[0].previous_output.txid)
             .collect::<Vec<_>>();
 
-        let total_funding_amount = message.txs_info.iter().fold(0u64, |acc, txinfo| {
+        let total_funding_amount: Amount = message.txs_info.iter().fold(0u64, |acc, txinfo| {
             acc + txinfo.funding_input_value.to_sat()
         });
 
@@ -345,7 +345,7 @@ impl Maker {
         }
 
         // Calculate output amounts for the next hop
-        let incoming_amount = message
+        let incoming_amount: Amount = message
             .confirmed_funding_txes
             .iter()
             .try_fold(0u64, |acc, fi| {

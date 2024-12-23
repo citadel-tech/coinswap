@@ -267,12 +267,12 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
                 // Hard error if fidelity still can't be created.
                 Err(e) => {
                     if let WalletError::InsufficientFund {
-                        available,
-                        required,
+                        available: Amount,
+                        required: Amount,
                     } = e
                     {
                         log::warn!("Insufficient fund to create fidelity bond.");
-                        let amount = required - available;
+                        let amount: Amount = required - available;
                         let addr = maker.get_wallet().write()?.get_next_external_address()?;
 
                         log::info!("Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your swap balance", amount, addr);

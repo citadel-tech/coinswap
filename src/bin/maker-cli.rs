@@ -1,4 +1,6 @@
 use std::{net::TcpStream, time::Duration};
+use bitcoin::Amount;
+
 
 use clap::Parser;
 use coinswap::{
@@ -43,7 +45,7 @@ enum Commands {
     /// Send to an external address and returns the transaction hex.
     SendToAddress {
         address: String,
-        amount: u64,
+        amount: Amount,
         fee: u64,
     },
     /// Returns the tor address
