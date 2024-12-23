@@ -28,7 +28,7 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 use socks::Socks5Stream;
 
 use bitcoin::{
-    consensus::encode::deserialize, hashes::{hash160::Hash as Hash160, Hash}, hex::DisplayHex, secp256k1::{
+    consensus::encode::deserialize, hashes::{hash160::Hash as Hash160, Hash}, hex::DisplayHex, locktime, relative::LockTime, secp256k1::{
         rand::{rngs::OsRng, RngCore},
         SecretKey,
     }, Amount, BlockHash, FeeRate, OutPoint, PublicKey, ScriptBuf, Transaction, Txid
@@ -57,8 +57,8 @@ use crate::{
 };
 
 // Default values for Taker configurations
-pub const REFUND_LOCKTIME: u16 = 48;
-pub const REFUND_LOCKTIME_STEP: u16 = 48;
+pub const REFUND_LOCKTIME: LockTime = LockTime::from_blocks(48);
+pub const REFUND_LOCKTIME_STEP:  LockTime = LockTime::from_blocks(48);
 pub const FIRST_CONNECT_ATTEMPTS: u32 = 5;
 pub const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1;
 pub const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 60;
@@ -786,7 +786,7 @@ impl Taker {
     /// If no suitable makers are found in [OfferBook], next swap will not initiate and the swap round will fail.
     fn send_sigs_init_next_hop(
         &mut self,
-        maker_refund_locktime: u16,
+        maker_refund_locktime:  locktime::relative::LockTime,
         funding_tx_infos: &[FundingTxInfo],
     ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TakerError> {
         // Configurable reconnection attempts for testing
@@ -845,7 +845,7 @@ impl Taker {
     /// [Internal] Single attempt to send signatures and initiate next hop.
     fn send_sigs_init_next_hop_once(
         &mut self,
-        maker_refund_locktime: u16,
+        maker_refund_locktime: locktime::relative::LockTime,
         funding_tx_infos: &[FundingTxInfo],
     ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TakerError> {
         let this_maker = &self
@@ -1325,7 +1325,7 @@ impl Taker {
         outgoing_swapcoins: &[S],
         maker_multisig_nonces: &[SecretKey],
         maker_hashlock_nonces: &[SecretKey],
-        locktime: u16,
+        locktime: locktime::relative::LockTime,
     ) -> Result<ContractSigsForSender, TakerError> {
         let reconnect_time_out = Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC);
         // Configurable reconnection attempts for testing

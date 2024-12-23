@@ -8,7 +8,7 @@ use bitcoin::{
     absolute::LockTime, blockdata::{
         opcodes::{self, all},
         script::{Builder, Instruction, Script},
-    }, ecdsa::Signature, hashes::Hash, secp256k1::{
+    }, ecdsa::Signature, hashes::Hash, locktime, secp256k1::{
         rand::{rngs::OsRng, RngCore},
         Message, Secp256k1, SecretKey,
     }, sighash::{EcdsaSighashType, SighashCache}, transaction::Version, Amount, FeeRate, OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness
@@ -194,7 +194,7 @@ pub fn create_contract_redeemscript(
     pub_hashlock: &PublicKey,
     pub_timelock: &PublicKey,
     hashvalue: &Hash160,
-    locktime: &u16,
+    locktime: &locktime::relative::LockTime,
 ) -> ScriptBuf {
     //avoid the malleability from OP_IF attack, see:
     //https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-September/000605.html
@@ -256,7 +256,7 @@ pub fn create_contract_redeemscript(
         .push_opcode(opcodes::all::OP_ELSE)
             .push_key(pub_timelock)
             .push_int(0)
-            .push_int(*locktime as i64)
+            .push_int(*locktime as locktime::relative::LockTime)
         .push_opcode(opcodes::all::OP_ENDIF)
         .push_opcode(opcodes::all::OP_CSV)
         .push_opcode(opcodes::all::OP_DROP)
@@ -410,8 +410,8 @@ pub fn is_contract_out_valid(
     hashlock_pubkey: &PublicKey,
     timelock_pubkey: &PublicKey,
     hashvalue: &Hash160,
-    locktime: &u16,
-    minimum_locktime: &u16,
+    locktime: &locktime::relative::LockTime,
+    minimum_locktime: &locktime::relative::LockTime,
 ) -> Result<(), ProtocolError> {
     if minimum_locktime > locktime {
         return Err(ProtocolError::General("locktime too short"));
@@ -577,13 +577,13 @@ mod test {
         .unwrap();
 
         // Use an u16 to strictly positive 2 byte integer
-        let locktime = random::<u16>();
+        let locktime:locktime::relative::LockTime = random::<u16>();
 
         let contract_script =
             create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hashvalue, &locktime);
 
         // Get the byte encoded locktime for script
-        let locktime_bytecode = Builder::new().push_int(locktime as i64).into_script();
+        let locktime_bytecode = Builder::new().push_int(locktime as locktime::relative::LockTime).into_script();
 
         // Below is hand made script string that should be expected
         let expected = "827ca914".to_owned()
@@ -727,7 +727,7 @@ mod test {
 
         // Extract contract script data
         let hashvalue = read_hashvalue_from_contract(&contract_script).unwrap();
-        let locktime = read_contract_locktime(&contract_script).unwrap();
+        let locktime :locktime::relative::LockTime= read_contract_locktime(&contract_script).unwrap();
         let (pub1, pub2) = read_pubkeys_from_contract_reedimscript(&contract_script).unwrap();
 
         // Validates if contract outpoint is correct
@@ -941,7 +941,7 @@ mod test {
         )
         .unwrap();
 
-        let locktime = random::<u16>();
+        let locktime:locktime::relative::LockTime = random::<u16>();
 
         let contract_script =
             create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hash_value, &locktime);
@@ -978,7 +978,7 @@ mod test {
         )
         .unwrap();
 
-        let locktime = random::<u16>();
+        let locktime:locktime::relative::LockTime = random::<u16>();
 
         let contract_script =
             create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hashvalue, &locktime);
@@ -1018,7 +1018,7 @@ mod test {
         )
         .unwrap();
 
-        let locktime = random::<u16>();
+        let locktime:locktime::relative::LockTime = random::<u16>();
 
         let contract_script =
             create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hashvalue, &locktime);
@@ -1265,7 +1265,7 @@ mod test {
         .unwrap();
 
         // Use an u16 to strictly positive 2 byte integer
-        let locktime = random::<u16>();
+        let locktime: locktime::relative::LockTime = random::<u16>();
 
         let contract_script_1 =
             create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hash_value_1, &locktime);
@@ -1285,7 +1285,7 @@ mod test {
                 next_hashlock_pubkey: pub_1,
                 next_multisig_pubkey: pub_2,
             }],
-            next_locktime: u16::default(),
+            next_locktime: locktime::relative::LockTime,
             next_fee_rate: FeeRate,
         };
 
@@ -1314,7 +1314,7 @@ mod test {
                 next_hashlock_pubkey: pub_1,
                 next_multisig_pubkey: pub_2,
             }],
-            next_locktime: u16::default(),
+            next_locktime: locktime::relative::LockTime,
             next_fee_rate: FeeRate,
         };
 

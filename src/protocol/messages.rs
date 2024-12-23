@@ -58,7 +58,7 @@
 use std::fmt::Display;
 
 use bitcoin::{
-    ecdsa::Signature, hashes::sha256d::Hash, secp256k1::SecretKey, Amount, FeeRate, PublicKey, ScriptBuf, Transaction
+    ecdsa::Signature, hashes::sha256d::Hash, locktime, secp256k1::SecretKey, Amount, FeeRate, PublicKey, ScriptBuf, Transaction
 };
 
 use serde::{Deserialize, Serialize};
@@ -100,7 +100,7 @@ pub struct ContractTxInfoForSender {
 pub struct ReqContractSigsForSender {
     pub txs_info: Vec<ContractTxInfoForSender>,
     pub hashvalue: Hash160,
-    pub locktime: u16,
+    pub locktime: locktime::relative::LockTime,
 }
 
 /// Contract Sigs requesting information for the Receiver side of the hop.
@@ -141,7 +141,7 @@ pub struct ProofOfFunding {
     pub confirmed_funding_txes: Vec<FundingTxInfo>,
     // TODO: Directly use Vec of Pubkeys.
     pub next_coinswap_info: Vec<NextHopInfo>,
-    pub next_locktime: u16,
+    pub next_locktime: locktime::relative::LockTime,
     pub next_fee_rate: FeeRate,
 }
 
@@ -241,7 +241,7 @@ pub struct Offer {
     pub amount_relative_fee_ppb: Amount,
     pub time_relative_fee_ppb: Amount,
     pub required_confirms: u64,
-    pub minimum_locktime: u16,
+    pub minimum_locktime: locktime::relative::LockTime,
     pub max_size: u64,
     pub min_size: u64,
     pub tweakable_point: PublicKey,

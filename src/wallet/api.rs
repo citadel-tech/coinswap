@@ -1119,7 +1119,7 @@ impl Wallet {
         other_multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
         hashvalue: Hash160,
-        locktime: u16,
+        locktime:  locktime::relative::LockTime,
         fee_rate: FeeRate,
     ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, Amount), WalletError> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys

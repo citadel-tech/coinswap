@@ -18,8 +18,9 @@ use crate::{
 use bitcoin::{
     ecdsa::Signature,
     secp256k1::{self, Secp256k1},
-    OutPoint, PublicKey, ScriptBuf, Transaction,
+    OutPoint, PublicKey, ScriptBuf, Transaction, locktime::relative::LockTime
 };
+
 use bitcoind::bitcoincore_rpc::RpcApi;
 use std::{
     collections::HashMap,
@@ -277,7 +278,7 @@ impl Maker {
         for funding_info in &message.confirmed_funding_txes {
             // check that the new locktime is sufficently short enough compared to the
             // locktime in the provided funding tx
-            let locktime = read_contract_locktime(&funding_info.contract_redeemscript)?;
+            let locktime:locktime::relative::LockTime = read_contract_locktime(&funding_info.contract_redeemscript)?;
             if locktime - message.next_locktime < MIN_CONTRACT_REACTION_TIME {
                 return Err(MakerError::General(
                     "Next hop locktime too close to current hop locktime",
