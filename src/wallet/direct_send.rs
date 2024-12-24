@@ -4,17 +4,22 @@
 //! direct sends. It leverages Bitcoin Core's RPC for wallet synchronization and implements various
 //! parsing mechanisms for transaction inputs and outputs.
 
-use std::{num::ParseIntError, str::FromStr};
+use std::{num::ParseIntError, str::FromStr, vec};
 
 use bitcoin::{
-    absolute::LockTime, transaction::Version, Address, Amount, Network, OutPoint, ScriptBuf,
-    Sequence, Transaction, TxIn, TxOut, Witness,
+    absolute::LockTime, script, transaction::Version, Address, Amount, Network, OutPoint,
+    ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RawTx, RpcApi};
 
 use crate::wallet::api::UTXOSpendInfo;
 
 use super::{error::WalletError, Wallet};
+
+const TRANSACTION_BASE_SIZE: usize = 10; //version(4) + input count(1) + output count(1) + locktime(4)
+const TRANSACTION_INPUT_BASE_SIZE: usize = 41; // outpoint(36) + sequence(4) + script length(1)
+const TRANSACTION_OUTPUT_BASE_SIZE: usize = 9; // value(8) + script length(1)
+const P2WPKH_WITNESS_SIZE: usize = 107; // Approximate size for P2WPKH witness data
 
 /// Enum representing different options for the amount to be sent in a transaction.
 #[derive(Debug, Clone, PartialEq)]
@@ -55,6 +60,23 @@ impl FromStr for Destination {
 }
 
 impl Wallet {
+    /// Estimate the virtual size of transaction  in vbytes.
+    fn estimat_vsize(
+        &self,
+        input_count: usize,
+        output_count: usize,
+        output_scripts: &[ScriptBuf],
+    ) -> usize {
+        let mut base_size = TRANSACTION_BASE_SIZE;
+        base_size += input_count * TRANSACTION_INPUT_BASE_SIZE;
+
+        let witness_size = input_count * P2WPKH_WITNESS_SIZE;
+        for script in output_scripts {
+            base_size += TRANSACTION_OUTPUT_BASE_SIZE + script.len();
+        }
+
+        (base_size * 4 + witness_size) / 4
+    }
     /// API to perform spending from wallet UTXOs, including descriptor coins and swap coins.
     ///
     /// The caller needs to specify a list of UTXO data and their corresponding `spend_info`.
@@ -75,7 +97,7 @@ impl Wallet {
     ///    are held in a change address, if applicable.
     pub fn spend_from_wallet(
         &mut self,
-        fee: Amount,
+        feerate: u64,
         send_amount: SendAmount,
         destination: Destination,
         coins_to_spend: &[(ListUnspentResultEntry, UTXOSpendInfo)],
@@ -94,6 +116,7 @@ impl Wallet {
         };
 
         let mut total_input_value = Amount::ZERO;
+        let mut valid_coins = Vec::new();
 
         for (utxo_data, spend_info) in coins_to_spend {
             // filter all contract and fidelity utxos.
@@ -105,26 +128,18 @@ impl Wallet {
                 continue;
             }
 
+            valid_coins.push((utxo_data, spend_info));
+            total_input_value += utxo_data.amount;
+        }
+
+        for (utxo_data, _) in &valid_coins {
             tx.input.push(TxIn {
                 previous_output: OutPoint::new(utxo_data.txid, utxo_data.vout),
                 sequence: Sequence::ZERO,
                 witness: Witness::new(),
                 script_sig: ScriptBuf::new(),
             });
-
-            total_input_value += utxo_data.amount;
         }
-
-        if let SendAmount::Amount(a) = send_amount {
-            if a + fee > total_input_value {
-                return Err(WalletError::InsufficientFund {
-                    available: total_input_value.to_btc(),
-                    required: (a + fee).to_btc(),
-                });
-            }
-        }
-
-        log::info!("Total Input Amount: {} | Fees: {}", total_input_value, fee);
 
         let dest_addr = match destination {
             Destination::Wallet => self.get_next_internal_addresses(1)?[0].clone(),
@@ -145,6 +160,29 @@ impl Wallet {
                 a
             }
         };
+
+        let mut output_scripts = vec![dest_addr.script_pubkey()];
+        let change_script = self.get_next_internal_addresses(1)?[0].script_pubkey();
+
+        if !matches!(send_amount, SendAmount::Max) {
+            output_scripts.push(change_script.clone());
+        }
+
+        let vsize = self.estimat_vsize(valid_coins.len(), output_scripts.len(), &output_scripts);
+        let fee = Amount::from_sat(feerate * vsize as u64);
+
+        log::info!("Estimated size: {} vbytes, Total fee: {}", vsize, fee);
+
+        if let SendAmount::Amount(a) = send_amount {
+            if a + fee > total_input_value {
+                return Err(WalletError::InsufficientFund {
+                    available: total_input_value.to_btc(),
+                    required: (a + fee).to_btc(),
+                });
+            }
+        }
+
+        log::info!("Total Input Amount: {} | Fees: {}", total_input_value, fee);
 
         let txout = {
             let value = match send_amount {
