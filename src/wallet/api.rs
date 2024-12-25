@@ -152,7 +152,8 @@ impl Wallet {
         // Generate Master key
         let master_key = {
             let mnemonic = Mnemonic::generate(12)?;
-            log::info!("Mnemonics: \n {:?}", mnemonic);
+            let words = mnemonic.words().collect::<Vec<_>>();
+            log::info!("Backup the Wallet Mnemonics. \n {:?}", words);
             let seed = mnemonic.to_entropy();
             Xpriv::new_master(rpc_config.network, &seed)?
         };
