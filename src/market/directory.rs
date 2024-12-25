@@ -433,6 +433,7 @@ fn handle_client(
             log::debug!("Sending Addresses: {}", response);
             send_message(stream, &response)?;
         }
+        #[cfg(feature = "integration-test")]
         DnsRequest::Dummy { url } => {
             log::info!("Got new maker address: {}", &url);
             directory.addresses.write()?.insert(AddressEntry(0, url));

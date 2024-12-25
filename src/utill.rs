@@ -512,9 +512,14 @@ pub struct DnsMetadata {
 // Structured requests and responses using serde.
 #[derive(Serialize, Deserialize, Debug)]
 pub enum DnsRequest {
-    Post { metadata: Box<DnsMetadata> },
-    Get { makers: u32 },
-    Dummy { url: String },
+    Post {
+        metadata: Box<DnsMetadata>,
+    },
+    Get,
+    #[cfg(feature = "integration-test")]
+    Dummy {
+        url: String,
+    },
 }
 
 pub fn verify_fidelity_checks(
