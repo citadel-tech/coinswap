@@ -298,6 +298,12 @@ impl Taker {
     pub fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         log::info!("Syncing Offerbook");
         self.sync_offerbook()?;
+
+        // Error early if hop_count > available good makers.
+        if swap_params.maker_count > self.offerbook.all_makers.len() {
+            return Err(TakerError::NotEnoughMakersInOfferBook);
+        }
+
         // Generate new random preimage and initiate the first hop.
         let mut preimage = [0u8; 32];
         OsRng.fill_bytes(&mut preimage);
