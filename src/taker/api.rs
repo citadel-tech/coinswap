@@ -297,7 +297,7 @@ impl Taker {
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         log::info!("Syncing Offerbook");
-        self.sync_offerbook(swap_params.maker_count)?;
+        self.sync_offerbook()?;
         // Generate new random preimage and initiate the first hop.
         let mut preimage = [0u8; 32];
         OsRng.fill_bytes(&mut preimage);
@@ -1920,7 +1920,7 @@ impl Taker {
     }
 
     /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
-    pub fn sync_offerbook(&mut self, maker_count: usize) -> Result<(), TakerError> {
+    pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
         let directory_address = match self.config.connection_type {
             ConnectionType::CLEARNET => {
                 let mut address = self.config.directory_server_address.clone();
@@ -1952,18 +1952,21 @@ impl Taker {
                 socks_port = Some(self.config.socks_port);
             }
         }
-        let addresses_from_dns = fetch_addresses_from_dns(
-            socks_port,
-            directory_address,
-            maker_count,
-            self.config.connection_type,
-        )?;
-        let offers = fetch_offer_from_makers(addresses_from_dns, &self.config)?;
+        let addresses_from_dns =
+            fetch_addresses_from_dns(socks_port, directory_address, self.config.connection_type)?;
 
-        let new_offers = offers
-            .into_iter()
-            .filter(|offer| !self.offerbook.bad_makers.contains(offer))
+        // Filter for new addresses only.
+        let know_addrs = self
+            .offerbook
+            .all_makers
+            .iter()
+            .map(|oa| oa.address.clone())
             .collect::<Vec<_>>();
+        let new_addrs = addresses_from_dns
+            .into_iter()
+            .filter(|addr| !know_addrs.contains(addr))
+            .collect::<Vec<_>>();
+        let new_offers = fetch_offer_from_makers(new_addrs, &self.config)?;
 
         for offer in new_offers {
             log::info!(
@@ -1976,10 +1979,11 @@ impl Taker {
                 .verify_fidelity_proof(&offer.offer.fidelity, &offer.address.to_string())
             {
                 log::warn!(
-                    "Fidelity Proof Verification failed with error: {:?}. Rejecting Offer from Maker : {}",
+                    "Fidelity Proof Verification failed with error: {:?}. Adding this to bad maker list : {}",
                     e,
                     offer.address.to_string()
                 );
+                self.offerbook.add_bad_maker(&offer);
             } else {
                 log::info!("Fideity Bond verification succes. Adding offer to our OfferBook");
                 self.offerbook.add_new_offer(&offer);

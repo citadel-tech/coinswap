@@ -394,7 +394,7 @@ fn handle_client(
     let dns_request: DnsRequest = serde_cbor::de::from_reader(&buf[..])?;
     match dns_request {
         DnsRequest::Post { metadata } => {
-            log::info!("Received new maker address: {}", &metadata.url);
+            log::info!("Received POST | From {}", &metadata.url);
 
             let txid = metadata.proof.bond.outpoint.txid;
             let transaction = rpc.get_raw_transaction(&txid, None)?;
@@ -422,20 +422,15 @@ fn handle_client(
                 }
             }
         }
-        DnsRequest::Get { makers } => {
-            log::info!("Taker pinged the directory server");
-            log::info!("Number of makers requested: {:?}", makers);
+        DnsRequest::Get => {
+            log::info!("Received GET | From {}", stream.peer_addr()?);
             let addresses = directory.addresses.read()?;
-            let response = if addresses.len() < makers as usize {
-                String::new()
-            } else {
-                addresses
-                    .iter()
-                    .take(makers as usize)
-                    .fold(String::new(), |acc, AddressEntry(_, addr)| {
-                        acc + addr + "\n"
-                    })
-            };
+            let response = addresses
+                .iter()
+                .fold(String::new(), |acc, AddressEntry(_, addr)| {
+                    acc + addr + "\n"
+                });
+            log::debug!("Sending Addresses: {}", response);
             send_message(stream, &response)?;
         }
         DnsRequest::Dummy { url } => {
