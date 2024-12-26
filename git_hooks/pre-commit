@@ -2,6 +2,7 @@
 
 # Check Rust formatting and automatically correct it
 echo "Auto-correcting code style with rustfmt..."
+rustup override set nightly
 cargo fmt
 
 # Check Clippy lints
@@ -10,6 +11,14 @@ if ! cargo clippy --all-targets -- -D warnings; then
     echo "Clippy issues detected."
     echo "Please fix the Clippy issues before committing."
     exit 1 
+fi
+
+# Check for feature combinations
+echo "Checking feature combinations with cargo-hack..."
+if ! cargo hack --feature-powerset check; then
+    echo "Feature combination issues detected"
+    echo "Please fix the issues before committing."
+    exit 1
 fi
 
 exit 0 
