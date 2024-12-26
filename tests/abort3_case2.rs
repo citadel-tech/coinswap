@@ -32,11 +32,12 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
-        makers_config_map.into(),
-        TakerBehavior::Normal,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, taker, makers, directory_server_instance, block_generation_handle) =
+        TestFramework::init(
+            makers_config_map.into(),
+            TakerBehavior::Normal,
+            ConnectionType::CLEARNET,
+        );
 
     warn!("Running Test: Maker closes connection after sending a ContractSigsForRecvr");
     let bitcoind = &test_framework.bitcoind;
@@ -170,4 +171,5 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
     }
 
     test_framework.stop();
+    block_generation_handle.join().unwrap();
 }

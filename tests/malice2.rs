@@ -29,11 +29,12 @@ fn malice2_maker_broadcast_contract_prematurely() {
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
-        makers_config_map.into(),
-        TakerBehavior::Normal,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, taker, makers, directory_server_instance, block_generation_handle) =
+        TestFramework::init(
+            makers_config_map.into(),
+            TakerBehavior::Normal,
+            ConnectionType::CLEARNET,
+        );
     let bitcoind = &test_framework.bitcoind;
 
     // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
@@ -311,4 +312,5 @@ fn malice2_maker_broadcast_contract_prematurely() {
     );
 
     test_framework.stop();
+    block_generation_handle.join().unwrap();
 }

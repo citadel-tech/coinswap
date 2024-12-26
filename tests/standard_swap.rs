@@ -34,11 +34,12 @@ fn test_standard_coinswap() {
     };
 
     // Initiate test framework, Makers and a Taker with default behavior.
-    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
-        makers_config_map.into(),
-        TakerBehavior::Normal,
-        connection_type,
-    );
+    let (test_framework, taker, makers, directory_server_instance, block_generation_handle) =
+        TestFramework::init(
+            makers_config_map.into(),
+            TakerBehavior::Normal,
+            connection_type,
+        );
 
     warn!("Running Test: Standard Coinswap Procedure");
 
@@ -427,4 +428,5 @@ fn test_standard_coinswap() {
     info!("All checks successful. Terminating integration test case");
 
     test_framework.stop();
+    block_generation_handle.join().unwrap();
 }

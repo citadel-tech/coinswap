@@ -32,11 +32,12 @@ fn test_abort_case_2_move_on_with_other_makers() {
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
-        makers_config_map.into(),
-        TakerBehavior::Normal,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, taker, makers, directory_server_instance, block_generation_handle) =
+        TestFramework::init(
+            makers_config_map.into(),
+            TakerBehavior::Normal,
+            ConnectionType::CLEARNET,
+        );
 
     warn!(
         "Running Test: Maker 6102 closes before sending sender's sigs. Taker moves on with other Makers."
@@ -158,4 +159,6 @@ fn test_abort_case_2_move_on_with_other_makers() {
     }
 
     test_framework.stop();
+
+    block_generation_handle.join().unwrap();
 }

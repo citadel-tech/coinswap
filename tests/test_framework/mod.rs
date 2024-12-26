@@ -20,7 +20,7 @@ use std::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc, RwLock,
     },
-    thread,
+    thread::{self, JoinHandle},
     time::Duration,
 };
 
@@ -196,6 +196,7 @@ impl TestFramework {
         Arc<RwLock<Taker>>,
         Vec<Arc<Maker>>,
         Arc<DirectoryServer>,
+        JoinHandle<()>,
     ) {
         if cfg!(feature = "tor") && connection_type == ConnectionType::TOR {
             coinswap::tor::setup_mitosis();
@@ -272,17 +273,24 @@ impl TestFramework {
         // start the block generation thread
         log::info!("spawning block generation thread");
         let tf_clone = test_framework.clone();
-        thread::spawn(move || loop {
+        let generate_blocks_handle = thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(3));
-            // tf_clone.generate_blocks(10);
-            generate_blocks(&tf_clone.bitcoind, 10);
+
             if tf_clone.shutdown.load(Relaxed) {
                 log::info!("ending block generation thread");
                 return;
             }
+            // tf_clone.generate_blocks(10);
+            generate_blocks(&tf_clone.bitcoind, 10);
         });
 
-        (test_framework, taker, makers, directory_server_instance)
+        (
+            test_framework,
+            taker,
+            makers,
+            directory_server_instance,
+            generate_blocks_handle,
+        )
     }
 
     /// Stop bitcoind and clean up all test data.

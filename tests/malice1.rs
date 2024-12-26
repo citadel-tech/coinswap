@@ -29,11 +29,12 @@ fn malice1_taker_broadcast_contract_prematurely() {
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
-        makers_config_map.into(),
-        TakerBehavior::BroadcastContractAfterFullSetup,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, taker, makers, directory_server_instance, block_generation_handle) =
+        TestFramework::init(
+            makers_config_map.into(),
+            TakerBehavior::BroadcastContractAfterFullSetup,
+            ConnectionType::CLEARNET,
+        );
 
     warn!("Running Test: Taker broadcasts contract transaction prematurely");
 
@@ -319,4 +320,5 @@ fn malice1_taker_broadcast_contract_prematurely() {
     );
 
     test_framework.stop();
+    block_generation_handle.join().unwrap();
 }
