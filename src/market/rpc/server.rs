@@ -1,11 +1,13 @@
+use bitcoin::OutPoint;
+
 use super::{RpcMsgReq, RpcMsgResp};
 use crate::{
     error::NetError,
-    market::directory::{AddressEntry, DirectoryServer, DirectoryServerError},
-    utill::{read_message, send_message, HEART_BEAT_INTERVAL},
+    market::directory::{DirectoryServer, DirectoryServerError},
+    utill::{read_message, send_message},
 };
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     io::ErrorKind,
     net::{TcpListener, TcpStream},
     sync::{atomic::Ordering::Relaxed, Arc, RwLock},
@@ -14,7 +16,7 @@ use std::{
 };
 fn handle_request(
     socket: &mut TcpStream,
-    address: Arc<RwLock<BTreeSet<AddressEntry>>>,
+    address: Arc<RwLock<HashMap<OutPoint, String>>>,
 ) -> Result<(), DirectoryServerError> {
     let req_bytes = read_message(socket)?;
     let rpc_request: RpcMsgReq = serde_cbor::from_slice(&req_bytes).map_err(NetError::Cbor)?;
@@ -26,7 +28,7 @@ fn handle_request(
                 address
                     .read()?
                     .iter()
-                    .map(|AddressEntry(_, address)| address.clone())
+                    .map(|(op, address)| (*op, address.clone()))
                     .collect::<BTreeSet<_>>(),
             );
             if let Err(e) = send_message(socket, &resp) {

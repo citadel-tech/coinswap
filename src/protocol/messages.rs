@@ -324,6 +324,7 @@ pub struct DnsMetadata {
 
 // Structured requests and responses using serde.
 #[derive(Serialize, Deserialize, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum DnsRequest {
     Post {
         metadata: DnsMetadata,

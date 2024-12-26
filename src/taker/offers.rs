@@ -21,8 +21,8 @@ use socks::Socks5Stream;
 
 use crate::{
     error::NetError,
-    protocol::messages::Offer,
-    utill::{read_message, send_message, ConnectionType, DnsRequest, GLOBAL_PAUSE, NET_TIMEOUT},
+    protocol::messages::{DnsRequest, Offer},
+    utill::{read_message, send_message, ConnectionType, GLOBAL_PAUSE, NET_TIMEOUT},
 };
 
 use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};

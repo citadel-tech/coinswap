@@ -150,6 +150,7 @@ pub fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> process::Ch
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
         if let Some(line) = reader.lines().map_while(Result::ok).next() {
+            println!("{}", line);
             let _ = stderr_sender.send(line);
         }
     });
@@ -159,7 +160,7 @@ pub fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> process::Ch
         let reader = BufReader::new(stdout);
 
         for line in reader.lines().map_while(Result::ok) {
-            log::info!("{line}");
+            println!("{}", line);
             if stdout_sender.send(line).is_err() {
                 break;
             }

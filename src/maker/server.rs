@@ -39,10 +39,8 @@ use crate::{
         handlers::handle_message,
         rpc::start_rpc_server,
     },
-    protocol::messages::TakerToMakerMessage,
-    utill::{
-        read_message, send_message, ConnectionType, DnsMetadata, DnsRequest, HEART_BEAT_INTERVAL,
-    },
+    protocol::messages::{DnsMetadata, DnsRequest, TakerToMakerMessage},
+    utill::{read_message, send_message, ConnectionType},
     wallet::WalletError,
 };
 
@@ -148,7 +146,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, OptionalJoinHandle), 
     };
 
     let request = DnsRequest::Post {
-        metadata: Box::new(dns_metadata),
+        metadata: dns_metadata,
     };
 
     // Keep trying until send is successful.
