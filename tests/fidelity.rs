@@ -26,11 +26,12 @@ fn test_fidelity() {
     // ---- Setup ----
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
 
-    let (test_framework, _, makers, directory_server_instance) = TestFramework::init(
-        makers_config_map.into(),
-        TakerBehavior::Normal,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, _, makers, directory_server_instance, block_generation_handle) =
+        TestFramework::init(
+            makers_config_map.into(),
+            TakerBehavior::Normal,
+            ConnectionType::CLEARNET,
+        );
 
     let bitcoind = &test_framework.bitcoind;
 
@@ -197,4 +198,5 @@ fn test_fidelity() {
     thread::sleep(Duration::from_secs(10));
 
     test_framework.stop();
+    block_generation_handle.join().unwrap();
 }

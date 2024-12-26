@@ -30,11 +30,12 @@ fn test_stop_taker_after_setup() {
 
     // Initiate test framework, Makers.
     // Taker has a special behavior DropConnectionAfterFullSetup.
-    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
-        makers_config_map.into(),
-        TakerBehavior::DropConnectionAfterFullSetup,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, taker, makers, directory_server_instance, block_generation_handle) =
+        TestFramework::init(
+            makers_config_map.into(),
+            TakerBehavior::DropConnectionAfterFullSetup,
+            ConnectionType::CLEARNET,
+        );
 
     warn!("Running Test: Taker Cheats on Everybody.");
 
@@ -321,4 +322,6 @@ fn test_stop_taker_after_setup() {
     info!("All checks successful. Terminating integration test case");
 
     test_framework.stop();
+
+    block_generation_handle.join().unwrap();
 }

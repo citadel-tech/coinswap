@@ -32,11 +32,12 @@ fn abort3_case3_close_at_hash_preimage_handover() {
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
-        makers_config_map.into(),
-        TakerBehavior::Normal,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, taker, makers, directory_server_instance, block_generation_handle) =
+        TestFramework::init(
+            makers_config_map.into(),
+            TakerBehavior::Normal,
+            ConnectionType::CLEARNET,
+        );
 
     warn!("Running Test: Maker closes conneciton at hash preimage handling");
     let bitcoind = &test_framework.bitcoind;
@@ -167,4 +168,5 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     }
 
     test_framework.stop();
+    block_generation_handle.join().unwrap();
 }
