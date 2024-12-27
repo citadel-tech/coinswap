@@ -232,7 +232,7 @@ fn main() -> Result<(), TakerError> {
         }
 
         Commands::SyncOfferBook => {
-            taker.sync_offerbook(args.maker_count)?;
+            taker.sync_offerbook()?;
         }
         Commands::DoCoinswap => {
             taker.do_coinswap(swap_params)?;

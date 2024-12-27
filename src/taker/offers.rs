@@ -165,10 +165,8 @@ pub fn fetch_offer_from_makers(
             thread.thread().name().expect("thread names expected")
         );
         let join_result = thread.join();
-        if let Ok(r) = join_result {
-            log::info!("Thread closing result: {:?}", r)
-        } else if let Err(e) = join_result {
-            log::info!("Error in internal thread: {:?}", e);
+        if let Err(e) = join_result {
+            log::error!("Error in internal thread: {:?}", e);
         }
     }
     Ok(result)
@@ -178,7 +176,6 @@ pub fn fetch_offer_from_makers(
 pub fn fetch_addresses_from_dns(
     socks_port: Option<u16>,
     directory_server_address: String,
-    number_of_makers: usize,
     connection_type: ConnectionType,
 ) -> Result<Vec<MakerAddress>, TakerError> {
     // TODO: Make the communication in serde_encoded bytes.
@@ -199,10 +196,7 @@ pub fn fetch_addresses_from_dns(
         stream.flush()?;
 
         // Change datatype of number of makers to u32 from usize
-        let request = DnsRequest::Get {
-            makers: number_of_makers as u32,
-        };
-        if let Err(e) = send_message(&mut stream, &request) {
+        if let Err(e) = send_message(&mut stream, &DnsRequest::Get) {
             log::warn!("Failed to send request. Retrying...{}", e);
             thread::sleep(GLOBAL_PAUSE);
             continue;
@@ -225,17 +219,7 @@ pub fn fetch_addresses_from_dns(
             .collect::<Result<Vec<MakerAddress>, _>>()
         {
             Ok(addresses) => {
-                if addresses.len() < number_of_makers {
-                    log::info!(
-                        "Insufficient addresses received. Need: {}, Got: {}. Retrying...",
-                        number_of_makers,
-                        addresses.len()
-                    );
-                    thread::sleep(GLOBAL_PAUSE);
-                    continue;
-                } else {
-                    return Ok(addresses);
-                }
+                return Ok(addresses);
             }
             Err(e) => {
                 log::error!("Error decoding DNS response: {:?}. Retrying...", e);
