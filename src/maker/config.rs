@@ -173,7 +173,7 @@ mod tests {
             rpc_port = 6103
             required_confirms = 1
             min_contract_reaction_time = 48
-            min_swap_amount = 10000
+            min_swap_amount = 100000
             socks_port = 19050
         "#;
         let config_path = create_temp_config(contents, "valid_maker_config.toml");

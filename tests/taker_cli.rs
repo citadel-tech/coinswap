@@ -36,8 +36,6 @@ impl TakerCli {
             self.data_dir.to_str().unwrap(),
             "--bitcoin-network",
             "regtest",
-            "--connection-type",
-            "clearnet",
         ];
 
         // RPC authentication (user:password) from the cookie file

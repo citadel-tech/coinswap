@@ -30,7 +30,6 @@ use crate::{
         contract::{
             calculate_coinswap_fee, create_receivers_contract_tx, find_funding_output_index,
             read_hashvalue_from_contract, read_pubkeys_from_multisig_redeemscript,
-            FUNDING_TX_VBYTE_SIZE,
         },
         error::ProtocolError,
         messages::{
@@ -363,10 +362,12 @@ impl Maker {
             TIME_RELATIVE_FEE_PCT,
         );
 
-        let calc_funding_tx_fees = (FUNDING_TX_VBYTE_SIZE
-            * message.contract_feerate
-            * (message.next_coinswap_info.len() as u64))
-            / 1000;
+        // NOTE: The `contract_feerate` currently represents the hardcoded `MINER_FEE` of a transaction, not the fee rate.
+        // This will remain unchanged to avoid modifying the structure of the [ProofOfFunding] message.
+        // Once issue https://github.com/citadel-tech/coinswap/issues/309 is resolved,
+        //`contract_feerate` will represent the actual fee rate instead of the `MINER_FEE`.
+        let calc_funding_tx_fees =
+            message.contract_feerate * (message.next_coinswap_info.len() as u64);
 
         // Check for overflow. If happens hard error.
         // This can happen if the fee_rate for funding tx is very high and incoming_amount is very low.
@@ -401,11 +402,6 @@ impl Maker {
             )?
         };
 
-        log::info!(
-            "cal coinswap fee ______________  : {:?}",
-            calc_coinswap_fees
-        );
-
         let act_coinswap_fees = incoming_amount
             .checked_sub(outgoing_amount + act_funding_txs_fees.to_sat())
             .expect("This should not overflow as we just above.");
@@ -420,10 +416,7 @@ impl Maker {
         );
 
         log::info!(
-            "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Swap Revenue = {}
-            /n
-            Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {} | 
-            ",
+            "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {} |",
             self.config.port,
             Amount::from_sat(incoming_amount),
             Amount::from_sat(outgoing_amount),

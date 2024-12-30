@@ -4,7 +4,7 @@ use crate::utill::HEART_BEAT_INTERVAL;
 use bitcoin::Network;
 use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 use serde_json::{json, Value};
-use std::{convert::TryFrom, thread, time::Duration};
+use std::{convert::TryFrom, thread};
 
 use crate::wallet::api::KeychainKind;
 

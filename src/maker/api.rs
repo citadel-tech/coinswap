@@ -352,7 +352,7 @@ impl Maker {
                 )
                 .map_err(WalletError::Rpc)?
             {
-                if txout.confirmations < (REQUIRED_CONFIRMS as u32) {
+                if txout.confirmations < REQUIRED_CONFIRMS {
                     return Err(MakerError::General(
                         "funding tx not confirmed to required depth",
                     ));

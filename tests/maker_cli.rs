@@ -2,7 +2,7 @@
 #![cfg(feature = "integration-test")]
 use bitcoin::{Address, Amount};
 use bitcoind::{bitcoincore_rpc::RpcApi, BitcoinD};
-use coinswap::utill::{setup_logger, ConnectionType};
+use coinswap::utill::setup_logger;
 use std::{
     fs,
     io::{BufRead, BufReader},
@@ -142,7 +142,7 @@ fn test_maker_cli() {
     let maker_cli = MakerCli::new();
 
     let dns_dir = maker_cli.data_dir.parent().unwrap();
-    let mut directoryd_proc = start_dns(dns_dir, ConnectionType::CLEARNET, &maker_cli.bitcoind);
+    let mut directoryd_proc = start_dns(dns_dir, &maker_cli.bitcoind);
     let (rx, mut makerd_proc) = maker_cli.start_makerd();
 
     // Ping check

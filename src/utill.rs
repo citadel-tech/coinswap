@@ -94,6 +94,7 @@ pub fn get_tor_addrs(hs_dir: &Path) -> io::Result<String> {
     let mut hostname_file = File::open(hostname_file_path).unwrap();
     let mut tor_addrs: String = String::new();
     hostname_file.read_to_string(&mut tor_addrs)?;
+    tor_addrs.pop(); // Remove `\n` at the end.
     Ok(tor_addrs)
 }
 

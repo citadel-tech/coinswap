@@ -2,7 +2,7 @@ use super::{RpcMsgReq, RpcMsgResp};
 use crate::{
     error::NetError,
     market::directory::{AddressEntry, DirectoryServer, DirectoryServerError},
-    utill::{read_message, send_message},
+    utill::{read_message, send_message, HEART_BEAT_INTERVAL},
 };
 use std::{
     collections::BTreeSet,
@@ -12,7 +12,6 @@ use std::{
     thread::sleep,
     time::Duration,
 };
-use crate::utill::HEART_BEAT_INTERVAL;
 fn handle_request(
     socket: &mut TcpStream,
     address: Arc<RwLock<BTreeSet<AddressEntry>>>,

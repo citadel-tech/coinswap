@@ -9,13 +9,13 @@
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tor")]
 use socks::Socks5Stream;
-use std::{io::ErrorKind, net::TcpStream, thread::sleep, time::Duration, u64::MIN};
+use std::{io::ErrorKind, net::TcpStream, thread::sleep, time::Duration};
 
 use crate::{
     protocol::{
         contract::{
             calculate_coinswap_fee, create_contract_redeemscript, find_funding_output_index,
-            validate_contract_tx, FUNDING_TX_VBYTE_SIZE,
+            validate_contract_tx,
         },
         error::ProtocolError,
         messages::{
@@ -346,9 +346,9 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         tmi.this_maker.offer.time_relative_fee_pct,
     );
 
-    let miner_fees_paid_by_taker =
-        (FUNDING_TX_VBYTE_SIZE * MINER_FEE * (npi.next_peer_multisig_pubkeys.len() as u64)) / 1000;
+    let miner_fees_paid_by_taker = (tmi.funding_tx_infos.len() as u64) * MINER_FEE;
     let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
+
     if Amount::from_sat(calculated_next_amount) != next_amount {
         return Err((ProtocolError::IncorrectFundingAmount {
             expected: Amount::from_sat(calculated_next_amount),
@@ -356,10 +356,12 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         })
         .into());
     }
+
     log::info!(
-        "This Maker is forwarding = {} to next Maker | Next maker's fees = {} | Miner fees covered by us = {}",
+        "Maker Received ={} | Maker is Forwarding = {} |  Coinswap Fees = {}  | Miner Fees paid by us={} ",
+        Amount::from_sat(this_amount),
         next_amount,
-        coinswap_fees, // These are not in Amount..
+        Amount::from_sat(coinswap_fees),
         miner_fees_paid_by_taker,
     );
 

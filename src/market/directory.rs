@@ -9,7 +9,7 @@ use crate::{
     market::rpc::start_rpc_server_thread,
     utill::{
         get_dns_dir, parse_field, parse_toml, read_message, send_message, verify_fidelity_checks,
-        ConnectionType, HEART_BEAT_INTERVAL, DnsRequest,
+        ConnectionType, DnsRequest, HEART_BEAT_INTERVAL,
     },
     wallet::{RPCConfig, WalletError},
 };

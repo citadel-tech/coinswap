@@ -6,6 +6,7 @@ use coinswap::{
     utill::ConnectionType,
     wallet::{Destination, SendAmount},
 };
+use std::sync::Arc;
 
 use bitcoind::bitcoincore_rpc::RpcApi;
 
@@ -33,172 +34,30 @@ fn test_standard_coinswap() {
     //     ConnectionType::TOR
     // };
 
+    let connection_type = ConnectionType::CLEARNET;
+
     // Initiate test framework, Makers and a Taker with default behavior.
-<<<<<<< HEAD
-    let (test_framework, taker, makers, directory_server_instance, block_generation_handle) =
+    let (test_framework, mut taker, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
             TakerBehavior::Normal,
             connection_type,
         );
-=======
-    let (test_framework, taker, makers, directory_server_instance) = TestFramework::init(
-        makers_config_map.into(),
-        TakerBehavior::Normal,
-        ConnectionType::CLEARNET,
-    );
->>>>>>> 465bbbc (WIP)
 
     warn!("Running Test: Standard Coinswap Procedure");
-
     let bitcoind = &test_framework.bitcoind;
-    info!("Initiating Takers...");
-    // Fund the Taker and Makers with 3 utxos of 0.05 btc each.
-    for _ in 0..3 {
-        let taker_address = taker
-            .write()
-            .unwrap()
-            .get_wallet_mut()
-            .get_next_external_address()
-            .unwrap();
-        send_to_address(bitcoind, &taker_address, Amount::from_btc(0.05).unwrap());
 
-        makers.iter().for_each(|maker| {
-            let maker_addrs = maker
-                .get_wallet()
-                .write()
-                .unwrap()
-                .get_next_external_address()
-                .unwrap();
-            send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.05).unwrap());
-        });
-    }
+    // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
+    let org_taker_spend_balance =
+        fund_and_verify_taker(&mut taker, bitcoind, 3, Amount::from_btc(0.05).unwrap());
 
-    // Coins for fidelity creation
-    makers.iter().for_each(|maker| {
-        let maker_addrs = maker
-            .get_wallet()
-            .write()
-            .unwrap()
-            .get_next_external_address()
-            .unwrap();
-        send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.05).unwrap());
-    });
+    // Fund the Maker with 4 utxos of 0.05 btc each and do basic checks on the balance.
+    let makers_ref = makers.iter().map(Arc::as_ref).collect::<Vec<_>>();
+    fund_and_verify_maker(makers_ref, bitcoind, 4, Amount::from_btc(0.05).unwrap());
 
-    // confirm balances
-    generate_blocks(bitcoind, 1);
+    //  Start the Maker Server threads
+    log::info!("Initiating Maker...");
 
-    // --- Basic Checks ----
-
-    // Assert external address index reached to 4.
-    assert_eq!(taker.read().unwrap().get_wallet().get_external_index(), &3);
-    makers.iter().for_each(|maker| {
-        let next_external_index = *maker.get_wallet().read().unwrap().get_external_index();
-        assert_eq!(next_external_index, 4);
-    });
-
-    // Check if utxo list looks good.
-    // TODO: Assert other interesting things from the utxo list.
-
-    let mut all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
-
-    let taker_no_of_descriptor_utxo_unspent = taker
-        .read()
-        .unwrap()
-        .get_wallet()
-        .list_descriptor_utxo_spend_info(Some(&all_utxos))
-        .unwrap()
-        .len();
-
-    let taker_no_of_fidelity_unspent = taker
-        .read()
-        .unwrap()
-        .get_wallet()
-        .list_fidelity_spend_info(Some(&all_utxos))
-        .unwrap()
-        .len();
-    let taker_no_of_swap_coin_unspent = taker
-        .read()
-        .unwrap()
-        .get_wallet()
-        .list_swap_coin_utxo_spend_info(Some(&all_utxos))
-        .unwrap()
-        .len();
-
-    let taker_no_of_live_contract_unspent = taker
-        .read()
-        .unwrap()
-        .get_wallet()
-        .list_live_contract_spend_info(Some(&all_utxos))
-        .unwrap()
-        .len();
-
-    assert_eq!(taker_no_of_descriptor_utxo_unspent, 3);
-    assert_eq!(taker_no_of_fidelity_unspent, 0);
-    assert_eq!(taker_no_of_swap_coin_unspent, 0);
-    assert_eq!(taker_no_of_live_contract_unspent, 0);
-
-    makers.iter().for_each(|maker| {
-        all_utxos = maker.get_wallet().read().unwrap().get_all_utxo().unwrap();
-
-        let maker_no_of_descriptor_utxo_unspent = maker
-            .get_wallet()
-            .read()
-            .unwrap()
-            .list_descriptor_utxo_spend_info(Some(&all_utxos))
-            .unwrap()
-            .len();
-
-        let maker_no_of_fidelity_unspent = maker
-            .get_wallet()
-            .read()
-            .unwrap()
-            .list_fidelity_spend_info(Some(&all_utxos))
-            .unwrap()
-            .len();
-
-        let maker_no_of_swap_coin_unspent = maker
-            .get_wallet()
-            .read()
-            .unwrap()
-            .list_swap_coin_utxo_spend_info(Some(&all_utxos))
-            .unwrap()
-            .len();
-
-        let maker_no_of_live_contract_unspent = maker
-            .get_wallet()
-            .read()
-            .unwrap()
-            .list_live_contract_spend_info(Some(&all_utxos))
-            .unwrap()
-            .len();
-
-        assert_eq!(maker_no_of_descriptor_utxo_unspent, 4);
-        assert_eq!(maker_no_of_fidelity_unspent, 0);
-        assert_eq!(maker_no_of_swap_coin_unspent, 0);
-        assert_eq!(maker_no_of_live_contract_unspent, 0);
-    });
-
-    // Check locking non-wallet utxos worked.
-    taker
-        .read()
-        .unwrap()
-        .get_wallet()
-        .lock_unspendable_utxos()
-        .unwrap();
-    makers.iter().for_each(|maker| {
-        maker
-            .get_wallet()
-            .read()
-            .unwrap()
-            .lock_unspendable_utxos()
-            .unwrap();
-    });
-
-    // ---- Start Servers and attempt Swap ----
-
-    info!("Initiating Maker...");
-    // Start the Maker server threads
     let maker_threads = makers
         .iter()
         .map(|maker| {
@@ -209,199 +68,106 @@ fn test_standard_coinswap() {
         })
         .collect::<Vec<_>>();
 
-    // Start swap
-
     // Makers take time to fully setup.
-    makers.iter().for_each(|maker| {
-        while !maker.is_setup_complete.load(Relaxed) {
-            log::info!("Waiting for maker setup completion");
-            // Introduce a delay of 10 seconds to prevent write lock starvation.
-            thread::sleep(Duration::from_secs(10));
-            continue;
-        }
-    });
+    let org_maker_spend_balances = makers
+        .iter()
+        .map(|maker| {
+            while !maker.is_setup_complete.load(Relaxed) {
+                log::info!("Waiting for maker setup completion");
+                // Introduce a delay of 10 seconds to prevent write lock starvation.
+                thread::sleep(Duration::from_secs(10));
+                continue;
+            }
 
+            // Check balance after setting up maker server.
+            let wallet = maker.wallet.read().unwrap();
+            let all_utxos = wallet.get_all_utxo().unwrap();
+
+            let seed_balance = wallet.balance_descriptor_utxo(Some(&all_utxos)).unwrap();
+
+            let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
+
+            let swapcoin_balance = wallet.balance_swap_coins(Some(&all_utxos)).unwrap();
+
+            let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
+
+            assert_eq!(seed_balance, Amount::from_btc(0.14999).unwrap());
+            assert_eq!(fidelity_balance, Amount::from_btc(0.05).unwrap());
+            assert_eq!(swapcoin_balance, Amount::ZERO);
+            assert_eq!(live_contract_balance, Amount::ZERO);
+
+            seed_balance + swapcoin_balance
+        })
+        .collect::<Vec<_>>();
+
+    // Initiate Coinswap
+    log::info!("Initiating coinswap protocol");
+
+    // Swap params for coinswap.
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
     };
+    taker.do_coinswap(swap_params).unwrap();
 
-    info!("Initiating coinswap protocol");
-    // Spawn a Taker coinswap thread.
-    let taker_clone = taker.clone();
-    let taker_thread = thread::spawn(move || {
-        taker_clone
-            .write()
-            .unwrap()
-            .do_coinswap(swap_params)
-            .unwrap();
-    });
-
-    // Wait for Taker swap thread to conclude.
-    taker_thread.join().unwrap();
-
-    // Wait for Maker threads to conclude.
+    // After Swap is done,  wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
+
     maker_threads
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    info!("All coinswaps processed successfully. Transaction complete.");
+    log::info!("All coinswaps processed successfully. Transaction complete.");
 
+    // Shutdown Directory Server
     directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
 
-    // ---- After Swap Asserts ----
+    //-------- Fee Tracking and Workflow:------------
+    //
+    // | Participant    | Amount Received (Sats) | Amount Forwarded (Sats) | Fee (Sats) | Funding Mining Fees (Sats) | Total Fees (Sats) |
+    // |----------------|------------------------|-------------------------|------------|----------------------------|-------------------|
+    // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
+    // | **Maker16102** | 500,000                | 463,500                 | 33,500     | 3,000                      | 36,500            |
+    // | **Maker6102**  | 463,500                | 438,642                 | 21,858     | 3,000                      | 24,858            |
+    //
+    // ## 3. Final Outcome for Taker (Successful Coinswap):
+    //
+    // | Participant   | Coinswap Outcome (Sats)                                                   |
+    // |---------------|---------------------------------------------------------------------------|
+    // | **Taker**     | 438,642= 500,000 - (Total Fees for Maker16102 + Total Fees for Maker6102) |
+    //
+    // ## 4. Final Outcome for Makers:
+    //
+    // | Participant    | Coinswap Outcome (Sats)                                           |
+    // |----------------|-------------------------------------------------------------------|
+    // | **Maker16102** | 500,000 - 463,500 - 3,000 = +33,500                               |
+    // | **Maker6102**  | 465,384 - 438,642 - 3,000 = +21,858                               |
 
-    info!("Final Balance Checks for process");
-    // Check everybody hash 6 swapcoins.
-    assert_eq!(taker.read().unwrap().get_wallet().get_swapcoins_count(), 6);
-    makers.iter().for_each(|maker| {
-        let swapcoin_count = maker.get_wallet().read().unwrap().get_swapcoins_count();
-        assert_eq!(swapcoin_count, 6);
-    });
-
-    // Check balances makes sense
-    all_utxos = taker.read().unwrap().get_wallet().get_all_utxo().unwrap();
-    assert_eq!(all_utxos.len(), 12); // how 12?
-
-    let taker_spendable_bal = taker
-        .read()
-        .unwrap()
-        .get_wallet()
-        .balance_descriptor_utxo(Some(&all_utxos))
-        .unwrap()
-        + taker
-            .read()
-            .unwrap()
-            .get_wallet()
-            .balance_swap_coins(Some(&all_utxos))
-            .unwrap();
-
-    assert_eq!(taker_spendable_bal, Amount::from_btc(0.1498284).unwrap());
-
-    let taker_balance_fidelity = taker
-        .read()
-        .unwrap()
-        .get_wallet()
-        .balance_fidelity_bonds(Some(&all_utxos))
-        .unwrap();
-    let taker_balance_descriptor_utxo = taker
-        .read()
-        .unwrap()
-        .get_wallet()
-        .balance_descriptor_utxo(Some(&all_utxos))
-        .unwrap();
-    let taker_balance_swap_coins = taker
-        .read()
-        .unwrap()
-        .get_wallet()
-        .balance_swap_coins(Some(&all_utxos))
-        .unwrap();
-    let taker_balance_live_contract = taker
-        .read()
-        .unwrap()
-        .get_wallet()
-        .balance_live_contract(Some(&all_utxos))
-        .unwrap();
-    assert_eq!(
-        taker_balance_fidelity
-            + taker_balance_descriptor_utxo
-            + taker_balance_swap_coins
-            + taker_balance_live_contract,
-        Amount::from_btc(0.1498284).unwrap()
+    //  After Swap Asserts
+    verify_swap_results(
+        &taker,
+        &makers,
+        org_taker_spend_balance,
+        org_maker_spend_balances,
     );
-    assert_eq!(
-        taker_balance_descriptor_utxo,
-        Amount::from_btc(0.14497).unwrap()
-    );
-    assert_eq!(
-        taker_balance_swap_coins,
-        Amount::from_btc(0.0048584).unwrap()
-    );
-    assert_eq!(taker_balance_fidelity, Amount::from_btc(0.0).unwrap());
-    assert_eq!(taker_balance_live_contract, Amount::from_btc(0.0).unwrap());
-
-    makers.iter().for_each(|maker| {
-        all_utxos = maker.get_wallet().read().unwrap().get_all_utxo().unwrap();
-        assert_eq!(all_utxos.len(), 10);
-
-        let maker_balance_fidelity = maker
-            .get_wallet()
-            .read()
-            .unwrap()
-            .balance_fidelity_bonds(Some(&all_utxos))
-            .unwrap();
-        let maker_balance_descriptor_utxo = maker
-            .get_wallet()
-            .read()
-            .unwrap()
-            .balance_descriptor_utxo(Some(&all_utxos))
-            .unwrap();
-        let maker_balance_swap_coins = maker
-            .get_wallet()
-            .read()
-            .unwrap()
-            .balance_swap_coins(Some(&all_utxos))
-            .unwrap();
-        let maker_balance_live_contract = maker
-            .get_wallet()
-            .read()
-            .unwrap()
-            .balance_live_contract(Some(&all_utxos))
-            .unwrap();
-
-        let maker_total_balance = maker.get_wallet().read().unwrap().balance().unwrap();
-
-        assert!(
-            maker_total_balance == Amount::from_btc(0.20003044).unwrap()
-                || maker_total_balance == Amount::from_btc(0.20003116).unwrap(),
-            "maker total balance didn't match any of the expected values"
-        );
-
-        assert!(
-            maker_balance_descriptor_utxo == Amount::from_btc(0.14503116).unwrap()
-                || maker_balance_descriptor_utxo == Amount::from_btc(0.1451016).unwrap(),
-            "maker_balance_descriptor_utxo does not match any of the expected values"
-        );
-
-        assert!(
-            maker_balance_swap_coins == Amount::from_btc(0.00492884).unwrap()
-                || maker_balance_swap_coins == Amount::from_btc(0.005).unwrap(),
-            "maker_balance_swap_coins does not match any of the expected values"
-        );
-        assert_eq!(maker_balance_fidelity, Amount::from_btc(0.05).unwrap());
-        assert_eq!(maker_balance_live_contract, Amount::from_btc(0.0).unwrap());
-
-        let maker_spendable_balance = maker_balance_descriptor_utxo + maker_balance_swap_coins;
-
-        assert!(
-            maker_spendable_balance == Amount::from_btc(0.15003116).unwrap()
-                || maker_spendable_balance == Amount::from_btc(0.15003044).unwrap(),
-            "maker spendable balance didn't match any of the expected values"
-        );
-    });
 
     info!("Balance check successful.");
 
     // Check spending from swapcoins.
     info!("Checking Spend from Swapcoin");
-    let swap_coins = taker
-        .read()
-        .unwrap()
-        .get_wallet()
+
+    let taker_wallet_mut = taker.get_wallet_mut();
+    let swap_coins = taker_wallet_mut
         .list_swap_coin_utxo_spend_info(None)
         .unwrap();
 
-    let tx = taker
-        .write()
-        .unwrap()
-        .get_wallet_mut()
+    let tx = taker_wallet_mut
         .spend_from_wallet(
             Amount::from_sat(1000),
             SendAmount::Max,
@@ -419,18 +185,11 @@ fn test_standard_coinswap() {
     bitcoind.client.send_raw_transaction(&tx).unwrap();
     generate_blocks(bitcoind, 1);
 
-    taker.write().unwrap().get_wallet_mut().sync().unwrap();
-
-    let taker_read = taker.read().unwrap();
-
-    let swap_coin_bal = taker_read.get_wallet().balance_swap_coins(None).unwrap();
-    let descriptor_bal = taker_read
-        .get_wallet()
-        .balance_descriptor_utxo(None)
-        .unwrap();
+    let swap_coin_bal = taker_wallet_mut.balance_swap_coins(None).unwrap();
+    let descriptor_bal = taker_wallet_mut.balance_descriptor_utxo(None).unwrap();
 
     assert_eq!(swap_coin_bal, Amount::ZERO);
-    assert_eq!(descriptor_bal, Amount::from_btc(0.1498184).unwrap());
+    assert_eq!(descriptor_bal, Amount::from_btc(0.14934642).unwrap());
 
     info!("All checks successful. Terminating integration test case");
 

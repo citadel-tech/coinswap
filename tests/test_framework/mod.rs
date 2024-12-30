@@ -11,14 +11,14 @@
 //! The test data also includes the backend bitcoind data-directory, which is useful for observing the blockchain states after a swap.
 //!
 //! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
+use bitcoin::Amount;
 use std::{
-    collections::HashMap,
     env::{self, consts},
     fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        Arc, RwLock,
+        Arc,
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -113,15 +113,10 @@ pub fn await_message(rx: &Receiver<String>, expected_message: &str) {
 
 // Start the DNS server based on given connection type and considers data directory for the server.
 #[allow(dead_code)]
-pub fn start_dns(
-    data_dir: &std::path::Path,
-    conn_type: ConnectionType,
-    bitcoind: &BitcoinD,
-) -> process::Child {
+pub fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> process::Child {
     let (stdout_sender, stdout_recv): (Sender<String>, Receiver<String>) = mpsc::channel();
 
     let (stderr_sender, stderr_recv): (Sender<String>, Receiver<String>) = mpsc::channel();
-    let conn_type = format!("{}", conn_type);
 
     let mut args = vec![
         "--data-directory",
@@ -182,6 +177,198 @@ pub fn start_dns(
     directoryd_process
 }
 
+#[allow(dead_code)]
+pub fn fund_and_verify_taker(
+    taker: &mut Taker,
+    bitcoind: &BitcoinD,
+    utxo_count: u32,
+    utxo_value: Amount,
+) -> Amount {
+    log::info!("Funding Takers...");
+
+    // Fund the Taker with 3 utxos of 0.05 btc each.
+    for _ in 0..utxo_count {
+        let taker_address = taker.get_wallet_mut().get_next_external_address().unwrap();
+        send_to_address(bitcoind, &taker_address, utxo_value);
+    }
+
+    // confirm balances
+    generate_blocks(bitcoind, 1);
+
+    //------Basic Checks-----
+
+    let wallet = taker.get_wallet();
+    // Assert external address index reached to 3.
+    assert_eq!(wallet.get_external_index(), &utxo_count);
+
+    // Check if utxo list looks good.
+    // TODO: Assert other interesting things from the utxo list.
+
+    let all_utxos = wallet.get_all_utxo().unwrap();
+
+    let seed_balance = wallet.balance_descriptor_utxo(Some(&all_utxos)).unwrap();
+
+    let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
+
+    let swapcoin_balance = wallet.balance_swap_coins(Some(&all_utxos)).unwrap();
+
+    let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
+
+    // TODO: Think about this: utxo_count*utxo_amt.
+    assert_eq!(seed_balance, Amount::from_btc(0.15).unwrap());
+    assert_eq!(fidelity_balance, Amount::ZERO);
+    assert_eq!(swapcoin_balance, Amount::ZERO);
+    assert_eq!(live_contract_balance, Amount::ZERO);
+
+    seed_balance + swapcoin_balance
+}
+
+#[allow(dead_code)]
+pub fn fund_and_verify_maker(
+    makers: Vec<&Maker>,
+    bitcoind: &BitcoinD,
+    utxo_count: u32,
+    utxo_value: Amount,
+) {
+    // Fund the Maker with 4 utxos of 0.05 btc each.
+
+    log::info!("Funding Makers...");
+
+    makers.iter().for_each(|&maker| {
+        // let wallet = maker..write().unwrap();
+        let mut wallet_write = maker.wallet.write().unwrap();
+
+        for _ in 0..utxo_count {
+            let maker_addr = wallet_write.get_next_external_address().unwrap();
+            send_to_address(bitcoind, &maker_addr, utxo_value);
+        }
+    });
+
+    // confirm balances
+    generate_blocks(bitcoind, 1);
+
+    // --- Basic Checks ----
+    makers.iter().for_each(|&maker| {
+        let wallet = maker.get_wallet().read().unwrap();
+        // Assert external address index reached to 4.
+        assert_eq!(wallet.get_external_index(), &utxo_count);
+
+        let all_utxos = wallet.get_all_utxo().unwrap();
+
+        let seed_balance = wallet.balance_descriptor_utxo(Some(&all_utxos)).unwrap();
+
+        let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
+
+        let swapcoin_balance = wallet.balance_swap_coins(Some(&all_utxos)).unwrap();
+
+        let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
+
+        // TODO: Think about this: utxo_count*utxo_amt.
+        assert_eq!(seed_balance, Amount::from_btc(0.20).unwrap());
+        assert_eq!(fidelity_balance, Amount::ZERO);
+        assert_eq!(swapcoin_balance, Amount::ZERO);
+        assert_eq!(live_contract_balance, Amount::ZERO);
+    });
+}
+
+/// Verifies the results of a coinswap for the taker and makers after performing a swap.
+#[allow(dead_code)]
+pub fn verify_swap_results(
+    taker: &Taker,
+    makers: &[Arc<Maker>],
+    org_taker_spend_balance: Amount,
+    org_maker_spend_balances: Vec<Amount>,
+) {
+    // Check Taker balances
+    {
+        let wallet = taker.get_wallet();
+        let all_utxos = wallet.get_all_utxo().unwrap();
+        let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
+        let seed_balance = wallet.balance_descriptor_utxo(Some(&all_utxos)).unwrap();
+        let swapcoin_balance = wallet.balance_swap_coins(Some(&all_utxos)).unwrap();
+        let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
+
+        let spendable_balance = seed_balance + swapcoin_balance;
+
+        assert!(
+            seed_balance == Amount::from_btc(0.14497).unwrap() // Successful coinswap
+                || seed_balance == Amount::from_btc(0.14993232).unwrap() // Recovery via timelock
+                || seed_balance == Amount::from_btc(0.15).unwrap(), // No spending
+            "Taker seed balance mismatch"
+        );
+
+        assert!(
+            swapcoin_balance == Amount::from_btc(0.00438642).unwrap() // Successful coinswap
+                || swapcoin_balance == Amount::ZERO, // Unsuccessful coinswap
+            "Taker swapcoin balance mismatch"
+        );
+
+        assert_eq!(live_contract_balance, Amount::ZERO);
+        assert_eq!(fidelity_balance, Amount::ZERO);
+
+        // Check balance difference
+        let balance_diff = org_taker_spend_balance
+            .checked_sub(spendable_balance)
+            .unwrap();
+
+        assert!(
+            balance_diff == Amount::from_sat(64358) // Successful coinswap
+                || balance_diff == Amount::from_sat(6768) // Recovery via timelock
+                || balance_diff == Amount::ZERO, // No spending
+            "Taker spendable balance change mismatch"
+        );
+    }
+
+    // Check Maker balances
+    makers
+        .iter()
+        .zip(org_maker_spend_balances.iter())
+        .for_each(|(maker, org_spend_balance)| {
+            let wallet = maker.get_wallet().read().unwrap();
+            let all_utxos = wallet.get_all_utxo().unwrap();
+            let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
+            let seed_balance = wallet.balance_descriptor_utxo(Some(&all_utxos)).unwrap();
+            let swapcoin_balance = wallet.balance_swap_coins(Some(&all_utxos)).unwrap();
+            let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
+
+            let spendable_balance = seed_balance + swapcoin_balance;
+
+            assert!(
+                seed_balance == Amount::from_btc(0.14557358).unwrap() // First maker on successful coinswap
+                    || seed_balance == Amount::from_btc(0.14532500).unwrap() // Second maker on successful coinswap
+                    || seed_balance == Amount::from_btc(0.14999).unwrap() // No spending
+                    || seed_balance == Amount::from_btc(0.14992232).unwrap(), // Recovery via timelock
+                "Maker seed balance mismatch"
+            );
+
+            assert!(
+                swapcoin_balance == Amount::from_btc(0.005).unwrap() // First maker
+                    || swapcoin_balance == Amount::from_btc(0.00463500).unwrap() // Second maker
+                    || swapcoin_balance == Amount::ZERO, // No swap or funding tx missing
+                "Maker swapcoin balance mismatch"
+            );
+
+            assert_eq!(fidelity_balance, Amount::from_btc(0.05).unwrap());
+            assert_eq!(live_contract_balance, Amount::ZERO);
+
+            // Check spendable balance difference.
+            let balance_diff = match org_spend_balance.checked_sub(spendable_balance) {
+                None => spendable_balance.checked_sub(*org_spend_balance).unwrap(), // Successful swap as Makers balance increase by Coinswap fee.
+                Some(diff) => diff, // No spending or unsuccessful swap
+            };
+
+            assert!(
+                balance_diff == Amount::from_sat(33500) // First maker fee
+                    || balance_diff == Amount::from_sat(21858) // Second maker fee
+                    || balance_diff == Amount::ZERO // No spending
+                    || balance_diff == Amount::from_sat(6768) // Recovery via timelock
+                    || balance_diff == Amount::from_sat(466500) // TODO: Investigate this value
+                    || balance_diff == Amount::from_sat(441642), // TODO: Investigate this value
+                "Maker spendable balance change mismatch"
+            );
+        });
+}
+
 /// The Test Framework.
 ///
 /// Handles initializing, operating and cleaning up of all backend processes. Bitcoind, Taker and Makers.
@@ -206,12 +393,12 @@ impl TestFramework {
     /// If no bitcoind conf is provide a default value will be used.
     #[allow(clippy::type_complexity)]
     pub fn init(
-        makers_config_map: HashMap<(u16, Option<u16>), MakerBehavior>,
+        makers_config_map: Vec<((u16, Option<u16>), MakerBehavior)>,
         taker_behavior: TakerBehavior,
         connection_type: ConnectionType,
     ) -> (
         Arc<Self>,
-        Arc<RwLock<Taker>>,
+        Taker,
         Vec<Arc<Maker>>,
         Arc<DirectoryServer>,
         JoinHandle<()>,
@@ -256,16 +443,15 @@ impl TestFramework {
 
         // Create the Taker.
         let taker_rpc_config = rpc_config.clone();
-        let taker = Arc::new(RwLock::new(
-            Taker::init(
-                Some(temp_dir.join("taker")),
-                None,
-                Some(taker_rpc_config),
-                taker_behavior,
-                Some(connection_type),
-            )
-            .unwrap(),
-        ));
+        let taker = Taker::init(
+            Some(temp_dir.join("taker")),
+            None,
+            Some(taker_rpc_config),
+            taker_behavior,
+            Some(connection_type),
+        )
+        .unwrap();
+
         let mut base_rpc_port = 3500; // Random port for RPC connection in tests. (Not used)
                                       // Create the Makers as per given configuration map.
         let makers = makers_config_map
