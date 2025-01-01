@@ -12,7 +12,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::TcpStream,
     path::PathBuf,
-    thread::{self, sleep},
+    thread::sleep,
     time::{Duration, Instant},
 };
 
@@ -61,8 +61,8 @@ use crate::{
 };
 
 // Default values for Taker configurations
-pub const REFUND_LOCKTIME: u16 = 48;
-pub const REFUND_LOCKTIME_STEP: u16 = 48;
+pub const REFUND_LOCKTIME: u16 = 20;
+pub const REFUND_LOCKTIME_STEP: u16 = 20;
 pub const FIRST_CONNECT_ATTEMPTS: u32 = 5;
 pub const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1;
 pub const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 60;
@@ -89,7 +89,7 @@ pub struct SwapParams {
     pub tx_count: u32,
     // TODO: Following two should be moved to TakerConfig as global configuration.
     /// Confirmation count required for funding txs.
-    pub required_confirms: u64,
+    pub required_confirms: u32,
 }
 
 // Defines the Taker's position in the current ongoing swap.
@@ -174,7 +174,7 @@ impl Taker {
     /// ### Parameters:
     /// - `data_dir`:  
     ///   - `Some(value)`: Use the specified directory for storing data.  
-    ///   - `None`: Use the default data directory (e.g., for Linux: `~/.coinswap/maker`).  
+    ///   - `None`: Use the default data directory (e.g., for Linux: `~/.coinswap/taker`).  
     /// - `wallet_file_name`:  
     ///   - `Some(value)`: Attempt to load a wallet file named `value`. If it does not exist, a new wallet with the given name will be created.  
     ///   - `None`: Create a new wallet file with the default name `maker-wallet`.  
@@ -240,10 +240,6 @@ impl Taker {
     }
 
     pub fn do_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
-        let tor_log_dir = "/tmp/tor-rust-taker/log".to_string();
-
-        let taker_port = self.config.port;
-
         #[cfg(feature = "tor")]
         let mut handle = None;
 
@@ -253,6 +249,7 @@ impl Taker {
             ConnectionType::TOR => {
                 let taker_socks_port = self.config.socks_port;
 
+                let tor_log_dir = "/tmp/tor-rust-taker/log".to_string();
                 if Path::new(tor_log_dir.as_str()).exists() {
                     match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
                         Ok(_) => log::info!("Previous taker log file deleted successfully"),
@@ -262,19 +259,20 @@ impl Taker {
 
                 handle = Some(crate::tor::spawn_tor(
                     taker_socks_port,
-                    taker_port,
+                    self.config.port,
                     "/tmp/tor-rust-taker".to_string(),
                 ));
 
-                thread::sleep(Duration::from_secs(10));
+                // wait for tor process to create a new log file.
+                std::thread::sleep(Duration::from_secs(3));
 
                 if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
-                    log::error!("Error monitoring taker log file: {}", e);
+                    log::error!("Error monitoring taker log file: {}\n Try removing the tor directory and retry", e);
+                    return Err(TakerError::IO(e));
                 }
-
-                log::info!("Taker tor is instantiated");
             }
         }
+
         self.send_coinswap(swap_params)?;
 
         #[cfg(feature = "tor")]
@@ -655,7 +653,7 @@ impl Taker {
                     }
                 }
                 //TODO handle confirm<0
-                if gettx.confirmations >= Some(required_confirmations as u32) {
+                if gettx.confirmations >= Some(required_confirmations) {
                     txid_tx_map.insert(
                         *txid,
                         deserialize::<Transaction>(&gettx.hex).map_err(WalletError::from)?,
@@ -957,18 +955,18 @@ impl Taker {
             log::info!("Fundix Txids: {:?}", funding_txids);
 
             // Struct for information related to the next peer
-            let next_maker_info = NextPeerInfoArgs {
+            let next_maker_info = NextMakerInfo {
                 next_peer_multisig_pubkeys: next_peer_multisig_pubkeys.clone(),
                 next_peer_hashlock_pubkeys: next_peer_hashlock_pubkeys.clone(),
-                next_maker_refund_locktime: maker_refund_locktime,
-                next_maker_fee_rate: Amount::from_sat(MINER_FEE),
             };
 
             let this_maker_info = ThisMakerInfo {
                 this_maker: this_maker.clone(),
                 funding_tx_infos: funding_tx_infos.to_vec(),
                 this_maker_contract_txs,
+                this_maker_refund_locktime: maker_refund_locktime,
             };
+
             let (contract_sigs_as_recvr_sender, next_swap_contract_redeemscripts) =
                 send_proof_of_funding_and_init_next_hop(
                     &mut socket,
@@ -1699,7 +1697,7 @@ impl Taker {
             .get_all_untried()
             .iter()
             .find(|oa| {
-                send_amount > Amount::from_sat(oa.offer.min_size)
+                send_amount >= Amount::from_sat(oa.offer.min_size)
                     && send_amount < Amount::from_sat(oa.offer.max_size)
                     && !self
                         .ongoing_swap_state
@@ -1927,30 +1925,25 @@ impl Taker {
 
     /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
     pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        let directory_address = match self.config.connection_type {
-            ConnectionType::CLEARNET => {
-                let mut address = self.config.directory_server_address.clone();
-                if cfg!(feature = "integration-test") {
-                    address = format!("127.0.0.1:{}", 8080);
+        let mut directory_address = self.config.directory_server_address.clone();
+        if cfg!(feature = "integration-test") {
+            match self.config.connection_type {
+                ConnectionType::CLEARNET => {
+                    directory_address = format!("127.0.0.1:{}", 8080);
                 }
-                address
-            }
-            #[cfg(feature = "tor")]
-            ConnectionType::TOR => {
-                let mut address = self.config.directory_server_address.clone();
-                if cfg!(feature = "integration-test") {
+                #[cfg(feature = "tor")]
+                ConnectionType::TOR => {
                     let directory_hs_path_str =
                         "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
-                    let directory_hs_path = PathBuf::from(directory_hs_path_str);
-                    let mut directory_file = fs::File::open(directory_hs_path)?;
+                    let mut directory_file = fs::File::open(directory_hs_path_str)?;
                     let mut directory_onion_addr = String::new();
                     directory_file.read_to_string(&mut directory_onion_addr)?;
                     directory_onion_addr.pop();
-                    address = format!("{}:{}", directory_onion_addr, 8080);
+                    directory_address = format!("{}:{}", directory_onion_addr, 8080);
                 }
-                address
             }
-        };
+        }
+
         let mut socks_port: Option<u16> = None;
         #[cfg(feature = "tor")]
         {

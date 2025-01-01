@@ -2,7 +2,7 @@ use super::{RpcMsgReq, RpcMsgResp};
 use crate::{
     error::NetError,
     market::directory::{AddressEntry, DirectoryServer, DirectoryServerError},
-    utill::{read_message, send_message},
+    utill::{read_message, send_message, HEART_BEAT_INTERVAL},
 };
 use std::{
     collections::BTreeSet,
@@ -12,7 +12,6 @@ use std::{
     thread::sleep,
     time::Duration,
 };
-
 fn handle_request(
     socket: &mut TcpStream,
     address: Arc<RwLock<BTreeSet<AddressEntry>>>,
@@ -59,15 +58,15 @@ pub fn start_rpc_server_thread(
             }
             Err(e) => {
                 if e.kind() == ErrorKind::WouldBlock {
-                    sleep(Duration::from_secs(3));
-                    continue;
+                    // do nothing
                 } else {
                     log::error!("Error accepting RPC connection: {:?}", e);
                     break;
                 }
             }
         }
-        sleep(Duration::from_secs(3));
+        // use heart_beat
+        sleep(HEART_BEAT_INTERVAL);
     }
 
     Ok(())

@@ -55,8 +55,11 @@ pub const NET_TIMEOUT: Duration = Duration::from_secs(60);
 /// Used as delays on reattempting some network communications.
 pub const GLOBAL_PAUSE: Duration = Duration::from_secs(10);
 
-/// Global heartbeat interval for internal server threads.
+/// Global heartbeat interval used during waiting periods in critical situations.
 pub const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
+
+/// Number of confirmation required funding transaction.
+pub const REQUIRED_CONFIRMS: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectionType {
@@ -94,6 +97,7 @@ pub fn get_tor_addrs(hs_dir: &Path) -> io::Result<String> {
     let mut hostname_file = File::open(hostname_file_path).unwrap();
     let mut tor_addrs: String = String::new();
     hostname_file.read_to_string(&mut tor_addrs)?;
+    tor_addrs.pop(); // Remove `\n` at the end.
     Ok(tor_addrs)
 }
 
@@ -421,7 +425,7 @@ pub fn monitor_log_for_completion(log_file: &Path, pattern: &str) -> io::Result<
 
             last_size = current_size;
         }
-        thread::sleep(Duration::from_secs(3));
+        thread::sleep(HEART_BEAT_INTERVAL);
     }
 }
 
@@ -587,17 +591,20 @@ mod tests {
             protocol_version_min: 1,
             protocol_version_max: 100,
         });
+
         thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             let msg_bytes = read_message(&mut socket).unwrap();
             let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes).unwrap();
-            assert_eq!(
-                msg,
-                MakerToTakerMessage::MakerHello(MakerHello {
-                    protocol_version_min: 1,
-                    protocol_version_max: 100
-                })
-            );
+
+            if let MakerToTakerMessage::MakerHello(hello) = msg {
+                assert!(hello.protocol_version_min == 1 && hello.protocol_version_max == 100);
+            } else {
+                panic!(
+                    "Received Wrong Message: Expected MakerHello variant, Got: {:?}",
+                    msg,
+                );
+            }
         });
 
         let mut stream = TcpStream::connect(address).unwrap();

@@ -3,7 +3,7 @@ use std::{io::Write, net::TcpStream, process::Command, thread, time::Duration};
 
 mod test_framework;
 
-use coinswap::utill::{ConnectionType, DnsRequest};
+use coinswap::utill::DnsRequest;
 use test_framework::{init_bitcoind, start_dns};
 
 fn send_addresses(addresses: &[&str]) {
@@ -56,7 +56,7 @@ fn test_dns() {
 
     let data_dir = temp_dir.join("dns");
 
-    let mut process = start_dns(&data_dir, ConnectionType::CLEARNET, &bitcoind);
+    let mut process = start_dns(&data_dir, &bitcoind);
 
     let initial_addresses = vec!["127.0.0.1:8080", "127.0.0.1:8081", "127.0.0.1:8082"];
     send_addresses(&initial_addresses);
@@ -67,7 +67,7 @@ fn test_dns() {
     process.kill().expect("Failed to kill directoryd process");
     process.wait().unwrap();
 
-    let mut process = start_dns(&data_dir, ConnectionType::CLEARNET, &bitcoind);
+    let mut process = start_dns(&data_dir, &bitcoind);
 
     let additional_addresses = vec!["127.0.0.1:8083", "127.0.0.1:8084"];
     send_addresses(&additional_addresses);
@@ -76,7 +76,7 @@ fn test_dns() {
     process.kill().expect("Failed to kill directoryd process");
     process.wait().unwrap();
 
-    let mut process = start_dns(&data_dir, ConnectionType::CLEARNET, &bitcoind);
+    let mut process = start_dns(&data_dir, &bitcoind);
     let all_addresses = vec![
         "127.0.0.1:8080",
         "127.0.0.1:8081",

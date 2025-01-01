@@ -17,9 +17,6 @@ use coinswap::tor::setup_mitosis;
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
-    /// Optional Connection Network Type
-    #[clap(long, default_value = "tor", possible_values = &["tor", "clearnet"])]
-    network: String,
     /// Optional DNS data directory. Default value : "~/.coinswap/maker"
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
@@ -60,14 +57,14 @@ fn main() -> Result<(), MakerError> {
 
     let rpc_network = bitcoin::Network::from_str(&args.rpc_network).unwrap();
 
-    let conn_type = ConnectionType::from_str(&args.network)?;
-
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
         network: rpc_network,
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
+
+    let conn_type = ConnectionType::TOR;
 
     #[cfg(feature = "tor")]
     {

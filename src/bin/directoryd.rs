@@ -14,9 +14,6 @@ use std::{path::PathBuf, str::FromStr, sync::Arc};
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
-    /// Optional network type.
-    #[clap(long, short = 'n', default_value = "tor", possible_values = &["tor", "clearnet"])]
-    network: String,
     /// Optional DNS data directory. Default value : "~/.coinswap/dns"
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
@@ -53,8 +50,6 @@ fn main() -> Result<(), DirectoryServerError> {
 
     let rpc_network = bitcoin::Network::from_str(&args.rpc_network).unwrap();
 
-    let conn_type = ConnectionType::from_str(&args.network)?;
-
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
@@ -62,12 +57,15 @@ fn main() -> Result<(), DirectoryServerError> {
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
 
+    let conn_type = ConnectionType::TOR;
+
     #[cfg(feature = "tor")]
     {
         if conn_type == ConnectionType::TOR {
             setup_mitosis();
         }
     }
+
     let directory = Arc::new(DirectoryServer::new(args.data_directory, Some(conn_type))?);
 
     start_directory_server(directory, Some(rpc_config))?;

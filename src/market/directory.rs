@@ -9,7 +9,7 @@ use crate::{
     market::rpc::start_rpc_server_thread,
     utill::{
         get_dns_dir, parse_field, parse_toml, read_message, send_message, verify_fidelity_checks,
-        ConnectionType, DnsRequest,
+        ConnectionType, DnsRequest, HEART_BEAT_INTERVAL,
     },
     wallet::{RPCConfig, WalletError},
 };
@@ -343,6 +343,7 @@ pub fn start_directory_server(
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port))?;
 
+    // why we have not set it to non-blocking mode?
     while !directory.shutdown.load(Relaxed) {
         match listener.accept() {
             Ok((mut stream, addrs)) => {
@@ -358,7 +359,7 @@ pub fn start_directory_server(
             }
         }
 
-        sleep(Duration::from_secs(3));
+        sleep(HEART_BEAT_INTERVAL);
     }
 
     log::info!("Shutdown signal received. Stopping directory server.");

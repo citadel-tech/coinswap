@@ -30,7 +30,7 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 #[cfg(feature = "tor")]
 use socks::Socks5Stream;
 
-pub use super::Maker;
+pub use super::{api::RPC_PING_INTERVAL, Maker};
 
 use crate::{
     error::NetError,
@@ -40,7 +40,9 @@ use crate::{
         rpc::start_rpc_server,
     },
     protocol::messages::TakerToMakerMessage,
-    utill::{read_message, send_message, ConnectionType, DnsMetadata, DnsRequest},
+    utill::{
+        read_message, send_message, ConnectionType, DnsMetadata, DnsRequest, HEART_BEAT_INTERVAL,
+    },
     wallet::WalletError,
 };
 
@@ -48,18 +50,6 @@ use crate::{
 use crate::utill::monitor_log_for_completion;
 
 use crate::maker::error::MakerError;
-
-// Default values for Maker configurations
-pub const HEART_BEAT_INTERVAL_SECS: u64 = 3;
-pub const RPC_PING_INTERVAL_SECS: u64 = 60;
-pub const _DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 60 * 12; // 12 Hours
-pub const _IDLE_CONNECTION_TIMEOUT: u64 = 300;
-pub const REQUIRED_CONFIRMS: u64 = 1;
-pub const MIN_CONTRACT_REACTION_TIME: u16 = 48;
-
-/// Fee rate per swap amount in parts per billion (PPB).
-/// E.g., for 1 billion sats (0.01 BTC), a value of 10_000 would result in a 0.1% fee.
-pub const AMOUNT_RELATIVE_FEE_PPB: Amount = Amount::from_sat(10_000_000);
 
 #[cfg(feature = "tor")]
 type OptionalJoinHandle = Option<mitosis::JoinHandle<()>>;
@@ -163,35 +153,28 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, OptionalJoinHandle), 
 
     // Keep trying until send is successful.
     loop {
-        let mut stream = match maker.config.connection_type {
-            ConnectionType::CLEARNET => match TcpStream::connect(&dns_address) {
-                Ok(s) => s,
+        let mut stream = loop {
+            let conn_result = match maker.config.connection_type {
+                ConnectionType::CLEARNET => TcpStream::connect(&dns_address),
+
+                #[cfg(feature = "tor")]
+                ConnectionType::TOR => Socks5Stream::connect(
+                    format!("127.0.0.1:{}", maker.config.socks_port),
+                    dns_address.as_str(),
+                )
+                .map(|stream| stream.into_inner()),
+            };
+
+            match conn_result {
+                Ok(stream) => break stream,
                 Err(e) => {
                     log::warn!(
                         "[{}] TCP connection error with directory, reattempting: {}",
                         maker_port,
                         e
                     );
-                    thread::sleep(Duration::from_secs(HEART_BEAT_INTERVAL_SECS));
+                    thread::sleep(HEART_BEAT_INTERVAL);
                     continue;
-                }
-            },
-            #[cfg(feature = "tor")]
-            ConnectionType::TOR => {
-                match Socks5Stream::connect(
-                    format!("127.0.0.1:{}", maker.config.socks_port),
-                    dns_address.as_str(),
-                ) {
-                    Ok(s) => s.into_inner(),
-                    Err(e) => {
-                        log::warn!(
-                            "[{}] TCP connection error with directory, reattempting: {}",
-                            maker_port,
-                            e
-                        );
-                        thread::sleep(Duration::from_secs(HEART_BEAT_INTERVAL_SECS));
-                        continue;
-                    }
                 }
             }
         };
@@ -202,9 +185,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, OptionalJoinHandle), 
                 maker_port,
                 e
             );
-
-            // Wait before reattempting
-            std::thread::sleep(std::time::Duration::from_secs(HEART_BEAT_INTERVAL_SECS));
+            thread::sleep(HEART_BEAT_INTERVAL);
             continue;
         };
 
@@ -230,7 +211,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
         *proof = Some(highest_proof);
     } else {
         // No bond in the wallet. Lets attempt to create one.
-        let amount = Amount::from_sat(maker.config.fidelity_value);
+        let amount = Amount::from_sat(maker.config.fidelity_amount);
         let current_height = maker
             .get_wallet()
             .read()?
@@ -321,10 +302,10 @@ fn check_connection_with_core(
         // If connection is live, keep tring at rpc_ping_interval (60 sec).
         match rpc_ping_success {
             true => {
-                sleep(Duration::from_secs(RPC_PING_INTERVAL_SECS));
+                sleep(RPC_PING_INTERVAL);
             }
             false => {
-                sleep(Duration::from_secs(HEART_BEAT_INTERVAL_SECS));
+                sleep(HEART_BEAT_INTERVAL);
             }
         }
         if let Err(e) = maker.wallet.read()?.rpc.get_blockchain_info() {
@@ -438,8 +419,6 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         maker_address
     );
 
-    let heart_beat_interval = HEART_BEAT_INTERVAL_SECS; // All maker internal threads loops at this frequency.
-
     // Global server Mutex, to switch on/off p2p network.
     let accepting_clients = Arc::new(AtomicBool::new(false));
 
@@ -512,7 +491,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
         maker.thread_pool.add_thread(rpc_thread);
 
-        sleep(Duration::from_secs(heart_beat_interval)); // wait for 1 beat, to complete spawns of all the threads.
+        sleep(HEART_BEAT_INTERVAL); // wait for 1 beat, to complete spawns of all the threads.
         maker.is_setup_complete.store(true, Relaxed);
         log::info!("[{}] Maker setup is ready", maker.config.port);
     }
@@ -522,7 +501,6 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     // This loop beats at `maker.config.heart_beat_interval_secs`
     while !maker.shutdown.load(Relaxed) {
         let maker = maker.clone(); // This clone is needed to avoid moving the Arc<Maker> in each iterations.
-        let heart_beat_interval = HEART_BEAT_INTERVAL_SECS;
 
         // Block client connections if accepting_client=false
         if !accepting_clients.load(Relaxed) {
@@ -530,7 +508,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 "[{}] Temporary failure in backend node. Not accepting swap request. Check your node if this error persists",
                 maker.config.port
             );
-            sleep(Duration::from_secs(heart_beat_interval));
+            sleep(HEART_BEAT_INTERVAL);
             continue;
         }
 
@@ -562,7 +540,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             }
         };
 
-        sleep(Duration::from_secs(heart_beat_interval));
+        sleep(HEART_BEAT_INTERVAL);
     }
 
     log::info!("[{}] Maker is shutting down.", port);

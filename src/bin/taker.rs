@@ -3,7 +3,7 @@ use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Auth};
 use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
-    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType},
+    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, REQUIRED_CONFIRMS},
     wallet::{Destination, RPCConfig, SendAmount},
 };
 use log::LevelFilter;
@@ -14,9 +14,6 @@ use std::{path::PathBuf, str::FromStr};
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
-    /// Optional Connection Network Type
-    #[clap(long, default_value = "clearnet",short= 'c', possible_values = &["tor","clearnet"])]
-    connection_type: String,
     /// Optional DNS data directory. Default value : "~/.coinswap/taker"
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
@@ -54,9 +51,6 @@ struct Cli {
     /// Sets the transaction count.
     #[clap(name = "tx_count", default_value = "3")]
     pub tx_count: u32,
-    /// Sets the required on-chain confirmations.
-    #[clap(name = "required_confirms", default_value = "1000")]
-    pub required_confirms: u64,
     /// List of sub commands to process various endpoints of taker cli app.
     #[clap(subcommand)]
     command: Commands,
@@ -101,7 +95,8 @@ fn main() -> Result<(), TakerError> {
     let args = Cli::parse();
 
     let rpc_network = bitcoin::Network::from_str(&args.bitcoin_network).unwrap();
-    let connection_type = ConnectionType::from_str(&args.connection_type)?;
+
+    let connection_type = ConnectionType::TOR;
 
     let rpc_config = RPCConfig {
         url: args.rpc,
@@ -114,7 +109,7 @@ fn main() -> Result<(), TakerError> {
         send_amount: Amount::from_sat(args.send_amount),
         maker_count: args.maker_count,
         tx_count: args.tx_count,
-        required_confirms: args.required_confirms,
+        required_confirms: REQUIRED_CONFIRMS,
     };
 
     let mut taker = Taker::init(

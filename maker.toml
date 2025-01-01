@@ -1,29 +1,16 @@
-[maker_config]
 # Listening port  
 port = 6102 
-# Time interval between connection checks
-heart_beat_interval_secs = 3
-# Time interval to ping the RPC backend
-rpc_ping_interval_secs = 60
-# Time interval to ping directory server
-# 12 hours = 60*60*12 = 43200
-directory_servers_refresh_interval_secs = 43200
-# Time interval to close a connection if no response is received
-idle_connection_timeout = 300
-# Absolute coinswap fee
-absolute_fee_sats = 1000
-# Fee rate per swap amount in ppb.
-amount_relative_fee_ppb = 10000000
-# Fee rate for timelocked contract in ppb
-time_relative_fee_ppb = 100000
-# No of confirmation required for funding transaction
-required_confirms = 1
-# Minimum timelock difference between contract transaction of two hops
-min_contract_reaction_time = 48
-# Minimum coinswap amount size in sats
-min_size = 10000
+# RPC listening port
+rpc_port
+# Minimum Coinswap amount
+min_swap_amount = 100000
 # Socks port
-socks_part = 19050
-# Directory server onion address
-directory_server_onion_address = "directoryhiddenserviceaddress.onion:8080"
-connection_type = "tor"
+socks_port = 19050
+# Directory server address
+directory_server_address = 127.0.0.1:8080
+# Fidelity Bond amount
+fidelity_amount =  5000000
+#  Fidelity Bond timelock in Block heights
+fidelity_timelock = 26000
+# Connection type
+connection_type = TOR

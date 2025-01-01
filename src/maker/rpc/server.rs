@@ -9,14 +9,13 @@ use std::{
 
 use bitcoin::{Address, Amount};
 
+use super::messages::RpcMsgReq;
 use crate::{
     maker::{error::MakerError, rpc::messages::RpcMsgResp, Maker},
-    utill::{read_message, send_message, ConnectionType},
+    utill::{read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
     wallet::{Destination, SendAmount},
 };
 use std::str::FromStr;
-
-use super::messages::RpcMsgReq;
 
 fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), MakerError> {
     let msg_bytes = read_message(socket)?;
@@ -206,16 +205,14 @@ pub fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
             Err(e) => {
                 if e.kind() == ErrorKind::WouldBlock {
-                    sleep(Duration::from_secs(3));
-                    continue;
+                    // do nothing
                 } else {
                     log::error!("Error accepting RPC connection: {:?}", e);
-                    return Err(e.into());
                 }
             }
         }
 
-        sleep(Duration::from_secs(3));
+        sleep(HEART_BEAT_INTERVAL);
     }
 
     Ok(())
