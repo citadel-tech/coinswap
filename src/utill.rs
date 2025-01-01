@@ -55,11 +55,14 @@ pub(crate) const NET_TIMEOUT: Duration = Duration::from_secs(60);
 pub(crate) const GLOBAL_PAUSE: Duration = Duration::from_secs(10);
 
 /// Global heartbeat interval used during waiting periods in critical situations.
-pub const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
+pub(crate) const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 
 /// Number of confirmation required funding transaction.
 pub const REQUIRED_CONFIRMS: u32 = 1;
 
+/// Specifies the type of connection: TOR or Clearnet.
+///
+/// This enum is used to distinguish between different types of network connections
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectionType {
     /// Represents a TOR connection type.

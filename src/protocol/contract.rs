@@ -44,8 +44,6 @@ use super::{
 // calculates exactly how big the transactions will be and then taker knows exactly the miner fee
 // to pay for
 
-/// Constant representing the virtual byte size of a funding transaction.
-pub(crate) const FUNDING_TX_VBYTE_SIZE: u64 = 372;
 const MIN_HASHV_LEN: usize = 25;
 
 // Used in read_pubkeys_from_multisig_redeemscript() function.

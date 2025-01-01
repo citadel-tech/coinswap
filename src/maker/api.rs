@@ -219,7 +219,7 @@ pub struct Maker {
     /// Maker configurations
     pub(crate) config: MakerConfig,
     /// Maker's underlying wallet
-    pub(crate) wallet: RwLock<Wallet>,
+    pub wallet: RwLock<Wallet>,
     /// A flag to trigger shutdown event
     pub shutdown: AtomicBool,
     /// Map of IP address to Connection State + last Connected instant

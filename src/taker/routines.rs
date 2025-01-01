@@ -251,9 +251,9 @@ pub(crate) struct ThisMakerInfo {
 
 // Type for information related to the next peer // why not next Maker?
 #[derive(Clone)]
-pub(crate) struct NextPeerInfoArgs {
-    pub(crate) next_peer_multisig_pubkeys: Vec<PublicKey>,
-    pub(crate) next_peer_hashlock_pubkeys: Vec<PublicKey>,
+pub struct NextMakerInfo {
+    pub next_peer_multisig_pubkeys: Vec<PublicKey>,
+    pub next_peer_hashlock_pubkeys: Vec<PublicKey>,
 }
 
 /// [Internal] Send a Proof funding to the maker and init next hop.
