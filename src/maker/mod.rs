@@ -20,4 +20,4 @@ mod server;
 pub use api::{Maker, MakerBehavior};
 pub use error::MakerError;
 pub use rpc::{RpcMsgReq, RpcMsgResp};
-pub use server::start_maker_server;
+pub use server::{shutdown_server, start_maker_server};

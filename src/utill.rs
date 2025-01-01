@@ -20,7 +20,8 @@ use std::{
     net::TcpStream,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Once,
+    sync::{Mutex, Once, PoisonError},
+    thread::JoinHandle,
 };
 
 use std::{
@@ -84,6 +85,97 @@ impl fmt::Display for ConnectionType {
             #[cfg(feature = "tor")]
             ConnectionType::TOR => write!(f, "tor"),
             ConnectionType::CLEARNET => write!(f, "clearnet"),
+        }
+    }
+}
+
+#[cfg(feature = "tor")]
+type OptionalJoinHandle = Option<mitosis::JoinHandle<()>>;
+
+#[cfg(not(feature = "tor"))]
+type OptionalJoinHandle = Option<()>;
+
+pub struct ThreadPool {
+    pub threads: Vec<JoinHandle<()>>,
+    pub tor_handle: OptionalJoinHandle,
+    // Port is only used in Integration Test for logging purposes.
+    #[cfg(feature = "integration-test")]
+    pub port: u16,
+}
+
+impl Drop for ThreadPool {
+    fn drop(&mut self) {
+        self.join_all_threads()
+    }
+}
+
+impl ThreadPool {
+    pub fn new(#[cfg(feature = "integration-test")] port: u16) -> Self {
+        Self {
+            threads: Vec::new(),
+            tor_handle: None,
+            #[cfg(feature = "integration-test")]
+            port,
+        }
+    }
+
+    pub(crate) fn add_thread(&mut self, handle: JoinHandle<()>) {
+        // let mut threads = self.threads.lock().unwrap();
+        self.threads.push(handle);
+    }
+
+    #[cfg(feature = "tor")]
+    pub(crate) fn add_tor_handle(&mut self, handle: mitosis::JoinHandle<()>) {
+        self.tor_handle = Some(handle)
+    }
+
+    #[inline]
+    pub(crate) fn join_all_threads(&mut self) {
+        // Terminate the tor process
+        #[cfg(feature = "tor")]
+        {
+            if let Some(handle) = self.tor_handle.take() {
+                crate::tor::kill_tor_handles(handle);
+            }
+        }
+
+        if !self.threads.is_empty() {
+            // Join all threads
+            log::info!("Joining {} threads", self.threads.len());
+
+            let mut joined_count = 0;
+            while let Some(thread) = self.threads.pop() {
+                let thread_name = thread
+                    .thread()
+                    .name()
+                    .expect("Thread name expected")
+                    .to_string();
+
+                match thread.join() {
+                    Ok(_) => {
+                        #[cfg(feature = "integration-test")]
+                        log::info!("[{}]: {} joined", self.port, thread_name);
+
+                        #[cfg(not(feature = "integration-test"))]
+                        log::info!("{} joined", thread_name);
+
+                        joined_count += 1;
+                    }
+                    Err(e) => {
+                        #[cfg(feature = "integration-test")]
+                        {
+                            log::error!(
+                                "[{}] Error while joining {} : {:?}",
+                                self.port,
+                                thread_name,
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+
+            log::info!("Successfully joined {} threads", joined_count);
         }
     }
 }

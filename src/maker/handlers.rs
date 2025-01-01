@@ -685,7 +685,7 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
                     log::error!("Failed to recover from swap due to: {:?}", e);
                 }
             })?;
-        maker.thread_pool.add_thread(handle);
+        maker.thread_pool.lock()?.add_thread(handle);
     }
     Ok(())
 }

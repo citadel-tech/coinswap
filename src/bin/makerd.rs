@@ -1,10 +1,12 @@
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
-    maker::{start_maker_server, Maker, MakerBehavior, MakerError},
+    maker::{shutdown_server, start_maker_server, Maker, MakerBehavior, MakerError},
     utill::{parse_proxy_auth, setup_maker_logger, ConnectionType},
     wallet::RPCConfig,
 };
+
+// use coinswap::maker::
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 #[cfg(feature = "tor")]
@@ -87,7 +89,11 @@ fn main() -> Result<(), MakerError> {
         MakerBehavior::Normal,
     )?);
 
-    start_maker_server(maker)?;
+    // TODO: Pass this Error via ServerError?
+    if let Err(e) = start_maker_server(maker.clone()) {
+        log::error!("Error: {:?}", e);
+        shutdown_server(maker)?;
+    }
 
     Ok(())
 }

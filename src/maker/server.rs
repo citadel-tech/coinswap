@@ -61,21 +61,14 @@ pub const MIN_CONTRACT_REACTION_TIME: u16 = 48;
 /// E.g., for 1 billion sats (0.01 BTC), a value of 10_000 would result in a 0.1% fee.
 pub const AMOUNT_RELATIVE_FEE_PPB: Amount = Amount::from_sat(10_000_000);
 
-#[cfg(feature = "tor")]
-type OptionalJoinHandle = Option<mitosis::JoinHandle<()>>;
-
-#[cfg(not(feature = "tor"))]
-type OptionalJoinHandle = Option<()>;
-
 /// Fetches the Maker and DNS address, and sends maker address to the DNS server.
 /// Depending upon ConnectionType and test/prod environment, different maker address and DNS addresses are returned.
-/// Return the Maker address and an optional tor thread handle.
+/// Return the Maker address.
 ///
 /// Tor thread is spawned only if ConnectionType=TOR and --feature=tor is enabled.
 /// Errors if ConncetionType=TOR but, the tor feature is not enabled.
-fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, OptionalJoinHandle), MakerError> {
+fn network_bootstrap(maker: Arc<Maker>) -> Result<String, MakerError> {
     let maker_port = maker.config.port;
-    let mut tor_handle = None;
     let (maker_address, dns_address) = match maker.config.connection_type {
         ConnectionType::CLEARNET => {
             let maker_address = format!("127.0.0.1:{}", maker_port);
@@ -103,11 +96,15 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, OptionalJoinHandle), 
                 }
             }
 
-            tor_handle = Some(crate::tor::spawn_tor(
+            let handle = crate::tor::spawn_tor(
                 maker_socks_port,
                 maker_port,
                 format!("/tmp/tor-rust-maker{}", maker_port),
-            ));
+            );
+
+            maker.thread_pool.lock()?.add_tor_handle(handle);
+
+            // TODO: WHy we need to wait?
             thread::sleep(Duration::from_secs(10));
 
             if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
@@ -215,7 +212,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, OptionalJoinHandle), 
         break;
     }
 
-    Ok((maker_address, tor_handle))
+    Ok(maker_address)
 }
 
 /// Checks if the wallet already has fidelity bonds. if not, create the first fidelity bond.
@@ -413,6 +410,7 @@ fn handle_client(
 // The main Maker Server process.
 pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Starting Maker Server");
+
     // Initialize network connections.
 
     // Setup the wallet with fidelity bond.
@@ -422,7 +420,15 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("[{}] Currency Network: {:?}", port, network);
     log::info!("[{}] Total Wallet Balance: {:?}", port, balance);
 
-    let (maker_address, tor_thread) = network_bootstrap(maker.clone())?;
+    let maker_address = network_bootstrap(maker.clone())?;
+
+    // Handle Signal Termination
+    let maker_clone = Arc::clone(&maker);
+    ctrlc::set_handler(move || {
+        shutdown_server(maker_clone.clone()).expect("Failed to shutdown Maker");
+        std::process::exit(0);
+    })
+    .expect("Error setting up signal handler");
 
     let listener =
         TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.port)).map_err(NetError::IO)?;
@@ -444,6 +450,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let accepting_clients = Arc::new(AtomicBool::new(false));
 
     if !maker.shutdown.load(Relaxed) {
+        let mut thread_pool = maker.thread_pool.lock()?;
         // 1. Bitcoin Core Connection checker thread.
         // Ensures that Bitcoin Core connection is live.
         // If not, it will block p2p connections until Core works again.
@@ -454,11 +461,11 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             .spawn(move || {
                 log::info!("[{}] Spawning Bitcoin Core connection checker thread", port);
                 if let Err(e) = check_connection_with_core(maker_clone.clone(), acc_client_clone) {
-                    log::error!("[{}] Bitcoin Core connection check failed: {:?}", port, e);
+                    log::error!("Bitcoin Core connection check failed: {:?}", e);
                     maker_clone.shutdown.store(true, Relaxed);
                 }
             })?;
-        maker.thread_pool.add_thread(conn_check_thread);
+        thread_pool.add_thread(conn_check_thread);
 
         // 2. Idle Client connection checker thread.
         // This threads check idelness of peer in live swaps.
@@ -476,7 +483,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                     maker_clone.shutdown.store(true, Relaxed);
                 }
             })?;
-        maker.thread_pool.add_thread(idle_conn_check_thread);
+        thread_pool.add_thread(idle_conn_check_thread);
 
         // 3. Watchtower thread.
         // This thread checks for broadcasted contract transactions, which usually means violation of the protocol.
@@ -488,35 +495,36 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             .spawn(move || {
                 log::info!("[{}] Spawning contract-watcher thread", port);
                 if let Err(e) = check_for_broadcasted_contracts(maker_clone.clone()) {
-                    maker_clone.shutdown.store(true, Relaxed);
                     log::error!("Failed checking broadcasted contracts {:?}", e);
+                    maker_clone.shutdown.store(true, Relaxed);
                 }
             })?;
-        maker.thread_pool.add_thread(contract_watcher_thread);
+        thread_pool.add_thread(contract_watcher_thread);
 
         // 4: The RPC server thread.
         // User for responding back to `maker-cli` apps.
         let maker_clone = maker.clone();
         let rpc_thread = thread::Builder::new()
-            .name("RPC Thread".to_string())
+            .name("RPC Server Thread".to_string())
             .spawn(move || {
                 log::info!("[{}] Spawning RPC server thread", port);
-                match start_rpc_server(maker_clone.clone()) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        log::error!("Failed starting rpc server {:?}", e);
-                        maker_clone.shutdown.store(true, Relaxed);
-                    }
+
+                if let Err(e) = start_rpc_server(maker_clone.clone()) {
+                    log::error!("Failure from rpc server: {:?}", e);
+                    maker_clone.shutdown.store(true, Relaxed)
                 }
             })?;
 
-        maker.thread_pool.add_thread(rpc_thread);
+        thread_pool.add_thread(rpc_thread);
+
+        drop(thread_pool);
 
         sleep(Duration::from_secs(heart_beat_interval)); // wait for 1 beat, to complete spawns of all the threads.
         maker.is_setup_complete.store(true, Relaxed);
         log::info!("[{}] Maker setup is ready", maker.config.port);
     }
 
+    // return Err(MakerError::General("FOR TESTING"));
     // The P2P Client connection loop.
     // Each client connection will spawn a new handler thread, which is added back in the global thread_pool.
     // This loop beats at `maker.config.heart_beat_interval_secs`
@@ -545,7 +553,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                             log::error!("[{}] Error Handling client request {:?}", port, e);
                         }
                     })?;
-                maker.thread_pool.add_thread(client_handler_thread);
+                maker.thread_pool.lock()?.add_thread(client_handler_thread);
             }
 
             Err(e) => {
@@ -557,7 +565,9 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                         maker.config.port,
                         e
                     );
-                    return Err(NetError::IO(e).into());
+                    // Shut down Maker Server
+                    maker.shutdown.store(true, Relaxed);
+                    break;
                 }
             }
         };
@@ -565,18 +575,32 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         sleep(Duration::from_secs(heart_beat_interval));
     }
 
-    log::info!("[{}] Maker is shutting down.", port);
-    #[cfg(feature = "tor")]
-    {
-        if maker.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {
-            crate::tor::kill_tor_handles(tor_thread.expect("Tor thread expected"));
-        }
+    // Shutdown server.
+    shutdown_server(maker)?;
+
+    Ok(())
+}
+
+// TODO: Should I use Arc<Maker> or &Maker?
+pub fn shutdown_server(maker: Arc<Maker>) -> Result<(), MakerError> {
+    // set shutdown flag to true
+    maker.shutdown.store(true, Relaxed);
+
+    if cfg!(feature = "integration-test") {
+        log::info!("[{}] Maker is shutting down....", maker.config.port);
+    } else {
+        log::info!("Maker is shutting down....");
     }
+
+    // Join all threads and tor process
+    maker.thread_pool.lock()?.join_all_threads();
+
     log::info!("Shutdown wallet sync initiated.");
     maker.get_wallet().write()?.sync()?;
     log::info!("Shutdown wallet syncing completed.");
     maker.get_wallet().read()?.save_to_disk()?;
     log::info!("Wallet file saved to disk.");
     log::info!("Maker Server is shut down successfully");
+
     Ok(())
 }

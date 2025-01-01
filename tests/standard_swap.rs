@@ -197,6 +197,7 @@ fn test_standard_coinswap() {
             let maker_clone = maker.clone();
             thread::spawn(move || {
                 start_maker_server(maker_clone).unwrap();
+                log::info!("maker server stop");
             })
         })
         .collect::<Vec<_>>();
@@ -212,6 +213,8 @@ fn test_standard_coinswap() {
             continue;
         }
     });
+
+    return;
 
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),

@@ -36,7 +36,7 @@ use bitcoind::bitcoincore_rpc::Auth;
 
 use coinswap::{
     maker::{Maker, MakerBehavior},
-    market::directory::{start_directory_server, DirectoryServer},
+    market::directory::{start_dns_server, DirectoryServer},
     taker::{Taker, TakerBehavior},
     utill::setup_logger,
     wallet::RPCConfig,
@@ -252,8 +252,7 @@ impl TestFramework {
         );
         let directory_server_instance_clone = directory_server_instance.clone();
         thread::spawn(move || {
-            start_directory_server(directory_server_instance_clone, Some(directory_rpc_config))
-                .unwrap();
+            start_dns_server(directory_server_instance_clone, Some(directory_rpc_config)).unwrap();
         });
 
         // Create the Taker.

@@ -12,7 +12,7 @@ use crate::{
         messages::{FidelityProof, ReqContractSigsForSender},
         Hash160,
     },
-    utill::{get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType},
+    utill::{get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType, ThreadPool},
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
 };
 use bitcoin::{
@@ -88,65 +88,6 @@ pub struct ConnectionState {
     pub pending_funding_txes: Vec<Transaction>,
 }
 
-pub struct ThreadPool {
-    pub threads: Mutex<Vec<JoinHandle<()>>>,
-    pub port: u16,
-}
-
-impl Drop for ThreadPool {
-    fn drop(&mut self) {
-        if let Err(e) = self.join_all_threads() {
-            log::error!("Error joining threads in via drop: {:?}", e);
-        }
-    }
-}
-
-impl ThreadPool {
-    pub fn new(port: u16) -> Self {
-        Self {
-            threads: Mutex::new(Vec::new()),
-            port,
-        }
-    }
-
-    pub fn add_thread(&self, handle: JoinHandle<()>) {
-        let mut threads = self.threads.lock().unwrap();
-        threads.push(handle);
-    }
-    #[inline]
-    fn join_all_threads(&self) -> Result<(), MakerError> {
-        let mut threads = self
-            .threads
-            .lock()
-            .map_err(|_| MakerError::General("Failed to lock threads"))?;
-
-        log::info!("Joining {} threads", threads.len());
-
-        let mut joined_count = 0;
-        while let Some(thread) = threads.pop() {
-            let thread_name = thread.thread().name().unwrap().to_string();
-
-            match thread.join() {
-                Ok(_) => {
-                    log::info!("[{}] Thread {} joined", self.port, thread_name);
-                    joined_count += 1;
-                }
-                Err(e) => {
-                    log::error!(
-                        "[{}] Error {:?} while joining thread {}",
-                        self.port,
-                        e,
-                        thread_name
-                    );
-                }
-            }
-        }
-
-        log::info!("Successfully joined {} threads", joined_count,);
-        Ok(())
-    }
-}
-
 /// Represents the maker in the swap protocol.
 pub struct Maker {
     /// Defines special maker behavior, only applicable for testing
@@ -166,7 +107,7 @@ pub struct Maker {
     /// Path for the data directory.
     pub data_dir: PathBuf,
     /// Thread pool for managing all spawned threads
-    pub thread_pool: Arc<ThreadPool>,
+    pub thread_pool: Arc<Mutex<ThreadPool>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -254,7 +195,16 @@ impl Maker {
             highest_fidelity_proof: RwLock::new(None),
             is_setup_complete: AtomicBool::new(false),
             data_dir,
-            thread_pool: Arc::new(ThreadPool::new(port)),
+            thread_pool: {
+                #[cfg(feature = "integration-test")]
+                {
+                    Arc::new(Mutex::new(ThreadPool::new(port)))
+                }
+                #[cfg(not(feature = "integration-test"))]
+                {
+                    Arc::new(Mutex::new(ThreadPool::new()))
+                }
+            },
         })
     }
 
@@ -511,7 +461,7 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
                                     log::error!("Failed to recover from swap due to: {:?}", e);
                                 }
                             })?;
-                        maker.thread_pool.add_thread(handle);
+                        maker.thread_pool.lock()?.add_thread(handle);
                         // Clear the state value here
                         *connection_state = ConnectionState::default();
                         break;
@@ -597,7 +547,7 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
                                 log::error!("Failed to recover from swap due to: {:?}", e);
                             }
                         })?;
-                    maker.thread_pool.add_thread(handle);
+                    maker.thread_pool.lock()?.add_thread(handle);
                     // Clear the state values here
                     *state = ConnectionState::default();
                     break;

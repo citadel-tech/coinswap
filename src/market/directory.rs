@@ -3,19 +3,21 @@
 //! Handles market-related logic where Makers post their offers. Also provides functions to synchronize
 //! maker addresses from directory servers, post maker addresses to directory servers,
 
-use bitcoind::bitcoincore_rpc::{self, Client, RpcApi};
-
+#[cfg(feature = "tor")]
+use crate::utill::{get_tor_addrs, monitor_log_for_completion};
 use crate::{
-    market::rpc::start_rpc_server_thread,
+    market::rpc::start_rpc_server,
     utill::{
         get_dns_dir, parse_field, parse_toml, read_message, send_message, verify_fidelity_checks,
-        ConnectionType, DnsRequest,
+        ConnectionType, DnsRequest, ThreadPool,
     },
     wallet::{RPCConfig, WalletError},
 };
-
-#[cfg(feature = "tor")]
-use crate::utill::{get_tor_addrs, monitor_log_for_completion};
+use bitcoind::bitcoincore_rpc::{self, Client, RpcApi};
+use std::{
+    io::ErrorKind,
+    sync::{Mutex, MutexGuard},
+};
 
 use std::{
     cmp::Ordering,
@@ -86,6 +88,12 @@ impl<'a, T> From<PoisonError<RwLockWriteGuard<'a, T>>> for DirectoryServerError 
     }
 }
 
+impl<'a, T> From<PoisonError<MutexGuard<'a, T>>> for DirectoryServerError {
+    fn from(_: PoisonError<MutexGuard<'a, T>>) -> Self {
+        Self::MutexPossion
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct AddressEntry(pub u64, pub String);
 
@@ -102,7 +110,7 @@ impl Ord for AddressEntry {
 }
 
 /// Directory Configuration,
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct DirectoryServer {
     pub rpc_port: u16,
     pub port: u16,
@@ -111,6 +119,7 @@ pub struct DirectoryServer {
     pub data_dir: PathBuf,
     pub shutdown: AtomicBool,
     pub addresses: Arc<RwLock<BTreeSet<AddressEntry>>>,
+    pub thread_pool: Mutex<ThreadPool>,
 }
 
 impl Default for DirectoryServer {
@@ -132,6 +141,16 @@ impl Default for DirectoryServer {
             data_dir: get_dns_dir(),
             shutdown: AtomicBool::new(false),
             addresses: Arc::new(RwLock::new(BTreeSet::new())),
+            thread_pool: {
+                #[cfg(feature = "integration-test")]
+                {
+                    Mutex::new(ThreadPool::new(8080))
+                }
+                #[cfg(not(feature = "integration-test"))]
+                {
+                    Mutex::new(ThreadPool::new())
+                }
+            },
         }
     }
 }
@@ -219,6 +238,7 @@ impl DirectoryServer {
                 default_dns.connection_type,
             ),
             addresses,
+            ..default_dns
         })
     }
 }
@@ -262,6 +282,8 @@ pub fn write_addresses_to_file(
     directory: &Arc<DirectoryServer>,
     address_file: &Path,
 ) -> Result<(), DirectoryServerError> {
+
+    
     let file_content = directory
         .addresses
         .read()?
@@ -275,18 +297,57 @@ pub fn write_addresses_to_file(
     file.flush()?;
     Ok(())
 }
-pub fn start_directory_server(
-    directory: Arc<DirectoryServer>,
+pub fn start_dns_server(
+    dns: Arc<DirectoryServer>,
     rpc_config: Option<RPCConfig>,
 ) -> Result<(), DirectoryServerError> {
-    #[cfg(feature = "tor")]
-    let mut tor_handle = None;
-
     let rpc_config = rpc_config.unwrap_or_default();
 
     let rpc_client = bitcoincore_rpc::Client::try_from(&rpc_config)?;
 
-    match directory.connection_type {
+    // Handle Signal Termination
+    let dns_clone = dns.clone();
+    ctrlc::set_handler(move || {
+        shutdown_server(dns_clone.clone()).expect("Failed to shutdown DNS server");
+        std::process::exit(0);
+    })
+    .expect("Error setting up signal handler");
+
+    // THINK : Think about TOR feature.
+    // if let ConnectionType::TOR = dns.connection_type {
+    //     let tor_log_dir = "/tmp/tor-rust-directory/log";
+    //     if Path::new(tor_log_dir).exists() {
+    //         match fs::remove_file(tor_log_dir) {
+    //             Ok(_) => log::info!("Previous directory log file deleted successfully"),
+    //             Err(_) => log::error!("Error deleting directory log file"),
+    //         }
+    //     }
+
+    //     let socks_port = dns.socks_port;
+    //     let tor_port = dns.port;
+    //     let handle =
+    //         crate::tor::spawn_tor(socks_port, tor_port, "/tmp/tor-rust-directory".to_string());
+
+    //     dns.thread_pool.lock()?.add_tor_handle(handle);
+
+    //     sleep(Duration::from_secs(10));
+
+    //     if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
+    //         log::error!("Error monitoring Directory log file: {}", e);
+    //     }
+
+    //     log::info!("Directory tor is instantiated");
+
+    //     let onion_addr = get_tor_addrs(&PathBuf::from("/tmp/tor-rust-directory"))?;
+
+    //     log::info!(
+    //         "Directory Server is listening at {}:{}",
+    //         onion_addr,
+    //         tor_port
+    //     );
+    // }
+
+    match dns.connection_type {
         ConnectionType::CLEARNET => {}
         #[cfg(feature = "tor")]
         ConnectionType::TOR => {
@@ -300,13 +361,15 @@ pub fn start_directory_server(
                     }
                 }
 
-                let socks_port = directory.socks_port;
-                let tor_port = directory.port;
-                tor_handle = Some(crate::tor::spawn_tor(
+                let socks_port = dns.socks_port;
+                let tor_port = dns.port;
+                let handle = crate::tor::spawn_tor(
                     socks_port,
                     tor_port,
                     "/tmp/tor-rust-directory".to_string(),
-                ));
+                );
+
+                dns.thread_pool.lock()?.add_tor_handle(handle);
 
                 sleep(Duration::from_secs(10));
 
@@ -327,59 +390,85 @@ pub fn start_directory_server(
         }
     }
 
-    let directory_clone = directory.clone();
+    let directory_clone = dns.clone();
 
-    let rpc_thread = thread::spawn(move || {
-        log::info!("Spawning RPC Server Thread");
-        start_rpc_server_thread(directory_clone)
-    });
+    let rpc_thread = thread::Builder::new()
+        .name("RPC Server Thread".to_string())
+        .spawn(move || {
+            log::info!("Spawning RPC Server Thread");
+            if let Err(e) = start_rpc_server(directory_clone.clone()) {
+                log::error!("Failure from rpc server: {:?}", e);
+                directory_clone.shutdown.store(true, Relaxed);
+            }
+        })?;
 
-    let address_file = directory.data_dir.join("addresses.dat");
-    let directory_clone = directory.clone();
-    let address_writer_thread = thread::spawn(move || {
-        log::info!("Spawning Address Writer Thread");
-        start_address_writer_thread(directory_clone)
-    });
+    dns.thread_pool.lock()?.add_thread(rpc_thread);
 
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port))?;
+    let directory_clone = dns.clone();
 
-    while !directory.shutdown.load(Relaxed) {
+    let address_writer_thread = thread::Builder::new()
+        .name("Address Writer Thread".to_string())
+        .spawn(move || {
+            log::info!("Spawning Address Writer Thread");
+            if let Err(e) = start_address_writer_thread(directory_clone.clone()) {
+                log::error!("Failed to write address: {:?}", e);
+                directory_clone.shutdown.store(true, Relaxed);
+            }
+        })?;
+
+    dns.thread_pool.lock()?.add_thread(address_writer_thread);
+
+    log::info!("DNS server is ready");
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, dns.port))?;
+
+    // TODO: Think about this?
+    // Setting TCP stream in non-blocking mode would help in 
+    // TODO: 
+    listener.set_nonblocking(true)?; // Needed to not block a thread waiting for incoming connection.
+
+    while !dns.shutdown.load(Relaxed) {
         match listener.accept() {
             Ok((mut stream, addrs)) => {
                 log::debug!("Incoming connection from : {}", addrs);
                 stream.set_read_timeout(Some(Duration::from_secs(60)))?;
                 stream.set_write_timeout(Some(Duration::from_secs(60)))?;
-                handle_client(&mut stream, &directory.clone(), &rpc_client)?;
+                handle_client(&mut stream, &dns.clone(), &rpc_client)?;
             }
 
-            // If no connection received, check for shutdown or save addresses to disk
             Err(e) => {
-                log::error!("Error accepting incoming connection: {:?}", e);
+                // Do nothing when ErrorKind = WouldBlock
+                if e.kind() != ErrorKind::WouldBlock {
+                    log::error!("Error accepting incoming connection: {:?}", e);
+                    // Shut down Directory Server
+                    dns.shutdown.store(true, Relaxed);
+                    break;
+                }
             }
         }
 
         sleep(Duration::from_secs(3));
     }
 
-    log::info!("Shutdown signal received. Stopping directory server.");
+    shutdown_server(dns)?;
 
-    // Its okay to suppress the error here as we are shuting down anyway.
-    if let Err(e) = rpc_thread.join() {
-        log::error!("Error closing RPC Thread: {:?}", e);
-    }
-    if let Err(e) = address_writer_thread.join() {
-        log::error!("Error closing Address Writer Thread : {:?}", e);
-    }
+    Ok(())
+}
 
-    #[cfg(feature = "tor")]
-    {
-        if let Some(handle) = tor_handle {
-            crate::tor::kill_tor_handles(handle);
-            log::info!("Directory server and Tor instance terminated successfully");
-        }
-    }
+// TODO: Should I use Arc<Maker> or &Maker?
+pub fn shutdown_server(dns: Arc<DirectoryServer>) -> Result<(), DirectoryServerError> {
+    // set shutdown flag to true
+    dns.shutdown.store(true, Relaxed);
 
-    write_addresses_to_file(&directory, &address_file)?;
+    log::info!("Directory Server is shutting down....");
+    // kill Tor process and join all threads
+    dns.thread_pool.lock()?.join_all_threads();
+
+    let address_file = dns.data_dir.join("addresses.dat");
+
+    write_addresses_to_file(&dns, &address_file)?;
+
+    log::info!("Directory Server is shut down successfully");
 
     Ok(())
 }

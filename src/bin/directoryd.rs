@@ -1,7 +1,9 @@
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
-    market::directory::{start_directory_server, DirectoryServer, DirectoryServerError},
+    market::directory::{
+        shutdown_server, start_dns_server, DirectoryServer, DirectoryServerError,
+    },
     utill::{parse_proxy_auth, setup_directory_logger, ConnectionType},
     wallet::RPCConfig,
 };
@@ -70,7 +72,11 @@ fn main() -> Result<(), DirectoryServerError> {
     }
     let directory = Arc::new(DirectoryServer::new(args.data_directory, Some(conn_type))?);
 
-    start_directory_server(directory, Some(rpc_config))?;
+    // TODO: Pass this Error via ServerError?
+    if let Err(e) = start_dns_server(directory.clone(), Some(rpc_config)) {
+        log::error!("Error: {:?}", e);
+        shutdown_server(directory)?;
+    }
 
     Ok(())
 }

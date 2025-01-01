@@ -601,7 +601,7 @@ impl Taker {
         let mut txids_seen_once = HashSet::<Txid>::new();
 
         // Wait for this much time for txs to appear in mempool.
-        let wait_time = if cfg!(feature = "integration-test") {
+    let wait_time = if cfg!(feature = "integration-test") {
             10u64 // 10 secs for the tests
         } else {
             60 * 5 // 5mins for production
