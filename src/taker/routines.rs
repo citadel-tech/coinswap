@@ -358,7 +358,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
     }
 
     log::info!(
-        "Maker Received ={} | Maker is Forwarding = {} |  Coinswap Fees = {}  | Miner Fees paid by us={} ",
+        "Maker Received = {} | Maker is Forwarding = {} |  Coinswap Fees = {}  | Miner Fees paid by us = {} ",
         Amount::from_sat(this_amount),
         next_amount,
         Amount::from_sat(coinswap_fees),

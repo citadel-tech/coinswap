@@ -58,6 +58,9 @@ pub const GLOBAL_PAUSE: Duration = Duration::from_secs(10);
 /// Global heartbeat interval used during waiting periods in critical situations.
 pub const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 
+/// Number of confirmation required funding transaction.
+pub const REQUIRED_CONFIRMS: u32 = 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectionType {
     #[cfg(feature = "tor")]
@@ -588,17 +591,20 @@ mod tests {
             protocol_version_min: 1,
             protocol_version_max: 100,
         });
+
         thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             let msg_bytes = read_message(&mut socket).unwrap();
             let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes).unwrap();
-            assert_eq!(
-                msg,
-                MakerToTakerMessage::MakerHello(MakerHello {
-                    protocol_version_min: 1,
-                    protocol_version_max: 100
-                })
-            );
+
+            if let MakerToTakerMessage::MakerHello(hello) = msg {
+                assert!(hello.protocol_version_min == 1 && hello.protocol_version_max == 100);
+            } else {
+                panic!(
+                    "Received Wrong Message: Expected MakerHello variant, Got: {:?}",
+                    msg,
+                );
+            }
         });
 
         let mut stream = TcpStream::connect(address).unwrap();

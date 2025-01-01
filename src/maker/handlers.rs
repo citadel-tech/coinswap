@@ -19,8 +19,7 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 use super::{
     api::{
         recover_from_swap, ConnectionState, ExpectedMessage, Maker, MakerBehavior,
-        AMOUNT_RELATIVE_FEE_PCT, BASE_FEE, MIN_CONTRACT_REACTION_TIME, REQUIRED_CONFIRMS,
-        TIME_RELATIVE_FEE_PCT,
+        AMOUNT_RELATIVE_FEE_PCT, BASE_FEE, MIN_CONTRACT_REACTION_TIME, TIME_RELATIVE_FEE_PCT,
     },
     error::MakerError,
 };
@@ -40,6 +39,7 @@ use crate::{
         },
         Hash160,
     },
+    utill::REQUIRED_CONFIRMS,
     wallet::{IncomingSwapCoin, SwapCoin, WalletError, WalletSwapCoin},
 };
 
@@ -236,8 +236,6 @@ impl Maker {
 
         if total_funding_amount >= self.config.min_swap_amount
             && total_funding_amount < self.wallet.read()?.store.offer_maxsize
-        // TODO: Taker must not be allowed to send the amount beyond this range?
-        // why can't it be <= ?
         {
             log::info!(
                 "[{}] Total Funding Amount = {} | Funding Txids = {:?}",
@@ -249,7 +247,6 @@ impl Maker {
                 ContractSigsForSender { sigs },
             ))
         } else {
-            // Instead , we must create a MakerToTakerMessage variant stating about it rather than giving error back to Maker itself.
             Err(MakerError::General("not enough funds"))
         }
     }
@@ -424,12 +421,6 @@ impl Maker {
             message.refund_locktime,
             act_funding_txs_fees
         );
-
-        // log::info!(
-        //     "Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {} | ",
-        //     message.refund_locktime,
-        //     act_funding_txs_fees
-        // );
 
         connection_state.pending_funding_txes = my_funding_txes;
         connection_state.outgoing_swapcoins = outgoing_swapcoins;

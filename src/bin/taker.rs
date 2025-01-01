@@ -3,7 +3,7 @@ use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Auth};
 use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
-    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType},
+    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, REQUIRED_CONFIRMS},
     wallet::{Destination, RPCConfig, SendAmount},
 };
 use log::LevelFilter;
@@ -51,9 +51,6 @@ struct Cli {
     /// Sets the transaction count.
     #[clap(name = "tx_count", default_value = "3")]
     pub tx_count: u32,
-    /// Sets the required on-chain confirmations.
-    #[clap(name = "required_confirms", default_value = "1000")]
-    pub required_confirms: u32,
     /// List of sub commands to process various endpoints of taker cli app.
     #[clap(subcommand)]
     command: Commands,
@@ -98,11 +95,8 @@ fn main() -> Result<(), TakerError> {
     let args = Cli::parse();
 
     let rpc_network = bitcoin::Network::from_str(&args.bitcoin_network).unwrap();
-    let connection_type = if cfg!(feature = "integration-test") {
-        ConnectionType::CLEARNET
-    } else {
-        ConnectionType::TOR
-    };
+
+    let connection_type = ConnectionType::TOR;
 
     let rpc_config = RPCConfig {
         url: args.rpc,
@@ -115,7 +109,7 @@ fn main() -> Result<(), TakerError> {
         send_amount: Amount::from_sat(args.send_amount),
         maker_count: args.maker_count,
         tx_count: args.tx_count,
-        required_confirms: args.required_confirms,
+        required_confirms: REQUIRED_CONFIRMS,
     };
 
     let mut taker = Taker::init(

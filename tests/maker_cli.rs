@@ -158,7 +158,7 @@ fn test_maker_cli() {
     // Tor address check
     let tor_addr = maker_cli.execute_maker_cli(&["get-tor-address"]);
     await_message(&rx, "RPC request received: GetTorAddress");
-    assert_eq!(tor_addr, "Maker is not running on TOR");
+    assert!(tor_addr.contains("onion:6102"));
 
     // Initial Balance checks
     let seed_balance = maker_cli.execute_maker_cli(&["seed-balance"]);

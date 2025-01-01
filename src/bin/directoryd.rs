@@ -57,11 +57,7 @@ fn main() -> Result<(), DirectoryServerError> {
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
 
-    let conn_type = if cfg!(feature = "integration-test") {
-        ConnectionType::CLEARNET
-    } else {
-        ConnectionType::TOR
-    };
+    let conn_type = ConnectionType::TOR;
 
     #[cfg(feature = "tor")]
     {
@@ -69,6 +65,7 @@ fn main() -> Result<(), DirectoryServerError> {
             setup_mitosis();
         }
     }
+
     let directory = Arc::new(DirectoryServer::new(args.data_directory, Some(conn_type))?);
 
     start_directory_server(directory, Some(rpc_config))?;

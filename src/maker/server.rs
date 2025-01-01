@@ -211,7 +211,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
         *proof = Some(highest_proof);
     } else {
         // No bond in the wallet. Lets attempt to create one.
-        let amount = Amount::from_sat(maker.config.fidelity_value);
+        let amount = Amount::from_sat(maker.config.fidelity_amount);
         let current_height = maker
             .get_wallet()
             .read()?

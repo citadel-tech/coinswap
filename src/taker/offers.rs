@@ -28,7 +28,7 @@ use crate::{
 use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
 
 /// Represents an offer along with the corresponding maker address.
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OfferAndAddress {
     pub offer: Offer,
     pub address: MakerAddress,
@@ -175,7 +175,7 @@ pub fn fetch_offer_from_makers(
 
 /// Retrieves advertised maker addresses from directory servers based on the specified network.
 pub fn fetch_addresses_from_dns(
-    socks_port: Option<u16>,
+    _socks_port: Option<u16>,
     directory_server_address: String,
     connection_type: ConnectionType,
 ) -> Result<Vec<MakerAddress>, TakerError> {
@@ -186,7 +186,7 @@ pub fn fetch_addresses_from_dns(
             ConnectionType::CLEARNET => TcpStream::connect(directory_server_address.as_str())?,
             #[cfg(feature = "tor")]
             ConnectionType::TOR => {
-                let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
+                let socket_addrs = format!("127.0.0.1:{}", _socks_port.expect("Tor port expected"));
                 Socks5Stream::connect(socket_addrs, directory_server_address.as_str())?.into_inner()
             }
         };

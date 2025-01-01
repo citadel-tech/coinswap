@@ -208,7 +208,6 @@ pub fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                     // do nothing
                 } else {
                     log::error!("Error accepting RPC connection: {:?}", e);
-                    return Err(e.into()); // Why are we returning the error instead of continuing?
                 }
             }
         }

@@ -16,14 +16,14 @@ pub struct MakerConfig {
     pub port: u16,
     /// RPC listening port
     pub rpc_port: u16,
-    /// Minimum swap size.
+    /// Minimum Coinswap amount
     pub min_swap_amount: u64,
     /// Socks port
     pub socks_port: u16,
     /// Directory server address (can be clearnet or onion)
     pub directory_server_address: String,
-    /// Fidelity Bond Value
-    pub fidelity_value: u64,
+    /// Fidelity Bond amount
+    pub fidelity_amount: u64,
     /// Fidelity Bond timelock in Block heights.
     pub fidelity_timelock: u32,
     /// Connection type
@@ -38,8 +38,8 @@ impl Default for MakerConfig {
             min_swap_amount: MIN_SWAP_AMOUNT,
             socks_port: 19050,
             directory_server_address: "127.0.0.1:8080".to_string(),
-            fidelity_value: 5_000_000, // 5 million sats
-            fidelity_timelock: 26_000, // Approx 6 months of blocks
+            fidelity_amount: 5_000_000, // 5 million sats
+            fidelity_timelock: 26_000,  // Approx 6 months of blocks
             connection_type: {
                 #[cfg(feature = "tor")]
                 {
@@ -100,9 +100,9 @@ impl MakerConfig {
                 config_map.get("directory_server_address"),
                 default_config.directory_server_address,
             ),
-            fidelity_value: parse_field(
-                config_map.get("fidelity_value"),
-                default_config.fidelity_value,
+            fidelity_amount: parse_field(
+                config_map.get("fidelity_amount"),
+                default_config.fidelity_amount,
             ),
             fidelity_timelock: parse_field(
                 config_map.get("fidelity_timelock"),
@@ -123,7 +123,7 @@ rpc_port = {}
 min_swap_amount = {}
 socks_port = {}
 directory_server_address = {}
-fidelity_value = {}
+fidelity_amount = {}
 fidelity_timelock = {}
 connection_type = {:?}",
             self.port,
@@ -131,7 +131,7 @@ connection_type = {:?}",
             self.min_swap_amount,
             self.socks_port,
             self.directory_server_address,
-            self.fidelity_value,
+            self.fidelity_amount,
             self.fidelity_timelock,
             self.connection_type,
         );
@@ -172,7 +172,6 @@ mod tests {
             port = 6102
             rpc_port = 6103
             required_confirms = 1
-            min_contract_reaction_time = 48
             min_swap_amount = 100000
             socks_port = 19050
         "#;

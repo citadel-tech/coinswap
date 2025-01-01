@@ -12,7 +12,10 @@ use crate::{
         messages::{FidelityProof, ReqContractSigsForSender},
         Hash160,
     },
-    utill::{get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType, HEART_BEAT_INTERVAL},
+    utill::{
+        get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType, HEART_BEAT_INTERVAL,
+        REQUIRED_CONFIRMS,
+    },
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
 };
 use bitcoin::{
@@ -56,9 +59,6 @@ pub const RPC_PING_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Maker triggers the recovery mechanism, if Taker is idle for more than 300 secs.
 pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(300);
-
-/// Number of confirmation required funding transaction.
-pub const REQUIRED_CONFIRMS: u32 = 1;
 
 /// The minimum difference in locktime (in blocks) between the incoming and outgoing swaps.
 ///
@@ -591,6 +591,13 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
 /// Broadcast the contract transactions and claim funds via timelock.
 pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut bad_ip = Vec::new();
+
+    let conn_timeout = if cfg!(feature = "integration-test") {
+        Duration::from_secs(60)
+    } else {
+        IDLE_CONNECTION_TIMEOUT
+    };
+
     loop {
         if maker.shutdown.load(Relaxed) {
             break;
@@ -612,7 +619,7 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
                     ip,
                     no_response_since
                 );
-                if no_response_since > IDLE_CONNECTION_TIMEOUT {
+                if no_response_since > conn_timeout {
                     log::error!(
                         "[{}] Potential Dropped Connection from {}",
                         maker.config.port,

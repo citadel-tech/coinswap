@@ -12,7 +12,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::TcpStream,
     path::PathBuf,
-    thread::{self, sleep},
+    thread::sleep,
     time::{Duration, Instant},
 };
 
@@ -174,7 +174,7 @@ impl Taker {
     /// ### Parameters:
     /// - `data_dir`:  
     ///   - `Some(value)`: Use the specified directory for storing data.  
-    ///   - `None`: Use the default data directory (e.g., for Linux: `~/.coinswap/maker`).  
+    ///   - `None`: Use the default data directory (e.g., for Linux: `~/.coinswap/taker`).  
     /// - `wallet_file_name`:  
     ///   - `Some(value)`: Attempt to load a wallet file named `value`. If it does not exist, a new wallet with the given name will be created.  
     ///   - `None`: Create a new wallet file with the default name `maker-wallet`.  
@@ -263,15 +263,13 @@ impl Taker {
                     "/tmp/tor-rust-taker".to_string(),
                 ));
 
-                thread::sleep(Duration::from_secs(10)); // Think about this?
+                // wait for tor process to create a new log file.
+                std::thread::sleep(Duration::from_secs(3));
 
-                // when we are getting error while reading the file -> how can we say that taker tor is started?
                 if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
-                    log::error!("Error monitoring taker log file: {}", e);
+                    log::error!("Error monitoring taker log file: {}\n Try removing the tor directory and retry", e);
+                    return Err(TakerError::IO(e));
                 }
-
-                // TODO: Think about here?
-                log::info!("Taker tor is instantiated");
             }
         }
 
@@ -451,7 +449,7 @@ impl Taker {
         // Loop until we find a live maker who responded to our signature request.
         let (maker, funding_txs) = loop {
             // Fail early if not enough good makers in the list to satisfy swap requirements.
-            let untried_maker_count = self.offerbook.get_all_untried().len(); //TODO: why we want to remove good makers?
+            let untried_maker_count = self.offerbook.get_all_untried().len();
 
             if untried_maker_count < (self.ongoing_swap_state.swap_params.maker_count) {
                 log::error!("Not enough makers to satisfy swap requirements.");
@@ -859,7 +857,6 @@ impl Taker {
         maker_refund_locktime: u16,
         funding_tx_infos: &[FundingTxInfo],
     ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TakerError> {
-        // TODO: WHy we are using this api two times.
         let this_maker = &self
             .ongoing_swap_state
             .peer_infos
@@ -875,7 +872,7 @@ impl Taker {
         );
         let address = this_maker.address.to_string();
         let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(address)?, // Why we give return here instead of trying again?
+            ConnectionType::CLEARNET => TcpStream::connect(address)?,
             #[cfg(feature = "tor")]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
@@ -1700,7 +1697,7 @@ impl Taker {
             .get_all_untried()
             .iter()
             .find(|oa| {
-                send_amount > Amount::from_sat(oa.offer.min_size)
+                send_amount >= Amount::from_sat(oa.offer.min_size)
                     && send_amount < Amount::from_sat(oa.offer.max_size)
                     && !self
                         .ongoing_swap_state
