@@ -24,33 +24,33 @@ struct Cli {
         short = 'r',
         default_value = "127.0.0.1:18443"
     )]
-    pub rpc: String,
+    pub(crate) rpc: String,
     /// Sets the rpc basic authentication.
     #[clap(name="USER:PASSWORD",short='a',long, value_parser = parse_proxy_auth, default_value = "user:password")]
-    pub auth: (String, String),
+    pub(crate) auth: (String, String),
     /// Sets the full node network, this should match with the network of the running node.
     #[clap(
         long,
         short = 'b',
         default_value = "regtest", possible_values = &["regtest", "signet", "mainnet"]
     )]
-    pub bitcoin_network: String,
+    pub(crate) bitcoin_network: String,
     /// Sets the taker wallet's name. If the wallet file already exists at data-directory, it will load that wallet.
     #[clap(name = "WALLET", long, short = 'w')]
-    pub wallet_name: Option<String>,
+    pub(crate) wallet_name: Option<String>,
     /// Sets the verbosity level of logs.
     /// Default: Determined by the command passed.
     #[clap(long, short = 'v', possible_values = &["off", "error", "warn", "info", "debug", "trace"])]
-    pub verbosity: Option<String>,
+    pub(crate) verbosity: Option<String>,
     /// Sets the maker count to initiate coinswap with.
     #[clap(name = "maker_count", default_value = "2")]
-    pub maker_count: usize,
+    pub(crate) maker_count: usize,
     /// Sets the send amount.
     #[clap(name = "send_amount", default_value = "500000")]
-    pub send_amount: u64,
+    pub(crate) send_amount: u64,
     /// Sets the transaction count.
     #[clap(name = "tx_count", default_value = "3")]
-    pub tx_count: u32,
+    pub(crate) tx_count: u32,
     /// List of sub commands to process various endpoints of taker cli app.
     #[clap(subcommand)]
     command: Commands,

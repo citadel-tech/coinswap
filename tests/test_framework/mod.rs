@@ -43,7 +43,7 @@ use coinswap::{
 };
 
 /// Initiate the bitcoind backend.
-pub fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
+pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
     let mut conf = bitcoind::Conf::default();
     conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
     conf.staticdir = Some(datadir.join(".bitcoin"));
@@ -75,7 +75,7 @@ pub fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
 }
 
 /// Generate Blocks in regtest node.
-pub fn generate_blocks(bitcoind: &BitcoinD, n: u64) {
+pub(crate) fn generate_blocks(bitcoind: &BitcoinD, n: u64) {
     let mining_address = bitcoind
         .client
         .get_new_address(None, None)
@@ -90,7 +90,7 @@ pub fn generate_blocks(bitcoind: &BitcoinD, n: u64) {
 
 /// Send coins to a bitcoin address.
 #[allow(dead_code)]
-pub fn send_to_address(
+pub(crate) fn send_to_address(
     bitcoind: &BitcoinD,
     addrs: &bitcoin::Address,
     amount: bitcoin::Amount,
@@ -102,7 +102,7 @@ pub fn send_to_address(
 }
 
 // Waits until the mpsc::Receiver<String> recieves the expected message.
-pub fn await_message(rx: &Receiver<String>, expected_message: &str) {
+pub(crate) fn await_message(rx: &Receiver<String>, expected_message: &str) {
     loop {
         let log_message = rx.recv().expect("Failure from Sender side");
         if log_message.contains(expected_message) {
@@ -113,7 +113,7 @@ pub fn await_message(rx: &Receiver<String>, expected_message: &str) {
 
 // Start the DNS server based on given connection type and considers data directory for the server.
 #[allow(dead_code)]
-pub fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> process::Child {
+pub(crate) fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> process::Child {
     let (stdout_sender, stdout_recv): (Sender<String>, Receiver<String>) = mpsc::channel();
 
     let (stderr_sender, stderr_recv): (Sender<String>, Receiver<String>) = mpsc::channel();

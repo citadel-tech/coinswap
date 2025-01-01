@@ -20,16 +20,16 @@ use super::Wallet;
 use super::error::WalletError;
 
 #[derive(Debug)]
-pub struct CreateFundingTxesResult {
-    pub funding_txes: Vec<Transaction>,
-    pub payment_output_positions: Vec<u32>,
-    pub total_miner_fee: u64,
+pub(crate) struct CreateFundingTxesResult {
+    pub(crate) funding_txes: Vec<Transaction>,
+    pub(crate) payment_output_positions: Vec<u32>,
+    pub(crate) total_miner_fee: u64,
 }
 
 impl Wallet {
     // Attempts to create the funding transactions.
     /// Returns Ok(None) if there was no error but the wallet was unable to create funding txes
-    pub fn create_funding_txes(
+    pub(crate) fn create_funding_txes(
         &self,
         coinswap_amount: Amount,
         destinations: &[Address],
@@ -91,7 +91,7 @@ impl Wallet {
         ))
     }
 
-    pub fn generate_amount_fractions(
+    pub(crate) fn generate_amount_fractions(
         count: usize,
         total_amount: Amount,
     ) -> Result<Vec<u64>, WalletError> {

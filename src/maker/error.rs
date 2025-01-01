@@ -8,17 +8,35 @@ use crate::{error::NetError, protocol::error::ProtocolError, wallet::WalletError
 
 use super::MakerBehavior;
 
-/// Enum to handle Maker related errors.
+/// Enum to handle Maker-related errors.
+///
+/// This enum encapsulates different types of errors that can occur while interacting
+/// with the maker. Each variant represents a specific category of error and provides
+/// relevant details to help diagnose issues.
 #[derive(Debug)]
 pub enum MakerError {
+    /// Represents a standard IO error.
     IO(std::io::Error),
-    UnexpectedMessage { expected: String, got: String },
+    /// Represents an unexpected message received during communication.
+    UnexpectedMessage {
+        /// The expected message.
+        expected: String,
+        /// The received message.
+        got: String,
+    },
+    /// Represents a general error with a static message.
     General(&'static str),
+    /// Represents a mutex poisoning error.
     MutexPossion,
+    /// Represents an error related to secp256k1 operations.
     Secp(secp256k1::Error),
+    /// Represents an error related to wallet operations.
     Wallet(WalletError),
+    /// Represents a network-related error.
     Net(NetError),
+    /// Represents an error triggered by special maker behavior.
     SpecialBehaviour(MakerBehavior),
+    /// Represents a protocol-related error.
     Protocol(ProtocolError),
 }
 

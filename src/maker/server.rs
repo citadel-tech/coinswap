@@ -30,7 +30,7 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 #[cfg(feature = "tor")]
 use socks::Socks5Stream;
 
-pub use super::{api::RPC_PING_INTERVAL, Maker};
+pub(crate) use super::{api::RPC_PING_INTERVAL, Maker};
 
 use crate::{
     error::NetError,
@@ -48,6 +48,18 @@ use crate::{
 use crate::utill::monitor_log_for_completion;
 
 use crate::maker::error::MakerError;
+
+// Default values for Maker configurations
+pub(crate) const HEART_BEAT_INTERVAL_SECS: u64 = 3;
+pub(crate) const RPC_PING_INTERVAL_SECS: u64 = 60;
+pub(crate) const _DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 60 * 12; // 12 Hours
+pub(crate) const _IDLE_CONNECTION_TIMEOUT: u64 = 300;
+pub(crate) const REQUIRED_CONFIRMS: u64 = 1;
+pub(crate) const MIN_CONTRACT_REACTION_TIME: u16 = 48;
+
+/// Fee rate per swap amount in parts per billion (PPB).
+/// E.g., for 1 billion sats (0.01 BTC), a value of 10_000 would result in a 0.1% fee.
+pub(crate) const AMOUNT_RELATIVE_FEE_PPB: Amount = Amount::from_sat(10_000_000);
 
 #[cfg(feature = "tor")]
 type OptionalJoinHandle = Option<mitosis::JoinHandle<()>>;
@@ -389,7 +401,20 @@ fn handle_client(
     Ok(())
 }
 
-// The main Maker Server process.
+/// Starts the main Maker Server process.
+///
+/// This function initializes the Maker server by setting up network connections,
+/// configuring the wallet with fidelity bond, and spawning necessary threads for:
+/// - Checking Bitcoin Core connections.
+/// - Monitoring idle client connections.
+/// - Watching for broadcasted contract transactions.
+/// - Running an RPC server for interacting with `maker-cli`.
+///
+/// It also handles incoming peer-to-peer (P2P) client connections in a loop, where
+/// each connection spawns a dedicated handler thread.
+///
+/// The server continues to run until a shutdown signal is detected, at which point
+/// it performs cleanup tasks, such as saving wallet data and terminating active Tor sessions.
 pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Starting Maker Server");
     // Initialize network connections.

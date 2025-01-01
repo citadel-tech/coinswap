@@ -105,14 +105,25 @@ pub const MIN_SWAP_AMOUNT: u64 = 100000;
 // What's the use of RefundLocktimeStep?
 
 /// Used to configure the maker for testing purposes.
+///
+/// This enum defines various behaviors that can be assigned to the maker during testing
+/// to simulate different scenarios or states. These behaviors can help in verifying
+/// the robustness and correctness of the system under different conditions.
 #[derive(Debug, Clone, Copy)]
 pub enum MakerBehavior {
+    /// Represents the normal behavior of the maker.
     Normal,
+    /// Simulates closure at the "Request Contract Signatures for Sender" step.
     CloseAtReqContractSigsForSender,
+    /// Simulates closure at the "Proof of Funding" step.
     CloseAtProofOfFunding,
+    /// Simulates closure at the "Contract Signatures for Receiver and Sender" step.
     CloseAtContractSigsForRecvrAndSender,
+    /// Simulates closure at the "Contract Signatures for Receiver" step.
     CloseAtContractSigsForRecvr,
+    /// Simulates closure at the "Hash Preimage" step.
     CloseAtHashPreimage,
+    /// Simulates broadcasting the contract immediately after setup.
     BroadcastContractAfterSetup,
 }
 
@@ -121,7 +132,7 @@ pub enum MakerBehavior {
 /// If the received message doesn't match expected message,
 /// a protocol error will be returned.
 #[derive(Debug, Default, PartialEq, Clone)]
-pub enum ExpectedMessage {
+pub(crate) enum ExpectedMessage {
     #[default]
     TakerHello,
     NewlyConnectedTaker,
@@ -135,16 +146,16 @@ pub enum ExpectedMessage {
 
 /// Maintains the state of a connection, including the list of swapcoins and the next expected message.
 #[derive(Debug, Default, Clone)]
-pub struct ConnectionState {
-    pub allowed_message: ExpectedMessage,
-    pub incoming_swapcoins: Vec<IncomingSwapCoin>,
-    pub outgoing_swapcoins: Vec<OutgoingSwapCoin>,
-    pub pending_funding_txes: Vec<Transaction>,
+pub(crate) struct ConnectionState {
+    pub(crate) allowed_message: ExpectedMessage,
+    pub(crate) incoming_swapcoins: Vec<IncomingSwapCoin>,
+    pub(crate) outgoing_swapcoins: Vec<OutgoingSwapCoin>,
+    pub(crate) pending_funding_txes: Vec<Transaction>,
 }
 
-pub struct ThreadPool {
-    pub threads: Mutex<Vec<JoinHandle<()>>>,
-    pub port: u16,
+pub(crate) struct ThreadPool {
+    pub(crate) threads: Mutex<Vec<JoinHandle<()>>>,
+    pub(crate) port: u16,
 }
 
 impl Drop for ThreadPool {
@@ -156,14 +167,14 @@ impl Drop for ThreadPool {
 }
 
 impl ThreadPool {
-    pub fn new(port: u16) -> Self {
+    pub(crate) fn new(port: u16) -> Self {
         Self {
             threads: Mutex::new(Vec::new()),
             port,
         }
     }
 
-    pub fn add_thread(&self, handle: JoinHandle<()>) {
+    pub(crate) fn add_thread(&self, handle: JoinHandle<()>) {
         let mut threads = self.threads.lock().unwrap();
         threads.push(handle);
     }
@@ -204,23 +215,23 @@ impl ThreadPool {
 /// Represents the maker in the swap protocol.
 pub struct Maker {
     /// Defines special maker behavior, only applicable for testing
-    pub behavior: MakerBehavior,
+    pub(crate) behavior: MakerBehavior,
     /// Maker configurations
-    pub config: MakerConfig,
+    pub(crate) config: MakerConfig,
     /// Maker's underlying wallet
-    pub wallet: RwLock<Wallet>,
+    pub(crate) wallet: RwLock<Wallet>,
     /// A flag to trigger shutdown event
     pub shutdown: AtomicBool,
     /// Map of IP address to Connection State + last Connected instant
-    pub connection_state: Mutex<HashMap<IpAddr, (ConnectionState, Instant)>>,
+    pub(crate) connection_state: Mutex<HashMap<IpAddr, (ConnectionState, Instant)>>,
     /// Highest Value Fidelity Proof
-    pub highest_fidelity_proof: RwLock<Option<FidelityProof>>,
+    pub(crate) highest_fidelity_proof: RwLock<Option<FidelityProof>>,
     /// Is setup complete
     pub is_setup_complete: AtomicBool,
     /// Path for the data directory.
-    pub data_dir: PathBuf,
+    pub(crate) data_dir: PathBuf,
     /// Thread pool for managing all spawned threads
-    pub thread_pool: Arc<ThreadPool>,
+    pub(crate) thread_pool: Arc<ThreadPool>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -312,7 +323,7 @@ impl Maker {
         })
     }
 
-    pub fn get_data_dir(&self) -> &PathBuf {
+    pub(crate) fn get_data_dir(&self) -> &PathBuf {
         &self.data_dir
     }
 
@@ -323,7 +334,10 @@ impl Maker {
 
     /// Checks consistency of the [ProofOfFunding] message and return the Hashvalue
     /// used in hashlock transaction.
-    pub fn verify_proof_of_funding(&self, message: &ProofOfFunding) -> Result<Hash160, MakerError> {
+    pub(crate) fn verify_proof_of_funding(
+        &self,
+        message: &ProofOfFunding,
+    ) -> Result<Hash160, MakerError> {
         if message.confirmed_funding_txes.is_empty() {
             return Err(MakerError::General("No funding txs provided by Taker"));
         }
@@ -398,7 +412,7 @@ impl Maker {
     }
 
     /// Verify the contract transaction for Sender and return the signatures.
-    pub fn verify_and_sign_contract_tx(
+    pub(crate) fn verify_and_sign_contract_tx(
         &self,
         message: &ReqContractSigsForSender,
     ) -> Result<Vec<Signature>, MakerError> {
@@ -471,7 +485,7 @@ impl Maker {
 /// unsettled swap.
 ///
 /// If any one of the is ever observed, run the recovery routine.
-pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerError> {
+pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut failed_swap_ip = Vec::new();
     loop {
         if maker.shutdown.load(Relaxed) {
@@ -589,7 +603,7 @@ pub fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerErr
 ///
 /// If a connection remains idle for more than idle timeout time, thats a potential DOS attack.
 /// Broadcast the contract transactions and claim funds via timelock.
-pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
+pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut bad_ip = Vec::new();
 
     let conn_timeout = if cfg!(feature = "integration-test") {
@@ -679,7 +693,7 @@ pub fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
 
 /// Broadcast Incoming and Outgoing Contract transactions & timelock transactions after maturity.
 /// Remove contract transactions from the wallet.
-pub fn recover_from_swap(
+pub(crate) fn recover_from_swap(
     maker: Arc<Maker>,
     // Tuple of ((Multisig_reedemscript, Contract Tx), (Timelock, Timelock Tx))
     outgoings: Vec<((ScriptBuf, Transaction), (u16, Transaction))>,

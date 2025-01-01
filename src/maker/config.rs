@@ -65,7 +65,7 @@ impl MakerConfig {
     ///
     /// Default data-dir for linux: `~/.coinswap/maker`
     /// Default config locations:`~/.coinswap/maker/config.toml`.
-    pub fn new(config_path: Option<&Path>) -> io::Result<Self> {
+    pub(crate) fn new(config_path: Option<&Path>) -> io::Result<Self> {
         let default_config_path = get_maker_dir().join("config.toml");
 
         let config_path = config_path.unwrap_or(&default_config_path);
@@ -116,7 +116,7 @@ impl MakerConfig {
     }
 
     // Method to serialize the MakerConfig into a TOML string and write it to a file
-    pub fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
+    pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
             "port = {}
 rpc_port = {}

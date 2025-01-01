@@ -173,7 +173,7 @@ Protocol messages are defined in two enums in the `src/messages.rs`. The individ
 use `Send` and `Recv` in them to identify their context as per the above definition.
 
 ```rust
-pub enum MakerToTakerMessage {
+pub(crate) enum MakerToTakerMessage {
     /// Protocol Handshake.
     MakerHello(MakerHello),
     /// Send the Maker's offer advertisement.
@@ -189,7 +189,7 @@ pub enum MakerToTakerMessage {
 }
 ```
 ```rust
-pub enum TakerToMakerMessage {
+pub(crate) enum TakerToMakerMessage {
     /// Protocol Handshake.
     TakerHello(TakerHello),
     /// Request the Maker's Offer advertisement.

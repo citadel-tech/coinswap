@@ -38,12 +38,27 @@ use std::{
 
 use crate::error::NetError;
 
-/// Represents errors that can occur during directory server operations.
+/// Represents errors that may occur during directory server operations.
 #[derive(Debug)]
 pub enum DirectoryServerError {
+    /// Error originating from standard I/O operations.
+    ///
+    /// This variant wraps a [`std::io::Error`] to provide details about I/O failures encountered during directory server operations.
     IO(std::io::Error),
+
+    /// Error related to network operations.
+    ///
+    /// This variant wraps a [`NetError`] to represent various network-related issues.
     Net(NetError),
+
+    /// Error indicating a mutex was poisoned.
+    ///
+    /// This occurs when a thread panics while holding a mutex, rendering it unusable.
     MutexPossion,
+
+    /// Error related to wallet operations.
+    ///
+    /// This variant wraps a [`WalletError`] to capture issues arising during wallet-related operations.
     Wallet(WalletError),
     AddressFileCorrupted(String),
 }
@@ -99,11 +114,17 @@ impl From<ParseOutPointError> for DirectoryServerError {
 /// Directory Configuration,
 #[derive(Debug)]
 pub struct DirectoryServer {
+    /// RPC listening port
     pub rpc_port: u16,
+    /// Network listening port
     pub port: u16,
+    /// Socks port
     pub socks_port: u16,
+    /// Connection type
     pub connection_type: ConnectionType,
+    /// Directory server data directory
     pub data_dir: PathBuf,
+    /// Shutdown flag to stop the directory server
     pub shutdown: AtomicBool,
     pub addresses: Arc<RwLock<HashMap<OutPoint, String>>>,
 }
@@ -132,7 +153,7 @@ impl Default for DirectoryServer {
 }
 
 impl DirectoryServer {
-    /// Constructs a [DirectoryConfig] from a specified data directory. Or create default configs and load them.
+    /// Constructs a [DirectoryServer] from a specified data directory. Or create default configs and load them.
     ///
     /// The directory.toml file should exist at the provided data-dir location.
     /// Or else, a new default-config will be loaded and created at given data-dir location.
@@ -246,7 +267,7 @@ fn write_default_directory_config(config_path: &Path) -> Result<(), DirectorySer
     Ok(())
 }
 
-pub fn start_address_writer_thread(
+pub(crate) fn start_address_writer_thread(
     directory: Arc<DirectoryServer>,
 ) -> Result<(), DirectoryServerError> {
     let address_file = directory.data_dir.join("addresses.dat");
@@ -265,8 +286,8 @@ pub fn start_address_writer_thread(
     }
 }
 
-/// Write in-memory address data to address file
-pub fn write_addresses_to_file(
+/// Write in-memory address data to file.
+pub(crate) fn write_addresses_to_file(
     directory: &Arc<DirectoryServer>,
     address_file: &Path,
 ) -> Result<(), DirectoryServerError> {

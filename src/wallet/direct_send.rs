@@ -16,10 +16,14 @@ use crate::wallet::api::UTXOSpendInfo;
 
 use super::{error::WalletError, Wallet};
 
-/// Enum representing different options for the amount to be sent in a transaction.
+/// Represents options for specifying the amount to be sent in a transaction.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SendAmount {
+    /// Represents sending the maximum available amount in the transaction.
     Max,
+    /// Represents sending a specific amount.
+    ///
+    /// The `Amount` variant allows the user to define an exact value to be sent.
     Amount(Amount),
 }
 
@@ -35,10 +39,14 @@ impl FromStr for SendAmount {
     }
 }
 
-/// Enum representing different destination options for a transaction.
+/// Represents different destination options for a transaction.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Destination {
+    /// Represents a wallet as the destination for the transaction.
     Wallet,
+    /// Represents a specific address as the destination for the transaction.
+    ///
+    /// The `Address` variant contains the address to which the transaction is directed.
     Address(Address),
 }
 

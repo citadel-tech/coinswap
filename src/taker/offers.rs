@@ -30,7 +30,8 @@ use super::{config::TakerConfig, error::TakerError, routines::download_maker_off
 /// Represents an offer along with the corresponding maker address.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OfferAndAddress {
-    pub offer: Offer,
+    pub(crate) offer: Offer,
+    /// All maker addresses
     pub address: MakerAddress,
 }
 
@@ -47,7 +48,7 @@ struct OnionAddress {
 pub struct MakerAddress(OnionAddress);
 
 impl MakerAddress {
-    pub fn new(address: &str) -> Result<Self, TakerError> {
+    pub(crate) fn new(address: &str) -> Result<Self, TakerError> {
         if let Some((onion_addr, port)) = address.split_once(':') {
             Ok(Self(OnionAddress {
                 port: port.to_string(),
@@ -80,7 +81,7 @@ impl TryFrom<&mut TcpStream> for MakerAddress {
 /// at start of every swap. So good and bad maker list will ot be persisted.
 // TODO: Persist the offerbook in disk.
 #[derive(Debug, Default)]
-pub struct OfferBook {
+pub(crate) struct OfferBook {
     pub(super) all_makers: Vec<OfferAndAddress>,
     pub(super) good_makers: Vec<OfferAndAddress>,
     pub(super) bad_makers: Vec<OfferAndAddress>,
@@ -88,7 +89,7 @@ pub struct OfferBook {
 
 impl OfferBook {
     /// Gets all untried offers.
-    pub fn get_all_untried(&self) -> Vec<&OfferAndAddress> {
+    pub(crate) fn get_all_untried(&self) -> Vec<&OfferAndAddress> {
         self.all_makers
             .iter()
             .filter(|offer| !self.good_makers.contains(offer) && !self.bad_makers.contains(offer))
@@ -96,7 +97,7 @@ impl OfferBook {
     }
 
     /// Adds a new offer to the offer book.
-    pub fn add_new_offer(&mut self, offer: &OfferAndAddress) -> bool {
+    pub(crate) fn add_new_offer(&mut self, offer: &OfferAndAddress) -> bool {
         if !self.all_makers.contains(offer) {
             self.all_makers.push(offer.clone());
             true
@@ -106,7 +107,7 @@ impl OfferBook {
     }
 
     /// Adds a good maker to the offer book.
-    pub fn add_good_maker(&mut self, good_maker: &OfferAndAddress) -> bool {
+    pub(crate) fn add_good_maker(&mut self, good_maker: &OfferAndAddress) -> bool {
         if !self.good_makers.contains(good_maker) {
             self.good_makers.push(good_maker.clone());
             true
@@ -116,7 +117,7 @@ impl OfferBook {
     }
 
     /// Adds a bad maker to the offer book.
-    pub fn add_bad_maker(&mut self, bad_maker: &OfferAndAddress) -> bool {
+    pub(crate) fn add_bad_maker(&mut self, bad_maker: &OfferAndAddress) -> bool {
         if !self.bad_makers.contains(bad_maker) {
             self.bad_makers.push(bad_maker.clone());
             true
@@ -126,13 +127,13 @@ impl OfferBook {
     }
 
     /// Gets the list of bad makers.
-    pub fn get_bad_makers(&self) -> Vec<&OfferAndAddress> {
+    pub(crate) fn get_bad_makers(&self) -> Vec<&OfferAndAddress> {
         self.bad_makers.iter().collect()
     }
 }
 
 /// Synchronizes the offer book with specific maker addresses.
-pub fn fetch_offer_from_makers(
+pub(crate) fn fetch_offer_from_makers(
     maker_addresses: Vec<MakerAddress>,
     config: &TakerConfig,
 ) -> Result<Vec<OfferAndAddress>, TakerError> {
@@ -174,7 +175,7 @@ pub fn fetch_offer_from_makers(
 }
 
 /// Retrieves advertised maker addresses from directory servers based on the specified network.
-pub fn fetch_addresses_from_dns(
+pub(crate) fn fetch_addresses_from_dns(
     _socks_port: Option<u16>,
     directory_server_address: String,
     connection_type: ConnectionType,

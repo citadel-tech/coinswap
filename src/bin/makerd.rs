@@ -27,7 +27,7 @@ struct Cli {
         short = 'r',
         default_value = "127.0.0.1:18443"
     )]
-    pub rpc: String,
+    pub(crate) rpc: String,
     /// Sets the rpc basic authentication.
     #[clap(
         name = "USER:PASSWD",
@@ -36,7 +36,7 @@ struct Cli {
         value_parser = parse_proxy_auth,
         default_value = "user:password",
     )]
-    pub auth: (String, String),
+    pub(crate) auth: (String, String),
     /// Sets the full node network, this should match with the network of the running node.
     #[clap(
         name = "NETWORK",
@@ -44,10 +44,10 @@ struct Cli {
         short = 'n',
         default_value = "regtest", possible_values = &["regtest", "signet", "mainnet"]
     )]
-    pub rpc_network: String,
+    pub(crate) rpc_network: String,
     /// Sets the maker wallet's name. If the wallet file already exists at data-directory, it will load that wallet.
     #[clap(name = "WALLET", long, short = 'w')]
-    pub wallet_name: Option<String>,
+    pub(crate) wallet_name: Option<String>,
 }
 
 fn main() -> Result<(), MakerError> {

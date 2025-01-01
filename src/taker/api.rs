@@ -61,19 +61,19 @@ use crate::{
 };
 
 // Default values for Taker configurations
-pub const REFUND_LOCKTIME: u16 = 20;
-pub const REFUND_LOCKTIME_STEP: u16 = 20;
-pub const FIRST_CONNECT_ATTEMPTS: u32 = 5;
-pub const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1;
-pub const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 60;
-pub const RECONNECT_ATTEMPTS: u32 = 3200;
-pub const RECONNECT_SHORT_SLEEP_DELAY: u64 = 10;
-pub const RECONNECT_LONG_SLEEP_DELAY: u64 = 60;
-pub const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 60;
-pub const RECONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 300;
+pub(crate) const REFUND_LOCKTIME: u16 = 20;
+pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
+pub(crate) const FIRST_CONNECT_ATTEMPTS: u32 = 5;
+pub(crate) const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1;
+pub(crate) const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 60;
+pub(crate) const RECONNECT_ATTEMPTS: u32 = 3200;
+pub(crate) const RECONNECT_SHORT_SLEEP_DELAY: u64 = 10;
+pub(crate) const RECONNECT_LONG_SLEEP_DELAY: u64 = 60;
+pub(crate) const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 60;
+pub(crate) const RECONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 300;
 // TODO: Maker should decide this miner fee
 // This fee is used for both funding and contract txs.
-pub const MINER_FEE: u64 = 1000;
+pub(crate) const MINER_FEE: u64 = 1000;
 
 /// Swap specific parameters. These are user's policy and can differ among swaps.
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
@@ -112,22 +112,22 @@ enum TakerPosition {
 #[derive(Default)]
 struct OngoingSwapState {
     /// SwapParams used in current swap round.
-    pub swap_params: SwapParams,
+    pub(crate) swap_params: SwapParams,
     /// SwapCoins going out from the Taker.
-    pub outgoing_swapcoins: Vec<OutgoingSwapCoin>,
+    pub(crate) outgoing_swapcoins: Vec<OutgoingSwapCoin>,
     /// SwapCoins between Makers.
-    pub watchonly_swapcoins: Vec<Vec<WatchOnlySwapCoin>>,
+    pub(crate) watchonly_swapcoins: Vec<Vec<WatchOnlySwapCoin>>,
     /// SwapCoins received by the Taker.
-    pub incoming_swapcoins: Vec<IncomingSwapCoin>,
+    pub(crate) incoming_swapcoins: Vec<IncomingSwapCoin>,
     /// Information regarding all the swap participants (Makers).
     /// The last entry at the end of the swap round will be the Taker, as it's the last peer.
-    pub peer_infos: Vec<NextPeerInfo>,
+    pub(crate) peer_infos: Vec<NextPeerInfo>,
     /// List of funding transactions with optional merkleproofs.
-    pub funding_txs: Vec<(Vec<Transaction>, Vec<String>)>,
+    pub(crate) funding_txs: Vec<(Vec<Transaction>, Vec<String>)>,
     /// The preimage being used for this coinswap round.
-    pub active_preimage: Preimage,
+    pub(crate) active_preimage: Preimage,
     /// Enum defining the position of the Taker at each steps of a multihop swap.
-    pub taker_position: TakerPosition,
+    pub(crate) taker_position: TakerPosition,
 }
 
 /// Information for the next maker in the hop.
@@ -157,6 +157,7 @@ pub enum TakerBehavior {
 /// sequence and corresponding SwapCoin infos are stored in `ongoing_swap_state`.
 pub struct Taker {
     wallet: Wallet,
+    /// Taker configuration with refund, connection, and sleep settings.
     pub config: TakerConfig,
     offerbook: OfferBook,
     ongoing_swap_state: OngoingSwapState,
@@ -231,14 +232,17 @@ impl Taker {
         })
     }
 
+    /// Get wallet
     pub fn get_wallet(&self) -> &Wallet {
         &self.wallet
     }
 
+    /// Get mutable reference to wallet
     pub fn get_wallet_mut(&mut self) -> &mut Wallet {
         &mut self.wallet
     }
 
+    ///  Does the coinswap process
     pub fn do_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         #[cfg(feature = "tor")]
         let mut handle = None;
@@ -293,7 +297,7 @@ impl Taker {
     /// by executing the contract txs. If that fails too for any reason, user should manually call the [Taker::recover_from_swap].
     ///
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
-    pub fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
+    pub(crate) fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         log::info!("Syncing Offerbook");
         self.sync_offerbook()?;
 
@@ -1116,7 +1120,7 @@ impl Taker {
     }
 
     /// Create [WatchOnlySwapCoin] for the current Maker.
-    pub fn create_watch_only_swapcoins(
+    pub(crate) fn create_watch_only_swapcoins(
         &self,
         contract_sigs_as_recvr_and_sender: &ContractSigsAsRecvrAndSender,
         next_peer_multisig_pubkeys: &[PublicKey],
@@ -1724,6 +1728,7 @@ impl Taker {
         self.ongoing_swap_state = OngoingSwapState::default();
     }
 
+    /// Get all the bad makers
     pub fn get_bad_makers(&self) -> Vec<&OfferAndAddress> {
         self.offerbook.get_bad_makers()
     }
@@ -1746,7 +1751,7 @@ impl Taker {
     /// Checks if any contreact transactions have been broadcasted.
     /// Returns the txid list of all the broadcasted contract transaction.
     /// Empty vector if nothing is nothing is broadcasted. (usual case).
-    pub fn check_for_broadcasted_contract_txes(&self) -> Vec<Txid> {
+    pub(crate) fn check_for_broadcasted_contract_txes(&self) -> Vec<Txid> {
         let contract_txids = self
             .ongoing_swap_state
             .incoming_swapcoins
@@ -1778,6 +1783,7 @@ impl Taker {
         seen_txids
     }
 
+    /// Recover from a bad swap
     pub fn recover_from_swap(&mut self) -> Result<(), TakerError> {
         let (incomings, outgoings) = self.wallet.find_unfinished_swapcoins();
 

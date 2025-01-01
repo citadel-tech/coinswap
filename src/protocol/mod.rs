@@ -1,7 +1,7 @@
 //! Defines the Contract Transaction and Protocol Messages.
 
-pub mod contract;
+pub(crate) mod contract;
 pub mod error;
-pub mod messages;
+pub(crate) mod messages;
 
-pub use contract::Hash160;
+pub(crate) use contract::Hash160;

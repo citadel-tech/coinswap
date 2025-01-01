@@ -4,21 +4,75 @@ use crate::protocol::error::ProtocolError;
 
 use super::fidelity::FidelityError;
 
-/// Enum for handling wallet-related errors.
+/// Represents various errors that can occur within a wallet.
+///
+/// This enum consolidates errors from multiple sources such as I/O, CBOR parsing,
+/// and custom application logic.
 #[derive(Debug)]
 pub enum WalletError {
+    /// Represents a standard I/O error.
+    ///
+    /// Typically occurs during file or network operations.
     IO(std::io::Error),
+
+    /// Represents an error during CBOR (Concise Binary Object Representation) serialization or deserialization.
+    ///
+    /// This is used for encoding/decoding data structures.
     Cbor(serde_cbor::Error),
+
+    /// Represents an error returned by the Bitcoin Core RPC client.
+    ///
+    /// Typically occurs during communication with a Bitcoin node.
     Rpc(bitcoind::bitcoincore_rpc::Error),
+
+    /// Represents an error related to BIP32 (Hierarchical Deterministic Wallets).
+    ///
+    /// This may occur during key derivation or wallet operations involving BIP32 paths.
     BIP32(bitcoin::bip32::Error),
+
+    /// Represents an error related to BIP39 (Mnemonic Codes for Generating Deterministic Keys).
+    ///
+    /// Typically occurs when handling mnemonic phrases for seed generation.
     BIP39(bip39::Error),
+
+    /// Represents a general error with a descriptive message.
+    ///
+    /// Use this variant for errors that do not fall under any specific category.
     General(String),
+
+    /// Represents an error related to protocol violations or unexpected protocol behavior.
     Protocol(ProtocolError),
+
+    /// Represents an error related to fidelity operations.
+    ///
+    /// Typically specific to application-defined fidelity processes.
     Fidelity(FidelityError),
+
+    /// Represents an error with Bitcoin's locktime conversion.
+    ///
+    /// This occurs when converting between absolute and relative locktime representations.
     Locktime(bitcoin::blockdata::locktime::absolute::ConversionError),
+
+    /// Represents an error from the Secp256k1 cryptographic library.
+    ///
+    /// Typically occurs during signature generation or verification.
     Secp(bitcoin::secp256k1::Error),
+
+    /// Represents an error related to Bitcoin consensus rules.
+    ///
+    /// Use this variant to indicate issues related to transaction or block validation.
     Consensus(String),
-    InsufficientFund { available: f64, required: f64 },
+
+    /// Represents an error when the wallet has insufficient funds to complete an operation.
+    ///
+    /// - `available`: The amount of funds available in the wallet.
+    /// - `required`: The amount of funds needed to complete the operation.
+    InsufficientFund {
+        /// The amount of funds available in the wallet.
+        available: f64,
+        /// The amount of funds needed to complete the operation.
+        required: f64,
+    },
 }
 
 impl From<std::io::Error> for WalletError {

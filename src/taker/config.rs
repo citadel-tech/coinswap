@@ -53,7 +53,7 @@ impl TakerConfig {
     ///
     /// Default data-dir for linux: `~/.coinswap/taker`
     /// Default config locations: `~/.coinswap/taker/config.toml`.
-    pub fn new(config_path: Option<&Path>) -> io::Result<Self> {
+    pub(crate) fn new(config_path: Option<&Path>) -> io::Result<Self> {
         let default_config_path = get_taker_dir().join("config.toml");
 
         let config_path = config_path.unwrap_or(&default_config_path);
@@ -91,7 +91,7 @@ impl TakerConfig {
     }
 
     // Method to manually serialize the Taker Config into a TOML string
-    pub fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
+    pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
             "port = {}
 socks_port = {}

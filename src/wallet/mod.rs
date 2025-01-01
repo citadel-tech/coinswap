@@ -9,12 +9,11 @@ mod rpc;
 mod storage;
 mod swapcoin;
 
-pub use api::{DisplayAddressType, UTXOSpendInfo, Wallet};
+pub(crate) use api::{UTXOSpendInfo, Wallet};
 pub use direct_send::{Destination, SendAmount};
 pub use error::WalletError;
-pub use fidelity::{fidelity_redeemscript, FidelityBond, FidelityError};
+pub(crate) use fidelity::{fidelity_redeemscript, FidelityBond, FidelityError};
 pub use rpc::RPCConfig;
-pub use storage::WalletStore;
-pub use swapcoin::{
+pub(crate) use swapcoin::{
     IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletSwapCoin, WatchOnlySwapCoin,
 };
