@@ -315,3 +315,24 @@ impl Display for MakerToTakerMessage {
         }
     }
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DnsMetadata {
+    pub url: String,
+    pub proof: FidelityProof,
+}
+
+// Structured requests and responses using serde.
+#[derive(Serialize, Deserialize, Debug)]
+#[allow(clippy::large_enum_variant)]
+pub enum DnsRequest {
+    Post {
+        metadata: DnsMetadata,
+    },
+    Get,
+    #[cfg(feature = "integration-test")]
+    Dummy {
+        url: String,
+        vout: u32, // represents a specific vout value of the OutPoint(deadbeefcafebabefeedc0ffee123456789abcdeffedcba9876543210ffeeddcc:vout)
+    },
+}

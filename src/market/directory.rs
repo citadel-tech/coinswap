@@ -3,13 +3,16 @@
 //! Handles market-related logic where Makers post their offers. Also provides functions to synchronize
 //! maker addresses from directory servers, post maker addresses to directory servers,
 
+use bitcoin::{transaction::ParseOutPointError, OutPoint};
 use bitcoind::bitcoincore_rpc::{self, Client, RpcApi};
+use std::collections::hash_map::Entry;
 
 use crate::{
     market::rpc::start_rpc_server_thread,
+    protocol::messages::DnsRequest,
     utill::{
         get_dns_dir, parse_field, parse_toml, read_message, send_message, verify_fidelity_checks,
-        ConnectionType, DnsRequest, HEART_BEAT_INTERVAL,
+        ConnectionType, HEART_BEAT_INTERVAL,
     },
     wallet::{RPCConfig, WalletError},
 };
@@ -18,13 +21,13 @@ use crate::{
 use crate::utill::{get_tor_addrs, monitor_log_for_completion};
 
 use std::{
-    cmp::Ordering,
-    collections::BTreeSet,
+    collections::HashMap,
     convert::TryFrom,
     fs::{self, File},
     io::{BufRead, BufReader, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
@@ -42,6 +45,7 @@ pub enum DirectoryServerError {
     Net(NetError),
     MutexPossion,
     Wallet(WalletError),
+    AddressFileCorrupted(String),
 }
 
 impl From<WalletError> for DirectoryServerError {
@@ -86,18 +90,9 @@ impl<'a, T> From<PoisonError<RwLockWriteGuard<'a, T>>> for DirectoryServerError 
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct AddressEntry(pub u64, pub String);
-
-impl PartialOrd for AddressEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for AddressEntry {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other.0.cmp(&self.0).then_with(|| self.1.cmp(&other.1))
+impl From<ParseOutPointError> for DirectoryServerError {
+    fn from(value: ParseOutPointError) -> Self {
+        Self::AddressFileCorrupted(value.to_string())
     }
 }
 
@@ -110,7 +105,7 @@ pub struct DirectoryServer {
     pub connection_type: ConnectionType,
     pub data_dir: PathBuf,
     pub shutdown: AtomicBool,
-    pub addresses: Arc<RwLock<BTreeSet<AddressEntry>>>,
+    pub addresses: Arc<RwLock<HashMap<OutPoint, String>>>,
 }
 
 impl Default for DirectoryServer {
@@ -131,7 +126,7 @@ impl Default for DirectoryServer {
             },
             data_dir: get_dns_dir(),
             shutdown: AtomicBool::new(false),
-            addresses: Arc::new(RwLock::new(BTreeSet::new())),
+            addresses: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -178,7 +173,7 @@ impl DirectoryServer {
             *value = conn_type_string;
 
             // Update the file on disk
-            let mut file = File::create(config_path)?;
+            let mut config_file = File::create(config_path)?;
             let mut content = String::new();
 
             for (i, (key, value)) in config_map.iter().enumerate() {
@@ -189,23 +184,12 @@ impl DirectoryServer {
                 }
             }
 
-            file.write_all(content.as_bytes())?;
+            config_file.write_all(content.as_bytes())?;
         }
 
-        let addresses = Arc::new(RwLock::new(BTreeSet::new()));
+        // Load all addresses from address.dat file
         let address_file = data_dir.join("addresses.dat");
-        if let Ok(file) = File::open(&address_file) {
-            let reader = BufReader::new(file);
-            for address in reader.lines().map_while(Result::ok) {
-                if let Some((key, value)) = address.split_once(',') {
-                    if let Ok(key) = key.trim().parse::<u64>() {
-                        addresses
-                            .write()?
-                            .insert(AddressEntry(key, value.to_string()));
-                    }
-                }
-            }
-        }
+        let addresses = Arc::new(RwLock::new(read_addresses_from_file(&address_file)?));
         let default_dns = Self::default();
 
         Ok(DirectoryServer {
@@ -220,6 +204,29 @@ impl DirectoryServer {
             ),
             addresses,
         })
+    }
+
+    /// Updates the in-memory address map. If entry already exists, updates the value. If new entry, inserts the value.
+    pub fn updated_address_map(
+        &self,
+        metadata: (String, OutPoint),
+    ) -> Result<(), DirectoryServerError> {
+        match self.addresses.write()?.entry(metadata.1) {
+            Entry::Occupied(mut value) => {
+                log::info!("Maker Address Got Updated | Existing Address {} | New Address {} | Fidelity Outpoint {}", value.get(), metadata.0, metadata.1);
+                *value.get_mut() = metadata.0.clone();
+                Ok(())
+            }
+            Entry::Vacant(value) => {
+                log::info!(
+                    "New Maker Address Added {} | Fidelity Outpoint {}",
+                    metadata.0,
+                    metadata.1
+                );
+                value.insert(metadata.0.clone());
+                Ok(())
+            }
+        }
     }
 }
 
@@ -258,6 +265,7 @@ pub fn start_address_writer_thread(
     }
 }
 
+/// Write in-memory address data to address file
 pub fn write_addresses_to_file(
     directory: &Arc<DirectoryServer>,
     address_file: &Path,
@@ -266,7 +274,7 @@ pub fn write_addresses_to_file(
         .addresses
         .read()?
         .iter()
-        .map(|AddressEntry(addr, amount)| format!("{},{}\n", addr, amount))
+        .map(|(op, addr)| format!("{},{}\n", op, addr))
         .collect::<Vec<String>>()
         .join("");
 
@@ -275,6 +283,31 @@ pub fn write_addresses_to_file(
     file.flush()?;
     Ok(())
 }
+
+/// Read address data from file and return the HashMap
+pub fn read_addresses_from_file(
+    path: &Path,
+) -> Result<HashMap<OutPoint, String>, DirectoryServerError> {
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let reader = BufReader::new(File::open(path)?);
+
+    reader
+        .lines()
+        .map(|line| {
+            let line = line?;
+            let (outpoint, addr) =
+                line.split_once(',')
+                    .ok_or(DirectoryServerError::AddressFileCorrupted(
+                        "deliminator missing in address.dat file".to_string(),
+                    ))?;
+            let op = OutPoint::from_str(outpoint)?;
+            Ok((op, addr.to_string()))
+        })
+        .collect::<Result<HashMap<_, _>, DirectoryServerError>>()
+}
+
 pub fn start_directory_server(
     directory: Arc<DirectoryServer>,
     rpc_config: Option<RPCConfig>,
@@ -408,11 +441,7 @@ fn handle_client(
                 current_height,
             ) {
                 Ok(_) => {
-                    log::info!("Maker verified successfully.");
-                    directory.addresses.write()?.insert(AddressEntry(
-                        metadata.proof.bond.amount.to_sat(),
-                        metadata.url.clone(),
-                    ));
+                    directory.updated_address_map((metadata.url, metadata.proof.bond.outpoint))?;
                 }
                 Err(e) => {
                     log::error!(
@@ -428,16 +457,24 @@ fn handle_client(
             let addresses = directory.addresses.read()?;
             let response = addresses
                 .iter()
-                .fold(String::new(), |acc, AddressEntry(_, addr)| {
-                    acc + addr + "\n"
-                });
+                .fold(String::new(), |acc, (_, addr)| acc + addr + "\n");
             log::debug!("Sending Addresses: {}", response);
             send_message(stream, &response)?;
         }
         #[cfg(feature = "integration-test")]
-        DnsRequest::Dummy { url } => {
+        // Used for IT, only checks the updated_address_map() function.
+        DnsRequest::Dummy { url, vout } => {
             log::info!("Got new maker address: {}", &url);
-            directory.addresses.write()?.insert(AddressEntry(0, url));
+
+            // Create a constant txid for tests
+            // Its okay to unwrap as this is test-only
+            let txid = bitcoin::Txid::from_str(
+                "c3a04e4bdf3c8684c5cf5c8b2f3c43009670bc194ac6c856b3ec9d3a7a6e2602",
+            )
+            .unwrap();
+            let fidelity_op = OutPoint::new(txid, vout);
+
+            directory.updated_address_map((url, fidelity_op))?;
         }
     }
     Ok(())

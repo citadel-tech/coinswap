@@ -13,7 +13,6 @@ use log4rs::{
     config::{Appender, Logger, Root},
     Config,
 };
-use serde::{Deserialize, Serialize};
 use std::{
     env, fmt,
     io::{BufReader, BufWriter, ErrorKind, Read},
@@ -505,25 +504,6 @@ pub fn parse_proxy_auth(s: &str) -> Result<(String, String), NetError> {
     let passwd = parts[1].to_string();
 
     Ok((user, passwd))
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct DnsMetadata {
-    pub url: String,
-    pub proof: FidelityProof,
-}
-
-// Structured requests and responses using serde.
-#[derive(Serialize, Deserialize, Debug)]
-pub enum DnsRequest {
-    Post {
-        metadata: Box<DnsMetadata>,
-    },
-    Get,
-    #[cfg(feature = "integration-test")]
-    Dummy {
-        url: String,
-    },
 }
 
 pub fn verify_fidelity_checks(

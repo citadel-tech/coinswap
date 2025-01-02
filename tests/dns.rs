@@ -3,14 +3,15 @@ use std::{io::Write, net::TcpStream, process::Command, thread, time::Duration};
 
 mod test_framework;
 
-use coinswap::utill::DnsRequest;
+use coinswap::{protocol::messages::DnsRequest, utill::ConnectionType};
 use test_framework::{init_bitcoind, start_dns};
 
-fn send_addresses(addresses: &[&str]) {
+fn send_addresses(addresses: &[(&str, u32)]) {
     for address in addresses {
         let mut stream = TcpStream::connect(("127.0.0.1", 8080)).unwrap();
         let request = DnsRequest::Dummy {
-            url: address.to_string(),
+            url: address.0.to_string(),
+            vout: address.1,
         };
         let buffer = serde_cbor::ser::to_vec(&request).unwrap();
         let length = buffer.len() as u32;
@@ -20,12 +21,14 @@ fn send_addresses(addresses: &[&str]) {
     }
 }
 
-fn verify_addresses(addresses: &[&str]) {
+fn verify_addresses(addresses: &[(&str, u32)]) {
     let output = Command::new("./target/debug/directory-cli")
         .arg("list-addresses")
         .output()
         .unwrap();
     let addresses_output = String::from_utf8(output.stdout).unwrap();
+
+    println!("{}", addresses_output);
 
     assert!(
         output.stderr.is_empty(),
@@ -33,10 +36,20 @@ fn verify_addresses(addresses: &[&str]) {
         String::from_utf8(output.stderr).unwrap()
     );
 
-    for address in addresses {
-        assert!(
-            addresses_output.contains(&address.to_string()),
-            "Address {} not found",
+    // TODO add more through script checking
+    for (address, index) in addresses {
+        assert_eq!(
+            addresses_output.match_indices(&address.to_string()).count(),
+            1,
+            "Address {} not found or duplicate entries found",
+            address
+        );
+        assert_eq!(
+            addresses_output
+                .match_indices(&format!("vout: {}", index.to_string()))
+                .count(),
+            1,
+            "OP index {} not found",
             address
         );
     }
@@ -58,7 +71,13 @@ fn test_dns() {
 
     let mut process = start_dns(&data_dir, &bitcoind);
 
-    let initial_addresses = vec!["127.0.0.1:8080", "127.0.0.1:8081", "127.0.0.1:8082"];
+    // The indexes denotes vout of an `OutPoint(deadbeefcafebabefeedc0ffee123456789abcdeffedcba9876543210ffeeddcc:vout)``
+    // So using the same index for different address, will replace the address.
+    let initial_addresses = vec![
+        ("127.0.0.1:8080", 0),
+        ("127.0.0.1:8081", 1),
+        ("127.0.0.1:8082", 2),
+    ];
     send_addresses(&initial_addresses);
     thread::sleep(Duration::from_secs(10));
     verify_addresses(&initial_addresses);
@@ -69,7 +88,9 @@ fn test_dns() {
 
     let mut process = start_dns(&data_dir, &bitcoind);
 
-    let additional_addresses = vec!["127.0.0.1:8083", "127.0.0.1:8084"];
+    // Replace address 8082 to 8083 registered for Bond index 2.
+    // Add a new entry with a new bond index
+    let additional_addresses = vec![("127.0.0.1:8083", 2), ("127.0.0.1:8084", 3)];
     send_addresses(&additional_addresses);
     thread::sleep(Duration::from_secs(10));
 
@@ -78,11 +99,10 @@ fn test_dns() {
 
     let mut process = start_dns(&data_dir, &bitcoind);
     let all_addresses = vec![
-        "127.0.0.1:8080",
-        "127.0.0.1:8081",
-        "127.0.0.1:8082",
-        "127.0.0.1:8083",
-        "127.0.0.1:8084",
+        ("127.0.0.1:8080", 0),
+        ("127.0.0.1:8081", 1),
+        ("127.0.0.1:8083", 2),
+        ("127.0.0.1:8084", 3),
     ];
     verify_addresses(&all_addresses);
 
