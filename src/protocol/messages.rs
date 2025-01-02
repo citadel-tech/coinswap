@@ -229,7 +229,7 @@ pub(crate) struct MakerHello {
 
 /// Contains proof data related to fidelity bond.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub(crate) struct FidelityProof {
+pub struct FidelityProof {
     pub(crate) bond: FidelityBond,
     pub(crate) cert_hash: Hash,
     pub(crate) cert_sig: bitcoin::secp256k1::ecdsa::Signature,
@@ -316,23 +316,34 @@ impl Display for MakerToTakerMessage {
     }
 }
 
+/// Metadata shared by the maker with the Directory Server for verifying authenticity.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DnsMetadata {
+    /// The maker's URL.
     pub url: String,
+    /// Proof of the maker's fidelity bond funding.
     pub proof: FidelityProof,
 }
 
-// Structured requests and responses using serde.
+/// Enum representing DNS request message types.
+///
+/// These requests and responses are structured using Serde for serialization and deserialization.
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum DnsRequest {
+    /// A request sent by the maker to register itself with the DNS server and authenticate.
     Post {
+        /// Metadata containing the maker's URL and fidelity proof.
         metadata: DnsMetadata,
     },
+    /// A request sent by the taker to fetch all valid maker addresses from the DNS server.
     Get,
+    /// Dummy data used for integration tests.
     #[cfg(feature = "integration-test")]
     Dummy {
+        /// A dummy URL for testing.
         url: String,
-        vout: u32, // represents a specific vout value of the OutPoint(deadbeefcafebabefeedc0ffee123456789abcdeffedcba9876543210ffeeddcc:vout)
+        /// A dummy `vout` value, representing a specific output index of an OutPoint.
+        vout: u32,
     },
 }

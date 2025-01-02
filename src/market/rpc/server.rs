@@ -40,7 +40,7 @@ fn handle_request(
     Ok(())
 }
 
-pub(crate) fn start_rpc_server_thread(
+pub fn start_rpc_server_thread(
     directory: Arc<DirectoryServer>,
 ) -> Result<(), DirectoryServerError> {
     let rpc_port = directory.rpc_port;

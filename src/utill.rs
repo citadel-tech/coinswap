@@ -13,6 +13,7 @@ use log4rs::{
     config::{Appender, Logger, Root},
     Config,
 };
+use serde::{Deserialize, Serialize};
 use std::{
     env, fmt,
     io::{BufReader, BufWriter, ErrorKind, Read},

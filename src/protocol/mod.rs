@@ -5,3 +5,5 @@ pub mod error;
 pub(crate) mod messages;
 
 pub(crate) use contract::Hash160;
+
+pub use messages::{DnsMetadata, DnsRequest};

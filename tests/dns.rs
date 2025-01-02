@@ -3,7 +3,7 @@ use std::{io::Write, net::TcpStream, process::Command, thread, time::Duration};
 
 mod test_framework;
 
-use coinswap::{protocol::messages::DnsRequest, utill::ConnectionType};
+use coinswap::protocol::DnsRequest;
 use test_framework::{init_bitcoind, start_dns};
 
 fn send_addresses(addresses: &[(&str, u32)]) {
@@ -46,7 +46,7 @@ fn verify_addresses(addresses: &[(&str, u32)]) {
         );
         assert_eq!(
             addresses_output
-                .match_indices(&format!("vout: {}", index.to_string()))
+                .match_indices(&format!("vout: {}", index))
                 .count(),
             1,
             "OP index {} not found",
