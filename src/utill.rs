@@ -49,21 +49,29 @@ const SHIFT_FOR_C0: u64 = 35;
 const CHECKSUM_FINAL_XOR_VALUE: u64 = 1;
 
 /// Global timeout for all network connections.
-pub const NET_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const NET_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Used as delays on reattempting some network communications.
-pub const GLOBAL_PAUSE: Duration = Duration::from_secs(10);
+pub(crate) const GLOBAL_PAUSE: Duration = Duration::from_secs(10);
 
 /// Global heartbeat interval used during waiting periods in critical situations.
-pub const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
+pub(crate) const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 
 /// Number of confirmation required funding transaction.
 pub const REQUIRED_CONFIRMS: u32 = 1;
 
+/// Specifies the type of connection: TOR or Clearnet.
+///
+/// This enum is used to distinguish between different types of network connections
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectionType {
+    /// Represents a TOR connection type.
+    ///
+    /// This variant is only available when the `tor` feature is enabled.
     #[cfg(feature = "tor")]
     TOR,
+
+    /// Represents a Clearnet connection type.
     CLEARNET,
 }
 
@@ -91,7 +99,7 @@ impl fmt::Display for ConnectionType {
 }
 
 /// Read the tor address given an hidden_service directory path
-pub fn get_tor_addrs(hs_dir: &Path) -> io::Result<String> {
+pub(crate) fn get_tor_addrs(hs_dir: &Path) -> io::Result<String> {
     let hostname_file_path = hs_dir.join("hs-dir").join("hostname");
     let mut hostname_file = File::open(hostname_file_path).unwrap();
     let mut tor_addrs: String = String::new();
@@ -116,20 +124,26 @@ fn get_data_dir() -> PathBuf {
 }
 
 /// Get the Maker Directory
-pub fn get_maker_dir() -> PathBuf {
+pub(crate) fn get_maker_dir() -> PathBuf {
     get_data_dir().join("maker")
 }
 
 /// Get the Taker Directory
-pub fn get_taker_dir() -> PathBuf {
+pub(crate) fn get_taker_dir() -> PathBuf {
     get_data_dir().join("taker")
 }
 
 /// Get the DNS Directory
-pub fn get_dns_dir() -> PathBuf {
+pub(crate) fn get_dns_dir() -> PathBuf {
     get_data_dir().join("dns")
 }
 
+/// Sets up the logger for the taker component.
+///
+/// This method initializes the logging configuration for the taker, directing logs to both
+/// the console and a file. It sets the `RUST_LOG` environment variable to provide default
+/// log levels and configures log4rs with the specified filter level for fine-grained control
+/// of log verbosity.
 pub fn setup_taker_logger(filter: LevelFilter) {
     env::set_var("RUST_LOG", "coinswap=info");
     let log_dir = get_taker_dir().join("debug.log");
@@ -151,6 +165,12 @@ pub fn setup_taker_logger(filter: LevelFilter) {
     log4rs::init_config(config).unwrap();
 }
 
+/// Sets up the logger for the maker component.
+///
+/// This method initializes the logging configuration for the maker, directing logs to both
+/// the console and a file. It sets the `RUST_LOG` environment variable to provide default
+/// log levels and configures log4rs with the specified filter level for fine-grained control
+/// of log verbosity.
 pub fn setup_maker_logger(filter: LevelFilter) {
     env::set_var("RUST_LOG", "coinswap=info");
     let log_dir = get_maker_dir().join("debug.log");
@@ -172,6 +192,12 @@ pub fn setup_maker_logger(filter: LevelFilter) {
     log4rs::init_config(config).unwrap();
 }
 
+/// Sets up the logger for the directory component.
+///
+/// This method initializes the logging configuration for the directory, directing logs to both
+/// the console and a file. It sets the `RUST_LOG` environment variable to provide default
+/// log levels and configures log4rs with the specified filter level for fine-grained control
+/// of log verbosity.
 pub fn setup_directory_logger(filter: LevelFilter) {
     env::set_var("RUST_LOG", "coinswap=info");
     let log_dir = get_dns_dir().join("debug.log");
@@ -276,7 +302,7 @@ pub fn read_message(reader: &mut TcpStream) -> Result<Vec<u8>, NetError> {
 }
 
 /// Apply the maker's privatekey to swapcoins, and check it's the correct privkey for corresponding pubkey.
-pub fn check_and_apply_maker_private_keys<S: SwapCoin>(
+pub(crate) fn check_and_apply_maker_private_keys<S: SwapCoin>(
     swapcoins: &mut [S],
     swapcoin_private_keys: &[MultisigPrivkey],
 ) -> Result<(), WalletError> {
@@ -291,7 +317,7 @@ pub fn check_and_apply_maker_private_keys<S: SwapCoin>(
 ///
 /// the Maker's advertised Pubkey with these two nonces.
 #[allow(clippy::type_complexity)]
-pub fn generate_maker_keys(
+pub(crate) fn generate_maker_keys(
     tweakable_point: &PublicKey,
     count: u32,
 ) -> Result<
@@ -329,7 +355,7 @@ pub fn generate_maker_keys(
 /// Parses an input descriptor string and returns `Some` with a tuple containing the HD path
 /// components if it's an HD descriptor. If the descriptor doesn't have path info, it returns `None`.
 /// This method only works for single key descriptors.
-pub fn get_hd_path_from_descriptor(descriptor: &str) -> Option<(&str, u32, i32)> {
+pub(crate) fn get_hd_path_from_descriptor(descriptor: &str) -> Option<(&str, u32, i32)> {
     let open = descriptor.find('[');
     let close = descriptor.find(']');
 
@@ -358,7 +384,7 @@ pub fn get_hd_path_from_descriptor(descriptor: &str) -> Option<(&str, u32, i32)>
 }
 
 /// Generates a keypair using the secp256k1 elliptic curve.
-pub fn generate_keypair() -> (PublicKey, SecretKey) {
+pub(crate) fn generate_keypair() -> (PublicKey, SecretKey) {
     let keypair = Keypair::new(&Secp256k1::new(), &mut thread_rng());
     let pubkey = PublicKey {
         compressed: true,
@@ -368,7 +394,9 @@ pub fn generate_keypair() -> (PublicKey, SecretKey) {
 }
 
 /// Convert a redeemscript into p2wsh scriptpubkey.
-pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> Result<ScriptBuf, ProtocolError> {
+pub(crate) fn redeemscript_to_scriptpubkey(
+    redeemscript: &ScriptBuf,
+) -> Result<ScriptBuf, ProtocolError> {
     let witness_program = WitnessProgram::new(
         WitnessVersion::V0,
         &redeemscript.wscript_hash().to_byte_array(),
@@ -377,7 +405,7 @@ pub fn redeemscript_to_scriptpubkey(redeemscript: &ScriptBuf) -> Result<ScriptBu
 }
 
 /// Parses a TOML file into a HashMap of key-value pairs.
-pub fn parse_toml<P: AsRef<Path>>(path: P) -> io::Result<HashMap<String, String>> {
+pub(crate) fn parse_toml<P: AsRef<Path>>(path: P) -> io::Result<HashMap<String, String>> {
     let content = fs::read_to_string(path)?;
 
     let mut config_map = HashMap::new();
@@ -392,14 +420,14 @@ pub fn parse_toml<P: AsRef<Path>>(path: P) -> io::Result<HashMap<String, String>
 }
 
 /// Parses a value of type T from an Option<&String>, returning the default if parsing fails or is None
-pub fn parse_field<T: std::str::FromStr>(value: Option<&String>, default: T) -> T {
+pub(crate) fn parse_field<T: std::str::FromStr>(value: Option<&String>, default: T) -> T {
     value
         .and_then(|value| value.parse::<T>().ok())
         .unwrap_or(default)
 }
 
 /// Function to check if tor log contains a pattern
-pub fn monitor_log_for_completion(log_file: &Path, pattern: &str) -> io::Result<()> {
+pub(crate) fn monitor_log_for_completion(log_file: &Path, pattern: &str) -> io::Result<()> {
     let mut last_size = 0;
 
     loop {
@@ -450,7 +478,7 @@ fn polynomial_modulus(mut checksum: u64, value: u64) -> u64 {
 }
 
 /// Compute the checksum of a descriptor
-pub fn compute_checksum(descriptor: &str) -> Result<String, WalletError> {
+pub(crate) fn compute_checksum(descriptor: &str) -> Result<String, WalletError> {
     let mut checksum = CHECKSUM_FINAL_XOR_VALUE;
     let mut accumulated_value = 0;
     let mut group_count = 0;
@@ -506,7 +534,34 @@ pub fn parse_proxy_auth(s: &str) -> Result<(String, String), NetError> {
     Ok((user, passwd))
 }
 
-pub fn verify_fidelity_checks(
+/// Dns request metadata
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DnsMetadata {
+    pub(crate) url: String,
+    pub(crate) proof: FidelityProof,
+}
+
+/// Structured requests and responses used to interact with dns.
+///
+/// Enum representing DNS request messages.
+#[derive(Serialize, Deserialize, Debug)]
+pub enum DnsRequest {
+    /// Sent by the maker to DNS to register itself.
+    Post {
+        /// Metadata associated with the request.
+        metadata: Box<DnsMetadata>,
+    },
+    /// Sent by the taker to retrieve all requests.
+    Get,
+    /// Dummy variant used for testing purposes.
+    #[cfg(feature = "integration-test")]
+    Dummy {
+        /// URL to register with DNS.
+        url: String,
+    },
+}
+
+pub(crate) fn verify_fidelity_checks(
     proof: &FidelityProof,
     addr: &str,
     tx: Transaction,

@@ -21,7 +21,7 @@ use bitcoin::{
     Amount, OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 
-pub use bitcoin::hashes::hash160::Hash as Hash160;
+pub(crate) use bitcoin::hashes::hash160::Hash as Hash160;
 
 use crate::utill::redeemscript_to_scriptpubkey;
 
@@ -44,8 +44,6 @@ use super::{
 // calculates exactly how big the transactions will be and then taker knows exactly the miner fee
 // to pay for
 
-/// Constant representing the virtual byte size of a funding transaction.
-pub const FUNDING_TX_VBYTE_SIZE: u64 = 372;
 const MIN_HASHV_LEN: usize = 25;
 
 // Used in read_pubkeys_from_multisig_redeemscript() function.
@@ -55,7 +53,7 @@ const PUBKEY2_OFFSET: usize = PUBKEY1_OFFSET + PUBKEY_LENGTH + 1;
 
 /// Calculate the coin swap fee based on various parameters.
 /// swap_amount in sats, refund_locktime in blocks.
-pub fn calculate_coinswap_fee(
+pub(crate) fn calculate_coinswap_fee(
     // Should we consider value in Amount?
     swap_amount: u64,
     refund_locktime: u16,
@@ -72,7 +70,7 @@ pub fn calculate_coinswap_fee(
 }
 
 /// Apply two signatures to a 2-of-2 multisig spend.
-pub fn apply_two_signatures_to_2of2_multisig_spend(
+pub(crate) fn apply_two_signatures_to_2of2_multisig_spend(
     key1: &PublicKey,
     key2: &PublicKey,
     sig1: &Signature,
@@ -93,7 +91,7 @@ pub fn apply_two_signatures_to_2of2_multisig_spend(
 }
 
 /// Create a multisig redeem script for a 2-of-2 setup.
-pub fn create_multisig_redeemscript(key1: &PublicKey, key2: &PublicKey) -> ScriptBuf {
+pub(crate) fn create_multisig_redeemscript(key1: &PublicKey, key2: &PublicKey) -> ScriptBuf {
     let builder = Builder::new().push_opcode(all::OP_PUSHNUM_2);
     (if key1.inner.serialize()[..] < key2.inner.serialize()[..] {
         builder.push_key(key1).push_key(key2)
@@ -106,7 +104,7 @@ pub fn create_multisig_redeemscript(key1: &PublicKey, key2: &PublicKey) -> Scrip
 }
 
 /// Derive the maker's public key and nonce from a tweakable point.
-pub fn derive_maker_pubkey_and_nonce(
+pub(crate) fn derive_maker_pubkey_and_nonce(
     tweakable_point: &PublicKey,
 ) -> Result<(PublicKey, SecretKey), ProtocolError> {
     let mut nonce_bytes = [0u8; 32];
@@ -117,7 +115,7 @@ pub fn derive_maker_pubkey_and_nonce(
 }
 
 /// Calculate the public key from a tweakable point and a nonce.
-pub fn calculate_pubkey_from_nonce(
+pub(crate) fn calculate_pubkey_from_nonce(
     tweakable_point: &PublicKey,
     nonce: &SecretKey,
 ) -> Result<PublicKey, ProtocolError> {
@@ -131,7 +129,9 @@ pub fn calculate_pubkey_from_nonce(
 }
 
 /// Find the index of the funding output in the funding transaction.
-pub fn find_funding_output_index(funding_tx_info: &FundingTxInfo) -> Result<u32, ProtocolError> {
+pub(crate) fn find_funding_output_index(
+    funding_tx_info: &FundingTxInfo,
+) -> Result<u32, ProtocolError> {
     let multisig_spk = redeemscript_to_scriptpubkey(&funding_tx_info.multisig_redeemscript)?;
     funding_tx_info
         .funding_tx
@@ -145,7 +145,7 @@ pub fn find_funding_output_index(funding_tx_info: &FundingTxInfo) -> Result<u32,
 }
 
 /// Check if the given redeem script is a multisig script.
-pub fn check_reedemscript_is_multisig(redeemscript: &Script) -> Result<(), ProtocolError> {
+pub(crate) fn check_reedemscript_is_multisig(redeemscript: &Script) -> Result<(), ProtocolError> {
     //pattern match to check redeemscript is really a 2of2 multisig
     let mut ms_rs_bytes = redeemscript.to_bytes();
     const PUB_PLACEHOLDER: [u8; 33] = [0x02; 33];
@@ -167,7 +167,7 @@ pub fn check_reedemscript_is_multisig(redeemscript: &Script) -> Result<(), Proto
 }
 
 /// Check if the given multisig redeem script contains the provided public key.
-pub fn check_multisig_has_pubkey(
+pub(crate) fn check_multisig_has_pubkey(
     redeemscript: &Script,
     tweakable_point: &PublicKey,
     nonce: &SecretKey,
@@ -184,7 +184,7 @@ pub fn check_multisig_has_pubkey(
 }
 
 /// Check if the given hashlock redeem script contains the provided public key and nonce.
-pub fn check_hashlock_has_pubkey(
+pub(crate) fn check_hashlock_has_pubkey(
     contract_redeemscript: &Script,
     tweakable_point: &PublicKey,
     nonce: &SecretKey,
@@ -202,7 +202,7 @@ pub fn check_hashlock_has_pubkey(
 
 /// Create a contract redeem script for a coinswap transaction.
 #[rustfmt::skip]
-pub fn create_contract_redeemscript(
+pub(crate) fn create_contract_redeemscript(
     pub_hashlock: &PublicKey,
     pub_timelock: &PublicKey,
     hashvalue: &Hash160,
@@ -279,7 +279,9 @@ pub fn create_contract_redeemscript(
 }
 
 /// Read the hash value from a contract redeem script.
-pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<Hash160, ProtocolError> {
+pub(crate) fn read_hashvalue_from_contract(
+    redeemscript: &Script,
+) -> Result<Hash160, ProtocolError> {
     if redeemscript.to_bytes().len() < MIN_HASHV_LEN {
         return Err(ProtocolError::General("Contract reedemscript too short!"));
     }
@@ -296,7 +298,9 @@ pub fn read_hashvalue_from_contract(redeemscript: &Script) -> Result<Hash160, Pr
 }
 
 /// Check that all the contract redeemscripts involve the same hashvalue.
-pub fn check_hashvalues_are_equal(message: &ProofOfFunding) -> Result<Hash160, ProtocolError> {
+pub(crate) fn check_hashvalues_are_equal(
+    message: &ProofOfFunding,
+) -> Result<Hash160, ProtocolError> {
     let hashvalues = message
         .confirmed_funding_txes
         .iter()
@@ -313,7 +317,7 @@ pub fn check_hashvalues_are_equal(message: &ProofOfFunding) -> Result<Hash160, P
 }
 
 /// Read the locktime from a contract redeem script.
-pub fn read_contract_locktime(redeemscript: &Script) -> Result<u16, ProtocolError> {
+pub(crate) fn read_contract_locktime(redeemscript: &Script) -> Result<u16, ProtocolError> {
     match redeemscript
         .instructions()
         .nth(12)
@@ -348,7 +352,7 @@ pub fn read_contract_locktime(redeemscript: &Script) -> Result<u16, ProtocolErro
 }
 
 /// Read the hashlock pubkey from a contract redeem script.
-pub fn read_hashlock_pubkey_from_contract(
+pub(crate) fn read_hashlock_pubkey_from_contract(
     redeemscript: &Script,
 ) -> Result<PublicKey, ProtocolError> {
     if redeemscript.to_bytes().len() < 61 {
@@ -358,7 +362,7 @@ pub fn read_hashlock_pubkey_from_contract(
 }
 
 /// Read the timelock pubkey from a contract redeem script.
-pub fn read_timelock_pubkey_from_contract(
+pub(crate) fn read_timelock_pubkey_from_contract(
     redeemscript: &Script,
 ) -> Result<PublicKey, ProtocolError> {
     if redeemscript.to_bytes().len() < 99 {
@@ -368,7 +372,7 @@ pub fn read_timelock_pubkey_from_contract(
 }
 
 /// Read the pubkeys from a multisig redeem script.
-pub fn read_pubkeys_from_multisig_redeemscript(
+pub(crate) fn read_pubkeys_from_multisig_redeemscript(
     redeemscript: &Script,
 ) -> Result<(PublicKey, PublicKey), ProtocolError> {
     let ms_rs_bytes = redeemscript.to_bytes();
@@ -382,7 +386,7 @@ pub fn read_pubkeys_from_multisig_redeemscript(
 /// Create a Contract Transaction for the "Sender" side of Coinswap.
 /// The Sender gets the coins back via timelock.
 /// Receiver gets the coins via hashlock.
-pub fn create_senders_contract_tx(
+pub(crate) fn create_senders_contract_tx(
     input: OutPoint,
     input_value: Amount,
     contract_redeemscript: &ScriptBuf,
@@ -405,7 +409,7 @@ pub fn create_senders_contract_tx(
 }
 
 /// Create the receiver's contract transaction.
-pub fn create_receivers_contract_tx(
+pub(crate) fn create_receivers_contract_tx(
     input: OutPoint,
     input_value: Amount,
     contract_redeemscript: &ScriptBuf,
@@ -417,7 +421,7 @@ pub fn create_receivers_contract_tx(
 }
 
 /// Check if a contract output is valid.
-pub fn is_contract_out_valid(
+pub(crate) fn is_contract_out_valid(
     contract_output: &TxOut,
     hashlock_pubkey: &PublicKey,
     timelock_pubkey: &PublicKey,
@@ -441,7 +445,7 @@ pub fn is_contract_out_valid(
 }
 
 /// Validate a contract transaction.
-pub fn validate_contract_tx(
+pub(crate) fn validate_contract_tx(
     receivers_contract_tx: &Transaction,
     funding_outpoint: Option<&OutPoint>,
     contract_redeemscript: &ScriptBuf,
@@ -467,7 +471,7 @@ pub fn validate_contract_tx(
 }
 
 /// Sign a contract transaction.
-pub fn sign_contract_tx(
+pub(crate) fn sign_contract_tx(
     contract_tx: &Transaction,
     multisig_redeemscript: &Script,
     funding_amount: Amount,
@@ -491,7 +495,7 @@ pub fn sign_contract_tx(
 }
 
 /// Verify a signature on a contract transaction.
-pub fn verify_contract_tx_sig(
+pub(crate) fn verify_contract_tx_sig(
     contract_tx: &Transaction,
     multisig_redeemscript: &Script,
     funding_amount: Amount,

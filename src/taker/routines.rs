@@ -46,25 +46,25 @@ use crate::taker::api::{
 use crate::wallet::SwapCoin;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct ContractTransaction {
-    pub tx: Transaction,
-    pub redeemscript: ScriptBuf,
-    pub hashlock_spend_without_preimage: Option<Transaction>,
-    pub timelock_spend: Option<Transaction>,
-    pub timelock_spend_broadcasted: bool,
+pub(crate) struct ContractTransaction {
+    pub(crate) tx: Transaction,
+    pub(crate) redeemscript: ScriptBuf,
+    pub(crate) hashlock_spend_without_preimage: Option<Transaction>,
+    pub(crate) timelock_spend: Option<Transaction>,
+    pub(crate) timelock_spend_broadcasted: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct ContractsInfo {
-    pub contract_txes: Vec<ContractTransaction>,
-    pub wallet_label: String,
+pub(crate) struct ContractsInfo {
+    pub(crate) contract_txes: Vec<ContractTransaction>,
+    pub(crate) wallet_label: String,
 }
 
 /// Make a handshake with a maker.
 /// Ensures that the Maker is alive and responding.
 ///
 // In future, handshake can be used to find protocol compatibility across multiple versions.
-pub fn handshake_maker(socket: &mut TcpStream) -> Result<(), TakerError> {
+pub(crate) fn handshake_maker(socket: &mut TcpStream) -> Result<(), TakerError> {
     send_message(
         socket,
         &TakerToMakerMessage::TakerHello(TakerHello {
@@ -242,10 +242,10 @@ pub(crate) fn req_sigs_for_recvr_once<S: SwapCoin>(
 // Type for information related to `this maker` consisting of:
 // `this_maker`, `funding_txs_infos`, `this_maker_contract_txs`
 #[derive(Clone)]
-pub struct ThisMakerInfo {
-    pub this_maker: OfferAndAddress,
-    pub funding_tx_infos: Vec<FundingTxInfo>,
-    pub this_maker_contract_txs: Vec<Transaction>,
+pub(crate) struct ThisMakerInfo {
+    pub(crate) this_maker: OfferAndAddress,
+    pub(crate) funding_tx_infos: Vec<FundingTxInfo>,
+    pub(crate) this_maker_contract_txs: Vec<Transaction>,
     pub this_maker_refund_locktime: u16,
 }
 
@@ -484,7 +484,10 @@ fn download_maker_offer_attempt_once(
     Ok(*offer)
 }
 
-pub fn download_maker_offer(address: MakerAddress, config: TakerConfig) -> Option<OfferAndAddress> {
+pub(crate) fn download_maker_offer(
+    address: MakerAddress,
+    config: TakerConfig,
+) -> Option<OfferAndAddress> {
     let mut ii = 0;
 
     loop {

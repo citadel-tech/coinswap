@@ -61,7 +61,7 @@ pub enum FidelityError {
 /// Old script: <locktime> <OP_CLTV> <OP_DROP> <pubkey> <OP_CHECKSIG>
 /// The new script drops the extra byte <OP_DROP>
 /// New script: <pubkey> <OP_CHECKSIGVERIFY> <locktime> <OP_CLTV>
-pub fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> ScriptBuf {
+pub(crate) fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> ScriptBuf {
     Builder::new()
         .push_key(pubkey)
         .push_opcode(OP_CHECKSIGVERIFY)
@@ -95,7 +95,7 @@ fn read_pubkey_from_fidelity_script(redeemscript: &ScriptBuf) -> Result<PublicKe
 
 /// Calculates the theoretical fidelity bond value. Bond value calculation is described in the doc below.
 /// https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds
-pub fn calculate_fidelity_value(
+pub(crate) fn calculate_fidelity_value(
     value: Amount,          // Bond amount in sats
     locktime: u64,          // Bond locktime timestamp
     confirmation_time: u64, // Confirmation timestamp
@@ -121,29 +121,31 @@ pub fn calculate_fidelity_value(
 /// Fidelity Bonds are described in https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Hash)]
 pub struct FidelityBond {
-    pub outpoint: OutPoint,
+    pub(crate) outpoint: OutPoint,
+    /// Fidelity Amount
     pub amount: Amount,
+    /// Fidelity Locktime
     pub lock_time: LockTime,
-    pub pubkey: PublicKey,
+    pub(crate) pubkey: PublicKey,
     // Height at which the bond was confirmed.
-    pub conf_height: u32,
+    pub(crate) conf_height: u32,
     // Cert expiry denoted in multiple of difficulty adjustment period (2016 blocks)
-    pub cert_expiry: u64,
+    pub(crate) cert_expiry: u64,
 }
 
 impl FidelityBond {
     /// get the reedemscript for this bond
-    pub fn redeem_script(&self) -> ScriptBuf {
+    pub(crate) fn redeem_script(&self) -> ScriptBuf {
         fidelity_redeemscript(&self.lock_time, &self.pubkey)
     }
 
     /// Get the script_pubkey for this bond.
-    pub fn script_pub_key(&self) -> ScriptBuf {
+    pub(crate) fn script_pub_key(&self) -> ScriptBuf {
         redeemscript_to_scriptpubkey(&self.redeem_script()).expect("This can never panic as fidelity redeemscript template is hardcoded in a private function.")
     }
 
     /// Generate the bond's certificate hash.
-    pub fn generate_cert_hash(&self, addr: &str) -> sha256d::Hash {
+    pub(crate) fn generate_cert_hash(&self, addr: &str) -> sha256d::Hash {
         let cert_msg_str = format!(
             "fidelity-bond-cert|{}|{}|{}|{}|{}|{}",
             self.outpoint, self.pubkey, self.cert_expiry, self.lock_time, self.amount, addr
@@ -183,7 +185,7 @@ impl Wallet {
     }
 
     /// Get the [KeyPair] for the fidelity bond at given index.
-    pub fn get_fidelity_keypair(&self, index: u32) -> Result<Keypair, WalletError> {
+    pub(crate) fn get_fidelity_keypair(&self, index: u32) -> Result<Keypair, WalletError> {
         let secp = Secp256k1::new();
 
         let derivation_path = DerivationPath::from_str(FIDELITY_DERIVATION_PATH)?;
@@ -198,7 +200,7 @@ impl Wallet {
     }
 
     /// Derives the fidelity redeemscript from bond values at given index.
-    pub fn get_fidelity_reedemscript(&self, index: u32) -> Result<ScriptBuf, WalletError> {
+    pub(crate) fn get_fidelity_reedemscript(&self, index: u32) -> Result<ScriptBuf, WalletError> {
         let (bond, _, _) = self
             .store
             .fidelity_bond
@@ -209,7 +211,7 @@ impl Wallet {
 
     /// Get the next fidelity bond address. If no fidelity bond is created
     /// returned address will be derived from index 0, of the [FIDELITY_DERIVATION_PATH]
-    pub fn get_next_fidelity_address(
+    pub(crate) fn get_next_fidelity_address(
         &self,
         locktime: LockTime,
     ) -> Result<(u32, Address, PublicKey), WalletError> {
@@ -516,7 +518,7 @@ impl Wallet {
     }
 
     /// Generate a [FidelityProof] for bond at a given index and a specific onion address.
-    pub fn generate_fidelity_proof(
+    pub(crate) fn generate_fidelity_proof(
         &self,
         index: u32,
         maker_addr: &str,
@@ -550,7 +552,7 @@ impl Wallet {
     }
 
     /// Verify a [FidelityProof] received from the directory servers.
-    pub fn verify_fidelity_proof(
+    pub(crate) fn verify_fidelity_proof(
         &self,
         proof: &FidelityProof,
         onion_addr: &str,
@@ -563,35 +565,9 @@ impl Wallet {
     }
 
     /// Calculate the expiry value. This depends on the current block height.
-    pub fn get_fidelity_expiry(&self) -> Result<u64, WalletError> {
+    pub(crate) fn get_fidelity_expiry(&self) -> Result<u64, WalletError> {
         let current_height = self.rpc.get_block_count()?;
         Ok((current_height + 2) /* safety buffer */ / 2016 + 5)
-    }
-
-    /// Extend the expiry of a fidelity bond. This is useful for bonds which are close to their expiry.
-    pub fn extend_fidelity_expiry(&mut self, index: u32) -> Result<(), WalletError> {
-        let cert_expiry = self.get_fidelity_expiry()?;
-        let (bond, _, _) = self
-            .store
-            .fidelity_bond
-            .get_mut(&index)
-            .ok_or(FidelityError::BondDoesNotExist)?;
-
-        bond.cert_expiry = cert_expiry;
-
-        Ok(())
-    }
-
-    /// Checks if the bond has expired.
-    pub fn is_fidelity_expired(&self, bond: &FidelityBond) -> Result<bool, WalletError> {
-        // Certificate has expired if current height more than the expiry difficulty period target
-        // 1 difficulty period = 2016 blocks
-        let current_height = self.rpc.get_block_count()?;
-        if current_height > bond.cert_expiry * 2016 {
-            Ok(true)
-        } else {
-            Ok(false)
-        }
     }
 }
 

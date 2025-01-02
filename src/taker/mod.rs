@@ -7,7 +7,7 @@
 mod api;
 mod config;
 pub mod error;
-pub mod offers;
+pub(crate) mod offers;
 mod routines;
 
 pub use self::api::TakerBehavior;

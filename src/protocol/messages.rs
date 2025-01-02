@@ -69,81 +69,81 @@ use bitcoin::hashes::hash160::Hash as Hash160;
 use crate::wallet::FidelityBond;
 
 /// Defines the length of the Preimage.
-pub const PREIMAGE_LEN: usize = 32;
+pub(crate) const PREIMAGE_LEN: usize = 32;
 
 /// Type for Preimage.
-pub type Preimage = [u8; PREIMAGE_LEN];
+pub(crate) type Preimage = [u8; PREIMAGE_LEN];
 
 /// Represents the initial handshake message sent from Taker to Maker.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TakerHello {
-    pub protocol_version_min: u32,
-    pub protocol_version_max: u32,
+pub(crate) struct TakerHello {
+    pub(crate) protocol_version_min: u32,
+    pub(crate) protocol_version_max: u32,
 }
 
 /// Represents a request to give an offer.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GiveOffer;
+pub(crate) struct GiveOffer;
 
 /// Contract Sigs requesting information for the Sender side of the hop.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ContractTxInfoForSender {
-    pub multisig_nonce: SecretKey,
-    pub hashlock_nonce: SecretKey,
-    pub timelock_pubkey: PublicKey,
-    pub senders_contract_tx: Transaction,
-    pub multisig_redeemscript: ScriptBuf,
-    pub funding_input_value: Amount,
+pub(crate) struct ContractTxInfoForSender {
+    pub(crate) multisig_nonce: SecretKey,
+    pub(crate) hashlock_nonce: SecretKey,
+    pub(crate) timelock_pubkey: PublicKey,
+    pub(crate) senders_contract_tx: Transaction,
+    pub(crate) multisig_redeemscript: ScriptBuf,
+    pub(crate) funding_input_value: Amount,
 }
 
 /// Request for Contract Sigs **for** the Sender side of the hop.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ReqContractSigsForSender {
-    pub txs_info: Vec<ContractTxInfoForSender>,
-    pub hashvalue: Hash160,
-    pub locktime: u16,
+pub(crate) struct ReqContractSigsForSender {
+    pub(crate) txs_info: Vec<ContractTxInfoForSender>,
+    pub(crate) hashvalue: Hash160,
+    pub(crate) locktime: u16,
 }
 
 /// Contract Sigs requesting information for the Receiver side of the hop.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ContractTxInfoForRecvr {
-    pub multisig_redeemscript: ScriptBuf,
-    pub contract_tx: Transaction,
+pub(crate) struct ContractTxInfoForRecvr {
+    pub(crate) multisig_redeemscript: ScriptBuf,
+    pub(crate) contract_tx: Transaction,
 }
 
 /// Request for Contract Sigs **for** the Receiver side of the hop.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ReqContractSigsForRecvr {
-    pub txs: Vec<ContractTxInfoForRecvr>,
+pub(crate) struct ReqContractSigsForRecvr {
+    pub(crate) txs: Vec<ContractTxInfoForRecvr>,
 }
 
 /// Confirmed Funding Tx with extra metadata.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct FundingTxInfo {
-    pub funding_tx: Transaction,
-    pub funding_tx_merkleproof: String,
-    pub multisig_redeemscript: ScriptBuf,
-    pub multisig_nonce: SecretKey,
-    pub contract_redeemscript: ScriptBuf,
-    pub hashlock_nonce: SecretKey,
+pub(crate) struct FundingTxInfo {
+    pub(crate) funding_tx: Transaction,
+    pub(crate) funding_tx_merkleproof: String,
+    pub(crate) multisig_redeemscript: ScriptBuf,
+    pub(crate) multisig_nonce: SecretKey,
+    pub(crate) contract_redeemscript: ScriptBuf,
+    pub(crate) hashlock_nonce: SecretKey,
 }
 
 /// PublickKey information for the next hop of Coinswap.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NextHopInfo {
-    pub next_multisig_pubkey: PublicKey,
-    pub next_hashlock_pubkey: PublicKey,
+pub(crate) struct NextHopInfo {
+    pub(crate) next_multisig_pubkey: PublicKey,
+    pub(crate) next_hashlock_pubkey: PublicKey,
 }
 
 /// Message sent to the Coinswap Receiver that funding transaction has been confirmed.
 /// Including information for the next hop of the coinswap.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ProofOfFunding {
-    pub confirmed_funding_txes: Vec<FundingTxInfo>,
+pub(crate) struct ProofOfFunding {
+    pub(crate) confirmed_funding_txes: Vec<FundingTxInfo>,
     // TODO: Directly use Vec of Pubkeys.
-    pub next_coinswap_info: Vec<NextHopInfo>,
-    pub refund_locktime: u16,
-    pub contract_feerate: u64,
+    pub(crate) next_coinswap_info: Vec<NextHopInfo>,
+    pub(crate) refund_locktime: u16,
+    pub(crate) contract_feerate: u64,
 }
 
 /// Signatures required for an intermediate Maker to perform receiving and sending of coinswaps.
@@ -154,37 +154,37 @@ pub struct ProofOfFunding {
 /// `receivers_sigs`: Signatures from Maker1. Maker1 is Sender, and Maker2 is Receiver.
 /// `senders_sigs`: Signatures from Maker3. Maker3 is Receiver and Maker2 is Sender.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ContractSigsForRecvrAndSender {
+pub(crate) struct ContractSigsForRecvrAndSender {
     /// Sigs from previous peer for Contract Tx of previous hop, (coinswap received by this Maker).
-    pub receivers_sigs: Vec<Signature>,
+    pub(crate) receivers_sigs: Vec<Signature>,
     /// Sigs from the next peer for Contract Tx of next hop, (coinswap sent by this Maker).
-    pub senders_sigs: Vec<Signature>,
+    pub(crate) senders_sigs: Vec<Signature>,
 }
 
 /// Message to Transfer [`HashPreimage`] from Taker to Makers.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct HashPreimage {
-    pub senders_multisig_redeemscripts: Vec<ScriptBuf>,
-    pub receivers_multisig_redeemscripts: Vec<ScriptBuf>,
-    pub preimage: [u8; 32],
+pub(crate) struct HashPreimage {
+    pub(crate) senders_multisig_redeemscripts: Vec<ScriptBuf>,
+    pub(crate) receivers_multisig_redeemscripts: Vec<ScriptBuf>,
+    pub(crate) preimage: [u8; 32],
 }
 
 /// Multisig Privatekeys used in the last step of coinswap to perform privatekey handover.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct MultisigPrivkey {
-    pub multisig_redeemscript: ScriptBuf,
-    pub key: SecretKey,
+pub(crate) struct MultisigPrivkey {
+    pub(crate) multisig_redeemscript: ScriptBuf,
+    pub(crate) key: SecretKey,
 }
 
 /// Message to perform the final Privatekey Handover. This is the last message of the Coinswap Protocol.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct PrivKeyHandover {
-    pub multisig_privkeys: Vec<MultisigPrivkey>,
+pub(crate) struct PrivKeyHandover {
+    pub(crate) multisig_privkeys: Vec<MultisigPrivkey>,
 }
 
 /// All messages sent from Taker to Maker.
 #[derive(Debug, Serialize, Deserialize)]
-pub enum TakerToMakerMessage {
+pub(crate) enum TakerToMakerMessage {
     /// Protocol Handshake.
     TakerHello(TakerHello),
     /// Request the Maker's Offer advertisement.
@@ -222,46 +222,46 @@ impl Display for TakerToMakerMessage {
 
 /// Represents the initial handshake message sent from Maker to Taker.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct MakerHello {
-    pub protocol_version_min: u32,
-    pub protocol_version_max: u32,
+pub(crate) struct MakerHello {
+    pub(crate) protocol_version_min: u32,
+    pub(crate) protocol_version_max: u32,
 }
 
 /// Contains proof data related to fidelity bond.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct FidelityProof {
-    pub bond: FidelityBond,
-    pub cert_hash: Hash,
-    pub cert_sig: bitcoin::secp256k1::ecdsa::Signature,
+pub(crate) struct FidelityProof {
+    pub(crate) bond: FidelityBond,
+    pub(crate) cert_hash: Hash,
+    pub(crate) cert_sig: bitcoin::secp256k1::ecdsa::Signature,
 }
 
 /// Represents an offer in the context of the Coinswap protocol.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct Offer {
-    pub base_fee: u64,                // base fee in sats
-    pub amount_relative_fee_pct: f64, // % fee on total amount
-    pub time_relative_fee_pct: f64, // amount * refund_locktime * TRF% = fees for locking the fund.
-    pub required_confirms: u32,
-    pub minimum_locktime: u16,
-    pub max_size: u64,
-    pub min_size: u64,
-    pub tweakable_point: PublicKey,
-    pub fidelity: FidelityProof,
+pub(crate) struct Offer {
+    pub(crate) base_fee: u64,                // base fee in sats
+    pub(crate) amount_relative_fee_pct: f64, // % fee on total amount
+    pub(crate) time_relative_fee_pct: f64, // amount * refund_locktime * TRF% = fees for locking the fund.
+    pub(crate) required_confirms: u32,
+    pub(crate) minimum_locktime: u16,
+    pub(crate) max_size: u64,
+    pub(crate) min_size: u64,
+    pub(crate) tweakable_point: PublicKey,
+    pub(crate) fidelity: FidelityProof,
 }
 
 /// Contract Tx signatures provided by a Sender of a Coinswap.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ContractSigsForSender {
-    pub sigs: Vec<Signature>,
+pub(crate) struct ContractSigsForSender {
+    pub(crate) sigs: Vec<Signature>,
 }
 
 /// Contract Tx and extra metadata from a Sender of a Coinswap
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SenderContractTxInfo {
-    pub contract_tx: Transaction,
-    pub timelock_pubkey: PublicKey,
-    pub multisig_redeemscript: ScriptBuf,
-    pub funding_amount: Amount,
+pub(crate) struct SenderContractTxInfo {
+    pub(crate) contract_tx: Transaction,
+    pub(crate) timelock_pubkey: PublicKey,
+    pub(crate) multisig_redeemscript: ScriptBuf,
+    pub(crate) funding_amount: Amount,
 }
 
 /// This message is sent by a Maker to a Taker, which is a request to the Taker for gathering signatures
@@ -269,22 +269,22 @@ pub struct SenderContractTxInfo {
 ///
 /// This message is sent by a Maker after a [`ProofOfFunding`] has been received.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ContractSigsAsRecvrAndSender {
+pub(crate) struct ContractSigsAsRecvrAndSender {
     /// Contract Tx by which this maker is receiving Coinswap.
-    pub receivers_contract_txs: Vec<Transaction>,
+    pub(crate) receivers_contract_txs: Vec<Transaction>,
     /// Contract Tx info by which this maker is sending Coinswap.
-    pub senders_contract_txs_info: Vec<SenderContractTxInfo>,
+    pub(crate) senders_contract_txs_info: Vec<SenderContractTxInfo>,
 }
 
 /// Contract Tx signatures a Maker sends as a Receiver of CoinSwap.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ContractSigsForRecvr {
-    pub sigs: Vec<Signature>,
+pub(crate) struct ContractSigsForRecvr {
+    pub(crate) sigs: Vec<Signature>,
 }
 
 /// All messages sent from Maker to Taker.
 #[derive(Debug, Serialize, Deserialize)]
-pub enum MakerToTakerMessage {
+pub(crate) enum MakerToTakerMessage {
     /// Protocol Handshake.
     MakerHello(MakerHello),
     /// Send the Maker's offer advertisement.

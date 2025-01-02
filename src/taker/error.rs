@@ -4,19 +4,34 @@ use crate::{
     wallet::WalletError,
 };
 
-/// Enum for handling taker-related errors.
+/// Represents errors that can occur during Taker operations.
+///
+/// This enum covers a range of errors related to I/O, wallet operations, network communication,
+/// and other Taker-specific scenarios.
 #[derive(Debug)]
 pub enum TakerError {
+    /// Standard input/output error.
     IO(std::io::Error),
+    /// Error indicating contracts were broadcasted prematurely.
+    /// Contains a list of the transaction IDs of the broadcasted contracts.
     ContractsBroadcasted(Vec<bitcoin::Txid>),
+    /// Error indicating there are not enough makers available in the offer book.
     NotEnoughMakersInOfferBook,
+    /// Error related to wallet operations.
     Wallet(WalletError),
+    /// Error encountered during interaction with the directory server.
     Directory(DirectoryServerError),
+    /// Error related to network operations.
     Net(NetError),
+    /// Error indicating the send amount was not set for a transaction.
     SendAmountNotSet,
+    /// Error indicating a timeout while waiting for the funding transaction.
     FundingTxWaitTimeOut,
+    /// Error deserializing data, typically related to CBOR-encoded data.
     Deserialize(serde_cbor::Error),
-    // MPSC channel failure error. Only occurs in internal thread communications.
+    /// Error indicating an MPSC channel failure.
+    ///
+    /// This error occurs during internal thread communication.
     MPSC(String),
 }
 

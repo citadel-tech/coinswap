@@ -154,7 +154,7 @@ impl Wallet {
     }
 
     /// Import watch addresses into core wallet. Does not check if the address was already imported.
-    pub fn import_descriptors(
+    pub(crate) fn import_descriptors(
         &self,
         descriptors_to_import: &[String],
         address_label: Option<String>,

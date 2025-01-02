@@ -17,7 +17,7 @@ use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
 
 /// Represents the internal data store for a Bitcoin wallet.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct WalletStore {
+pub(crate) struct WalletStore {
     /// The file name associated with the wallet store.
     pub(crate) file_name: String,
     /// Network the wallet operates on.
@@ -44,7 +44,7 @@ pub struct WalletStore {
 
 impl WalletStore {
     /// Initialize a store at a path (if path already exists, it will overwrite it).
-    pub fn init(
+    pub(crate) fn init(
         file_name: String,
         path: &Path,
         network: Network,
@@ -76,14 +76,14 @@ impl WalletStore {
     }
 
     /// Load existing file, updates it, writes it back (errors if path doesn't exist).
-    pub fn write_to_disk(&self, path: &Path) -> Result<(), WalletError> {
+    pub(crate) fn write_to_disk(&self, path: &Path) -> Result<(), WalletError> {
         let wallet_file = fs::OpenOptions::new().write(true).open(path)?;
         let writer = BufWriter::new(wallet_file);
         Ok(serde_cbor::to_writer(writer, &self)?)
     }
 
     /// Reads from a path (errors if path doesn't exist).
-    pub fn read_from_disk(path: &Path) -> Result<Self, WalletError> {
+    pub(crate) fn read_from_disk(path: &Path) -> Result<Self, WalletError> {
         let wallet_file = File::open(path)?;
         let reader = BufReader::new(wallet_file);
         let store: Self = serde_cbor::from_reader(reader)?;

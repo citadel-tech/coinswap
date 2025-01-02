@@ -46,16 +46,16 @@ use super::WalletError;
 /// This designation applies regardless of the swap's status—whether
 /// it is still in progress or has been finalized.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct IncomingSwapCoin {
-    pub my_privkey: SecretKey,
-    pub other_pubkey: PublicKey,
-    pub other_privkey: Option<SecretKey>,
-    pub contract_tx: Transaction,
-    pub contract_redeemscript: ScriptBuf,
-    pub hashlock_privkey: SecretKey,
-    pub funding_amount: Amount,
-    pub others_contract_sig: Option<Signature>,
-    pub hash_preimage: Option<Preimage>,
+pub(crate) struct IncomingSwapCoin {
+    pub(crate) my_privkey: SecretKey,
+    pub(crate) other_pubkey: PublicKey,
+    pub(crate) other_privkey: Option<SecretKey>,
+    pub(crate) contract_tx: Transaction,
+    pub(crate) contract_redeemscript: ScriptBuf,
+    pub(crate) hashlock_privkey: SecretKey,
+    pub(crate) funding_amount: Amount,
+    pub(crate) others_contract_sig: Option<Signature>,
+    pub(crate) hash_preimage: Option<Preimage>,
 }
 
 /// Describes an outgoing swapcoin, which can either be currently active or successfully completed.
@@ -72,36 +72,36 @@ pub struct IncomingSwapCoin {
 /// This terminology reflects the direction of the asset transfer,
 /// regardless of whether the swap is still ongoing or has been completed.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct OutgoingSwapCoin {
-    pub my_privkey: SecretKey,
-    pub other_pubkey: PublicKey,
-    pub contract_tx: Transaction,
-    pub contract_redeemscript: ScriptBuf,
-    pub timelock_privkey: SecretKey,
-    pub funding_amount: Amount,
-    pub others_contract_sig: Option<Signature>,
-    pub hash_preimage: Option<Preimage>,
+pub(crate) struct OutgoingSwapCoin {
+    pub(crate) my_privkey: SecretKey,
+    pub(crate) other_pubkey: PublicKey,
+    pub(crate) contract_tx: Transaction,
+    pub(crate) contract_redeemscript: ScriptBuf,
+    pub(crate) timelock_privkey: SecretKey,
+    pub(crate) funding_amount: Amount,
+    pub(crate) others_contract_sig: Option<Signature>,
+    pub(crate) hash_preimage: Option<Preimage>,
 }
 
 /// Represents a watch-only view of a coinswap between two makers.
 //like the Incoming/OutgoingSwapCoin structs but no privkey or signature information
 //used by the taker to monitor coinswaps between two makers
 #[derive(Debug, Clone)]
-pub struct WatchOnlySwapCoin {
+pub(crate) struct WatchOnlySwapCoin {
     /// Public key of the sender (maker).
-    pub sender_pubkey: PublicKey,
+    pub(crate) sender_pubkey: PublicKey,
     /// Public key of the receiver (maker).
-    pub receiver_pubkey: PublicKey,
+    pub(crate) receiver_pubkey: PublicKey,
     /// Transaction representing the coinswap contract.
-    pub contract_tx: Transaction,
+    pub(crate) contract_tx: Transaction,
     /// Redeem script associated with the coinswap contract.
-    pub contract_redeemscript: ScriptBuf,
+    pub(crate) contract_redeemscript: ScriptBuf,
     /// The funding amount of the coinswap.
-    pub funding_amount: Amount,
+    pub(crate) funding_amount: Amount,
 }
 
 /// Trait representing common functionality for swap coins.
-pub trait SwapCoin {
+pub(crate) trait SwapCoin {
     /// Get the multisig redeem script.
     fn get_multisig_redeemscript(&self) -> ScriptBuf;
     /// Get the contract transaction.
@@ -112,8 +112,6 @@ pub trait SwapCoin {
     fn get_timelock_pubkey(&self) -> Result<PublicKey, WalletError>;
     /// Get the timelock value.
     fn get_timelock(&self) -> Result<u16, WalletError>;
-    /// Get the hashlock public key.
-    fn get_hashlock_pubkey(&self) -> Result<PublicKey, WalletError>;
     /// Get the hash value.
     fn get_hashvalue(&self) -> Result<Hash160, WalletError>;
     /// Get the funding amount.
@@ -127,7 +125,7 @@ pub trait SwapCoin {
 }
 
 /// Trait representing swap coin functionality specific to a wallet.
-pub trait WalletSwapCoin: SwapCoin {
+pub(crate) trait WalletSwapCoin: SwapCoin {
     fn get_my_pubkey(&self) -> PublicKey;
     fn get_other_pubkey(&self) -> &PublicKey;
     fn get_fully_signed_contract_tx(&self) -> Result<Transaction, ProtocolError>;
@@ -210,11 +208,11 @@ macro_rules! impl_swapcoin_getters {
             Ok(read_contract_locktime(&self.contract_redeemscript)?)
         }
 
-        fn get_hashlock_pubkey(&self) -> Result<PublicKey, WalletError> {
-            Ok(read_hashlock_pubkey_from_contract(
-                &self.contract_redeemscript,
-            )?)
-        }
+        // fn get_hashlock_pubkey(&self) -> Result<PublicKey, WalletError> {
+        //     Ok(read_hashlock_pubkey_from_contract(
+        //         &self.contract_redeemscript,
+        //     )?)
+        // }
 
         fn get_hashvalue(&self) -> Result<Hash160, WalletError> {
             Ok(read_hashvalue_from_contract(&self.contract_redeemscript)?)
@@ -235,7 +233,7 @@ macro_rules! impl_swapcoin_getters {
 }
 
 impl IncomingSwapCoin {
-    pub fn new(
+    pub(crate) fn new(
         my_privkey: SecretKey,
         other_pubkey: PublicKey,
         contract_tx: Transaction,
@@ -262,7 +260,7 @@ impl IncomingSwapCoin {
         })
     }
 
-    pub fn sign_transaction_input(
+    pub(crate) fn sign_transaction_input(
         &self,
         index: usize,
         tx: &Transaction,
@@ -312,7 +310,7 @@ impl IncomingSwapCoin {
         Ok(())
     }
 
-    pub fn sign_hashlocked_transaction_input_given_preimage(
+    pub(crate) fn sign_hashlocked_transaction_input_given_preimage(
         &self,
         index: usize,
         tx: &Transaction,
@@ -342,7 +340,7 @@ impl IncomingSwapCoin {
         Ok(())
     }
 
-    pub fn sign_hashlocked_transaction_input(
+    pub(crate) fn sign_hashlocked_transaction_input(
         &self,
         index: usize,
         tx: &Transaction,
@@ -361,41 +359,7 @@ impl IncomingSwapCoin {
         )
     }
 
-    pub fn create_hashlock_spend_without_preimage(
-        &self,
-        destination_address: &Address,
-    ) -> Result<Transaction, WalletError> {
-        let miner_fee = 136 * 10; //126 vbytes x 10 sat/vb, size calculated using testmempoolaccept
-        let mut tx = Transaction {
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: self.contract_tx.compute_txid(),
-                    vout: 0, //contract_tx is one-input-one-output
-                },
-                sequence: Sequence(1), //hashlock spends must have 1 because of the `OP_CSV 1`
-                witness: Witness::new(),
-                script_sig: ScriptBuf::new(),
-            }],
-            output: vec![TxOut {
-                script_pubkey: destination_address.script_pubkey(),
-                value: Amount::from_sat(self.contract_tx.output[0].value.to_sat() - miner_fee),
-            }],
-            lock_time: LockTime::ZERO,
-            version: Version::TWO,
-        };
-        let index = 0;
-        let preimage = Vec::new();
-        self.sign_hashlocked_transaction_input_given_preimage(
-            index,
-            &tx.clone(),
-            &mut tx.input[0],
-            self.contract_tx.output[0].value,
-            &preimage,
-        )?;
-        Ok(tx)
-    }
-
-    pub fn verify_contract_tx_sig(&self, sig: &Signature) -> Result<(), WalletError> {
+    pub(crate) fn verify_contract_tx_sig(&self, sig: &Signature) -> Result<(), WalletError> {
         Ok(verify_contract_tx_sig(
             &self.contract_tx,
             &self.get_multisig_redeemscript(),
@@ -407,7 +371,7 @@ impl IncomingSwapCoin {
 }
 
 impl OutgoingSwapCoin {
-    pub fn new(
+    pub(crate) fn new(
         my_privkey: SecretKey,
         other_pubkey: PublicKey,
         contract_tx: Transaction,
@@ -433,7 +397,7 @@ impl OutgoingSwapCoin {
         })
     }
 
-    pub fn sign_timelocked_transaction_input(
+    pub(crate) fn sign_timelocked_transaction_input(
         &self,
         index: usize,
         tx: &Transaction,
@@ -463,7 +427,7 @@ impl OutgoingSwapCoin {
         Ok(())
     }
 
-    pub fn create_timelock_spend(
+    pub(crate) fn create_timelock_spend(
         &self,
         destination_address: &Address,
     ) -> Result<Transaction, WalletError> {
@@ -496,7 +460,7 @@ impl OutgoingSwapCoin {
     }
 
     //"_with_my_privkey" as opposed to with other_privkey
-    pub fn sign_contract_tx_with_my_privkey(
+    pub(crate) fn sign_contract_tx_with_my_privkey(
         &self,
         contract_tx: &Transaction,
     ) -> Result<Signature, WalletError> {
@@ -509,7 +473,7 @@ impl OutgoingSwapCoin {
         )?)
     }
 
-    pub fn verify_contract_tx_sig(&self, sig: &Signature) -> Result<(), WalletError> {
+    pub(crate) fn verify_contract_tx_sig(&self, sig: &Signature) -> Result<(), WalletError> {
         Ok(verify_contract_tx_sig(
             &self.contract_tx,
             &self.get_multisig_redeemscript(),
@@ -521,7 +485,7 @@ impl OutgoingSwapCoin {
 }
 
 impl WatchOnlySwapCoin {
-    pub fn new(
+    pub(crate) fn new(
         multisig_redeemscript: &ScriptBuf,
         receiver_pubkey: PublicKey,
         contract_tx: Transaction,

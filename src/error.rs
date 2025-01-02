@@ -2,14 +2,29 @@
 
 use std::error::Error;
 
-/// Includes all network-related errors.
+/// Represents all possible network-related errors.
 #[derive(Debug)]
 pub enum NetError {
+    /// Error originating from standard I/O operations.
+    ///
+    /// This variant wraps a [`std::io::Error`] to provide details about I/O failures.
     IO(std::io::Error),
+
+    /// Error indicating the end of a file was reached unexpectedly.
     ReachedEOF,
+
+    /// Error indicating that a connection attempt timed out.
     ConnectionTimedOut,
+
+    /// Error caused by an invalid network address.
     InvalidNetworkAddress,
+
+    /// Error related to CBOR (Concise Binary Object Representation) serialization or deserialization.
+    ///
+    /// This variant wraps a [`serde_cbor::Error`] to provide details about the issue.
     Cbor(serde_cbor::Error),
+
+    /// Error indicating an invalid CLI application network.
     InvalidAppNetwork,
 }
 

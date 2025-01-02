@@ -45,7 +45,7 @@ use crate::{
 
 /// The Global Handle Message function. Takes in a [`Arc<Maker>`] and handle messages
 /// according to a [ConnectionState].
-pub fn handle_message(
+pub(crate) fn handle_message(
     maker: &Arc<Maker>,
     connection_state: &mut ConnectionState,
     message: TakerToMakerMessage,
@@ -213,7 +213,7 @@ impl Maker {
     /// checks the validity of contract transactions, and provide's the signature for the sender side.
     /// This will fail if the maker doesn't have enough utxos to fund the next coinswap hop, or the contract
     /// transaction isn't valid.
-    pub fn handle_req_contract_sigs_for_sender(
+    pub(crate) fn handle_req_contract_sigs_for_sender(
         &self,
         message: ReqContractSigsForSender,
     ) -> Result<MakerToTakerMessage, MakerError> {
@@ -253,7 +253,7 @@ impl Maker {
 
     /// Validates the [ProofOfFunding] message, initiate the next hop,
     /// and create the `[ReqContractSigsAsRecvrAndSender`\] message.
-    pub fn handle_proof_of_funding(
+    pub(crate) fn handle_proof_of_funding(
         &self,
         connection_state: &mut ConnectionState,
         message: ProofOfFunding,
@@ -473,7 +473,7 @@ impl Maker {
     }
 
     /// Handles [ContractSigsForRecvrAndSender] message and updates the wallet state
-    pub fn handle_contract_sigs_for_recvr_and_sender(
+    pub(crate) fn handle_contract_sigs_for_recvr_and_sender(
         &self,
         connection_state: &mut ConnectionState,
         message: ContractSigsForRecvrAndSender,
@@ -550,7 +550,7 @@ impl Maker {
     }
 
     /// Handles [ReqContractSigsForRecvr] and returns a [MakerToTakerMessage::RespContractSigsForRecvr]
-    pub fn handle_req_contract_sigs_for_recvr(
+    pub(crate) fn handle_req_contract_sigs_for_recvr(
         &self,
         message: ReqContractSigsForRecvr,
     ) -> Result<MakerToTakerMessage, MakerError> {
@@ -577,7 +577,7 @@ impl Maker {
     }
 
     /// Handles a [HashPreimage] message and returns a [MakerToTakerMessage::RespPrivKeyHandover]
-    pub fn handle_hash_preimage(
+    pub(crate) fn handle_hash_preimage(
         &self,
         message: HashPreimage,
     ) -> Result<MakerToTakerMessage, MakerError> {
@@ -629,7 +629,10 @@ impl Maker {
 
     /// Handles [PrivKeyHandover] message and updates all the coinswap wallet states and stores it to disk.
     /// This is the last step of completing a coinswap round.
-    pub fn handle_private_key_handover(&self, message: PrivKeyHandover) -> Result<(), MakerError> {
+    pub(crate) fn handle_private_key_handover(
+        &self,
+        message: PrivKeyHandover,
+    ) -> Result<(), MakerError> {
         for swapcoin_private_key in &message.multisig_privkeys {
             self.wallet
                 .write()?

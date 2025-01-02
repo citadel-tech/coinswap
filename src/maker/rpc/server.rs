@@ -182,7 +182,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
     Ok(())
 }
 
-pub fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
+pub(crate) fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let rpc_port = maker.config.rpc_port;
     let rpc_socket = format!("127.0.0.1:{}", rpc_port);
     let listener = Arc::new(TcpListener::bind(&rpc_socket)?);

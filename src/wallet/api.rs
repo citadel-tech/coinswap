@@ -3,9 +3,9 @@
 //! Currently, wallet synchronization is exclusively performed through RPC for makers.
 //! In the future, takers might adopt alternative synchronization methods, such as lightweight wallet solutions.
 
-use std::{convert::TryFrom, fs, path::PathBuf, str::FromStr};
+use std::{convert::TryFrom, path::PathBuf, str::FromStr};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use bip39::Mnemonic;
 use bitcoin::{
@@ -50,7 +50,7 @@ pub struct Wallet {
 /// Speicfy the keychain derivation path from [`HARDENDED_DERIVATION`]
 /// Each kind represents an unhardened index value. Starting with External = 0.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub enum KeychainKind {
+pub(crate) enum KeychainKind {
     External = 0isize,
     Internal,
 }
@@ -68,7 +68,7 @@ const WATCH_ONLY_SWAPCOIN_LABEL: &str = "watchonly_swapcoin_label";
 
 /// Enum representing different types of addresses to display.
 #[derive(Clone, PartialEq, Debug)]
-pub enum DisplayAddressType {
+pub(crate) enum DisplayAddressType {
     /// Display all types of addresses.
     All,
     /// Display information related to the master key.
@@ -116,39 +116,30 @@ impl FromStr for DisplayAddressType {
 // about a UTXO required to spend it
 #[derive(Debug, Clone)]
 pub enum UTXOSpendInfo {
-    SeedCoin {
-        path: String,
-        input_value: Amount,
-    },
-    SwapCoin {
-        multisig_redeemscript: ScriptBuf,
-    },
+    /// Seed Coin
+    SeedCoin { path: String, input_value: Amount },
+    /// Swap coin
+    SwapCoin { multisig_redeemscript: ScriptBuf },
+    /// Timelock Contract
     TimelockContract {
         swapcoin_multisig_redeemscript: ScriptBuf,
         input_value: Amount,
     },
+    /// HahsLockContract
     HashlockContract {
         swapcoin_multisig_redeemscript: ScriptBuf,
         input_value: Amount,
     },
-    FidelityBondCoin {
-        index: u32,
-        input_value: Amount,
-    },
+    /// Fidelity Bond Coin
+    FidelityBondCoin { index: u32, input_value: Amount },
 }
-
-// Custom type to handle complex return values.
-type SwapCoinsInfo<'a> = (
-    Vec<(&'a IncomingSwapCoin, ListUnspentResultEntry)>,
-    Vec<(&'a OutgoingSwapCoin, ListUnspentResultEntry)>,
-);
 
 impl Wallet {
     /// Initialize the wallet at a given path.
     ///
     /// The path should include the full path for a wallet file.
     /// If the wallet file doesn't exist it will create a new wallet file.
-    pub fn init(path: &Path, rpc_config: &RPCConfig) -> Result<Self, WalletError> {
+    pub(crate) fn init(path: &Path, rpc_config: &RPCConfig) -> Result<Self, WalletError> {
         // Generate Master key
         let master_key = {
             let mnemonic = Mnemonic::generate(12)?;
@@ -184,7 +175,7 @@ impl Wallet {
 
     /// Load wallet data from file and connects to a core RPC.
     /// The core rpc wallet name, and wallet_id field in the file should match.
-    pub fn load(path: &Path, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
+    pub(crate) fn load(path: &Path, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
         let store = WalletStore::read_from_disk(path)?;
         if rpc_config.wallet_name != store.file_name {
             return Err(WalletError::General(format!(
@@ -208,33 +199,22 @@ impl Wallet {
         })
     }
 
-    /// Deletes the wallet file and returns the result as `Ok(())` on success.
-    pub fn delete_wallet_file(&self) -> Result<(), WalletError> {
-        Ok(fs::remove_file(&self.wallet_file_path)?)
-    }
-
-    /// Returns a reference to the file path of the wallet.
-    pub fn get_file_path(&self) -> &Path {
-        &self.wallet_file_path
-    }
-
     /// Update external index and saves to disk.
-    pub fn update_external_index(&mut self, new_external_index: u32) -> Result<(), WalletError> {
+    pub(crate) fn update_external_index(
+        &mut self,
+        new_external_index: u32,
+    ) -> Result<(), WalletError> {
         self.store.external_index = new_external_index;
         self.save_to_disk()
     }
 
-    // pub fn get_external_index(&self) -> u32 {
-    //     self.external_index
-    // }
-
     /// Update the existing file. Error if path does not exist.
-    pub fn save_to_disk(&self) -> Result<(), WalletError> {
+    pub(crate) fn save_to_disk(&self) -> Result<(), WalletError> {
         self.store.write_to_disk(&self.wallet_file_path)
     }
 
     /// Finds an incoming swap coin with the specified multisig redeem script.
-    pub fn find_incoming_swapcoin(
+    pub(crate) fn find_incoming_swapcoin(
         &self,
         multisig_redeemscript: &ScriptBuf,
     ) -> Option<&IncomingSwapCoin> {
@@ -242,7 +222,7 @@ impl Wallet {
     }
 
     /// Finds an outgoing swap coin with the specified multisig redeem script.
-    pub fn find_outgoing_swapcoin(
+    pub(crate) fn find_outgoing_swapcoin(
         &self,
         multisig_redeemscript: &ScriptBuf,
     ) -> Option<&OutgoingSwapCoin> {
@@ -250,7 +230,7 @@ impl Wallet {
     }
 
     /// Finds a mutable reference to an incoming swap coin with the specified multisig redeem script.
-    pub fn find_incoming_swapcoin_mut(
+    pub(crate) fn find_incoming_swapcoin_mut(
         &mut self,
         multisig_redeemscript: &ScriptBuf,
     ) -> Option<&mut IncomingSwapCoin> {
@@ -258,21 +238,21 @@ impl Wallet {
     }
 
     /// Adds an incoming swap coin to the wallet.
-    pub fn add_incoming_swapcoin(&mut self, coin: &IncomingSwapCoin) {
+    pub(crate) fn add_incoming_swapcoin(&mut self, coin: &IncomingSwapCoin) {
         self.store
             .incoming_swapcoins
             .insert(coin.get_multisig_redeemscript(), coin.clone());
     }
 
     /// Adds an outgoing swap coin to the wallet.
-    pub fn add_outgoing_swapcoin(&mut self, coin: &OutgoingSwapCoin) {
+    pub(crate) fn add_outgoing_swapcoin(&mut self, coin: &OutgoingSwapCoin) {
         self.store
             .outgoing_swapcoins
             .insert(coin.get_multisig_redeemscript(), coin.clone());
     }
 
     /// Removes an incoming swap coin with the specified multisig redeem script from the wallet.
-    pub fn remove_incoming_swapcoin(
+    pub(crate) fn remove_incoming_swapcoin(
         &mut self,
         multisig_redeemscript: &ScriptBuf,
     ) -> Result<Option<IncomingSwapCoin>, WalletError> {
@@ -280,25 +260,11 @@ impl Wallet {
     }
 
     /// Removes an outgoing swap coin with the specified multisig redeem script from the wallet.
-    pub fn remove_outgoing_swapcoin(
+    pub(crate) fn remove_outgoing_swapcoin(
         &mut self,
         multisig_redeemscript: &ScriptBuf,
     ) -> Result<Option<OutgoingSwapCoin>, WalletError> {
         Ok(self.store.outgoing_swapcoins.remove(multisig_redeemscript))
-    }
-
-    /// Gets a reference to the list of incoming swap coins in the wallet.
-    pub fn get_incoming_swapcoin_list(
-        &self,
-    ) -> Result<&HashMap<ScriptBuf, IncomingSwapCoin>, WalletError> {
-        Ok(&self.store.incoming_swapcoins)
-    }
-
-    /// Gets a reference to the list of outgoing swap coins in the wallet.
-    pub fn get_outgoing_swapcoin_list(
-        &self,
-    ) -> Result<&HashMap<ScriptBuf, OutgoingSwapCoin>, WalletError> {
-        Ok(&self.store.outgoing_swapcoins)
     }
 
     /// Gets the total count of swap coins in the wallet.
@@ -379,7 +345,7 @@ impl Wallet {
     /// - Case 3: Previous output has an entry that doesn't match the contract => Reject
     ///
     /// The two cases are mostly the same, except for Case 1 in `proofoffunding`, which shouldn't happen.
-    pub fn does_prevout_match_cached_contract(
+    pub(crate) fn does_prevout_match_cached_contract(
         &self,
         prevout: &OutPoint,
         contract_scriptpubkey: &Script,
@@ -392,7 +358,7 @@ impl Wallet {
     }
 
     /// Dynamic address import count function. 10 for tests, 5000 for production.
-    pub fn get_addrss_import_count(&self) -> u32 {
+    pub(crate) fn get_addrss_import_count(&self) -> u32 {
         if cfg!(feature = "integration-test") {
             10
         } else {
@@ -402,7 +368,7 @@ impl Wallet {
 
     /// Stores an entry into [`WalletStore`]'s prevout-to-contract map.
     /// If the prevout already existed with a contract script, this will update the existing contract.
-    pub fn cache_prevout_to_contract(
+    pub(crate) fn cache_prevout_to_contract(
         &mut self,
         prevout: OutPoint,
         contract: ScriptBuf,
@@ -416,7 +382,7 @@ impl Wallet {
         Ok(())
     }
 
-    //pub fn get_recovery_phrase_from_file()
+    //pub(crate) fn get_recovery_phrase_from_file()
 
     /// Wallet descriptors are derivable. Currently only supports two KeychainKind. Internal and External.
     fn get_wallet_descriptors(&self) -> Result<HashMap<KeychainKind, String>, WalletError> {
@@ -485,8 +451,8 @@ impl Wallet {
         &self.store.external_index
     }
 
-    /// Core wallet label is the master XPub fingerint.
-    pub fn get_core_wallet_label(&self) -> String {
+    /// Core wallet label is the master Xpub(crate) fingerint.
+    pub(crate) fn get_core_wallet_label(&self) -> String {
         let secp = Secp256k1::new();
         let m_xpub = Xpub::from_priv(&secp, &self.store.master_key);
         m_xpub.fingerprint().to_string()
@@ -618,7 +584,7 @@ impl Wallet {
         Ok(all_utxos)
     }
 
-    pub fn get_all_locked_utxo(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
+    pub(crate) fn get_all_locked_utxo(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
         let all_utxos = self
             .rpc
             .list_unspent(Some(0), Some(9999999), None, None, None)?;
@@ -627,7 +593,7 @@ impl Wallet {
     /// Returns a list all utxos with their spend info tracked by the wallet.
     /// Optionally takes in an Utxo list to reduce RPC calls. If None is given, the
     /// full list of utxo is fetched from core rpc.
-    pub fn list_all_utxo_spend_info(
+    pub(crate) fn list_all_utxo_spend_info(
         &self,
         utxos: Option<&Vec<ListUnspentResultEntry>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
@@ -713,71 +679,10 @@ impl Wallet {
         Ok(filtered_utxos)
     }
 
-    /// Finds incomplete coin swaps in the wallet.
-    pub fn find_incomplete_coinswaps(
-        &self,
-    ) -> Result<HashMap<Hash160, SwapCoinsInfo>, WalletError> {
-        self.rpc.unlock_unspent_all()?;
-
-        let completed_coinswap_hashvalues = self
-            .store
-            .incoming_swapcoins
-            .values()
-            .filter(|sc| sc.other_privkey.is_some())
-            .map(|sc| sc.get_hashvalue())
-            .collect::<Result<HashSet<Hash160>, _>>()?;
-
-        let mut incomplete_swapcoin_groups = HashMap::<Hash160, SwapCoinsInfo>::new();
-        let get_hashvalue = |s: &dyn SwapCoin| -> Result<_, WalletError> {
-            let swapcoin_hashvalue = s.get_hashvalue()?;
-            if completed_coinswap_hashvalues.contains(&swapcoin_hashvalue) {
-                return Ok(None);
-            }
-            Ok(Some(swapcoin_hashvalue))
-        };
-        for utxo in self
-            .rpc
-            .list_unspent(Some(0), Some(9999999), None, None, None)?
-        {
-            if utxo.descriptor.is_none() {
-                continue;
-            }
-            let multisig_redeemscript = if let Some(rs) = utxo.witness_script.as_ref() {
-                rs
-            } else {
-                continue;
-            };
-            if let Some(s) = self.find_incoming_swapcoin(multisig_redeemscript) {
-                if let Some(swapcoin_hashvalue) = get_hashvalue(s)? {
-                    incomplete_swapcoin_groups
-                        .entry(swapcoin_hashvalue)
-                        .or_insert((
-                            Vec::<(&IncomingSwapCoin, ListUnspentResultEntry)>::new(),
-                            Vec::<(&OutgoingSwapCoin, ListUnspentResultEntry)>::new(),
-                        ))
-                        .0
-                        .push((s, utxo));
-                }
-            } else if let Some(s) = self.find_outgoing_swapcoin(multisig_redeemscript) {
-                if let Some(swapcoin_hashvalue) = get_hashvalue(s)? {
-                    incomplete_swapcoin_groups
-                        .entry(swapcoin_hashvalue)
-                        .or_insert((
-                            Vec::<(&IncomingSwapCoin, ListUnspentResultEntry)>::new(),
-                            Vec::<(&OutgoingSwapCoin, ListUnspentResultEntry)>::new(),
-                        ))
-                        .1
-                        .push((s, utxo));
-                }
-            } else {
-                continue;
-            };
-        }
-        Ok(incomplete_swapcoin_groups)
-    }
-
     /// A simplification of `find_incomplete_coinswaps` function
-    pub fn find_unfinished_swapcoins(&self) -> (Vec<IncomingSwapCoin>, Vec<OutgoingSwapCoin>) {
+    pub(crate) fn find_unfinished_swapcoins(
+        &self,
+    ) -> (Vec<IncomingSwapCoin>, Vec<OutgoingSwapCoin>) {
         let unfinished_incomins = self
             .store
             .incoming_swapcoins
@@ -804,55 +709,6 @@ impl Wallet {
             .collect::<Vec<_>>();
 
         (unfinished_incomins, unfinished_outgoings)
-    }
-
-    /// Finds live contract unspent outputs in the wallet.
-    // live contract refers to a contract tx which has been broadcast
-    // i.e. where there are UTXOs protected by contract_redeemscript's that we know about
-    pub fn find_live_contract_unspents(&self) -> Result<SwapCoinsInfo, WalletError> {
-        // populate hashmaps where key is contract scriptpubkey and value is the swapcoin
-        // let contract_scriptpubkeys_incoming_swapcoins =
-        //     self.create_contract_scriptpubkey_incoming_swapcoin_hashmap();
-        // let contract_scriptpubkeys_outgoing_swapcoins =
-        //     self.create_contract_scriptpubkey_outgoing_swapcoin_hashmap();
-
-        self.rpc.unlock_unspent_all()?;
-        let listunspent = self
-            .rpc
-            .list_unspent(Some(0), Some(9999999), None, None, None)?;
-
-        let (incoming_swapcoins_utxos, outgoing_swapcoins_utxos): (Vec<_>, Vec<_>) = listunspent
-            .iter()
-            .map(|u| {
-                (
-                    self.store.incoming_swapcoins.get(&u.script_pub_key),
-                    self.store.outgoing_swapcoins.get(&u.script_pub_key),
-                    u,
-                )
-            })
-            .filter(|isc_osc_u| (isc_osc_u.0.is_some() || isc_osc_u.1.is_some()))
-            .partition(|isc_osc_u| isc_osc_u.0.is_some());
-
-        Ok((
-            incoming_swapcoins_utxos
-                .iter()
-                .map(|isc_osc_u| {
-                    (
-                        isc_osc_u.0.expect("incoming swapcoin expected"),
-                        isc_osc_u.2.clone(),
-                    )
-                })
-                .collect::<Vec<(&IncomingSwapCoin, ListUnspentResultEntry)>>(),
-            outgoing_swapcoins_utxos
-                .iter()
-                .map(|isc_osc_u| {
-                    (
-                        isc_osc_u.1.expect("outgoing swapcoin expected"),
-                        isc_osc_u.2.clone(),
-                    )
-                })
-                .collect::<Vec<(&OutgoingSwapCoin, ListUnspentResultEntry)>>(),
-        ))
     }
 
     /// Finds the next unused index in the HD keychain.
@@ -899,7 +755,10 @@ impl Wallet {
     }
 
     /// Gets the next internal addresses from the HD keychain.
-    pub fn get_next_internal_addresses(&self, count: u32) -> Result<Vec<Address>, WalletError> {
+    pub(crate) fn get_next_internal_addresses(
+        &self,
+        count: u32,
+    ) -> Result<Vec<Address>, WalletError> {
         let next_change_addr_index = self.find_hd_next_index(KeychainKind::Internal)?;
         let descriptors = self.get_wallet_descriptors()?;
         let change_branch_descriptor = descriptors
@@ -917,20 +776,15 @@ impl Wallet {
     }
 
     /// Refreshes the offer maximum size cache based on the current wallet's unspent transaction outputs (UTXOs).
-    pub fn refresh_offer_maxsize_cache(&mut self) -> Result<(), WalletError> {
+    pub(crate) fn refresh_offer_maxsize_cache(&mut self) -> Result<(), WalletError> {
         let swap_balance = self.balance_swap_coins(None)?;
         let seed_balance = self.balance_descriptor_utxo(None)?;
         self.store.offer_maxsize = (seed_balance + swap_balance).to_sat();
         Ok(())
     }
 
-    /// Gets the offer maximum size from the cached value.
-    pub fn get_offer_maxsize(&self) -> u64 {
-        self.store.offer_maxsize
-    }
-
     /// Gets a tweakable key pair from the master key of the wallet.
-    pub fn get_tweakable_keypair(&self) -> Result<(SecretKey, PublicKey), WalletError> {
+    pub(crate) fn get_tweakable_keypair(&self) -> Result<(SecretKey, PublicKey), WalletError> {
         let secp = Secp256k1::new();
         let privkey = self
             .store
@@ -946,7 +800,7 @@ impl Wallet {
     }
 
     /// Signs a transaction corresponding to the provided UTXO spend information.
-    pub fn sign_transaction(
+    pub(crate) fn sign_transaction(
         &self,
         tx: &mut Transaction,
         inputs_info: impl Iterator<Item = UTXOSpendInfo>,
@@ -1031,6 +885,7 @@ impl Wallet {
         Ok(())
     }
 
+    /// Largerst to lowest coinselect algorithm
     pub fn coin_select(
         &self,
         amount: Amount,
@@ -1065,7 +920,7 @@ impl Wallet {
         Ok(selected_utxo)
     }
 
-    pub fn get_utxo(
+    pub(crate) fn get_utxo(
         &self,
         (txid, vout): (Txid, u32),
     ) -> Result<Option<UTXOSpendInfo>, WalletError> {
@@ -1113,7 +968,7 @@ impl Wallet {
 
     /// Initialize a Coinswap with the Other party.
     /// Returns, the Funding Transactions, [`OutgoingSwapCoin`]s and the Total Miner fees.
-    pub fn initalize_coinswap(
+    pub(crate) fn initalize_coinswap(
         &mut self,
         total_coinswap_amount: Amount,
         other_multisig_pubkeys: &[PublicKey],
@@ -1189,7 +1044,7 @@ impl Wallet {
     }
 
     /// Imports a watch-only redeem script into the wallet.
-    pub fn import_watchonly_redeemscript(
+    pub(crate) fn import_watchonly_redeemscript(
         &self,
         redeemscript: &ScriptBuf,
     ) -> Result<(), WalletError> {
@@ -1201,7 +1056,7 @@ impl Wallet {
         self.import_descriptors(&[descriptor], Some(WATCH_ONLY_SWAPCOIN_LABEL.to_string()))
     }
 
-    pub fn descriptors_to_import(&self) -> Result<Vec<String>, WalletError> {
+    pub(crate) fn descriptors_to_import(&self) -> Result<Vec<String>, WalletError> {
         let mut descriptors_to_import = Vec::new();
 
         descriptors_to_import.extend(self.get_unimported_wallet_desc()?);
