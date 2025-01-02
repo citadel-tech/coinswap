@@ -40,7 +40,7 @@ use crate::{
         rpc::start_rpc_server,
     },
     protocol::messages::{DnsMetadata, DnsRequest, TakerToMakerMessage},
-    utill::{read_message, send_message, ConnectionType},
+    utill::{read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
     wallet::WalletError,
 };
 

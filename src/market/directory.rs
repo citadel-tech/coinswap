@@ -12,7 +12,7 @@ use crate::{
     protocol::messages::DnsRequest,
     utill::{
         get_dns_dir, parse_field, parse_toml, read_message, send_message, verify_fidelity_checks,
-        ConnectionType,
+        ConnectionType, HEART_BEAT_INTERVAL,
     },
     wallet::{RPCConfig, WalletError},
 };

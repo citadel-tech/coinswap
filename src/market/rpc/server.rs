@@ -4,7 +4,7 @@ use super::{RpcMsgReq, RpcMsgResp};
 use crate::{
     error::NetError,
     market::directory::{DirectoryServer, DirectoryServerError},
-    utill::{read_message, send_message},
+    utill::{read_message, send_message, HEART_BEAT_INTERVAL},
 };
 use std::{
     collections::{BTreeSet, HashMap},
