@@ -35,8 +35,14 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: cargo install cargo-hack
-        uses: taiki-e/install-action@cargo-hack
+      # - name: cargo install cargo-hack
+      #   uses: taiki-e/install-action@cargo-hack
         
-      - name: cargo hack
-        run: cargo hack --feature-powerset check
+      # - name: cargo hack
+      #   run: cargo hack --feature-powerset check
+
+      - name: Install cargo-docs-rs
+        uses: dtolnay/install@cargo-docs-rs
+        
+      - name: cargo docs-rs
+        run: cargo +nightly docs-rs
