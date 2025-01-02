@@ -13,5 +13,5 @@ pub enum RpcMsgReq {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum RpcMsgResp {
     /// ListAddressesResp RPC message response variant
-    ListAddressesResp(BTreeSet<String>),
+    ListAddressesResp(BTreeSet<(OutPoint, String)>),
 }

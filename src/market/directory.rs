@@ -60,6 +60,7 @@ pub enum DirectoryServerError {
     ///
     /// This variant wraps a [`WalletError`] to capture issues arising during wallet-related operations.
     Wallet(WalletError),
+    /// Represents an error caused by a corrupted address file read.
     AddressFileCorrupted(String),
 }
 
@@ -126,6 +127,7 @@ pub struct DirectoryServer {
     pub data_dir: PathBuf,
     /// Shutdown flag to stop the directory server
     pub shutdown: AtomicBool,
+    /// A collection of maker addresses received from the Dns Server.
     pub addresses: Arc<RwLock<HashMap<OutPoint, String>>>,
 }
 
@@ -329,6 +331,16 @@ pub fn read_addresses_from_file(
         .collect::<Result<HashMap<_, _>, DirectoryServerError>>()
 }
 
+/// Initializes and starts the Directory Server with the provided configuration.
+///
+/// This function configures the Directory Server based on the specified `directory` and optional `rpc_config`.
+/// It handles both Clearnet and Tor connections (if the `tor` feature is enabled) and performs the following tasks:
+///
+/// - Sets up the Directory Server for the appropriate connection type.
+/// - Spawns threads for handling RPC requests and writing address data to disk.
+/// - Monitors and manages incoming TCP connections.
+/// - Handles shutdown signals gracefully, ensuring all threads are terminated and resources are cleaned up.
+///
 pub fn start_directory_server(
     directory: Arc<DirectoryServer>,
     rpc_config: Option<RPCConfig>,
