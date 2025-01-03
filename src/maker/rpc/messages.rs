@@ -1,8 +1,11 @@
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
+use bitcoin::Txid;
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+use crate::wallet::FidelityBond;
 
 /// Enum representing RPC message requests.
 ///
@@ -12,17 +15,17 @@ use std::path::PathBuf;
 pub enum RpcMsgReq {
     /// Ping request to check connectivity.
     Ping,
-    /// Request to fetch UTXOs in the seed pool.
-    SeedUtxo,
-    /// Request to fetch UTXOs in the swap pool.
+    /// Request to fetch all utxos in the wallet.
+    Utxo,
+    /// Request to fetch only swap utxos in the wallet.
     SwapUtxo,
     /// Request to fetch UTXOs in the contract pool.
     ContractUtxo,
     /// Request to fetch UTXOs in the fidelity pool.
     FidelityUtxo,
-    /// Request to retrieve the total balance in the seed pool.
-    SeedBalance,
-    /// Request to retrieve the total balance in the swap pool.
+    /// Request to retreive the total spenable balance in wallet.
+    Balance,
+    /// Request to retrieve the total swap balance in wallet.
     SwapBalance,
     /// Request to retrieve the total balance in the contract pool.
     ContractBalance,
@@ -45,6 +48,12 @@ pub enum RpcMsgReq {
     GetDataDir,
     /// Request to stop the Maker server.
     Stop,
+    /// Request to reddem a fidelity bond for a given index.
+    RedeemFidelity(u32),
+    /// Request to list all active and past fidelity bonds.
+    ListFidelity,
+    /// Request to sync the internal wallet with blockchain.
+    SyncWallet,
 }
 
 /// Enum representing RPC message responses.
@@ -55,9 +64,9 @@ pub enum RpcMsgReq {
 pub enum RpcMsgResp {
     /// Response to a Ping request.
     Pong,
-    /// Response containing UTXOs in the seed pool.
-    SeedUtxoResp {
-        /// List of UTXOs in the seed pool.
+    /// Response containing all spendable UTXOs
+    UtxoResp {
+        /// List of spndable UTXOs in the wallet.
         utxos: Vec<ListUnspentResultEntry>,
     },
     /// Response containing UTXOs in the swap pool.
@@ -93,6 +102,12 @@ pub enum RpcMsgResp {
     GetDataDirResp(PathBuf),
     /// Response indicating the server has been shut down.
     Shutdown,
+    /// Response with the fidelity spending txid.
+    FidelitySpend(Txid),
+    /// Response with the internal server error.
+    ServerError(String),
+    /// Response listing all current and past fidelity bonds.
+    ListBonds(HashMap<u32, (FidelityBond, bool)>),
 }
 
 impl Display for RpcMsgResp {
@@ -104,14 +119,17 @@ impl Display for RpcMsgResp {
             Self::ContractBalanceResp(bal) => write!(f, "{} sats", bal),
             Self::SwapBalanceResp(bal) => write!(f, "{} sats", bal),
             Self::FidelityBalanceResp(bal) => write!(f, "{} sats", bal),
-            Self::SeedUtxoResp { utxos } => write!(f, "{:?}", utxos),
-            Self::SwapUtxoResp { utxos } => write!(f, "{:?}", utxos),
-            Self::FidelityUtxoResp { utxos } => write!(f, "{:?}", utxos),
-            Self::ContractUtxoResp { utxos } => write!(f, "{:?}", utxos),
+            Self::UtxoResp { utxos } => write!(f, "{:#?}", utxos),
+            Self::SwapUtxoResp { utxos } => write!(f, "{:#?}", utxos),
+            Self::FidelityUtxoResp { utxos } => write!(f, "{:#?}", utxos),
+            Self::ContractUtxoResp { utxos } => write!(f, "{:#?}", utxos),
             Self::SendToAddressResp(tx_hex) => write!(f, "{}", tx_hex),
             Self::GetTorAddressResp(addr) => write!(f, "{}", addr),
             Self::GetDataDirResp(path) => write!(f, "{}", path.display()),
             Self::Shutdown => write!(f, "Shutdown Initiated"),
+            Self::FidelitySpend(txid) => write!(f, "{}", txid),
+            Self::ServerError(e) => write!(f, "{}", e),
+            Self::ListBonds(v) => write!(f, "{:#?}", v),
         }
     }
 }

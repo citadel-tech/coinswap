@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tor")]
 use socks::Socks5Stream;
-use std::{io::ErrorKind, net::TcpStream, thread::sleep, time::Duration};
+use std::{net::TcpStream, thread::sleep, time::Duration};
 
 use crate::{
     protocol::{
@@ -107,7 +107,6 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
     maker_hashlock_nonces: &[SecretKey],
     locktime: u16,
 ) -> Result<ContractSigsForSender, TakerError> {
-    log::info!("Connecting to {}", socket.peer_addr()?);
     handshake_maker(socket)?;
     log::info!(
         "===> Sending ReqContractSigsForSender to {}",
@@ -184,7 +183,6 @@ pub(crate) fn req_sigs_for_recvr_once<S: SwapCoin>(
     incoming_swapcoins: &[S],
     receivers_contract_txes: &[Transaction],
 ) -> Result<ContractSigsForRecvr, TakerError> {
-    log::info!("Connecting to {}", socket.peer_addr()?);
     handshake_maker(socket)?;
 
     let txs_info = incoming_swapcoins
@@ -450,13 +448,14 @@ fn download_maker_offer_attempt_once(
     addr: &MakerAddress,
     config: &TakerConfig,
 ) -> Result<Offer, TakerError> {
-    let address = addr.to_string();
+    let maker_addr = addr.to_string();
+    log::info!("Attempting to download Offer from {}", maker_addr);
     let mut socket = match config.connection_type {
-        ConnectionType::CLEARNET => TcpStream::connect(address)?,
+        ConnectionType::CLEARNET => TcpStream::connect(&maker_addr)?,
         #[cfg(feature = "tor")]
         ConnectionType::TOR => Socks5Stream::connect(
             format!("127.0.0.1:{}", config.socks_port).as_str(),
-            address.as_ref(),
+            maker_addr.as_ref(),
         )?
         .into_inner(),
     };
@@ -481,6 +480,8 @@ fn download_maker_offer_attempt_once(
         }
     };
 
+    log::info!("Got offer from : {} | {:?}", maker_addr, offer);
+
     Ok(*offer)
 }
 
@@ -494,31 +495,14 @@ pub(crate) fn download_maker_offer(
         ii += 1;
         match download_maker_offer_attempt_once(&address, &config) {
             Ok(offer) => return Some(OfferAndAddress { offer, address }),
-            Err(TakerError::IO(e)) => {
-                // TODO: Think about here for better logic?
-                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut {
-                    if ii <= FIRST_CONNECT_ATTEMPTS {
-                        log::warn!(
-                            "Timeout for request offer from maker {}, reattempting...",
-                            address
-                        );
-                        continue;
-                    } else {
-                        log::error!(
-                            "Timeout attempt exceeded for request offer from maker {}, ",
-                            address
-                        );
-                        return None;
-                    }
-                }
-            }
-
             Err(e) => {
                 if ii <= FIRST_CONNECT_ATTEMPTS {
                     log::warn!(
-                        "Failed to request offer from maker {}, reattempting... error={:?}",
+                        "Failed to request offer from maker {}, with error: {:?} reattempting {} of {}",
                         address,
-                        e
+                        e,
+                        ii,
+                        FIRST_CONNECT_ATTEMPTS
                     );
                     sleep(Duration::from_secs(FIRST_CONNECT_SLEEP_DELAY_SEC));
                     continue;

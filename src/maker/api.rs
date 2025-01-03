@@ -158,14 +158,6 @@ pub(crate) struct ThreadPool {
     pub(crate) port: u16,
 }
 
-impl Drop for ThreadPool {
-    fn drop(&mut self) {
-        if let Err(e) = self.join_all_threads() {
-            log::error!("Error joining threads in via drop: {:?}", e);
-        }
-    }
-}
-
 impl ThreadPool {
     pub(crate) fn new(port: u16) -> Self {
         Self {
@@ -179,7 +171,7 @@ impl ThreadPool {
         threads.push(handle);
     }
     #[inline]
-    fn join_all_threads(&self) -> Result<(), MakerError> {
+    pub(crate) fn join_all_threads(&self) -> Result<(), MakerError> {
         let mut threads = self
             .threads
             .lock()
@@ -238,22 +230,22 @@ pub struct Maker {
 impl Maker {
     /// Initializes a Maker structure.
     ///
-    /// This function sets up a Maker instance with configurable parameters.  
+    /// This function sets up a Maker instance with configurable parameters.
     /// It handles the initialization of data directories, wallet files, and RPC configurations.
     ///
     /// ### Parameters:
-    /// - `data_dir`:  
-    ///   - `Some(value)`: Use the specified directory for storing data.  
-    ///   - `None`: Use the default data directory (e.g., for Linux: `~/.coinswap/maker`).  
-    /// - `wallet_file_name`:  
-    ///   - `Some(value)`: Attempt to load a wallet file named `value`. If it does not exist, a new wallet with the given name will be created.  
-    ///   - `None`: Create a new wallet file with the default name `maker-wallet`.  
+    /// - `data_dir`:
+    ///   - `Some(value)`: Use the specified directory for storing data.
+    ///   - `None`: Use the default data directory (e.g., for Linux: `~/.coinswap/maker`).
+    /// - `wallet_file_name`:
+    ///   - `Some(value)`: Attempt to load a wallet file named `value`. If it does not exist, a new wallet with the given name will be created.
+    ///   - `None`: Create a new wallet file with the default name `maker-wallet`.
     /// - If `rpc_config` = `None`: Use the default [`RPCConfig`]
     pub fn init(
         data_dir: Option<PathBuf>,
         wallet_file_name: Option<String>,
         rpc_config: Option<RPCConfig>,
-        port: Option<u16>,
+        network_port: Option<u16>,
         rpc_port: Option<u16>,
         socks_port: Option<u16>,
         connection_type: Option<ConnectionType>,
@@ -286,8 +278,8 @@ impl Maker {
         // If config file doesn't exist, default config will be loaded.
         let mut config = MakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
-        if let Some(port) = port {
-            config.port = port;
+        if let Some(port) = network_port {
+            config.network_port = port;
         }
 
         if let Some(rpc_port) = rpc_port {
@@ -302,13 +294,15 @@ impl Maker {
             config.connection_type = connection_type;
         }
 
-        let port = config.port;
+        let port = config.network_port;
 
         config.write_to_file(&data_dir.join("config.toml"))?;
 
         log::info!("Initializing wallet sync");
         wallet.sync()?;
         log::info!("Completed wallet sync");
+
+        log::info!("Max offer size : {} sats", wallet.store.offer_maxsize);
 
         Ok(Self {
             behavior,
@@ -522,7 +516,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                         // Something is broadcasted. Report, Recover and Abort.
                         log::warn!(
                             "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
-                            maker.config.port,
+                            maker.config.network_port,
                             txid
                         );
                         // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
@@ -551,7 +545,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                             } else {
                                 log::warn!(
                                     "[{}] Outgoing contact signature not known. Not Broadcasting",
-                                    maker.config.port
+                                    maker.config.network_port
                                 );
                             }
                             if let Ok(tx) = ic_sc.get_fully_signed_contract_tx() {
@@ -559,7 +553,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                             } else {
                                 log::warn!(
                                     "[{}] Incoming contact signature not known. Not Broadcasting",
-                                    maker.config.port
+                                    maker.config.network_port
                                 );
                             }
                         }
@@ -569,7 +563,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                         let maker_clone = maker.clone();
                         log::info!(
                             "[{}] Spawning recovery thread after seeing contracts in mempool",
-                            maker.config.port
+                            maker.config.network_port
                         );
                         let handle = std::thread::Builder::new()
                             .name("Swap recovery thread".to_string())
@@ -629,14 +623,14 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                     current_time.saturating_duration_since(*last_connected_time);
                 log::info!(
                     "[{}] No response from {} in {:?}",
-                    maker.config.port,
+                    maker.config.network_port,
                     ip,
                     no_response_since
                 );
                 if no_response_since > conn_timeout {
                     log::error!(
                         "[{}] Potential Dropped Connection from {}",
-                        maker.config.port,
+                        maker.config.network_port,
                         ip
                     );
                     // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
@@ -663,7 +657,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                     let maker_clone = maker.clone();
                     log::info!(
                         "[{}] Spawning recovery thread after Taker dropped",
-                        maker.config.port
+                        maker.config.network_port
                     );
                     let handle = std::thread::Builder::new()
                         .name("Swap Recovery Thread".to_string())
@@ -711,7 +705,7 @@ pub(crate) fn recover_from_swap(
         {
             log::info!(
                 "[{}] Incoming Contract Already Broadcasted",
-                maker.config.port
+                maker.config.network_port
             );
         } else {
             maker
@@ -722,7 +716,7 @@ pub(crate) fn recover_from_swap(
                 .map_err(WalletError::Rpc)?;
             log::info!(
                 "[{}] Broadcasted Incoming Contract : {}",
-                maker.config.port,
+                maker.config.network_port,
                 tx.compute_txid()
             );
         }
@@ -734,7 +728,7 @@ pub(crate) fn recover_from_swap(
             .expect("Incoming swapcoin expected");
         log::info!(
             "[{}] Removed Incoming Swapcoin From Wallet, Contract Txid : {}",
-            maker.config.port,
+            maker.config.network_port,
             removed_incoming.contract_tx.compute_txid()
         );
     }
@@ -752,7 +746,7 @@ pub(crate) fn recover_from_swap(
         {
             log::info!(
                 "[{}] Outgoing Contract already broadcasted",
-                maker.config.port
+                maker.config.network_port
             );
         } else {
             maker
@@ -763,7 +757,7 @@ pub(crate) fn recover_from_swap(
                 .map_err(WalletError::Rpc)?;
             log::info!(
                 "[{}] Broadcasted Outgoing Contract : {}",
-                maker.config.port,
+                maker.config.network_port,
                 tx.compute_txid()
             );
         }
@@ -787,7 +781,7 @@ pub(crate) fn recover_from_swap(
             {
                 log::info!(
                     "[{}] Contract Tx : {}, reached confirmation : {:?}, Required Confirmation : {}",
-                    maker.config.port,
+                    maker.config.network_port,
                     contract.compute_txid(),
                     result.confirmations,
                     timelock
@@ -797,13 +791,13 @@ pub(crate) fn recover_from_swap(
                     if confirmation > (*timelock as u32) {
                         log::info!(
                             "[{}] Timelock maturity of {} blocks for Contract Tx is reached : {}",
-                            maker.config.port,
+                            maker.config.network_port,
                             timelock,
                             contract.compute_txid()
                         );
                         log::info!(
                             "[{}] Broadcasting timelocked tx: {}",
-                            maker.config.port,
+                            maker.config.network_port,
                             timelocked_tx.compute_txid()
                         );
                         maker
@@ -828,7 +822,7 @@ pub(crate) fn recover_from_swap(
 
                 log::info!(
                     "[{}] Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
-                    maker.config.port,
+                    maker.config.network_port,
                     outgoing_removed.contract_tx.compute_txid()
                 );
             }

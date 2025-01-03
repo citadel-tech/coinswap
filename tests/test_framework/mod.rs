@@ -118,12 +118,7 @@ pub(crate) fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> proc
 
     let (stderr_sender, stderr_recv): (Sender<String>, Receiver<String>) = mpsc::channel();
 
-    let mut args = vec![
-        "--data-directory",
-        data_dir.to_str().unwrap(),
-        "--rpc_network",
-        "regtest",
-    ];
+    let mut args = vec!["--data-directory", data_dir.to_str().unwrap()];
 
     // RPC authentication (user:password) from the cookie file
     let cookie_file_path = Path::new(&bitcoind.params.cookie_file);
@@ -404,9 +399,6 @@ impl TestFramework {
         Arc<DirectoryServer>,
         JoinHandle<()>,
     ) {
-        if cfg!(feature = "tor") && connection_type == ConnectionType::TOR {
-            coinswap::tor::setup_mitosis();
-        }
         setup_logger(log::LevelFilter::Info);
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
@@ -516,11 +508,9 @@ impl From<&TestFramework> for RPCConfig {
     fn from(value: &TestFramework) -> Self {
         let url = value.bitcoind.rpc_url().split_at(7).1.to_string();
         let auth = Auth::CookieFile(value.bitcoind.params.cookie_file.clone());
-        let network = value.bitcoind.client.get_blockchain_info().unwrap().chain;
         Self {
             url,
             auth,
-            network,
             ..Default::default()
         }
     }
