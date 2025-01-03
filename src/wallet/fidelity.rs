@@ -174,8 +174,19 @@ impl Wallet {
             .iter()
             .filter_map(|(i, (_, _, is_spent))| {
                 if !is_spent {
-                    let value = self.calculate_bond_value(*i).unwrap();
-                    Some((i, value))
+                    match self.calculate_bond_value(*i) {
+                        Ok(v) => {
+                            log::info!("Fidelity Bond found | Index: {}, Value : {}", i, v);
+                            Some((i, v))
+                        }
+                        Err(e) => {
+                            log::error!("Fidelity valuation failed for index {}:  {:?} ", i, e);
+                            log::info!(
+                                "Use `maker-cli redeem-fildeity <index>` to redeem the bond"
+                            );
+                            None
+                        }
+                    }
                 } else {
                     None
                 }
@@ -430,8 +441,8 @@ impl Wallet {
     }
 
     /// Redeem a Fidelity Bond.
-    /// This functions creates a spending transaction, signs and broadcasts it.
-    /// Upon confirmation it marks the bond as `spent` in the wallet data.
+    /// This functions creates a spending transaction from the fidelity bond, signs and broadcasts it.
+    /// Returns the txid of the spending tx, and mark the bond as spent.
     pub fn redeem_fidelity(&mut self, index: u32) -> Result<Txid, WalletError> {
         let (bond, _, is_spent) = self
             .store
@@ -477,31 +488,9 @@ impl Wallet {
 
         let txid = self.rpc.send_raw_transaction(&tx)?;
 
-        let sleep_increment = 10;
-        let mut sleep_multiplier = 0;
+        log::info!("Fidelity redeem transaction braodcasted. txid: {}", txid);
 
-        loop {
-            sleep_multiplier += 1;
-            let get_tx_result = self.rpc.get_transaction(&txid, None)?;
-            if let Some(ht) = get_tx_result.info.blockheight {
-                log::info!(
-                    "Redeem fidelity transaction {} confirmed at blockheight: {}",
-                    txid,
-                    ht
-                );
-                break;
-            } else {
-                log::info!(
-                    "Redeem fildelity transaction {} seen in mempool, waiting for confirmation.",
-                    txid
-                );
-
-                let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60); // Caps at 1 Block interval i.e 10 mins
-                log::info!("Next sync in {:?} secs", total_sleep);
-                thread::sleep(Duration::from_secs(total_sleep));
-                continue;
-            }
-        }
+        // No need to wait for confirmation as that will delay the rpc call. Just send back the txid.
 
         // mark is_spent
         {

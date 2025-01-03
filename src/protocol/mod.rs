@@ -2,7 +2,7 @@
 
 pub(crate) mod contract;
 pub mod error;
-pub(crate) mod messages;
+pub mod messages;
 
 pub(crate) use contract::Hash160;
 

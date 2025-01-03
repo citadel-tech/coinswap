@@ -60,7 +60,9 @@ pub enum DirectoryServerError {
     ///
     /// This variant wraps a [`WalletError`] to capture issues arising during wallet-related operations.
     Wallet(WalletError),
-    /// Represents an error caused by a corrupted address file read.
+    /// Error indicating the address.dat file is corrupted.
+    ///
+    /// This can occur in case of incomplete shutdown or other ways a file can corrupt.
     AddressFileCorrupted(String),
 }
 
@@ -118,7 +120,7 @@ pub struct DirectoryServer {
     /// RPC listening port
     pub rpc_port: u16,
     /// Network listening port
-    pub port: u16,
+    pub network_port: u16,
     /// Socks port
     pub socks_port: u16,
     /// Connection type
@@ -127,7 +129,7 @@ pub struct DirectoryServer {
     pub data_dir: PathBuf,
     /// Shutdown flag to stop the directory server
     pub shutdown: AtomicBool,
-    /// A collection of maker addresses received from the Dns Server.
+    /// A store of all the received maker addresses indexed by fidelity bond outpoints.
     pub addresses: Arc<RwLock<HashMap<OutPoint, String>>>,
 }
 
@@ -135,7 +137,7 @@ impl Default for DirectoryServer {
     fn default() -> Self {
         Self {
             rpc_port: 4321,
-            port: 8080,
+            network_port: 8080,
             socks_port: 19060,
             connection_type: {
                 #[cfg(feature = "tor")]
@@ -217,7 +219,7 @@ impl DirectoryServer {
 
         Ok(DirectoryServer {
             rpc_port: parse_field(config_map.get("rpc_port"), default_dns.rpc_port),
-            port: parse_field(config_map.get("port"), default_dns.port),
+            network_port: parse_field(config_map.get("port"), default_dns.network_port),
             socks_port: parse_field(config_map.get("socks_port"), default_dns.socks_port),
             data_dir,
             shutdown: AtomicBool::new(false),
@@ -361,34 +363,33 @@ pub fn start_directory_server(
                 let tor_log_dir = "/tmp/tor-rust-directory/log";
                 if Path::new(tor_log_dir).exists() {
                     match fs::remove_file(tor_log_dir) {
-                        Ok(_) => log::info!("Previous directory log file deleted successfully"),
-                        Err(_) => log::error!("Error deleting directory log file"),
+                        Ok(_) => log::info!("Previous tor log file deleted successfully"),
+                        Err(_) => log::error!("Error deleting tor log file"),
                     }
                 }
 
                 let socks_port = directory.socks_port;
-                let tor_port = directory.port;
+                let network_port = directory.network_port;
                 tor_handle = Some(crate::tor::spawn_tor(
                     socks_port,
-                    tor_port,
+                    network_port,
                     "/tmp/tor-rust-directory".to_string(),
-                ));
+                )?);
 
-                sleep(Duration::from_secs(10));
+                log::info!("waiting for tor setup completion.");
 
-                if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
-                    log::error!("Error monitoring Directory log file: {}", e);
+                if let Err(e) = monitor_log_for_completion(
+                    &PathBuf::from(tor_log_dir),
+                    "Bootstrapped 100% (done): Done",
+                ) {
+                    log::error!("Error monitoring tor log file: {}", e);
                 }
 
-                log::info!("Directory tor is instantiated");
+                log::info!("tor is ready!!");
 
                 let onion_addr = get_tor_addrs(&PathBuf::from("/tmp/tor-rust-directory"))?;
 
-                log::info!(
-                    "Directory Server is listening at {}:{}",
-                    onion_addr,
-                    tor_port
-                );
+                log::info!("DNS is listening at {}:{}", onion_addr, network_port);
             }
         }
     }
@@ -407,16 +408,17 @@ pub fn start_directory_server(
         start_address_writer_thread(directory_clone)
     });
 
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.port))?;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.network_port))?;
 
     // why we have not set it to non-blocking mode?
     while !directory.shutdown.load(Relaxed) {
         match listener.accept() {
-            Ok((mut stream, addrs)) => {
-                log::debug!("Incoming connection from : {}", addrs);
+            Ok((mut stream, _)) => {
                 stream.set_read_timeout(Some(Duration::from_secs(60)))?;
                 stream.set_write_timeout(Some(Duration::from_secs(60)))?;
-                handle_client(&mut stream, &directory.clone(), &rpc_client)?;
+                if let Err(e) = handle_client(&mut stream, &directory, &rpc_client) {
+                    log::error!("Error accepting incoming connection: {:?}", e);
+                }
             }
 
             // If no connection received, check for shutdown or save addresses to disk
@@ -440,8 +442,8 @@ pub fn start_directory_server(
 
     #[cfg(feature = "tor")]
     {
-        if let Some(handle) = tor_handle {
-            crate::tor::kill_tor_handles(handle);
+        if let Some(mut handle) = tor_handle {
+            crate::tor::kill_tor_handles(&mut handle);
             log::info!("Directory server and Tor instance terminated successfully");
         }
     }
@@ -474,6 +476,10 @@ fn handle_client(
                 current_height,
             ) {
                 Ok(_) => {
+                    log::info!(
+                        "Fidelity verification success from {}. Adding/updating to address data.",
+                        metadata.url
+                    );
                     directory.updated_address_map((metadata.url, metadata.proof.bond.outpoint))?;
                 }
                 Err(e) => {
@@ -486,7 +492,7 @@ fn handle_client(
             }
         }
         DnsRequest::Get => {
-            log::info!("Received GET | From {}", stream.peer_addr()?);
+            log::info!("Received GET");
             let addresses = directory.addresses.read()?;
             let response = addresses
                 .iter()
@@ -536,7 +542,7 @@ mod tests {
         let dns = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
         let default_dns = DirectoryServer::default();
 
-        assert_eq!(dns.port, default_dns.port);
+        assert_eq!(dns.network_port, default_dns.network_port);
         assert_eq!(dns.socks_port, default_dns.socks_port);
 
         temp_dir.close().unwrap();
@@ -552,7 +558,7 @@ mod tests {
         create_temp_config(contents, &temp_dir);
         let dns = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
 
-        assert_eq!(dns.port, 8080);
+        assert_eq!(dns.network_port, 8080);
         assert_eq!(dns.socks_port, DirectoryServer::default().socks_port);
 
         temp_dir.close().unwrap();
@@ -569,7 +575,7 @@ mod tests {
         let dns = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
         let default_dns = DirectoryServer::default();
 
-        assert_eq!(dns.port, default_dns.port);
+        assert_eq!(dns.network_port, default_dns.network_port);
         assert_eq!(dns.socks_port, default_dns.socks_port);
 
         temp_dir.close().unwrap();
@@ -581,7 +587,7 @@ mod tests {
         let dns = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
         let default_dns = DirectoryServer::default();
 
-        assert_eq!(dns.port, default_dns.port);
+        assert_eq!(dns.network_port, default_dns.network_port);
         assert_eq!(dns.socks_port, default_dns.socks_port);
 
         temp_dir.close().unwrap();

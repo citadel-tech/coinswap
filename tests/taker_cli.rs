@@ -1,5 +1,5 @@
 #![cfg(feature = "integration-test")]
-use bitcoin::{address::NetworkChecked, Address, Amount, Transaction};
+use bitcoin::{address::NetworkChecked, Address, Amount};
 use bitcoind::{bitcoincore_rpc::RpcApi, tempfile::env::temp_dir, BitcoinD};
 
 use std::{fs, path::PathBuf, process::Command, str::FromStr};
@@ -31,12 +31,7 @@ impl TakerCli {
 
     // Execute a cli-command
     fn execute(&self, cmd: &[&str]) -> String {
-        let mut args = vec![
-            "--data-directory",
-            self.data_dir.to_str().unwrap(),
-            "--bitcoin-network",
-            "regtest",
-        ];
+        let mut args = vec!["--data-directory", self.data_dir.to_str().unwrap()];
 
         // RPC authentication (user:password) from the cookie file
         let cookie_file_path = &self.bitcoind.params.cookie_file;
@@ -51,15 +46,6 @@ impl TakerCli {
 
         args.push("--WALLET");
         args.push("test_wallet");
-
-        // makers count
-        args.push("3");
-
-        // tx_count
-        args.push("3");
-
-        // fee_rate
-        args.push("1000");
 
         for arg in cmd {
             args.push(arg);
@@ -108,16 +94,14 @@ fn test_taker_cli() {
     generate_blocks(bitcoind, 10);
 
     // Assert that total_balance & seed_balance must be 3 BTC
-    let seed_balance = taker_cli.execute(&["seed-balance"]);
-    let total_balance = taker_cli.execute(&["total-balance"]);
+    let spendable_balance = taker_cli.execute(&["get-balance"]);
 
-    assert_eq!("300000000 SAT", seed_balance);
-    assert_eq!("300000000 SAT", total_balance);
+    assert_eq!("300000000 SAT", spendable_balance);
 
     // Assert that total no of seed-utxos are 3.
-    let seed_utxos = taker_cli.execute(&["seed-utxo"]);
+    let all_utxos = taker_cli.execute(&["list-utxo"]);
 
-    let no_of_seed_utxos = seed_utxos.matches("ListUnspentResultEntry {").count();
+    let no_of_seed_utxos = all_utxos.matches("ListUnspentResultEntry {").count();
     assert_eq!(3, no_of_seed_utxos);
 
     // Send 100,000 sats to a new address within the wallet, with a fee of 1,000 sats.
@@ -125,40 +109,28 @@ fn test_taker_cli() {
     // get new external address
     let new_address = taker_cli.execute(&["get-new-address"]);
 
-    let response = taker_cli.execute(&["send-to-address", &new_address, "100000", "1000"]);
-
-    // Extract Transaction hex string
-    let tx_hex_start = response.find("transaction_hex").unwrap() + "transaction_hex :  \"".len();
-    let tx_hex_end = response.find("\"\n").unwrap();
-
-    let tx_hex = &response[tx_hex_start..tx_hex_end];
-
-    // Extract FeeRate
-    let fee_rate_start = response.find("FeeRate").unwrap() + "FeeRate : ".len();
-    let fee_rate_end = response.find(" sat").unwrap();
-
-    let _fee_rate = &response[fee_rate_start..fee_rate_end];
-    // TODO: Determine if asserts are needed for the calculated fee rate.
-
-    let tx: Transaction = bitcoin::consensus::encode::deserialize_hex(tx_hex).unwrap();
-
-    // broadcast signed transaction
-    bitcoind.client.send_raw_transaction(&tx).unwrap();
+    let _ = taker_cli.execute(&[
+        "send-to-address",
+        "-t",
+        &new_address,
+        "-a",
+        "100000",
+        "-f",
+        "1000",
+    ]);
 
     generate_blocks(bitcoind, 10);
 
     // Assert the total_amount & seed_amount must be initial (balance -fee)
-    let seed_balance = taker_cli.execute(&["seed-balance"]);
-    let total_balance = taker_cli.execute(&["total-balance"]);
+    let spendable_balance = taker_cli.execute(&["get-balance"]);
 
     // Since the amount is sent back to our wallet, the transaction fee is deducted from the balance.
-    assert_eq!("299999000 SAT", seed_balance);
-    assert_eq!("299999000 SAT", total_balance);
+    assert_eq!("299999000 SAT", spendable_balance);
 
     // Assert that no of seed utxos are 2
-    let seed_utxos = taker_cli.execute(&["seed-utxo"]);
+    let all_utxos = taker_cli.execute(&["list-utxo"]);
 
-    let no_of_seed_utxos = seed_utxos.matches("ListUnspentResultEntry {").count();
+    let no_of_seed_utxos = all_utxos.matches("ListUnspentResultEntry {").count();
     assert_eq!(4, no_of_seed_utxos);
 
     bitcoind.client.stop().unwrap();

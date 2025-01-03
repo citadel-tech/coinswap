@@ -1,12 +1,11 @@
 //! Manages connection with a Bitcoin Core RPC.
 //!
-use crate::utill::HEART_BEAT_INTERVAL;
-use bitcoin::Network;
-use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
-use serde_json::{json, Value};
 use std::{convert::TryFrom, thread};
 
-use crate::wallet::api::KeychainKind;
+use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
+use serde_json::{json, Value};
+
+use crate::{utill::HEART_BEAT_INTERVAL, wallet::api::KeychainKind};
 
 use serde::Deserialize;
 
@@ -19,8 +18,6 @@ pub struct RPCConfig {
     pub url: String,
     /// The bitcoin node authentication mechanism
     pub auth: Auth,
-    /// The network we are using (it will be checked the bitcoin node network matches this)
-    pub network: Network,
     /// The wallet name in the bitcoin node, derive this from the descriptor.
     pub wallet_name: String,
 }
@@ -32,7 +29,6 @@ impl Default for RPCConfig {
         Self {
             url: RPC_HOSTPORT.to_string(),
             auth: Auth::UserPass("regtestrpcuser".to_string(), "regtestrpcpass".to_string()),
-            network: Network::Regtest,
             wallet_name: "random-wallet-name".to_string(),
         }
     }
@@ -50,11 +46,6 @@ impl TryFrom<&RPCConfig> for Client {
             .as_str(),
             config.auth.clone(),
         )?;
-        if config.network != rpc.get_blockchain_info()?.chain {
-            return Err(WalletError::General(
-                "RPC Network not mathcing with RPCConfig".to_string(),
-            ));
-        }
         Ok(rpc)
     }
 }
@@ -127,7 +118,7 @@ impl Wallet {
                 .max(self.store.wallet_birthday.unwrap_or(0));
             let node_synced = self.rpc.get_block_count()?;
             log::debug!(
-                "rescan_blockchain from:{} to:{}",
+                "Re-scanning Blockchain from:{} to:{}",
                 last_synced_height,
                 node_synced
             );

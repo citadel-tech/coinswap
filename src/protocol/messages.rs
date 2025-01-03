@@ -318,6 +318,7 @@ impl Display for MakerToTakerMessage {
 
 /// Metadata shared by the maker with the Directory Server for verifying authenticity.
 #[derive(Serialize, Deserialize, Debug)]
+#[allow(private_interfaces)]
 pub struct DnsMetadata {
     /// The maker's URL.
     pub url: String,
@@ -340,6 +341,7 @@ pub enum DnsRequest {
     Get,
     /// Dummy data used for integration tests.
     #[cfg(feature = "integration-test")]
+    /// Send a dummy, request, only used in integration tests
     Dummy {
         /// A dummy URL for testing.
         url: String,
