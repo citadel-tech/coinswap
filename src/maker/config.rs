@@ -38,8 +38,14 @@ impl Default for MakerConfig {
             min_swap_amount: MIN_SWAP_AMOUNT,
             socks_port: 19050,
             directory_server_address: "127.0.0.1:8080".to_string(),
-            fidelity_amount: 5_000_000, // 0.05 BTC
-            fidelity_timelock: 26_000,  // Approx 6 months of blocks
+            #[cfg(feature = "integration-test")]
+            fidelity_amount: 5_000_000, // 0.05 BTC for tests
+            #[cfg(feature = "integration-test")]
+            fidelity_timelock: 26_000, // Approx 6 months of blocks for test
+            #[cfg(not(feature = "integration-test"))]
+            fidelity_amount: 50_000, // 50K sats for production
+            #[cfg(not(feature = "integration-test"))]
+            fidelity_timelock: 2160, // Approx 15 days of blocks in production
             connection_type: {
                 #[cfg(feature = "tor")]
                 {

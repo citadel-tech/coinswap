@@ -100,7 +100,7 @@ pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 2.50;
 pub const TIME_RELATIVE_FEE_PCT: f64 = 0.10;
 
 /// Minimum Coinswap amount; makers will not accept amounts below this.
-pub const MIN_SWAP_AMOUNT: u64 = 100000;
+pub const MIN_SWAP_AMOUNT: u64 = 10_000;
 
 // What's the use of RefundLocktimeStep?
 
