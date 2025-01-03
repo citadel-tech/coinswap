@@ -10,17 +10,16 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    io::BufWriter,
     net::TcpStream,
     path::PathBuf,
+    process::Child,
     thread::sleep,
     time::{Duration, Instant},
 };
 
 #[cfg(feature = "tor")]
 use std::io::Read;
-
-#[cfg(feature = "tor")]
-use std::{fs, path::Path};
 
 use bitcoind::bitcoincore_rpc::RpcApi;
 
@@ -60,16 +59,24 @@ use crate::{
     },
 };
 
+#[cfg(feature = "tor")]
+use crate::tor::kill_tor_handles;
+
 // Default values for Taker configurations
 pub(crate) const REFUND_LOCKTIME: u16 = 20;
 pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
 pub(crate) const FIRST_CONNECT_ATTEMPTS: u32 = 5;
 pub(crate) const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1;
-pub(crate) const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 60;
-pub(crate) const RECONNECT_ATTEMPTS: u32 = 3200;
-pub(crate) const RECONNECT_SHORT_SLEEP_DELAY: u64 = 10;
-pub(crate) const RECONNECT_LONG_SLEEP_DELAY: u64 = 60;
-pub(crate) const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 60;
+pub(crate) const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 30;
+
+// Tries reconnection by variable delay.
+// First 10 attempts at 1 sec interval.
+// Next 5 attempts by 30 sec interval.
+// This is useful to cater for random network failure.
+pub(crate) const RECONNECT_ATTEMPTS: u32 = 10;
+pub(crate) const RECONNECT_SHORT_SLEEP_DELAY: u64 = 1;
+pub(crate) const RECONNECT_LONG_SLEEP_DELAY: u64 = 5;
+pub(crate) const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 30;
 pub(crate) const RECONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 300;
 // TODO: Maker should decide this miner fee
 // This fee is used for both funding and contract txs.
@@ -162,6 +169,29 @@ pub struct Taker {
     offerbook: OfferBook,
     ongoing_swap_state: OngoingSwapState,
     behavior: TakerBehavior,
+    tor_handle: Option<Child>,
+    data_dir: PathBuf,
+}
+
+impl Drop for Taker {
+    fn drop(&mut self) {
+        log::info!("Shutting down take.");
+        self.offerbook
+            .write_to_disk(&self.data_dir.join("offerbook.dat"))
+            .unwrap();
+        log::info!("offerbook data saved to disk.");
+        self.wallet.save_to_disk().unwrap();
+        log::info!("Wallet data saved to disk.");
+
+        if !cfg!(feature = "tor") {
+            assert!(self.tor_handle.is_some(), "Tor handle should not exist")
+        }
+
+        #[cfg(feature = "tor")]
+        if let Some(handle) = &mut self.tor_handle {
+            kill_tor_handles(handle);
+        }
+    }
 }
 
 impl Taker {
@@ -169,16 +199,16 @@ impl Taker {
 
     ///  Initializes a Maker structure.
     ///
-    /// This function sets up a Maker instance with configurable parameters.  
+    /// This function sets up a Maker instance with configurable parameters.
     /// It handles the initialization of data directories, wallet files, and RPC configurations.
     ///
     /// ### Parameters:
-    /// - `data_dir`:  
-    ///   - `Some(value)`: Use the specified directory for storing data.  
-    ///   - `None`: Use the default data directory (e.g., for Linux: `~/.coinswap/taker`).  
-    /// - `wallet_file_name`:  
-    ///   - `Some(value)`: Attempt to load a wallet file named `value`. If it does not exist, a new wallet with the given name will be created.  
-    ///   - `None`: Create a new wallet file with the default name `maker-wallet`.  
+    /// - `data_dir`:
+    ///   - `Some(value)`: Use the specified directory for storing data.
+    ///   - `None`: Use the default data directory (e.g., for Linux: `~/.coinswap/taker`).
+    /// - `wallet_file_name`:
+    ///   - `Some(value)`: Attempt to load a wallet file named `value`. If it does not exist, a new wallet with the given name will be created.
+    ///   - `None`: Create a new wallet file with the default name `taker-wallet`.
     /// - If `rpc_config` = `None`: Use the default [`RPCConfig`]
     pub fn init(
         data_dir: Option<PathBuf>,
@@ -219,6 +249,31 @@ impl Taker {
 
         config.write_to_file(&data_dir.join("config.toml"))?;
 
+        // Load offerbook. If doesn't exists, creates fresh file.
+        let offerbook_path = data_dir.join("offerbook.dat");
+        let offerbook = if offerbook_path.exists() {
+            // If read fails, recreate a fresh offerbook.
+            match OfferBook::read_from_disk(&offerbook_path) {
+                Ok(offerbook) => {
+                    log::info!("Succesfully loaded offerbook at : {:?}", offerbook_path);
+                    offerbook
+                }
+                Err(e) => {
+                    log::error!("Offerbook data corrupted. Recreating. {:?}", e);
+                    let empty_book = OfferBook::default();
+                    empty_book.write_to_disk(&offerbook_path)?;
+                    empty_book
+                }
+            }
+        } else {
+            // Crewate a new offer book
+            let empty_book = OfferBook::default();
+            let file = std::fs::File::create(&offerbook_path)?;
+            let writer = BufWriter::new(file);
+            serde_cbor::to_writer(writer, &empty_book)?;
+            empty_book
+        };
+
         log::info!("Initializing wallet sync");
         wallet.sync()?;
         log::info!("Completed wallet sync");
@@ -226,9 +281,11 @@ impl Taker {
         Ok(Self {
             wallet,
             config,
-            offerbook: OfferBook::default(),
+            offerbook,
             ongoing_swap_state: OngoingSwapState::default(),
             behavior,
+            tor_handle: None,
+            data_dir,
         })
     }
 
@@ -244,48 +301,50 @@ impl Taker {
 
     ///  Does the coinswap process
     pub fn do_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
-        #[cfg(feature = "tor")]
-        let mut handle = None;
+        self.tor_handle = self.setup_tor()?;
+        self.send_coinswap(swap_params)
+    }
 
+    fn setup_tor(&self) -> Result<Option<Child>, TakerError> {
         match self.config.connection_type {
-            ConnectionType::CLEARNET => {}
+            ConnectionType::CLEARNET => Ok(None),
             #[cfg(feature = "tor")]
             ConnectionType::TOR => {
-                let taker_socks_port = self.config.socks_port;
+                let tor_dir = self.data_dir.join("tor");
+                let tor_log_file = tor_dir.join("log");
 
-                let tor_log_dir = "/tmp/tor-rust-taker/log".to_string();
-                if Path::new(tor_log_dir.as_str()).exists() {
-                    match fs::remove_file(Path::new(tor_log_dir.clone().as_str())) {
-                        Ok(_) => log::info!("Previous taker log file deleted successfully"),
-                        Err(_) => log::error!("Error deleting taker log file "),
+                // Hard error if previous log file can't be removed, as monitor_log_for_completion doesn't work with existing file.
+                // Tell the user to manually delete the file and restart.
+                if tor_log_file.exists() {
+                    if let Err(e) = std::fs::remove_file(&tor_log_file) {
+                        log::error!(
+                        "Error removing previous tor log. Please delet the file and restart. | {:?}",
+                        tor_log_file
+                    );
+                        return Err(e.into());
+                    } else {
+                        log::info!("Previous tor log file deleted succesfully");
                     }
                 }
 
-                handle = Some(crate::tor::spawn_tor(
-                    taker_socks_port,
-                    self.config.port,
-                    "/tmp/tor-rust-taker".to_string(),
-                ));
+                let handle = Some(crate::tor::spawn_tor(
+                    self.config.socks_port,
+                    self.config.network_port,
+                    tor_dir.to_str().unwrap().to_owned(),
+                )?);
 
-                // wait for tor process to create a new log file.
-                std::thread::sleep(Duration::from_secs(3));
-
-                if let Err(e) = monitor_log_for_completion(&PathBuf::from(tor_log_dir), "100%") {
-                    log::error!("Error monitoring taker log file: {}\n Try removing the tor directory and retry", e);
-                    return Err(TakerError::IO(e));
+                if let Err(e) =
+                    monitor_log_for_completion(&tor_log_file, "Bootstrapped 100% (done): Done")
+                {
+                    log::error!("Error monitoring taker log file. Try removing the tor log file {:?} and try again. | {}", tor_log_file, e);
+                    return Err(e.into());
                 }
+
+                log::info!("tor is ready!");
+
+                Ok(handle)
             }
         }
-
-        self.send_coinswap(swap_params)?;
-
-        #[cfg(feature = "tor")]
-        {
-            if self.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {
-                crate::tor::kill_tor_handles(handle.expect("tor handle expected"));
-            }
-        }
-        Ok(())
     }
 
     /// Perform a coinswap round with given [SwapParams]. The Taker will try to perform swap with makers
@@ -302,7 +361,12 @@ impl Taker {
         self.sync_offerbook()?;
 
         // Error early if hop_count > available good makers.
-        if swap_params.maker_count > self.offerbook.all_makers.len() {
+        if swap_params.maker_count > self.offerbook.all_good_makers().len() {
+            log::error!(
+                "Not enough makers in the offerbook. Required {}, avaialable {}",
+                swap_params.maker_count,
+                self.offerbook.all_good_makers().len()
+            );
             return Err(TakerError::NotEnoughMakersInOfferBook);
         }
 
@@ -312,6 +376,20 @@ impl Taker {
 
         self.ongoing_swap_state.active_preimage = preimage;
         self.ongoing_swap_state.swap_params = swap_params;
+
+        let available = self.wallet.spendable_balance()?;
+
+        // TODO: Make more exact estimate of swap cost and ensure balanbce.
+        // For now ensure at least swap_amount + 50000 is available.
+        let required = swap_params.send_amount + Amount::from_sat(50000);
+        if available < required {
+            let err = WalletError::InsufficientFund {
+                available: available.to_btc(),
+                required: required.to_btc(),
+            };
+            log::error!("Not enough balance to cover swap : {:#?}", err);
+            return Err(err.into());
+        }
 
         // Try first hop. Abort if error happens.
         if let Err(e) = self.init_first_hop() {
@@ -452,14 +530,8 @@ impl Taker {
 
         // Loop until we find a live maker who responded to our signature request.
         let (maker, funding_txs) = loop {
-            // Fail early if not enough good makers in the list to satisfy swap requirements.
-            let untried_maker_count = self.offerbook.get_all_untried().len();
-
-            if untried_maker_count < (self.ongoing_swap_state.swap_params.maker_count) {
-                log::error!("Not enough makers to satisfy swap requirements.");
-                return Err(TakerError::NotEnoughMakersInOfferBook);
-            }
             let maker = self.choose_next_maker()?.clone();
+            log::info!("Choosing next maker: {}", maker.address);
             let (multisig_pubkeys, multisig_nonces, hashlock_pubkeys, hashlock_nonces) =
                 generate_maker_keys(
                     &maker.offer.tweakable_point,
@@ -559,7 +631,6 @@ impl Taker {
         match self.watch_for_txs(&funding_txids) {
             Ok(stuffs) => {
                 self.ongoing_swap_state.funding_txs.push(stuffs);
-                self.offerbook.add_good_maker(&maker);
             }
             Err(e) => {
                 log::error!("Error: {:?}", e);
@@ -833,8 +904,10 @@ impl Taker {
                 Err(e) => {
                     log::warn!(
                         "Failed to connect to maker {} to send signatures and init next hop, \
-                            reattempting... error={:?}",
+                            reattempting {} of {} | error={:?}",
                         &maker_oa.address,
+                        ii,
+                        reconnect_attempts,
                         e
                     );
                     if ii <= reconnect_attempts {
@@ -1020,10 +1093,7 @@ impl Taker {
                     &next_peer_hashlock_keys_or_nonces,
                     maker_refund_locktime,
                 ) {
-                    Ok(r) => {
-                        self.offerbook.add_good_maker(&next_maker);
-                        r
-                    }
+                    Ok(r) => r,
                     Err(e) => {
                         self.offerbook.add_bad_maker(&next_maker);
                         log::info!(
@@ -1386,8 +1456,10 @@ impl Taker {
                 Err(e) => {
                     log::warn!(
                         "Failed to connect to maker {} to request signatures for receiver, \
-                                reattempting... error={:?}",
+                                reattempting {} of {} | error={:?}",
                         &maker_addr_str,
+                        ii,
+                        first_connect_attempts,
                         e
                     );
                     if ii <= first_connect_attempts {
@@ -1463,8 +1535,10 @@ impl Taker {
                 Err(e) => {
                     log::warn!(
                         "Failed to connect to maker {} to request signatures for receiver, \
-                                reattempting... error={:?}",
+                                reattempting, {} of {} |  error={:?}",
                         &maker_addr_str,
+                        ii,
+                        reconnect_attempts,
                         e
                     );
                     if ii <= reconnect_attempts {
@@ -1590,8 +1664,10 @@ impl Taker {
                     Err(e) => {
                         log::warn!(
                             "Failed to connect to maker {} to settle coinswap, \
-                                    reattempting... error={:?}",
+                                    reattempting {} of {} error={:?}",
                             &maker_address.address,
+                            ii,
+                            reconnect_attempts,
                             e
                         );
                         if ii <= reconnect_attempts {
@@ -1698,11 +1774,11 @@ impl Taker {
         // Ensure that we don't select a maker we are already swaping with.
         Ok(self
             .offerbook
-            .get_all_untried()
+            .all_good_makers()
             .iter()
             .find(|oa| {
                 send_amount >= Amount::from_sat(oa.offer.min_size)
-                    && send_amount < Amount::from_sat(oa.offer.max_size)
+                    && send_amount <= Amount::from_sat(oa.offer.max_size)
                     && !self
                         .ongoing_swap_state
                         .peer_infos
@@ -1931,51 +2007,57 @@ impl Taker {
 
     /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
     pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        let mut directory_address = self.config.directory_server_address.clone();
-        if cfg!(feature = "integration-test") {
-            match self.config.connection_type {
-                ConnectionType::CLEARNET => {
-                    directory_address = format!("127.0.0.1:{}", 8080);
-                }
-                #[cfg(feature = "tor")]
-                ConnectionType::TOR => {
-                    let directory_hs_path_str =
-                        "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
-                    let mut directory_file = fs::File::open(directory_hs_path_str)?;
-                    let mut directory_onion_addr = String::new();
-                    directory_file.read_to_string(&mut directory_onion_addr)?;
-                    directory_onion_addr.pop();
-                    directory_address = format!("{}:{}", directory_onion_addr, 8080);
+        let dns_addr = match self.config.connection_type {
+            ConnectionType::CLEARNET => {
+                if cfg!(feature = "integration-test") {
+                    format!("127.0.0.1:{}", 8080)
+                } else {
+                    self.config.directory_server_address.clone()
                 }
             }
-        }
+            #[cfg(feature = "tor")]
+            ConnectionType::TOR => {
+                let directory_hs_path_str = "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
+                let mut directory_file = std::fs::File::open(directory_hs_path_str)?;
+                let mut directory_onion_addr = String::new();
+                directory_file.read_to_string(&mut directory_onion_addr)?;
+                directory_onion_addr.pop();
+                format!("{}:{}", directory_onion_addr, 8080)
+            }
+        };
 
-        let mut socks_port: Option<u16> = None;
-        #[cfg(feature = "tor")]
-        {
-            if self.config.connection_type == ConnectionType::TOR {
-                socks_port = Some(self.config.socks_port);
+        let socks_port = if cfg!(feature = "tor") {
+            if self.config.connection_type == ConnectionType::CLEARNET {
+                None
+            } else {
+                Some(self.config.socks_port)
             }
-        }
+        } else {
+            None
+        };
+
+        log::info!("Fetching addresses from DNS: {}", dns_addr);
+
         let addresses_from_dns =
-            fetch_addresses_from_dns(socks_port, directory_address, self.config.connection_type)?;
+            match fetch_addresses_from_dns(socks_port, dns_addr, self.config.connection_type) {
+                Ok(dns_addrs) => dns_addrs,
+                Err(e) => {
+                    log::error!("Could not connect to DNS Server: {:?}", e);
+                    return Err(e);
+                }
+            };
 
-        // Filter for new addresses only.
-        let know_addrs = self
-            .offerbook
-            .all_makers
-            .iter()
-            .map(|oa| oa.address.clone())
-            .collect::<Vec<_>>();
-        let new_addrs = addresses_from_dns
-            .into_iter()
-            .filter(|addr| !know_addrs.contains(addr))
-            .collect::<Vec<_>>();
-        let new_offers = fetch_offer_from_makers(new_addrs, &self.config)?;
+        // For now, ask offers from everyone,
+        // Because we don not have any smart update mechanism, not asking again could cause problem.
+        // if a maker changes their offer without changing tor address, the taker will not ask them again for updated offer.
+        // TODO: Add smarter update mechanism, where DNS would keep a flag for every update of maker offers and taker
+        // will selectively redownload the offer from those makers only.
+        // Further TODO: The Offer book needs to be restructured to store a unqiue value per fidelity bond. Similar to DNS.
+        let offers = fetch_offer_from_makers(addresses_from_dns, &self.config)?;
 
-        for offer in new_offers {
+        for offer in offers {
             log::info!(
-                "Found New Offer from {}. Verifying Fidelity Proof",
+                "Found offer from {}. Verifying Fidelity Proof",
                 offer.address.to_string()
             );
             log::debug!("{:?}", offer);
@@ -1995,5 +2077,13 @@ impl Taker {
             }
         }
         Ok(())
+    }
+
+    /// fetches only the offer data from DNS and returns the updated Offerbook.
+    /// Used for taker cli app, in `fetch-offers` command.
+    pub fn fetch_offers(&mut self) -> Result<&OfferBook, TakerError> {
+        self.tor_handle = self.setup_tor()?;
+        self.sync_offerbook()?;
+        Ok(&self.offerbook)
     }
 }

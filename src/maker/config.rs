@@ -13,7 +13,7 @@ use super::api::MIN_SWAP_AMOUNT;
 #[derive(Debug, Clone, PartialEq)]
 pub struct MakerConfig {
     /// Network listening port
-    pub port: u16,
+    pub network_port: u16,
     /// RPC listening port
     pub rpc_port: u16,
     /// Minimum Coinswap amount
@@ -33,12 +33,12 @@ pub struct MakerConfig {
 impl Default for MakerConfig {
     fn default() -> Self {
         Self {
-            port: 6102,
+            network_port: 6102,
             rpc_port: 6103,
             min_swap_amount: MIN_SWAP_AMOUNT,
             socks_port: 19050,
             directory_server_address: "127.0.0.1:8080".to_string(),
-            fidelity_amount: 5_000_000, // 5 million sats
+            fidelity_amount: 5_000_000, // 0.05 BTC
             fidelity_timelock: 26_000,  // Approx 6 months of blocks
             connection_type: {
                 #[cfg(feature = "tor")]
@@ -89,7 +89,7 @@ impl MakerConfig {
         );
 
         Ok(MakerConfig {
-            port: parse_field(config_map.get("port"), default_config.port),
+            network_port: parse_field(config_map.get("network_port"), default_config.network_port),
             rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
             min_swap_amount: parse_field(
                 config_map.get("min_swap_amount"),
@@ -118,7 +118,7 @@ impl MakerConfig {
     // Method to serialize the MakerConfig into a TOML string and write it to a file
     pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
-            "port = {}
+            "network_port = {}
 rpc_port = {}
 min_swap_amount = {}
 socks_port = {}
@@ -126,7 +126,7 @@ directory_server_address = {}
 fidelity_amount = {}
 fidelity_timelock = {}
 connection_type = {:?}",
-            self.port,
+            self.network_port,
             self.rpc_port,
             self.min_swap_amount,
             self.socks_port,
@@ -168,8 +168,7 @@ mod tests {
     #[test]
     fn test_valid_config() {
         let contents = r#"
-            [maker_config]
-            port = 6102
+            network_port = 6102
             rpc_port = 6103
             required_confirms = 1
             min_swap_amount = 100000
@@ -187,16 +186,16 @@ mod tests {
     fn test_missing_fields() {
         let contents = r#"
             [maker_config]
-            port = 6103
+            network_port = 6103
         "#;
         let config_path = create_temp_config(contents, "missing_fields_maker_config.toml");
         let config = MakerConfig::new(Some(&config_path)).unwrap();
         remove_temp_config(&config_path);
 
-        assert_eq!(config.port, 6103);
+        assert_eq!(config.network_port, 6103);
         assert_eq!(
             MakerConfig {
-                port: 6102,
+                network_port: 6102,
                 ..config
             },
             MakerConfig::default()
@@ -207,7 +206,7 @@ mod tests {
     fn test_incorrect_data_type() {
         let contents = r#"
             [maker_config]
-            port = "not_a_number"
+            network_port = "not_a_number"
         "#;
         let config_path = create_temp_config(contents, "incorrect_type_maker_config.toml");
         let config = MakerConfig::new(Some(&config_path)).unwrap();

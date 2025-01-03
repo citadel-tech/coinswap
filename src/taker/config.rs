@@ -9,22 +9,20 @@ use std::{io, io::Write, path::Path};
 /// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
-    /// Network listening port
-    pub port: u16,
-    /// Socks port
+    /// Network connection port
+    pub network_port: u16,
+    /// Socks proxy port used to connect TOR
     pub socks_port: u16,
     /// Directory server address (can be clearnet or onion)
     pub directory_server_address: String,
     /// Connection type
     pub connection_type: ConnectionType,
-    /// RPC port
-    pub rpc_port: u16,
 }
 
 impl Default for TakerConfig {
     fn default() -> Self {
         Self {
-            port: 8000,
+            network_port: 8000,
             socks_port: 19050,
             directory_server_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
             connection_type: {
@@ -37,7 +35,6 @@ impl Default for TakerConfig {
                     ConnectionType::CLEARNET
                 }
             },
-            rpc_port: 8081,
         }
     }
 }
@@ -76,7 +73,7 @@ impl TakerConfig {
         );
 
         Ok(TakerConfig {
-            port: parse_field(config_map.get("port"), default_config.port),
+            network_port: parse_field(config_map.get("network_port"), default_config.network_port),
             socks_port: parse_field(config_map.get("socks_port"), default_config.socks_port),
             directory_server_address: parse_field(
                 config_map.get("directory_server_address"),
@@ -86,23 +83,17 @@ impl TakerConfig {
                 config_map.get("connection_type"),
                 default_config.connection_type,
             ),
-            rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
         })
     }
 
     // Method to manually serialize the Taker Config into a TOML string
     pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
-            "port = {}
+            "network_port = {}
 socks_port = {}
-rpc_port = {}
 directory_server_address = {}
 connection_type = {:?}",
-            self.port,
-            self.socks_port,
-            self.rpc_port,
-            self.directory_server_address,
-            self.connection_type
+            self.network_port, self.socks_port, self.directory_server_address, self.connection_type
         );
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;
@@ -138,7 +129,7 @@ mod tests {
     #[test]
     fn test_valid_config() {
         let contents = r#"
-        port = 8000
+        network_port = 8000
         socks_port = 19050
         directory_server_address = directoryhiddenserviceaddress.onion:8080
         connection_type = "TOR"

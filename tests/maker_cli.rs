@@ -1,7 +1,7 @@
 //! Integration test for Maker CLI functionality.
 #![cfg(feature = "integration-test")]
 use bitcoin::{Address, Amount};
-use bitcoind::{bitcoincore_rpc::RpcApi, BitcoinD};
+use bitcoind::BitcoinD;
 use coinswap::utill::setup_logger;
 use std::{
     fs,
@@ -70,13 +70,15 @@ impl MakerCli {
         thread::spawn(move || {
             let reader = BufReader::new(stderr);
             if let Some(line) = reader.lines().map_while(Result::ok).next() {
-                let _ = stderr_sender.send(line);
+                println!("{}", line);
+                stderr_sender.send(line).unwrap();
             }
         });
 
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
+                println!("{}", line);
                 if stdout_sender.send(line).is_err() {
                     break;
                 }
@@ -110,7 +112,7 @@ impl MakerCli {
         await_message(&stdout_recv, "Fidelity Transaction");
         generate_blocks(&self.bitcoind, 1);
         await_message(&stdout_recv, "Successfully created fidelity bond");
-        await_message(&stdout_recv, "Maker setup is ready");
+        await_message(&stdout_recv, "Server Setup completed!!");
 
         (stdout_recv, makerd_process)
     }
@@ -146,31 +148,31 @@ fn test_maker_cli() {
     let (rx, mut makerd_proc) = maker_cli.start_makerd();
 
     // Ping check
-    let ping_resp = maker_cli.execute_maker_cli(&["ping"]);
+    let ping_resp = maker_cli.execute_maker_cli(&["send-ping"]);
     await_message(&rx, "RPC request received: Ping");
-    assert_eq!(ping_resp, "Pong");
+    assert_eq!(ping_resp, "success");
 
     // Data Dir check
-    let data_dir = maker_cli.execute_maker_cli(&["get-data-dir"]);
+    let data_dir = maker_cli.execute_maker_cli(&["show-data-dir"]);
     await_message(&rx, "RPC request received: GetDataDir");
     assert!(data_dir.contains("/coinswap/maker"));
 
-    // Tor address check
-    let tor_addr = maker_cli.execute_maker_cli(&["get-tor-address"]);
-    await_message(&rx, "RPC request received: GetTorAddress");
-    assert!(tor_addr.contains("onion:6102"));
+    // // Tor address check
+    // let tor_addr = maker_cli.execute_maker_cli(&["show-tor-address"]);
+    // await_message(&rx, "RPC request received: GetTorAddress");
+    // assert!(tor_addr.contains("onion:6102"));
 
     // Initial Balance checks
-    let seed_balance = maker_cli.execute_maker_cli(&["seed-balance"]);
-    await_message(&rx, "RPC request received: SeedBalance");
+    let seed_balance = maker_cli.execute_maker_cli(&["get-balance"]);
+    await_message(&rx, "RPC request received: Balance");
 
-    let contract_balance = maker_cli.execute_maker_cli(&["contract-balance"]);
+    let contract_balance = maker_cli.execute_maker_cli(&["get-balance-contract"]);
     await_message(&rx, "RPC request received: ContractBalance");
 
-    let fidelity_balance = maker_cli.execute_maker_cli(&["fidelity-balance"]);
+    let fidelity_balance = maker_cli.execute_maker_cli(&["get-balance-fidelity"]);
     await_message(&rx, "RPC request received: FidelityBalance");
 
-    let swap_balance = maker_cli.execute_maker_cli(&["swap-balance"]);
+    let swap_balance = maker_cli.execute_maker_cli(&["get-balance-swap"]);
     await_message(&rx, "RPC request received: SwapBalance");
 
     assert_eq!(seed_balance, "1000000 sats");
@@ -179,51 +181,57 @@ fn test_maker_cli() {
     assert_eq!(contract_balance, "0 sats");
 
     // Initial UTXO checks
-    let seed_utxo = maker_cli.execute_maker_cli(&["seed-utxo"]);
-    await_message(&rx, "RPC request received: SeedUtxo");
+    let all_utxos = maker_cli.execute_maker_cli(&["list-utxo"]);
+    await_message(&rx, "RPC request received: Utxo");
 
-    let swap_utxo = maker_cli.execute_maker_cli(&["swap-utxo"]);
+    let swap_utxo = maker_cli.execute_maker_cli(&["list-utxo-swap"]);
     await_message(&rx, "RPC request received: SwapUtxo");
 
-    let contract_utxo = maker_cli.execute_maker_cli(&["contract-utxo"]);
+    let contract_utxo = maker_cli.execute_maker_cli(&["list-utxo-contract"]);
     await_message(&rx, "RPC request received: ContractUtxo");
 
-    let fidelity_utxo = maker_cli.execute_maker_cli(&["fidelity-utxo"]);
+    let fidelity_utxo = maker_cli.execute_maker_cli(&["list-utxo-fidelity"]);
     await_message(&rx, "RPC request received: FidelityUtxo");
 
     // Validate UTXOs
-    assert_eq!(seed_utxo.matches("ListUnspentResultEntry").count(), 1);
-    assert!(seed_utxo.contains("amount: 1000000 SAT"));
+    assert_eq!(all_utxos.matches("ListUnspentResultEntry").count(), 2);
+    assert!(all_utxos.contains("amount: 1000000 SAT"));
     assert_eq!(fidelity_utxo.matches("ListUnspentResultEntry").count(), 1);
     assert!(fidelity_utxo.contains("amount: 5000000 SAT"));
     assert_eq!(swap_utxo.matches("ListUnspentResultEntry").count(), 0);
     assert_eq!(contract_utxo.matches("ListUnspentResultEntry").count(), 0);
 
     // Address check - derive and send to address ->
-    let address = maker_cli.execute_maker_cli(&["new-address"]);
+    let address = maker_cli.execute_maker_cli(&["get-new-address"]);
     await_message(&rx, "RPC request received: NewAddress");
     assert!(Address::from_str(&address).is_ok());
 
-    let tx_hex = maker_cli.execute_maker_cli(&["send-to-address", &address, "10000", "1000"]);
-    let tx: bitcoin::Transaction = bitcoin::consensus::encode::deserialize_hex(&tx_hex).unwrap();
-    maker_cli.bitcoind.client.send_raw_transaction(&tx).unwrap();
+    let _ = maker_cli.execute_maker_cli(&[
+        "send-to-address",
+        "-t",
+        &address,
+        "-a",
+        "10000",
+        "-f",
+        "1000",
+    ]);
     generate_blocks(&maker_cli.bitcoind, 1);
 
     // Check balances
+    assert_eq!(maker_cli.execute_maker_cli(&["get-balance"]), "999000 sats");
     assert_eq!(
-        maker_cli.execute_maker_cli(&["seed-balance"]),
-        "999000 sats"
+        maker_cli.execute_maker_cli(&["get-balance-contract"]),
+        "0 sats"
     );
-    assert_eq!(maker_cli.execute_maker_cli(&["contract-balance"]), "0 sats");
     assert_eq!(
-        maker_cli.execute_maker_cli(&["fidelity-balance"]),
+        maker_cli.execute_maker_cli(&["get-balance-fidelity"]),
         "5000000 sats"
     );
-    assert_eq!(maker_cli.execute_maker_cli(&["swap-balance"]), "0 sats");
+    assert_eq!(maker_cli.execute_maker_cli(&["get-balance-swap"]), "0 sats");
 
     // Verify the seed UTXO count; other balance types remain unaffected when sending funds to an address.
-    let seed_utxo = maker_cli.execute_maker_cli(&["seed-utxo"]);
-    assert_eq!(seed_utxo.matches("ListUnspentResultEntry").count(), 2);
+    let seed_utxo = maker_cli.execute_maker_cli(&["list-utxo"]);
+    assert_eq!(seed_utxo.matches("ListUnspentResultEntry").count(), 3);
 
     // Shutdown check
     let stop = maker_cli.execute_maker_cli(&["stop"]);

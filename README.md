@@ -49,6 +49,14 @@ CoinSwap is a rust implementation of a variant of atomic-swap protocol, using HT
 * [Detailed design](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964)
 * [Developer's resources](/docs/dev-book.md)
 
+## Dependencies
+
+Ensure you have the following dependency installed before compiling the project.
+
+```shell
+sudo apt install build-essential automake libtool
+```
+
 ## Build and Test
 
 The repo contains a fully automated integration testing framework on Bitcoin Regtest. The bitcoin binary used for testing is
