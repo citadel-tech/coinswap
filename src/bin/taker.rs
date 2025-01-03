@@ -90,7 +90,7 @@ enum Commands {
         /// Adding more makers in the swap will incure more swap fees.
         #[clap(long, short = 'm', default_value = "2")]
         makers: usize,
-        /// Sets the send amount.
+        /// Sets the send amount in sats.
         #[clap(long, short = 'a', default_value = "20000")]
         amount: u64,
         /// Sets how many utxos to swap.

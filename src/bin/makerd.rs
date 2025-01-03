@@ -8,8 +8,10 @@ use coinswap::{
 use std::{path::PathBuf, sync::Arc};
 /// Coinswap Maker Server
 ///
-/// The server requires a Bitcoin Core RPC connection running in Signet. It requires some starting balance, arounbd 0.05 BTC Fidelity + Swap Liquidity (suggested 0.05 BTC).
-/// After succesful creation of Fidelity Bond, the server will start listinening for incoimng swap requests and earn swap fees.
+/// The server requires a Bitcoin Core RPC connection running in Signet. It requires some starting balance, around 50,000 sats for Fidelity + Swap Liquidity (suggested 50,000 sats).
+/// So topup with at least 0.01 BTC to start all the node processses. Suggested faucet: https://signetfaucet.com/
+/// All server process will start after the fidelity bond transaction confirms. This may take some time. Approx: 10 mins.
+/// Once the bond confirms, the server starts listening for incoming swap requests. As it performs swaps for clients, it keeps earning fees.
 ///
 /// The server is operated with the maker-cli app, for all basic wallet related operations.
 ///
