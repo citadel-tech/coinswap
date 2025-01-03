@@ -3,114 +3,122 @@ use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Auth};
 use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
-    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, REQUIRED_CONFIRMS},
+    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType},
     wallet::{Destination, RPCConfig, SendAmount},
 };
 use log::LevelFilter;
 use std::{path::PathBuf, str::FromStr};
 
-/// taker-cli is a command line app to use taker client API's.
+/// A simple command line app to operate as coinswap client.
+///
+/// The app works as regular Bitcoin wallet with added capability to perform coinswaps. The app
+/// requires a running Bitcoin Core node with RPC access.
+///
+/// For more detailed usage information, please refer: [taker-cli demo doc link]
+///
+/// This is early beta, and there are known and unknown bugs. Please report issues at: https://github.com/citadel-tech/coinswap/issues
 #[derive(Parser, Debug)]
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
-    /// Optional DNS data directory. Default value : "~/.coinswap/taker"
+    /// Optional data directory. Default value : "~/.coinswap/taker"
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
-    /// Sets the full node address for rpc connection.
+
+    /// Bitcoin Core RPC address:port value
     #[clap(
         name = "ADDRESS:PORT",
         long,
         short = 'r',
         default_value = "127.0.0.1:18443"
     )]
-    pub(crate) rpc: String,
-    /// Sets the rpc basic authentication.
+    pub rpc: String,
+
+    /// Bitcoin Core RPC authentication string. Ex: username:password
     #[clap(name="USER:PASSWORD",short='a',long, value_parser = parse_proxy_auth, default_value = "user:password")]
-    pub(crate) auth: (String, String),
-    /// Sets the full node network, this should match with the network of the running node.
-    #[clap(
-        long,
-        short = 'b',
-        default_value = "regtest", possible_values = &["regtest", "signet", "mainnet"]
-    )]
-    pub(crate) bitcoin_network: String,
-    /// Sets the taker wallet's name. If the wallet file already exists at data-directory, it will load that wallet.
+    pub auth: (String, String),
+
+    /// Sets the taker wallet's name. If the wallet file already exists, it will load that wallet. Default: taker-wallet
     #[clap(name = "WALLET", long, short = 'w')]
-    pub(crate) wallet_name: Option<String>,
-    /// Sets the verbosity level of logs.
-    /// Default: Determined by the command passed.
-    #[clap(long, short = 'v', possible_values = &["off", "error", "warn", "info", "debug", "trace"])]
-    pub(crate) verbosity: Option<String>,
-    /// Sets the maker count to initiate coinswap with.
-    #[clap(name = "maker_count", default_value = "2")]
-    pub(crate) maker_count: usize,
-    /// Sets the send amount.
-    #[clap(name = "send_amount", default_value = "500000")]
-    pub(crate) send_amount: u64,
-    /// Sets the transaction count.
-    #[clap(name = "tx_count", default_value = "3")]
-    pub(crate) tx_count: u32,
-    /// List of sub commands to process various endpoints of taker cli app.
+    pub wallet_name: Option<String>,
+
+    /// Sets the verbosity level of debug.log file
+    #[clap(long, short = 'v', possible_values = &["off", "error", "warn", "info", "debug", "trace"], default_value = "info")]
+    pub verbosity: String,
+
+    /// List of commands for various wallet operations
     #[clap(subcommand)]
     command: Commands,
 }
 
 #[derive(Parser, Debug)]
 enum Commands {
-    /// Returns a list of seed utxos
-    SeedUtxo,
-    /// Returns a list of swap coin utxos
-    SwapUtxo,
-    /// Returns a list of live contract utxos
-    ContractUtxo,
-    /// Returns the total seed balance
-    SeedBalance,
-    /// Returns the total swap coin balance
-    SwapBalance,
-    /// Returns the total live contract balance
-    ContractBalance,
-    /// Returns the total balance of taker wallet
-    TotalBalance,
+    // TODO: Design a better structure to display different utxos and balance groups.
+    /// Lists all currently spendable utxos
+    ListUtxo,
+    /// Lists all utxos received in incoming swaps
+    ListUtxoSwap,
+    /// Lists all HTLC utxos (if any)
+    ListUtxoContract,
+    /// Get the total spendable wallet balance (sats)
+    GetBalance,
+    /// Get the total balance received from swaps (sats)
+    GetBalanceSwap,
+    /// Get the total amount stuck in HTLC contracts (sats)
+    GetBalanceContract,
     /// Returns a new address
     GetNewAddress,
     /// Send to an external wallet address.
     SendToAddress {
-        #[clap(name = "address")]
+        /// Recipient's address.
+        #[clap(long, short = 't')]
         address: String,
-        /// Amount to be sent (in sats)
-        #[clap(name = "amount")]
+        /// Amount to send in sats
+        #[clap(long, short = 'a')]
         amount: u64,
-        /// Fee of a Tx(in sats)
-        #[clap(name = "fee")]
+        /// Total fee to be paid in sats
+        #[clap(long, short = 'f')]
         fee: u64,
     },
-    /// Sync the offer book
-    SyncOfferBook,
+    /// Update the offerbook with current market offers and display them
+    FetchOffers,
+
+    // TODO: Also add ListOffers command to just list the current book.
     /// Initiate the coinswap process
-    DoCoinswap,
+    Coinswap {
+        /// Sets the maker count to swap with. Swapping with less than 2 makers is allowed to maintain client privacy.
+        /// Adding more makers in the swap will incure more swap fees.
+        #[clap(long, short = 'm', default_value = "2")]
+        makers: usize,
+        /// Sets the send amount.
+        #[clap(long, short = 'a', default_value = "20000")]
+        amount: u64,
+        /// Sets how many utxos to swap.
+        /// The wallet needs to have at least that many utxos, of greater than or equal to the `amount` value.
+        #[clap(long, short = 'u', default_value = "1")]
+        utxos: u32,
+    },
 }
 
 fn main() -> Result<(), TakerError> {
     let args = Cli::parse();
-
-    let rpc_network = bitcoin::Network::from_str(&args.bitcoin_network).unwrap();
-
-    let connection_type = ConnectionType::TOR;
+    setup_taker_logger(LevelFilter::from_str(&args.verbosity).unwrap());
 
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
-        network: rpc_network,
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
 
-    let swap_params = SwapParams {
-        send_amount: Amount::from_sat(args.send_amount),
-        maker_count: args.maker_count,
-        tx_count: args.tx_count,
-        required_confirms: REQUIRED_CONFIRMS,
+    #[cfg(feature = "tor")]
+    let connection_type = if cfg!(feature = "integration-test") {
+        ConnectionType::CLEARNET
+    } else {
+        ConnectionType::TOR
     };
+
+    #[cfg(not(feature = "tor"))]
+    let connection_type = ConnectionType::CLEARNET;
 
     let mut taker = Taker::init(
         args.data_directory.clone(),
@@ -120,64 +128,44 @@ fn main() -> Result<(), TakerError> {
         Some(connection_type),
     )?;
 
-    // Determines the log level based on the verbosity argument or the command.
-    //
-    // If verbosity is provided, it converts the string to a `LevelFilter`.
-    // Otherwise, the log level is set based on the command.
-    let log_level = match args.verbosity {
-        Some(level) => LevelFilter::from_str(&level).unwrap(),
-        None => match args.command {
-            Commands::DoCoinswap | Commands::SyncOfferBook | Commands::SendToAddress { .. } => {
-                log::LevelFilter::Info
-            }
-            _ => log::LevelFilter::Off,
-        },
-    };
-
-    setup_taker_logger(log_level);
-
     match args.command {
-        Commands::SeedUtxo => {
+        Commands::ListUtxo => {
             let utxos: Vec<ListUnspentResultEntry> = taker
                 .get_wallet()
-                .list_descriptor_utxo_spend_info(None)?
+                .list_all_utxo_spend_info(None)?
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect();
-            println!("{:?}", utxos);
+            println!("{:#?}", utxos);
         }
-        Commands::SwapUtxo => {
+        Commands::ListUtxoSwap => {
             let utxos: Vec<ListUnspentResultEntry> = taker
                 .get_wallet()
                 .list_swap_coin_utxo_spend_info(None)?
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect();
-            println!("{:?}", utxos);
+            println!("{:#?}", utxos);
         }
-        Commands::ContractUtxo => {
+        Commands::ListUtxoContract => {
             let utxos: Vec<ListUnspentResultEntry> = taker
                 .get_wallet()
                 .list_live_contract_spend_info(None)?
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect();
-            println!("{:?}", utxos);
+            println!("{:#?}", utxos);
         }
-        Commands::ContractBalance => {
+        Commands::GetBalanceContract => {
             let balance = taker.get_wallet().balance_live_contract(None)?;
             println!("{:?}", balance);
         }
-        Commands::SwapBalance => {
+        Commands::GetBalanceSwap => {
             let balance = taker.get_wallet().balance_swap_coins(None)?;
             println!("{:?}", balance);
         }
-        Commands::SeedBalance => {
-            let balance = taker.get_wallet().balance_descriptor_utxo(None)?;
-            println!("{:?}", balance);
-        }
-        Commands::TotalBalance => {
-            let balance = taker.get_wallet().balance()?;
+        Commands::GetBalance => {
+            let balance = taker.get_wallet().spendable_balance()?;
             println!("{:?}", balance);
         }
         Commands::GetNewAddress => {
@@ -216,21 +204,29 @@ fn main() -> Result<(), TakerError> {
                 &coins_to_spend,
             )?;
 
-            // Derive fee rate from given `fee` argument.
-            let calculated_fee_rate = fee / (tx.weight());
+            let txid = taker.get_wallet().send_tx(&tx).unwrap();
 
-            println!(
-                "transaction_hex :  {:?}",
-                bitcoin::consensus::encode::serialize_hex(&tx)
-            );
-            println!("Calculated FeeRate : {:#}", calculated_fee_rate);
+            println!("{}", txid);
         }
 
-        Commands::SyncOfferBook => {
-            taker.sync_offerbook()?;
+        Commands::FetchOffers => {
+            let offerbook = taker.fetch_offers()?;
+            println!("{:#?}", offerbook)
         }
-        Commands::DoCoinswap => {
+        Commands::Coinswap {
+            makers,
+            utxos,
+            amount,
+        } => {
+            let swap_params = SwapParams {
+                send_amount: Amount::from_sat(amount),
+                maker_count: makers,
+                tx_count: utxos,
+                required_confirms: 1,
+            };
+
             taker.do_coinswap(swap_params)?;
+            println!("succesfully completed coinswap!! Check `list-utxo` to see the new coins");
         }
     }
 

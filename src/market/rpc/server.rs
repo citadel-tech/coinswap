@@ -31,9 +31,7 @@ fn handle_request(
                     .map(|(op, address)| (*op, address.clone()))
                     .collect::<BTreeSet<_>>(),
             );
-            if let Err(e) = send_message(socket, &resp) {
-                log::info!("Error sending RPC response {:?}", e);
-            };
+            send_message(socket, &resp)?;
         }
     }
 
@@ -56,14 +54,15 @@ pub fn start_rpc_server_thread(
                 log::info!("Got RPC request from: {}", addr);
                 stream.set_read_timeout(Some(Duration::from_secs(20)))?;
                 stream.set_write_timeout(Some(Duration::from_secs(20)))?;
-                handle_request(&mut stream, directory.addresses.clone())?;
+                if let Err(e) = handle_request(&mut stream, directory.addresses.clone()) {
+                    log::error!("Error handling RPC request: {:?}", e);
+                }
             }
             Err(e) => {
                 if e.kind() == ErrorKind::WouldBlock {
                     // do nothing
                 } else {
                     log::error!("Error accepting RPC connection: {:?}", e);
-                    break;
                 }
             }
         }
