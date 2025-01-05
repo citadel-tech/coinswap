@@ -30,7 +30,7 @@ struct Cli {
         name = "ADDRESS:PORT",
         long,
         short = 'r',
-        default_value = "127.0.0.1:18443"
+        default_value = "127.0.0.1:48332"
     )]
     pub rpc: String,
 
@@ -90,11 +90,11 @@ enum Commands {
         /// Adding more makers in the swap will incure more swap fees.
         #[clap(long, short = 'm', default_value = "2")]
         makers: usize,
-        /// Sets the send amount in sats.
+        /// Sets the swap amount in sats.
         #[clap(long, short = 'a', default_value = "20000")]
         amount: u64,
-        /// Sets how many utxos to swap.
-        /// The wallet needs to have at least that many utxos, of greater than or equal to the `amount` value.
+        /// Sets how many new swap utxos to get. The swap amount will be randomly distrubted across the new utxos.
+        /// Increasing this number also increases total swap fee.
         #[clap(long, short = 'u', default_value = "1")]
         utxos: u32,
     },

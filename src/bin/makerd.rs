@@ -9,7 +9,7 @@ use std::{path::PathBuf, sync::Arc};
 /// Coinswap Maker Server
 ///
 /// The server requires a Bitcoin Core RPC connection running in Signet. It requires some starting balance, around 50,000 sats for Fidelity + Swap Liquidity (suggested 50,000 sats).
-/// So topup with at least 0.01 BTC to start all the node processses. Suggested faucet: https://signetfaucet.com/
+/// So topup with at least 0.001 BTC to start all the node processses. Suggested faucet: https://signetfaucet.com/
 /// All server process will start after the fidelity bond transaction confirms. This may take some time. Approx: 10 mins.
 /// Once the bond confirms, the server starts listening for incoming swap requests. As it performs swaps for clients, it keeps earning fees.
 ///
@@ -30,7 +30,7 @@ struct Cli {
         name = "ADDRESS:PORT",
         long,
         short = 'r',
-        default_value = "127.0.0.1:38332"
+        default_value = "127.0.0.1:48332"
     )]
     pub rpc: String,
     /// Bitcoin Core RPC authentication string (username, password).

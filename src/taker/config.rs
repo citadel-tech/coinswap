@@ -23,7 +23,7 @@ impl Default for TakerConfig {
     fn default() -> Self {
         Self {
             network_port: 8000,
-            socks_port: 19050,
+            socks_port: 19070,
             directory_server_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
             connection_type: {
                 #[cfg(feature = "tor")]
@@ -130,7 +130,7 @@ mod tests {
     fn test_valid_config() {
         let contents = r#"
         network_port = 8000
-        socks_port = 19050
+        socks_port = 19070
         directory_server_address = directoryhiddenserviceaddress.onion:8080
         connection_type = "TOR"
         rpc_port = 8081
