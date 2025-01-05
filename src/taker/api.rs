@@ -1931,6 +1931,11 @@ impl Taker {
         // Check for contract confirmations and broadcast timelocked transaction
         let mut timelock_boardcasted = Vec::new();
 
+        // Save the wallet file here before going into the expensive loop.
+        self.wallet.save_to_disk()?;
+        log::info!("Wallet data saved to disk.");
+        log::info!("{:?}", self.wallet.store);
+
         // Start the loop to keep checking for timelock maturity, and spend from the contract asap.
         loop {
             // Break early if nothing to broadcast.
@@ -1991,6 +1996,7 @@ impl Taker {
                     self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
                     log::info!("Initializing Wallet sync and save");
                     self.wallet.sync()?;
+                    self.wallet.save_to_disk()?;
                     log::info!("Completed wallet sync and save");
                     return Ok(());
                 }

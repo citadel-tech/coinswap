@@ -234,8 +234,12 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
         let sleep_increment = 10;
         let mut sleep_multiplier = 0;
         log::info!("No active Fidelity Bonds found. Creating one.");
-        log::info!("Fidelity value chosen = {:?} BTC", amount.to_btc());
+        log::info!("Fidelity value chosen = {:?} sats", amount.to_sat());
         log::info!("Fidelity Tx fee = 1000 sats");
+        log::info!(
+            "Fidelity timelock {} blocks",
+            maker.config.fidelity_timelock
+        );
 
         while !maker.shutdown.load(Relaxed) {
             sleep_multiplier += 1;

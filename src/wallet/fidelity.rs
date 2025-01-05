@@ -411,6 +411,7 @@ impl Wallet {
                     "Fidelity Transaction {} seen in mempool, waiting for confirmation.",
                     txid
                 );
+                log::warn!("ATTENTION ! DO NOT SHUTDOWN THE MAKER UNTIL CONFIRMATION");
 
                 let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60); // Caps at 1 Block interval i.e 10 mins
                 log::info!("Next sync in {:?} secs", total_sleep);
