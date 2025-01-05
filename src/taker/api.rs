@@ -1932,8 +1932,9 @@ impl Taker {
         let mut timelock_boardcasted = Vec::new();
 
         // Save the wallet file here before going into the expensive loop.
+        self.wallet.sync()?;
         self.wallet.save_to_disk()?;
-        log::info!("Wallet data saved to disk.");
+        log::info!("Wallet file synced and saved.");
         log::info!("{:?}", self.wallet.store);
 
         // Start the loop to keep checking for timelock maturity, and spend from the contract asap.
