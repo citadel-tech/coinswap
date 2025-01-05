@@ -587,11 +587,18 @@ pub(crate) fn verify_fidelity_checks(
         return Err(FidelityError::InvalidCertHash.into());
     }
 
+    #[cfg(feature = "integration-test")]
+    let network = bitcoin::network::Network::Regtest;
+
+    #[cfg(not(feature = "integration-test"))]
+    let network = bitcoin::network::Network::Signet;
+
+
     // Validate redeem script and corresponding address
     let fidelity_redeem_script = fidelity_redeemscript(&proof.bond.lock_time, &proof.bond.pubkey);
     let expected_address = Address::p2wsh(
         fidelity_redeem_script.as_script(),
-        bitcoin::network::Network::Regtest,
+        network,
     );
 
     let derived_script_pubkey = expected_address.script_pubkey();
