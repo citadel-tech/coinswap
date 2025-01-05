@@ -20,7 +20,7 @@ struct Cli {
         name = "ADDRESS:PORT",
         long,
         short = 'r',
-        default_value = "127.0.0.1:18443"
+        default_value = "127.0.0.1:48332"
     )]
     pub(crate) rpc: String,
     /// Sets the rpc basic authentication.

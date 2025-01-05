@@ -57,8 +57,8 @@ pub const RPC_PING_INTERVAL: Duration = Duration::from_secs(60);
 // TODO: Make the maker repost their address to DNS once a day in spawned thread.
 // pub const DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = Duartion::from_days(1); // Once a day.
 
-/// Maker triggers the recovery mechanism, if Taker is idle for more than 300 secs.
-pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(300);
+/// Maker triggers the recovery mechanism, if Taker is idle for more than 30 mins.
+pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The minimum difference in locktime (in blocks) between the incoming and outgoing swaps.
 ///
@@ -733,8 +733,6 @@ pub(crate) fn recover_from_swap(
         );
     }
 
-    maker.wallet.read()?.save_to_disk()?;
-
     //broadcast all the outgoing contracts
     for ((_, tx), _) in outgoings.iter() {
         if maker
@@ -763,9 +761,13 @@ pub(crate) fn recover_from_swap(
         }
     }
 
+    // Save the wallet here before going into the expensive loop.
+    maker.get_wallet().read()?.save_to_disk()?;
+    log::info!("Wallet file saved to disk.");
+
     // Check for contract confirmations and broadcast timelocked transaction
     let mut timelock_boardcasted = Vec::new();
-    loop {
+    while !maker.shutdown.load(Relaxed) {
         for ((_, contract), (timelock, timelocked_tx)) in outgoings.iter() {
             // We have already broadcasted this tx, so skip
             if timelock_boardcasted.contains(&timelocked_tx) {
@@ -842,8 +844,9 @@ pub(crate) fn recover_from_swap(
         let block_lookup_interval = if cfg!(feature = "integration-test") {
             Duration::from_secs(10)
         } else {
-            Duration::from_secs(300)
+            Duration::from_secs(60 * 10)
         };
         std::thread::sleep(block_lookup_interval);
     }
+    Ok(())
 }
