@@ -104,8 +104,14 @@ fn main() -> Result<(), TakerError> {
     let args = Cli::parse();
     setup_taker_logger(LevelFilter::from_str(&args.verbosity).unwrap());
 
+    let url = if cfg!(feature = "integration-test") {
+        "127.0.0.1:18443".to_owned()
+    } else {
+        args.rpc
+    };
+
     let rpc_config = RPCConfig {
-        url: args.rpc,
+        url,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
