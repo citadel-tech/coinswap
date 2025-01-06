@@ -236,31 +236,49 @@ impl DirectoryServer {
         metadata: (String, OutPoint),
     ) -> Result<(), DirectoryServerError> {
         let mut write_lock = self.addresses.write()?;
-        for (key, value) in write_lock.iter_mut() {
-            if key == &metadata.1 {
-                log::info!("Fifdelity Bond existing: {}", key);
-                if value != &metadata.0 {
-                    log::info!(
-                        "Tor address updated. Old address {} | New Address {}",
-                        value,
-                        metadata.0
-                    );
-                    *value = metadata.0.clone();
-                    return Ok(());
-                } else {
-                    log::info!("Tor address is also same. No update required");
-                    return Ok(());
-                }
+        // Check if the value exists with a different key
+        if let Some(existing_key) =
+            write_lock
+                .iter()
+                .find_map(|(k, v)| if v == &metadata.0 { Some(*k) } else { None })
+        {
+            // Update the fielity for the existing address
+            if existing_key != metadata.1 {
+                log::info!(
+                    "Fidelity update detected for address: {} | Old fidelity {} | New fidelity {}",
+                    metadata.0,
+                    existing_key,
+                    metadata.1
+                );
+                write_lock.remove(&existing_key);
+                write_lock.insert(metadata.1, metadata.0);
+            } else {
+                log::info!("Maker data already exist for {}", metadata.0);
             }
+        } else if write_lock.contains_key(&metadata.1) {
+            // Update the address for the existing fidelity
+            if write_lock[&metadata.1] != metadata.0 {
+                let old_addr = write_lock
+                    .insert(metadata.1, metadata.0.clone())
+                    .expect("value expected");
+                log::info!(
+                    "Address updated for fidelity: {} | old address {} | new address {}",
+                    metadata.1,
+                    old_addr,
+                    metadata.0
+                );
+            } else {
+                log::info!("Maker data already exist for {}", metadata.0);
+            }
+        } else {
+            // Add a new entry if both fidelity and address are new
+            write_lock.insert(metadata.1, metadata.0.clone());
+            log::info!(
+                "Added new maker info: Fidelity {} | Address {}",
+                metadata.1,
+                metadata.0
+            );
         }
-
-        log::info!(
-            "New Fidelity Bond found. Outpoint {} | Addrs {}",
-            metadata.1,
-            metadata.0
-        );
-        write_lock.entry(metadata.1).or_insert(metadata.0);
-
         Ok(())
     }
 }
