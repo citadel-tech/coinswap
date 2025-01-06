@@ -512,17 +512,24 @@ impl Wallet {
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Result<Option<UTXOSpendInfo>, WalletError> {
-        if let Some(outgoing_swapcoin) = self.store.outgoing_swapcoins.get(&utxo.script_pub_key) {
-            if utxo.confirmations >= outgoing_swapcoin.get_timelock()?.into() {
-                return Ok(Some(UTXOSpendInfo::TimelockContract {
-                    swapcoin_multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
-                    input_value: utxo.amount,
-                }));
-            }
-        } else if let Some(incoming_swapcoin) =
-            self.store.incoming_swapcoins.get(&utxo.script_pub_key)
+        if let Some((_, outgoing_swapcoin)) =
+            self.store.outgoing_swapcoins.iter().find(|(_, og)| {
+                redeemscript_to_scriptpubkey(&og.contract_redeemscript).unwrap()
+                    == utxo.script_pub_key
+            })
         {
-            if incoming_swapcoin.is_hash_preimage_known() && utxo.confirmations >= 1 {
+            log::info!("Found outgoing swaps");
+            return Ok(Some(UTXOSpendInfo::TimelockContract {
+                swapcoin_multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
+                input_value: utxo.amount,
+            }));
+        } else if let Some((_, incoming_swapcoin)) =
+            self.store.incoming_swapcoins.iter().find(|(_, ig)| {
+                redeemscript_to_scriptpubkey(&ig.contract_redeemscript).unwrap()
+                    == utxo.script_pub_key
+            })
+        {
+            if incoming_swapcoin.is_hash_preimage_known() {
                 return Ok(Some(UTXOSpendInfo::HashlockContract {
                     swapcoin_multisig_redeemscript: incoming_swapcoin.get_multisig_redeemscript(),
                     input_value: utxo.amount,

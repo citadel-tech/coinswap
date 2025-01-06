@@ -44,7 +44,6 @@ use crate::maker::error::MakerError;
 
 // Default values for Maker configurations
 pub(crate) const _DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 60 * 12; // 12 Hours
-pub(crate) const _IDLE_CONNECTION_TIMEOUT: u64 = 300;
 
 /// Fetches the Maker and DNS address, and sends maker address to the DNS server.
 /// Depending upon ConnectionType and test/prod environment, different maker address and DNS addresses are returned.
@@ -163,6 +162,12 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
             )
             .map(|stream| stream.into_inner()),
         };
+
+        log::info!(
+            "[{}] Connecting to DNS: {}",
+            maker.config.network_port,
+            dns_address
+        );
 
         let mut stream = match stream {
             Ok(s) => s,
