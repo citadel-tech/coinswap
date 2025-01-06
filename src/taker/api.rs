@@ -2062,6 +2062,9 @@ impl Taker {
         // Further TODO: The Offer book needs to be restructured to store a unqiue value per fidelity bond. Similar to DNS.
         let offers = fetch_offer_from_makers(addresses_from_dns, &self.config)?;
 
+        // TODO: Use better logic to update offerbook than to just rewrite everything.
+        self.offerbook = OfferBook::default();
+
         for offer in offers {
             log::info!(
                 "Found offer from {}. Verifying Fidelity Proof",
