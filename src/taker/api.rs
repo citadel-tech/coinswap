@@ -80,7 +80,12 @@ pub(crate) const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 30;
 pub(crate) const RECONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 300;
 // TODO: Maker should decide this miner fee
 // This fee is used for both funding and contract txs.
+#[cfg(feature = "integration-test")]
 pub(crate) const MINER_FEE: u64 = 1000;
+
+/// This fee is used for both funding and contract txs.
+#[cfg(not(feature = "integration-test"))]
+pub(crate) const MINER_FEE: u64 = 300; // around 2 sats/vb for funding tx
 
 /// Swap specific parameters. These are user's policy and can differ among swaps.
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
@@ -380,8 +385,8 @@ impl Taker {
         let available = self.wallet.spendable_balance()?;
 
         // TODO: Make more exact estimate of swap cost and ensure balanbce.
-        // For now ensure at least swap_amount + 50000 is available.
-        let required = swap_params.send_amount + Amount::from_sat(50000);
+        // For now ensure at least swap_amount + 10000 is available.
+        let required = swap_params.send_amount + Amount::from_sat(1000);
         if available < required {
             let err = WalletError::InsufficientFund {
                 available: available.to_btc(),
@@ -1935,14 +1940,13 @@ impl Taker {
         self.wallet.sync()?;
         self.wallet.save_to_disk()?;
         log::info!("Wallet file synced and saved.");
-        log::info!("{:?}", self.wallet.store);
 
         // Start the loop to keep checking for timelock maturity, and spend from the contract asap.
         loop {
             // Break early if nothing to broadcast.
             // This happens only when init_first_hop() fails at `NotEnoughMakersInOfferBook`
             if outgoing_infos.is_empty() {
-                return Ok(());
+                break;
             }
             for ((reedemscript, contract), (timelock, timelocked_tx)) in outgoing_infos.iter() {
                 // We have already broadcasted this tx, so skip
@@ -1995,11 +1999,7 @@ impl Taker {
                 if timelock_boardcasted.len() == outgoing_infos.len() {
                     log::info!("All outgoing contracts reedemed. Cleared ongoing swap state");
                     self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
-                    log::info!("Initializing Wallet sync and save");
-                    self.wallet.sync()?;
-                    self.wallet.save_to_disk()?;
-                    log::info!("Completed wallet sync and save");
-                    return Ok(());
+                    break;
                 }
             }
             // Block wait time is varied between prod. and test builds.
@@ -2010,6 +2010,12 @@ impl Taker {
             };
             std::thread::sleep(block_wait_time);
         }
+        log::info!("Recovery completed.");
+        log::info!("Initializing Wallet sync and save");
+        self.wallet.sync()?;
+        self.wallet.save_to_disk()?;
+        log::info!("Completed wallet sync and save");
+        Ok(())
     }
 
     /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.

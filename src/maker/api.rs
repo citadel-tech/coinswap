@@ -58,7 +58,7 @@ pub const RPC_PING_INTERVAL: Duration = Duration::from_secs(60);
 // pub const DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = Duartion::from_days(1); // Once a day.
 
 /// Maker triggers the recovery mechanism, if Taker is idle for more than 30 mins.
-pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(120);
+pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60 * 30);
 
 /// The minimum difference in locktime (in blocks) between the incoming and outgoing swaps.
 ///
@@ -95,9 +95,19 @@ pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
 /// - `total_fee` = 5,500 sats (5.5%)
 ///
 /// Fee rates are designed to asymptotically approach 5% of the swap amount as the swap amount increases..
+#[cfg(feature = "integration-test")]
 pub const BASE_FEE: u64 = 1000;
+#[cfg(feature = "integration-test")]
 pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 2.50;
+#[cfg(feature = "integration-test")]
 pub const TIME_RELATIVE_FEE_PCT: f64 = 0.10;
+
+#[cfg(not(feature = "integration-test"))]
+pub const BASE_FEE: u64 = 100;
+#[cfg(not(feature = "integration-test"))]
+pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 0.1;
+#[cfg(not(feature = "integration-test"))]
+pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
 
 /// Minimum Coinswap amount; makers will not accept amounts below this.
 pub const MIN_SWAP_AMOUNT: u64 = 10_000;
@@ -762,8 +772,9 @@ pub(crate) fn recover_from_swap(
     }
 
     // Save the wallet here before going into the expensive loop.
+    maker.get_wallet().write()?.sync()?;
     maker.get_wallet().read()?.save_to_disk()?;
-    log::info!("Wallet file saved to disk.");
+    log::info!("Wallet file synced and saved to disk.");
 
     // Check for contract confirmations and broadcast timelocked transaction
     let mut timelock_boardcasted = Vec::new();
@@ -813,33 +824,7 @@ pub(crate) fn recover_from_swap(
                 }
             }
         }
-        // Everything is broadcasted. Remove swapcoins from wallet
-        if timelock_boardcasted.len() == outgoings.len() {
-            for ((outgoing_reedemscript, _), _) in outgoings {
-                let outgoing_removed = maker
-                    .wallet
-                    .write()?
-                    .remove_outgoing_swapcoin(&outgoing_reedemscript)?
-                    .expect("outgoing swapcoin expected");
 
-                log::info!(
-                    "[{}] Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
-                    maker.config.network_port,
-                    outgoing_removed.contract_tx.compute_txid()
-                );
-            }
-            log::info!("initializing Wallet Sync.");
-            {
-                let mut wallet_write = maker.wallet.write()?;
-                wallet_write.sync()?;
-                wallet_write.save_to_disk()?;
-            }
-            log::info!("Completed Wallet Sync.");
-            // For test, shutdown the maker at this stage.
-            #[cfg(feature = "integration-test")]
-            maker.shutdown.store(true, Relaxed);
-            return Ok(());
-        }
         // Sleep before next blockchain scan
         let block_lookup_interval = if cfg!(feature = "integration-test") {
             Duration::from_secs(10)
@@ -848,5 +833,33 @@ pub(crate) fn recover_from_swap(
         };
         std::thread::sleep(block_lookup_interval);
     }
+
+    // Everything is broadcasted. Remove swapcoins from wallet
+    if timelock_boardcasted.len() == outgoings.len() {
+        for ((outgoing_reedemscript, _), _) in outgoings {
+            let outgoing_removed = maker
+                .wallet
+                .write()?
+                .remove_outgoing_swapcoin(&outgoing_reedemscript)?
+                .expect("outgoing swapcoin expected");
+
+            log::info!(
+                "[{}] Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
+                maker.config.network_port,
+                outgoing_removed.contract_tx.compute_txid()
+            );
+        }
+    }
+
+    log::info!("initializing Wallet Sync.");
+    {
+        let mut wallet_write = maker.wallet.write()?;
+        wallet_write.sync()?;
+        wallet_write.save_to_disk()?;
+    }
+    log::info!("Completed Wallet Sync.");
+    // For test, shutdown the maker at this stage.
+    #[cfg(feature = "integration-test")]
+    maker.shutdown.store(true, Relaxed);
     Ok(())
 }

@@ -98,6 +98,8 @@ enum Commands {
         #[clap(long, short = 'u', default_value = "1")]
         utxos: u32,
     },
+    /// Recover from all failed swaps
+    Recover,
 }
 
 fn main() -> Result<(), TakerError> {
@@ -216,6 +218,7 @@ fn main() -> Result<(), TakerError> {
         }
 
         Commands::FetchOffers => {
+            println!("Fetching offerdata from the market. use `tail -f <data-dir>/debug.log` to see progress.");
             let offerbook = taker.fetch_offers()?;
             println!("{:#?}", offerbook)
         }
@@ -231,8 +234,15 @@ fn main() -> Result<(), TakerError> {
                 required_confirms: 1,
             };
 
+            println!("Starting coinswap with swap params : {:?}. use `tail -f <data-dir>/debug.log` to see progress.", swap_params);
             taker.do_coinswap(swap_params)?;
             println!("succesfully completed coinswap!! Check `list-utxo` to see the new coins");
+        }
+
+        Commands::Recover => {
+            println!("Starting recovery. use `tail -f <data-dir>/debug.log` to see progress.");
+            taker.recover_from_swap()?;
+            println!("Recovery completed succesfully.");
         }
     }
 
