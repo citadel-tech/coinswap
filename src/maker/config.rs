@@ -2,7 +2,7 @@
 
 use crate::utill::parse_toml;
 use std::{io, path::Path};
-
+use bitcoin::Amount;
 use std::io::Write;
 
 use crate::utill::{get_maker_dir, parse_field, ConnectionType};
@@ -17,13 +17,13 @@ pub struct MakerConfig {
     /// RPC listening port
     pub rpc_port: u16,
     /// Minimum Coinswap amount
-    pub min_swap_amount: u64,
+    pub min_swap_amount: Amount,
     /// Socks port
     pub socks_port: u16,
     /// Directory server address (can be clearnet or onion)
     pub directory_server_address: String,
     /// Fidelity Bond amount
-    pub fidelity_amount: u64,
+    pub fidelity_amount: Amount,
     /// Fidelity Bond timelock in Block heights.
     pub fidelity_timelock: u32,
     /// Connection type

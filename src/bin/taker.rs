@@ -80,7 +80,7 @@ enum Commands {
         address: String,
         /// Amount to be sent (in sats)
         #[clap(name = "amount")]
-        amount: u64,
+        amount: Amount,
         /// Fee of a Tx(in sats)
         #[clap(name = "fee")]
         fee: u64,

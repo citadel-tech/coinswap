@@ -1,5 +1,5 @@
 use std::fmt::Display;
-
+use bitcoin::Amount; 
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -35,7 +35,7 @@ pub enum RpcMsgReq {
         /// The recipient's address.
         address: String,
         /// The amount to send.
-        amount: u64,
+        amount: Amount,
         /// The transaction fee to include.
         fee: u64,
     },

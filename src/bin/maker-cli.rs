@@ -5,6 +5,7 @@ use coinswap::{
     maker::{MakerError, RpcMsgReq, RpcMsgResp},
     utill::{read_message, send_message, setup_maker_logger},
 };
+use bitcoin::Amount;
 
 /// maker-cli is a command line app to send RPC messages to maker server.
 #[derive(Parser, Debug)]
@@ -43,8 +44,8 @@ enum Commands {
     /// Send to an external address and returns the transaction hex.
     SendToAddress {
         address: String,
-        amount: u64,
-        fee: u64,
+        amount: Amount,
+        fee:Amount,
     },
     /// Returns the tor address
     GetTorAddress,
