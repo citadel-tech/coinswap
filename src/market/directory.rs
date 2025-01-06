@@ -5,7 +5,6 @@
 
 use bitcoin::{transaction::ParseOutPointError, OutPoint};
 use bitcoind::bitcoincore_rpc::{self, Client, RpcApi};
-use std::collections::hash_map::Entry;
 
 use crate::{
     market::rpc::start_rpc_server_thread,
@@ -236,22 +235,33 @@ impl DirectoryServer {
         &self,
         metadata: (String, OutPoint),
     ) -> Result<(), DirectoryServerError> {
-        match self.addresses.write()?.entry(metadata.1) {
-            Entry::Occupied(mut value) => {
-                log::info!("Maker Address Got Updated | Existing Address {} | New Address {} | Fidelity Outpoint {}", value.get(), metadata.0, metadata.1);
-                *value.get_mut() = metadata.0.clone();
-                Ok(())
-            }
-            Entry::Vacant(value) => {
-                log::info!(
-                    "New Maker Address Added {} | Fidelity Outpoint {}",
-                    metadata.0,
-                    metadata.1
-                );
-                value.insert(metadata.0.clone());
-                Ok(())
+        let mut write_lock = self.addresses.write()?;
+        for (key, value) in write_lock.iter_mut() {
+            if key == &metadata.1 {
+                log::info!("Fifdelity Bond existing: {}", key);
+                if value != &metadata.0 {
+                    log::info!(
+                        "Tor address updated. Old address {} | New Address {}",
+                        value,
+                        metadata.0
+                    );
+                    *value = metadata.0.clone();
+                    return Ok(());
+                } else {
+                    log::info!("Tor address is also same. No update required");
+                    return Ok(());
+                }
             }
         }
+
+        log::info!(
+            "New Fidelity Bond found. Outpoint {} | Addrs {}",
+            metadata.1,
+            metadata.0
+        );
+        write_lock.entry(metadata.1).or_insert(metadata.0);
+
+        Ok(())
     }
 }
 

@@ -8,7 +8,8 @@
 use std::{
     convert::TryFrom,
     fmt,
-    io::{BufReader, BufWriter, Write},
+    fs::read,
+    io::{BufWriter, Write},
     net::TcpStream,
     path::Path,
     sync::mpsc,
@@ -136,9 +137,27 @@ impl OfferBook {
 
     /// Reads from a path (errors if path doesn't exist).
     pub fn read_from_disk(path: &Path) -> Result<Self, TakerError> {
-        let wallet_file = std::fs::File::open(path)?;
-        let reader = BufReader::new(wallet_file);
-        let book: Self = serde_cbor::from_reader(reader)?;
+        //let wallet_file = File::open(path)?;
+        let mut reader = read(path)?;
+        let book = match serde_cbor::from_slice::<Self>(&reader) {
+            Ok(book) => book,
+            Err(e) => {
+                let err_string = format!("{:?}", e);
+                if err_string.contains("code: TrailingData") {
+                    log::info!("Offerbook has trailing data, trying to restore");
+                    loop {
+                        // pop the last byte and try again.
+                        reader.pop();
+                        match serde_cbor::from_slice::<Self>(&reader) {
+                            Ok(book) => break book,
+                            Err(_) => continue,
+                        }
+                    }
+                } else {
+                    return Err(e.into());
+                }
+            }
+        };
         Ok(book)
     }
 }
