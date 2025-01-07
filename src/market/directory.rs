@@ -382,6 +382,14 @@ pub fn start_directory_server(
 
     let rpc_client = bitcoincore_rpc::Client::try_from(&rpc_config)?;
 
+    // Stop early if bitcoin core connection is wrong
+    if let Err(e) = rpc_client.get_blockchain_info() {
+        log::error!("Cannot connect to bitcoin node {:?}", e);
+        return Err(e.into());
+    } else {
+        log::info!("Bitcoin core connection successful");
+    }
+
     match directory.connection_type {
         ConnectionType::CLEARNET => {}
         #[cfg(feature = "tor")]
@@ -438,7 +446,6 @@ pub fn start_directory_server(
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.network_port))?;
 
-    // why we have not set it to non-blocking mode?
     while !directory.shutdown.load(Relaxed) {
         match listener.accept() {
             Ok((mut stream, _)) => {

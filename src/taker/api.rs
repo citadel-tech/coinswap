@@ -77,7 +77,7 @@ pub(crate) const RECONNECT_ATTEMPTS: u32 = 10;
 pub(crate) const RECONNECT_SHORT_SLEEP_DELAY: u64 = 1;
 pub(crate) const RECONNECT_LONG_SLEEP_DELAY: u64 = 5;
 pub(crate) const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 30;
-pub(crate) const RECONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 300;
+pub(crate) const TCP_TIMEOUT_SECONDS: u64 = 300;
 // TODO: Maker should decide this miner fee
 // This fee is used for both funding and contract txs.
 #[cfg(feature = "integration-test")]
@@ -180,7 +180,7 @@ pub struct Taker {
 
 impl Drop for Taker {
     fn drop(&mut self) {
-        log::info!("Shutting down take.");
+        log::info!("Shutting down taker.");
         self.offerbook
             .write_to_disk(&self.data_dir.join("offerbook.dat"))
             .unwrap();
@@ -373,6 +373,12 @@ impl Taker {
                 self.offerbook.all_good_makers().len()
             );
             return Err(TakerError::NotEnoughMakersInOfferBook);
+        }
+
+        // Error early if less than 2 makers.
+        if swap_params.maker_count < 2 {
+            log::error!("Cannot swap with less than 2 makers");
+            return Err(ProtocolError::General("Swap maker count < 2").into());
         }
 
         // Generate new random preimage and initiate the first hop.
@@ -963,7 +969,7 @@ impl Taker {
             .into_inner(),
         };
 
-        let reconnect_timeout = Duration::from_secs(RECONNECT_ATTEMPT_TIMEOUT_SEC);
+        let reconnect_timeout = Duration::from_secs(TCP_TIMEOUT_SECONDS);
 
         socket.set_read_timeout(Some(reconnect_timeout))?;
         socket.set_write_timeout(Some(reconnect_timeout))?;
@@ -1499,7 +1505,7 @@ impl Taker {
         incoming_swapcoins: &[S],
         receivers_contract_txes: &[Transaction],
     ) -> Result<ContractSigsForRecvr, TakerError> {
-        let reconnect_time_out = Duration::from_secs(RECONNECT_ATTEMPT_TIMEOUT_SEC);
+        let reconnect_time_out = Duration::from_secs(TCP_TIMEOUT_SECONDS);
 
         // Configurable reconnection attempts for testing
         let reconnect_attempts = if cfg!(feature = "integration-test") {
@@ -1623,7 +1629,7 @@ impl Taker {
                         .collect::<Vec<_>>()
                 };
 
-            let reconnect_time_out = Duration::from_secs(RECONNECT_ATTEMPT_TIMEOUT_SEC);
+            let reconnect_time_out = Duration::from_secs(TCP_TIMEOUT_SECONDS);
 
             let mut ii = 0;
 
@@ -1992,6 +1998,10 @@ impl Taker {
                                 "Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
                                 outgoing_removed.contract_tx.compute_txid()
                             );
+                            log::info!("Initializing Wallet sync and save");
+                            self.wallet.sync()?;
+                            self.wallet.save_to_disk()?;
+                            log::info!("Completed wallet sync and save");
                         }
                     }
                 }
@@ -2000,6 +2010,7 @@ impl Taker {
             // Everything is broadcasted. Clear the connectionstate and break the loop
             if timelock_boardcasted.len() == outgoing_infos.len() {
                 log::info!("All outgoing contracts reedemed. Cleared ongoing swap state");
+                // TODO: Reevaluate this.
                 self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
                 break;
             }
@@ -2013,10 +2024,7 @@ impl Taker {
             std::thread::sleep(block_wait_time);
         }
         log::info!("Recovery completed.");
-        log::info!("Initializing Wallet sync and save");
-        self.wallet.sync()?;
-        self.wallet.save_to_disk()?;
-        log::info!("Completed wallet sync and save");
+
         Ok(())
     }
 

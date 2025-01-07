@@ -3,7 +3,7 @@ use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Auth};
 use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
-    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType},
+    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, REQUIRED_CONFIRMS},
     wallet::{Destination, RPCConfig, SendAmount},
 };
 use log::LevelFilter;
@@ -12,7 +12,8 @@ use std::{path::PathBuf, str::FromStr};
 /// A simple command line app to operate as coinswap client.
 ///
 /// The app works as regular Bitcoin wallet with added capability to perform coinswaps. The app
-/// requires a running Bitcoin Core node with RPC access.
+/// requires a running Bitcoin Core node with RPC access. It currently only runs on Testnet4.
+/// Suggested faucet for getting Testnet4 coins: https://mempool.space/testnet4
 ///
 /// For more detailed usage information, please refer: [taker-cli demo doc link]
 ///
@@ -76,7 +77,7 @@ enum Commands {
         /// Amount to send in sats
         #[clap(long, short = 'a')]
         amount: u64,
-        /// Total fee to be paid in sats
+        /// Mining fee to be paid in sats
         #[clap(long, short = 'f')]
         fee: u64,
     },
@@ -93,10 +94,10 @@ enum Commands {
         /// Sets the swap amount in sats.
         #[clap(long, short = 'a', default_value = "20000")]
         amount: u64,
-        /// Sets how many new swap utxos to get. The swap amount will be randomly distrubted across the new utxos.
-        /// Increasing this number also increases total swap fee.
-        #[clap(long, short = 'u', default_value = "1")]
-        utxos: u32,
+        // /// Sets how many new swap utxos to get. The swap amount will be randomly distrubted across the new utxos.
+        // /// Increasing this number also increases total swap fee.
+        // #[clap(long, short = 'u', default_value = "1")]
+        // utxos: u32,
     },
     /// Recover from all failed swaps
     Recover,
@@ -222,16 +223,12 @@ fn main() -> Result<(), TakerError> {
             let offerbook = taker.fetch_offers()?;
             println!("{:#?}", offerbook)
         }
-        Commands::Coinswap {
-            makers,
-            utxos,
-            amount,
-        } => {
+        Commands::Coinswap { makers, amount } => {
             let swap_params = SwapParams {
                 send_amount: Amount::from_sat(amount),
                 maker_count: makers,
-                tx_count: utxos,
-                required_confirms: 1,
+                tx_count: 1,
+                required_confirms: REQUIRED_CONFIRMS,
             };
 
             println!("Starting coinswap with swap params : {:?}. use `tail -f <data-dir>/debug.log` to see progress.", swap_params);

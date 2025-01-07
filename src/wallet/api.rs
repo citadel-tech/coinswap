@@ -518,7 +518,6 @@ impl Wallet {
                     == utxo.script_pub_key
             })
         {
-            log::info!("Found outgoing swaps");
             return Ok(Some(UTXOSpendInfo::TimelockContract {
                 swapcoin_multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
                 input_value: utxo.amount,

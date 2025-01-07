@@ -192,6 +192,7 @@ impl ThreadPool {
         let mut joined_count = 0;
         while let Some(thread) = threads.pop() {
             let thread_name = thread.thread().name().unwrap().to_string();
+            println!("joining thread: {}", thread_name);
 
             match thread.join() {
                 Ok(_) => {
@@ -608,53 +609,37 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
 /// If any one of the is ever observed, run the recovery routine.
 pub(crate) fn restore_broadcasted_contracts_on_reboot(maker: Arc<Maker>) -> Result<(), MakerError> {
     let (inc, out) = maker.wallet.read()?.find_unfinished_swapcoins();
-    let txids_to_watch = inc
-        .iter()
-        .map(|is| is.contract_tx.compute_txid())
-        .chain(out.iter().map(|oc| oc.contract_tx.compute_txid()))
-        .collect::<Vec<_>>();
+    let mut outgoings = Vec::new();
+    let mut incomings = Vec::new();
+    // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
+    // fully signed.
+    for og_sc in out.iter() {
+        let contract_timelock = og_sc.get_timelock()?;
+        let next_internal_address = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
+        let time_lock_spend = og_sc.create_timelock_spend(next_internal_address)?;
 
-    for txid in txids_to_watch {
-        if maker
-            .wallet
-            .read()?
-            .rpc
-            .get_raw_transaction_info(&txid, None)
-            .is_ok()
-        {
-            let mut outgoings = Vec::new();
-            let mut incomings = Vec::new();
-            // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
-            // fully signed.
-            for (og_sc, ic_sc) in out.iter().zip(inc.iter()) {
-                let contract_timelock = og_sc.get_timelock()?;
-                let next_internal_address =
-                    &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
-                let time_lock_spend = og_sc.create_timelock_spend(next_internal_address)?;
-
-                if let Ok(tx) = og_sc.get_fully_signed_contract_tx() {
-                    outgoings.push((
-                        (og_sc.get_multisig_redeemscript(), tx),
-                        (contract_timelock, time_lock_spend),
-                    ));
-                }
-                if let Ok(tx) = ic_sc.get_fully_signed_contract_tx() {
-                    incomings.push((ic_sc.get_multisig_redeemscript(), tx));
-                }
-            }
-
-            // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
-            let maker_clone = maker.clone();
-            let handle = std::thread::Builder::new()
-                .name("Swap recovery thread".to_string())
-                .spawn(move || {
-                    if let Err(e) = recover_from_swap(maker_clone, outgoings, incomings) {
-                        log::error!("Failed to recover from swap due to: {:?}", e);
-                    }
-                })?;
-            maker.thread_pool.add_thread(handle);
-        }
+        let tx = og_sc.get_fully_signed_contract_tx()?;
+        outgoings.push((
+            (og_sc.get_multisig_redeemscript(), tx),
+            (contract_timelock, time_lock_spend),
+        ));
     }
+
+    for ic_sc in inc.iter() {
+        let tx = ic_sc.get_fully_signed_contract_tx()?;
+        incomings.push((ic_sc.get_multisig_redeemscript(), tx));
+    }
+
+    // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
+    let maker_clone = maker.clone();
+    let handle = std::thread::Builder::new()
+        .name("Swap recovery thread".to_string())
+        .spawn(move || {
+            if let Err(e) = recover_from_swap(maker_clone, outgoings, incomings) {
+                log::error!("Failed to recover from swap due to: {:?}", e);
+            }
+        })?;
+    maker.thread_pool.add_thread(handle);
 
     Ok(())
 }
@@ -687,18 +672,14 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
 
                 let no_response_since =
                     current_time.saturating_duration_since(*last_connected_time);
-                log::info!(
-                    "[{}] No response from {} in {:?}",
-                    maker.config.network_port,
-                    ip,
-                    no_response_since
-                );
+
                 if no_response_since > conn_timeout {
                     log::error!(
-                        "[{}] Potential Dropped Connection from {}",
+                        "[{}] Potential Dropped Connection from taker. No response since : {} secs. Recovering from swap",
                         maker.config.network_port,
-                        ip
+                        no_response_since.as_secs()
                     );
+
                     // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
                     // fully signed.
                     for (og_sc, ic_sc) in state
@@ -835,7 +816,7 @@ pub(crate) fn recover_from_swap(
     // Check for contract confirmations and broadcast timelocked transaction
     let mut timelock_boardcasted = Vec::new();
     while !maker.shutdown.load(Relaxed) {
-        for ((_, contract), (timelock, timelocked_tx)) in outgoings.iter() {
+        for ((outgoing_reedemscript, contract), (timelock, timelocked_tx)) in outgoings.iter() {
             // We have already broadcasted this tx, so skip
             if timelock_boardcasted.contains(&timelocked_tx) {
                 continue;
@@ -849,7 +830,7 @@ pub(crate) fn recover_from_swap(
                 .get_raw_transaction_info(&contract.compute_txid(), None)
             {
                 log::info!(
-                    "[{}] Contract Tx : {}, reached confirmation : {:?}, Required Confirmation : {}",
+                    "[{}] Contract Txid : {} reached confirmation : {:?}, Required Confirmation : {}",
                     maker.config.network_port,
                     contract.compute_txid(),
                     result.confirmations,
@@ -859,7 +840,7 @@ pub(crate) fn recover_from_swap(
                     // Now the transaction is confirmed in a block, check for required maturity
                     if confirmation > (*timelock as u32) {
                         log::info!(
-                            "[{}] Timelock maturity of {} blocks for Contract Tx is reached : {}",
+                            "[{}] Timelock maturity of {} blocks reached for Contract Txid : {}",
                             maker.config.network_port,
                             timelock,
                             contract.compute_txid()
@@ -876,45 +857,39 @@ pub(crate) fn recover_from_swap(
                             .send_raw_transaction(timelocked_tx)
                             .map_err(WalletError::Rpc)?;
                         timelock_boardcasted.push(timelocked_tx);
+
+                        let outgoing_removed = maker
+                            .wallet
+                            .write()?
+                            .remove_outgoing_swapcoin(outgoing_reedemscript)?
+                            .expect("outgoing swapcoin expected");
+
+                        log::info!(
+                            "[{}] Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
+                            maker.config.network_port,
+                            outgoing_removed.contract_tx.compute_txid()
+                        );
+
+                        log::info!("initializing Wallet Sync.");
+                        {
+                            let mut wallet_write = maker.wallet.write()?;
+                            wallet_write.sync()?;
+                            wallet_write.save_to_disk()?;
+                        }
+                        log::info!("Completed Wallet Sync.");
                     }
                 }
             }
         }
 
-        // Everything is broadcasted. Remove swapcoins from wallet
-        if timelock_boardcasted.len() == outgoings.len() {
-            for ((outgoing_reedemscript, _), _) in outgoings.iter() {
-                let outgoing_removed = maker
-                    .wallet
-                    .write()?
-                    .remove_outgoing_swapcoin(outgoing_reedemscript)?
-                    .expect("outgoing swapcoin expected");
-
-                log::info!(
-                    "[{}] Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
-                    maker.config.network_port,
-                    outgoing_removed.contract_tx.compute_txid()
-                );
-            }
-
-            // For test, shutdown the maker at this stage.
-            #[cfg(feature = "integration-test")]
-            maker.shutdown.store(true, Relaxed);
-        }
-
-        log::info!("initializing Wallet Sync.");
-        {
-            let mut wallet_write = maker.wallet.write()?;
-            wallet_write.sync()?;
-            wallet_write.save_to_disk()?;
-        }
-        log::info!("Completed Wallet Sync.");
+        #[cfg(feature = "integration-test")]
+        maker.shutdown.store(true, Relaxed);
 
         // Sleep before next blockchain scan
         let block_lookup_interval = if cfg!(feature = "integration-test") {
             Duration::from_secs(10)
         } else {
-            Duration::from_secs(60 * 10)
+            Duration::from_secs(60)
         };
         std::thread::sleep(block_lookup_interval);
     }

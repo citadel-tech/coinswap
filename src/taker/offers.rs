@@ -206,14 +206,14 @@ pub fn fetch_addresses_from_dns(
     dns_addr: String,
     connection_type: ConnectionType,
 ) -> Result<Vec<MakerAddress>, TakerError> {
-    loop {
-        if !cfg!(feature = "tor") {
-            assert!(
-                socks_port.is_none(),
-                "Cannot use socks port without tor feature"
-            );
-        }
+    if !cfg!(feature = "tor") {
+        assert!(
+            socks_port.is_none(),
+            "Cannot use socks port without tor feature"
+        );
+    }
 
+    loop {
         let mut stream = match connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(dns_addr.as_str())?,
             #[cfg(feature = "tor")]
