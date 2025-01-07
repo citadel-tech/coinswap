@@ -347,7 +347,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
     );
 
     let miner_fees_paid_by_taker = (tmi.funding_tx_infos.len() as u64) * MINER_FEE;
-    let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
+    let calculated_next_amount = this_amount - coinswap_fees.to_sat() - miner_fees_paid_by_taker;
 
     if Amount::from_sat(calculated_next_amount) != next_amount {
         return Err((ProtocolError::IncorrectFundingAmount {
@@ -361,7 +361,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         "Maker Received = {} | Maker is Forwarding = {} |  Coinswap Fees = {}  | Miner Fees paid by us = {} ",
         Amount::from_sat(this_amount),
         next_amount,
-        Amount::from_sat(coinswap_fees),
+        coinswap_fees,
         miner_fees_paid_by_taker,
     );
 

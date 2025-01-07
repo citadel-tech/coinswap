@@ -364,13 +364,13 @@ impl Maker {
         // Once issue https://github.com/citadel-tech/coinswap/issues/309 is resolved,
         //`contract_feerate` will represent the actual fee rate instead of the `MINER_FEE`.
         let calc_funding_tx_fees =
-            message.contract_feerate * (message.next_coinswap_info.len() as u64);
+            Amount::from_sat(message.contract_feerate * (message.next_coinswap_info.len() as u64));
 
         // Check for overflow. If happens hard error.
         // This can happen if the fee_rate for funding tx is very high and incoming_amount is very low.
         // TODO: Ensure at Taker protocol that this never happens.
         let outgoing_amount:Amount = if let Some(a) =
-            Amount::from_sat(incoming_amount.checked_sub(calc_coinswap_fees.to_sat() + calc_funding_tx_fees))
+            incoming_amount.checked_sub(calc_coinswap_fees + calc_funding_tx_fees)
         {
             a.to_sat()
         } else {
@@ -400,7 +400,7 @@ impl Maker {
         };
 
         let act_coinswap_fees = incoming_amount
-            .checked_sub(outgoing_amount.to_sat() + act_funding_txs_fees.to_sat())
+            .checked_sub(outgoing_amount + act_funding_txs_fees)
             .expect("This should not overflow as we just above.");
 
         log::info!(
