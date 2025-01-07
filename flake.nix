@@ -1,5 +1,5 @@
 {
-  description = "Bria";
+  description = "coinswap";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
