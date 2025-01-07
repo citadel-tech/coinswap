@@ -587,22 +587,35 @@ pub(crate) fn verify_fidelity_checks(
         return Err(FidelityError::InvalidCertHash.into());
     }
 
-    #[cfg(feature = "integration-test")]
-    let network = bitcoin::network::Network::Regtest;
+    let networks = vec![
+        bitcoin::network::Network::Regtest,
+        bitcoin::network::Network::Testnet,
+        bitcoin::network::Network::Testnet4,
+        bitcoin::network::Network::Bitcoin,
+        bitcoin::network::Network::Signet,
+    ];
 
-    #[cfg(not(feature = "integration-test"))]
-    let network = bitcoin::network::Network::Signet;
+    let mut all_failed = true;
 
-    // Validate redeem script and corresponding address
-    let fidelity_redeem_script = fidelity_redeemscript(&proof.bond.lock_time, &proof.bond.pubkey);
-    let expected_address = Address::p2wsh(fidelity_redeem_script.as_script(), network);
+    for network in networks {
+        // Validate redeem script and corresponding address
+        let fidelity_redeem_script =
+            fidelity_redeemscript(&proof.bond.lock_time, &proof.bond.pubkey);
+        let expected_address = Address::p2wsh(fidelity_redeem_script.as_script(), network);
 
-    let derived_script_pubkey = expected_address.script_pubkey();
-    let tx_out = tx
-        .tx_out(proof.bond.outpoint.vout as usize)
-        .map_err(|_| WalletError::General("Outputs index error".to_string()))?;
+        let derived_script_pubkey = expected_address.script_pubkey();
+        let tx_out = tx
+            .tx_out(proof.bond.outpoint.vout as usize)
+            .map_err(|_| WalletError::General("Outputs index error".to_string()))?;
 
-    if tx_out.script_pubkey != derived_script_pubkey {
+        if tx_out.script_pubkey == derived_script_pubkey {
+            all_failed = false;
+            break; // No need to continue checking once we find a successful match
+        }
+    }
+
+    // Only throw error if all checks fail
+    if all_failed {
         return Err(FidelityError::BondDoesNotExist.into());
     }
 
