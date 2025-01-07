@@ -79,7 +79,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
             if tor_log_file.exists() {
                 if let Err(e) = std::fs::remove_file(&tor_log_file) {
                     log::error!(
-                        "Error removing previous tor log. Please delet the file and restart. | {:?}",
+                        "Error removing previous tor log. Please delete the file and restart. | {:?}",
                         tor_log_file
                     );
                     return Err(e.into());
@@ -243,7 +243,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
         let mut sleep_multiplier = 0;
         log::info!("No active Fidelity Bonds found. Creating one.");
         log::info!("Fidelity value chosen = {:?} sats", amount.to_sat());
-        log::info!("Fidelity Tx fee = 1000 sats");
+        log::info!("Fidelity Tx fee = 300 sats");
         log::info!(
             "Fidelity timelock {} blocks",
             maker.config.fidelity_timelock
@@ -272,7 +272,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
                         let amount = required - available;
                         let addr = maker.get_wallet().write()?.get_next_external_address()?;
 
-                        log::info!("Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your swap balance", amount, addr);
+                        log::info!("Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", amount, addr);
 
                         let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60);
                         log::info!("Next sync in {:?} secs", total_sleep);
@@ -490,25 +490,6 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             })?;
         maker.thread_pool.add_thread(idle_conn_check_thread);
 
-        let (inc, out) = maker.wallet.read()?.find_unfinished_swapcoins();
-        if !inc.is_empty() || !out.is_empty() {
-            let maker_clone = maker.clone();
-            let contract_watcher_thread = thread::Builder::new()
-                .name("On-start Contract Watcher Thread".to_string())
-                .spawn({
-                    move || {
-                        log::info!("[{}] Spawning contract-watcher thread", port);
-                        if let Err(e) = restore_broadcasted_contracts_on_reboot(maker_clone.clone())
-                        {
-                            maker_clone.shutdown.store(true, Relaxed);
-                            log::error!("Failed checking broadcasted contracts: {:?}", e);
-                        }
-                    }
-                })?;
-
-            maker.thread_pool.add_thread(contract_watcher_thread);
-        }
-
         // 3. Watchtower thread.
         // This thread checks for broadcasted contract transactions, which usually means violation of the protocol.
         // When contract transaction detected in mempool it will attempt recovery.
@@ -546,6 +527,14 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         sleep(HEART_BEAT_INTERVAL); // wait for 1 beat, to complete spawns of all the threads.
         maker.is_setup_complete.store(true, Relaxed);
         log::info!("[{}] Server Setup completed!! Use maker-cli to operate the server and the internal wallet.", maker.config.network_port);
+    }
+
+    // Check if recovery is needed.
+    let (inc, out) = maker.wallet.read()?.find_unfinished_swapcoins();
+    if !inc.is_empty() || !out.is_empty() {
+        log::info!("Incomplete swaps detected in the wallet. Starting recovery");
+        let maker_clone = maker.clone();
+        restore_broadcasted_contracts_on_reboot(maker_clone.clone())?;
     }
 
     // The P2P Client connection loop.

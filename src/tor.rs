@@ -14,12 +14,12 @@ use libtor::{HiddenServiceVersion, LogDestination, LogLevel, Tor, TorAddress, To
 pub fn start_tor(socks_port: u16, port: u16, base_dir: String) -> Result<(), libtor::Error> {
     let hs_string = format!("{}/hs-dir/", base_dir);
     let data_dir = format!("{}/", base_dir);
-    let log_dir = format!("{}/log", base_dir);
+    let log_file = format!("{}/log", base_dir);
     Tor::new()
         .flag(TorFlag::DataDirectory(data_dir))
         .flag(TorFlag::LogTo(
             LogLevel::Notice,
-            LogDestination::File(log_dir),
+            LogDestination::File(log_file),
         ))
         .flag(TorFlag::SocksPort(socks_port))
         .flag(TorFlag::HiddenServiceDir(hs_string))

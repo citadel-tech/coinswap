@@ -181,9 +181,14 @@ impl Wallet {
                         }
                         Err(e) => {
                             log::error!("Fidelity valuation failed for index {}:  {:?} ", i, e);
-                            log::info!(
-                                "Use `maker-cli redeem-fildeity <index>` to redeem the bond"
-                            );
+                            if matches!(
+                                e,
+                                WalletError::Fidelity(FidelityError::BondLocktimeExpired)
+                            ) {
+                                log::info!(
+                                    "Use `maker-cli redeem-fildeity <index>` to redeem the bond"
+                                );
+                            }
                             None
                         }
                     }
@@ -333,7 +338,7 @@ impl Wallet {
             }
         }
 
-        let fee = Amount::from_sat(1000); // TODO: Update this with the feerate
+        let fee = Amount::from_sat(300); // TODO: Update this with the feerate
 
         let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
             acc.checked_add(unspet.amount)
@@ -489,7 +494,7 @@ impl Wallet {
 
         let txid = self.rpc.send_raw_transaction(&tx)?;
 
-        log::info!("Fidelity redeem transaction braodcasted. txid: {}", txid);
+        log::info!("Fidelity redeem transaction broadcasted. txid: {}", txid);
 
         // No need to wait for confirmation as that will delay the rpc call. Just send back the txid.
 
