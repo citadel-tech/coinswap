@@ -1995,13 +1995,15 @@ impl Taker {
                         }
                     }
                 }
-                // Everything is broadcasted. Clear the connectionstate and break the loop
-                if timelock_boardcasted.len() == outgoing_infos.len() {
-                    log::info!("All outgoing contracts reedemed. Cleared ongoing swap state");
-                    self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
-                    break;
-                }
             }
+
+            // Everything is broadcasted. Clear the connectionstate and break the loop
+            if timelock_boardcasted.len() == outgoing_infos.len() {
+                log::info!("All outgoing contracts reedemed. Cleared ongoing swap state");
+                self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
+                break;
+            }
+
             // Block wait time is varied between prod. and test builds.
             let block_wait_time = if cfg!(feature = "integration-test") {
                 Duration::from_secs(10)

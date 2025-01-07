@@ -496,7 +496,6 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             let contract_watcher_thread = thread::Builder::new()
                 .name("On-start Contract Watcher Thread".to_string())
                 .spawn({
-                    let port = port.clone(); // If needed
                     move || {
                         log::info!("[{}] Spawning contract-watcher thread", port);
                         if let Err(e) = restore_broadcasted_contracts_on_reboot(maker_clone.clone())
