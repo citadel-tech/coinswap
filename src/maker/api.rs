@@ -881,6 +881,35 @@ pub(crate) fn recover_from_swap(
             }
         }
 
+        // Everything is broadcasted. Remove swapcoins from wallet
+        if timelock_boardcasted.len() == outgoings.len() {
+            for ((outgoing_reedemscript, _), _) in outgoings.iter() {
+                let outgoing_removed = maker
+                    .wallet
+                    .write()?
+                    .remove_outgoing_swapcoin(outgoing_reedemscript)?
+                    .expect("outgoing swapcoin expected");
+
+                log::info!(
+                    "[{}] Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
+                    maker.config.network_port,
+                    outgoing_removed.contract_tx.compute_txid()
+                );
+            }
+
+            // For test, shutdown the maker at this stage.
+            #[cfg(feature = "integration-test")]
+            maker.shutdown.store(true, Relaxed);
+        }
+
+        log::info!("initializing Wallet Sync.");
+        {
+            let mut wallet_write = maker.wallet.write()?;
+            wallet_write.sync()?;
+            wallet_write.save_to_disk()?;
+        }
+        log::info!("Completed Wallet Sync.");
+
         // Sleep before next blockchain scan
         let block_lookup_interval = if cfg!(feature = "integration-test") {
             Duration::from_secs(10)
@@ -889,33 +918,5 @@ pub(crate) fn recover_from_swap(
         };
         std::thread::sleep(block_lookup_interval);
     }
-
-    // Everything is broadcasted. Remove swapcoins from wallet
-    if timelock_boardcasted.len() == outgoings.len() {
-        for ((outgoing_reedemscript, _), _) in outgoings {
-            let outgoing_removed = maker
-                .wallet
-                .write()?
-                .remove_outgoing_swapcoin(&outgoing_reedemscript)?
-                .expect("outgoing swapcoin expected");
-
-            log::info!(
-                "[{}] Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
-                maker.config.network_port,
-                outgoing_removed.contract_tx.compute_txid()
-            );
-        }
-    }
-
-    log::info!("initializing Wallet Sync.");
-    {
-        let mut wallet_write = maker.wallet.write()?;
-        wallet_write.sync()?;
-        wallet_write.save_to_disk()?;
-    }
-    log::info!("Completed Wallet Sync.");
-    // For test, shutdown the maker at this stage.
-    #[cfg(feature = "integration-test")]
-    maker.shutdown.store(true, Relaxed);
     Ok(())
 }
