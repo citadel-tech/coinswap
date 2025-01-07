@@ -603,6 +603,62 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
     Ok(())
 }
 
+/// Checks for swapcoins present in wallet store on reboot and starts recovery if found on bitcoind network.
+///
+/// If any one of the is ever observed, run the recovery routine.
+pub(crate) fn restore_broadcasted_contracts_on_reboot(maker: Arc<Maker>) -> Result<(), MakerError> {
+    let (inc, out) = maker.wallet.read()?.find_unfinished_swapcoins();
+    let txids_to_watch = inc
+        .iter()
+        .map(|is| is.contract_tx.compute_txid())
+        .chain(out.iter().map(|oc| oc.contract_tx.compute_txid()))
+        .collect::<Vec<_>>();
+
+    for txid in txids_to_watch {
+        if maker
+            .wallet
+            .read()?
+            .rpc
+            .get_raw_transaction_info(&txid, None)
+            .is_ok()
+        {
+            let mut outgoings = Vec::new();
+            let mut incomings = Vec::new();
+            // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
+            // fully signed.
+            for (og_sc, ic_sc) in out.iter().zip(inc.iter()) {
+                let contract_timelock = og_sc.get_timelock()?;
+                let next_internal_address =
+                    &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
+                let time_lock_spend = og_sc.create_timelock_spend(next_internal_address)?;
+
+                if let Ok(tx) = og_sc.get_fully_signed_contract_tx() {
+                    outgoings.push((
+                        (og_sc.get_multisig_redeemscript(), tx),
+                        (contract_timelock, time_lock_spend),
+                    ));
+                }
+                if let Ok(tx) = ic_sc.get_fully_signed_contract_tx() {
+                    incomings.push((ic_sc.get_multisig_redeemscript(), tx));
+                }
+            }
+
+            // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
+            let maker_clone = maker.clone();
+            let handle = std::thread::Builder::new()
+                .name("Swap recovery thread".to_string())
+                .spawn(move || {
+                    if let Err(e) = recover_from_swap(maker_clone, outgoings, incomings) {
+                        log::error!("Failed to recover from swap due to: {:?}", e);
+                    }
+                })?;
+            maker.thread_pool.add_thread(handle);
+        }
+    }
+
+    Ok(())
+}
+
 /// Check that if any Taker connection went idle.
 ///
 /// If a connection remains idle for more than idle timeout time, thats a potential DOS attack.
