@@ -28,7 +28,10 @@ pub(crate) use super::{api::RPC_PING_INTERVAL, Maker};
 use crate::{
     error::NetError,
     maker::{
-        api::{check_for_broadcasted_contracts, check_for_idle_states, ConnectionState},
+        api::{
+            check_for_broadcasted_contracts, check_for_idle_states,
+            restore_broadcasted_contracts_on_reboot, ConnectionState,
+        },
         handlers::handle_message,
         rpc::start_rpc_server,
     },
@@ -486,6 +489,26 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 }
             })?;
         maker.thread_pool.add_thread(idle_conn_check_thread);
+
+        let (inc, out) = maker.wallet.read()?.find_unfinished_swapcoins();
+        if !inc.is_empty() || !out.is_empty() {
+            let maker_clone = maker.clone();
+            let contract_watcher_thread = thread::Builder::new()
+                .name("On-start Contract Watcher Thread".to_string())
+                .spawn({
+                    let port = port.clone(); // If needed
+                    move || {
+                        log::info!("[{}] Spawning contract-watcher thread", port);
+                        if let Err(e) = restore_broadcasted_contracts_on_reboot(maker_clone.clone())
+                        {
+                            maker_clone.shutdown.store(true, Relaxed);
+                            log::error!("Failed checking broadcasted contracts: {:?}", e);
+                        }
+                    }
+                })?;
+
+            maker.thread_pool.add_thread(contract_watcher_thread);
+        }
 
         // 3. Watchtower thread.
         // This thread checks for broadcasted contract transactions, which usually means violation of the protocol.
