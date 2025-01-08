@@ -7,6 +7,7 @@ use std::{
 
 use crate::{
     protocol::messages::FidelityProof,
+    taker::api::MINER_FEE,
     utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks},
     wallet::{UTXOSpendInfo, Wallet},
 };
@@ -338,7 +339,7 @@ impl Wallet {
             }
         }
 
-        let fee = Amount::from_sat(300); // TODO: Update this with the feerate
+        let fee = Amount::from_sat(MINER_FEE); // TODO: Update this with the feerate
 
         let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
             acc.checked_add(unspet.amount)
@@ -469,7 +470,7 @@ impl Wallet {
         };
 
         // TODO take feerate as user input
-        let fee = Amount::from_sat(1000);
+        let fee = Amount::from_sat(MINER_FEE);
 
         let change_addr = &self.get_next_internal_addresses(1)?[0];
 
