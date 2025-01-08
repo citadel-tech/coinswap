@@ -50,7 +50,7 @@ use crate::{
 use super::{config::MakerConfig, error::MakerError};
 
 /// Interval for health checks on a stable RPC connection with bitcoind.
-pub const RPC_PING_INTERVAL: Duration = Duration::from_secs(60);
+pub const RPC_PING_INTERVAL: Duration = Duration::from_secs(10);
 
 // Currently we don't refresh address at DNS. The Maker only post it once at startup.
 // If the address record gets deleted, or the DNS gets blasted, the Maker won't know.
@@ -823,7 +823,7 @@ pub(crate) fn recover_from_swap(
             }
             // Check if the contract tx has reached required maturity
             // Failure here means the transaction hasn't been broadcasted yet. So do nothing and try again.
-            if let Ok(result) = maker
+            let tx_from_chain = if let Ok(result) = maker
                 .wallet
                 .read()?
                 .rpc
@@ -836,54 +836,66 @@ pub(crate) fn recover_from_swap(
                     result.confirmations,
                     timelock
                 );
-                if let Some(confirmation) = result.confirmations {
-                    // Now the transaction is confirmed in a block, check for required maturity
-                    if confirmation > (*timelock as u32) {
-                        log::info!(
-                            "[{}] Timelock maturity of {} blocks reached for Contract Txid : {}",
-                            maker.config.network_port,
-                            timelock,
-                            contract.compute_txid()
-                        );
-                        log::info!(
-                            "[{}] Broadcasting timelocked tx: {}",
-                            maker.config.network_port,
-                            timelocked_tx.compute_txid()
-                        );
-                        maker
-                            .wallet
-                            .read()?
-                            .rpc
-                            .send_raw_transaction(timelocked_tx)
-                            .map_err(WalletError::Rpc)?;
-                        timelock_boardcasted.push(timelocked_tx);
+                result
+            } else {
+                continue;
+            };
 
-                        let outgoing_removed = maker
-                            .wallet
-                            .write()?
-                            .remove_outgoing_swapcoin(outgoing_reedemscript)?
-                            .expect("outgoing swapcoin expected");
+            if let Some(confirmation) = tx_from_chain.confirmations {
+                // Now the transaction is confirmed in a block, check for required maturity
+                if confirmation > (*timelock as u32) {
+                    log::info!(
+                        "[{}] Timelock maturity of {} blocks reached for Contract Txid : {}",
+                        maker.config.network_port,
+                        timelock,
+                        contract.compute_txid()
+                    );
+                    log::info!(
+                        "[{}] Broadcasting timelocked tx: {}",
+                        maker.config.network_port,
+                        timelocked_tx.compute_txid()
+                    );
+                    maker
+                        .wallet
+                        .read()?
+                        .rpc
+                        .send_raw_transaction(timelocked_tx)
+                        .map_err(WalletError::Rpc)?;
+                    timelock_boardcasted.push(timelocked_tx);
 
-                        log::info!(
-                            "[{}] Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
-                            maker.config.network_port,
-                            outgoing_removed.contract_tx.compute_txid()
-                        );
+                    let outgoing_removed = maker
+                        .wallet
+                        .write()?
+                        .remove_outgoing_swapcoin(outgoing_reedemscript)?
+                        .expect("outgoing swapcoin expected");
 
-                        log::info!("initializing Wallet Sync.");
-                        {
-                            let mut wallet_write = maker.wallet.write()?;
-                            wallet_write.sync()?;
-                            wallet_write.save_to_disk()?;
-                        }
-                        log::info!("Completed Wallet Sync.");
+                    log::info!(
+                        "[{}] Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
+                        maker.config.network_port,
+                        outgoing_removed.contract_tx.compute_txid()
+                    );
+
+                    log::info!("initializing Wallet Sync.");
+                    {
+                        let mut wallet_write = maker.wallet.write()?;
+                        wallet_write.sync()?;
+                        wallet_write.save_to_disk()?;
                     }
+                    log::info!("Completed Wallet Sync.");
                 }
             }
         }
 
-        #[cfg(feature = "integration-test")]
-        maker.shutdown.store(true, Relaxed);
+        if timelock_boardcasted.len() == outgoings.len() {
+            // For tests, terminate the maker at this stage.
+            #[cfg(feature = "integration-test")]
+            maker.shutdown.store(true, Relaxed);
+
+            log::info!(
+                "All outgoing transactions claimed back via timelock. Recovery loop exiting."
+            );
+            break;
+        }
 
         // Sleep before next blockchain scan
         let block_lookup_interval = if cfg!(feature = "integration-test") {

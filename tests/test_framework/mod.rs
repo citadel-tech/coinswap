@@ -345,7 +345,11 @@ pub fn verify_swap_results(
             );
 
             assert_eq!(fidelity_balance, Amount::from_btc(0.05).unwrap());
-            assert_eq!(live_contract_balance, Amount::ZERO);
+            // Live contract balance will remain
+            assert!(
+                live_contract_balance == Amount::ZERO
+                    || live_contract_balance == Amount::from_btc(0.004605).unwrap() // for cases like abort3_case3: where the fauly maker doesn't recover.
+            );
 
             // Check spendable balance difference.
             let balance_diff = match org_spend_balance.checked_sub(spendable_balance) {

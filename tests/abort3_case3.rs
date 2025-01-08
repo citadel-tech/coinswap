@@ -114,14 +114,11 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
     maker_threads
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
+
+    //TODO: Start the faulty maker again, and validate its recovery.
 
     info!("All coinswaps processed successfully. Transaction complete.");
 
