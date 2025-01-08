@@ -144,6 +144,7 @@ pub(crate) struct ProofOfFunding {
     pub(crate) next_coinswap_info: Vec<NextHopInfo>,
     pub(crate) refund_locktime: u16,
     pub(crate) contract_feerate: u64,
+    pub(crate) id: String,
 }
 
 /// Signatures required for an intermediate Maker to perform receiving and sending of coinswaps.
@@ -159,6 +160,8 @@ pub(crate) struct ContractSigsForRecvrAndSender {
     pub(crate) receivers_sigs: Vec<Signature>,
     /// Sigs from the next peer for Contract Tx of next hop, (coinswap sent by this Maker).
     pub(crate) senders_sigs: Vec<Signature>,
+    /// Unique ID for a swap
+    pub(crate) id: String,
 }
 
 /// Message to Transfer [`HashPreimage`] from Taker to Makers.

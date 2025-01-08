@@ -6,7 +6,7 @@
 
 use std::{
     io::ErrorKind,
-    net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
+    net::{Ipv4Addr, TcpListener, TcpStream},
     path::PathBuf,
     process::Child,
     sync::{
@@ -36,6 +36,7 @@ use crate::{
         rpc::start_rpc_server,
     },
     protocol::messages::{DnsMetadata, DnsRequest, TakerToMakerMessage},
+    taker::api::MINER_FEE,
     utill::{get_tor_addrs, read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
     wallet::WalletError,
 };
@@ -263,7 +264,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
         let mut sleep_multiplier = 0;
         log::info!("No active Fidelity Bonds found. Creating one.");
         log::info!("Fidelity value chosen = {:?} sats", amount.to_sat());
-        log::info!("Fidelity Tx fee = 300 sats");
+        log::info!("Fidelity Tx fee = {} sats", MINER_FEE);
         log::info!(
             "Fidelity timelock {} blocks",
             maker.config.fidelity_timelock
@@ -371,11 +372,7 @@ fn check_connection_with_core(
 }
 
 /// Handle a single client connection.
-fn handle_client(
-    maker: Arc<Maker>,
-    stream: &mut TcpStream,
-    client_addr: SocketAddr,
-) -> Result<(), MakerError> {
+fn handle_client(maker: Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerError> {
     stream.set_nonblocking(false)?; // Block this thread until message is read.
 
     let mut connection_state = ConnectionState::default();
@@ -401,7 +398,7 @@ fn handle_client(
         let taker_msg: TakerToMakerMessage = serde_cbor::from_slice(&taker_msg_bytes)?;
         log::info!("[{}]  <=== {}", maker.config.network_port, taker_msg);
 
-        let reply = handle_message(&maker, &mut connection_state, taker_msg, client_addr.ip());
+        let reply = handle_message(&maker, &mut connection_state, taker_msg);
 
         match reply {
             Ok(reply) => {
@@ -575,13 +572,13 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         }
 
         match listener.accept() {
-            Ok((mut stream, client_addr)) => {
+            Ok((mut stream, _)) => {
                 log::info!(
                     "[{}] Received incoming connection",
                     maker.config.network_port
                 );
 
-                if let Err(e) = handle_client(maker, &mut stream, client_addr) {
+                if let Err(e) = handle_client(maker, &mut stream) {
                     log::error!("[{}] Error Handling client request {:?}", port, e);
                 }
             }

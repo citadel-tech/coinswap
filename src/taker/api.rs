@@ -29,7 +29,7 @@ use socks::Socks5Stream;
 use bitcoin::{
     consensus::encode::deserialize,
     hashes::{hash160::Hash as Hash160, Hash},
-    hex::DisplayHex,
+    hex::{Case, DisplayHex},
     secp256k1::{
         rand::{rngs::OsRng, RngCore},
         SecretKey,
@@ -140,6 +140,8 @@ struct OngoingSwapState {
     pub(crate) active_preimage: Preimage,
     /// Enum defining the position of the Taker at each steps of a multihop swap.
     pub(crate) taker_position: TakerPosition,
+    /// Unique ID for a swap
+    pub(crate) id: String,
 }
 
 /// Information for the next maker in the hop.
@@ -385,8 +387,13 @@ impl Taker {
         let mut preimage = [0u8; 32];
         OsRng.fill_bytes(&mut preimage);
 
+        let unique_id = preimage[0..8].to_hex_string(Case::Lower);
+
+        log::info!("Initiating coinswap with id : {}", unique_id);
+
         self.ongoing_swap_state.active_preimage = preimage;
         self.ongoing_swap_state.swap_params = swap_params;
+        self.ongoing_swap_state.id = unique_id;
 
         let available = self.wallet.spendable_balance()?;
 
@@ -1057,6 +1064,7 @@ impl Taker {
                     this_maker_info,
                     next_maker_info,
                     self.get_preimage_hash(),
+                    self.ongoing_swap_state.id.clone(),
                 )?;
             log::info!(
                 "<=== Recieved ContractSigsAsRecvrAndSender from {}",
@@ -1176,12 +1184,14 @@ impl Taker {
             "===> Sending ContractSigsAsReceiverAndSender to {}",
             this_maker.address
         );
+        let id = self.ongoing_swap_state.id.clone();
         send_message(
             &mut socket,
             &TakerToMakerMessage::RespContractSigsForRecvrAndSender(
                 ContractSigsForRecvrAndSender {
                     receivers_sigs,
                     senders_sigs,
+                    id,
                 },
             ),
         )?;

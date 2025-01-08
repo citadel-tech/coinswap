@@ -26,7 +26,6 @@ use bitcoin::{
 use bitcoind::bitcoincore_rpc::RpcApi;
 use std::{
     collections::HashMap,
-    net::IpAddr,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
@@ -226,7 +225,7 @@ pub struct Maker {
     /// A flag to trigger shutdown event
     pub shutdown: AtomicBool,
     /// Map of IP address to Connection State + last Connected instant
-    pub(crate) connection_state: Mutex<HashMap<IpAddr, (ConnectionState, Instant)>>,
+    pub(crate) connection_state: Mutex<HashMap<String, (ConnectionState, Instant)>>,
     /// Highest Value Fidelity Proof
     pub(crate) highest_fidelity_proof: RwLock<Option<FidelityProof>>,
     /// Is setup complete
@@ -566,7 +565,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                                 );
                             }
                         }
-                        failed_swap_ip.push(*ip);
+                        failed_swap_ip.push(ip.clone());
 
                         // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
                         let maker_clone = maker.clone();
@@ -697,7 +696,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                         let incoming_contract = ic_sc.get_fully_signed_contract_tx()?;
                         incomings.push((ic_sc.get_multisig_redeemscript(), incoming_contract));
                     }
-                    bad_ip.push(*ip);
+                    bad_ip.push(ip.clone());
                     // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
                     let maker_clone = maker.clone();
                     log::info!(
