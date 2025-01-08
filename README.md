@@ -92,7 +92,7 @@ taker --help
   
   `maker-cli`: The RPC controler of the server deamon. This can be used to manage the server, access internal wallet, see swap statistics, etc. App demo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/maker-cli.md)
   
-  `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App demo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker-tutorial.md)
+  `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App demo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker.md)
 
 All the apps will require a Bitcoin Core RPC connection running on testnet4. For running bitcoin instrcutions, see [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/bitcoind.md)
 
