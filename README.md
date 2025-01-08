@@ -31,8 +31,6 @@ Coinswap v0.1.0 marketplace is now live on Testnet4.
 
 This library is currently under beta development and is in an experimental stage. There are known and unknown bugs. **Mainnet use is strictly NOT recommended.** 
 
-Additionally, note that this code is currently designed to run exclusively on Linux systems.
-
 # About
 
 Coinswap is a decentralized [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol that enables trustless swaps of Bitcoin UTXOs through a decentralized, Sybil-resistant marketplace.
@@ -94,7 +92,7 @@ taker --help
   
   `maker-cli`: The RPC controler of the server deamon. This can be used to manage the server, access internal wallet, see swap statistics, etc. App demo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/maker-cli.md)
   
-  `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App dmeo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker-tutorial.md)
+  `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App demo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker-tutorial.md)
 
 All the apps will require a Bitcoin Core RPC connection running on testnet4. For running bitcoin instrcutions, see [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/bitcoind.md)
 

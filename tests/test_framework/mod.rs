@@ -345,10 +345,12 @@ pub fn verify_swap_results(
             );
 
             assert_eq!(fidelity_balance, Amount::from_btc(0.05).unwrap());
-            // Live contract balance will remain
+
+            // Live contract balance can be non-zero, if a maker shuts down in middle of recovery.
             assert!(
                 live_contract_balance == Amount::ZERO
-                    || live_contract_balance == Amount::from_btc(0.004605).unwrap() // for cases like abort3_case3: where the fauly maker doesn't recover.
+                    || live_contract_balance == Amount::from_btc(0.00460500).unwrap() // For the first maker in hop
+                    || live_contract_balance == Amount::from_btc(0.00435642).unwrap() // For the second maker in hop
             );
 
             // Check spendable balance difference.

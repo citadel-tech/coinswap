@@ -161,7 +161,7 @@ $ ./maker-cli show-fidelity
 ```
 
 **Output:**  
-```json
+```bash
 {
     0: (
         FidelityBond {
