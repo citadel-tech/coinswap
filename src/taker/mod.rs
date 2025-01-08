@@ -4,7 +4,7 @@
 //! simple request-response servers. The Taker handles all the necessary communications between one or many makers to route the swap across various makers. Description of
 //! protocol workflow is described in the [protocol between takers and makers](https://github.com/citadel-tech/coinswap/blob/master/docs/dev-book.md)
 
-mod api;
+pub mod api;
 mod config;
 pub mod error;
 pub(crate) mod offers;
