@@ -6,6 +6,15 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+description = "Functioning, minimal-viable binaries and libraries to perform a trustless, p2p Maxwell-Belcher Coinswap Protocol"
+license = "MIT OR Apache-2.0"          
+license-file = "LICENSE"               
+documentation = "https://docs.rs/coinswap"
+homepage = "https://github.com/citadel-tech/coinswap" 
+repository = "https://github.com/citadel-tech/coinswap" 
+categories = ["Bitcoin", "Atomic Swap", "HTLC"]   
+keywords = ["bitcoin", "HTLC", "coinswap"]  
+
 [dependencies]
 bip39 =  { version = "2.1.0", features = ["rand"] }
 bitcoin =  "0.32"
