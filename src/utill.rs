@@ -146,24 +146,24 @@ pub(crate) fn get_dns_dir() -> PathBuf {
 /// log levels and configures log4rs with the specified filter level for fine-grained control
 /// of log verbosity.
 pub fn setup_taker_logger(filter: LevelFilter) {
-    env::set_var("RUST_LOG", "coinswap=info");
-    let log_dir = get_taker_dir().join("debug.log");
+    Once::new().call_once(|| {
+        //env::set_var("RUST_LOG", "coinswap=info");
+        let log_dir = get_taker_dir().join("debug.log");
 
-    let stdout = ConsoleAppender::builder().build();
-    let file_appender = FileAppender::builder().build(log_dir).unwrap();
+        let file_appender = FileAppender::builder().build(log_dir).unwrap();
 
-    let config = Config::builder()
-        .appender(Appender::builder().build("stdout", Box::new(stdout)))
-        .appender(Appender::builder().build("file", Box::new(file_appender)))
-        .logger(
-            Logger::builder()
-                .appender("file")
-                .build("coinswap::taker", filter),
-        )
-        .build(Root::builder().appender("stdout").build(filter))
-        .unwrap();
+        let config = Config::builder()
+            .appender(Appender::builder().build("file", Box::new(file_appender)))
+            .logger(
+                Logger::builder()
+                    .appender("file")
+                    .build("coinswap::taker", filter),
+            )
+            .build(Root::builder().appender("file").build(filter))
+            .unwrap();
 
-    log4rs::init_config(config).unwrap();
+        log4rs::init_config(config).unwrap();
+    })
 }
 
 /// Sets up the logger for the maker component.
@@ -173,24 +173,26 @@ pub fn setup_taker_logger(filter: LevelFilter) {
 /// log levels and configures log4rs with the specified filter level for fine-grained control
 /// of log verbosity.
 pub fn setup_maker_logger(filter: LevelFilter) {
-    env::set_var("RUST_LOG", "coinswap=info");
-    let log_dir = get_maker_dir().join("debug.log");
+    Once::new().call_once(|| {
+        //env::set_var("RUST_LOG", "coinswap=info");
+        let log_dir = get_maker_dir().join("debug.log");
 
-    let stdout = ConsoleAppender::builder().build();
-    let file_appender = FileAppender::builder().build(log_dir).unwrap();
+        let stdout = ConsoleAppender::builder().build();
+        let file_appender = FileAppender::builder().build(log_dir).unwrap();
 
-    let config = Config::builder()
-        .appender(Appender::builder().build("stdout", Box::new(stdout)))
-        .appender(Appender::builder().build("file", Box::new(file_appender)))
-        .logger(
-            Logger::builder()
-                .appender("file")
-                .build("coinswap::maker", filter),
-        )
-        .build(Root::builder().appender("stdout").build(filter))
-        .unwrap();
+        let config = Config::builder()
+            .appender(Appender::builder().build("stdout", Box::new(stdout)))
+            .appender(Appender::builder().build("file", Box::new(file_appender)))
+            .logger(
+                Logger::builder()
+                    .appender("file")
+                    .build("coinswap::maker", filter),
+            )
+            .build(Root::builder().appender("stdout").build(filter))
+            .unwrap();
 
-    log4rs::init_config(config).unwrap();
+        log4rs::init_config(config).unwrap();
+    })
 }
 
 /// Sets up the logger for the directory component.
@@ -200,24 +202,26 @@ pub fn setup_maker_logger(filter: LevelFilter) {
 /// log levels and configures log4rs with the specified filter level for fine-grained control
 /// of log verbosity.
 pub fn setup_directory_logger(filter: LevelFilter) {
-    env::set_var("RUST_LOG", "coinswap=info");
-    let log_dir = get_dns_dir().join("debug.log");
+    Once::new().call_once(|| {
+        //env::set_var("RUST_LOG", "coinswap=info");
+        let log_dir = get_dns_dir().join("debug.log");
 
-    let stdout = ConsoleAppender::builder().build();
-    let file_appender = FileAppender::builder().build(log_dir).unwrap();
+        let stdout = ConsoleAppender::builder().build();
+        let file_appender = FileAppender::builder().build(log_dir).unwrap();
 
-    let config = Config::builder()
-        .appender(Appender::builder().build("stdout", Box::new(stdout)))
-        .appender(Appender::builder().build("file", Box::new(file_appender)))
-        .logger(
-            Logger::builder()
-                .appender("file")
-                .build("coinswap::market", filter),
-        )
-        .build(Root::builder().appender("stdout").build(filter))
-        .unwrap();
+        let config = Config::builder()
+            .appender(Appender::builder().build("stdout", Box::new(stdout)))
+            .appender(Appender::builder().build("file", Box::new(file_appender)))
+            .logger(
+                Logger::builder()
+                    .appender("file")
+                    .build("coinswap::market", filter),
+            )
+            .build(Root::builder().appender("stdout").build(filter))
+            .unwrap();
 
-    log4rs::init_config(config).unwrap();
+        log4rs::init_config(config).unwrap();
+    })
 }
 
 /// Setup function that will only run once, even if called multiple times.
@@ -364,14 +368,14 @@ pub(crate) fn get_hd_path_from_descriptor(descriptor: &str) -> Option<(&str, u32
         &descriptor[open + 1..close]
     } else {
         // Debug log, because if it doesn't have path, its not an error.
-        log::debug!("Descriptor doesn't have path = {}", descriptor);
+        log::error!("Descriptor doesn't have path = {}", descriptor);
         return None;
     };
 
     let path_chunks: Vec<&str> = path.split('/').collect();
     if path_chunks.len() != 3 {
         // Debug log, because if it doesn't have path, its not an error.
-        log::debug!("Path is not a triplet. Path chunks = {:?}", path_chunks);
+        //log::warn!("Path is not a triplet. Path chunks = {:?}", path_chunks);
         return None;
     }
 
@@ -429,29 +433,32 @@ pub(crate) fn parse_field<T: std::str::FromStr>(value: Option<&String>, default:
 
 /// Function to check if tor log contains a pattern
 pub(crate) fn monitor_log_for_completion(log_file: &Path, pattern: &str) -> io::Result<()> {
+    // TODO: Make this logic work for existing file with previous logs.
     let mut last_size = 0;
 
     loop {
-        let file = File::open(log_file)?;
-        let metadata = file.metadata()?;
-        let current_size = metadata.len();
+        if log_file.exists() {
+            let file = File::open(log_file)?;
+            let metadata = file.metadata()?;
+            let current_size = metadata.len();
 
-        if current_size != last_size {
-            let reader = io::BufReader::new(file);
-            let lines = reader.lines();
+            if current_size != last_size {
+                let reader = io::BufReader::new(file);
+                let lines = reader.lines();
 
-            for line in lines {
-                if let Ok(line) = line {
-                    if line.contains(pattern) {
-                        log::info!("Tor instance bootstrapped");
-                        return Ok(());
+                for line in lines {
+                    if let Ok(line) = line {
+                        log::info!("{}", line);
+                        if line.contains(pattern) {
+                            return Ok(());
+                        }
+                    } else {
+                        return Err(io::Error::new(io::ErrorKind::Other, "Error reading line"));
                     }
-                } else {
-                    return Err(io::Error::new(io::ErrorKind::Other, "Error reading line"));
                 }
-            }
 
-            last_size = current_size;
+                last_size = current_size;
+            }
         }
         thread::sleep(HEART_BEAT_INTERVAL);
     }
@@ -580,19 +587,35 @@ pub(crate) fn verify_fidelity_checks(
         return Err(FidelityError::InvalidCertHash.into());
     }
 
-    // Validate redeem script and corresponding address
-    let fidelity_redeem_script = fidelity_redeemscript(&proof.bond.lock_time, &proof.bond.pubkey);
-    let expected_address = Address::p2wsh(
-        fidelity_redeem_script.as_script(),
+    let networks = vec![
         bitcoin::network::Network::Regtest,
-    );
+        bitcoin::network::Network::Testnet,
+        bitcoin::network::Network::Testnet4,
+        bitcoin::network::Network::Bitcoin,
+        bitcoin::network::Network::Signet,
+    ];
 
-    let derived_script_pubkey = expected_address.script_pubkey();
-    let tx_out = tx
-        .tx_out(proof.bond.outpoint.vout as usize)
-        .map_err(|_| WalletError::General("Outputs index error".to_string()))?;
+    let mut all_failed = true;
 
-    if tx_out.script_pubkey != derived_script_pubkey {
+    for network in networks {
+        // Validate redeem script and corresponding address
+        let fidelity_redeem_script =
+            fidelity_redeemscript(&proof.bond.lock_time, &proof.bond.pubkey);
+        let expected_address = Address::p2wsh(fidelity_redeem_script.as_script(), network);
+
+        let derived_script_pubkey = expected_address.script_pubkey();
+        let tx_out = tx
+            .tx_out(proof.bond.outpoint.vout as usize)
+            .map_err(|_| WalletError::General("Outputs index error".to_string()))?;
+
+        if tx_out.script_pubkey == derived_script_pubkey {
+            all_failed = false;
+            break; // No need to continue checking once we find a successful match
+        }
+    }
+
+    // Only throw error if all checks fail
+    if all_failed {
         return Err(FidelityError::BondDoesNotExist.into());
     }
 

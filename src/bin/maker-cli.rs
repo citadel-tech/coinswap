@@ -6,9 +6,16 @@ use coinswap::{
     utill::{read_message, send_message, setup_maker_logger},
 };
 
-/// maker-cli is a command line app to send RPC messages to maker server.
+/// A simple command line app to operate the makerd server.
+///
+/// The app works as a RPC client for makerd, useful to access the server, retrieve information, and manage server operations.
+///
+/// For more detailed usage information, please refer: https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/maker-cli.md
+///
+/// This is early beta, and there are known and unknown bugs. Please report issues at: https://github.com/citadel-tech/coinswap/issues
 #[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
+#[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
+author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct App {
     /// Sets the rpc-port of Makerd
     #[clap(long, short = 'p', default_value = "127.0.0.1:6103")]
@@ -20,38 +27,53 @@ struct App {
 
 #[derive(Parser, Debug)]
 enum Commands {
-    /// Sends a Ping
-    Ping,
-    /// Returns a list of seed utxos
-    SeedUtxo,
-    /// Returns a list of swap coin utxos
-    SwapUtxo,
-    /// Returns a list of live contract utxos
-    ContractUtxo,
-    /// Returns a list of fidelity utxos
-    FidelityUtxo,
-    /// Returns the total seed balance
-    SeedBalance,
-    /// Returns the total swap coin balance
-    SwapBalance,
-    /// Returns the total live contract balance
-    ContractBalance,
-    /// Returns the total fidelity balance
-    FidelityBalance,
-    /// Gets a new address
-    NewAddress,
-    /// Send to an external address and returns the transaction hex.
+    /// Sends a ping to makerd. Will return a pong.
+    SendPing,
+    /// Lists all utxos in the wallet. Including fidelity bonds.
+    ListUtxo,
+    /// Lists utxos received from incoming swaps.
+    ListUtxoSwap,
+    /// Lists HTLC contract utxos.
+    ListUtxoContract,
+    /// Lists fidelity bond utxos.
+    ListUtxoFidelity,
+    /// Get total wallet balance, excluding Fidelity bonds.
+    GetBalance,
+    /// Get total balance received via incoming swaps.
+    GetBalanceSwap,
+    /// Get total balances of HTLC contract utxos.
+    GetBalanceContract,
+    /// Get total amount locked in fidelity bonds.
+    GetBalanceFidelity,
+    /// Gets a new bitcoin receiving address
+    GetNewAddress,
+    /// Send Bitcoin to an external address and returns the txid.
     SendToAddress {
+        /// Recipient's address.
+        #[clap(long, short = 't')]
         address: String,
+        /// Amount to send in sats
+        #[clap(long, short = 'a')]
         amount: u64,
+        /// Total fee to be paid in sats
+        #[clap(long, short = 'f')]
         fee: u64,
     },
-    /// Returns the tor address
-    GetTorAddress,
-    /// Returns the data directory path
-    GetDataDir,
-    /// Stops the maker server
+    /// Show the server tor address
+    ShowTorAddress,
+    /// Show the data directory path
+    ShowDataDir,
+    /// Shutdown the makerd server
     Stop,
+    /// Redeems the fidelity bond if timelock is matured. Returns the txid of the spending transaction.
+    RedeemFidelity {
+        #[clap(long, short = 'i', default_value = "0")]
+        index: u32,
+    },
+    /// Show all the fidelity bonds, current and previous, with an (index, {bond_proof, is_spent}) tupple.
+    ShowFidelity,
+    /// Sync the maker wallet with current blockchain state.
+    SyncWallet,
 }
 
 fn main() -> Result<(), MakerError> {
@@ -61,34 +83,34 @@ fn main() -> Result<(), MakerError> {
     let stream = TcpStream::connect(cli.rpc_port)?;
 
     match cli.command {
-        Commands::Ping => {
+        Commands::SendPing => {
             send_rpc_req(stream, RpcMsgReq::Ping)?;
         }
-        Commands::ContractUtxo => {
+        Commands::ListUtxoContract => {
             send_rpc_req(stream, RpcMsgReq::ContractUtxo)?;
         }
-        Commands::ContractBalance => {
+        Commands::GetBalanceContract => {
             send_rpc_req(stream, RpcMsgReq::ContractBalance)?;
         }
-        Commands::FidelityBalance => {
+        Commands::GetBalanceFidelity => {
             send_rpc_req(stream, RpcMsgReq::FidelityBalance)?;
         }
-        Commands::FidelityUtxo => {
+        Commands::ListUtxoFidelity => {
             send_rpc_req(stream, RpcMsgReq::FidelityUtxo)?;
         }
-        Commands::SeedBalance => {
-            send_rpc_req(stream, RpcMsgReq::SeedBalance)?;
+        Commands::GetBalance => {
+            send_rpc_req(stream, RpcMsgReq::Balance)?;
         }
-        Commands::SeedUtxo => {
-            send_rpc_req(stream, RpcMsgReq::SeedUtxo)?;
+        Commands::ListUtxo => {
+            send_rpc_req(stream, RpcMsgReq::Utxo)?;
         }
-        Commands::SwapBalance => {
+        Commands::GetBalanceSwap => {
             send_rpc_req(stream, RpcMsgReq::SwapBalance)?;
         }
-        Commands::SwapUtxo => {
+        Commands::ListUtxoSwap => {
             send_rpc_req(stream, RpcMsgReq::SwapUtxo)?;
         }
-        Commands::NewAddress => {
+        Commands::GetNewAddress => {
             send_rpc_req(stream, RpcMsgReq::NewAddress)?;
         }
         Commands::SendToAddress {
@@ -105,14 +127,23 @@ fn main() -> Result<(), MakerError> {
                 },
             )?;
         }
-        Commands::GetTorAddress => {
+        Commands::ShowTorAddress => {
             send_rpc_req(stream, RpcMsgReq::GetTorAddress)?;
         }
-        Commands::GetDataDir => {
+        Commands::ShowDataDir => {
             send_rpc_req(stream, RpcMsgReq::GetDataDir)?;
         }
         Commands::Stop => {
             send_rpc_req(stream, RpcMsgReq::Stop)?;
+        }
+        Commands::RedeemFidelity { index } => {
+            send_rpc_req(stream, RpcMsgReq::RedeemFidelity(index))?;
+        }
+        Commands::ShowFidelity => {
+            send_rpc_req(stream, RpcMsgReq::ListFidelity)?;
+        }
+        Commands::SyncWallet => {
+            send_rpc_req(stream, RpcMsgReq::SyncWallet)?;
         }
     }
 
@@ -120,7 +151,7 @@ fn main() -> Result<(), MakerError> {
 }
 
 fn send_rpc_req(mut stream: TcpStream, req: RpcMsgReq) -> Result<(), MakerError> {
-    stream.set_read_timeout(Some(Duration::from_secs(20)))?;
+    // stream.set_read_timeout(Some(Duration::from_secs(20)))?;
     stream.set_write_timeout(Some(Duration::from_secs(20)))?;
 
     send_message(&mut stream, &req)?;
@@ -128,7 +159,11 @@ fn send_rpc_req(mut stream: TcpStream, req: RpcMsgReq) -> Result<(), MakerError>
     let response_bytes = read_message(&mut stream)?;
     let response: RpcMsgResp = serde_cbor::from_slice(&response_bytes)?;
 
-    println!("{}", response);
+    if matches!(response, RpcMsgResp::Pong) {
+        println!("success");
+    } else {
+        println!("{}", response);
+    }
 
     Ok(())
 }

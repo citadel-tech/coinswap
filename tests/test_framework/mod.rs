@@ -118,12 +118,7 @@ pub(crate) fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> proc
 
     let (stderr_sender, stderr_recv): (Sender<String>, Receiver<String>) = mpsc::channel();
 
-    let mut args = vec![
-        "--data-directory",
-        data_dir.to_str().unwrap(),
-        "--rpc_network",
-        "regtest",
-    ];
+    let mut args = vec!["--data-directory", data_dir.to_str().unwrap()];
 
     // RPC authentication (user:password) from the cookie file
     let cookie_file_path = Path::new(&bitcoind.params.cookie_file);
@@ -350,7 +345,13 @@ pub fn verify_swap_results(
             );
 
             assert_eq!(fidelity_balance, Amount::from_btc(0.05).unwrap());
-            assert_eq!(live_contract_balance, Amount::ZERO);
+
+            // Live contract balance can be non-zero, if a maker shuts down in middle of recovery.
+            assert!(
+                live_contract_balance == Amount::ZERO
+                    || live_contract_balance == Amount::from_btc(0.00460500).unwrap() // For the first maker in hop
+                    || live_contract_balance == Amount::from_btc(0.00435642).unwrap() // For the second maker in hop
+            );
 
             // Check spendable balance difference.
             let balance_diff = match org_spend_balance.checked_sub(spendable_balance) {
@@ -404,9 +405,6 @@ impl TestFramework {
         Arc<DirectoryServer>,
         JoinHandle<()>,
     ) {
-        if cfg!(feature = "tor") && connection_type == ConnectionType::TOR {
-            coinswap::tor::setup_mitosis();
-        }
         setup_logger(log::LevelFilter::Info);
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
@@ -516,11 +514,9 @@ impl From<&TestFramework> for RPCConfig {
     fn from(value: &TestFramework) -> Self {
         let url = value.bitcoind.rpc_url().split_at(7).1.to_string();
         let auth = Auth::CookieFile(value.bitcoind.params.cookie_file.clone());
-        let network = value.bitcoind.client.get_blockchain_info().unwrap().chain;
         Self {
             url,
             auth,
-            network,
             ..Default::default()
         }
     }

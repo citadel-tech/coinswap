@@ -7,14 +7,13 @@
 //! The file includes functions to validate and sign contract transactions, verify proof of funding, and handle unexpected recovery scenarios.
 //! Implements the core functionality for a Maker in a Bitcoin coinswap protocol.
 
-use std::{net::IpAddr, sync::Arc, time::Instant};
+use std::{collections::HashMap, net::IpAddr, sync::Arc, time::Instant};
 
 use bitcoin::{
     hashes::Hash,
     secp256k1::{self, Secp256k1},
     Amount, OutPoint, PublicKey, Transaction, Txid,
 };
-use bitcoind::bitcoincore_rpc::RpcApi;
 
 use super::{
     api::{
@@ -234,19 +233,24 @@ impl Maker {
             acc + txinfo.funding_input_value.to_sat()
         });
 
-        if total_funding_amount >= self.config.min_swap_amount
-            && total_funding_amount < self.wallet.read()?.store.offer_maxsize
-        {
-            log::info!(
-                "[{}] Total Funding Amount = {} | Funding Txids = {:?}",
-                self.config.port,
-                Amount::from_sat(total_funding_amount),
-                funding_txids
-            );
+        log::info!(
+            "[{}] Total Funding Amount = {} | Funding Txids = {:?}",
+            self.config.network_port,
+            Amount::from_sat(total_funding_amount),
+            funding_txids
+        );
+
+        let max_size = self.wallet.read()?.store.offer_maxsize;
+        if total_funding_amount >= self.config.min_swap_amount && total_funding_amount <= max_size {
             Ok(MakerToTakerMessage::RespContractSigsForSender(
                 ContractSigsForSender { sigs },
             ))
         } else {
+            log::error!(
+                "Funding amount not within min/max limit, min {}, max {}",
+                self.config.min_swap_amount,
+                max_size
+            );
             Err(MakerError::General("not enough funds"))
         }
     }
@@ -268,7 +272,7 @@ impl Maker {
         let hashvalue = self.verify_proof_of_funding(&message)?;
         log::info!(
             "[{}] Validated Proof of Funding of receiving swap. Adding Incoming Swaps.",
-            self.config.port
+            self.config.network_port
         );
 
         // Import transactions and addresses into Bitcoin core's wallet.
@@ -328,11 +332,6 @@ impl Maker {
                 .incoming_swapcoins
                 .contains(&incoming_swapcoin)
             {
-                log::debug!(
-                    "[{}] Incoming SwapCoins: {:?}",
-                    self.config.port,
-                    incoming_swapcoin
-                );
                 connection_state.incoming_swapcoins.push(incoming_swapcoin);
             }
         }
@@ -405,7 +404,7 @@ impl Maker {
 
         log::info!(
             "[{}] Outgoing Funding Txids: {:?}.",
-            self.config.port,
+            self.config.network_port,
             my_funding_txes
                 .iter()
                 .map(|tx| tx.compute_txid())
@@ -414,7 +413,7 @@ impl Maker {
 
         log::info!(
             "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {} |",
-            self.config.port,
+            self.config.network_port,
             Amount::from_sat(incoming_amount),
             Amount::from_sat(outgoing_amount),
             Amount::from_sat(act_coinswap_fees),
@@ -513,18 +512,14 @@ impl Maker {
 
         let mut my_funding_txids = Vec::<Txid>::new();
         for my_funding_tx in &connection_state.pending_funding_txes {
-            let txid = self
-                .wallet
-                .read()?
-                .rpc
-                .send_raw_transaction(my_funding_tx)
-                .map_err(|e| MakerError::Wallet(e.into()))?;
+            let txid = self.wallet.read()?.send_tx(my_funding_tx)?;
+
             assert_eq!(txid, my_funding_tx.compute_txid());
             my_funding_txids.push(txid);
         }
         log::info!(
             "[{}] Outgoing Funding Txids: {:?}",
-            self.config.port,
+            self.config.network_port,
             my_funding_txids
         );
 
@@ -600,7 +595,7 @@ impl Maker {
 
         log::info!(
             "[{}] received preimage for hashvalue={}",
-            self.config.port,
+            self.config.network_port,
             hashvalue
         );
         let mut swapcoin_private_keys = Vec::<MultisigPrivkey>::new();
@@ -640,6 +635,11 @@ impl Maker {
                 .expect("incoming swapcoin not found")
                 .apply_privkey(swapcoin_private_key.key)?;
         }
+
+        // Reset the connection state so watchtowers are not triggered.
+        let mut conn_state = self.connection_state.lock()?;
+        *conn_state = HashMap::default();
+
         log::info!("initializing Wallet Sync.");
         {
             let mut wallet_write = self.wallet.write()?;

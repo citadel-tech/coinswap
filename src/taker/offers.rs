@@ -8,8 +8,10 @@
 use std::{
     convert::TryFrom,
     fmt,
-    io::Write,
+    fs::read,
+    io::{BufWriter, Write},
     net::TcpStream,
+    path::Path,
     sync::mpsc,
     thread::{self, Builder},
 };
@@ -28,7 +30,7 @@ use crate::{
 use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
 
 /// Represents an offer along with the corresponding maker address.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OfferAndAddress {
     pub(crate) offer: Offer,
     /// All maker addresses
@@ -44,7 +46,7 @@ struct OnionAddress {
 }
 
 /// Enum representing maker addresses.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MakerAddress(OnionAddress);
 
 impl MakerAddress {
@@ -80,19 +82,24 @@ impl TryFrom<&mut TcpStream> for MakerAddress {
 /// An ephemeral Offerbook tracking good and bad makers. Currently, Offerbook is initiated
 /// at start of every swap. So good and bad maker list will ot be persisted.
 // TODO: Persist the offerbook in disk.
-#[derive(Debug, Default)]
-pub(crate) struct OfferBook {
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct OfferBook {
     pub(super) all_makers: Vec<OfferAndAddress>,
-    pub(super) good_makers: Vec<OfferAndAddress>,
     pub(super) bad_makers: Vec<OfferAndAddress>,
 }
 
 impl OfferBook {
-    /// Gets all untried offers.
-    pub(crate) fn get_all_untried(&self) -> Vec<&OfferAndAddress> {
+    // TODO: design a better offerbook:
+    // - unique key.
+    // - clear good-bad separations.
+    // - ranking system.
+    // - various categories of livelynesss, to smartly distribute try counts.
+
+    /// Gets all "not-bad" offers.
+    pub fn all_good_makers(&self) -> Vec<&OfferAndAddress> {
         self.all_makers
             .iter()
-            .filter(|offer| !self.good_makers.contains(offer) && !self.bad_makers.contains(offer))
+            .filter(|offer| !self.bad_makers.contains(offer))
             .collect()
     }
 
@@ -100,16 +107,6 @@ impl OfferBook {
     pub(crate) fn add_new_offer(&mut self, offer: &OfferAndAddress) -> bool {
         if !self.all_makers.contains(offer) {
             self.all_makers.push(offer.clone());
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Adds a good maker to the offer book.
-    pub(crate) fn add_good_maker(&mut self, good_maker: &OfferAndAddress) -> bool {
-        if !self.good_makers.contains(good_maker) {
-            self.good_makers.push(good_maker.clone());
             true
         } else {
             false
@@ -129,6 +126,39 @@ impl OfferBook {
     /// Gets the list of bad makers.
     pub(crate) fn get_bad_makers(&self) -> Vec<&OfferAndAddress> {
         self.bad_makers.iter().collect()
+    }
+
+    /// Load existing file, updates it, writes it back (errors if path doesn't exist).
+    pub fn write_to_disk(&self, path: &Path) -> Result<(), TakerError> {
+        let wallet_file = std::fs::OpenOptions::new().write(true).open(path)?;
+        let writer = BufWriter::new(wallet_file);
+        Ok(serde_cbor::to_writer(writer, &self)?)
+    }
+
+    /// Reads from a path (errors if path doesn't exist).
+    pub fn read_from_disk(path: &Path) -> Result<Self, TakerError> {
+        //let wallet_file = File::open(path)?;
+        let mut reader = read(path)?;
+        let book = match serde_cbor::from_slice::<Self>(&reader) {
+            Ok(book) => book,
+            Err(e) => {
+                let err_string = format!("{:?}", e);
+                if err_string.contains("code: TrailingData") {
+                    log::info!("Offerbook has trailing data, trying to restore");
+                    loop {
+                        // pop the last byte and try again.
+                        reader.pop();
+                        match serde_cbor::from_slice::<Self>(&reader) {
+                            Ok(book) => break book,
+                            Err(_) => continue,
+                        }
+                    }
+                } else {
+                    return Err(e.into());
+                }
+            }
+        };
+        Ok(book)
     }
 }
 
@@ -161,10 +191,6 @@ pub(crate) fn fetch_offer_from_makers(
     }
 
     for thread in thread_pool {
-        log::debug!(
-            "Joining thread : {}",
-            thread.thread().name().expect("thread names expected")
-        );
         let join_result = thread.join();
 
         if let Err(e) = join_result {
@@ -175,20 +201,25 @@ pub(crate) fn fetch_offer_from_makers(
 }
 
 /// Retrieves advertised maker addresses from directory servers based on the specified network.
-pub(crate) fn fetch_addresses_from_dns(
-    _socks_port: Option<u16>,
-    directory_server_address: String,
+pub fn fetch_addresses_from_dns(
+    socks_port: Option<u16>,
+    dns_addr: String,
     connection_type: ConnectionType,
 ) -> Result<Vec<MakerAddress>, TakerError> {
-    // TODO: Make the communication in serde_encoded bytes.
+    if !cfg!(feature = "tor") {
+        assert!(
+            socks_port.is_none(),
+            "Cannot use socks port without tor feature"
+        );
+    }
 
     loop {
         let mut stream = match connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(directory_server_address.as_str())?,
+            ConnectionType::CLEARNET => TcpStream::connect(dns_addr.as_str())?,
             #[cfg(feature = "tor")]
             ConnectionType::TOR => {
-                let socket_addrs = format!("127.0.0.1:{}", _socks_port.expect("Tor port expected"));
-                Socks5Stream::connect(socket_addrs, directory_server_address.as_str())?.into_inner()
+                let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
+                Socks5Stream::connect(socket_addrs, dns_addr.as_str())?.into_inner()
             }
         };
 
@@ -197,9 +228,8 @@ pub(crate) fn fetch_addresses_from_dns(
         stream.set_nonblocking(false)?;
         stream.flush()?;
 
-        // Change datatype of number of makers to u32 from usize
         if let Err(e) = send_message(&mut stream, &DnsRequest::Get) {
-            log::warn!("Failed to send request. Retrying...{}", e);
+            log::error!("Failed to send request. Retrying...{}", e);
             thread::sleep(GLOBAL_PAUSE);
             continue;
         }

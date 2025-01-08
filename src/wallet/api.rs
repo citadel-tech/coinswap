@@ -139,14 +139,17 @@ impl Wallet {
     ///
     /// The path should include the full path for a wallet file.
     /// If the wallet file doesn't exist it will create a new wallet file.
-    pub(crate) fn init(path: &Path, rpc_config: &RPCConfig) -> Result<Self, WalletError> {
+    pub fn init(path: &Path, rpc_config: &RPCConfig) -> Result<Self, WalletError> {
+        let rpc = Client::try_from(rpc_config)?;
+        let network = rpc.get_blockchain_info()?.chain;
+
         // Generate Master key
         let master_key = {
             let mnemonic = Mnemonic::generate(12)?;
             let words = mnemonic.words().collect::<Vec<_>>();
             log::info!("Backup the Wallet Mnemonics. \n {:?}", words);
             let seed = mnemonic.to_entropy();
-            Xpriv::new_master(rpc_config.network, &seed)?
+            Xpriv::new_master(network, &seed)?
         };
 
         // Initialise wallet
@@ -156,15 +159,9 @@ impl Wallet {
             .to_str()
             .expect("expected")
             .to_string();
-        let rpc = Client::try_from(rpc_config)?;
+
         let wallet_birthday = rpc.get_block_count()?;
-        let store = WalletStore::init(
-            file_name,
-            path,
-            rpc_config.network,
-            master_key,
-            Some(wallet_birthday),
-        )?;
+        let store = WalletStore::init(file_name, path, network, master_key, Some(wallet_birthday))?;
 
         Ok(Self {
             rpc,
@@ -184,7 +181,18 @@ impl Wallet {
             )));
         }
         let rpc = Client::try_from(rpc_config)?;
-        log::info!(
+        let network = rpc.get_blockchain_info()?.chain;
+
+        // Check if the backend node is running on correct network. Or else hard error.
+        if store.network != network {
+            log::error!(
+                "Wallet file is created for {}, backend Bitcoin Core is running on {}",
+                store.network.to_string(),
+                network.to_string()
+            );
+            return Err(WalletError::General("Wrong Bitcoin Network".to_string()));
+        }
+        log::debug!(
             "Loaded wallet file {} | External Index = {} | Incoming Swapcoins = {} | Outgoing Swapcoins = {}",
             store.file_name,
             store.external_index,
@@ -272,11 +280,12 @@ impl Wallet {
         self.store.incoming_swapcoins.len() + self.store.outgoing_swapcoins.len()
     }
 
-    /// Calculates the total balance of the wallet, including swap coins, live contracts and fidelity bonds.
-    pub fn balance(&self) -> Result<Amount, WalletError> {
+    /// Calculates the total spendable balance of the wallet. Includes all utxos except the fidelity bond.
+    pub fn spendable_balance(&self) -> Result<Amount, WalletError> {
         Ok(self
             .list_all_utxo_spend_info(None)?
             .iter()
+            .filter(|(_, spend_info)| !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. }))
             .fold(Amount::ZERO, |a, (utxo, _)| a + utxo.amount))
     }
 
@@ -503,17 +512,23 @@ impl Wallet {
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Result<Option<UTXOSpendInfo>, WalletError> {
-        if let Some(outgoing_swapcoin) = self.store.outgoing_swapcoins.get(&utxo.script_pub_key) {
-            if utxo.confirmations >= outgoing_swapcoin.get_timelock()?.into() {
-                return Ok(Some(UTXOSpendInfo::TimelockContract {
-                    swapcoin_multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
-                    input_value: utxo.amount,
-                }));
-            }
-        } else if let Some(incoming_swapcoin) =
-            self.store.incoming_swapcoins.get(&utxo.script_pub_key)
+        if let Some((_, outgoing_swapcoin)) =
+            self.store.outgoing_swapcoins.iter().find(|(_, og)| {
+                redeemscript_to_scriptpubkey(&og.contract_redeemscript).unwrap()
+                    == utxo.script_pub_key
+            })
         {
-            if incoming_swapcoin.is_hash_preimage_known() && utxo.confirmations >= 1 {
+            return Ok(Some(UTXOSpendInfo::TimelockContract {
+                swapcoin_multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
+                input_value: utxo.amount,
+            }));
+        } else if let Some((_, incoming_swapcoin)) =
+            self.store.incoming_swapcoins.iter().find(|(_, ig)| {
+                redeemscript_to_scriptpubkey(&ig.contract_redeemscript).unwrap()
+                    == utxo.script_pub_key
+            })
+        {
+            if incoming_swapcoin.is_hash_preimage_known() {
                 return Ok(Some(UTXOSpendInfo::HashlockContract {
                     swapcoin_multisig_redeemscript: incoming_swapcoin.get_multisig_redeemscript(),
                     input_value: utxo.amount,
@@ -593,7 +608,7 @@ impl Wallet {
     /// Returns a list all utxos with their spend info tracked by the wallet.
     /// Optionally takes in an Utxo list to reduce RPC calls. If None is given, the
     /// full list of utxo is fetched from core rpc.
-    pub(crate) fn list_all_utxo_spend_info(
+    pub fn list_all_utxo_spend_info(
         &self,
         utxos: Option<&Vec<ListUnspentResultEntry>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
@@ -1145,5 +1160,10 @@ impl Wallet {
                 .collect::<Result<Vec<String>, WalletError>>()?,
         );
         Ok(descriptors_to_import)
+    }
+
+    /// Uses internal RPC client to braodcast a transaction
+    pub fn send_tx(&self, tx: &Transaction) -> Result<Txid, WalletError> {
+        Ok(self.rpc.send_raw_transaction(tx)?)
     }
 }

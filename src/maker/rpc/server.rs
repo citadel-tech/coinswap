@@ -22,12 +22,8 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
     let rpc_request: RpcMsgReq = serde_cbor::from_slice(&msg_bytes)?;
     log::info!("RPC request received: {:?}", rpc_request);
 
-    match rpc_request {
-        RpcMsgReq::Ping => {
-            if let Err(e) = send_message(socket, &RpcMsgResp::Pong) {
-                log::info!("Error sending RPC response {:?}", e);
-            };
-        }
+    let resp = match rpc_request {
+        RpcMsgReq::Ping => RpcMsgResp::Pong,
         RpcMsgReq::ContractUtxo => {
             let utxos = maker
                 .get_wallet()
@@ -36,10 +32,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect::<Vec<_>>();
-            let resp = RpcMsgResp::ContractUtxoResp { utxos };
-            if let Err(e) = send_message(socket, &resp) {
-                log::info!("Error sending RPC response {:?}", e);
-            };
+            RpcMsgResp::ContractUtxoResp { utxos }
         }
         RpcMsgReq::FidelityUtxo => {
             let utxos = maker
@@ -49,23 +42,17 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect::<Vec<_>>();
-            let resp = RpcMsgResp::FidelityUtxoResp { utxos };
-            if let Err(e) = send_message(socket, &resp) {
-                log::info!("Error sending RPC response {:?}", e);
-            };
+            RpcMsgResp::FidelityUtxoResp { utxos }
         }
-        RpcMsgReq::SeedUtxo => {
+        RpcMsgReq::Utxo => {
             let utxos = maker
                 .get_wallet()
                 .read()?
-                .list_descriptor_utxo_spend_info(None)?
+                .list_all_utxo_spend_info(None)?
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect::<Vec<_>>();
-            let resp = RpcMsgResp::SeedUtxoResp { utxos };
-            if let Err(e) = send_message(socket, &resp) {
-                log::info!("Error sending RPC response {:?}", e);
-            };
+            RpcMsgResp::UtxoResp { utxos }
         }
         RpcMsgReq::SwapUtxo => {
             let utxos = maker
@@ -75,45 +62,27 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect::<Vec<_>>();
-            let resp = RpcMsgResp::SwapUtxoResp { utxos };
-            if let Err(e) = send_message(socket, &resp) {
-                log::info!("Error sending RPC response {:?}", e);
-            };
+            RpcMsgResp::SwapUtxoResp { utxos }
         }
         RpcMsgReq::ContractBalance => {
             let balance = maker.get_wallet().read()?.balance_live_contract(None)?;
-            let resp = RpcMsgResp::ContractBalanceResp(balance.to_sat());
-            if let Err(e) = send_message(socket, &resp) {
-                log::info!("Error sending RPC response {:?}", e);
-            };
+            RpcMsgResp::ContractBalanceResp(balance.to_sat())
         }
         RpcMsgReq::FidelityBalance => {
             let balance = maker.get_wallet().read()?.balance_fidelity_bonds(None)?;
-            let resp = RpcMsgResp::FidelityBalanceResp(balance.to_sat());
-            if let Err(e) = send_message(socket, &resp) {
-                log::info!("Error sending RPC response {:?}", e);
-            };
+            RpcMsgResp::FidelityBalanceResp(balance.to_sat())
         }
-        RpcMsgReq::SeedBalance => {
-            let balance = maker.get_wallet().read()?.balance_descriptor_utxo(None)?;
-            let resp = RpcMsgResp::SeedBalanceResp(balance.to_sat());
-            if let Err(e) = send_message(socket, &resp) {
-                log::info!("Error sending RPC response {:?}", e);
-            };
+        RpcMsgReq::Balance => {
+            let balance = maker.get_wallet().read()?.spendable_balance()?;
+            RpcMsgResp::SeedBalanceResp(balance.to_sat())
         }
         RpcMsgReq::SwapBalance => {
             let balance = maker.get_wallet().read()?.balance_swap_coins(None)?;
-            let resp = RpcMsgResp::SwapBalanceResp(balance.to_sat());
-            if let Err(e) = send_message(socket, &resp) {
-                log::info!("Error sending RPC response {:?}", e);
-            };
+            RpcMsgResp::SwapBalanceResp(balance.to_sat())
         }
         RpcMsgReq::NewAddress => {
             let new_address = maker.get_wallet().write()?.get_next_external_address()?;
-            let resp = RpcMsgResp::NewAddressResp(new_address.to_string());
-            if let Err(e) = send_message(socket, &resp) {
-                log::info!("Error sending RPC response {:?}", e);
-            };
+            RpcMsgResp::NewAddressResp(new_address.to_string())
         }
         RpcMsgReq::SendToAddress {
             address,
@@ -137,46 +106,64 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             let calculated_fee_rate = fee / (tx.weight());
             log::info!("Calculated FeeRate : {:#}", calculated_fee_rate);
 
-            let resp =
-                RpcMsgResp::SendToAddressResp(bitcoin::consensus::encode::serialize_hex(&tx));
-            if let Err(e) = send_message(socket, &resp) {
-                log::info!("Error sending RPC response {:?}", e);
-            };
+            let txid = maker.get_wallet().read()?.send_tx(&tx)?;
+
+            RpcMsgResp::SendToAddressResp(txid.to_string())
         }
         RpcMsgReq::GetDataDir => {
             let path = maker.get_data_dir();
-            let resp = RpcMsgResp::GetDataDirResp(path.clone());
-            if let Err(e) = send_message(socket, &resp) {
-                log::info!("Error sending RPC response {:?}", e);
-            };
+            RpcMsgResp::GetDataDirResp(path.clone())
         }
         RpcMsgReq::GetTorAddress => {
             if maker.config.connection_type == ConnectionType::CLEARNET {
-                let resp = RpcMsgResp::GetTorAddressResp("Maker is not running on TOR".to_string());
-                if let Err(e) = send_message(socket, &resp) {
-                    log::info!("Error sending RPC response {:?}", e);
-                };
+                RpcMsgResp::GetTorAddressResp("Maker is not running on TOR".to_string())
             } else {
-                let maker_hs_path_str =
-                    format!("/tmp/tor-rust-maker{}/hs-dir/hostname", maker.config.port);
+                let maker_hs_path_str = format!(
+                    "/tmp/tor-rust-maker{}/hs-dir/hostname",
+                    maker.config.network_port
+                );
                 let mut maker_file = File::open(maker_hs_path_str)?;
                 let mut maker_onion_addr: String = String::new();
                 maker_file.read_to_string(&mut maker_onion_addr)?;
                 maker_onion_addr.pop(); // Remove `\n` at the end.
-                let maker_address = format!("{}:{}", maker_onion_addr, maker.config.port);
+                let maker_address = format!("{}:{}", maker_onion_addr, maker.config.network_port);
 
-                let resp = RpcMsgResp::GetTorAddressResp(maker_address);
-                if let Err(e) = send_message(socket, &resp) {
-                    log::info!("Error sending RPC response {:?}", e);
-                };
+                RpcMsgResp::GetTorAddressResp(maker_address)
             }
         }
         RpcMsgReq::Stop => {
             maker.shutdown.store(true, Relaxed);
-            if let Err(e) = send_message(socket, &RpcMsgResp::Shutdown) {
-                log::info!("Error sending RPC response {:?}", e);
-            };
+            RpcMsgResp::Shutdown
         }
+
+        RpcMsgReq::RedeemFidelity(index) => {
+            let txid = maker.get_wallet().write()?.redeem_fidelity(index)?;
+            RpcMsgResp::FidelitySpend(txid)
+        }
+        RpcMsgReq::ListFidelity => {
+            let list = maker
+                .get_wallet()
+                .read()?
+                .get_fidelity_bonds()
+                .iter()
+                .map(|(i, (b, _, is_spent))| (*i, (b.clone(), *is_spent)))
+                .collect();
+
+            RpcMsgResp::ListBonds(list)
+        }
+        RpcMsgReq::SyncWallet => {
+            log::info!("Initializing wallet sync");
+            if let Err(e) = maker.get_wallet().write()?.sync() {
+                RpcMsgResp::ServerError(format!("{:?}", e))
+            } else {
+                log::info!("Completed wallet sync");
+                RpcMsgResp::Pong
+            }
+        }
+    };
+
+    if let Err(e) = send_message(socket, &resp) {
+        log::error!("Error sending RPC response {:?}", e);
     }
 
     Ok(())
@@ -188,7 +175,7 @@ pub(crate) fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let listener = Arc::new(TcpListener::bind(&rpc_socket)?);
     log::info!(
         "[{}] RPC socket binding successful at {}",
-        maker.config.port,
+        maker.config.network_port,
         rpc_socket
     );
 
@@ -200,7 +187,16 @@ pub(crate) fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 log::info!("Got RPC request from: {}", addr);
                 stream.set_read_timeout(Some(Duration::from_secs(20)))?;
                 stream.set_write_timeout(Some(Duration::from_secs(20)))?;
-                handle_request(&maker, &mut stream)?;
+                // Do not cause hard error if a rpc request fails
+                if let Err(e) = handle_request(&maker, &mut stream) {
+                    log::error!("Error processing RPC Request: {:?}", e);
+                    // Send the error back to client.
+                    if let Err(e) =
+                        send_message(&mut stream, &RpcMsgResp::ServerError(format!("{:?}", e)))
+                    {
+                        log::error!("Error sending RPC response {:?}", e);
+                    };
+                }
             }
 
             Err(e) => {

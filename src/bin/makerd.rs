@@ -5,30 +5,36 @@ use coinswap::{
     utill::{parse_proxy_auth, setup_maker_logger, ConnectionType},
     wallet::RPCConfig,
 };
-use std::{path::PathBuf, str::FromStr, sync::Arc};
-
-#[cfg(feature = "tor")]
-use coinswap::tor::setup_mitosis;
-
-/// The Maker Server.
+use std::{path::PathBuf, sync::Arc};
+/// Coinswap Maker Server
 ///
-/// This app starts the Maker server.
-#[derive(Parser)]
+/// The server requires a Bitcoin Core RPC connection running in Testnet4. It requires some starting balance, around 50,000 sats for Fidelity + Swap Liquidity (suggested 50,000 sats).
+/// So topup with at least 0.001 BTC to start all the node processses. Suggested faucet: https://mempool.space/testnet4
+///
+/// All server process will start after the fidelity bond transaction confirms. This may take some time. Approx: 10 mins.
+/// Once the bond confirms, the server starts listening for incoming swap requests. As it performs swaps for clients, it keeps earning fees.
+///
+/// The server is operated with the maker-cli app, for all basic wallet related operations.
+///
+/// For more detailed usage information, please refer: https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/makerd.md
+///
+/// This is early beta, and there are known and unknown bugs. Please report issues at: https://github.com/citadel-tech/coinswap/issues
+#[derive(Parser, Debug)]
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
     /// Optional DNS data directory. Default value : "~/.coinswap/maker"
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
-    /// Sets the full node address for rpc connection.
+    /// Bitcoin Core  RPC network address.
     #[clap(
         name = "ADDRESS:PORT",
         long,
         short = 'r',
-        default_value = "127.0.0.1:18443"
+        default_value = "127.0.0.1:48332"
     )]
-    pub(crate) rpc: String,
-    /// Sets the rpc basic authentication.
+    pub rpc: String,
+    /// Bitcoin Core RPC authentication string (username, password).
     #[clap(
         name = "USER:PASSWD",
         short = 'a',
@@ -36,16 +42,8 @@ struct Cli {
         value_parser = parse_proxy_auth,
         default_value = "user:password",
     )]
-    pub(crate) auth: (String, String),
-    /// Sets the full node network, this should match with the network of the running node.
-    #[clap(
-        name = "NETWORK",
-        long,
-        short = 'n',
-        default_value = "regtest", possible_values = &["regtest", "signet", "mainnet"]
-    )]
-    pub(crate) rpc_network: String,
-    /// Sets the maker wallet's name. If the wallet file already exists at data-directory, it will load that wallet.
+    pub auth: (String, String),
+    /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with given name. Default: maker-wallet
     #[clap(name = "WALLET", long, short = 'w')]
     pub(crate) wallet_name: Option<String>,
 }
@@ -55,23 +53,21 @@ fn main() -> Result<(), MakerError> {
 
     let args = Cli::parse();
 
-    let rpc_network = bitcoin::Network::from_str(&args.rpc_network).unwrap();
-
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
-        network: rpc_network,
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
 
-    let conn_type = ConnectionType::TOR;
-
     #[cfg(feature = "tor")]
-    {
-        if conn_type == ConnectionType::TOR {
-            setup_mitosis();
-        }
-    }
+    let connection_type = if cfg!(feature = "integration-test") {
+        ConnectionType::CLEARNET
+    } else {
+        ConnectionType::TOR
+    };
+
+    #[cfg(not(feature = "tor"))]
+    let connection_type = ConnectionType::CLEARNET;
 
     let maker = Arc::new(Maker::init(
         args.data_directory,
@@ -80,7 +76,7 @@ fn main() -> Result<(), MakerError> {
         None,
         None,
         None,
-        Some(conn_type),
+        Some(connection_type),
         MakerBehavior::Normal,
     )?);
 

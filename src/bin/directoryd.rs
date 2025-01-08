@@ -6,9 +6,7 @@ use coinswap::{
     wallet::RPCConfig,
 };
 
-#[cfg(feature = "tor")]
-use coinswap::tor::setup_mitosis;
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 #[derive(Parser)]
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
@@ -22,7 +20,7 @@ struct Cli {
         name = "ADDRESS:PORT",
         long,
         short = 'r',
-        default_value = "127.0.0.1:18443"
+        default_value = "127.0.0.1:48332"
     )]
     pub(crate) rpc: String,
     /// Sets the rpc basic authentication.
@@ -33,40 +31,33 @@ struct Cli {
         value_parser = parse_proxy_auth,
         default_value = "user:password",
     )]
-    pub(crate) auth: (String, String),
-    /// Sets the full node network, this should match with the network of the running node.
-    #[clap(
-        name = "rpc_network",
-        long,
-        default_value = "regtest", possible_values = &["regtest", "signet", "mainnet"]
-    )]
-    pub(crate) rpc_network: String,
+    pub auth: (String, String),
 }
 
 fn main() -> Result<(), DirectoryServerError> {
     setup_directory_logger(log::LevelFilter::Info);
 
     let args = Cli::parse();
-
-    let rpc_network = bitcoin::Network::from_str(&args.rpc_network).unwrap();
-
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
-        network: rpc_network,
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
 
-    let conn_type = ConnectionType::TOR;
-
     #[cfg(feature = "tor")]
-    {
-        if conn_type == ConnectionType::TOR {
-            setup_mitosis();
-        }
-    }
+    let connection_type = if cfg!(feature = "integration-test") {
+        ConnectionType::CLEARNET
+    } else {
+        ConnectionType::TOR
+    };
 
-    let directory = Arc::new(DirectoryServer::new(args.data_directory, Some(conn_type))?);
+    #[cfg(not(feature = "tor"))]
+    let connection_type = ConnectionType::CLEARNET;
+
+    let directory = Arc::new(DirectoryServer::new(
+        args.data_directory,
+        Some(connection_type),
+    )?);
 
     start_directory_server(directory, Some(rpc_config))?;
 

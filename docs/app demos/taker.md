@@ -106,10 +106,10 @@ $ taker -r 127.0.0.1:38332 -a user:pass fetch-offers
 This will fetch the list of available makers from the directory server. Now we can initiate a coinswap with the makers.
 
 ```sh
-$ taker -r 127.0.0.1:38332 -a user:pass do-coinswap
+$ taker -r 127.0.0.1:38332 -a user:pass coinswap
 ```
 
-This will initiate a coinswap with the default parameters.
+This will initiate a coinswap with the default parameters. This will take some time. You can check swap progress at the log file in data diectory. In an new terminal do `tail -f <datadir>/debug.log`.
 
 ## Data, Config and Wallets
 

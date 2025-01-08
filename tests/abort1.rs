@@ -119,6 +119,11 @@ fn test_stop_taker_after_setup() {
     taker.do_coinswap(swap_params).unwrap();
 
     // After Swap is done,  wait for maker threads to conclude.
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+
+    // After Swap is done,  wait for maker threads to conclude.
     maker_threads
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
