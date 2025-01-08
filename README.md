@@ -22,146 +22,110 @@
   </p>
 </div>
 
+### ⚠️ Info
+
+Coinswap v0.1.0 marketplace is now live on Testnet4.
+
+
 ### ⚠️ Warning
 
 This library is currently under beta development and is in an experimental stage. There are known and unknown bugs. **Mainnet use is strictly NOT recommended.** 
 
 Additionally, note that this code is currently designed to run exclusively on Linux systems.
 
+# About
 
-## Table of Contents
+Coinswap is a decentralized [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol that enables trustless swaps of Bitcoin UTXOs through a decentralized, Sybil-resistant marketplace.
 
-- [Table of Contents](#table-of-contents)
-- [About](#about)
-- [Build and Test](#build-and-test)
-- [Architecture](#architecture)
-- [Project Status](#project-status)
-- [Roadmap](#roadmap)
-  - [V 0.1.0](#v-010)
-  - [V 0.1.\*](#v-01)
-- [Community](#community)
+While atomic swaps are not new, existing solutions are centralized, rely on large swap servers, and inherently have the service provider as a [single point of failure (SPOF)](https://en.wikipedia.org/wiki/Single_point_of_failure) for censorship and privacy attacks. This project aims to implement atomic swaps via a decentralized market-based protocol.
 
-## About
+The project builds on the work of many predecessors and is a continuation of Bitcoin researcher Chris Belcher's [teleport-transactions](https://github.com/bitcoin-teleport/teleport-transactions). Since Belcher's prototype, the project has significantly matured, incorporating complete protocol handling, functional testing, Sybil resistance, and command-line applications, making it a practical swap solution for live networks.
 
-CoinSwap is a rust implementation of a variant of atomic-swap protocol, using HTLCs on Bitcoin. Read more at:
+Anyone can become a swap service provider (aka `Maker`) and earn fees by running the `makerd` app. Clients (aka `Takers`) can perform swaps with multiple makers using the `taker` app. A taker selects multiple makers from the market to swap with, splitting and routing swaps through various makers while maintaining privacy. 
 
-* [Mailing list post](https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-October/018221.html)
-* [Detailed design](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964)
-* [Developer's resources](/docs/dev-book.md)
+The system is designed with a *smart-client-dumb-server* philosophy, minimizing server requirements. This allows any home node operator to run `makerd` on their node box. The protocol employs [fidelity bonds](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md) as a Sybil and DoS resistance mechanism for the market. Takers will avoid swapping with makers holding expired or invalid fidelity bonds.
 
-## Dependencies
+Takers, acting as smart clients, handle critical roles such as coordinating swap rounds, validating data, managing interactions with multiple makers, and recovering swaps in case of errors. Makers, acting as dumb servers, respond to taker queries and do not communicate with each other. Instead, the taker routes all inter-maker messages. All communication strictly occurs over Tor.
 
-Ensure you have the following dependency installed before compiling the project.
+For more details on the protocol and market mechanisms, refer to the [Coinswap Protocol Specification](https://github.com/citadel-tech/Coinswap-Protocol-Specification).
+
+
+# Run the apps
+### ❗ Important
+
+The project currently only compiles on Linux. Mac and Windows are not supported yet. To compile on Mac or Windows, consider using virtual machines.
+
+### Dependencies
+
+Ensure you have the following dependency installed before compiling.
 
 ```shell
 sudo apt install build-essential automake libtool
 ```
 
-## Build and Test
+The project also requires working `rust` and `cargo` installation to compile. Precompile binaries will be available soon. Cargo can be installed from [here](https://www.rust-lang.org/learn/get-started).
 
-The repo contains a fully automated integration testing framework on Bitcoin Regtest. The bitcoin binary used for testing is
-included [here](./bin/bitcoind).
+### Build and Install
+```console
+git clone https://github.com/citadel-tech/coinswap.git
+cd coinswap
+cargo build
+```
+
+After compilation you will get the binaries in the `./target/debug` folder. 
+
+Install the required binaries:
+```console
+sudo cp ./target/debug/maker* /usr/local/bin/
+sudo cp ./target/debug/taker /usr/local/bin/    
+```
+
+### Apps overview
+This will install three binaries, `makerd`, `maker-cli` and `taker` in your system, which can be used to run both the server and the client.
+Use the help command to for more information.
+
+```console
+makerd --help
+maker-cli --help
+taker --help
+```
+
+  `makerd`: The backend server daemon. This requires continuous uptime and connection to live bitcoin core RPC. App demo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/makerd.md)
+  
+  `maker-cli`: The RPC controler of the server deamon. This can be used to manage the server, access internal wallet, see swap statistics, etc. App demo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/maker-cli.md)
+  
+  `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App dmeo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker-tutorial.md)
+
+All the apps will require a Bitcoin Core RPC connection running on testnet4. For running bitcoin instrcutions, see [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/bitcoind.md)
+
+# [Dev Mode] Checkout the tests
+
+Extensive functional testing to simulate various edge cases of the protocol, is covered. The [functional tests](./tests/) spawns 
+a toy marketplace in Bitcoin regetst and plays out various protocol situation. Functional test logs are a good way to look at simulations of various
+edge cases in the protocol, and how the taker and makers recover from failed swaps. 
+
+The bitcoin binary used for testing is included [here](./bin/bitcoind).
 
 ### 💡 Tip
 
-Delete the `bitcoind` binary to reduce the repository size if you don't intend to run the integration tests.
+Replace the `bitcoind` binary to run the tests with your custom bitcoind build.
 
-The integration tests are the best way to look at a working demonstration of the coinswap protocol, involving multiple makers,
-a taker and the directory server. All working over Tor by default. No pre-requisite setup is needed, other than rust and cargo.
+Each test in the [tests](./tests/) folder covers a different edge-case situation and demonstrates how the taker and makers recover
+from various types of swap failures.
 
-Run all the integration tests by running:
+Run all the functional tests and see the logs:
 
 ```console
 $ cargo test --features=integration-test -- --nocapture
 ```
 
-Each test in the [tests](./tests/) folder covers a different edge-case situation and demonstrates how the taker and makers recover
-from various types of swap failures.
+A rust based [`TestFramework`](./tests/test_framework/mod.rs) (Inspired from the Bitcoin Core [testframeowrk](https://github.com/bitcoin/bitcoin/tree/master/test/functional)) has been designed to easily spawn the test situations, with many makers and takers. For example checkout the simple [`standard_swap` module](./tests/standard_swap.rs) to see how to simulate a simple swap case programatically. 
 
-keep an eye on the logs, that's where all the actions are happening.
-
-Play through a single test case, for example, `standard_swap`,  by running:
-
-```console
-$ cargo test --features=integration-test --tests test_standard_coinswap -- --nocapture
-```
-The individual test names can be found in the test files.
-
-For in-depth developer documentation on the coinswap protocol and implementation, consult the [dev book](/docs/dev-book.md).
-
-## Architecture
-
-The project is divided into distinct modules, each focused on specific functionalities.
-
-```console
-docs/
-src/
-├─ bin/
-├─ maker/
-├─ market/
-├─ protocol/
-├─ taker/
-tests/
-```
-| Directory           | Description |
-|---------------------|-------------|
-| **`doc`**           | Contains all the project-related docs. The [dev-book](./docs/dev-book.md) includes major developer salient points.|
-| **`src/taker`**     | Taker module houses its core logic in `src/taker/api.rs` and handles both Taker-related behaviors and most of the protocol-related logic. |
-| **`src/maker`**     | Encompasses Maker-specific logic and plays a relatively passive role compared to Taker. |
-| **`src/wallet`**    | Manages wallet-related operations, including storage and blockchain interaction. |
-| **`src/market`**    | Handles market-related logic, where Makers post their offers. |
-| **`src/protocol`**  | Contains utility functions, error handling, and messages for protocol communication. |
-| **`tests`**         | Contains integration tests. Describes behavior of various abort/malice cases.|
-
-### ❗ Important
-
-The project currently only compiles on Linux. Mac and Windows are not supported. To compile on Mac or Windows, consider using virtual machines.
-
-## Roadmap
-
-### V 0.1.0
-
-- [X] Basic protocol workflow with integration tests.
-- [X] Modularize protocol components.
-- [X] Refine logging information.
-- [X] Abort 1: Taker aborts after setup. Makers identify this, and gets their fund back via contract tx.
-- [X] Abort 2: One Maker aborts **before setup**. Taker retaliates by banning the maker, moving on with other makers, if it can't find enough makers, then recovering via contract transactions.
-  - [X] Case 1: Maker drops **before** sending sender's signature. Taker tries with another Maker and moves on.
-  - [X] Case 2: Maker drops **before** sending sender's signature. Taker doesn't have any new Maker. Recovers from swap.
-  - [X] Case 3: Maker drops **after** sending sender's signatures. Taker doesn't have any new Maker. Recovers from swap.
-- [X] Build a flexible Test-Framework with `bitcoind` backend.
-- [X] Abort 3: Maker aborts **after setup**. Taker and other Makers identify this and recovers back via contract tx. Taker bans the aborting Maker's fidelity bond.
-  - [X] Case 1: Maker Drops at `ContractSigsForRecvrAndSender`. Does not broadcasts the funding txs. Taker and Other Maker recovers. Maker gets banned.
-  - [X] Case 2: Maker drops at `ContractSigsForRecvr` after broadcasting funding txs. Taker and other Makers recover. Maker gets banned.
-  - [X] Case 3: Maker Drops at `HashPreimage` message and doesn't respond back with privkeys. Taker and other Maker recovers. Maker gets banned.
-- [X] Malice 1: Taker broadcasts contract immaturely. Other Makers identify this, get their funds back via contract tx.
-- [X] Malice 2: One of the Makers broadcast contract immaturely. The Taker identify this, bans the Maker's fidelity bond, other Makers get back funds via contract tx.
-- [X] Fix all clippy warnings.
-- [x] Implement configuration file i/o support for Takers and Makers.
-- [x] Switch to binary encoding for network messages.
-- [x] Switch to binary encoding for wallet data.
-- [x] Clean up and integrate fidelity bonds with maker banning.
-- [x] Make tor detectable and connectable by default for Maker and Taker. And Tor configs to their config lists.
-- [x] Sketch a simple `Directory Server`. Tor must. This will act as the MVP DNS server.
-- [x] Achieve >80% crate-level test coverage ratio (including integration tests).
-- [x] Turn maker server into a `maker` cli app, that spawns the server in the background, and exposes a basic maker wallet API.
-- [x] Turn the taker into a `taker` cli app. This also has basic taker wallet API + `do_coinswap()` which spawns a swap process in the background.
-- [x] Create `swap_dns_server` as a stand-alone directory server binary.
-- [ ] A fresh `demo.md` doc to demonstrate a swap process with `maker` and `taker` and `swap_dns_server` in Signet.
-- [ ] Release v0.1.0 in crates.io.
-
-### V 0.1.*
-
-- [ ] Implement UTXO merging and branch-out via swap for improved UTXO management.
-- [ ] Describe contract and funding transactions via miniscript, using BDK for wallet management.
-- [ ] Enable wallet syncing via CBF (BIP157/158).
-- [ ] Transition to taproot outputs for the entire protocol, enhancing anonymity and obfuscating contract transactions.
-- [ ] Implement customizable wallet data storage (SQLite, Postgres).
-- [ ] Optional: Payjoin integration via coinswap.
+The functional tests is a good place for potential contributors to start tinkering and gathering context.
 
 # Contributing
 
-The project is under active development by a few motivated Rusty Bitcoin devs. Any contribution for features, tests, docs and other fixes/upgrades is encouraged and welcomed. The maintainers will use the PR thread to provide quick reviews and suggestions and are generally proactive at merging good contributions.
+The project is under active development by developers at Citadel Tech. Any contribution for features, tests, docs and other fixes/upgrades is encouraged and welcomed. The maintainers will use the PR thread to provide quick reviews and suggestions and are generally proactive at merging good contributions.
 
 Few directions for new contributors:
 
@@ -183,11 +147,10 @@ The repo contains pre-commit githooks to do auto-linting before commits. Set up 
 ln -s ../../git_hooks/pre-commit .git/hooks/pre-commit
 ```
 
-
 ## Community
 
-The dev community lurks in a Discord [here](https://discord.gg/Wz42hVmrrK).
+The dev community lurks [here](https://discord.gg/Wz42hVmrrK).
 
-Dev discussions predominantly happen via FOSS best practices, and by using Github as the Community Forum.
+Dev discussions predominantly happen via FOSS best practices, and by using Github as the major community forum.
 
 The Issues, PRs and Discussions are where all the hard lifting happening.
