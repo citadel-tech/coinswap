@@ -13,9 +13,9 @@ use std::{path::PathBuf, str::FromStr};
 ///
 /// The app works as regular Bitcoin wallet with added capability to perform coinswaps. The app
 /// requires a running Bitcoin Core node with RPC access. It currently only runs on Testnet4.
-/// Suggested faucet for getting Testnet4 coins: https://mempool.space/testnet4
+/// Suggested faucet for getting Testnet4 coins: https://mempool.space/testnet4/faucet
 ///
-/// For more detailed usage information, please refer: https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker-tutorial.md
+/// For more detailed usage information, please refer: https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker.md
 ///
 /// This is early beta, and there are known and unknown bugs. Please report issues at: https://github.com/citadel-tech/coinswap/issues
 #[derive(Parser, Debug)]
