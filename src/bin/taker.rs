@@ -15,7 +15,7 @@ use std::{path::PathBuf, str::FromStr};
 /// requires a running Bitcoin Core node with RPC access. It currently only runs on Testnet4.
 /// Suggested faucet for getting Testnet4 coins: https://mempool.space/testnet4
 ///
-/// For more detailed usage information, please refer: [taker-cli demo doc link]
+/// For more detailed usage information, please refer: https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker-tutorial.md
 ///
 /// This is early beta, and there are known and unknown bugs. Please report issues at: https://github.com/citadel-tech/coinswap/issues
 #[derive(Parser, Debug)]

@@ -10,7 +10,7 @@ use coinswap::{
 ///
 /// The app works as a RPC client for makerd, useful to access the server, retrieve information, and manage server operations.
 ///
-/// For more detailed usage information, please refer: [maker demo doc link]
+/// For more detailed usage information, please refer: https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/maker-cli.md
 ///
 /// This is early beta, and there are known and unknown bugs. Please report issues at: https://github.com/citadel-tech/coinswap/issues
 #[derive(Parser, Debug)]
