@@ -7,7 +7,7 @@
 //! The file includes functions to validate and sign contract transactions, verify proof of funding, and handle unexpected recovery scenarios.
 //! Implements the core functionality for a Maker in a Bitcoin coinswap protocol.
 
-use std::{collections::HashMap, net::IpAddr, sync::Arc, time::Instant};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use bitcoin::{
     hashes::Hash,
@@ -48,7 +48,6 @@ pub(crate) fn handle_message(
     maker: &Arc<Maker>,
     connection_state: &mut ConnectionState,
     message: TakerToMakerMessage,
-    ip: IpAddr,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     let outgoing_message = match connection_state.allowed_message {
         ExpectedMessage::TakerHello => {
@@ -106,7 +105,7 @@ pub(crate) fn handle_message(
             TakerToMakerMessage::RespProofOfFunding(proof) => {
                 connection_state.allowed_message =
                     ExpectedMessage::ProofOfFundingORContractSigsForRecvrAndSender;
-                Some(maker.handle_proof_of_funding(connection_state, proof, ip)?)
+                Some(maker.handle_proof_of_funding(connection_state, proof)?)
             }
             TakerToMakerMessage::ReqContractSigsForRecvr(message) => {
                 connection_state.allowed_message = ExpectedMessage::HashPreimage;
@@ -138,7 +137,7 @@ pub(crate) fn handle_message(
             if let TakerToMakerMessage::RespProofOfFunding(proof) = message {
                 connection_state.allowed_message =
                     ExpectedMessage::ProofOfFundingORContractSigsForRecvrAndSender;
-                Some(maker.handle_proof_of_funding(connection_state, proof, ip)?)
+                Some(maker.handle_proof_of_funding(connection_state, proof)?)
             } else {
                 return Err(MakerError::UnexpectedMessage {
                     expected: "Proof OF Funding".to_string(),
@@ -151,16 +150,12 @@ pub(crate) fn handle_message(
                 TakerToMakerMessage::RespProofOfFunding(proof) => {
                     connection_state.allowed_message =
                         ExpectedMessage::ProofOfFundingORContractSigsForRecvrAndSender;
-                    Some(maker.handle_proof_of_funding(connection_state, proof, ip)?)
+                    Some(maker.handle_proof_of_funding(connection_state, proof)?)
                 }
                 TakerToMakerMessage::RespContractSigsForRecvrAndSender(message) => {
                     // Nothing to send. Maker now creates and broadcasts his funding Txs
                     connection_state.allowed_message = ExpectedMessage::ReqContractSigsForRecvr;
-                    maker.handle_contract_sigs_for_recvr_and_sender(
-                        connection_state,
-                        message,
-                        ip,
-                    )?;
+                    maker.handle_contract_sigs_for_recvr_and_sender(connection_state, message)?;
                     if let MakerBehavior::BroadcastContractAfterSetup = maker.behavior {
                         unexpected_recovery(maker.clone())?;
                         return Err(maker.behavior.into());
@@ -261,7 +256,6 @@ impl Maker {
         &self,
         connection_state: &mut ConnectionState,
         message: ProofOfFunding,
-        ip: IpAddr,
     ) -> Result<MakerToTakerMessage, MakerError> {
         if let MakerBehavior::CloseAtProofOfFunding = self.behavior {
             return Err(self.behavior.into());
@@ -459,9 +453,12 @@ impl Maker {
             .collect::<Result<Vec<SenderContractTxInfo>, WalletError>>()?;
 
         // Update the connection state.
-        self.connection_state
-            .lock()?
-            .insert(ip, (connection_state.clone(), Instant::now()));
+        self.connection_state.lock()?.insert(
+            message.id.clone(),
+            (connection_state.clone(), Instant::now()),
+        );
+
+        log::info!("Connection state initiatilzed for swap id: {}", message.id);
 
         Ok(MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(
             ContractSigsAsRecvrAndSender {
@@ -476,7 +473,6 @@ impl Maker {
         &self,
         connection_state: &mut ConnectionState,
         message: ContractSigsForRecvrAndSender,
-        ip: IpAddr,
     ) -> Result<(), MakerError> {
         if let MakerBehavior::CloseAtContractSigsForRecvrAndSender = self.behavior {
             return Err(self.behavior.into());
@@ -537,9 +533,12 @@ impl Maker {
         }
 
         // Update the connection state.
-        self.connection_state
-            .lock()?
-            .insert(ip, (connection_state.clone(), Instant::now()));
+        self.connection_state.lock()?.insert(
+            message.id.clone(),
+            (connection_state.clone(), Instant::now()),
+        );
+
+        log::info!("Connection state timer reset for swap id: {}", message.id);
 
         Ok(())
     }
