@@ -14,7 +14,6 @@ use bitcoin::{
     secp256k1::{self, Secp256k1},
     Amount, OutPoint, PublicKey, Transaction, Txid,
 };
-use bitcoind::bitcoincore_rpc::RpcApi;
 
 use super::{
     api::{
@@ -513,12 +512,8 @@ impl Maker {
 
         let mut my_funding_txids = Vec::<Txid>::new();
         for my_funding_tx in &connection_state.pending_funding_txes {
-            let txid = self
-                .wallet
-                .read()?
-                .rpc
-                .send_raw_transaction(my_funding_tx)
-                .map_err(|e| MakerError::Wallet(e.into()))?;
+            let txid = self.wallet.read()?.send_tx(my_funding_tx)?;
+
             assert_eq!(txid, my_funding_tx.compute_txid());
             my_funding_txids.push(txid);
         }

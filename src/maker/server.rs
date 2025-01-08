@@ -136,7 +136,10 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
     );
 
     setup_fidelity_bond(&maker, &maker_address)?;
-    maker.wallet.write()?.refresh_offer_maxsize_cache()?;
+    log::info!(
+        "Max offer size : {} sats",
+        maker.get_wallet().read()?.store.offer_maxsize
+    );
 
     let proof = maker
         .highest_fidelity_proof
@@ -210,18 +213,35 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
 fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), MakerError> {
     let highest_index = maker.get_wallet().read()?.get_highest_fidelity_index()?;
     if let Some(i) = highest_index {
+        let wallet_read = maker.get_wallet().read()?;
+        let (bond, _, _) = wallet_read.get_fidelity_bonds().get(&i).unwrap();
+
+        let current_height = wallet_read
+            .rpc
+            .get_block_count()
+            .map_err(WalletError::Rpc)? as u32;
+
         let highest_proof = maker
             .get_wallet()
             .read()?
             .generate_fidelity_proof(i, maker_address)?;
+
         log::info!(
-            "Highest bond at outpoint {}, index {}",
+            "Highest bond at outpoint {} |  index {} | Amount {:?} sats | Remaining Timelock for expiry : {:?} Blocks | Current Bond Value : {:?} sats",
             highest_proof.bond.outpoint,
-            i
+            i,
+            bond.amount.to_sat(),
+            current_height - bond.lock_time.to_consensus_u32(),
+            wallet_read.calculate_bond_value(i)?.to_sat()
         );
+        log::info!("Bond amount : {:?}", bond.amount.to_sat());
+        // TODO: work remainig
+        // log::info!("")
+
         let mut proof = maker.highest_fidelity_proof.write()?;
         *proof = Some(highest_proof);
     } else {
+        // xxxxx
         // No bond in the wallet. Lets attempt to create one.
         let amount = Amount::from_sat(maker.config.fidelity_amount);
         let current_height = maker
@@ -298,7 +318,8 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
                     let mut proof = maker.highest_fidelity_proof.write()?;
                     *proof = Some(highest_proof);
 
-                    // save the wallet data to disk
+                    // sync and save the wallet data to disk
+                    maker.get_wallet().write()?.sync()?;
                     maker.get_wallet().read()?.save_to_disk()?;
                     break;
                 }
