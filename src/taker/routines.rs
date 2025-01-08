@@ -260,6 +260,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
     tmi: ThisMakerInfo,
     npi: NextMakerInfo,
     hashvalue: Hash160,
+    id: String,
 ) -> Result<(ContractSigsAsRecvrAndSender, Vec<ScriptBuf>), TakerError> {
     // Send POF
     let next_coinswap_info = npi
@@ -279,6 +280,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         next_coinswap_info,
         refund_locktime: tmi.this_maker_refund_locktime,
         contract_feerate: MINER_FEE,
+        id,
     });
 
     send_message(socket, &pof_msg)?;

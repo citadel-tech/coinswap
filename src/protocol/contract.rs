@@ -1295,6 +1295,7 @@ mod test {
             }],
             refund_locktime: u16::default(),
             contract_feerate: u64::default(),
+            id: "random".to_string(),
         };
 
         // case with same hash value
@@ -1324,6 +1325,7 @@ mod test {
             }],
             refund_locktime: u16::default(),
             contract_feerate: u64::default(),
+            id: "random".to_string(),
         };
 
         let hash_value_from_fn = check_hashvalues_are_equal(&funding_proof).unwrap_err();
