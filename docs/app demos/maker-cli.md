@@ -356,14 +356,10 @@ $ ./maker-cli get-new-address
 ### Spending `10,000 sats` from the Maker's Wallet:
 Next, let's send `10,000 sats` from the maker's wallet to an external address.
 
-#### **Step 1**: Derive an External Address Using `bitcoin-cli`'s `deriveaddresses` Command
+#### **Step 1**: Derive an External Address Using `bitcoin-cli`'s `getnewaddress` Command
 
 ```bash
-$ bitcoin-cli deriveaddresses <descriptor in signet> "[0,0]"
-
-[
-  <derived address>
-]
+$ bitcoin-cli getnewaddress
 ```
 
 #### **Step 2**: Use `maker-cli`'s `send-to-address` Command to Send the Amount to the Derived Address

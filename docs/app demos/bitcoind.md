@@ -61,7 +61,7 @@ After setting up the configuration file, our node will be ready to run in `regte
 
 
 > **NOTE**: `Regtest` is a toy network that allows for creating custom blocks and generating coins, making it ideal for easy integration testing of applications.  
-> For actual swap markets, use `Signet`. Switch to `Signet` by setting `signet=1` in the configuration.
+> For actual swap markets, use `testnet4`. Switch to `testnet4` by setting `testnet4=1` in the configuration.
 ---
 
 ### **3. Basic Operations**

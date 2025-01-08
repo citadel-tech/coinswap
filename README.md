@@ -11,7 +11,7 @@
     <a href="https://crates.io/crates/coinswap"><img alt="Crate Info" src="https://img.shields.io/crates/v/coinswap.svg"/></a>
     <a href="https://docs.rs/coinswap"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-coinswap-green"/></a>
     -->
-    <a href="https://github.com/citadel-tech/coinswap/blob/master/LICENSE.md"><img alt="MIT or Apache-2.0 Licensed" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg"/></a>
+    <a href="https://github.com/citadel-tech/coinswap/blob/master/LICENSE"><img alt="MIT or Apache-2.0 Licensed" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg"/></a>
     <a href="https://github.com/citadel-tech/coinswap/actions/workflows/build.yaml"><img alt="CI Status" src="https://github.com/citadel-tech/coinswap/actions/workflows/build.yaml/badge.svg"></a>
     <a href="https://github.com/citadel-tech/coinswap/actions/workflows/lint.yaml"><img alt="CI Status" src="https://github.com/citadel-tech/coinswap/actions/workflows/lint.yaml/badge.svg"></a>
     <a href="https://github.com/citadel-tech/coinswap/actions/workflows/test.yaml"><img alt="CI Status" src="https://github.com/citadel-tech/coinswap/actions/workflows/test.yaml/badge.svg"></a>
@@ -92,7 +92,7 @@ taker --help
   
   `maker-cli`: The RPC controler of the server deamon. This can be used to manage the server, access internal wallet, see swap statistics, etc. App demo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/maker-cli.md)
   
-  `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App demo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker-tutorial.md)
+  `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App demo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker.md)
 
 All the apps will require a Bitcoin Core RPC connection running on testnet4. For running bitcoin instrcutions, see [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/bitcoind.md)
 
