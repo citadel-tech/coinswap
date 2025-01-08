@@ -2037,12 +2037,17 @@ impl Taker {
             }
             #[cfg(feature = "tor")]
             ConnectionType::TOR => {
-                let directory_hs_path_str = "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
-                let mut directory_file = std::fs::File::open(directory_hs_path_str)?;
-                let mut directory_onion_addr = String::new();
-                directory_file.read_to_string(&mut directory_onion_addr)?;
-                directory_onion_addr.pop();
-                format!("{}:{}", directory_onion_addr, 8080)
+                if cfg!(feature = "integration-test") {
+                    let directory_hs_path_str =
+                        "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
+                    let mut directory_file = std::fs::File::open(directory_hs_path_str)?;
+                    let mut directory_onion_addr = String::new();
+                    directory_file.read_to_string(&mut directory_onion_addr)?;
+                    directory_onion_addr.pop();
+                    format!("{}:{}", directory_onion_addr, 8080)
+                } else {
+                    self.config.directory_server_address.clone()
+                }
             }
         };
 

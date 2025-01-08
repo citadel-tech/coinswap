@@ -36,7 +36,6 @@ use crate::{
         rpc::start_rpc_server,
     },
     protocol::messages::{DnsMetadata, DnsRequest, TakerToMakerMessage},
-    taker::api::MINER_FEE,
     utill::{get_tor_addrs, read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
     wallet::WalletError,
 };
@@ -232,7 +231,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
             highest_proof.bond.outpoint,
             i,
             bond.amount.to_sat(),
-            current_height - bond.lock_time.to_consensus_u32(),
+            bond.lock_time.to_consensus_u32() - current_height,
             wallet_read.calculate_bond_value(i)?.to_sat()
         );
         log::info!("Bond amount : {:?}", bond.amount.to_sat());
@@ -264,7 +263,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
         let mut sleep_multiplier = 0;
         log::info!("No active Fidelity Bonds found. Creating one.");
         log::info!("Fidelity value chosen = {:?} sats", amount.to_sat());
-        log::info!("Fidelity Tx fee = {} sats", MINER_FEE);
+        log::info!("Fidelity Tx fee = 300 sats");
         log::info!(
             "Fidelity timelock {} blocks",
             maker.config.fidelity_timelock
