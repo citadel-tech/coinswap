@@ -396,7 +396,7 @@ impl Wallet {
             .map(|(_, spend_info)| spend_info.clone());
         self.sign_transaction(&mut tx, &mut input_info)?;
 
-        let txid = self.rpc.send_raw_transaction(&tx)?;
+        let txid = self.send_tx(&tx)?;
 
         let sleep_increment = 10;
         let mut sleep_multiplier = 0;
@@ -493,7 +493,7 @@ impl Wallet {
 
         self.sign_transaction(&mut tx, vec![utxo_spend_info].into_iter())?;
 
-        let txid = self.rpc.send_raw_transaction(&tx)?;
+        let txid = self.send_tx(&tx)?;
 
         log::info!("Fidelity redeem transaction broadcasted. txid: {}", txid);
 

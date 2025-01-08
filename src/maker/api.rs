@@ -313,8 +313,6 @@ impl Maker {
         wallet.sync()?;
         log::info!("Completed wallet sync");
 
-        log::info!("Max offer size : {} sats", wallet.store.offer_maxsize);
-
         Ok(Self {
             behavior,
             config,
@@ -755,12 +753,8 @@ pub(crate) fn recover_from_swap(
                 maker.config.network_port
             );
         } else {
-            maker
-                .wallet
-                .read()?
-                .rpc
-                .send_raw_transaction(&tx)
-                .map_err(WalletError::Rpc)?;
+            maker.wallet.read()?.send_tx(&tx)?;
+
             log::info!(
                 "[{}] Broadcasted Incoming Contract : {}",
                 maker.config.network_port,
@@ -794,16 +788,11 @@ pub(crate) fn recover_from_swap(
                 maker.config.network_port
             );
         } else {
-            maker
-                .wallet
-                .read()?
-                .rpc
-                .send_raw_transaction(tx)
-                .map_err(WalletError::Rpc)?;
+            let txid = maker.wallet.read()?.send_tx(tx)?;
             log::info!(
                 "[{}] Broadcasted Outgoing Contract : {}",
                 maker.config.network_port,
-                tx.compute_txid()
+                txid
             );
         }
     }

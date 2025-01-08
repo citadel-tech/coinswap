@@ -623,11 +623,7 @@ impl Taker {
         let funding_txids = funding_txs
             .iter()
             .map(|tx| {
-                let txid = self
-                    .wallet
-                    .rpc
-                    .send_raw_transaction(tx)
-                    .map_err(WalletError::Rpc)?;
+                let txid = self.wallet.send_tx(tx)?;
                 log::info!("Funding Txid: {}", txid);
                 assert_eq!(txid, tx.compute_txid());
                 Ok(txid)
@@ -1894,10 +1890,7 @@ impl Taker {
             {
                 log::info!("Incoming Contract already broadacsted");
             } else {
-                self.wallet
-                    .rpc
-                    .send_raw_transaction(contract_tx)
-                    .map_err(WalletError::from)?;
+                self.wallet.send_tx(contract_tx)?;
                 log::info!(
                     "Broadcasted Incoming Contract. Removing from wallet. Contract Txid {}",
                     contract_tx.compute_txid()
@@ -1923,10 +1916,7 @@ impl Taker {
             {
                 log::info!("Outgoing Contract already broadcasted");
             } else {
-                self.wallet
-                    .rpc
-                    .send_raw_transaction(&contract_tx)
-                    .map_err(WalletError::Rpc)?;
+                self.wallet.send_tx(&contract_tx)?;
                 log::info!(
                     "Broadcasted Outgoing Contract, Contract txid : {}",
                     contract_tx.compute_txid()
@@ -1984,10 +1974,7 @@ impl Taker {
                                 "Broadcasting timelocked tx: {}",
                                 timelocked_tx.compute_txid()
                             );
-                            self.wallet
-                                .rpc
-                                .send_raw_transaction(timelocked_tx)
-                                .map_err(WalletError::from)?;
+                            self.wallet.send_tx(timelocked_tx)?;
                             timelock_boardcasted.push(timelocked_tx);
 
                             let outgoing_removed = self
