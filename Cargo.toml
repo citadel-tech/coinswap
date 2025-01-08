@@ -8,7 +8,6 @@ edition = "2018"
 
 description = "Functioning, minimal-viable binaries and libraries to perform a trustless, p2p Maxwell-Belcher Coinswap Protocol"
 license = "MIT OR Apache-2.0"          
-license-file = "LICENSE"               
 documentation = "https://docs.rs/coinswap"
 homepage = "https://github.com/citadel-tech/coinswap" 
 repository = "https://github.com/citadel-tech/coinswap" 
