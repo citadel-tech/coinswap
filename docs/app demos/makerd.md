@@ -71,10 +71,10 @@ This section focuses on `Makerd`, walking you through the process of starting an
 
 ### 1. Start Bitcoin Core (Pre-requisite)
 
-`Makerd` requires a **Bitcoin Core** RPC connection running on **Signet** for its operation. To get started, you need to start `bitcoind`:
+`Makerd` requires a **Bitcoin Core** RPC connection running on **testnet4** for its operation. To get started, you need to start `bitcoind`:
 
 > **Important:**  
-> All apps are designed to run on **Signet** for testing purposes. The DNS server that Maker connects to will also be on Signet. While you can run these apps on other networks, there won't be any DNS available, so Maker won’t be able to connect to the DNS server or other Coinswap networks.
+> All apps are designed to run on **testnet4** for testing purposes. The DNS server that Maker connects to will also be on testnet4. While you can run these apps on other networks, there won't be any DNS available, so Maker won’t be able to connect to the DNS server or other Coinswap networks.
 
 To start `bitcoind`:
 
@@ -101,7 +101,7 @@ coinswap 0.1.0
 Developers at Citadel-Tech
 Coinswap Maker Server
 
-The server requires a Bitcoin Core RPC connection running in Signet. It requires some starting balance (0.05 BTC Fidelity + Swap Liquidity). After the successful creation of a Fidelity Bond, the server will start listening for incoming swap requests and earn swap fees.
+The server requires a Bitcoin Core RPC connection running in testnet4. It requires some starting balance (0.05 BTC Fidelity + Swap Liquidity). After the successful creation of a Fidelity Bond, the server will start listening for incoming swap requests and earn swap fees.
 
 The server is operated with the maker-cli app, for all basic wallet-related operations.
 
@@ -191,7 +191,7 @@ This will launch `makerd` and connect it to the Bitcoin RPC core running on it's
 
   > **Note**: Currently The transaction fee for the fidelity bond is hardcoded at `1000 sats`. This approach of directly considering `fee` not `fee rate` will be improved in v0.1.1 milestones.
 
-- Since the maker wallet is empty, we'll need to fund it with at least `0.00051000 BTC` to cover the fidelity amount and transaction fee. To fund the wallet, we can use a Signet faucet from [Signet Faucets](https://signetfaucet.com/).
+- Since the maker wallet is empty, we'll need to fund it with at least `0.00051000 BTC` to cover the fidelity amount and transaction fee. To fund the wallet, we can use a testnet4 faucet from [testnet4 Faucets](https://mempool.space/testnet4/faucet).
   Let's just take `0.01 BTC`testcoins as extra amount will be used in doing wallet related operations in [maker-cli demo](./maker-cli.md)
 
 - The server will regularly sync the wallet every 10 seconds, increasing the interval in the pattern 10,20,30,40..., to detect any incoming funds.

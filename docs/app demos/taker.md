@@ -13,10 +13,10 @@ The taker CLI is an application that allows you to perform coinswaps as a taker.
 
 ### Start Bitcoin Core (Pre-requisite)
 
-`Taker` requires a **Bitcoin Core** RPC connection running on **Signet** for its operation. To get started, you need to start `bitcoind`:
+`Taker` requires a **Bitcoin Core** RPC connection running on **testnet4** for its operation. To get started, you need to start `bitcoind`:
 
 > **Important:**  
-> All apps are designed to run on **Signet** for testing purposes. The DNS server that Taker connects to will also be on Signet. While you can run these apps on other networks, there won't be any DNS available, so Taker won’t be able to connect to the DNS server fir getting maker's offers and can't do coinswap with makers.
+> All apps are designed to run on **testnet4** for testing purposes. The DNS server that Taker connects to will also be on testnet4. While you can run these apps on other networks, there won't be any DNS available, so Taker won’t be able to connect to the DNS server fir getting maker's offers and can't do coinswap with makers.
 
 To start `bitcoind`:
 
@@ -87,7 +87,7 @@ $ taker -r 127.0.0.1:38332 -a user:pass get-new-address
 bcrt1qyywgd4we5y7u05lnrgs8runc3j7sspwqhekrdd
 ```
 
-Now we can use a Signet faucet to send some coins to this address. You can find a Signet faucet [here](https://signetfaucet.com/).
+Now we can use a testnet4 faucet to send some coins to this address. You can find a testnet4 faucet [here](https://mempool.space/testnet4/faucet).
 
 Once you have some coins in your wallet, you can check your balance by running the following command:
 
