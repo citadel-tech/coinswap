@@ -265,7 +265,13 @@ impl DirectoryServer {
                     metadata.0
                 );
             } else {
-                log::info!("Maker data already exist for {}", metadata.0);
+                log::info!(
+                    "Maker data already exist for {} | restarted counter",
+                    metadata.0
+                );
+                write_lock
+                    .entry(metadata.1)
+                    .and_modify(|(_, instant)| *instant = Instant::now());
             }
         } else {
             // Add a new entry if both fidelity and address are new
