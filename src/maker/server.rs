@@ -157,63 +157,57 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
         metadata: dns_metadata,
     };
 
-    let _directory_refresh_handle = thread::Builder::new()
-        .name("Directory refresh handle".to_string())
-        .spawn(move || {
-            let outer_interval_duration =
-                Duration::from_secs(DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS);
+    thread::spawn(move || {
+        let outer_interval_duration = Duration::from_secs(DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS);
 
-            while !maker.shutdown.load(Relaxed) {
-                while !maker.shutdown.load(Relaxed) {
-                    let stream = match maker.config.connection_type {
-                        ConnectionType::CLEARNET => TcpStream::connect(&dns_address),
-                        #[cfg(feature = "tor")]
-                        ConnectionType::TOR => Socks5Stream::connect(
-                            format!("127.0.0.1:{}", maker.config.socks_port),
-                            dns_address.as_str(),
-                        )
-                        .map(|stream| stream.into_inner()),
-                    };
+        while !maker.shutdown.load(Relaxed) {
+            let stream = match maker.config.connection_type {
+                ConnectionType::CLEARNET => TcpStream::connect(&dns_address),
+                #[cfg(feature = "tor")]
+                ConnectionType::TOR => Socks5Stream::connect(
+                    format!("127.0.0.1:{}", maker.config.socks_port),
+                    dns_address.as_str(),
+                )
+                .map(|stream| stream.into_inner()),
+            };
 
-                    log::info!(
-                        "[{}] Connecting to DNS: {}",
-                        maker.config.network_port,
-                        dns_address
-                    );
+            log::info!(
+                "[{}] Connecting to DNS: {}",
+                maker.config.network_port,
+                dns_address
+            );
 
-                    let mut stream = match stream {
-                        Ok(s) => s,
-                        Err(e) => {
-                            log::warn!(
-                                "[{}] TCP connection error with directory, reattempting: {}",
-                                maker_port,
-                                e
-                            );
-                            thread::sleep(HEART_BEAT_INTERVAL);
-                            continue;
-                        }
-                    };
-
-                    if let Err(e) = send_message(&mut stream, &request) {
-                        log::warn!(
-                            "[{}] Failed to send our address to directory, reattempting: {}",
-                            maker_port,
-                            e
-                        );
-                        thread::sleep(HEART_BEAT_INTERVAL);
-                        continue;
-                    }
-
-                    log::info!(
-                        "[{}] Successfully sent our address to DNS at {}",
+            let mut stream = match stream {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!(
+                        "[{}] TCP connection error with directory, reattempting: {}",
                         maker_port,
-                        dns_address
+                        e
                     );
-                    break;
+                    thread::sleep(HEART_BEAT_INTERVAL);
+                    continue;
                 }
-                thread::sleep(outer_interval_duration);
+            };
+
+            if let Err(e) = send_message(&mut stream, &request) {
+                log::warn!(
+                    "[{}] Failed to send our address to directory, reattempting: {}",
+                    maker_port,
+                    e
+                );
+                thread::sleep(HEART_BEAT_INTERVAL);
+                continue;
             }
-        })?;
+
+            log::info!(
+                "[{}] Successfully sent our address to DNS at {}",
+                maker_port,
+                dns_address
+            );
+            thread::sleep(outer_interval_duration);
+        }
+    });
 
     Ok(tor_handle)
 }

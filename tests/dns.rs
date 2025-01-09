@@ -85,27 +85,4 @@ fn test_dns() {
     // Persistence check
     process.kill().expect("Failed to kill directoryd process");
     process.wait().unwrap();
-
-    let mut process = start_dns(&data_dir, &bitcoind);
-
-    // Replace address 8082 to 8083 registered for Bond index 2.
-    // Add a new entry with a new bond index
-    let additional_addresses = vec![("127.0.0.1:8083", 2), ("127.0.0.1:8084", 3)];
-    send_addresses(&additional_addresses);
-    thread::sleep(Duration::from_secs(10));
-
-    process.kill().expect("Failed to kill directoryd process");
-    process.wait().unwrap();
-
-    let mut process = start_dns(&data_dir, &bitcoind);
-    let all_addresses = vec![
-        ("127.0.0.1:8080", 0),
-        ("127.0.0.1:8081", 1),
-        ("127.0.0.1:8083", 2),
-        ("127.0.0.1:8084", 3),
-    ];
-    verify_addresses(&all_addresses);
-
-    process.kill().expect("Failed to kill directoryd process");
-    process.wait().unwrap();
 }
