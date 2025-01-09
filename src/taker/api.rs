@@ -12,14 +12,11 @@ use std::{
     collections::{HashMap, HashSet},
     io::BufWriter,
     net::TcpStream,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Child,
     thread::sleep,
     time::{Duration, Instant},
 };
-
-#[cfg(feature = "tor")]
-use std::io::Read;
 
 use bitcoind::bitcoincore_rpc::RpcApi;
 
@@ -325,7 +322,7 @@ impl Taker {
                 if tor_log_file.exists() {
                     if let Err(e) = std::fs::remove_file(&tor_log_file) {
                         log::error!(
-                        "Error removing previous tor log. Please delet the file and restart. | {:?}",
+                        "Error removing previous tor log. Please delete the file and restart. | {:?}",
                         tor_log_file
                     );
                         return Err(e.into());
@@ -2038,13 +2035,11 @@ impl Taker {
             #[cfg(feature = "tor")]
             ConnectionType::TOR => {
                 if cfg!(feature = "integration-test") {
-                    let directory_hs_path_str =
-                        "/tmp/tor-rust-directory/hs-dir/hostname".to_string();
-                    let mut directory_file = std::fs::File::open(directory_hs_path_str)?;
-                    let mut directory_onion_addr = String::new();
-                    directory_file.read_to_string(&mut directory_onion_addr)?;
-                    directory_onion_addr.pop();
-                    format!("{}:{}", directory_onion_addr, 8080)
+                    let tor_dir = Path::new("/tmp/coinswap/dns/tor");
+
+                    let hostname = get_tor_hostname(tor_dir)?;
+                    log::info!("---------------hostname : {:?}", hostname);
+                    format!("{}:{}", hostname, 8080)
                 } else {
                     self.config.directory_server_address.clone()
                 }
