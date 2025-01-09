@@ -250,7 +250,13 @@ impl DirectoryServer {
                 write_lock.remove(&existing_key);
                 write_lock.insert(metadata.1, (metadata.0, Instant::now()));
             } else {
-                log::info!("Maker data already exist for {}", metadata.0);
+                log::info!(
+                    "Maker data already exist for {} | restarted counter",
+                    metadata.0
+                );
+                write_lock
+                    .entry(metadata.1)
+                    .and_modify(|(_, instant)| *instant = Instant::now());
             }
         } else if write_lock.contains_key(&metadata.1) {
             // Update the address for the existing fidelity
@@ -307,7 +313,6 @@ pub(crate) fn start_address_writer_thread(
 ) -> Result<(), DirectoryServerError> {
     let interval = 60 * 15;
     loop {
-        sleep(Duration::from_secs(interval));
         let mut directory_address_book = directory.addresses.write()?;
         let ttl = Duration::from_secs(60 * 30);
 
@@ -324,6 +329,7 @@ pub(crate) fn start_address_writer_thread(
             directory_address_book.remove(outpoint);
             log::info!("Maker entry removed");
         }
+        sleep(Duration::from_secs(interval));
     }
 }
 
