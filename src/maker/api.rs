@@ -803,95 +803,101 @@ pub(crate) fn recover_from_swap(
 
     // Check for contract confirmations and broadcast timelocked transaction
     let mut timelock_boardcasted = Vec::new();
+    let trigger_count = if cfg!(feature = "integration-test") {
+        10 / HEART_BEAT_INTERVAL.as_secs() // triggers every 10 secs for tests
+    } else {
+        60 / HEART_BEAT_INTERVAL.as_secs() // triggers every 60 secs for prod
+    };
+
+    let mut i = 0;
+
     while !maker.shutdown.load(Relaxed) {
-        for ((outgoing_reedemscript, contract), (timelock, timelocked_tx)) in outgoings.iter() {
-            // We have already broadcasted this tx, so skip
-            if timelock_boardcasted.contains(&timelocked_tx) {
-                continue;
-            }
-            // Check if the contract tx has reached required maturity
-            // Failure here means the transaction hasn't been broadcasted yet. So do nothing and try again.
-            let tx_from_chain = if let Ok(result) = maker
-                .wallet
-                .read()?
-                .rpc
-                .get_raw_transaction_info(&contract.compute_txid(), None)
-            {
-                log::info!(
-                    "[{}] Contract Txid : {} reached confirmation : {:?}, Required Confirmation : {}",
-                    maker.config.network_port,
-                    contract.compute_txid(),
-                    result.confirmations,
-                    timelock
-                );
-                result
-            } else {
-                continue;
-            };
-
-            if let Some(confirmation) = tx_from_chain.confirmations {
-                // Now the transaction is confirmed in a block, check for required maturity
-                if confirmation > (*timelock as u32) {
+        if i >= trigger_count || i == 0 {
+            for ((outgoing_reedemscript, contract), (timelock, timelocked_tx)) in outgoings.iter() {
+                // We have already broadcasted this tx, so skip
+                if timelock_boardcasted.contains(&timelocked_tx) {
+                    continue;
+                }
+                // Check if the contract tx has reached required maturity
+                // Failure here means the transaction hasn't been broadcasted yet. So do nothing and try again.
+                let tx_from_chain = if let Ok(result) = maker
+                    .wallet
+                    .read()?
+                    .rpc
+                    .get_raw_transaction_info(&contract.compute_txid(), None)
+                {
                     log::info!(
-                        "[{}] Timelock maturity of {} blocks reached for Contract Txid : {}",
+                        "[{}] Contract Txid : {} reached confirmation : {:?}, Required Confirmation : {}",
                         maker.config.network_port,
-                        timelock,
-                        contract.compute_txid()
+                        contract.compute_txid(),
+                        result.confirmations,
+                        timelock
                     );
-                    log::info!(
-                        "[{}] Broadcasting timelocked tx: {}",
-                        maker.config.network_port,
-                        timelocked_tx.compute_txid()
-                    );
-                    maker
-                        .wallet
-                        .read()?
-                        .rpc
-                        .send_raw_transaction(timelocked_tx)
-                        .map_err(WalletError::Rpc)?;
-                    timelock_boardcasted.push(timelocked_tx);
+                    result
+                } else {
+                    continue;
+                };
 
-                    let outgoing_removed = maker
-                        .wallet
-                        .write()?
-                        .remove_outgoing_swapcoin(outgoing_reedemscript)?
-                        .expect("outgoing swapcoin expected");
+                if let Some(confirmation) = tx_from_chain.confirmations {
+                    // Now the transaction is confirmed in a block, check for required maturity
+                    if confirmation > (*timelock as u32) {
+                        log::info!(
+                            "[{}] Timelock maturity of {} blocks reached for Contract Txid : {}",
+                            maker.config.network_port,
+                            timelock,
+                            contract.compute_txid()
+                        );
+                        log::info!(
+                            "[{}] Broadcasting timelocked tx: {}",
+                            maker.config.network_port,
+                            timelocked_tx.compute_txid()
+                        );
+                        maker
+                            .wallet
+                            .read()?
+                            .rpc
+                            .send_raw_transaction(timelocked_tx)
+                            .map_err(WalletError::Rpc)?;
+                        timelock_boardcasted.push(timelocked_tx);
 
-                    log::info!(
-                        "[{}] Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
-                        maker.config.network_port,
-                        outgoing_removed.contract_tx.compute_txid()
-                    );
+                        let outgoing_removed = maker
+                            .wallet
+                            .write()?
+                            .remove_outgoing_swapcoin(outgoing_reedemscript)?
+                            .expect("outgoing swapcoin expected");
 
-                    log::info!("initializing Wallet Sync.");
-                    {
-                        let mut wallet_write = maker.wallet.write()?;
-                        wallet_write.sync()?;
-                        wallet_write.save_to_disk()?;
+                        log::info!(
+                            "[{}] Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
+                            maker.config.network_port,
+                            outgoing_removed.contract_tx.compute_txid()
+                        );
+
+                        log::info!("initializing Wallet Sync.");
+                        {
+                            let mut wallet_write = maker.wallet.write()?;
+                            wallet_write.sync()?;
+                            wallet_write.save_to_disk()?;
+                        }
+                        log::info!("Completed Wallet Sync.");
                     }
-                    log::info!("Completed Wallet Sync.");
                 }
             }
+
+            if timelock_boardcasted.len() == outgoings.len() {
+                // For tests, terminate the maker at this stage.
+                #[cfg(feature = "integration-test")]
+                maker.shutdown.store(true, Relaxed);
+
+                log::info!(
+                    "All outgoing transactions claimed back via timelock. Recovery loop exiting."
+                );
+                break;
+            }
+            // Reset counter
+            i = 0;
         }
-
-        if timelock_boardcasted.len() == outgoings.len() {
-            // For tests, terminate the maker at this stage.
-            #[cfg(feature = "integration-test")]
-            maker.shutdown.store(true, Relaxed);
-
-            log::info!(
-                "All outgoing transactions claimed back via timelock. Recovery loop exiting."
-            );
-            break;
-        }
-
-        // Sleep before next blockchain scan
-        let block_lookup_interval = if cfg!(feature = "integration-test") {
-            Duration::from_secs(10)
-        } else {
-            Duration::from_secs(60)
-        };
-        std::thread::sleep(block_lookup_interval);
+        i += 1;
+        std::thread::sleep(HEART_BEAT_INTERVAL);
     }
     Ok(())
 }

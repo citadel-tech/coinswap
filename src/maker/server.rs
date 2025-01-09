@@ -158,54 +158,60 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
     };
 
     thread::spawn(move || {
-        let outer_interval_duration = Duration::from_secs(DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS);
+        let trigger_count = DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS / HEART_BEAT_INTERVAL.as_secs();
+        let mut i = 0;
 
         while !maker.shutdown.load(Relaxed) {
-            let stream = match maker.config.connection_type {
-                ConnectionType::CLEARNET => TcpStream::connect(&dns_address),
-                #[cfg(feature = "tor")]
-                ConnectionType::TOR => Socks5Stream::connect(
-                    format!("127.0.0.1:{}", maker.config.socks_port),
-                    dns_address.as_str(),
-                )
-                .map(|stream| stream.into_inner()),
-            };
+            if i >= trigger_count || i == 0 {
+                let stream = match maker.config.connection_type {
+                    ConnectionType::CLEARNET => TcpStream::connect(&dns_address),
+                    #[cfg(feature = "tor")]
+                    ConnectionType::TOR => Socks5Stream::connect(
+                        format!("127.0.0.1:{}", maker.config.socks_port),
+                        dns_address.as_str(),
+                    )
+                    .map(|stream| stream.into_inner()),
+                };
 
-            log::info!(
-                "[{}] Connecting to DNS: {}",
-                maker.config.network_port,
-                dns_address
-            );
+                log::info!(
+                    "[{}] Connecting to DNS: {}",
+                    maker.config.network_port,
+                    dns_address
+                );
 
-            let mut stream = match stream {
-                Ok(s) => s,
-                Err(e) => {
+                let mut stream = match stream {
+                    Ok(s) => s,
+                    Err(e) => {
+                        log::warn!(
+                            "[{}] TCP connection error with directory, reattempting: {}",
+                            maker_port,
+                            e
+                        );
+                        thread::sleep(HEART_BEAT_INTERVAL);
+                        continue;
+                    }
+                };
+
+                if let Err(e) = send_message(&mut stream, &request) {
                     log::warn!(
-                        "[{}] TCP connection error with directory, reattempting: {}",
+                        "[{}] Failed to send our address to directory, reattempting: {}",
                         maker_port,
                         e
                     );
                     thread::sleep(HEART_BEAT_INTERVAL);
                     continue;
                 }
-            };
 
-            if let Err(e) = send_message(&mut stream, &request) {
-                log::warn!(
-                    "[{}] Failed to send our address to directory, reattempting: {}",
+                log::info!(
+                    "[{}] Successfully sent our address to DNS at {}",
                     maker_port,
-                    e
+                    dns_address
                 );
-                thread::sleep(HEART_BEAT_INTERVAL);
-                continue;
+                // Reset counter when success
+                i = 0;
             }
-
-            log::info!(
-                "[{}] Successfully sent our address to DNS at {}",
-                maker_port,
-                dns_address
-            );
-            thread::sleep(outer_interval_duration);
+            i += 1;
+            thread::sleep(HEART_BEAT_INTERVAL);
         }
     });
 
@@ -340,34 +346,37 @@ fn check_connection_with_core(
     accepting_clients: Arc<AtomicBool>,
 ) -> Result<(), MakerError> {
     let mut rpc_ping_success = false;
+    let mut i = 0;
     while !maker.shutdown.load(Relaxed) {
         // If connection is disrupted keep trying at heart_beat_interval (3 sec).
         // If connection is live, keep tring at rpc_ping_interval (60 sec).
-        match rpc_ping_success {
-            true => {
-                sleep(RPC_PING_INTERVAL);
-            }
-            false => {
-                sleep(HEART_BEAT_INTERVAL);
-            }
-        }
-        if let Err(e) = maker.wallet.read()?.rpc.get_blockchain_info() {
-            log::error!(
-                "[{}] RPC Connection failed. Reattempting {}",
-                maker.config.network_port,
-                e
-            );
-            rpc_ping_success = false;
-        } else {
-            if !rpc_ping_success {
-                log::info!(
-                    "[{}] Bitcoin Core RPC connection is live.",
-                    maker.config.network_port
+        let trigger_count = match rpc_ping_success {
+            true => RPC_PING_INTERVAL.as_secs() / HEART_BEAT_INTERVAL.as_secs(),
+            false => 1,
+        };
+
+        if i >= trigger_count || i == 0 {
+            if let Err(e) = maker.wallet.read()?.rpc.get_blockchain_info() {
+                log::error!(
+                    "[{}] RPC Connection failed. Reattempting {}",
+                    maker.config.network_port,
+                    e
                 );
+                rpc_ping_success = false;
+            } else {
+                if !rpc_ping_success {
+                    log::info!(
+                        "[{}] Bitcoin Core RPC connection is back online.",
+                        maker.config.network_port
+                    );
+                }
+                rpc_ping_success = true;
             }
-            rpc_ping_success = true;
+            accepting_clients.store(rpc_ping_success, Relaxed);
+            i = 0;
         }
-        accepting_clients.store(rpc_ping_success, Relaxed);
+        i += 1;
+        thread::sleep(HEART_BEAT_INTERVAL);
     }
 
     Ok(())
