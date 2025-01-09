@@ -132,7 +132,6 @@ mod tests {
         let contents = r#"
         network_port = 8000
         socks_port = 19070
-        directory_server_address = directoryhiddenserviceaddress.onion:8080
         connection_type = "TOR"
         rpc_port = 8081
         "#;
