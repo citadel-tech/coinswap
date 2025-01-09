@@ -311,7 +311,12 @@ pub(crate) fn start_address_writer_thread(
             .map(|(outpoint, _)| *outpoint)
             .collect();
         for outpoint in &expired_outpoints {
+            log::info!(
+                "No update for 30 mins from maker with fidelity : {}",
+                outpoint
+            );
             directory_address_book.remove(outpoint);
+            log::info!("Maker entry removed");
         }
     }
 }

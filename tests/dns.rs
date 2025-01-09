@@ -82,6 +82,20 @@ fn test_dns() {
     thread::sleep(Duration::from_secs(10));
     verify_addresses(&initial_addresses);
 
+    // Replace address 8082 to 8083 registered for Bond index 2.
+    // Add a new entry with a new bond index
+    let additional_addresses = vec![("127.0.0.1:8083", 2), ("127.0.0.1:8084", 3)];
+    send_addresses(&additional_addresses);
+    thread::sleep(Duration::from_secs(10));
+
+    let all_addresses = vec![
+        ("127.0.0.1:8080", 0),
+        ("127.0.0.1:8081", 1),
+        ("127.0.0.1:8083", 2),
+        ("127.0.0.1:8084", 3),
+    ];
+    verify_addresses(&all_addresses);
+
     // Persistence check
     process.kill().expect("Failed to kill directoryd process");
     process.wait().unwrap();
