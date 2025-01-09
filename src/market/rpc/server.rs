@@ -12,11 +12,11 @@ use std::{
     net::{TcpListener, TcpStream},
     sync::{atomic::Ordering::Relaxed, Arc, RwLock},
     thread::sleep,
-    time::Duration,
+    time::{Duration, Instant},
 };
 fn handle_request(
     socket: &mut TcpStream,
-    address: Arc<RwLock<HashMap<OutPoint, String>>>,
+    address: Arc<RwLock<HashMap<OutPoint, (String, Instant)>>>,
 ) -> Result<(), DirectoryServerError> {
     let req_bytes = read_message(socket)?;
     let rpc_request: RpcMsgReq = serde_cbor::from_slice(&req_bytes).map_err(NetError::Cbor)?;
@@ -28,7 +28,7 @@ fn handle_request(
                 address
                     .read()?
                     .iter()
-                    .map(|(op, address)| (*op, address.clone()))
+                    .map(|(op, address)| (*op, address.0.clone()))
                     .collect::<BTreeSet<_>>(),
             );
             send_message(socket, &resp)?;

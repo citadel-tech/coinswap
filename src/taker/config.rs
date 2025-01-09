@@ -24,7 +24,8 @@ impl Default for TakerConfig {
         Self {
             network_port: 8000,
             socks_port: 19070,
-            directory_server_address: "directoryhiddenserviceaddress.onion:8080".to_string(),
+            directory_server_address:
+                "bhbzkndgad52ojm75w4goii7xsi6ou73fzyvorxas7swg2snlto4c4ad.onion:8080".to_string(),
             connection_type: {
                 #[cfg(feature = "tor")]
                 {
@@ -131,7 +132,6 @@ mod tests {
         let contents = r#"
         network_port = 8000
         socks_port = 19070
-        directory_server_address = directoryhiddenserviceaddress.onion:8080
         connection_type = "TOR"
         rpc_port = 8081
         "#;

@@ -23,16 +23,15 @@ use std::{
     collections::HashMap,
     convert::TryFrom,
     fs::{self, File},
-    io::{BufRead, BufReader, Write},
+    io::Write,
     net::{Ipv4Addr, TcpListener, TcpStream},
     path::{Path, PathBuf},
-    str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
     },
     thread::{self, sleep},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::error::NetError;
@@ -129,7 +128,7 @@ pub struct DirectoryServer {
     /// Shutdown flag to stop the directory server
     pub shutdown: AtomicBool,
     /// A store of all the received maker addresses indexed by fidelity bond outpoints.
-    pub addresses: Arc<RwLock<HashMap<OutPoint, String>>>,
+    pub addresses: Arc<RwLock<HashMap<OutPoint, (String, Instant)>>>,
 }
 
 impl Default for DirectoryServer {
@@ -211,9 +210,7 @@ impl DirectoryServer {
             config_file.write_all(content.as_bytes())?;
         }
 
-        // Load all addresses from address.dat file
-        let address_file = data_dir.join("addresses.dat");
-        let addresses = Arc::new(RwLock::new(read_addresses_from_file(&address_file)?));
+        let addresses = Arc::new(RwLock::new(HashMap::new()));
         let default_dns = Self::default();
 
         Ok(DirectoryServer {
@@ -240,7 +237,7 @@ impl DirectoryServer {
         if let Some(existing_key) =
             write_lock
                 .iter()
-                .find_map(|(k, v)| if v == &metadata.0 { Some(*k) } else { None })
+                .find_map(|(k, v)| if v.0 == metadata.0 { Some(*k) } else { None })
         {
             // Update the fielity for the existing address
             if existing_key != metadata.1 {
@@ -251,28 +248,40 @@ impl DirectoryServer {
                     metadata.1
                 );
                 write_lock.remove(&existing_key);
-                write_lock.insert(metadata.1, metadata.0);
+                write_lock.insert(metadata.1, (metadata.0, Instant::now()));
             } else {
-                log::info!("Maker data already exist for {}", metadata.0);
+                log::info!(
+                    "Maker data already exist for {} | restarted counter",
+                    metadata.0
+                );
+                write_lock
+                    .entry(metadata.1)
+                    .and_modify(|(_, instant)| *instant = Instant::now());
             }
         } else if write_lock.contains_key(&metadata.1) {
             // Update the address for the existing fidelity
-            if write_lock[&metadata.1] != metadata.0 {
+            if write_lock[&metadata.1].0 != metadata.0 {
                 let old_addr = write_lock
-                    .insert(metadata.1, metadata.0.clone())
+                    .insert(metadata.1, (metadata.0.clone(), Instant::now()))
                     .expect("value expected");
                 log::info!(
-                    "Address updated for fidelity: {} | old address {} | new address {}",
+                    "Address updated for fidelity: {} | old address {:?} | new address {}",
                     metadata.1,
                     old_addr,
                     metadata.0
                 );
             } else {
-                log::info!("Maker data already exist for {}", metadata.0);
+                log::info!(
+                    "Maker data already exist for {} | restarted counter",
+                    metadata.0
+                );
+                write_lock
+                    .entry(metadata.1)
+                    .and_modify(|(_, instant)| *instant = Instant::now());
             }
         } else {
             // Add a new entry if both fidelity and address are new
-            write_lock.insert(metadata.1, metadata.0.clone());
+            write_lock.insert(metadata.1, (metadata.0.clone(), Instant::now()));
             log::info!(
                 "Added new maker info: Fidelity {} | Address {}",
                 metadata.1,
@@ -302,63 +311,26 @@ fn write_default_directory_config(config_path: &Path) -> Result<(), DirectorySer
 pub(crate) fn start_address_writer_thread(
     directory: Arc<DirectoryServer>,
 ) -> Result<(), DirectoryServerError> {
-    let address_file = directory.data_dir.join("addresses.dat");
-
-    let interval = if cfg!(feature = "integration-test") {
-        3 // 3 seconds for tests
-    } else {
-        600 // 10 minutes for production
-    };
+    let interval = 60 * 15;
     loop {
         sleep(Duration::from_secs(interval));
+        let mut directory_address_book = directory.addresses.write()?;
+        let ttl = Duration::from_secs(60 * 30);
 
-        if let Err(e) = write_addresses_to_file(&directory, &address_file) {
-            log::error!("Error writing addresses: {:?}", e);
+        let expired_outpoints: Vec<_> = directory_address_book
+            .iter()
+            .filter(|(_, (_, timestamp))| timestamp.elapsed() > ttl)
+            .map(|(outpoint, _)| *outpoint)
+            .collect();
+        for outpoint in &expired_outpoints {
+            log::info!(
+                "No update for 30 mins from maker with fidelity : {}",
+                outpoint
+            );
+            directory_address_book.remove(outpoint);
+            log::info!("Maker entry removed");
         }
     }
-}
-
-/// Write in-memory address data to file.
-pub(crate) fn write_addresses_to_file(
-    directory: &Arc<DirectoryServer>,
-    address_file: &Path,
-) -> Result<(), DirectoryServerError> {
-    let file_content = directory
-        .addresses
-        .read()?
-        .iter()
-        .map(|(op, addr)| format!("{},{}\n", op, addr))
-        .collect::<Vec<String>>()
-        .join("");
-
-    let mut file = File::create(address_file)?;
-    file.write_all(file_content.as_bytes())?;
-    file.flush()?;
-    Ok(())
-}
-
-/// Read address data from file and return the HashMap
-pub fn read_addresses_from_file(
-    path: &Path,
-) -> Result<HashMap<OutPoint, String>, DirectoryServerError> {
-    if !path.exists() {
-        return Ok(HashMap::new());
-    }
-    let reader = BufReader::new(File::open(path)?);
-
-    reader
-        .lines()
-        .map(|line| {
-            let line = line?;
-            let (outpoint, addr) =
-                line.split_once(',')
-                    .ok_or(DirectoryServerError::AddressFileCorrupted(
-                        "deliminator missing in address.dat file".to_string(),
-                    ))?;
-            let op = OutPoint::from_str(outpoint)?;
-            Ok((op, addr.to_string()))
-        })
-        .collect::<Result<HashMap<_, _>, DirectoryServerError>>()
 }
 
 /// Initializes and starts the Directory Server with the provided configuration.
@@ -437,7 +409,6 @@ pub fn start_directory_server(
         start_rpc_server_thread(directory_clone)
     });
 
-    let address_file = directory.data_dir.join("addresses.dat");
     let directory_clone = directory.clone();
     let address_writer_thread = thread::spawn(move || {
         log::info!("Spawning Address Writer Thread");
@@ -483,8 +454,6 @@ pub fn start_directory_server(
         }
     }
 
-    write_addresses_to_file(&directory, &address_file)?;
-
     Ok(())
 }
 
@@ -528,16 +497,21 @@ fn handle_client(
         }
         DnsRequest::Get => {
             log::info!("Received GET");
+
             let addresses = directory.addresses.read()?;
+
             let response = addresses
                 .iter()
-                .fold(String::new(), |acc, (_, addr)| acc + addr + "\n");
+                .filter(|(_, (_, timestamp))| timestamp.elapsed() <= Duration::from_secs(30 * 60))
+                .fold(String::new(), |acc, (_, addr)| acc + &addr.0 + "\n");
+
             log::debug!("Sending Addresses: {}", response);
             send_message(stream, &response)?;
         }
         #[cfg(feature = "integration-test")]
         // Used for IT, only checks the updated_address_map() function.
         DnsRequest::Dummy { url, vout } => {
+            use std::str::FromStr;
             log::info!("Got new maker address: {}", &url);
 
             // Create a constant txid for tests

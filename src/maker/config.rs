@@ -37,7 +37,8 @@ impl Default for MakerConfig {
             rpc_port: 6103,
             min_swap_amount: MIN_SWAP_AMOUNT,
             socks_port: 19050,
-            directory_server_address: "127.0.0.1:8080".to_string(),
+            directory_server_address:
+                "bhbzkndgad52ojm75w4goii7xsi6ou73fzyvorxas7swg2snlto4c4ad.onion:8080".to_string(),
             #[cfg(feature = "integration-test")]
             fidelity_amount: 5_000_000, // 0.05 BTC for tests
             #[cfg(feature = "integration-test")]
