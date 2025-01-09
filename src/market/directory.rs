@@ -313,6 +313,7 @@ pub(crate) fn start_address_writer_thread(
 ) -> Result<(), DirectoryServerError> {
     let interval = 60 * 15;
     loop {
+        sleep(Duration::from_secs(interval));
         let mut directory_address_book = directory.addresses.write()?;
         let ttl = Duration::from_secs(60 * 30);
 
@@ -329,7 +330,6 @@ pub(crate) fn start_address_writer_thread(
             directory_address_book.remove(outpoint);
             log::info!("Maker entry removed");
         }
-        sleep(Duration::from_secs(interval));
     }
 }
 
