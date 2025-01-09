@@ -32,7 +32,7 @@ use std::{
         Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
     },
     thread::{self, sleep},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::error::NetError;
@@ -129,7 +129,7 @@ pub struct DirectoryServer {
     /// Shutdown flag to stop the directory server
     pub shutdown: AtomicBool,
     /// A store of all the received maker addresses indexed by fidelity bond outpoints.
-    pub addresses: Arc<RwLock<HashMap<OutPoint, String>>>,
+    pub addresses: Arc<RwLock<HashMap<OutPoint, (String, Instant)>>>,
 }
 
 impl Default for DirectoryServer {
@@ -213,7 +213,8 @@ impl DirectoryServer {
 
         // Load all addresses from address.dat file
         let address_file = data_dir.join("addresses.dat");
-        let addresses = Arc::new(RwLock::new(read_addresses_from_file(&address_file)?));
+        let addresses: Arc<RwLock<HashMap<OutPoint, (String, Instant)>>> =
+            Arc::new(RwLock::new(read_addresses_from_file(&address_file)?));
         let default_dns = Self::default();
 
         Ok(DirectoryServer {
@@ -240,7 +241,7 @@ impl DirectoryServer {
         if let Some(existing_key) =
             write_lock
                 .iter()
-                .find_map(|(k, v)| if v == &metadata.0 { Some(*k) } else { None })
+                .find_map(|(k, v)| if v.0 == metadata.0 { Some(*k) } else { None })
         {
             // Update the fielity for the existing address
             if existing_key != metadata.1 {
@@ -251,18 +252,18 @@ impl DirectoryServer {
                     metadata.1
                 );
                 write_lock.remove(&existing_key);
-                write_lock.insert(metadata.1, metadata.0);
+                write_lock.insert(metadata.1, (metadata.0, Instant::now()));
             } else {
                 log::info!("Maker data already exist for {}", metadata.0);
             }
         } else if write_lock.contains_key(&metadata.1) {
             // Update the address for the existing fidelity
-            if write_lock[&metadata.1] != metadata.0 {
+            if write_lock[&metadata.1].0 != metadata.0 {
                 let old_addr = write_lock
-                    .insert(metadata.1, metadata.0.clone())
+                    .insert(metadata.1, (metadata.0.clone(), Instant::now()))
                     .expect("value expected");
                 log::info!(
-                    "Address updated for fidelity: {} | old address {} | new address {}",
+                    "Address updated for fidelity: {} | old address {:?} | new address {}",
                     metadata.1,
                     old_addr,
                     metadata.0
@@ -272,7 +273,7 @@ impl DirectoryServer {
             }
         } else {
             // Add a new entry if both fidelity and address are new
-            write_lock.insert(metadata.1, metadata.0.clone());
+            write_lock.insert(metadata.1, (metadata.0.clone(), Instant::now()));
             log::info!(
                 "Added new maker info: Fidelity {} | Address {}",
                 metadata.1,
@@ -327,7 +328,7 @@ pub(crate) fn write_addresses_to_file(
         .addresses
         .read()?
         .iter()
-        .map(|(op, addr)| format!("{},{}\n", op, addr))
+        .map(|(op, (addr, time))| format!("{},{},{:?}\n", op, addr, time))
         .collect::<Vec<String>>()
         .join("");
 
@@ -337,27 +338,65 @@ pub(crate) fn write_addresses_to_file(
     Ok(())
 }
 
-/// Read address data from file and return the HashMap
+/// Reads address data from a file and returns a `HashMap` of valid entries.
+/// Entries with timestamps older than 30 minutes are discarded.
+#[allow(clippy::type_complexity)]
 pub fn read_addresses_from_file(
     path: &Path,
-) -> Result<HashMap<OutPoint, String>, DirectoryServerError> {
+) -> Result<HashMap<OutPoint, (String, Instant)>, DirectoryServerError> {
     if !path.exists() {
         return Ok(HashMap::new());
     }
+
     let reader = BufReader::new(File::open(path)?);
+
+    let thirty_minutes_ago = Instant::now() - std::time::Duration::from_secs(30 * 60);
 
     reader
         .lines()
-        .map(|line| {
-            let line = line?;
-            let (outpoint, addr) =
-                line.split_once(',')
-                    .ok_or(DirectoryServerError::AddressFileCorrupted(
-                        "deliminator missing in address.dat file".to_string(),
-                    ))?;
-            let op = OutPoint::from_str(outpoint)?;
-            Ok((op, addr.to_string()))
-        })
+        .map(
+            |line| -> Result<Option<(OutPoint, (String, Instant))>, DirectoryServerError> {
+                let line = line.map_err(DirectoryServerError::IO)?;
+
+                let mut parts = line.splitn(3, ',');
+                let outpoint = parts.next().ok_or_else(|| {
+                    DirectoryServerError::AddressFileCorrupted(
+                        "Missing OutPoint in address.dat file".to_string(),
+                    )
+                })?;
+                let addr = parts.next().ok_or_else(|| {
+                    DirectoryServerError::AddressFileCorrupted(
+                        "Missing address in address.dat file".to_string(),
+                    )
+                })?;
+                let time_duration = parts.next().ok_or_else(|| {
+                    DirectoryServerError::AddressFileCorrupted(
+                        "Missing time duration in address.dat file".to_string(),
+                    )
+                })?;
+
+                let op = OutPoint::from_str(outpoint).map_err(|_| {
+                    DirectoryServerError::AddressFileCorrupted(format!(
+                        "Invalid OutPoint: {}",
+                        outpoint
+                    ))
+                })?;
+                let duration_secs: u64 = time_duration.parse().map_err(|_| {
+                    DirectoryServerError::AddressFileCorrupted(format!(
+                        "Invalid time duration: {}",
+                        time_duration
+                    ))
+                })?;
+                let timestamp = Instant::now() - std::time::Duration::from_secs(duration_secs);
+
+                if timestamp < thirty_minutes_ago {
+                    return Ok(None);
+                }
+
+                Ok(Some((op, (addr.to_string(), timestamp))))
+            },
+        )
+        .filter_map(|res| res.transpose())
         .collect::<Result<HashMap<_, _>, DirectoryServerError>>()
 }
 
@@ -528,10 +567,15 @@ fn handle_client(
         }
         DnsRequest::Get => {
             log::info!("Received GET");
+
             let addresses = directory.addresses.read()?;
+            let thirty_minutes_ago = Instant::now() - std::time::Duration::from_secs(30 * 60);
+
             let response = addresses
                 .iter()
-                .fold(String::new(), |acc, (_, addr)| acc + addr + "\n");
+                .filter(|(_, (_, timestamp))| *timestamp >= thirty_minutes_ago)
+                .fold(String::new(), |acc, (_, addr)| acc + &addr.0 + "\n");
+
             log::debug!("Sending Addresses: {}", response);
             send_message(stream, &response)?;
         }

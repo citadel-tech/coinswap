@@ -46,7 +46,7 @@ use crate::utill::monitor_log_for_completion;
 use crate::maker::error::MakerError;
 
 // Default values for Maker configurations
-pub(crate) const _DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 60 * 12; // 12 Hours
+pub(crate) const DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 15; // 15 minutes
 
 /// Fetches the Maker and DNS address, and sends maker address to the DNS server.
 /// Depending upon ConnectionType and test/prod environment, different maker address and DNS addresses are returned.
@@ -157,54 +157,67 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
         metadata: dns_metadata,
     };
 
-    // Loop until shoutdown is initiated.
-    while !maker.shutdown.load(Relaxed) {
-        let stream = match maker.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(&dns_address),
-            #[cfg(feature = "tor")]
-            ConnectionType::TOR => Socks5Stream::connect(
-                format!("127.0.0.1:{}", maker.config.socks_port),
-                dns_address.as_str(),
-            )
-            .map(|stream| stream.into_inner()),
-        };
+    let maker2 = maker.clone();
 
-        log::info!(
-            "[{}] Connecting to DNS: {}",
-            maker.config.network_port,
-            dns_address
-        );
+    let _directory_refresh_handle = thread::Builder::new()
+        .name("Directory refresh handle".to_string())
+        .spawn(move || {
+            let outer_interval_duration =
+                Duration::from_secs(DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS);
 
-        let mut stream = match stream {
-            Ok(s) => s,
-            Err(e) => {
-                log::warn!(
-                    "[{}] TCP connection error with directory, reattempting: {}",
-                    maker_port,
-                    e
-                );
-                thread::sleep(HEART_BEAT_INTERVAL);
-                continue;
+            while !maker.shutdown.load(Relaxed) {
+                while !maker.shutdown.load(Relaxed) {
+                    let stream = match maker.config.connection_type {
+                        ConnectionType::CLEARNET => TcpStream::connect(&dns_address),
+                        #[cfg(feature = "tor")]
+                        ConnectionType::TOR => Socks5Stream::connect(
+                            format!("127.0.0.1:{}", maker.config.socks_port),
+                            dns_address.as_str(),
+                        )
+                        .map(|stream| stream.into_inner()),
+                    };
+
+                    log::info!(
+                        "[{}] Connecting to DNS: {}",
+                        maker.config.network_port,
+                        dns_address
+                    );
+
+                    let mut stream = match stream {
+                        Ok(s) => s,
+                        Err(e) => {
+                            log::warn!(
+                                "[{}] TCP connection error with directory, reattempting: {}",
+                                maker_port,
+                                e
+                            );
+                            thread::sleep(HEART_BEAT_INTERVAL);
+                            continue;
+                        }
+                    };
+
+                    if let Err(e) = send_message(&mut stream, &request) {
+                        log::warn!(
+                            "[{}] Failed to send our address to directory, reattempting: {}",
+                            maker_port,
+                            e
+                        );
+                        thread::sleep(HEART_BEAT_INTERVAL);
+                        continue;
+                    }
+
+                    log::info!(
+                        "[{}] Successfully sent our address to DNS at {}",
+                        maker_port,
+                        dns_address
+                    );
+                    break;
+                }
+                thread::sleep(outer_interval_duration);
             }
-        };
+        })?;
 
-        if let Err(e) = send_message(&mut stream, &request) {
-            log::warn!(
-                "[{}] Failed to send our address to directory, reattempting: {}",
-                maker_port,
-                e
-            );
-            thread::sleep(HEART_BEAT_INTERVAL);
-            continue;
-        };
-
-        log::info!(
-            "[{}] Successfully sent our address to dns at {}",
-            maker_port,
-            dns_address
-        );
-        break;
-    }
+    maker2.thread_pool.add_thread(_directory_refresh_handle);
 
     Ok(tor_handle)
 }
