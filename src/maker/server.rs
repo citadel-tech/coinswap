@@ -157,8 +157,6 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
         metadata: dns_metadata,
     };
 
-    let maker2 = maker.clone();
-
     let _directory_refresh_handle = thread::Builder::new()
         .name("Directory refresh handle".to_string())
         .spawn(move || {
@@ -216,8 +214,6 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
                 thread::sleep(outer_interval_duration);
             }
         })?;
-
-    maker2.thread_pool.add_thread(_directory_refresh_handle);
 
     Ok(tor_handle)
 }
