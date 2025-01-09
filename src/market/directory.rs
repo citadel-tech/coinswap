@@ -485,7 +485,7 @@ fn handle_client(
 
             let response = addresses
                 .iter()
-                .filter(|(_, (_, timestamp))| timestamp.elapsed() >= Duration::from_secs(30 * 60))
+                .filter(|(_, (_, timestamp))| timestamp.elapsed() <= Duration::from_secs(30 * 60))
                 .fold(String::new(), |acc, (_, addr)| acc + &addr.0 + "\n");
 
             log::debug!("Sending Addresses: {}", response);
