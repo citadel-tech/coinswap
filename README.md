@@ -63,7 +63,7 @@ sudo apt install build-essential automake libtool
 
 The project also requires working `rust` and `cargo` installation to compile. Precompile binaries will be available soon. Cargo can be installed from [here](https://www.rust-lang.org/learn/get-started).
 
-### Build and Install
+### Build and Run the Apps
 ```console
 git clone https://github.com/citadel-tech/coinswap.git
 cd coinswap
@@ -72,29 +72,39 @@ cargo build
 
 After compilation you will get the binaries in the `./target/debug` folder. 
 
-Install the required binaries:
+Currently, it is required to run the apps from the project root dirtectory only. This can be done by following commands.
+
 ```console
-sudo cp ./target/debug/maker* /usr/local/bin/
-sudo cp ./target/debug/taker /usr/local/bin/    
+./target/debug/makerd --help
+./target/debug/maker-cli --help
+./target/debug/taker --help
+```
+
+The apps also requires a fully synced, non-prunded `bitcoind` node with RPC access on Testnet4 with `-txindex` enabled. 
+
+An example `bitcoin.conf` with the required and other optional flags:
+```
+testnet4=1 #Required
+server=1
+txindex=1 #Required
+rpcuser=user
+rpcpassword=password
+blockfilterindex=1 #This makes wallet sync faster
+daemon=1
 ```
 
 ### Apps overview
-This will install three binaries, `makerd`, `maker-cli` and `taker` in your system, which can be used to run both the server and the client.
-Use the help command to for more information.
+The apps can be used to run both the swap maker server and the taker client. The maker server is suitable to run inside a full node, or *always online* system. Although shutting down the server, and using it intermittently will also work. 
 
-```console
-makerd --help
-maker-cli --help
-taker --help
-```
-
-  `makerd`: The backend server daemon. This requires continuous uptime and connection to live bitcoin core RPC. App demo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/makerd.md)
+  `makerd`: The backend server daemon. This requires continuous uptime and connection to live bitcoin core RPC. App demo [here](./docs/app%20demos/makerd.md)
   
-  `maker-cli`: The RPC controler of the server deamon. This can be used to manage the server, access internal wallet, see swap statistics, etc. App demo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/maker-cli.md)
+  `maker-cli`: The RPC controler of the server deamon. This can be used to manage the server, access internal wallet, see swap statistics, etc. App demo [here](./docs/app%20demos/maker-cli.md)
   
-  `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App demo [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker.md)
+  `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App demo [here](./docs/app%20demos/taker.md)
 
-All the apps will require a Bitcoin Core RPC connection running on testnet4. For running bitcoin instrcutions, see [here](https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/bitcoind.md)
+### ❗ Important
+
+Once the `makerd` server setup is complete, always stop the server with `maker-cli stop`. Avoid using `ctr+c` to ensure wallet data integrity.
 
 # [Dev Mode] Checkout the tests
 
