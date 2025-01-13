@@ -21,7 +21,7 @@ use crate::{
 use bitcoin::{
     ecdsa::Signature,
     secp256k1::{self, Secp256k1},
-    OutPoint, PublicKey, ScriptBuf, Transaction,
+    OutPoint, PublicKey, ScriptBuf, Transaction, Amount
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use std::{
@@ -95,7 +95,7 @@ pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
 ///
 /// Fee rates are designed to asymptotically approach 5% of the swap amount as the swap amount increases..
 #[cfg(feature = "integration-test")]
-pub const BASE_FEE: u64 = 1000;
+pub const BASE_FEE: Amount = 1000;
 #[cfg(feature = "integration-test")]
 pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 2.50;
 #[cfg(feature = "integration-test")]
@@ -109,7 +109,7 @@ pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 0.1;
 pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
 
 /// Minimum Coinswap amount; makers will not accept amounts below this.
-pub const MIN_SWAP_AMOUNT: u64 = 10_000;
+pub const MIN_SWAP_AMOUNT: Amount = 100000;
 
 // What's the use of RefundLocktimeStep?
 

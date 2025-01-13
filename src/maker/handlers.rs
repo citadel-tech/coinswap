@@ -224,8 +224,8 @@ impl Maker {
             .map(|txinfo| txinfo.senders_contract_tx.input[0].previous_output.txid)
             .collect::<Vec<_>>();
 
-        let total_funding_amount = message.txs_info.iter().fold(0u64, |acc, txinfo| {
-            acc + txinfo.funding_input_value.to_sat()
+        let total_funding_amount:Amount = message.txs_info.iter().fold(0u64, |acc, txinfo| {
+            acc + Amount::from_sat(txinfo.funding_input_value.to_sat())
         });
 
         log::info!(
@@ -334,38 +334,38 @@ impl Maker {
         let incoming_amount = message
             .confirmed_funding_txes
             .iter()
-            .try_fold(0u64, |acc, fi| {
+            .try_fold(Amount::from_sat(0), |acc, fi| {
                 let index = find_funding_output_index(fi)?;
                 let txout = fi
                     .funding_tx
                     .output
                     .get(index as usize)
                     .expect("output at index expected");
-                Ok::<_, MakerError>(acc + txout.value.to_sat())
+                Ok::<_, MakerError>(acc + txout.value)
             })?;
 
-        let calc_coinswap_fees = calculate_coinswap_fee(
+        let calc_coinswap_fees = Amount::from_sat(calculate_coinswap_fee(
             incoming_amount,
             message.refund_locktime,
             BASE_FEE,
             AMOUNT_RELATIVE_FEE_PCT,
             TIME_RELATIVE_FEE_PCT,
-        );
+        ));
 
         // NOTE: The `contract_feerate` currently represents the hardcoded `MINER_FEE` of a transaction, not the fee rate.
         // This will remain unchanged to avoid modifying the structure of the [ProofOfFunding] message.
         // Once issue https://github.com/citadel-tech/coinswap/issues/309 is resolved,
         //`contract_feerate` will represent the actual fee rate instead of the `MINER_FEE`.
         let calc_funding_tx_fees =
-            message.contract_feerate * (message.next_coinswap_info.len() as u64);
+            Amount::from_sat(message.contract_feerate * (message.next_coinswap_info.len() as u64));
 
         // Check for overflow. If happens hard error.
         // This can happen if the fee_rate for funding tx is very high and incoming_amount is very low.
         // TODO: Ensure at Taker protocol that this never happens.
-        let outgoing_amount = if let Some(a) =
+        let outgoing_amount:Amount = if let Some(a) =
             incoming_amount.checked_sub(calc_coinswap_fees + calc_funding_tx_fees)
         {
-            a
+            a.to_sat()
         } else {
             return Err(MakerError::General(
                 "Fatal Error! Total swap fee is more than the swap amount. Failing the swap.",
@@ -393,7 +393,7 @@ impl Maker {
         };
 
         let act_coinswap_fees = incoming_amount
-            .checked_sub(outgoing_amount + act_funding_txs_fees.to_sat())
+            .checked_sub(outgoing_amount + act_funding_txs_fees)
             .expect("This should not overflow as we just above.");
 
         log::info!(

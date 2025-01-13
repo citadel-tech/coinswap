@@ -31,7 +31,7 @@ use crate::{
     utill::{read_message, send_message, ConnectionType},
     wallet::WalletError,
 };
-use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
+use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction, relative::LockTime};
 
 use super::{
     config::TakerConfig,
@@ -105,7 +105,7 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
     outgoing_swapcoins: &[S],
     maker_multisig_nonces: &[SecretKey],
     maker_hashlock_nonces: &[SecretKey],
-    locktime: u16,
+    locktime: LockTime,
 ) -> Result<ContractSigsForSender, TakerError> {
     handshake_maker(socket)?;
     log::info!(
@@ -244,7 +244,7 @@ pub(crate) struct ThisMakerInfo {
     pub(crate) this_maker: OfferAndAddress,
     pub(crate) funding_tx_infos: Vec<FundingTxInfo>,
     pub(crate) this_maker_contract_txs: Vec<Transaction>,
-    pub this_maker_refund_locktime: u16,
+    pub this_maker_refund_locktime: LockTime,
 }
 
 // Type for information related to the next peer // why not next Maker?
@@ -347,7 +347,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
     );
 
     let miner_fees_paid_by_taker = (tmi.funding_tx_infos.len() as u64) * MINER_FEE;
-    let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
+    let calculated_next_amount = this_amount - coinswap_fees.to_sat() - miner_fees_paid_by_taker;
 
     if Amount::from_sat(calculated_next_amount) != next_amount {
         return Err((ProtocolError::IncorrectFundingAmount {
@@ -361,7 +361,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         "Maker Received = {} | Maker is Forwarding = {} |  Coinswap Fees = {}  | Miner Fees paid by us = {} ",
         Amount::from_sat(this_amount),
         next_amount,
-        Amount::from_sat(coinswap_fees),
+        coinswap_fees,
         miner_fees_paid_by_taker,
     );
 

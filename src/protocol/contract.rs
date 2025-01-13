@@ -60,13 +60,13 @@ pub(crate) fn calculate_coinswap_fee(
     base_fee: u64,
     amt_rel_fee_pct: f64,
     time_rel_fee_pct: f64,
-) -> u64 {
+) -> Amount {
     // swap_amount as f64 * refund_locktime as f64 -> can  overflow inside f64?
     let total_fee = base_fee as f64
         + (swap_amount as f64 * amt_rel_fee_pct) / 1_00.00
         + (swap_amount as f64 * refund_locktime as f64 * time_rel_fee_pct) / 1_00.00;
 
-    total_fee.ceil() as u64
+    Amount::from_sat(total_fee.ceil() as u64)
 }
 
 /// Apply two signatures to a 2-of-2 multisig spend.
@@ -1117,17 +1117,17 @@ mod test {
             time_rel_fee_pct,
         );
 
-        assert_eq!(calculated_fee, expected_fee);
+        assert_eq!(calculated_fee, Amount::from_sat(expected_fee as u64));
 
         // Test with zero values
         assert_eq!(
-            calculate_coinswap_fee(swap_amount, refund_locktime, 0, 0.0, 0.0),
+            calculate_coinswap_fee(swap_amount, refund_locktime, 0, 0.0, 0.0).to_sat(),
             0
         );
 
         // Test with only the absolute fee being non-zero
         assert_eq!(
-            calculate_coinswap_fee(swap_amount, refund_locktime, base_fee_sat, 0.0, 0.0),
+            calculate_coinswap_fee(swap_amount, refund_locktime, base_fee_sat, 0.0, 0.0).to_sat(),
             1000
         );
 
@@ -1139,7 +1139,7 @@ mod test {
                 0,
                 amt_rel_fee_pct,
                 time_rel_fee_pct
-            ),
+            ).to_sat(),
             4500
         );
     }

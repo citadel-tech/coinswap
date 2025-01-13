@@ -5,6 +5,7 @@ use coinswap::{
     maker::{MakerError, RpcMsgReq, RpcMsgResp},
     utill::{read_message, send_message, setup_maker_logger},
 };
+use bitcoin::Amount;
 
 /// A simple command line app to operate the makerd server.
 ///
@@ -52,12 +53,17 @@ enum Commands {
         /// Recipient's address.
         #[clap(long, short = 't')]
         address: String,
+<<<<<<< HEAD
+        amount: Amount,
+        fee:Amount,
+=======
         /// Amount to send in sats
         #[clap(long, short = 'a')]
         amount: u64,
         /// Total fee to be paid in sats
         #[clap(long, short = 'f')]
         fee: u64,
+>>>>>>> 58a3446c6c5617d2f5761117ad2278068e215443
     },
     /// Show the server tor address
     ShowTorAddress,

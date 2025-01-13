@@ -74,11 +74,19 @@ enum Commands {
         /// Recipient's address.
         #[clap(long, short = 't')]
         address: String,
+<<<<<<< HEAD
+        /// Amount to be sent (in sats)
+        #[clap(name = "amount")]
+        amount: Amount,
+        /// Fee of a Tx(in sats)
+        #[clap(name = "fee")]
+=======
         /// Amount to send in sats
         #[clap(long, short = 'a')]
         amount: u64,
         /// Mining fee to be paid in sats
         #[clap(long, short = 'f')]
+>>>>>>> 58a3446c6c5617d2f5761117ad2278068e215443
         fee: u64,
     },
     /// Update the offerbook with current market offers and display them
