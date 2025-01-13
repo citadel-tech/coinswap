@@ -31,7 +31,7 @@ use crate::{
     utill::{read_message, send_message, ConnectionType},
     wallet::WalletError,
 };
-use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
+use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction, relative::LockTime};
 
 use super::{
     config::TakerConfig,
@@ -105,7 +105,7 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
     outgoing_swapcoins: &[S],
     maker_multisig_nonces: &[SecretKey],
     maker_hashlock_nonces: &[SecretKey],
-    locktime: u16,
+    locktime: LockTime,
 ) -> Result<ContractSigsForSender, TakerError> {
     log::info!("Connecting to {}", socket.peer_addr()?);
     handshake_maker(socket)?;
@@ -246,7 +246,7 @@ pub(crate) struct ThisMakerInfo {
     pub(crate) this_maker: OfferAndAddress,
     pub(crate) funding_tx_infos: Vec<FundingTxInfo>,
     pub(crate) this_maker_contract_txs: Vec<Transaction>,
-    pub this_maker_refund_locktime: u16,
+    pub this_maker_refund_locktime: LockTime,
 }
 
 // Type for information related to the next peer // why not next Maker?
