@@ -56,8 +56,8 @@ pub const RPC_PING_INTERVAL: Duration = Duration::from_secs(10);
 // TODO: Make the maker repost their address to DNS once a day in spawned thread.
 // pub const DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = Duartion::from_days(1); // Once a day.
 
-/// Maker triggers the recovery mechanism, if Taker is idle for more than 30 mins.
-pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60 * 30);
+/// Maker triggers the recovery mechanism, if Taker is idle for more than 1 hour.
+pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 /// The minimum difference in locktime (in blocks) between the incoming and outgoing swaps.
 ///
