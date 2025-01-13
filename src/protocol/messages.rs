@@ -144,6 +144,7 @@ pub(crate) struct ProofOfFunding {
     pub(crate) next_coinswap_info: Vec<NextHopInfo>,
     pub(crate) refund_locktime: LockTime,
     pub(crate) contract_feerate: u64,
+    pub(crate) id: String,
 }
 
 /// Signatures required for an intermediate Maker to perform receiving and sending of coinswaps.
@@ -159,6 +160,8 @@ pub(crate) struct ContractSigsForRecvrAndSender {
     pub(crate) receivers_sigs: Vec<Signature>,
     /// Sigs from the next peer for Contract Tx of next hop, (coinswap sent by this Maker).
     pub(crate) senders_sigs: Vec<Signature>,
+    /// Unique ID for a swap
+    pub(crate) id: String,
 }
 
 /// Message to Transfer [`HashPreimage`] from Taker to Makers.
@@ -318,6 +321,7 @@ impl Display for MakerToTakerMessage {
 
 /// Metadata shared by the maker with the Directory Server for verifying authenticity.
 #[derive(Serialize, Deserialize, Debug)]
+#[allow(private_interfaces)]
 pub struct DnsMetadata {
     /// The maker's URL.
     pub url: String,
@@ -340,6 +344,7 @@ pub enum DnsRequest {
     Get,
     /// Dummy data used for integration tests.
     #[cfg(feature = "integration-test")]
+    /// Send a dummy, request, only used in integration tests
     Dummy {
         /// A dummy URL for testing.
         url: String,

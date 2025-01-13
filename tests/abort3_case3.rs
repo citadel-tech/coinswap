@@ -123,6 +123,8 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
+    //TODO: Start the faulty maker again, and validate its recovery.
+
     info!("All coinswaps processed successfully. Transaction complete.");
 
     // Shutdown Directory Server

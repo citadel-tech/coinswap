@@ -6,8 +6,8 @@ use bitcoin::{bip32::Xpriv, Network, OutPoint, ScriptBuf};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    fs::{self, File},
-    io::{BufReader, BufWriter},
+    fs::{self, read, File},
+    io::BufWriter,
     path::Path,
 };
 
@@ -84,9 +84,27 @@ impl WalletStore {
 
     /// Reads from a path (errors if path doesn't exist).
     pub(crate) fn read_from_disk(path: &Path) -> Result<Self, WalletError> {
-        let wallet_file = File::open(path)?;
-        let reader = BufReader::new(wallet_file);
-        let store: Self = serde_cbor::from_reader(reader)?;
+        //let wallet_file = File::open(path)?;
+        let mut reader = read(path)?;
+        let store = match serde_cbor::from_slice::<Self>(&reader) {
+            Ok(store) => store,
+            Err(e) => {
+                let err_string = format!("{:?}", e);
+                if err_string.contains("code: TrailingData") {
+                    log::info!("Wallet file has trailing data, trying to restore");
+                    loop {
+                        // pop the last byte and try again.
+                        reader.pop();
+                        match serde_cbor::from_slice::<Self>(&reader) {
+                            Ok(store) => break store,
+                            Err(_) => continue,
+                        }
+                    }
+                } else {
+                    return Err(e.into());
+                }
+            }
+        };
         Ok(store)
     }
 }

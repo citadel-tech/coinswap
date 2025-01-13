@@ -6,42 +6,33 @@ In this tutorial, we will guide you through the process of setting up and runnin
 
 ## Setup
 
-### Bitcoin Core
-
-In order to run the taker, you need to have Bitcoin Core installed and the `bitcoind` service running. You can download Bitcoin Core [here](https://bitcoin.org/en/bitcoin-core/). Now, before running the `bitcoind` service, you need to create a configuration file for it. Create a file named `bitcoin.conf` in the Bitcoin Core data directory (located at `$HOME/.bitcoin/` on Linux). Add the following lines to the file:
-
-```
-signet=1
-server=1
-txindex=1
-rpcuser=user
-rpcpassword=pass
-```
-
-This will make Bitcoin Core run on the Signet network, enable the RPC server, and set the RPC username and password to `user` and `pass` respectively. This is important for the taker to be able to interact with the Bitcoin Core service. The Signet network is a local testing network that allows you to mine blocks instantly and generate coins for testing purposes.
-
-Save the file and start the `bitcoind` service by running the following command:
-
-```
-bitcoind -signet
-```
-
-This will start the Bitcoin Core service on the Signet network in the background.
 
 ## Taker CLI
 
 The taker CLI is an application that allows you to perform coinswaps as a taker.
 
-### Installation
+### Start Bitcoin Core (Pre-requisite)
 
-[TODO]
+`Taker` requires a **Bitcoin Core** RPC connection running on **testnet4** for its operation. To get started, you need to start `bitcoind`:
+
+> **Important:**  
+> All apps are designed to run on **testnet4** for testing purposes. The DNS server that Taker connects to will also be on testnet4. While you can run these apps on other networks, there won't be any DNS available, so Taker won’t be able to connect to the DNS server fir getting maker's offers and can't do coinswap with makers.
+
+To start `bitcoind`:
+
+```bash
+$ bitcoind
+```
+
+**Note:** If you don’t have `bitcoind` installed or need help setting it up, refer to the [bitcoind demo documentation](./bitcoind.md).
+
 
 ### Usage
 
 Run the `taker` command to see the list of available commands and options.
 
 ```sh
-$ taker
+$ ./taker --help
 
 coinswap 0.1.0
 Developers at Citadel-Tech
@@ -96,7 +87,7 @@ $ taker -r 127.0.0.1:38332 -a user:pass get-new-address
 bcrt1qyywgd4we5y7u05lnrgs8runc3j7sspwqhekrdd
 ```
 
-Now we can use a Signet faucet to send some coins to this address. You can find a Signet faucet [here](https://signetfaucet.com/).
+Now we can use a testnet4 faucet to send some coins to this address. You can find a testnet4 faucet [here](https://mempool.space/testnet4/faucet).
 
 Once you have some coins in your wallet, you can check your balance by running the following command:
 
@@ -115,10 +106,10 @@ $ taker -r 127.0.0.1:38332 -a user:pass fetch-offers
 This will fetch the list of available makers from the directory server. Now we can initiate a coinswap with the makers.
 
 ```sh
-$ taker -r 127.0.0.1:38332 -a user:pass do-coinswap
+$ taker -r 127.0.0.1:38332 -a user:pass coinswap
 ```
 
-This will initiate a coinswap with the default parameters.
+This will initiate a coinswap with the default parameters. This will take some time. You can check swap progress at the log file in data diectory. In an new terminal do `tail -f <datadir>/debug.log`.
 
 ## Data, Config and Wallets
 

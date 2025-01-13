@@ -15,6 +15,8 @@ use bitcoind::bitcoincore_rpc::{json::CreateRawTransactionInput, RpcApi};
 
 use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
 
+use crate::taker::api::MINER_FEE;
+
 use super::Wallet;
 
 use super::error::WalletError;
@@ -385,7 +387,7 @@ impl Wallet {
 
         self.lock_unspendable_utxos()?;
 
-        let fee = Amount::from_sat(1000);
+        let fee = Amount::from_sat(MINER_FEE);
 
         let remaining = coinswap_amount;
 
