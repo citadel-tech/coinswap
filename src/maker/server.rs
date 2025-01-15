@@ -469,13 +469,26 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     // Initialize network connections.
 
     // Setup the wallet with fidelity bond.
+    let _tor_thread = network_bootstrap(maker.clone())?;
+
     let port = maker.config.network_port;
     let network = maker.get_wallet().read()?.store.network;
-    let balance = maker.get_wallet().read()?.spendable_balance()?;
-    log::info!("[{}] Currency Network: {}", port, network);
-    log::info!("[{}] Total Wallet Balance: {}", port, balance);
-
-    let _tor_thread = network_bootstrap(maker.clone())?;
+    let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;
+    let utxos = maker.get_wallet().read()?.get_all_utxo()?;
+    let balance = maker.get_wallet().read()?.spendable_balance(Some(&utxos))?;
+    let fidelity_amount = maker
+        .get_wallet()
+        .read()?
+        .balance_fidelity_bonds(Some(&utxos))?;
+    log::info!("[{}] Bitcoin Network: {}", port, network);
+    log::info!("[{}] Spenable Wallet Balance: {}", port, balance);
+    log::info!("[{}] Fidelity Bond Amount : {}", port, fidelity_amount);
+    log::info!(
+        "[{}] Minimum Swap Size {}",
+        port,
+        maker.config.min_swap_amount
+    );
+    log::info!("[{}] Maximum Swap Size {}", port, offer_max_size);
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.network_port))
         .map_err(NetError::IO)?;
@@ -570,6 +583,12 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     // Each client connection will spawn a new handler thread, which is added back in the global thread_pool.
     // This loop beats at `maker.config.heart_beat_interval_secs`
     while !maker.shutdown.load(Relaxed) {
+        if offer_max_size <= maker.config.min_swap_amount {
+            log::warn!("Swap liquidity less than minimum threshold, Please put more funds in the wallet | Min required {} sats | Available {} sats", maker.config.min_swap_amount, offer_max_size);
+            sleep(HEART_BEAT_INTERVAL);
+            continue;
+        }
+
         let maker = maker.clone(); // This clone is needed to avoid moving the Arc<Maker> in each iterations.
 
         // Block client connections if accepting_client=false

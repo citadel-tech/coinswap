@@ -482,7 +482,7 @@ fn download_maker_offer_attempt_once(
         }
     };
 
-    log::info!("Got offer from : {} | {:?}", maker_addr, offer);
+    log::info!("Got offer from : {} ", maker_addr);
 
     Ok(*offer)
 }

@@ -395,10 +395,10 @@ impl Taker {
         self.ongoing_swap_state.swap_params = swap_params;
         self.ongoing_swap_state.id = unique_id;
 
-        let available = self.wallet.spendable_balance()?;
+        let available = self.wallet.spendable_balance(None)?;
 
         // TODO: Make more exact estimate of swap cost and ensure balanbce.
-        // For now ensure at least swap_amount + 10000 is available.
+        // For now ensure at least swap_amount + 1000 sats is available.
         let required = swap_params.send_amount + Amount::from_sat(1000);
         if available < required {
             let err = WalletError::InsufficientFund {
