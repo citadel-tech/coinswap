@@ -17,7 +17,7 @@ use crate::{
 };
 
 #[cfg(feature = "tor")]
-use crate::utill::{get_tor_addrs, monitor_log_for_completion};
+use crate::utill::{get_tor_hostname, monitor_log_for_completion};
 
 use std::{
     collections::HashMap,
@@ -368,9 +368,10 @@ pub fn start_directory_server(
         ConnectionType::TOR => {
             #[cfg(feature = "tor")]
             {
-                let tor_log_dir = "/tmp/tor-rust-directory/log";
-                if Path::new(tor_log_dir).exists() {
-                    match fs::remove_file(tor_log_dir) {
+                let tor_dir = directory.data_dir.join("tor");
+                let log_file = tor_dir.join("log");
+                if log_file.exists() {
+                    match fs::remove_file(&log_file) {
                         Ok(_) => log::info!("Previous tor log file deleted successfully"),
                         Err(_) => log::error!("Error deleting tor log file"),
                     }
@@ -381,23 +382,22 @@ pub fn start_directory_server(
                 tor_handle = Some(crate::tor::spawn_tor(
                     socks_port,
                     network_port,
-                    "/tmp/tor-rust-directory".to_string(),
+                    tor_dir.to_str().unwrap().to_string(),
                 )?);
 
                 log::info!("waiting for tor setup completion.");
 
-                if let Err(e) = monitor_log_for_completion(
-                    &PathBuf::from(tor_log_dir),
-                    "Bootstrapped 100% (done): Done",
-                ) {
+                if let Err(e) =
+                    monitor_log_for_completion(&log_file, "Bootstrapped 100% (done): Done")
+                {
                     log::error!("Error monitoring tor log file: {}", e);
                 }
 
                 log::info!("tor is ready!!");
 
-                let onion_addr = get_tor_addrs(&PathBuf::from("/tmp/tor-rust-directory"))?;
+                let hostname = get_tor_hostname(&tor_dir)?;
 
-                log::info!("DNS is listening at {}:{}", onion_addr, network_port);
+                log::info!("DNS is listening at {}:{}", hostname, network_port);
             }
         }
     }

@@ -99,10 +99,10 @@ impl fmt::Display for ConnectionType {
     }
 }
 
-/// Read the tor address given an hidden_service directory path
-pub(crate) fn get_tor_addrs(hs_dir: &Path) -> io::Result<String> {
-    let hostname_file_path = hs_dir.join("hs-dir").join("hostname");
-    let mut hostname_file = File::open(hostname_file_path).unwrap();
+/// Read the tor address given a tor directory path
+pub(crate) fn get_tor_hostname(tor_dir: &Path) -> io::Result<String> {
+    let hostname_file_path = tor_dir.join("hs-dir").join("hostname");
+    let mut hostname_file = File::open(hostname_file_path)?;
     let mut tor_addrs: String = String::new();
     hostname_file.read_to_string(&mut tor_addrs)?;
     tor_addrs.pop(); // Remove `\n` at the end.

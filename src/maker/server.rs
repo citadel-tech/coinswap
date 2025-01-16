@@ -7,7 +7,7 @@
 use std::{
     io::ErrorKind,
     net::{Ipv4Addr, TcpListener, TcpStream},
-    path::PathBuf,
+    path::Path,
     process::Child,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
@@ -36,7 +36,7 @@ use crate::{
         rpc::start_rpc_server,
     },
     protocol::messages::{DnsMetadata, DnsRequest, TakerToMakerMessage},
-    utill::{get_tor_addrs, read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
+    utill::{get_tor_hostname, read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
     wallet::WalletError,
 };
 
@@ -114,18 +114,18 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
 
             log::info!("[{}] tor setup complete!", maker_port);
 
-            let maker_onion_addr = get_tor_addrs(&tor_dir)?;
-            let maker_address = format!("{}:{}", maker_onion_addr, maker.config.network_port);
+            let maker_hostname = get_tor_hostname(&tor_dir)?;
+            let maker_address = format!("{}:{}", maker_hostname, maker.config.network_port);
 
-            let directory_onion_address = if cfg!(feature = "integration-test") {
-                let directory_onion_addr =
-                    get_tor_addrs(&PathBuf::from("/tmp/tor-rust-directory"))?;
-                format!("{}:{}", directory_onion_addr, 8080)
+            let dns_address = if cfg!(feature = "integration-test") {
+                let dns_tor_dir = Path::new("/tmp/coinswap/dns/tor");
+                let dns_hostname = get_tor_hostname(dns_tor_dir)?;
+                format!("{}:{}", dns_hostname, 8080)
             } else {
                 maker.config.directory_server_address.clone()
             };
 
-            (maker_address, directory_onion_address, tor_handle)
+            (maker_address, dns_address, tor_handle)
         }
     };
 

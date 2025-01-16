@@ -1,6 +1,5 @@
 use std::{
-    fs::File,
-    io::{ErrorKind, Read},
+    io::ErrorKind,
     net::{TcpListener, TcpStream},
     sync::{atomic::Ordering::Relaxed, Arc},
     thread::sleep,
@@ -12,7 +11,7 @@ use bitcoin::{Address, Amount};
 use super::messages::RpcMsgReq;
 use crate::{
     maker::{error::MakerError, rpc::messages::RpcMsgResp, Maker},
-    utill::{read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
+    utill::{get_tor_hostname, read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
     wallet::{Destination, SendAmount},
 };
 use std::str::FromStr;
@@ -118,17 +117,11 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             if maker.config.connection_type == ConnectionType::CLEARNET {
                 RpcMsgResp::GetTorAddressResp("Maker is not running on TOR".to_string())
             } else {
-                let maker_hs_path_str = format!(
-                    "/tmp/tor-rust-maker{}/hs-dir/hostname",
-                    maker.config.network_port
-                );
-                let mut maker_file = File::open(maker_hs_path_str)?;
-                let mut maker_onion_addr: String = String::new();
-                maker_file.read_to_string(&mut maker_onion_addr)?;
-                maker_onion_addr.pop(); // Remove `\n` at the end.
-                let maker_address = format!("{}:{}", maker_onion_addr, maker.config.network_port);
+                let hostname = get_tor_hostname(&maker.data_dir.join("tor"))?;
 
-                RpcMsgResp::GetTorAddressResp(maker_address)
+                let address = format!("{}:{}", hostname, maker.config.network_port);
+
+                RpcMsgResp::GetTorAddressResp(address)
             }
         }
         RpcMsgReq::Stop => {
