@@ -105,7 +105,13 @@ enum Commands {
 
 fn main() -> Result<(), TakerError> {
     let args = Cli::parse();
-    setup_taker_logger(LevelFilter::from_str(&args.verbosity).unwrap());
+    setup_taker_logger(
+        LevelFilter::from_str(&args.verbosity).unwrap(),
+        matches!(
+            args.command,
+            Commands::Recover | Commands::FetchOffers | Commands::Coinswap { .. }
+        ),
+    );
 
     let rpc_config = RPCConfig {
         url: args.rpc,
@@ -168,7 +174,7 @@ fn main() -> Result<(), TakerError> {
             println!("{:?}", balance);
         }
         Commands::GetBalance => {
-            let balance = taker.get_wallet().spendable_balance()?;
+            let balance = taker.get_wallet().spendable_balance(None)?;
             println!("{:?}", balance);
         }
         Commands::GetNewAddress => {

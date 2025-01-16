@@ -281,9 +281,12 @@ impl Wallet {
     }
 
     /// Calculates the total spendable balance of the wallet. Includes all utxos except the fidelity bond.
-    pub fn spendable_balance(&self) -> Result<Amount, WalletError> {
+    pub fn spendable_balance(
+        &self,
+        utxos: Option<&Vec<ListUnspentResultEntry>>,
+    ) -> Result<Amount, WalletError> {
         Ok(self
-            .list_all_utxo_spend_info(None)?
+            .list_all_utxo_spend_info(utxos)?
             .iter()
             .filter(|(_, spend_info)| !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. }))
             .fold(Amount::ZERO, |a, (utxo, _)| a + utxo.amount))

@@ -49,6 +49,20 @@ pub(crate) fn handle_message(
     connection_state: &mut ConnectionState,
     message: TakerToMakerMessage,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
+    // If taker is waiting for funding confirmation, reset the timer.
+    if let TakerToMakerMessage::WaitingFundingConfirmation(id) = &message {
+        log::info!(
+            "[{}] Taker is waiting for funding confirmation. Reseting timer.",
+            maker.config.network_port
+        );
+        maker
+            .connection_state
+            .lock()?
+            .entry(id.clone())
+            .and_modify(|(_, timer)| *timer = Instant::now());
+        return Ok(None);
+    }
+
     let outgoing_message = match connection_state.allowed_message {
         ExpectedMessage::TakerHello => {
             if let TakerToMakerMessage::TakerHello(m) = message {
@@ -397,7 +411,7 @@ impl Maker {
             .expect("This should not overflow as we just above.");
 
         log::info!(
-            "[{}] Outgoing Funding Txids: {:?}.",
+            "[{}] Prepared outgoing funding txs: {:?}.",
             self.config.network_port,
             my_funding_txes
                 .iter()
@@ -514,7 +528,7 @@ impl Maker {
             my_funding_txids.push(txid);
         }
         log::info!(
-            "[{}] Outgoing Funding Txids: {:?}",
+            "[{}] Broadcasted funding txs: {:?}",
             self.config.network_port,
             my_funding_txids
         );

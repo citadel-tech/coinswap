@@ -204,6 +204,7 @@ pub(crate) enum TakerToMakerMessage {
     RespHashPreimage(HashPreimage),
     /// Respond by handing over the Private Keys of coinswap multisig. This denotes the completion of the whole swap.
     RespPrivKeyHandover(PrivKeyHandover),
+    WaitingFundingConfirmation(String),
 }
 
 impl Display for TakerToMakerMessage {
@@ -219,6 +220,7 @@ impl Display for TakerToMakerMessage {
             Self::ReqContractSigsForRecvr(_) => write!(f, "ReqContractSigsForRecvr"),
             Self::RespHashPreimage(_) => write!(f, "RespHashPreimage"),
             Self::RespPrivKeyHandover(_) => write!(f, "RespPrivKeyHandover"),
+            Self::WaitingFundingConfirmation(_) => write!(f, "WaitingFundingConfirmation"),
         }
     }
 }

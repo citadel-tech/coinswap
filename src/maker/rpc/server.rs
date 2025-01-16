@@ -72,7 +72,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             RpcMsgResp::FidelityBalanceResp(balance.to_sat())
         }
         RpcMsgReq::Balance => {
-            let balance = maker.get_wallet().read()?.spendable_balance()?;
+            let balance = maker.get_wallet().read()?.spendable_balance(None)?;
             RpcMsgResp::SeedBalanceResp(balance.to_sat())
         }
         RpcMsgReq::SwapBalance => {

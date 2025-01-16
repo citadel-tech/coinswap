@@ -9,7 +9,7 @@
 //! [Taker::do_coinswap]: The routine running all other protocol subroutines.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     io::BufWriter,
     net::TcpStream,
     path::{Path, PathBuf},
@@ -392,10 +392,10 @@ impl Taker {
         self.ongoing_swap_state.swap_params = swap_params;
         self.ongoing_swap_state.id = unique_id;
 
-        let available = self.wallet.spendable_balance()?;
+        let available = self.wallet.spendable_balance(None)?;
 
         // TODO: Make more exact estimate of swap cost and ensure balanbce.
-        // For now ensure at least swap_amount + 10000 is available.
+        // For now ensure at least swap_amount + 1000 sats is available.
         let required = swap_params.send_amount + Amount::from_sat(1000);
         if available < required {
             let err = WalletError::InsufficientFund {
@@ -628,7 +628,7 @@ impl Taker {
             .iter()
             .map(|tx| {
                 let txid = self.wallet.send_tx(tx)?;
-                log::info!("Funding Txid: {}", txid);
+                log::info!("Broadcasted Funding tx. txid: {}", txid);
                 assert_eq!(txid, tx.compute_txid());
                 Ok(txid)
             })
@@ -665,30 +665,39 @@ impl Taker {
         let mut txid_tx_map = HashMap::<Txid, Transaction>::new();
         let mut txid_blockhash_map = HashMap::<Txid, BlockHash>::new();
 
-        // Required confirmation target for the funding txs.
-        let required_confirmations =
+        // Find next maker's details
+        let (required_confirmations, maker_addr) =
             if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
-                self.ongoing_swap_state.swap_params.required_confirms
+                (self.ongoing_swap_state.swap_params.required_confirms, None)
             } else {
                 self.ongoing_swap_state
                     .peer_infos
                     .last()
+                    .map(|npi| {
+                        (
+                            npi.peer.offer.required_confirms,
+                            Some(npi.peer.address.clone()),
+                        )
+                    })
                     .expect("Maker information expected in swap state")
-                    .peer
-                    .offer
-                    .required_confirms
             };
         log::info!(
-            "Waiting for funding transaction confirmations ({} conf required)",
-            required_confirmations
+            "Waiting for funding transaction confirmation. Txids : {:?}",
+            funding_txids
         );
-        let mut txids_seen_once = HashSet::<Txid>::new();
 
         // Wait for this much time for txs to appear in mempool.
-        let wait_time = if cfg!(feature = "integration-test") {
+        let mempool_wait_timeout = if cfg!(feature = "integration-test") {
             10u64 // 10 secs for the tests
         } else {
             60 * 5 // 5mins for production
+        };
+
+        // Check for funding confirmation at this frequency
+        let sleep_interval = if cfg!(feature = "integration-test") {
+            1u64 // 1 secs for the tests
+        } else {
+            30 // 30 secs for production
         };
 
         let start_time = Instant::now();
@@ -698,14 +707,14 @@ impl Taker {
             // TODO: Find the culprit Maker, and ban it's fidelity bond.
             let contracts_broadcasted = self.check_for_broadcasted_contract_txes();
             if !contracts_broadcasted.is_empty() {
-                log::info!(
-                    "Contract transactions were broadcasted : {:?}",
+                log::error!(
+                    "Fatal! Contract txs broadcasted by makers. Txids : {:?}",
                     contracts_broadcasted
                 );
                 return Err(TakerError::ContractsBroadcasted(contracts_broadcasted));
             }
 
-            // Check for funding transactions
+            // Check for each funding transactions if they are confirmed
             for txid in funding_txids {
                 if txid_tx_map.contains_key(txid) {
                     continue;
@@ -715,29 +724,39 @@ impl Taker {
                     // Transaction haven't arrived in our mempool, keep looping.
                     Err(_e) => {
                         let elapsed = start_time.elapsed().as_secs();
-                        log::info!("Waiting for mempool transaction for {}secs", elapsed);
-                        if elapsed > wait_time {
+                        log::info!(
+                            "Waiting for funding tx to appear in mempool | {} secs",
+                            elapsed
+                        );
+                        if elapsed > mempool_wait_timeout {
+                            log::error!("Timed out waiting for funding tx to appear in mempool. | No tx seen in {} secs", elapsed);
                             return Err(TakerError::FundingTxWaitTimeOut);
                         }
                         continue;
                     }
                 };
-                if !txids_seen_once.contains(txid) {
-                    txids_seen_once.insert(*txid);
-                    if gettx.confirmations.is_none() {
-                        let mempool_tx = match self.wallet.rpc.get_mempool_entry(txid) {
-                            Ok(m) => m,
-                            Err(_e) => {
-                                continue;
-                            }
-                        };
-                        log::info!(
-                            "Tx {} Seen in Mempool | [{:.1} sat/vbyte]",
-                            txid,
-                            (mempool_tx.fees.base.to_sat() as f32) / (mempool_tx.vsize as f32)
-                        );
+
+                // log that its waiting for confirmation.
+                if gettx.confirmations.is_none() {
+                    let elapsed = start_time.elapsed().as_secs();
+                    log::info!(
+                        "Funding tx Seen in Mempool. Waiting for confirmation for {} secs",
+                        elapsed,
+                    );
+
+                    if let Some(maker_addr) = &maker_addr {
+                        self.send_to_maker(
+                            maker_addr,
+                            TakerToMakerMessage::WaitingFundingConfirmation(
+                                self.ongoing_swap_state.id.clone(),
+                            ),
+                        )?;
+                    } else {
+                        log::info!("Waiting for our incoming funding tx.");
                     }
                 }
+
+                // handle confirmations
                 //TODO handle confirm<0
                 if gettx.confirmations >= Some(required_confirmations) {
                     txid_tx_map.insert(
@@ -777,7 +796,7 @@ impl Taker {
                     .map_err(WalletError::from)?;
                 return Ok((txes, merkleproofs));
             }
-            sleep(Duration::from_millis(1000));
+            sleep(Duration::from_secs(sleep_interval));
         }
     }
 
@@ -2002,6 +2021,11 @@ impl Taker {
             }
 
             // Everything is broadcasted. Clear the connectionstate and break the loop
+            log::info!(
+                "{} outgoing contracts detected | {} timelock txs broadcasted.",
+                outgoing_infos.len(),
+                timelock_boardcasted.len()
+            );
             if timelock_boardcasted.len() == outgoing_infos.len() {
                 log::info!("All outgoing contracts reedemed. Cleared ongoing swap state");
                 // TODO: Reevaluate this.
@@ -2108,5 +2132,33 @@ impl Taker {
         self.tor_handle = self.setup_tor()?;
         self.sync_offerbook()?;
         Ok(&self.offerbook)
+    }
+
+    /// Send any message to a maker
+    fn send_to_maker(
+        &self,
+        maker_addr: &MakerAddress,
+        msg: TakerToMakerMessage,
+    ) -> Result<(), TakerError> {
+        // Notify the maker that we are waiting for funding confirmation
+        let address = maker_addr.to_string();
+        let mut socket = match self.config.connection_type {
+            ConnectionType::CLEARNET => TcpStream::connect(address)?,
+            #[cfg(feature = "tor")]
+            ConnectionType::TOR => Socks5Stream::connect(
+                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+                address.as_str(),
+            )?
+            .into_inner(),
+        };
+
+        let reconnect_timeout = Duration::from_secs(TCP_TIMEOUT_SECONDS);
+
+        socket.set_write_timeout(Some(reconnect_timeout))?;
+
+        send_message(&mut socket, &msg)?;
+        log::info!("===> Sent {} to {}", msg, maker_addr);
+
+        Ok(())
     }
 }
