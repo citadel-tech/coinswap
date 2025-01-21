@@ -145,6 +145,14 @@ impl Wallet {
         Ok(())
     }
 
+    /// Keep retrying sync until success and log failure.
+    // This is useful to handle transient RPC errors.
+    pub fn sync_no_fail(&mut self) {
+        while let Err(e) = self.sync() {
+            log::error!("Blockchain sync failed. Retrying. | {:?}", e);
+        }
+    }
+
     /// Import watch addresses into core wallet. Does not check if the address was already imported.
     pub(crate) fn import_descriptors(
         &self,

@@ -9,7 +9,7 @@ use std::{
     convert::TryFrom,
     fmt,
     fs::read,
-    io::{BufWriter, Write},
+    io::BufWriter,
     net::TcpStream,
     path::Path,
     sync::mpsc,
@@ -46,7 +46,7 @@ struct OnionAddress {
 }
 
 /// Enum representing maker addresses.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 pub struct MakerAddress(OnionAddress);
 
 impl MakerAddress {
@@ -215,18 +215,31 @@ pub fn fetch_addresses_from_dns(
 
     loop {
         let mut stream = match connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(dns_addr.as_str())?,
+            ConnectionType::CLEARNET => match TcpStream::connect(dns_addr.as_str()) {
+                Err(e) => {
+                    log::error!("Error connecting to DNS: {:?}", e);
+                    thread::sleep(GLOBAL_PAUSE);
+                    continue;
+                }
+                Ok(s) => s,
+            },
             #[cfg(feature = "tor")]
             ConnectionType::TOR => {
                 let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
-                Socks5Stream::connect(socket_addrs, dns_addr.as_str())?.into_inner()
+                match Socks5Stream::connect(socket_addrs, dns_addr.as_str()) {
+                    Err(e) => {
+                        log::error!("Error connecting to DNS: {:?}", e);
+                        thread::sleep(GLOBAL_PAUSE);
+                        continue;
+                    }
+                    Ok(s) => s.into_inner(),
+                }
             }
         };
 
         stream.set_read_timeout(Some(NET_TIMEOUT))?;
         stream.set_write_timeout(Some(NET_TIMEOUT))?;
         stream.set_nonblocking(false)?;
-        stream.flush()?;
 
         if let Err(e) = send_message(&mut stream, &DnsRequest::Get) {
             log::error!("Failed to send request. Retrying...{}", e);
