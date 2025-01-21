@@ -126,8 +126,8 @@ impl Wallet {
         if let SendAmount::Amount(a) = send_amount {
             if a + fee > total_input_value {
                 return Err(WalletError::InsufficientFund {
-                    available: total_input_value.to_btc(),
-                    required: (a + fee).to_btc(),
+                    available: total_input_value.to_sat(),
+                    required: (a + fee).to_sat(),
                 });
             }
         }

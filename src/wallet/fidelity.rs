@@ -314,7 +314,7 @@ impl Wallet {
         let all_utxos = self.get_all_utxo()?;
 
         let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
-        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
+        let mut swap_coin_utxo = self.list_incoming_swap_coin_utxo_spend_info(Some(&all_utxos))?;
         seed_coin_utxo.append(&mut swap_coin_utxo);
 
         // Fetch utxos, filter out existing fidelity coins
@@ -348,8 +348,8 @@ impl Wallet {
 
         if total_input_amount < amount + fee {
             return Err(WalletError::InsufficientFund {
-                available: total_input_amount.to_btc(),
-                required: (amount + fee).to_btc(),
+                available: total_input_amount.to_sat(),
+                required: (amount + fee).to_sat(),
             });
         }
 
