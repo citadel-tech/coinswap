@@ -37,14 +37,8 @@ enum Commands {
     ListUtxoContract,
     /// Lists fidelity bond utxos.
     ListUtxoFidelity,
-    /// Get total wallet balance, excluding Fidelity bonds.
+    /// Get total wallet balance.
     GetBalance,
-    /// Get total balance received via incoming swaps.
-    GetBalanceSwap,
-    /// Get total balances of HTLC contract utxos.
-    GetBalanceContract,
-    /// Get total amount locked in fidelity bonds.
-    GetBalanceFidelity,
     /// Gets a new bitcoin receiving address
     GetNewAddress,
     /// Send Bitcoin to an external address and returns the txid.
@@ -89,12 +83,6 @@ fn main() -> Result<(), MakerError> {
         Commands::ListUtxoContract => {
             send_rpc_req(stream, RpcMsgReq::ContractUtxo)?;
         }
-        Commands::GetBalanceContract => {
-            send_rpc_req(stream, RpcMsgReq::ContractBalance)?;
-        }
-        Commands::GetBalanceFidelity => {
-            send_rpc_req(stream, RpcMsgReq::FidelityBalance)?;
-        }
         Commands::ListUtxoFidelity => {
             send_rpc_req(stream, RpcMsgReq::FidelityUtxo)?;
         }
@@ -103,9 +91,6 @@ fn main() -> Result<(), MakerError> {
         }
         Commands::ListUtxo => {
             send_rpc_req(stream, RpcMsgReq::Utxo)?;
-        }
-        Commands::GetBalanceSwap => {
-            send_rpc_req(stream, RpcMsgReq::SwapBalance)?;
         }
         Commands::ListUtxoSwap => {
             send_rpc_req(stream, RpcMsgReq::SwapUtxo)?;

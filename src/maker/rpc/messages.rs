@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Display};
 
-use bitcoin::Txid;
+use bitcoin::{Amount, Txid};
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -25,12 +25,6 @@ pub enum RpcMsgReq {
     FidelityUtxo,
     /// Request to retreive the total spenable balance in wallet.
     Balance,
-    /// Request to retrieve the total swap balance in wallet.
-    SwapBalance,
-    /// Request to retrieve the total balance in the contract pool.
-    ContractBalance,
-    /// Request to retrieve the total balance in the fidelity pool.
-    FidelityBalance,
     /// Request for generating a new wallet address.
     NewAddress,
     /// Request to send funds to a specific address.
@@ -54,6 +48,30 @@ pub enum RpcMsgReq {
     ListFidelity,
     /// Request to sync the internal wallet with blockchain.
     SyncWallet,
+}
+
+/// Represents balance of each utxo type.
+pub struct Balance {
+    /// Seed balance.
+    pub regular: Amount,
+    /// Incoming swap balance.
+    pub swap: Amount,
+    /// Unfinished timelock contract balance.
+    pub contract: Amount,
+    /// Amount locked in Fidelity bonds.
+    pub fidelity: Amount,
+    /// Spendable amount in wallet (seed + swap balance).
+    pub spendable: Amount,
+}
+
+impl Display for Balance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Seed balance: {}, Swap balance: {}, Contract balance: {}, Fidelity balance: {}, Spendable balance: {}",
+            self.regular.to_sat(), self.swap.to_sat(), self.contract.to_sat(), self.fidelity.to_sat(), self.regular.to_sat() + self.swap.to_sat()
+        )
+    }
 }
 
 /// Enum representing RPC message responses.
@@ -84,14 +102,8 @@ pub enum RpcMsgResp {
         /// List of UTXOs in the contract pool.
         utxos: Vec<ListUnspentResultEntry>,
     },
-    /// Response containing the total balance in the seed pool.
-    SeedBalanceResp(u64),
-    /// Response containing the total balance in the swap pool.
-    SwapBalanceResp(u64),
-    /// Response containing the total balance in the contract pool.
-    ContractBalanceResp(u64),
-    /// Response containing the total balance in the fidelity pool.
-    FidelityBalanceResp(u64),
+    /// Response containing the total wallet balance.
+    TotalBalanceResp(Balance),
     /// Response containing a newly generated wallet address.
     NewAddressResp(String),
     /// Response to a send-to-address request.
@@ -115,10 +127,7 @@ impl Display for RpcMsgResp {
         match self {
             Self::Pong => write!(f, "Pong"),
             Self::NewAddressResp(addr) => write!(f, "{}", addr),
-            Self::SeedBalanceResp(bal) => write!(f, "{} sats", bal),
-            Self::ContractBalanceResp(bal) => write!(f, "{} sats", bal),
-            Self::SwapBalanceResp(bal) => write!(f, "{} sats", bal),
-            Self::FidelityBalanceResp(bal) => write!(f, "{} sats", bal),
+            Self::TotalBalanceResp(balance) => write!(f, "{}", balance),
             Self::UtxoResp { utxos } => write!(f, "{:#?}", utxos),
             Self::SwapUtxoResp { utxos } => write!(f, "{:#?}", utxos),
             Self::FidelityUtxoResp { utxos } => write!(f, "{:#?}", utxos),
