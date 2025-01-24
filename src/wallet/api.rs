@@ -312,7 +312,7 @@ impl Wallet {
 
     /// Calculates live contract balance of the wallet.
     /// Optionally takes in a list of UTXOs to reduce rpc call. If None is provided, the full list is fetched from core rpc.
-    pub fn balance_live_contract(
+    pub fn balance_live_timelock_contract(
         &self,
         all_utxos: Option<&Vec<ListUnspentResultEntry>>,
     ) -> Result<Amount, WalletError> {

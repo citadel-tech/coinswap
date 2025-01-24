@@ -174,7 +174,7 @@ fn main() -> Result<(), TakerError> {
             println!("{:#?}", utxos);
         }
         Commands::GetBalanceContract => {
-            let balance = taker.get_wallet().balance_live_contract(None)?;
+            let balance = taker.get_wallet().balance_live_timelock_contract(None)?;
             println!("{:?}", balance);
         }
         Commands::GetBalanceSwap => {

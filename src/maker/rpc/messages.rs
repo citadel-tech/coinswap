@@ -3,6 +3,7 @@ use std::{collections::HashMap, fmt::Display};
 use bitcoin::{Amount, Txid};
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, to_string_pretty};
 use std::path::PathBuf;
 
 use crate::wallet::FidelityBond;
@@ -50,28 +51,18 @@ pub enum RpcMsgReq {
     SyncWallet,
 }
 
-/// Represents balance of each utxo type.
+/// Represents total wallet balances of different categories.
 pub struct Balance {
-    /// Seed balance.
+    /// All single signature regular wallet coins (seed balance).
     pub regular: Amount,
-    /// Incoming swap balance.
+    ///  All 2of2 multisig coins received in swaps.
     pub swap: Amount,
-    /// Unfinished timelock contract balance.
+    ///  All live contract transaction balance locked in timelocks.
     pub contract: Amount,
-    /// Amount locked in Fidelity bonds.
+    /// All coins locked in fidelity bonds.
     pub fidelity: Amount,
     /// Spendable amount in wallet (seed + swap balance).
     pub spendable: Amount,
-}
-
-impl Display for Balance {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Seed balance: {}, Swap balance: {}, Contract balance: {}, Fidelity balance: {}, Spendable balance: {}",
-            self.regular.to_sat(), self.swap.to_sat(), self.contract.to_sat(), self.fidelity.to_sat(), self.regular.to_sat() + self.swap.to_sat()
-        )
-    }
 }
 
 /// Enum representing RPC message responses.
@@ -127,7 +118,20 @@ impl Display for RpcMsgResp {
         match self {
             Self::Pong => write!(f, "Pong"),
             Self::NewAddressResp(addr) => write!(f, "{}", addr),
-            Self::TotalBalanceResp(balance) => write!(f, "{}", balance),
+            Self::TotalBalanceResp(balance) => {
+                write!(
+                    f,
+                    "{}",
+                    to_string_pretty(&json!({
+                        "regular": balance.regular.to_sat(),
+                        "swap": balance.swap.to_sat(),
+                        "contract": balance.contract.to_sat(),
+                        "fidelity": balance.fidelity.to_sat(),
+                        "spendable": balance.regular.to_sat() + balance.swap.to_sat(),
+                    }))
+                    .unwrap()
+                )
+            }
             Self::UtxoResp { utxos } => write!(f, "{:#?}", utxos),
             Self::SwapUtxoResp { utxos } => write!(f, "{:#?}", utxos),
             Self::FidelityUtxoResp { utxos } => write!(f, "{:#?}", utxos),

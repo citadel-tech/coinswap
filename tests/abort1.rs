@@ -97,7 +97,9 @@ fn test_stop_taker_after_setup() {
                 .balance_incoming_swap_coins(Some(&all_utxos))
                 .unwrap();
 
-            let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
+            let live_contract_balance = wallet
+                .balance_live_timelock_contract(Some(&all_utxos))
+                .unwrap();
 
             assert_eq!(seed_balance, Amount::from_btc(0.14999).unwrap());
             assert_eq!(fidelity_balance, Amount::from_btc(0.05).unwrap());

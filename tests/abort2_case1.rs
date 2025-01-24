@@ -94,7 +94,9 @@ fn test_abort_case_2_move_on_with_other_makers() {
                 .balance_incoming_swap_coins(Some(&all_utxos))
                 .unwrap();
 
-            let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
+            let live_contract_balance = wallet
+                .balance_live_timelock_contract(Some(&all_utxos))
+                .unwrap();
 
             assert_eq!(seed_balance, Amount::from_btc(0.14999).unwrap());
             assert_eq!(fidelity_balance, Amount::from_btc(0.05).unwrap());

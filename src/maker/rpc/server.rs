@@ -69,7 +69,10 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
         }
         RpcMsgReq::Balance => {
             let regular = maker.get_wallet().read()?.spendable_balance(None)?;
-            let contract = maker.get_wallet().read()?.balance_live_contract(None)?;
+            let contract = maker
+                .get_wallet()
+                .read()?
+                .balance_live_timelock_contract(None)?;
             let fidelity = maker.get_wallet().read()?.balance_fidelity_bonds(None)?;
             let swap = maker
                 .get_wallet()
