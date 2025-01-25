@@ -145,22 +145,35 @@ pub(crate) fn get_dns_dir() -> PathBuf {
 /// the console and a file. It sets the `RUST_LOG` environment variable to provide default
 /// log levels and configures log4rs with the specified filter level for fine-grained control
 /// of log verbosity.
-pub fn setup_taker_logger(filter: LevelFilter) {
+pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool) {
     Once::new().call_once(|| {
-        //env::set_var("RUST_LOG", "coinswap=info");
+        // TODO: Get the custom datadir instead of the default.
         let log_dir = get_taker_dir().join("debug.log");
 
         let file_appender = FileAppender::builder().build(log_dir).unwrap();
+        let stdout = ConsoleAppender::builder().build();
 
-        let config = Config::builder()
-            .appender(Appender::builder().build("file", Box::new(file_appender)))
-            .logger(
-                Logger::builder()
-                    .appender("file")
-                    .build("coinswap::taker", filter),
-            )
-            .build(Root::builder().appender("file").build(filter))
-            .unwrap();
+        let config =
+            Config::builder().appender(Appender::builder().build("file", Box::new(file_appender)));
+
+        let config = if is_stdout {
+            config.appender(Appender::builder().build("stdout", Box::new(stdout)))
+            //.logger(Logger::builder().appender("stdout").build("stdout", filter))
+        } else {
+            config
+        };
+
+        // Add appenders to the root logger
+        let root_logger = if is_stdout {
+            Root::builder()
+                .appender("file")
+                .appender("stdout")
+                .build(filter)
+        } else {
+            Root::builder().appender("file").build(filter)
+        };
+
+        let config = config.build(root_logger).unwrap();
 
         log4rs::init_config(config).unwrap();
     })
@@ -174,7 +187,7 @@ pub fn setup_taker_logger(filter: LevelFilter) {
 /// of log verbosity.
 pub fn setup_maker_logger(filter: LevelFilter) {
     Once::new().call_once(|| {
-        //env::set_var("RUST_LOG", "coinswap=info");
+        // TODO: Get the custom datadir instead of the default.
         let log_dir = get_maker_dir().join("debug.log");
 
         let stdout = ConsoleAppender::builder().build();
@@ -203,7 +216,7 @@ pub fn setup_maker_logger(filter: LevelFilter) {
 /// of log verbosity.
 pub fn setup_directory_logger(filter: LevelFilter) {
     Once::new().call_once(|| {
-        //env::set_var("RUST_LOG", "coinswap=info");
+        // TODO: Get the custom datadir instead of the default.
         let log_dir = get_dns_dir().join("debug.log");
 
         let stdout = ConsoleAppender::builder().build();
@@ -226,6 +239,7 @@ pub fn setup_directory_logger(filter: LevelFilter) {
 
 /// Setup function that will only run once, even if called multiple times.
 /// Takes log level to set the desired logging verbosity
+// TODO: Use the above setup logger functions.
 pub fn setup_logger(filter: LevelFilter) {
     Once::new().call_once(|| {
         env::set_var("RUST_LOG", "coinswap=info");

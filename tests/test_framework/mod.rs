@@ -206,7 +206,9 @@ pub fn fund_and_verify_taker(
 
     let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
 
-    let swapcoin_balance = wallet.balance_swap_coins(Some(&all_utxos)).unwrap();
+    let swapcoin_balance = wallet
+        .balance_incoming_swap_coins(Some(&all_utxos))
+        .unwrap();
 
     let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
 
@@ -255,7 +257,9 @@ pub fn fund_and_verify_maker(
 
         let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
 
-        let swapcoin_balance = wallet.balance_swap_coins(Some(&all_utxos)).unwrap();
+        let swapcoin_balance = wallet
+            .balance_incoming_swap_coins(Some(&all_utxos))
+            .unwrap();
 
         let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
 
@@ -281,7 +285,9 @@ pub fn verify_swap_results(
         let all_utxos = wallet.get_all_utxo().unwrap();
         let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
         let seed_balance = wallet.balance_descriptor_utxo(Some(&all_utxos)).unwrap();
-        let swapcoin_balance = wallet.balance_swap_coins(Some(&all_utxos)).unwrap();
+        let swapcoin_balance = wallet
+            .balance_incoming_swap_coins(Some(&all_utxos))
+            .unwrap();
         let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
 
         let spendable_balance = seed_balance + swapcoin_balance;
@@ -324,7 +330,9 @@ pub fn verify_swap_results(
             let all_utxos = wallet.get_all_utxo().unwrap();
             let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
             let seed_balance = wallet.balance_descriptor_utxo(Some(&all_utxos)).unwrap();
-            let swapcoin_balance = wallet.balance_swap_coins(Some(&all_utxos)).unwrap();
+            let swapcoin_balance = wallet
+                .balance_incoming_swap_coins(Some(&all_utxos))
+                .unwrap();
             let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
 
             let spendable_balance = seed_balance + swapcoin_balance;

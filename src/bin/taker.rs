@@ -55,17 +55,21 @@ struct Cli {
 #[derive(Parser, Debug)]
 enum Commands {
     // TODO: Design a better structure to display different utxos and balance groups.
-    /// Lists all currently spendable utxos
+    /// Lists all utxos we know about along with their spend info. This is useful for debugging
     ListUtxo,
+    /// List all signle signature wallet Utxos. These are all non-swap regular wallet utxos.
+    ListUtxoRegular,
     /// Lists all utxos received in incoming swaps
     ListUtxoSwap,
-    /// Lists all HTLC utxos (if any)
+    /// Lists all utxos that we need to claim via timelock. If you see entries in this list, do a `taker recover` to claim them.
     ListUtxoContract,
-    /// Get the total spendable wallet balance (sats)
+    /// Get the total spendable wallet balance in sats (regular + swap utxos)
     GetBalance,
-    /// Get the total balance received from swaps (sats)
+    /// Get Balance of all single sig regular wallet utxos.
+    GetBalanceRegular,
+    /// Get the total balance received in incoming swaps (sats)
     GetBalanceSwap,
-    /// Get the total amount stuck in HTLC contracts (sats)
+    /// Get the total amount stuck in timelock contracts (sats)
     GetBalanceContract,
     /// Returns a new address
     GetNewAddress,
@@ -105,7 +109,13 @@ enum Commands {
 
 fn main() -> Result<(), TakerError> {
     let args = Cli::parse();
-    setup_taker_logger(LevelFilter::from_str(&args.verbosity).unwrap());
+    setup_taker_logger(
+        LevelFilter::from_str(&args.verbosity).unwrap(),
+        matches!(
+            args.command,
+            Commands::Recover | Commands::FetchOffers | Commands::Coinswap { .. }
+        ),
+    );
 
     let rpc_config = RPCConfig {
         url: args.rpc,
@@ -133,9 +143,13 @@ fn main() -> Result<(), TakerError> {
 
     match args.command {
         Commands::ListUtxo => {
+            let utxos = taker.get_wallet().list_all_utxo_spend_info(None)?;
+            println!("{:#?}", utxos);
+        }
+        Commands::ListUtxoRegular => {
             let utxos: Vec<ListUnspentResultEntry> = taker
                 .get_wallet()
-                .list_all_utxo_spend_info(None)?
+                .list_descriptor_utxo_spend_info(None)?
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect();
@@ -144,19 +158,19 @@ fn main() -> Result<(), TakerError> {
         Commands::ListUtxoSwap => {
             let utxos: Vec<ListUnspentResultEntry> = taker
                 .get_wallet()
-                .list_swap_coin_utxo_spend_info(None)?
+                .list_incoming_swap_coin_utxo_spend_info(None)?
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect();
             println!("{:#?}", utxos);
         }
         Commands::ListUtxoContract => {
-            let utxos: Vec<ListUnspentResultEntry> = taker
+            let utxos = taker
                 .get_wallet()
-                .list_live_contract_spend_info(None)?
+                .list_live_timelock_contract_spend_info(None)?
                 .iter()
                 .map(|(l, _)| l.clone())
-                .collect();
+                .collect::<Vec<_>>();
             println!("{:#?}", utxos);
         }
         Commands::GetBalanceContract => {
@@ -164,11 +178,15 @@ fn main() -> Result<(), TakerError> {
             println!("{:?}", balance);
         }
         Commands::GetBalanceSwap => {
-            let balance = taker.get_wallet().balance_swap_coins(None)?;
+            let balance = taker.get_wallet().balance_incoming_swap_coins(None)?;
             println!("{:?}", balance);
         }
         Commands::GetBalance => {
-            let balance = taker.get_wallet().spendable_balance()?;
+            let balance = taker.get_wallet().spendable_balance(None)?;
+            println!("{:?}", balance);
+        }
+        Commands::GetBalanceRegular => {
+            let balance = taker.get_wallet().balance_descriptor_utxo(None)?;
             println!("{:?}", balance);
         }
         Commands::GetNewAddress => {
@@ -213,7 +231,6 @@ fn main() -> Result<(), TakerError> {
         }
 
         Commands::FetchOffers => {
-            println!("Fetching offerdata from the market. use `tail -f <data-dir>/debug.log` to see progress.");
             let offerbook = taker.fetch_offers()?;
             println!("{:#?}", offerbook)
         }
@@ -224,16 +241,11 @@ fn main() -> Result<(), TakerError> {
                 tx_count: 1,
                 required_confirms: REQUIRED_CONFIRMS,
             };
-
-            println!("Starting coinswap with swap params : {:?}. use `tail -f <data-dir>/debug.log` to see progress.", swap_params);
             taker.do_coinswap(swap_params)?;
-            println!("succesfully completed coinswap!! Check `list-utxo` to see the new coins");
         }
 
         Commands::Recover => {
-            println!("Starting recovery. use `tail -f <data-dir>/debug.log` to see progress.");
             taker.recover_from_swap()?;
-            println!("Recovery completed succesfully.");
         }
     }
 

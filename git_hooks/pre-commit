@@ -21,4 +21,13 @@ if ! cargo hack --feature-powerset check; then
     exit 1
 fi
 
+# Check for unit tests
+echo "Checking Unit Tests..."
+if ! cargo test -q; then
+    echo "unit test failed"
+    echo "Please fix the issues before committing."
+    exit 1
+fi
+
+
 exit 0 

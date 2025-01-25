@@ -83,7 +83,7 @@ Currently, it is required to run the apps from the project root dirtectory only.
 The apps also requires a fully synced, non-prunded `bitcoind` node with RPC access on Testnet4 with `-txindex` enabled. 
 
 An example `bitcoin.conf` with the required and other optional flags:
-```
+```bash
 testnet4=1 #Required
 server=1
 txindex=1 #Required

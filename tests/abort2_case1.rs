@@ -90,7 +90,9 @@ fn test_abort_case_2_move_on_with_other_makers() {
 
             let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
 
-            let swapcoin_balance = wallet.balance_swap_coins(Some(&all_utxos)).unwrap();
+            let swapcoin_balance = wallet
+                .balance_incoming_swap_coins(Some(&all_utxos))
+                .unwrap();
 
             let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
 
@@ -198,7 +200,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
     let taker_wallet_mut = taker.get_wallet_mut();
 
     let swap_coins = taker_wallet_mut
-        .list_swap_coin_utxo_spend_info(None)
+        .list_incoming_swap_coin_utxo_spend_info(None)
         .unwrap();
 
     let tx = taker_wallet_mut
@@ -221,7 +223,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
 
     taker_wallet_mut.sync().unwrap();
 
-    let swap_coin_bal = taker_wallet_mut.balance_swap_coins(None).unwrap();
+    let swap_coin_bal = taker_wallet_mut.balance_incoming_swap_coins(None).unwrap();
     let descriptor_bal = taker_wallet_mut.balance_descriptor_utxo(None).unwrap();
 
     assert_eq!(swap_coin_bal, Amount::ZERO);

@@ -69,9 +69,9 @@ pub enum WalletError {
     /// - `required`: The amount of funds needed to complete the operation.
     InsufficientFund {
         /// The amount of funds available in the wallet.
-        available: f64,
+        available: u64,
         /// The amount of funds needed to complete the operation.
-        required: f64,
+        required: u64,
     },
 }
 

@@ -85,7 +85,9 @@ fn malice2_maker_broadcast_contract_prematurely() {
 
             let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
 
-            let swapcoin_balance = wallet.balance_swap_coins(Some(&all_utxos)).unwrap();
+            let swapcoin_balance = wallet
+                .balance_incoming_swap_coins(Some(&all_utxos))
+                .unwrap();
 
             let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
 

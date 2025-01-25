@@ -49,6 +49,20 @@ pub(crate) fn handle_message(
     connection_state: &mut ConnectionState,
     message: TakerToMakerMessage,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
+    // If taker is waiting for funding confirmation, reset the timer.
+    if let TakerToMakerMessage::WaitingFundingConfirmation(id) = &message {
+        log::info!(
+            "[{}] Taker is waiting for funding confirmation. Reseting timer.",
+            maker.config.network_port
+        );
+        maker
+            .ongoing_swap_state
+            .lock()?
+            .entry(id.clone())
+            .and_modify(|(_, timer)| *timer = Instant::now());
+        return Ok(None);
+    }
+
     let outgoing_message = match connection_state.allowed_message {
         ExpectedMessage::TakerHello => {
             if let TakerToMakerMessage::TakerHello(m) = message {
@@ -397,7 +411,7 @@ impl Maker {
             .expect("This should not overflow as we just above.");
 
         log::info!(
-            "[{}] Outgoing Funding Txids: {:?}.",
+            "[{}] Prepared outgoing funding txs: {:?}.",
             self.config.network_port,
             my_funding_txes
                 .iter()
@@ -453,7 +467,7 @@ impl Maker {
             .collect::<Result<Vec<SenderContractTxInfo>, WalletError>>()?;
 
         // Update the connection state.
-        self.connection_state.lock()?.insert(
+        self.ongoing_swap_state.lock()?.insert(
             message.id.clone(),
             (connection_state.clone(), Instant::now()),
         );
@@ -514,7 +528,7 @@ impl Maker {
             my_funding_txids.push(txid);
         }
         log::info!(
-            "[{}] Outgoing Funding Txids: {:?}",
+            "[{}] Broadcasted funding txs: {:?}",
             self.config.network_port,
             my_funding_txids
         );
@@ -533,7 +547,7 @@ impl Maker {
         }
 
         // Update the connection state.
-        self.connection_state.lock()?.insert(
+        self.ongoing_swap_state.lock()?.insert(
             message.id.clone(),
             (connection_state.clone(), Instant::now()),
         );
@@ -599,14 +613,17 @@ impl Maker {
         );
         let mut swapcoin_private_keys = Vec::<MultisigPrivkey>::new();
 
+        // Send our privkey and mark the outgoing swapcoin as "done".
         for multisig_redeemscript in &message.receivers_multisig_redeemscripts {
-            let wallet_read = self.wallet.read()?;
-            let outgoing_swapcoin = wallet_read
-                .find_outgoing_swapcoin(multisig_redeemscript)
+            let mut wallet_write = self.wallet.write()?;
+            let outgoing_swapcoin = wallet_write
+                .find_outgoing_swapcoin_mut(multisig_redeemscript)
                 .expect("outgoing swapcoin expected");
             if read_hashvalue_from_contract(&outgoing_swapcoin.contract_redeemscript)? != hashvalue
             {
                 return Err(MakerError::General("not correct hash preimage"));
+            } else {
+                outgoing_swapcoin.hash_preimage.replace(message.preimage);
             }
 
             swapcoin_private_keys.push(MultisigPrivkey {
@@ -627,6 +644,7 @@ impl Maker {
         &self,
         message: PrivKeyHandover,
     ) -> Result<(), MakerError> {
+        // Mark the incoming swapcoins as "done", by adding their's privkey
         for swapcoin_private_key in &message.multisig_privkeys {
             self.wallet
                 .write()?
@@ -636,7 +654,7 @@ impl Maker {
         }
 
         // Reset the connection state so watchtowers are not triggered.
-        let mut conn_state = self.connection_state.lock()?;
+        let mut conn_state = self.ongoing_swap_state.lock()?;
         *conn_state = HashMap::default();
 
         log::info!("initializing Wallet Sync.");
@@ -652,7 +670,7 @@ impl Maker {
 }
 
 fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
-    let mut lock_on_state = maker.connection_state.lock()?;
+    let mut lock_on_state = maker.ongoing_swap_state.lock()?;
     for (_, (state, _)) in lock_on_state.iter_mut() {
         let mut outgoings = Vec::new();
         let mut incomings = Vec::new();

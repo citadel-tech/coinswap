@@ -108,11 +108,6 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
     locktime: u16,
 ) -> Result<ContractSigsForSender, TakerError> {
     handshake_maker(socket)?;
-    log::info!(
-        "===> Sending ReqContractSigsForSender to {}",
-        socket.peer_addr()?
-    );
-
     let txs_info = maker_multisig_nonces
         .iter()
         .zip(maker_hashlock_nonces.iter())
@@ -170,10 +165,6 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
     {
         outgoing_swapcoin.verify_contract_tx_sender_sig(sig)?;
     }
-    log::info!(
-        "<=== Received ContractSigsForSender from {}",
-        socket.peer_addr()?
-    );
     Ok(contract_sigs_for_sender)
 }
 
@@ -229,11 +220,6 @@ pub(crate) fn req_sigs_for_recvr_once<S: SwapCoin>(
     {
         swapcoin.verify_contract_tx_receiver_sig(sig)?;
     }
-
-    log::info!(
-        "<=== Received ContractSigsForRecvr from {}",
-        socket.peer_addr()?
-    );
     Ok(contract_sigs_for_recvr)
 }
 
@@ -482,7 +468,7 @@ fn download_maker_offer_attempt_once(
         }
     };
 
-    log::info!("Got offer from : {} | {:?}", maker_addr, offer);
+    log::info!("Got offer from : {} ", maker_addr);
 
     Ok(*offer)
 }

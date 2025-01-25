@@ -281,7 +281,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
         while !maker.shutdown.load(Relaxed) {
             sleep_multiplier += 1;
             // sync the wallet
-            maker.get_wallet().write()?.sync()?;
+            maker.get_wallet().write()?.sync_no_fail();
 
             let fidelity_result = maker
                 .get_wallet()
@@ -301,7 +301,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
                         let amount = required - available;
                         let addr = maker.get_wallet().write()?.get_next_external_address()?;
 
-                        log::info!("Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", amount, addr);
+                        log::info!("Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", Amount::from_sat(amount).to_btc(), addr);
 
                         let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60);
                         log::info!("Next sync in {:?} secs", total_sleep);
@@ -328,7 +328,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
                     *proof = Some(highest_proof);
 
                     // sync and save the wallet data to disk
-                    maker.get_wallet().write()?.sync()?;
+                    maker.get_wallet().write()?.sync_no_fail();
                     maker.get_wallet().read()?.save_to_disk()?;
                     break;
                 }
@@ -407,7 +407,7 @@ fn handle_client(maker: Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerE
         }
 
         let taker_msg: TakerToMakerMessage = serde_cbor::from_slice(&taker_msg_bytes)?;
-        log::info!("[{}]  <=== {}", maker.config.network_port, taker_msg);
+        log::info!("[{}] <=== {}", maker.config.network_port, taker_msg);
 
         let reply = handle_message(&maker, &mut connection_state, taker_msg);
 
@@ -469,13 +469,26 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     // Initialize network connections.
 
     // Setup the wallet with fidelity bond.
+    let _tor_thread = network_bootstrap(maker.clone())?;
+
     let port = maker.config.network_port;
     let network = maker.get_wallet().read()?.store.network;
-    let balance = maker.get_wallet().read()?.spendable_balance()?;
-    log::info!("[{}] Currency Network: {}", port, network);
-    log::info!("[{}] Total Wallet Balance: {}", port, balance);
-
-    let _tor_thread = network_bootstrap(maker.clone())?;
+    let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;
+    let utxos = maker.get_wallet().read()?.get_all_utxo()?;
+    let balance = maker.get_wallet().read()?.spendable_balance(Some(&utxos))?;
+    let fidelity_amount = maker
+        .get_wallet()
+        .read()?
+        .balance_fidelity_bonds(Some(&utxos))?;
+    log::info!("[{}] Bitcoin Network: {}", port, network);
+    log::info!("[{}] Spendable Wallet Balance: {}", port, balance);
+    log::info!("[{}] Fidelity Bond Amount : {}", port, fidelity_amount);
+    log::info!(
+        "[{}] Minimum Swap Size {} SATS",
+        port,
+        maker.config.min_swap_amount
+    );
+    log::info!("[{}] Maximum Swap Size {} SATS", port, offer_max_size);
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.network_port))
         .map_err(NetError::IO)?;
@@ -566,10 +579,28 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         restore_broadcasted_contracts_on_reboot(maker_clone.clone())?;
     }
 
+    let mut sync_counter = 0;
     // The P2P Client connection loop.
     // Each client connection will spawn a new handler thread, which is added back in the global thread_pool.
     // This loop beats at `maker.config.heart_beat_interval_secs`
     while !maker.shutdown.load(Relaxed) {
+        // Check every 30 secs that we have enough swap liquidity.
+        // Raise warning otherwise and don't listen for swap requests.
+        if sync_counter >= 10 || sync_counter == 0 {
+            maker.get_wallet().write()?.sync_no_fail();
+            let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;
+            if offer_max_size <= maker.config.min_swap_amount {
+                log::warn!("[WARN!] Swaps are disabled due to low balance, Please put more funds in the wallet | Min required {} sats | Available {} sats", maker.config.min_swap_amount, offer_max_size);
+            } else {
+                log::info!(
+                    "Total available balance for swaps: {} sats | Listening for incoming swap requests",
+                    offer_max_size
+                );
+            }
+            sync_counter = 0;
+        }
+        sync_counter += 1;
+
         let maker = maker.clone(); // This clone is needed to avoid moving the Arc<Maker> in each iterations.
 
         // Block client connections if accepting_client=false
@@ -623,7 +654,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     }
 
     log::info!("Shutdown wallet sync initiated.");
-    maker.get_wallet().write()?.sync()?;
+    maker.get_wallet().write()?.sync_no_fail();
     log::info!("Shutdown wallet syncing completed.");
     maker.get_wallet().read()?.save_to_disk()?;
     log::info!("Wallet file saved to disk.");

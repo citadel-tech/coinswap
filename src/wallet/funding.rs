@@ -58,7 +58,7 @@ impl Wallet {
         //     return ret;
         // }
 
-        log::info!(target: "wallet", "failed to create funding txes with any method");
+        log::info!("failed to create funding txes with any method {:?}", ret);
         ret
     }
 
@@ -182,16 +182,31 @@ impl Wallet {
 
             let lock_time = LockTime::from_height(current_height as u32)?;
 
+            let actual_fee = total_input_amount
+                - (tx_outs.iter().fold(Amount::ZERO, |a, txo| {
+                    a.checked_add(txo.value)
+                        .expect("output amount sumation overflowred")
+                }));
+
             let mut funding_tx = Transaction {
                 input: tx_inputs,
                 output: tx_outs,
                 lock_time,
                 version: Version::TWO,
             };
+
             let mut input_info = selected_utxo
                 .iter()
                 .map(|(_, spend_info)| spend_info.clone());
             self.sign_transaction(&mut funding_tx, &mut input_info)?;
+            let tx_size = funding_tx.weight().to_vbytes_ceil();
+            let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
+
+            log::info!(
+                "Created Funding tx, txid : {} | Feerate: {:.2} sats/vb",
+                funding_tx.compute_txid(),
+                actual_feerate
+            );
 
             self.rpc.lock_unspent(
                 &funding_tx
