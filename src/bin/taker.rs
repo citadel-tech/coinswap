@@ -65,10 +65,10 @@ enum Commands {
     /// Lists all utxos that we need to claim via timelock. If you see entries in this list, do a `taker recover` to claim them.
     ListUtxoContract,
     /// Get total wallet balances of different categories.
-    /// regular: All single signature regular wallet coins.
+    /// regular: All single signature regular wallet coins (seed balance).
     /// swap: All 2of2 multisig coins received in swaps.
     /// contract: All live contract transaction balance locked in timelocks. If you see value in this field, you have unfinished or malfinished swaps. You can claim them back with recover command.
-    /// spendable: Spendable amount in wallet (regular + swap utxos).
+    /// spendable: Spendable amount in wallet (regular + swap balance).
     GetBalance,
     /// Returns a new address
     GetNewAddress,
@@ -173,17 +173,14 @@ fn main() -> Result<(), TakerError> {
             println!("{:#?}", utxos);
         }
         Commands::GetBalance => {
-            let regular = taker.get_wallet().balance_descriptor_utxo(None)?;
-            let contract = taker.get_wallet().balance_live_timelock_contract(None)?;
-            let swap = taker.get_wallet().balance_incoming_swap_coins(None)?;
-            let spendable = taker.get_wallet().spendable_balance(None)?;
+            let balances = taker.get_wallet().get_balances()?;
             println!(
                 "{}",
                 to_string_pretty(&json!({
-                    "regular": regular.to_sat(),
-                    "contract": contract.to_sat(),
-                    "swap": swap.to_sat(),
-                    "spendable": spendable.to_sat(),
+                    "regular": balances.regular.to_sat(),
+                    "contract": balances.contract.to_sat(),
+                    "swap": balances.swap.to_sat(),
+                    "spendable": balances.spendable.to_sat(),
                 }))
                 .unwrap()
             );

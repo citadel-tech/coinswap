@@ -38,11 +38,11 @@ enum Commands {
     /// Lists fidelity bond utxos.
     ListUtxoFidelity,
     /// Get total wallet balances of different categories.
-    /// regular: All single signature regular wallet coins.
+    /// regular: All single signature regular wallet coins (seed balance).
     /// swap: All 2of2 multisig coins received in swaps.
     /// contract: All live contract transaction balance locked in timelocks. If you see value in this field, you have unfinished or malfinished swaps. You can claim them back with recover command.
     /// fidelity: All coins locked in fidelity bonds.
-    /// spendable: Spendable amount in wallet (seed + swap balance).
+    /// spendable: Spendable amount in wallet (regular + swap balance).
     GetBalance,
     /// Gets a new bitcoin receiving address
     GetNewAddress,

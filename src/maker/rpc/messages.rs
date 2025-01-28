@@ -1,12 +1,12 @@
 use std::{collections::HashMap, fmt::Display};
 
-use bitcoin::{Amount, Txid};
+use bitcoin::Txid;
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string_pretty};
 use std::path::PathBuf;
 
-use crate::wallet::FidelityBond;
+use crate::wallet::{Balances, FidelityBond};
 
 /// Enum representing RPC message requests.
 ///
@@ -24,7 +24,7 @@ pub enum RpcMsgReq {
     ContractUtxo,
     /// Request to fetch UTXOs in the fidelity pool.
     FidelityUtxo,
-    /// Request to retreive the total spenable balance in wallet.
+    /// Request to retreive the total wallet balances of different categories.
     Balance,
     /// Request for generating a new wallet address.
     NewAddress,
@@ -49,20 +49,6 @@ pub enum RpcMsgReq {
     ListFidelity,
     /// Request to sync the internal wallet with blockchain.
     SyncWallet,
-}
-
-/// Represents total wallet balances of different categories.
-pub struct Balance {
-    /// All single signature regular wallet coins (seed balance).
-    pub regular: Amount,
-    ///  All 2of2 multisig coins received in swaps.
-    pub swap: Amount,
-    ///  All live contract transaction balance locked in timelocks.
-    pub contract: Amount,
-    /// All coins locked in fidelity bonds.
-    pub fidelity: Amount,
-    /// Spendable amount in wallet (seed + swap balance).
-    pub spendable: Amount,
 }
 
 /// Enum representing RPC message responses.
@@ -93,8 +79,8 @@ pub enum RpcMsgResp {
         /// List of UTXOs in the contract pool.
         utxos: Vec<ListUnspentResultEntry>,
     },
-    /// Response containing the total wallet balance.
-    TotalBalanceResp(Balance),
+    /// Response containing the total wallet balances of different categories.
+    TotalBalanceResp(Balances),
     /// Response containing a newly generated wallet address.
     NewAddressResp(String),
     /// Response to a send-to-address request.
@@ -118,16 +104,16 @@ impl Display for RpcMsgResp {
         match self {
             Self::Pong => write!(f, "Pong"),
             Self::NewAddressResp(addr) => write!(f, "{}", addr),
-            Self::TotalBalanceResp(balance) => {
+            Self::TotalBalanceResp(balances) => {
                 write!(
                     f,
                     "{}",
                     to_string_pretty(&json!({
-                        "regular": balance.regular.to_sat(),
-                        "swap": balance.swap.to_sat(),
-                        "contract": balance.contract.to_sat(),
-                        "fidelity": balance.fidelity.to_sat(),
-                        "spendable": balance.regular.to_sat() + balance.swap.to_sat(),
+                        "regular": balances.regular.to_sat(),
+                        "swap": balances.swap.to_sat(),
+                        "contract": balances.contract.to_sat(),
+                        "fidelity": balances.fidelity.to_sat(),
+                        "spendable": balances.spendable.to_sat(),
                     }))
                     .unwrap()
                 )

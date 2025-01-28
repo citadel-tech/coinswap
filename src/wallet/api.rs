@@ -17,6 +17,7 @@ use bitcoin::{
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use crate::{
@@ -134,6 +135,21 @@ pub enum UTXOSpendInfo {
     },
     /// Fidelity Bond Coin
     FidelityBondCoin { index: u32, input_value: Amount },
+}
+
+/// Represents total wallet balances of different categories.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Balances {
+    /// All single signature regular wallet coins (seed balance).
+    pub regular: Amount,
+    ///  All 2of2 multisig coins received in swaps.
+    pub swap: Amount,
+    ///  All live contract transaction balance locked in timelocks.
+    pub contract: Amount,
+    /// All coins locked in fidelity bonds.
+    pub fidelity: Amount,
+    /// Spendable amount in wallet (regular + swap balance).
+    pub spendable: Amount,
 }
 
 impl Wallet {
@@ -288,6 +304,21 @@ impl Wallet {
     /// Gets the total count of swap coins in the wallet.
     pub fn get_swapcoins_count(&self) -> usize {
         self.store.incoming_swapcoins.len() + self.store.outgoing_swapcoins.len()
+    }
+
+    pub fn get_balances(&self) -> Result<Balances, WalletError> {
+        let regular = self.balance_descriptor_utxo(None)?;
+        let contract = self.balance_live_timelock_contract(None)?;
+        let swap = self.balance_incoming_swap_coins(None)?;
+        let fidelity = self.balance_fidelity_bonds(None)?;
+        let spendable = self.spendable_balance(None)?;
+        Ok(Balances {
+            regular,
+            swap,
+            contract,
+            fidelity,
+            spendable,
+        })
     }
 
     /// Calculates the total spendable balance of the wallet. Includes all utxos except the fidelity bond.

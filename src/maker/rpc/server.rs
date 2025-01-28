@@ -10,11 +10,7 @@ use bitcoin::{Address, Amount};
 
 use super::messages::RpcMsgReq;
 use crate::{
-    maker::{
-        error::MakerError,
-        rpc::messages::{Balance, RpcMsgResp},
-        Maker,
-    },
+    maker::{error::MakerError, rpc::messages::RpcMsgResp, Maker},
     utill::{get_tor_hostname, read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
     wallet::{Destination, SendAmount},
 };
@@ -68,24 +64,8 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             RpcMsgResp::SwapUtxoResp { utxos }
         }
         RpcMsgReq::Balance => {
-            let regular = maker.get_wallet().read()?.spendable_balance(None)?;
-            let contract = maker
-                .get_wallet()
-                .read()?
-                .balance_live_timelock_contract(None)?;
-            let fidelity = maker.get_wallet().read()?.balance_fidelity_bonds(None)?;
-            let swap = maker
-                .get_wallet()
-                .read()?
-                .balance_incoming_swap_coins(None)?;
-            let spendable = Amount::from_sat(regular.to_sat() + swap.to_sat());
-            RpcMsgResp::TotalBalanceResp(Balance {
-                regular,
-                swap,
-                contract,
-                fidelity,
-                spendable,
-            })
+            let balances = maker.get_wallet().read()?.get_balances()?;
+            RpcMsgResp::TotalBalanceResp(balances)
         }
         RpcMsgReq::NewAddress => {
             let new_address = maker.get_wallet().write()?.get_next_external_address()?;
