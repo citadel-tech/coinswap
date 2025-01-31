@@ -69,7 +69,7 @@ enum Commands {
     /// swap: All 2of2 multisig coins received in swaps.
     /// contract: All live contract transaction balance locked in timelocks. If you see value in this field, you have unfinished or malfinished swaps. You can claim them back with recover command.
     /// spendable: Spendable amount in wallet (regular + swap balance).
-    GetBalance,
+    GetBalances,
     /// Returns a new address
     GetNewAddress,
     /// Send to an external wallet address.
@@ -172,7 +172,7 @@ fn main() -> Result<(), TakerError> {
                 .collect::<Vec<_>>();
             println!("{:#?}", utxos);
         }
-        Commands::GetBalance => {
+        Commands::GetBalances => {
             let balances = taker.get_wallet().get_balances()?;
             println!(
                 "{}",

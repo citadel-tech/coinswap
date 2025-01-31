@@ -2,6 +2,7 @@
 use bitcoin::{address::NetworkChecked, Address, Amount};
 use bitcoind::{bitcoincore_rpc::RpcApi, tempfile::env::temp_dir, BitcoinD};
 
+use serde_json::Value;
 use std::{fs, path::PathBuf, process::Command, str::FromStr};
 mod test_framework;
 use test_framework::{generate_blocks, init_bitcoind, send_to_address};
@@ -94,9 +95,10 @@ fn test_taker_cli() {
     generate_blocks(bitcoind, 10);
 
     // Assert that total_balance & seed_balance must be 3 BTC
-    let spendable_balance = taker_cli.execute(&["get-balance"]);
+    let balances = taker_cli.execute(&["get-balances"]);
+    let balances = serde_json::from_str::<Value>(&balances).unwrap();
 
-    assert_eq!("300000000 SAT", spendable_balance);
+    assert_eq!("300000000", balances["spendable"].to_string());
 
     // Assert that total no of seed-utxos are 3.
     let all_utxos = taker_cli.execute(&["list-utxo"]);
@@ -122,10 +124,11 @@ fn test_taker_cli() {
     generate_blocks(bitcoind, 10);
 
     // Assert the total_amount & seed_amount must be initial (balance -fee)
-    let spendable_balance = taker_cli.execute(&["get-balance"]);
+    let balances = taker_cli.execute(&["get-balances"]);
+    let balances = serde_json::from_str::<Value>(&balances).unwrap();
 
     // Since the amount is sent back to our wallet, the transaction fee is deducted from the balance.
-    assert_eq!("299999000 SAT", spendable_balance);
+    assert_eq!("299999000", balances["spendable"].to_string());
 
     // Assert that no of seed utxos are 2
     let all_utxos = taker_cli.execute(&["list-utxo"]);

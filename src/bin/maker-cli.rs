@@ -43,7 +43,7 @@ enum Commands {
     /// contract: All live contract transaction balance locked in timelocks. If you see value in this field, you have unfinished or malfinished swaps. You can claim them back with recover command.
     /// fidelity: All coins locked in fidelity bonds.
     /// spendable: Spendable amount in wallet (regular + swap balance).
-    GetBalance,
+    GetBalances,
     /// Gets a new bitcoin receiving address
     GetNewAddress,
     /// Send Bitcoin to an external address and returns the txid.
@@ -91,7 +91,7 @@ fn main() -> Result<(), MakerError> {
         Commands::ListUtxoFidelity => {
             send_rpc_req(stream, RpcMsgReq::FidelityUtxo)?;
         }
-        Commands::GetBalance => {
+        Commands::GetBalances => {
             send_rpc_req(stream, RpcMsgReq::Balance)?;
         }
         Commands::ListUtxo => {
