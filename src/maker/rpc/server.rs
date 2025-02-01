@@ -63,7 +63,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 .collect::<Vec<_>>();
             RpcMsgResp::SwapUtxoResp { utxos }
         }
-        RpcMsgReq::Balance => {
+        RpcMsgReq::Balances => {
             let balances = maker.get_wallet().read()?.get_balances()?;
             RpcMsgResp::TotalBalanceResp(balances)
         }

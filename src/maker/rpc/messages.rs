@@ -25,7 +25,7 @@ pub enum RpcMsgReq {
     /// Request to fetch UTXOs in the fidelity pool.
     FidelityUtxo,
     /// Request to retreive the total wallet balances of different categories.
-    Balance,
+    Balances,
     /// Request for generating a new wallet address.
     NewAddress,
     /// Request to send funds to a specific address.

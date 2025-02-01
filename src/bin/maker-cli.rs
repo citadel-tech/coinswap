@@ -92,7 +92,7 @@ fn main() -> Result<(), MakerError> {
             send_rpc_req(stream, RpcMsgReq::FidelityUtxo)?;
         }
         Commands::GetBalances => {
-            send_rpc_req(stream, RpcMsgReq::Balance)?;
+            send_rpc_req(stream, RpcMsgReq::Balances)?;
         }
         Commands::ListUtxo => {
             send_rpc_req(stream, RpcMsgReq::Utxo)?;
