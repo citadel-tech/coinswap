@@ -58,10 +58,7 @@ OPTIONS:
             Print version information
 
 SUBCOMMANDS:
-    get-balance               Retrieve the total wallet balance, excluding fidelity bonds
-    get-balance-contract      Retrieve the balance of HTLC contract UTXOs
-    get-balance-fidelity      Check the amount locked in fidelity bonds
-    get-balance-swap          Get the balance received from incoming swaps
+    get-balances              Retrieve the total wallet balances of different categories (sats)
     get-new-address           Generate a new Bitcoin receiving address
     list-utxo                 List all UTXOs in the wallet, including fidelity bonds
     list-utxo-contract        List HTLC contract UTXOs
@@ -216,12 +213,18 @@ Since only one live fidelity bond is allowed at a time, this shows a single UTXO
 To check the balance of our fidelity UTXOs, use:
 
 ```bash
-$ ./maker-cli get-balance-fidelity
+$ ./maker-cli get-balances
 ```
 
 **Output:**  
 ```bash
-50000 sats
+{
+    "regular": 1000000,
+    "swap": 0,
+    "contract": 0,
+    "fidelity": 50000,
+    "spendable": 1000000
+}
 ```
 
 This confirms the balance of our fidelity UTXOs matches the amount we set when creating the bond.
@@ -247,9 +250,15 @@ Next, we’ll explore other UTXOs and balances in Coinswap.
  Since we have not done any coinswap yet, so we have no swap utxos yet and thus we would have no swap balances as can be verified by running the command:
 
  ```bash
- $ ./maker-cli  get-balance-swap
+$ ./maker-cli  get-balances
 
- 0 sats
+{
+   "regular": 1000000,
+   "swap": 0,
+   "contract": 0,
+   "fidelity": 50000,
+   "spendable": 1000000
+}
 ```
 
 
@@ -264,8 +273,15 @@ $ ./maker-cli  list-utxo-contract
 As mentioned above -> we have not paritcipated in any coinswap till now, thus have no unsuccessfull coinswap currently -> thus we have no `contract utxos` and have no balance in this category as shown:
 
 ```bash
-$  ./maker-cli  get-balance-contract
-0 sats
+$  ./maker-cli  get-balances
+
+{
+    "regular": 1000000,
+    "swap": 0,
+    "contract": 0,
+    "fidelity": 50000,
+    "spendable": 1000000
+}
 ```
 
 
@@ -335,11 +351,17 @@ The remaining balance after these transactions is:
 
 **949,000 sats** = **1,000,000 sats** (total funding) - **50,000 sats** (for the fidelity bond) - **1,000 sats** (mining fees).
 
-We can verify this balance by running the `get-balance` command, which shows the total spendable balance (excluding the fidelity bond balance):
+We can verify this balance by running the `get-balances` command, which shows the total wallet balances of different categories:
 
 ```bash
-$ ./maker-cli get-balance
-949,000 sats
+ $ ./maker-cli get-balances
+  {
+      "regular": 949000,
+      "swap": 0,
+      "contract": 0,
+      "fidelity": 50000,
+      "spendable": 949000
+  }
 ```
 
 ---
@@ -445,9 +467,15 @@ $ ./maker-cli list-utxo-fidelity
     },
 ]
 
-$ ./maker-cli get-balance-fidelity
+$ ./maker-cli get-balances
 
-50000 sats
+{
+    "regular": 949000,
+    "swap": 0,
+    "contract": 0,
+    "fidelity": 50000,
+    "spendable": 949000
+}
 ```  
 
 > **NOTE**: Fidelity UTXOs are not used for spending purposes. We can only spend these UTXOs by using the `redeem_fidelity` command after the fidelity bond expires. This is why the UTXO list and balance remain unchanged.
@@ -459,8 +487,14 @@ $ ./maker-cli get-balance-fidelity
 $ ./maker-cli list-utxo-swap
 []
 
-$ ./maker-cli get-balance-swap
-0 sats
+$ ./maker-cli get-balances
+{
+    "regular": 949000,
+    "swap": 0,
+    "contract": 0,
+    "fidelity": 50000,
+    "spendable": 949000
+}
 ```
 
 ---
@@ -470,8 +504,14 @@ $ ./maker-cli get-balance-swap
 $ ./maker-cli list-utxo-contract
 []
 
-$ ./maker-cli get-balance-contract
-0 sats
+$ ./maker-cli get-balances
+{
+    "regular": 949000,
+    "swap": 0,
+    "contract": 0,
+    "fidelity": 50000,
+    "spendable": 949000
+}
 ```
 
 ---
@@ -521,8 +561,14 @@ $ ./maker-cli list-utxo
     },
 ]
 
-$ ./maker-cli get-balance
-938000 sats
+$ ./maker-cli get-balances
+{
+    "regular": 938000,
+    "swap": 0,
+    "contract": 0,
+    "fidelity": 50000,
+    "spendable": 938000
+}
 ```
 
 ---
