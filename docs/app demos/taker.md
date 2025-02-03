@@ -96,7 +96,6 @@ $ taker -r 127.0.0.1:38332 -a user:pass get-balances
     "regular": 10000000,
     "swap": 0,
     "contract": 0,
-    "fidelity": 0,
     "spendable": 10000000
 }
 ```

@@ -286,10 +286,9 @@ $  ./maker-cli  get-balances
 
 
 >[!IMPORTANT]
-> Currently `maker-cli` does not provide any method to see maker's normal wallet utxos and their correspinding balance seperately as we do have for other utxos types.
-> we have to manually figure these utxos and their balances by using  `list-utxo` and `get-balance` command respectively.
+> we have to manually figure utxos and their balances by using  `list-utxo` and `get-balances` command respectively.
 > where `list-utxo` returns all the utxos present in the maker wallet including the `fidleity utxos` also.
-> and `get-balance` returns the total spendable balance which includes balance of normal utxos , swap utxos, contract utxos but excludes `fidelitly utxos`.
+> and `get-balances` returns the total wallet balances of different categories which includes balance of normal utxos, swap utxos, contract utxos, fidelitly utxos and spendable utxos (normal + swap utxos).
 
 Let's find them out: 
 
