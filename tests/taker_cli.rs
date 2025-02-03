@@ -3,7 +3,7 @@ use bitcoin::{address::NetworkChecked, Address, Amount};
 use bitcoind::{bitcoincore_rpc::RpcApi, tempfile::env::temp_dir, BitcoinD};
 
 use serde_json::Value;
-use std::{fs, path::PathBuf, println, process::Command, str::FromStr};
+use std::{fs, path::PathBuf, process::Command, str::FromStr};
 mod test_framework;
 use test_framework::{generate_blocks, init_bitcoind, send_to_address};
 /// The taker-cli command struct
