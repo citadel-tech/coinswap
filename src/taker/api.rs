@@ -188,7 +188,7 @@ impl Drop for Taker {
         log::info!("Wallet data saved to disk.");
 
         if !cfg!(feature = "tor") {
-            assert!(self.tor_handle.is_some(), "Tor handle should not exist")
+            assert!(self.tor_handle.is_none(), "Tor handle should not exist")
         }
 
         #[cfg(feature = "tor")]
