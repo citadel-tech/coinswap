@@ -3,9 +3,10 @@ use std::{collections::HashMap, fmt::Display};
 use bitcoin::Txid;
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, to_string_pretty};
 use std::path::PathBuf;
 
-use crate::wallet::FidelityBond;
+use crate::wallet::{Balances, FidelityBond};
 
 /// Enum representing RPC message requests.
 ///
@@ -23,14 +24,8 @@ pub enum RpcMsgReq {
     ContractUtxo,
     /// Request to fetch UTXOs in the fidelity pool.
     FidelityUtxo,
-    /// Request to retreive the total spenable balance in wallet.
-    Balance,
-    /// Request to retrieve the total swap balance in wallet.
-    SwapBalance,
-    /// Request to retrieve the total balance in the contract pool.
-    ContractBalance,
-    /// Request to retrieve the total balance in the fidelity pool.
-    FidelityBalance,
+    /// Request to retreive the total wallet balances of different categories.
+    Balances,
     /// Request for generating a new wallet address.
     NewAddress,
     /// Request to send funds to a specific address.
@@ -84,14 +79,8 @@ pub enum RpcMsgResp {
         /// List of UTXOs in the contract pool.
         utxos: Vec<ListUnspentResultEntry>,
     },
-    /// Response containing the total balance in the seed pool.
-    SeedBalanceResp(u64),
-    /// Response containing the total balance in the swap pool.
-    SwapBalanceResp(u64),
-    /// Response containing the total balance in the contract pool.
-    ContractBalanceResp(u64),
-    /// Response containing the total balance in the fidelity pool.
-    FidelityBalanceResp(u64),
+    /// Response containing the total wallet balances of different categories.
+    TotalBalanceResp(Balances),
     /// Response containing a newly generated wallet address.
     NewAddressResp(String),
     /// Response to a send-to-address request.
@@ -115,10 +104,20 @@ impl Display for RpcMsgResp {
         match self {
             Self::Pong => write!(f, "Pong"),
             Self::NewAddressResp(addr) => write!(f, "{}", addr),
-            Self::SeedBalanceResp(bal) => write!(f, "{} sats", bal),
-            Self::ContractBalanceResp(bal) => write!(f, "{} sats", bal),
-            Self::SwapBalanceResp(bal) => write!(f, "{} sats", bal),
-            Self::FidelityBalanceResp(bal) => write!(f, "{} sats", bal),
+            Self::TotalBalanceResp(balances) => {
+                write!(
+                    f,
+                    "{}",
+                    to_string_pretty(&json!({
+                        "regular": balances.regular.to_sat(),
+                        "swap": balances.swap.to_sat(),
+                        "contract": balances.contract.to_sat(),
+                        "fidelity": balances.fidelity.to_sat(),
+                        "spendable": balances.spendable.to_sat(),
+                    }))
+                    .unwrap()
+                )
+            }
             Self::UtxoResp { utxos } => write!(f, "{:#?}", utxos),
             Self::SwapUtxoResp { utxos } => write!(f, "{:#?}", utxos),
             Self::FidelityUtxoResp { utxos } => write!(f, "{:#?}", utxos),

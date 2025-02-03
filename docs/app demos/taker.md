@@ -68,9 +68,7 @@ OPTIONS:
 SUBCOMMANDS:
     do-coinswap             Initiate the coinswap process
     fetch-offers            Update the offerbook with current market offers and display them
-    get-balance             Get the total spendable wallet balance (sats)
-    get-balance-contract    Get the total amount stuck in HTLC contracts (sats)
-    get-balance-swap        Get the total balance received from swaps (sats)
+    get-balances            Retrieve the total wallet balances of different categories (sats)
     get-new-address         Returns a new address
     help                    Print this message or the help of the given subcommand(s)
     list-utxo               Lists all currently spendable utxos
@@ -92,9 +90,14 @@ Now we can use a testnet4 faucet to send some coins to this address. You can fin
 Once you have some coins in your wallet, you can check your balance by running the following command:
 
 ```sh
-$ taker -r 127.0.0.1:38332 -a user:pass get-balance
+$ taker -r 127.0.0.1:38332 -a user:pass get-balances
 
-10000000 SAT
+{
+    "regular": 10000000,
+    "swap": 0,
+    "contract": 0,
+    "spendable": 10000000
+}
 ```
 
 Now we are ready to initate a coinswap. We are first going to sync the offer book to get a list of available makers.

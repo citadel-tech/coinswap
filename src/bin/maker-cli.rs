@@ -37,14 +37,13 @@ enum Commands {
     ListUtxoContract,
     /// Lists fidelity bond utxos.
     ListUtxoFidelity,
-    /// Get total wallet balance, excluding Fidelity bonds.
-    GetBalance,
-    /// Get total balance received via incoming swaps.
-    GetBalanceSwap,
-    /// Get total balances of HTLC contract utxos.
-    GetBalanceContract,
-    /// Get total amount locked in fidelity bonds.
-    GetBalanceFidelity,
+    /// Get total wallet balances of different categories.
+    /// regular: All single signature regular wallet coins (seed balance).
+    /// swap: All 2of2 multisig coins received in swaps.
+    /// contract: All live contract transaction balance locked in timelocks. If you see value in this field, you have unfinished or malfinished swaps. You can claim them back with recover command.
+    /// fidelity: All coins locked in fidelity bonds.
+    /// spendable: Spendable amount in wallet (regular + swap balance).
+    GetBalances,
     /// Gets a new bitcoin receiving address
     GetNewAddress,
     /// Send Bitcoin to an external address and returns the txid.
@@ -89,23 +88,14 @@ fn main() -> Result<(), MakerError> {
         Commands::ListUtxoContract => {
             send_rpc_req(stream, RpcMsgReq::ContractUtxo)?;
         }
-        Commands::GetBalanceContract => {
-            send_rpc_req(stream, RpcMsgReq::ContractBalance)?;
-        }
-        Commands::GetBalanceFidelity => {
-            send_rpc_req(stream, RpcMsgReq::FidelityBalance)?;
-        }
         Commands::ListUtxoFidelity => {
             send_rpc_req(stream, RpcMsgReq::FidelityUtxo)?;
         }
-        Commands::GetBalance => {
-            send_rpc_req(stream, RpcMsgReq::Balance)?;
+        Commands::GetBalances => {
+            send_rpc_req(stream, RpcMsgReq::Balances)?;
         }
         Commands::ListUtxo => {
             send_rpc_req(stream, RpcMsgReq::Utxo)?;
-        }
-        Commands::GetBalanceSwap => {
-            send_rpc_req(stream, RpcMsgReq::SwapBalance)?;
         }
         Commands::ListUtxoSwap => {
             send_rpc_req(stream, RpcMsgReq::SwapUtxo)?;

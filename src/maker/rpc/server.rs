@@ -63,24 +63,9 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 .collect::<Vec<_>>();
             RpcMsgResp::SwapUtxoResp { utxos }
         }
-        RpcMsgReq::ContractBalance => {
-            let balance = maker.get_wallet().read()?.balance_live_contract(None)?;
-            RpcMsgResp::ContractBalanceResp(balance.to_sat())
-        }
-        RpcMsgReq::FidelityBalance => {
-            let balance = maker.get_wallet().read()?.balance_fidelity_bonds(None)?;
-            RpcMsgResp::FidelityBalanceResp(balance.to_sat())
-        }
-        RpcMsgReq::Balance => {
-            let balance = maker.get_wallet().read()?.spendable_balance(None)?;
-            RpcMsgResp::SeedBalanceResp(balance.to_sat())
-        }
-        RpcMsgReq::SwapBalance => {
-            let balance = maker
-                .get_wallet()
-                .read()?
-                .balance_incoming_swap_coins(None)?;
-            RpcMsgResp::SwapBalanceResp(balance.to_sat())
+        RpcMsgReq::Balances => {
+            let balances = maker.get_wallet().read()?.get_balances()?;
+            RpcMsgResp::TotalBalanceResp(balances)
         }
         RpcMsgReq::NewAddress => {
             let new_address = maker.get_wallet().write()?.get_next_external_address()?;

@@ -7,6 +7,7 @@ use coinswap::{
     wallet::{Destination, RPCConfig, SendAmount},
 };
 use log::LevelFilter;
+use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};
 
 /// A simple command line app to operate as coinswap client.
@@ -63,14 +64,12 @@ enum Commands {
     ListUtxoSwap,
     /// Lists all utxos that we need to claim via timelock. If you see entries in this list, do a `taker recover` to claim them.
     ListUtxoContract,
-    /// Get the total spendable wallet balance in sats (regular + swap utxos)
-    GetBalance,
-    /// Get Balance of all single sig regular wallet utxos.
-    GetBalanceRegular,
-    /// Get the total balance received in incoming swaps (sats)
-    GetBalanceSwap,
-    /// Get the total amount stuck in timelock contracts (sats)
-    GetBalanceContract,
+    /// Get total wallet balances of different categories.
+    /// regular: All single signature regular wallet coins (seed balance).
+    /// swap: All 2of2 multisig coins received in swaps.
+    /// contract: All live contract transaction balance locked in timelocks. If you see value in this field, you have unfinished or malfinished swaps. You can claim them back with recover command.
+    /// spendable: Spendable amount in wallet (regular + swap balance).
+    GetBalances,
     /// Returns a new address
     GetNewAddress,
     /// Send to an external wallet address.
@@ -173,21 +172,18 @@ fn main() -> Result<(), TakerError> {
                 .collect::<Vec<_>>();
             println!("{:#?}", utxos);
         }
-        Commands::GetBalanceContract => {
-            let balance = taker.get_wallet().balance_live_contract(None)?;
-            println!("{:?}", balance);
-        }
-        Commands::GetBalanceSwap => {
-            let balance = taker.get_wallet().balance_incoming_swap_coins(None)?;
-            println!("{:?}", balance);
-        }
-        Commands::GetBalance => {
-            let balance = taker.get_wallet().spendable_balance(None)?;
-            println!("{:?}", balance);
-        }
-        Commands::GetBalanceRegular => {
-            let balance = taker.get_wallet().balance_descriptor_utxo(None)?;
-            println!("{:?}", balance);
+        Commands::GetBalances => {
+            let balances = taker.get_wallet().get_balances()?;
+            println!(
+                "{}",
+                to_string_pretty(&json!({
+                    "regular": balances.regular.to_sat(),
+                    "contract": balances.contract.to_sat(),
+                    "swap": balances.swap.to_sat(),
+                    "spendable": balances.spendable.to_sat(),
+                }))
+                .unwrap()
+            );
         }
         Commands::GetNewAddress => {
             let address = taker.get_wallet_mut().get_next_external_address()?;

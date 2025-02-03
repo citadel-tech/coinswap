@@ -210,7 +210,9 @@ pub fn fund_and_verify_taker(
         .balance_incoming_swap_coins(Some(&all_utxos))
         .unwrap();
 
-    let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
+    let live_contract_balance = wallet
+        .balance_live_timelock_contract(Some(&all_utxos))
+        .unwrap();
 
     // TODO: Think about this: utxo_count*utxo_amt.
     assert_eq!(seed_balance, Amount::from_btc(0.15).unwrap());
@@ -261,7 +263,9 @@ pub fn fund_and_verify_maker(
             .balance_incoming_swap_coins(Some(&all_utxos))
             .unwrap();
 
-        let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
+        let live_contract_balance = wallet
+            .balance_live_timelock_contract(Some(&all_utxos))
+            .unwrap();
 
         // TODO: Think about this: utxo_count*utxo_amt.
         assert_eq!(seed_balance, Amount::from_btc(0.20).unwrap());
@@ -288,7 +292,9 @@ pub fn verify_swap_results(
         let swapcoin_balance = wallet
             .balance_incoming_swap_coins(Some(&all_utxos))
             .unwrap();
-        let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
+        let live_contract_balance = wallet
+            .balance_live_timelock_contract(Some(&all_utxos))
+            .unwrap();
 
         let spendable_balance = seed_balance + swapcoin_balance;
 
@@ -333,7 +339,9 @@ pub fn verify_swap_results(
             let swapcoin_balance = wallet
                 .balance_incoming_swap_coins(Some(&all_utxos))
                 .unwrap();
-            let live_contract_balance = wallet.balance_live_contract(Some(&all_utxos)).unwrap();
+            let live_contract_balance = wallet
+                .balance_live_timelock_contract(Some(&all_utxos))
+                .unwrap();
 
             let spendable_balance = seed_balance + swapcoin_balance;
 

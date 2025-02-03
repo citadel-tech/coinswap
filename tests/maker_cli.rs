@@ -3,6 +3,7 @@
 use bitcoin::{Address, Amount};
 use bitcoind::BitcoinD;
 use coinswap::utill::setup_logger;
+use serde_json::{json, Value};
 use std::{
     fs,
     io::{BufRead, BufReader},
@@ -163,22 +164,19 @@ fn test_maker_cli() {
     // assert!(tor_addr.contains("onion:6102"));
 
     // Initial Balance checks
-    let seed_balance = maker_cli.execute_maker_cli(&["get-balance"]);
-    await_message(&rx, "RPC request received: Balance");
+    let balances = maker_cli.execute_maker_cli(&["get-balances"]);
+    await_message(&rx, "RPC request received: Balances");
 
-    let contract_balance = maker_cli.execute_maker_cli(&["get-balance-contract"]);
-    await_message(&rx, "RPC request received: ContractBalance");
-
-    let fidelity_balance = maker_cli.execute_maker_cli(&["get-balance-fidelity"]);
-    await_message(&rx, "RPC request received: FidelityBalance");
-
-    let swap_balance = maker_cli.execute_maker_cli(&["get-balance-swap"]);
-    await_message(&rx, "RPC request received: SwapBalance");
-
-    assert_eq!(seed_balance, "1000000 sats");
-    assert_eq!(swap_balance, "0 sats");
-    assert_eq!(fidelity_balance, "5000000 sats");
-    assert_eq!(contract_balance, "0 sats");
+    assert_eq!(
+        serde_json::from_str::<Value>(&balances).unwrap(),
+        json!({
+            "regular": 1000000,
+            "swap": 0,
+            "contract": 0,
+            "fidelity": 5000000,
+            "spendable": 1000000
+        })
+    );
 
     // Initial UTXO checks
     let all_utxos = maker_cli.execute_maker_cli(&["list-utxo"]);
@@ -218,16 +216,17 @@ fn test_maker_cli() {
     generate_blocks(&maker_cli.bitcoind, 1);
 
     // Check balances
-    assert_eq!(maker_cli.execute_maker_cli(&["get-balance"]), "999000 sats");
+    let balances = maker_cli.execute_maker_cli(&["get-balances"]);
     assert_eq!(
-        maker_cli.execute_maker_cli(&["get-balance-contract"]),
-        "0 sats"
+        serde_json::from_str::<Value>(&balances).unwrap(),
+        json!({
+            "regular": 999000,
+            "swap": 0,
+            "contract": 0,
+            "fidelity": 5000000,
+            "spendable": 999000
+        })
     );
-    assert_eq!(
-        maker_cli.execute_maker_cli(&["get-balance-fidelity"]),
-        "5000000 sats"
-    );
-    assert_eq!(maker_cli.execute_maker_cli(&["get-balance-swap"]), "0 sats");
 
     // Verify the seed UTXO count; other balance types remain unaffected when sending funds to an address.
     let seed_utxo = maker_cli.execute_maker_cli(&["list-utxo"]);
