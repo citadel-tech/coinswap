@@ -5,8 +5,9 @@ use bitcoin::{
     hashes::Hash,
     key::{rand::thread_rng, Keypair},
     secp256k1::{Message, Secp256k1, SecretKey},
-    Address, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
+    Address, Amount, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
 };
+use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use log::LevelFilter;
 use log4rs::{
     append::{console::ConsoleAppender, file::FileAppender},
@@ -38,7 +39,7 @@ use crate::{
         error::ProtocolError,
         messages::{FidelityProof, MultisigPrivkey},
     },
-    wallet::{fidelity_redeemscript, FidelityError, SwapCoin, WalletError},
+    wallet::{fidelity_redeemscript, FidelityError, SwapCoin, UTXOSpendInfo, WalletError},
 };
 
 const INPUT_CHARSET: &str =
@@ -497,6 +498,33 @@ fn polynomial_modulus(mut checksum: u64, value: u64) -> u64 {
     }
 
     checksum
+}
+
+/// Represents basic UTXO details, useful for pretty printing in the apps.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UTXO {
+    addr: String,
+    amount: Amount,
+    confirmations: u32,
+    utxo_type: String,
+}
+
+impl UTXO {
+    /// Creates an UTXO from detailed internal utxo data
+    pub fn from_utxo_data(data: (ListUnspentResultEntry, UTXOSpendInfo)) -> Self {
+        let addr = data
+            .0
+            .address
+            .expect("address always expected")
+            .assume_checked()
+            .to_string();
+        Self {
+            addr,
+            amount: data.0.amount,
+            confirmations: data.0.confirmations,
+            utxo_type: data.1.to_string(),
+        }
+    }
 }
 
 /// Compute the checksum of a descriptor
