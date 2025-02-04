@@ -13,34 +13,120 @@
 //! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
 use bitcoin::Amount;
 use std::{
-    env::{self, consts},
-    fs,
+    env,
+    fs::{self, create_dir_all, File},
+    io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
+    process,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
+        mpsc::{self, Receiver, Sender},
         Arc,
     },
     thread::{self, JoinHandle},
     time::Duration,
 };
 
-use bitcoind::{bitcoincore_rpc::RpcApi, BitcoinD};
-use coinswap::utill::ConnectionType;
-use std::{
-    io::{BufRead, BufReader},
-    process,
-    sync::mpsc::{self, Receiver, Sender},
-};
+use flate2::read::GzDecoder;
+use tar::Archive;
 
-use bitcoind::bitcoincore_rpc::Auth;
+use bitcoind::{
+    bitcoincore_rpc::{Auth, RpcApi},
+    BitcoinD,
+};
 
 use coinswap::{
     maker::{Maker, MakerBehavior},
     market::directory::{start_directory_server, DirectoryServer},
     taker::{Taker, TakerBehavior},
-    utill::setup_logger,
+    utill::{setup_logger, ConnectionType},
     wallet::RPCConfig,
 };
+
+const BITCOIN_VERSION: &str = "28.1";
+
+fn download_bitcoind_tarball(download_url: &str, retries: usize) -> Vec<u8> {
+    for attempt in 1..=retries {
+        let response = minreq::get(download_url).send();
+        match response {
+            Ok(res) if res.status_code == 200 => {
+                return res.as_bytes().to_vec();
+            }
+            Ok(res) if res.status_code == 503 => {
+                // If the response is 503, log and prepare for retry
+                eprintln!(
+                    "Attempt {}: URL {} returned status code 503 (Service Unavailable)",
+                    attempt + 1,
+                    download_url
+                );
+            }
+            Ok(res) => {
+                // For other status codes, log and stop retrying
+                panic!(
+                    "URL {} returned unexpected status code {}. Aborting.",
+                    download_url, res.status_code
+                );
+            }
+            Err(err) => {
+                eprintln!(
+                    "Attempt {}: Failed to fetch URL {}: {:?}",
+                    attempt + 1,
+                    download_url,
+                    err
+                );
+            }
+        }
+
+        if attempt < retries {
+            let delay = 1u64 << (attempt - 1);
+            eprintln!("Retrying in {} seconds (exponential backoff)...", delay);
+            std::thread::sleep(std::time::Duration::from_secs(delay));
+        }
+    }
+    // If all retries fail, panic with an error message
+    panic!(
+        "Cannot reach URL {} after {} attempts",
+        download_url, retries
+    );
+}
+
+fn read_tarball_from_file(path: &str) -> Vec<u8> {
+    let file = File::open(path).unwrap_or_else(|_| {
+        panic!(
+            "Cannot find {:?} specified with env var BITCOIND_TARBALL_FILE",
+            path
+        )
+    });
+    let mut reader = BufReader::new(file);
+    let mut buffer = Vec::new();
+    reader.read_to_end(&mut buffer).unwrap();
+    buffer
+}
+
+fn unpack_tarball(tarball_bytes: &[u8], destination: &Path) {
+    let decoder = GzDecoder::new(tarball_bytes);
+    let mut archive = Archive::new(decoder);
+    for mut entry in archive.entries().unwrap().flatten() {
+        if let Ok(file) = entry.path() {
+            if file.ends_with("bitcoind") {
+                entry.unpack_in(destination).unwrap();
+            }
+        }
+    }
+}
+
+fn get_bitcoind_filename(os: &str, arch: &str) -> String {
+    match (os, arch) {
+        ("macos", "aarch64") => format!("bitcoin-{}-arm64-apple-darwin.tar.gz", BITCOIN_VERSION),
+        ("macos", "x86_64") => format!("bitcoin-{}-x86_64-apple-darwin.tar.gz", BITCOIN_VERSION),
+        ("linux", "x86_64") => format!("bitcoin-{}-x86_64-linux-gnu.tar.gz", BITCOIN_VERSION),
+        ("linux", "aarch64") => format!("bitcoin-{}-aarch64-linux-gnu.tar.gz", BITCOIN_VERSION),
+        _ => format!(
+            "bitcoin-{}-x86_64-apple-darwin-unsigned.zip",
+            BITCOIN_VERSION
+        ),
+    }
+}
 
 /// Initiate the bitcoind backend.
 pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
@@ -50,17 +136,48 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
     log::info!("bitcoind datadir: {:?}", conf.staticdir.as_ref().unwrap());
     log::info!("bitcoind configuration: {:?}", conf.args);
 
-    let os = consts::OS;
-    let arch = consts::ARCH;
+    let os = env::consts::OS;
+    let arch = env::consts::ARCH;
+    let current_dir: PathBuf = std::env::current_dir().expect("failed to read current dir");
+    let bitcoin_bin_dir = current_dir.join("bin");
+    let download_filename = get_bitcoind_filename(os, arch);
+    let bitcoin_exe_home = bitcoin_bin_dir
+        .join(format!("bitcoin-{}", BITCOIN_VERSION))
+        .join("bin");
 
-    let key = "BITCOIND_EXE";
-    let curr_dir_path = env::current_dir().unwrap();
+    if !bitcoin_exe_home.exists() {
+        let tarball_bytes = match env::var("BITCOIND_TARBALL_FILE") {
+            Ok(path) => read_tarball_from_file(&path),
+            Err(_) => {
+                let download_endpoint = env::var("BITCOIND_DOWNLOAD_ENDPOINT")
+                    .unwrap_or_else(|_| "https://bitcoincore.org/bin".to_owned());
+                let url = format!(
+                    "{}/bitcoin-core-{}/{}",
+                    download_endpoint, BITCOIN_VERSION, download_filename
+                );
+                download_bitcoind_tarball(&url, 5)
+            }
+        };
 
-    let bitcoind_path = match (os, arch) {
-        ("macos", "aarch64") => curr_dir_path.join("bin").join("bitcoind_macos"),
-        _ => curr_dir_path.join("bin").join("bitcoind"),
-    };
-    env::set_var(key, bitcoind_path);
+        if let Some(parent) = bitcoin_exe_home.parent() {
+            create_dir_all(parent).unwrap();
+        }
+
+        unpack_tarball(&tarball_bytes, &bitcoin_bin_dir);
+
+        if os == "macos" {
+            let bitcoind_binary = bitcoin_exe_home.join("bitcoind");
+            std::process::Command::new("codesign")
+                .arg("--sign")
+                .arg("-")
+                .arg(&bitcoind_binary)
+                .output()
+                .expect("Failed to sign bitcoind binary");
+        }
+    }
+
+    env::set_var("BITCOIND_EXE", bitcoin_exe_home.join("bitcoind"));
+
     let exe_path = bitcoind::exe_path().unwrap();
 
     log::info!("Executable path: {:?}", exe_path);
