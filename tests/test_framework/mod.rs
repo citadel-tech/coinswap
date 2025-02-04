@@ -268,7 +268,7 @@ pub fn verify_swap_results(
         let wallet = taker.get_wallet();
         let all_utxos = wallet.get_all_utxo().unwrap();
         let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
-    
+
         assert!(
             balances.regular == Amount::from_btc(0.14497).unwrap() // Successful coinswap
                 || balances.regular == Amount::from_btc(0.14993232).unwrap() // Recovery via timelock
