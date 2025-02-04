@@ -173,7 +173,7 @@ fn main() -> Result<(), TakerError> {
             println!("{:#?}", utxos);
         }
         Commands::GetBalances => {
-            let balances = taker.get_wallet().get_balances()?;
+            let balances = taker.get_wallet().get_balances(None)?;
             println!(
                 "{}",
                 to_string_pretty(&json!({

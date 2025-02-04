@@ -89,24 +89,14 @@ fn maker_drops_after_sending_senders_sigs() {
             let wallet = maker.wallet.read().unwrap();
             let all_utxos = wallet.get_all_utxo().unwrap();
 
-            let seed_balance = wallet.balance_descriptor_utxo(Some(&all_utxos)).unwrap();
+            let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
 
-            let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
+            assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
+            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
+            assert_eq!(balances.swap, Amount::ZERO);
+            assert_eq!(balances.contract, Amount::ZERO);
 
-            let swapcoin_balance = wallet
-                .balance_incoming_swap_coins(Some(&all_utxos))
-                .unwrap();
-
-            let live_contract_balance = wallet
-                .balance_live_timelock_contract(Some(&all_utxos))
-                .unwrap();
-
-            assert_eq!(seed_balance, Amount::from_btc(0.14999).unwrap());
-            assert_eq!(fidelity_balance, Amount::from_btc(0.05).unwrap());
-            assert_eq!(swapcoin_balance, Amount::ZERO);
-            assert_eq!(live_contract_balance, Amount::ZERO);
-
-            seed_balance + swapcoin_balance
+            balances.spendable
         })
         .collect::<Vec<_>>();
 

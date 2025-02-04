@@ -306,12 +306,15 @@ impl Wallet {
         self.store.incoming_swapcoins.len() + self.store.outgoing_swapcoins.len()
     }
 
-    pub fn get_balances(&self) -> Result<Balances, WalletError> {
-        let regular = self.balance_descriptor_utxo(None)?;
-        let contract = self.balance_live_timelock_contract(None)?;
-        let swap = self.balance_incoming_swap_coins(None)?;
-        let fidelity = self.balance_fidelity_bonds(None)?;
-        let spendable = self.spendable_balance(None)?;
+    pub fn get_balances(
+        &self,
+        all_utxos: Option<&Vec<ListUnspentResultEntry>>,
+    ) -> Result<Balances, WalletError> {
+        let regular = self.balance_descriptor_utxo(all_utxos)?;
+        let contract = self.balance_live_timelock_contract(all_utxos)?;
+        let swap = self.balance_incoming_swap_coins(all_utxos)?;
+        let fidelity = self.balance_fidelity_bonds(all_utxos)?;
+        let spendable = self.spendable_balance(all_utxos)?;
         Ok(Balances {
             regular,
             swap,

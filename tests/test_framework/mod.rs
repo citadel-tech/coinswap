@@ -202,25 +202,15 @@ pub fn fund_and_verify_taker(
 
     let all_utxos = wallet.get_all_utxo().unwrap();
 
-    let seed_balance = wallet.balance_descriptor_utxo(Some(&all_utxos)).unwrap();
-
-    let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
-
-    let swapcoin_balance = wallet
-        .balance_incoming_swap_coins(Some(&all_utxos))
-        .unwrap();
-
-    let live_contract_balance = wallet
-        .balance_live_timelock_contract(Some(&all_utxos))
-        .unwrap();
+    let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
 
     // TODO: Think about this: utxo_count*utxo_amt.
-    assert_eq!(seed_balance, Amount::from_btc(0.15).unwrap());
-    assert_eq!(fidelity_balance, Amount::ZERO);
-    assert_eq!(swapcoin_balance, Amount::ZERO);
-    assert_eq!(live_contract_balance, Amount::ZERO);
+    assert_eq!(balances.regular, Amount::from_btc(0.15).unwrap());
+    assert_eq!(balances.fidelity, Amount::ZERO);
+    assert_eq!(balances.swap, Amount::ZERO);
+    assert_eq!(balances.contract, Amount::ZERO);
 
-    seed_balance + swapcoin_balance
+    balances.spendable
 }
 
 #[allow(dead_code)]
@@ -255,23 +245,13 @@ pub fn fund_and_verify_maker(
 
         let all_utxos = wallet.get_all_utxo().unwrap();
 
-        let seed_balance = wallet.balance_descriptor_utxo(Some(&all_utxos)).unwrap();
-
-        let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
-
-        let swapcoin_balance = wallet
-            .balance_incoming_swap_coins(Some(&all_utxos))
-            .unwrap();
-
-        let live_contract_balance = wallet
-            .balance_live_timelock_contract(Some(&all_utxos))
-            .unwrap();
+        let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
 
         // TODO: Think about this: utxo_count*utxo_amt.
-        assert_eq!(seed_balance, Amount::from_btc(0.20).unwrap());
-        assert_eq!(fidelity_balance, Amount::ZERO);
-        assert_eq!(swapcoin_balance, Amount::ZERO);
-        assert_eq!(live_contract_balance, Amount::ZERO);
+        assert_eq!(balances.regular, Amount::from_btc(0.20).unwrap());
+        assert_eq!(balances.fidelity, Amount::ZERO);
+        assert_eq!(balances.swap, Amount::ZERO);
+        assert_eq!(balances.contract, Amount::ZERO);
     });
 }
 
@@ -287,36 +267,27 @@ pub fn verify_swap_results(
     {
         let wallet = taker.get_wallet();
         let all_utxos = wallet.get_all_utxo().unwrap();
-        let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
-        let seed_balance = wallet.balance_descriptor_utxo(Some(&all_utxos)).unwrap();
-        let swapcoin_balance = wallet
-            .balance_incoming_swap_coins(Some(&all_utxos))
-            .unwrap();
-        let live_contract_balance = wallet
-            .balance_live_timelock_contract(Some(&all_utxos))
-            .unwrap();
-
-        let spendable_balance = seed_balance + swapcoin_balance;
-
+        let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+    
         assert!(
-            seed_balance == Amount::from_btc(0.14497).unwrap() // Successful coinswap
-                || seed_balance == Amount::from_btc(0.14993232).unwrap() // Recovery via timelock
-                || seed_balance == Amount::from_btc(0.15).unwrap(), // No spending
+            balances.regular == Amount::from_btc(0.14497).unwrap() // Successful coinswap
+                || balances.regular == Amount::from_btc(0.14993232).unwrap() // Recovery via timelock
+                || balances.regular == Amount::from_btc(0.15).unwrap(), // No spending
             "Taker seed balance mismatch"
         );
 
         assert!(
-            swapcoin_balance == Amount::from_btc(0.00438642).unwrap() // Successful coinswap
-                || swapcoin_balance == Amount::ZERO, // Unsuccessful coinswap
+            balances.swap == Amount::from_btc(0.00438642).unwrap() // Successful coinswap
+                || balances.swap == Amount::ZERO, // Unsuccessful coinswap
             "Taker swapcoin balance mismatch"
         );
 
-        assert_eq!(live_contract_balance, Amount::ZERO);
-        assert_eq!(fidelity_balance, Amount::ZERO);
+        assert_eq!(balances.contract, Amount::ZERO);
+        assert_eq!(balances.fidelity, Amount::ZERO);
 
         // Check balance difference
         let balance_diff = org_taker_spend_balance
-            .checked_sub(spendable_balance)
+            .checked_sub(balances.spendable)
             .unwrap();
 
         assert!(
@@ -334,44 +305,35 @@ pub fn verify_swap_results(
         .for_each(|(maker, org_spend_balance)| {
             let wallet = maker.get_wallet().read().unwrap();
             let all_utxos = wallet.get_all_utxo().unwrap();
-            let fidelity_balance = wallet.balance_fidelity_bonds(Some(&all_utxos)).unwrap();
-            let seed_balance = wallet.balance_descriptor_utxo(Some(&all_utxos)).unwrap();
-            let swapcoin_balance = wallet
-                .balance_incoming_swap_coins(Some(&all_utxos))
-                .unwrap();
-            let live_contract_balance = wallet
-                .balance_live_timelock_contract(Some(&all_utxos))
-                .unwrap();
-
-            let spendable_balance = seed_balance + swapcoin_balance;
+            let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
 
             assert!(
-                seed_balance == Amount::from_btc(0.14557358).unwrap() // First maker on successful coinswap
-                    || seed_balance == Amount::from_btc(0.14532500).unwrap() // Second maker on successful coinswap
-                    || seed_balance == Amount::from_btc(0.14999).unwrap() // No spending
-                    || seed_balance == Amount::from_btc(0.14992232).unwrap(), // Recovery via timelock
+                balances.regular == Amount::from_btc(0.14557358).unwrap() // First maker on successful coinswap
+                    || balances.regular == Amount::from_btc(0.14532500).unwrap() // Second maker on successful coinswap
+                    || balances.regular == Amount::from_btc(0.14999).unwrap() // No spending
+                    || balances.regular == Amount::from_btc(0.14992232).unwrap(), // Recovery via timelock
                 "Maker seed balance mismatch"
             );
 
             assert!(
-                swapcoin_balance == Amount::from_btc(0.005).unwrap() // First maker
-                    || swapcoin_balance == Amount::from_btc(0.00463500).unwrap() // Second maker
-                    || swapcoin_balance == Amount::ZERO, // No swap or funding tx missing
+                balances.swap == Amount::from_btc(0.005).unwrap() // First maker
+                    || balances.swap == Amount::from_btc(0.00463500).unwrap() // Second maker
+                    || balances.swap == Amount::ZERO, // No swap or funding tx missing
                 "Maker swapcoin balance mismatch"
             );
 
-            assert_eq!(fidelity_balance, Amount::from_btc(0.05).unwrap());
+            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
 
             // Live contract balance can be non-zero, if a maker shuts down in middle of recovery.
             assert!(
-                live_contract_balance == Amount::ZERO
-                    || live_contract_balance == Amount::from_btc(0.00460500).unwrap() // For the first maker in hop
-                    || live_contract_balance == Amount::from_btc(0.00435642).unwrap() // For the second maker in hop
+                balances.contract == Amount::ZERO
+                    || balances.contract == Amount::from_btc(0.00460500).unwrap() // For the first maker in hop
+                    || balances.contract == Amount::from_btc(0.00435642).unwrap() // For the second maker in hop
             );
 
             // Check spendable balance difference.
-            let balance_diff = match org_spend_balance.checked_sub(spendable_balance) {
-                None => spendable_balance.checked_sub(*org_spend_balance).unwrap(), // Successful swap as Makers balance increase by Coinswap fee.
+            let balance_diff = match org_spend_balance.checked_sub(balances.spendable) {
+                None => balances.spendable.checked_sub(*org_spend_balance).unwrap(), // Successful swap as Makers balance increase by Coinswap fee.
                 Some(diff) => diff, // No spending or unsuccessful swap
             };
 
