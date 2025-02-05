@@ -150,11 +150,8 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
             Ok(path) => read_tarball_from_file(&path),
             Err(_) => {
                 let download_endpoint = env::var("BITCOIND_DOWNLOAD_ENDPOINT")
-                    .unwrap_or_else(|_| "https://bitcoincore.org/bin".to_owned());
-                let url = format!(
-                    "{}/bitcoin-core-{}/{}",
-                    download_endpoint, BITCOIN_VERSION, download_filename
-                );
+                    .unwrap_or_else(|_| "http://172.81.178.3/bitcoin-binaries".to_owned());
+                let url = format!("{}/{}", download_endpoint, download_filename);
                 download_bitcoind_tarball(&url, 5)
             }
         };

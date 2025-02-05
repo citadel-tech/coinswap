@@ -35,7 +35,7 @@ minreq = { version = "2.12.0", features = ["https"] , optional = true}
 
 #Empty default feature set, (helpful to generalise in github actions)
 [features]
-default = ['tor']
+default = ['tor','integration-test']
 # The following feature set is in response to the issue described at https://github.com/rust-lang/rust/issues/45599
 # Only used for running the integration tests
 integration-test = ['dep:flate2','dep:tar','dep:minreq']
