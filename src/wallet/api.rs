@@ -3,7 +3,7 @@
 //! Currently, wallet synchronization is exclusively performed through RPC for makers.
 //! In the future, takers might adopt alternative synchronization methods, such as lightweight wallet solutions.
 
-use std::{convert::TryFrom, path::PathBuf, str::FromStr};
+use std::{convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr};
 
 use std::collections::HashMap;
 
@@ -115,7 +115,7 @@ impl FromStr for DisplayAddressType {
 /// Enum representing additional data needed to spend a UTXO, in addition to `ListUnspentResultEntry`.
 // data needed to find information  in addition to ListUnspentResultEntry
 // about a UTXO required to spend it
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UTXOSpendInfo {
     /// Seed Coin
     SeedCoin { path: String, input_value: Amount },
@@ -135,6 +135,19 @@ pub enum UTXOSpendInfo {
     },
     /// Fidelity Bond Coin
     FidelityBondCoin { index: u32, input_value: Amount },
+}
+
+impl Display for UTXOSpendInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            UTXOSpendInfo::SeedCoin { .. } => write!(f, "regular"),
+            UTXOSpendInfo::FidelityBondCoin { .. } => write!(f, "fidelity-bond"),
+            UTXOSpendInfo::HashlockContract { .. } => write!(f, "hashlock-contract"),
+            UTXOSpendInfo::TimelockContract { .. } => write!(f, "timelock-contract"),
+            UTXOSpendInfo::IncomingSwapCoin { .. } => write!(f, "incoming-swap"),
+            UTXOSpendInfo::OutgoingSwapCoin { .. } => write!(f, "outgoing-swap"),
+        }
+    }
 }
 
 /// Represents total wallet balances of different categories.

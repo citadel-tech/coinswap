@@ -1,9 +1,9 @@
 use bitcoin::{Address, Amount};
-use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Auth};
+use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
-    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, REQUIRED_CONFIRMS},
+    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, REQUIRED_CONFIRMS, UTXO},
     wallet::{Destination, RPCConfig, SendAmount},
 };
 use log::LevelFilter;
@@ -143,34 +143,35 @@ fn main() -> Result<(), TakerError> {
     match args.command {
         Commands::ListUtxo => {
             let utxos = taker.get_wallet().list_all_utxo_spend_info(None)?;
-            println!("{:#?}", utxos);
+            for utxo in utxos {
+                let utxo = UTXO::from_utxo_data(utxo);
+                println!("{}", serde_json::to_string_pretty(&utxo)?);
+            }
         }
         Commands::ListUtxoRegular => {
-            let utxos: Vec<ListUnspentResultEntry> = taker
-                .get_wallet()
-                .list_descriptor_utxo_spend_info(None)?
-                .iter()
-                .map(|(l, _)| l.clone())
-                .collect();
-            println!("{:#?}", utxos);
+            let utxos = taker.get_wallet().list_descriptor_utxo_spend_info(None)?;
+            for utxo in utxos {
+                let utxo = UTXO::from_utxo_data(utxo);
+                println!("{}", serde_json::to_string_pretty(&utxo)?);
+            }
         }
         Commands::ListUtxoSwap => {
-            let utxos: Vec<ListUnspentResultEntry> = taker
+            let utxos = taker
                 .get_wallet()
-                .list_incoming_swap_coin_utxo_spend_info(None)?
-                .iter()
-                .map(|(l, _)| l.clone())
-                .collect();
-            println!("{:#?}", utxos);
+                .list_incoming_swap_coin_utxo_spend_info(None)?;
+            for utxo in utxos {
+                let utxo = UTXO::from_utxo_data(utxo);
+                println!("{}", serde_json::to_string_pretty(&utxo)?);
+            }
         }
         Commands::ListUtxoContract => {
             let utxos = taker
                 .get_wallet()
-                .list_live_timelock_contract_spend_info(None)?
-                .iter()
-                .map(|(l, _)| l.clone())
-                .collect::<Vec<_>>();
-            println!("{:#?}", utxos);
+                .list_live_timelock_contract_spend_info(None)?;
+            for utxo in utxos {
+                let utxo = UTXO::from_utxo_data(utxo);
+                println!("{}", serde_json::to_string_pretty(&utxo)?);
+            }
         }
         Commands::GetBalances => {
             let balances = taker.get_wallet().get_balances()?;

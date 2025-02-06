@@ -106,7 +106,7 @@ fn test_taker_cli() {
     // Assert that total no of seed-utxos are 3.
     let all_utxos = taker_cli.execute(&["list-utxo"]);
 
-    let no_of_seed_utxos = all_utxos.matches("ListUnspentResultEntry {").count();
+    let no_of_seed_utxos = all_utxos.matches("addr").count();
     assert_eq!(3, no_of_seed_utxos);
 
     // Send 100,000 sats to a new address within the wallet, with a fee of 1,000 sats.
@@ -139,7 +139,7 @@ fn test_taker_cli() {
     // Assert that no of seed utxos are 2
     let all_utxos = taker_cli.execute(&["list-utxo"]);
 
-    let no_of_seed_utxos = all_utxos.matches("ListUnspentResultEntry {").count();
+    let no_of_seed_utxos = all_utxos.matches("addr").count();
     assert_eq!(4, no_of_seed_utxos);
 
     bitcoind.client.stop().unwrap();
