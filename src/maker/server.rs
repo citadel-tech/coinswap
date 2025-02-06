@@ -40,9 +40,6 @@ use crate::{
     wallet::WalletError,
 };
 
-#[cfg(feature = "tor")]
-use crate::utill::monitor_log_for_completion;
-
 use crate::maker::error::MakerError;
 
 // Default values for Maker configurations
@@ -69,52 +66,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
         }
         #[cfg(feature = "tor")]
         ConnectionType::TOR => {
-            let maker_socks_port = maker.config.socks_port;
-
-            let tor_dir = maker.data_dir.join("tor");
-            let tor_log_file = tor_dir.join("log");
-
-            // Hard error if previous log file can't be removed, as monitor_log_for_completion doesn't work with existing file.
-            // Tell the user to manually delete the file and restart.
-            if tor_log_file.exists() {
-                if let Err(e) = std::fs::remove_file(&tor_log_file) {
-                    log::error!(
-                        "Error removing previous tor log. Please delete the file and restart. | {:?}",
-                        tor_log_file
-                    );
-                    return Err(e.into());
-                } else {
-                    log::info!("Previous tor log file deleted succesfully");
-                }
-            }
-
-            let tor_handle = Some(crate::tor::spawn_tor(
-                maker_socks_port,
-                maker_port,
-                tor_dir.to_str().unwrap().to_owned(),
-            )?);
-
-            log::info!(
-                "[{}] waiting for tor setup to compelte.",
-                maker.config.network_port
-            );
-
-            // TODO: move this function inside `spawn_tor` routine. `
-            if let Err(e) =
-                monitor_log_for_completion(&tor_log_file, "Bootstrapped 100% (done): Done")
-            {
-                log::error!(
-                    "[{}] Error monitoring log file {:?}. Remove the file and restart again. | {}",
-                    maker_port,
-                    tor_log_file,
-                    e
-                );
-                return Err(e.into());
-            }
-
-            log::info!("[{}] tor setup complete!", maker_port);
-
-            let maker_hostname = get_tor_hostname(&tor_dir)?;
+            let maker_hostname = &maker.config.hostname;
             let maker_address = format!("{}:{}", maker_hostname, maker.config.network_port);
 
             let dns_address = if cfg!(feature = "integration-test") {
@@ -125,7 +77,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
                 maker.config.directory_server_address.clone()
             };
 
-            (maker_address, dns_address, tor_handle)
+            (maker_address, dns_address, None)
         }
     };
 
@@ -643,15 +595,6 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     log::info!("[{}] Maker is shutting down.", port);
     maker.thread_pool.join_all_threads()?;
-
-    #[cfg(feature = "tor")]
-    if let Some(mut tor_thread) = _tor_thread {
-        {
-            if maker.config.connection_type == ConnectionType::TOR && cfg!(feature = "tor") {
-                crate::tor::kill_tor_handles(&mut tor_thread);
-            }
-        }
-    }
 
     log::info!("Shutdown wallet sync initiated.");
     maker.get_wallet().write()?.sync_no_fail();

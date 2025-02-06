@@ -26,8 +26,7 @@ use std::{
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io::{self, BufRead, Write},
-    thread,
+    io::{self, Write},
     time::Duration,
 };
 
@@ -445,39 +444,6 @@ pub(crate) fn parse_field<T: std::str::FromStr>(value: Option<&String>, default:
         .unwrap_or(default)
 }
 
-/// Function to check if tor log contains a pattern
-pub(crate) fn monitor_log_for_completion(log_file: &Path, pattern: &str) -> io::Result<()> {
-    // TODO: Make this logic work for existing file with previous logs.
-    let mut last_size = 0;
-
-    loop {
-        if log_file.exists() {
-            let file = File::open(log_file)?;
-            let metadata = file.metadata()?;
-            let current_size = metadata.len();
-
-            if current_size != last_size {
-                let reader = io::BufReader::new(file);
-                let lines = reader.lines();
-
-                for line in lines {
-                    if let Ok(line) = line {
-                        log::info!("{}", line);
-                        if line.contains(pattern) {
-                            return Ok(());
-                        }
-                    } else {
-                        return Err(io::Error::new(io::ErrorKind::Other, "Error reading line"));
-                    }
-                }
-
-                last_size = current_size;
-            }
-        }
-        thread::sleep(HEART_BEAT_INTERVAL);
-    }
-}
-
 fn polynomial_modulus(mut checksum: u64, value: u64) -> u64 {
     let upper_bits = checksum >> SHIFT_FOR_C0;
     checksum = ((checksum & MASK_LOW_35_BITS) << 5) ^ value;
@@ -643,7 +609,7 @@ pub(crate) fn verify_fidelity_checks(
 
 #[cfg(test)]
 mod tests {
-    use std::net::TcpListener;
+    use std::{net::TcpListener, thread};
 
     use bitcoin::{
         blockdata::{opcodes::all, script::Builder},

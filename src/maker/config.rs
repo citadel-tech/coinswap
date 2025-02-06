@@ -20,6 +20,8 @@ pub struct MakerConfig {
     pub min_swap_amount: u64,
     /// Socks port
     pub socks_port: u16,
+    // Onion hostname
+    pub hostname: String,
     /// Directory server address (can be clearnet or onion)
     pub directory_server_address: String,
     /// Fidelity Bond amount
@@ -57,6 +59,7 @@ impl Default for MakerConfig {
                     ConnectionType::CLEARNET
                 }
             },
+            hostname: "ocqkq73acs4qryk5snoiwtpskb2w3wp65basfzw2xcw6mrp57yonygyd.onion".to_string(),
         }
     }
 }
@@ -119,6 +122,7 @@ impl MakerConfig {
                 config_map.get("connection_type"),
                 default_config.connection_type,
             ),
+            hostname: parse_field(config_map.get("hostname"), default_config.hostname),
         })
     }
 
