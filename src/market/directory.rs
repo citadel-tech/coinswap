@@ -16,9 +16,6 @@ use crate::{
     wallet::{RPCConfig, WalletError},
 };
 
-#[cfg(feature = "tor")]
-use crate::utill::{get_tor_hostname, monitor_log_for_completion};
-
 use std::{
     collections::HashMap,
     convert::TryFrom,
@@ -121,6 +118,8 @@ pub struct DirectoryServer {
     pub network_port: u16,
     /// Socks port
     pub socks_port: u16,
+    ///onion hostname
+    pub hostname: String,
     /// Connection type
     pub connection_type: ConnectionType,
     /// Directory server data directory
@@ -150,6 +149,7 @@ impl Default for DirectoryServer {
             data_dir: get_dns_dir(),
             shutdown: AtomicBool::new(false),
             addresses: Arc::new(RwLock::new(HashMap::new())),
+            hostname: "ocqkq73acs4qryk5snoiwtpskb2w3wp65basfzw2xcw6mrp57yonygyd.onion".to_string(),
         }
     }
 }
@@ -218,6 +218,7 @@ impl DirectoryServer {
             network_port: parse_field(config_map.get("port"), default_dns.network_port),
             socks_port: parse_field(config_map.get("socks_port"), default_dns.socks_port),
             data_dir,
+            hostname: "ocqkq73acs4qryk5snoiwtpskb2w3wp65basfzw2xcw6mrp57yonygyd.onion".to_string(),
             shutdown: AtomicBool::new(false),
             connection_type: parse_field(
                 config_map.get("connection_type"),
@@ -348,8 +349,6 @@ pub fn start_directory_server(
     rpc_config: Option<RPCConfig>,
 ) -> Result<(), DirectoryServerError> {
     #[cfg(feature = "tor")]
-    let mut tor_handle = None;
-
     let rpc_config = rpc_config.unwrap_or_default();
 
     let rpc_client = bitcoincore_rpc::Client::try_from(&rpc_config)?;
@@ -368,34 +367,11 @@ pub fn start_directory_server(
         ConnectionType::TOR => {
             #[cfg(feature = "tor")]
             {
-                let tor_dir = directory.data_dir.join("tor");
-                let log_file = tor_dir.join("log");
-                if log_file.exists() {
-                    match fs::remove_file(&log_file) {
-                        Ok(_) => log::info!("Previous tor log file deleted successfully"),
-                        Err(_) => log::error!("Error deleting tor log file"),
-                    }
-                }
-
-                let socks_port = directory.socks_port;
                 let network_port = directory.network_port;
-                tor_handle = Some(crate::tor::spawn_tor(
-                    socks_port,
-                    network_port,
-                    tor_dir.to_str().unwrap().to_string(),
-                )?);
-
-                log::info!("waiting for tor setup completion.");
-
-                if let Err(e) =
-                    monitor_log_for_completion(&log_file, "Bootstrapped 100% (done): Done")
-                {
-                    log::error!("Error monitoring tor log file: {}", e);
-                }
 
                 log::info!("tor is ready!!");
 
-                let hostname = get_tor_hostname(&tor_dir)?;
+                let hostname = &directory.hostname;
 
                 log::info!("DNS is listening at {}:{}", hostname, network_port);
             }
@@ -444,14 +420,6 @@ pub fn start_directory_server(
     }
     if let Err(e) = address_writer_thread.join() {
         log::error!("Error closing Address Writer Thread : {:?}", e);
-    }
-
-    #[cfg(feature = "tor")]
-    {
-        if let Some(mut handle) = tor_handle {
-            crate::tor::kill_tor_handles(&mut handle);
-            log::info!("Directory server and Tor instance terminated successfully");
-        }
     }
 
     Ok(())
