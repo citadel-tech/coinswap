@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display};
+use std::fmt::Display;
 
 use bitcoin::Txid;
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string_pretty};
 use std::path::PathBuf;
 
-use crate::wallet::{Balances, FidelityBond};
+use crate::wallet::Balances;
 
 /// Enum representing RPC message requests.
 ///
@@ -96,7 +96,7 @@ pub enum RpcMsgResp {
     /// Response with the internal server error.
     ServerError(String),
     /// Response listing all current and past fidelity bonds.
-    ListBonds(HashMap<u32, (FidelityBond, bool)>),
+    ListBonds(String),
 }
 
 impl Display for RpcMsgResp {
