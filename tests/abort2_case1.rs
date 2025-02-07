@@ -215,11 +215,10 @@ fn test_abort_case_2_move_on_with_other_makers() {
 
     taker_wallet_mut.sync().unwrap();
 
-    let swap_coin_bal = taker_wallet_mut.balance_incoming_swap_coins(None).unwrap();
-    let descriptor_bal = taker_wallet_mut.balance_descriptor_utxo(None).unwrap();
+    let balances = taker_wallet_mut.get_balances(None).unwrap();
 
-    assert_eq!(swap_coin_bal, Amount::ZERO);
-    assert_eq!(descriptor_bal, Amount::from_btc(0.14934642).unwrap());
+    assert_eq!(balances.swap, Amount::ZERO);
+    assert_eq!(balances.regular, Amount::from_btc(0.14934642).unwrap());
 
     info!("All checks successful. Terminating integration test case");
 

@@ -475,14 +475,14 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let network = maker.get_wallet().read()?.store.network;
     let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;
     let utxos = maker.get_wallet().read()?.get_all_utxo()?;
-    let balance = maker.get_wallet().read()?.spendable_balance(Some(&utxos))?;
-    let fidelity_amount = maker
-        .get_wallet()
-        .read()?
-        .balance_fidelity_bonds(Some(&utxos))?;
+    let balances = maker.get_wallet().read()?.get_balances(Some(&utxos))?;
     log::info!("[{}] Bitcoin Network: {}", port, network);
-    log::info!("[{}] Spendable Wallet Balance: {}", port, balance);
-    log::info!("[{}] Fidelity Bond Amount : {}", port, fidelity_amount);
+    log::info!(
+        "[{}] Spendable Wallet Balance: {}",
+        port,
+        balances.spendable
+    );
+    log::info!("[{}] Fidelity Bond Amount : {}", port, balances.fidelity);
     log::info!(
         "[{}] Minimum Swap Size {} SATS",
         port,

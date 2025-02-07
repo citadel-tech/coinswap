@@ -129,11 +129,10 @@ fn test_fidelity() {
     {
         let wallet_read = maker.get_wallet().read().unwrap();
 
-        let fidelity_balance = wallet_read.balance_fidelity_bonds(None).unwrap();
-        let seed_balance = wallet_read.balance_descriptor_utxo(None).unwrap();
+        let balances = wallet_read.get_balances(None).unwrap();
 
-        assert_eq!(fidelity_balance.to_sat(), 13000000);
-        assert_eq!(seed_balance.to_sat(), 90998000);
+        assert_eq!(balances.fidelity.to_sat(), 13000000);
+        assert_eq!(balances.regular.to_sat(), 90998000);
     }
 
     // Wait for the bonds to mature, redeem them, and validate the process.
@@ -185,11 +184,10 @@ fn test_fidelity() {
     // Verify the balances again after all bonds are redeemed.
     {
         let wallet_read = maker.get_wallet().read().unwrap();
-        let fidelity_balance = wallet_read.balance_fidelity_bonds(None).unwrap();
-        let seed_balance = wallet_read.balance_descriptor_utxo(None).unwrap();
+        let balances = wallet_read.get_balances(None).unwrap();
 
-        assert_eq!(fidelity_balance.to_sat(), 0);
-        assert_eq!(seed_balance.to_sat(), 103996000);
+        assert_eq!(balances.fidelity.to_sat(), 0);
+        assert_eq!(balances.regular.to_sat(), 103996000);
     }
 
     // Stop the directory server.
