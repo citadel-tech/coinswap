@@ -70,9 +70,7 @@ fn download_bitcoind_tarball(download_url: &str, retries: usize) -> Vec<u8> {
             Err(err) => {
                 eprintln!(
                     "Attempt {}: Failed to fetch URL {}: {:?}",
-                    attempt + 1,
-                    download_url,
-                    err
+                    attempt, download_url, err
                 );
             }
         }
