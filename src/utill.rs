@@ -146,10 +146,10 @@ pub(crate) fn get_dns_dir() -> PathBuf {
 /// the console and a file. It sets the `RUST_LOG` environment variable to provide default
 /// log levels and configures log4rs with the specified filter level for fine-grained control
 /// of log verbosity.
-pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool) {
+pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<PathBuf>) {
     Once::new().call_once(|| {
         // TODO: Get the custom datadir instead of the default.
-        let log_dir = get_taker_dir().join("debug.log");
+        let log_dir = datadir.unwrap_or_else(|| get_taker_dir()).join("debug.log");
 
         let file_appender = FileAppender::builder().build(log_dir).unwrap();
         let stdout = ConsoleAppender::builder().build();
@@ -186,10 +186,12 @@ pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool) {
 /// the console and a file. It sets the `RUST_LOG` environment variable to provide default
 /// log levels and configures log4rs with the specified filter level for fine-grained control
 /// of log verbosity.
-pub fn setup_maker_logger(filter: LevelFilter) {
+pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     Once::new().call_once(|| {
         // TODO: Get the custom datadir instead of the default.
-        let log_dir = get_maker_dir().join("debug.log");
+        let log_dir = data_dir
+            .unwrap_or_else(|| get_maker_dir())
+            .join("debug.log");
 
         let stdout = ConsoleAppender::builder().build();
         let file_appender = FileAppender::builder().build(log_dir).unwrap();
@@ -215,10 +217,10 @@ pub fn setup_maker_logger(filter: LevelFilter) {
 /// the console and a file. It sets the `RUST_LOG` environment variable to provide default
 /// log levels and configures log4rs with the specified filter level for fine-grained control
 /// of log verbosity.
-pub fn setup_directory_logger(filter: LevelFilter) {
+pub fn setup_directory_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     Once::new().call_once(|| {
         // TODO: Get the custom datadir instead of the default.
-        let log_dir = get_dns_dir().join("debug.log");
+        let log_dir = data_dir.unwrap_or_else(|| get_dns_dir()).join("debug.log");
 
         let stdout = ConsoleAppender::builder().build();
         let file_appender = FileAppender::builder().build(log_dir).unwrap();
@@ -241,40 +243,12 @@ pub fn setup_directory_logger(filter: LevelFilter) {
 /// Setup function that will only run once, even if called multiple times.
 /// Takes log level to set the desired logging verbosity
 // TODO: Use the above setup logger functions.
-pub fn setup_logger(filter: LevelFilter) {
+pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     Once::new().call_once(|| {
         env::set_var("RUST_LOG", "coinswap=info");
-        let taker_log_dir = get_taker_dir().join("debug.log");
-        let maker_log_dir = get_maker_dir().join("debug.log");
-        let directory_log_dir = get_dns_dir().join("debug.log");
-
-        let stdout = ConsoleAppender::builder().build();
-        let taker = FileAppender::builder().build(taker_log_dir).unwrap();
-        let maker = FileAppender::builder().build(maker_log_dir).unwrap();
-        let directory = FileAppender::builder().build(directory_log_dir).unwrap();
-        let config = Config::builder()
-            .appender(Appender::builder().build("stdout", Box::new(stdout)))
-            .appender(Appender::builder().build("taker", Box::new(taker)))
-            .appender(Appender::builder().build("maker", Box::new(maker)))
-            .appender(Appender::builder().build("directory", Box::new(directory)))
-            .logger(
-                Logger::builder()
-                    .appender("taker")
-                    .build("coinswap::taker", filter),
-            )
-            .logger(
-                Logger::builder()
-                    .appender("maker")
-                    .build("coinswap::maker", log::LevelFilter::Info),
-            )
-            .logger(
-                Logger::builder()
-                    .appender("directory")
-                    .build("coinswap::market", log::LevelFilter::Info),
-            )
-            .build(Root::builder().appender("stdout").build(filter))
-            .unwrap();
-        log4rs::init_config(config).unwrap();
+        setup_taker_logger(filter, true, datadir);
+        setup_maker_logger(filter, data_dir);
+        setup_directory_logger(filter, data_dir);
     });
 }
 
