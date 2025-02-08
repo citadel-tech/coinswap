@@ -362,9 +362,9 @@ impl Taker {
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub(crate) fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         // Check if we have enough balance.
-        let available = self.wallet.spendable_balance(None)?;
+        let available = self.wallet.get_balances(None)?.spendable;
 
-        // TODO: Make more exact estimate of swap cost and ensure balanbce.
+        // TODO: Make more exact estimate of swap cost and ensure balance.
         // For now ensure at least swap_amount + 1000 sats is available.
         let required = swap_params.send_amount + Amount::from_sat(1000);
         if available < required {
