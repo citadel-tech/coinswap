@@ -44,7 +44,7 @@ fn send_rpc_req(mut stream: TcpStream, req: RpcMsgReq) -> Result<(), DirectorySe
 }
 
 fn main() -> Result<(), DirectoryServerError> {
-    setup_directory_logger(log::LevelFilter::Info, dirs::data_dir());
+    setup_directory_logger(log::LevelFilter::Info, None);
     let cli = App::parse();
 
     let stream = TcpStream::connect(cli.rpc_port)?;
