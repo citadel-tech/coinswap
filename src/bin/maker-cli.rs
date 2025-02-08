@@ -77,7 +77,7 @@ enum Commands {
 }
 
 fn main() -> Result<(), MakerError> {
-    setup_maker_logger(log::LevelFilter::Info);
+    setup_maker_logger(log::LevelFilter::Info, dirs::data_dir());
     let cli = App::parse();
 
     let stream = TcpStream::connect(cli.rpc_port)?;

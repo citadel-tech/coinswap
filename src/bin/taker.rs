@@ -115,6 +115,7 @@ fn main() -> Result<(), TakerError> {
             args.command,
             Commands::Recover | Commands::FetchOffers | Commands::Coinswap { .. }
         ),
+        dirs::data_dir(),
     );
 
     let rpc_config = RPCConfig {
