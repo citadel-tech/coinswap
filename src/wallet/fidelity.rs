@@ -168,7 +168,7 @@ impl Wallet {
     }
 
     /// Display the fidelity bonds
-    pub fn display_fidelity_bonds(&self) -> Result<(), WalletError> {
+    pub fn get_fidelity_bonds_display(&self) -> Result<String, WalletError> {
         let blockchain_info = self.rpc.get_blockchain_info()?;
         let current_block = blockchain_info.blocks as u32;
 
@@ -192,11 +192,7 @@ impl Wallet {
             })
             .collect::<Result<Vec<serde_json::Value>, WalletError>>()?;
 
-        let pretty_json = serde_json::to_string_pretty(&serialized)
-            .map_err(|e| WalletError::General(e.to_string()))?;
-
-        println!("{}", pretty_json);
-        Ok(())
+        serde_json::to_string_pretty(&serialized).map_err(|e| WalletError::General(e.to_string()))
     }
 
     /// Get the highest value fidelity bond. Returns None, if no bond exists.
