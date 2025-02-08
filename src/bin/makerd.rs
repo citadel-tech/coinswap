@@ -5,6 +5,7 @@ use coinswap::{
     utill::{parse_proxy_auth, setup_maker_logger, ConnectionType},
     wallet::RPCConfig,
 };
+use dirs::data_dir;
 use std::{path::PathBuf, sync::Arc};
 /// Coinswap Maker Server
 ///
@@ -50,7 +51,6 @@ struct Cli {
 
 fn main() -> Result<(), MakerError> {
     setup_maker_logger(log::LevelFilter::Info);
-
     let args = Cli::parse();
 
     let rpc_config = RPCConfig {

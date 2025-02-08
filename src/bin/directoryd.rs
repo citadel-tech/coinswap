@@ -5,6 +5,7 @@ use coinswap::{
     utill::{parse_proxy_auth, setup_directory_logger, ConnectionType},
     wallet::RPCConfig,
 };
+use dirs::data_dir;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -36,8 +37,8 @@ struct Cli {
 
 fn main() -> Result<(), DirectoryServerError> {
     setup_directory_logger(log::LevelFilter::Info);
-
     let args = Cli::parse();
+
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),

@@ -10,6 +10,7 @@ use coinswap::{
     },
     utill::{read_message, send_message, setup_directory_logger},
 };
+use dirs::data_dir;
 
 /// directory-cli is a command line app to send RPC messages to directory server.
 #[derive(Parser, Debug)]
