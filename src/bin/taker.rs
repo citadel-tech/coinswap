@@ -90,8 +90,8 @@ enum Commands {
     // TODO: Also add ListOffers command to just list the current book.
     /// Initiate the coinswap process
     Coinswap {
-        /// Sets the maker count to swap with. Swapping with less than 2 makers is allowed to maintain client privacy.
-        /// Adding more makers in the swap will incure more swap fees.
+        /// Sets the maker count to swap with. Swapping with less than 2 makers is not allowed to maintain client privacy.
+        /// Adding more makers in the swap will incur more swap fees.
         #[clap(long, short = 'm', default_value = "2")]
         makers: usize,
         /// Sets the swap amount in sats.
