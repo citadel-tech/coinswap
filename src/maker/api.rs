@@ -8,9 +8,7 @@
 
 use crate::{
     protocol::{
-        contract::check_hashvalues_are_equal,
-        messages::{FidelityProof, ReqContractSigsForSender},
-        Hash160,
+        contract::check_hashvalues_are_equal, error::ProtocolError, messages::{FidelityProof, ReqContractSigsForSender}, Hash160
     },
     utill::{
         get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType, HEART_BEAT_INTERVAL,
@@ -615,7 +613,17 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(maker: Arc<Maker>) -> Resu
         let next_internal_address = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
         let time_lock_spend = og_sc.create_timelock_spend(next_internal_address)?;
 
-        let tx = og_sc.get_fully_signed_contract_tx()?;
+        let tx = match og_sc.get_fully_signed_contract_tx() {
+            Ok(tx) => tx,
+            Err(ProtocolError::General(msg)) => {
+                log::error!("SOMETHING WENT WRONG: {}", msg);
+                continue;
+            },
+            Err(e) => {
+                log::error!("SOMETHING WENT WRONG WHEN TRYING TO GET FULLY SIGNED CONTRACT TX");
+                continue;
+            }
+        };
         outgoings.push((
             (og_sc.get_multisig_redeemscript(), tx),
             (contract_timelock, time_lock_spend),
@@ -623,7 +631,17 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(maker: Arc<Maker>) -> Resu
     }
 
     for ic_sc in inc.iter() {
-        let tx = ic_sc.get_fully_signed_contract_tx()?;
+        let tx = match ic_sc.get_fully_signed_contract_tx() {
+            Ok(tx) => tx,
+            Err(ProtocolError::General(msg)) => {
+                log::error!("SOMETHING WENT WRONG: {}", msg);
+                continue;
+            },
+            Err(e) => {
+                log::error!("SOMETHING WENT WRONG WHEN TRYING TO GET FULLY SIGNED CONTRACT TX");
+                continue;
+            }
+        };
         incomings.push((ic_sc.get_multisig_redeemscript(), tx));
     }
 

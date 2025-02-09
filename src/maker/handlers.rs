@@ -682,7 +682,17 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
             .zip(state.incoming_swapcoins.iter())
         {
             let contract_timelock = og_sc.get_timelock()?;
-            let contract = og_sc.get_fully_signed_contract_tx()?;
+            let contract = match og_sc.get_fully_signed_contract_tx() {
+                Ok(tx) => tx,
+                Err(ProtocolError::General(msg)) => {
+                    log::error!("SOMETHING WENT WRONG: {}", msg);
+                    continue;
+                },
+                Err(e) => {
+                    log::error!("SOMETHING WENT WRONG WHEN TRYING TO GET FULLY SIGNED CONTRACT TX");
+                    continue;
+                }
+            };
             let next_internal_address = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
             let time_lock_spend = og_sc.create_timelock_spend(next_internal_address)?;
             outgoings.push((
