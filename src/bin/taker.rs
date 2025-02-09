@@ -6,7 +6,6 @@ use coinswap::{
     utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, REQUIRED_CONFIRMS, UTXO},
     wallet::{Destination, RPCConfig, SendAmount},
 };
-//use dirs::data_dir;
 use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};

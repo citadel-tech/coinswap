@@ -5,7 +5,6 @@ use coinswap::{
     utill::{parse_proxy_auth, setup_directory_logger, ConnectionType},
     wallet::RPCConfig,
 };
-//use dirs::data_dir;
 
 use std::{path::PathBuf, sync::Arc};
 
