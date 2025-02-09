@@ -1,12 +1,12 @@
 use bitcoin::{Address, Amount};
-use bitcoind::{bitcoincore_rpc::Auth, DataDir};
+use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
     utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, REQUIRED_CONFIRMS, UTXO},
     wallet::{Destination, RPCConfig, SendAmount},
 };
-use dirs::data_dir;
+//use dirs::data_dir;
 use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};
@@ -115,7 +115,7 @@ fn main() -> Result<(), TakerError> {
             args.command,
             Commands::Recover | Commands::FetchOffers | Commands::Coinswap { .. }
         ),
-        dirs::data_dir(),
+        None, //default path handled inside the function.
     );
 
     let rpc_config = RPCConfig {

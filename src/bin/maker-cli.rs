@@ -5,7 +5,7 @@ use coinswap::{
     maker::{MakerError, RpcMsgReq, RpcMsgResp},
     utill::{read_message, send_message, setup_maker_logger},
 };
-use dirs::data_dir;
+//use dirs::data_dir;
 
 /// A simple command line app to operate the makerd server.
 ///

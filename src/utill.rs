@@ -148,7 +148,7 @@ pub(crate) fn get_dns_dir() -> PathBuf {
 /// of log verbosity.
 pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<PathBuf>) {
     Once::new().call_once(|| {
-        let log_dir = datadir.unwrap_or_else(|| get_taker_dir()).join("debug.log");
+        let log_dir = datadir.unwrap_or_else(get_taker_dir).join("debug.log");
 
         let file_appender = FileAppender::builder().build(log_dir).unwrap();
         let stdout = ConsoleAppender::builder().build();
@@ -175,7 +175,9 @@ pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<
 
         let config = config.build(root_logger).unwrap();
 
-        log4rs::init_config(config).unwrap();
+        if let Err(e) = log4rs::init_config(config) {
+            eprintln!("Failed to initialize logger: {}", e);
+        }
     })
 }
 
@@ -187,9 +189,7 @@ pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<
 /// of log verbosity.
 pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     Once::new().call_once(|| {
-        let log_dir = data_dir
-            .unwrap_or_else(|| get_maker_dir())
-            .join("debug.log");
+        let log_dir = data_dir.unwrap_or_else(get_maker_dir).join("debug.log");
 
         let stdout = ConsoleAppender::builder().build();
         let file_appender = FileAppender::builder().build(log_dir).unwrap();
@@ -204,8 +204,9 @@ pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
             )
             .build(Root::builder().appender("stdout").build(filter))
             .unwrap();
-
-        log4rs::init_config(config).unwrap();
+        if let Err(e) = log4rs::init_config(config) {
+            eprintln!("Failed to initialize logger: {}", e);
+        }
     })
 }
 
@@ -217,7 +218,7 @@ pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
 /// of log verbosity.
 pub fn setup_directory_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     Once::new().call_once(|| {
-        let log_dir = data_dir.unwrap_or_else(|| get_dns_dir()).join("debug.log");
+        let log_dir = data_dir.unwrap_or_else(get_dns_dir).join("debug.log");
 
         let stdout = ConsoleAppender::builder().build();
         let file_appender = FileAppender::builder().build(log_dir).unwrap();
@@ -233,7 +234,9 @@ pub fn setup_directory_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
             .build(Root::builder().appender("stdout").build(filter))
             .unwrap();
 
-        log4rs::init_config(config).unwrap();
+        if let Err(e) = log4rs::init_config(config) {
+            eprintln!("Failed to initialize logger: {}", e);
+        }
     })
 }
 
