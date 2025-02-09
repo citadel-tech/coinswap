@@ -520,19 +520,6 @@ impl Maker {
             outgoing_swapcoin.others_contract_sig = Some(*senders_sig);
         }
 
-        let mut my_funding_txids = Vec::<Txid>::new();
-        for my_funding_tx in &connection_state.pending_funding_txes {
-            let txid = self.wallet.read()?.send_tx(my_funding_tx)?;
-
-            assert_eq!(txid, my_funding_tx.compute_txid());
-            my_funding_txids.push(txid);
-        }
-        log::info!(
-            "[{}] Broadcasted funding txs: {:?}",
-            self.config.network_port,
-            my_funding_txids
-        );
-
         {
             let mut wallet_writer = self.wallet.write()?;
             for (incoming_sc, outgoing_sc) in connection_state
@@ -545,6 +532,19 @@ impl Maker {
             }
             wallet_writer.save_to_disk()?;
         }
+
+        let mut my_funding_txids = Vec::<Txid>::new();
+        for my_funding_tx in &connection_state.pending_funding_txes {
+            let txid = self.wallet.read()?.send_tx(my_funding_tx)?;
+
+            assert_eq!(txid, my_funding_tx.compute_txid());
+            my_funding_txids.push(txid);
+        }
+        log::info!(
+            "[{}] Broadcasted funding txs: {:?}",
+            self.config.network_port,
+            my_funding_txids
+        );
 
         // Update the connection state.
         self.ongoing_swap_state.lock()?.insert(
