@@ -32,6 +32,8 @@ use super::WalletError;
 // is based on the (time value of the bond)^x here x is the bond_value_exponent,
 // where x > 1.
 const BOND_VALUE_EXPONENT: f64 = 1.3;
+const FIDELITY_BOND_WITNESS_SIZE: usize = 115; // Signature(73 bytes) + Redeem Script(42 bytes)
+
 
 // Interest rate used when calculating the value of fidelity bonds created
 // by locking bitcoins in timelocked addresses
@@ -307,6 +309,7 @@ impl Wallet {
     pub fn create_fidelity(
         &mut self,
         amount: Amount,
+        fee_rate: f64,
         locktime: LockTime, // The final locktime in blockheight or timestamp
     ) -> Result<u32, WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
@@ -339,21 +342,11 @@ impl Wallet {
             }
         }
 
-        let fee = Amount::from_sat(MINER_FEE); // TODO: Update this with the feerate
-
         let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
             acc.checked_add(unspet.amount)
                 .expect("Amount sum overflowed")
         });
 
-        if total_input_amount < amount + fee {
-            return Err(WalletError::InsufficientFund {
-                available: total_input_amount.to_sat(),
-                required: (amount + fee).to_sat(),
-            });
-        }
-
-        let change_amount = total_input_amount.checked_sub(amount + fee);
         let tx_inputs = selected_utxo
             .iter()
             .map(|(unspent, _)| TxIn {
@@ -369,17 +362,6 @@ impl Wallet {
             script_pubkey: fidelity_addr.script_pubkey(),
         }];
 
-        if let Some(change) = change_amount {
-            let change_addrs = self.get_next_internal_addresses(1)?[0].script_pubkey();
-            // check for dust
-            if change > change_addrs.minimal_non_dust() {
-                tx_outs.push(TxOut {
-                    value: change,
-                    script_pubkey: change_addrs,
-                });
-            }
-        }
-
         // Set the Anti-Fee Snipping Locktime
         let current_height = self.rpc.get_block_count()?;
         let lock_time = LockTime::from_height(current_height as u32)?;
@@ -390,6 +372,52 @@ impl Wallet {
             lock_time,
             version: Version::TWO,
         };
+
+        let mut total_witness_weight = 0;
+        for (_, spend_info) in &selected_utxo {
+            match spend_info {
+                UTXOSpendInfo::FidelityBondCoin { .. } => {
+                    total_witness_weight += FIDELITY_BOND_WITNESS_SIZE;
+                }
+                _ => {}
+            }
+        }
+
+        let base_size = tx.base_size();
+        let vsize = (base_size * 4 + total_witness_weight) / 4;
+        let mut fee = Amount::from_sat((fee_rate * (vsize as f64)).ceil() as u64);
+
+        if total_input_amount < amount + fee {
+            return Err(WalletError::InsufficientFund {
+                available: total_input_amount.to_btc(),
+                required: (amount + fee).to_btc(),
+            });
+        }
+
+        tx.output[0].value = amount;
+        let mut change_amount = total_input_amount - (amount + fee);
+
+        let internal_addr = self.get_next_internal_addresses(1)?[0].clone();
+        let internal_spk = internal_addr.script_pubkey();
+        let minimal_nondust = internal_spk.minimal_non_dust();
+        if change_amount > minimal_nondust {
+            tx.output.push(TxOut {
+                value, // to be updated below
+                script_pubkey: internal_spk,
+            });
+
+            let base_size_w_change = tx.base_size();
+            let vsize_w_change = (base_size_w_change * 4 + total_witness_weight) / 4;
+            fee = Amount::from_sat((fee_rate * (vsize_w_change as f64)).ceil() as u64);
+
+            change_amount = total_input_amount - (amount + fee);
+
+            if change_amount > minimal_nondust {
+                tx.output[1].value = change_amount;
+            } else {
+                tx.output.pop();
+            }
+        }
 
         let mut input_info = selected_utxo
             .iter()

@@ -31,6 +31,7 @@ use crate::protocol::{
 };
 
 use super::WalletError;
+const CONTRACT_TX_WITNESS_SIZE: usize = 222;
 
 /// Defines an incoming swapcoin, which can either be currently active or successfully completed.
 ///
@@ -430,6 +431,7 @@ impl OutgoingSwapCoin {
     pub(crate) fn create_timelock_spend(
         &self,
         destination_address: &Address,
+        fee_rate: f64,
     ) -> Result<Transaction, WalletError> {
         let miner_fee = 128 * 2; //128 vbytes x 2 sat/vb, size calculated using testmempoolaccept
         let mut tx = Transaction {
@@ -449,6 +451,15 @@ impl OutgoingSwapCoin {
             lock_time: LockTime::ZERO,
             version: Version::TWO,
         };
+        let base_size = tx.base_size();
+        let witness_size = CONTRACT_TX_WITNESS_SIZE;
+        let vsize = (base_size * 4 + witness_size) / 4;
+        let miner_fee = Amount::from_sat((fee_rate * vsize as f64).ceil() as u64);
+        tx.output = vec![TxOut {
+            script_pubkey: destination_address.script_pubkey(),
+            value: Amount::from_sat(self.contract_tx.output[0].value.to_sat() - miner_fee.to_sat()),
+        }];
+
         let index = 0;
         self.sign_timelocked_transaction_input(
             index,

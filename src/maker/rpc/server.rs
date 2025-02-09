@@ -83,15 +83,14 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
 
             let coins_to_send = maker.get_wallet().read()?.coin_select(amount + fee)?;
 
+            let fee_rate = 3.0; // sats/vByte, Written as a temporary fix until issue #199 is solved.
+
             let tx = maker.get_wallet().write()?.spend_from_wallet(
-                fee,
+                fee_rate,
                 SendAmount::Amount(amount),
                 destination,
                 &coins_to_send,
             )?;
-
-            let calculated_fee_rate = fee / (tx.weight());
-            log::info!("Calculated FeeRate : {:#}", calculated_fee_rate);
 
             let txid = maker.get_wallet().read()?.send_tx(&tx)?;
 

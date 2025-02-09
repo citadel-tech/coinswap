@@ -215,8 +215,10 @@ fn main() -> Result<(), TakerError> {
             let destination =
                 Destination::Address(Address::from_str(&address).unwrap().assume_checked());
 
+            let fee_rate = 3.0; // sats/vByte, Written as a temporary fix until issue #199 is solved.
+
             let tx = taker.get_wallet_mut().spend_from_wallet(
-                fee,
+                fee_rate,
                 SendAmount::Amount(amount),
                 destination,
                 &coins_to_spend,
