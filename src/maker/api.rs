@@ -9,7 +9,6 @@
 use crate::{
     protocol::{
         contract::check_hashvalues_are_equal,
-        error::ProtocolError,
         messages::{FidelityProof, ReqContractSigsForSender},
         Hash160,
     },
