@@ -8,7 +8,10 @@
 
 use crate::{
     protocol::{
-        contract::check_hashvalues_are_equal, error::ProtocolError, messages::{FidelityProof, ReqContractSigsForSender}, Hash160
+        contract::check_hashvalues_are_equal,
+        error::ProtocolError,
+        messages::{FidelityProof, ReqContractSigsForSender},
+        Hash160,
     },
     utill::{
         get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType, HEART_BEAT_INTERVAL,
@@ -615,12 +618,17 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(maker: Arc<Maker>) -> Resu
 
         let tx = match og_sc.get_fully_signed_contract_tx() {
             Ok(tx) => tx,
-            Err(ProtocolError::General(msg)) => {
-                log::error!("SOMETHING WENT WRONG: {}", msg);
-                continue;
-            },
             Err(e) => {
-                log::error!("SOMETHING WENT WRONG WHEN TRYING TO GET FULLY SIGNED CONTRACT TX");
+                log::error!(
+                    "Error: {:?} \
+                    This was not supposed to happen. \
+                    Kindly open an issue at https://github.com/citadel-tech/coinswap/issues.",
+                    e
+                );
+                maker
+                    .wallet
+                    .write()?
+                    .remove_outgoing_swapcoin(&og_sc.get_multisig_redeemscript())?;
                 continue;
             }
         };
@@ -633,12 +641,17 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(maker: Arc<Maker>) -> Resu
     for ic_sc in inc.iter() {
         let tx = match ic_sc.get_fully_signed_contract_tx() {
             Ok(tx) => tx,
-            Err(ProtocolError::General(msg)) => {
-                log::error!("SOMETHING WENT WRONG: {}", msg);
-                continue;
-            },
             Err(e) => {
-                log::error!("SOMETHING WENT WRONG WHEN TRYING TO GET FULLY SIGNED CONTRACT TX");
+                log::error!(
+                    "Error: {:?} \
+                    This was not supposed to happen. \
+                    Kindly open an issue at https://github.com/citadel-tech/coinswap/issues.",
+                    e
+                );
+                maker
+                    .wallet
+                    .write()?
+                    .remove_incoming_swapcoin(&ic_sc.get_multisig_redeemscript())?;
                 continue;
             }
         };

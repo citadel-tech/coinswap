@@ -684,12 +684,17 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
             let contract_timelock = og_sc.get_timelock()?;
             let contract = match og_sc.get_fully_signed_contract_tx() {
                 Ok(tx) => tx,
-                Err(ProtocolError::General(msg)) => {
-                    log::error!("SOMETHING WENT WRONG: {}", msg);
-                    continue;
-                },
                 Err(e) => {
-                    log::error!("SOMETHING WENT WRONG WHEN TRYING TO GET FULLY SIGNED CONTRACT TX");
+                    log::error!(
+                        "Error: {:?} \
+                        This was not supposed to happen. \
+                        Kindly open an issue at https://github.com/citadel-tech/coinswap/issues.",
+                        e
+                    );
+                    maker
+                        .wallet
+                        .write()?
+                        .remove_outgoing_swapcoin(&og_sc.get_multisig_redeemscript())?;
                     continue;
                 }
             };
