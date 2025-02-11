@@ -323,18 +323,18 @@ impl Display for MakerToTakerMessage {
 
 /// All messages sent from DNS to Maker
 #[derive(Debug, Serialize, Deserialize)]
-pub enum DnsToMaker {
+pub enum DnsResponse {
     /// Posting request by Maker was accepted by DNS.
     Ack,
     /// Posting request by Maker was rejected by DNS.
-    Nack,
+    Nack(String),
 }
 
-impl Display for DnsToMaker {
+impl Display for DnsResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Ack => write!(f, "Ack"),
-            Self::Nack => write!(f, "Nack"),
+            Self::Nack(s) => write!(f, "{}", s.as_str()),
         }
     }
 }

@@ -35,7 +35,7 @@ use crate::{
         handlers::handle_message,
         rpc::start_rpc_server,
     },
-    protocol::messages::{DnsMetadata, DnsRequest, DnsToMaker, TakerToMakerMessage},
+    protocol::messages::{DnsMetadata, DnsRequest, DnsResponse, TakerToMakerMessage},
     utill::{get_tor_hostname, read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
     wallet::WalletError,
 };
@@ -210,10 +210,16 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
 
                 match read_message(&mut stream) {
                     Ok(dns_msg_bytes) => {
-                        match serde_cbor::from_slice::<DnsToMaker>(&dns_msg_bytes) {
-                            Ok(dns_msg) => {
-                                log::info!("[{}] <=== {}", maker.config.network_port, dns_msg);
-                            }
+                        match serde_cbor::from_slice::<DnsResponse>(&dns_msg_bytes) {
+                            Ok(dns_msg) => match dns_msg {
+                                DnsResponse::Ack => {
+                                    log::info!("[{}] <=== {}", maker.config.network_port, dns_msg);
+                                }
+                                DnsResponse::Nack(reason) => {
+                                    log::error!("{}", reason);
+                                    return Err(reason);
+                                }
+                            },
                             Err(e) => {
                                 log::warn!("CBOR deserialization failed: {}", e);
                             }
@@ -238,6 +244,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
             i += 1;
             thread::sleep(HEART_BEAT_INTERVAL);
         }
+        Ok(())
     });
 
     Ok(tor_handle)

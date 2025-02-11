@@ -8,7 +8,7 @@ use bitcoind::bitcoincore_rpc::{self, Client, RpcApi};
 
 use crate::{
     market::rpc::start_rpc_server_thread,
-    protocol::messages::{DnsRequest, DnsToMaker},
+    protocol::messages::{DnsRequest, DnsResponse},
     utill::{
         get_dns_dir, parse_field, parse_toml, read_message, send_message, verify_fidelity_checks,
         ConnectionType, HEART_BEAT_INTERVAL,
@@ -484,17 +484,24 @@ fn handle_client(
                         "Fidelity verification success from {}. Adding/updating to address data.",
                         metadata.url
                     );
+
                     let dns_address = format!("127.0.0.1:{}", 8080);
                     match directory
                         .updated_address_map((metadata.url, metadata.proof.bond.outpoint))
                     {
                         Ok(_) => {
                             log::info!("Maker posting request successful at {}", dns_address);
-                            send_message(stream, &DnsToMaker::Ack)?;
+                            send_message(stream, &DnsResponse::Ack)?;
                         }
                         Err(e) => {
-                            log::warn!("[{}] Maker posting request failed: {:?}", dns_address, e);
-                            send_message(stream, &DnsToMaker::Nack)?;
+                            log::warn!("Maker posting request failed at {}", dns_address);
+                            send_message(
+                                stream,
+                                &DnsResponse::Nack(format!(
+                                    "Maker posting request failed: {:?}",
+                                    e
+                                )),
+                            )?;
                         }
                     }
                 }
