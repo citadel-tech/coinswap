@@ -230,7 +230,7 @@ fn test_maker_cli() {
 
     let fidelity_bonds_str = maker_cli.execute_maker_cli(&["show-fidelity"]);
     let fidelity_bonds: Vec<Value> = serde_json::from_str(&fidelity_bonds_str).unwrap();
-    let expected_fields = ["index", "outpoint", "amount", "bond_value", "expires_in"];
+    let expected_fields = ["index", "outpoint", "amount", "bond-value", "expires-in"];
     for fidelity_bond in fidelity_bonds {
         for field in expected_fields {
             assert!(
