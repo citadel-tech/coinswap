@@ -35,7 +35,7 @@ use crate::{
         handlers::handle_message,
         rpc::start_rpc_server,
     },
-    protocol::messages::{DnsMetadata, DnsRequest, TakerToMakerMessage},
+    protocol::messages::{DnsMetadata, DnsRequest, DnsToMaker, TakerToMakerMessage},
     utill::{get_tor_hostname, read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
     wallet::WalletError,
 };
@@ -207,6 +207,31 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
                     maker_port,
                     dns_address
                 );
+
+                match read_message(&mut stream) {
+                    Ok(dns_msg_bytes) => {
+                        match serde_cbor::from_slice::<DnsToMaker>(&dns_msg_bytes) {
+                            Ok(dns_msg) => {
+                                log::info!("[{}] <=== {}", maker.config.network_port, dns_msg);
+                            }
+                            Err(e) => {
+                                log::warn!("CBOR deserialization failed: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if let NetError::IO(e) = e {
+                            if e.kind() == ErrorKind::UnexpectedEof {
+                                log::info!("[{}] Connection ended.", maker.config.network_port);
+                                break;
+                            } else {
+                                // For any other errors, report them
+                                log::error!("[{}] Net Error: {}", maker.config.network_port, e);
+                                continue;
+                            }
+                        }
+                    }
+                }
                 // Reset counter when success
                 i = 0;
             }
