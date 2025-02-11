@@ -321,6 +321,24 @@ impl Display for MakerToTakerMessage {
     }
 }
 
+/// All messages sent from DNS to Maker
+#[derive(Debug, Serialize, Deserialize)]
+pub enum DnsResponse {
+    /// Posting request by Maker was accepted by DNS.
+    Ack,
+    /// Posting request by Maker was rejected by DNS.
+    Nack(String),
+}
+
+impl Display for DnsResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ack => write!(f, "DNS Ack"),
+            Self::Nack(s) => write!(f, "DNS Nack {}", s.as_str()),
+        }
+    }
+}
+
 /// Metadata shared by the maker with the Directory Server for verifying authenticity.
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(private_interfaces)]

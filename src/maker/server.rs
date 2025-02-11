@@ -33,7 +33,7 @@ use crate::{
         handlers::handle_message,
         rpc::start_rpc_server,
     },
-    protocol::messages::{DnsMetadata, DnsRequest, TakerToMakerMessage},
+    protocol::messages::{DnsMetadata, DnsRequest, DnsResponse, TakerToMakerMessage},
     utill::{get_tor_hostname, read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
     wallet::WalletError,
 };
@@ -161,14 +161,39 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
 
         while !maker.shutdown.load(Relaxed) {
             if i >= trigger_count || i == 0 {
-                let stream = match maker.config.connection_type {
-                    ConnectionType::CLEARNET => TcpStream::connect(&dns_address),
+                let mut stream = match maker.config.connection_type {
+                    ConnectionType::CLEARNET => match TcpStream::connect(&dns_address) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            log::warn!(
+                                "[{}] TCP connection error with directory, reattempting: {}",
+                                maker_port,
+                                e
+                            );
+                            thread::sleep(HEART_BEAT_INTERVAL);
+                            continue;
+                        }
+                    },
                     #[cfg(feature = "tor")]
-                    ConnectionType::TOR => Socks5Stream::connect(
-                        format!("127.0.0.1:{}", maker.config.socks_port),
-                        dns_address.as_str(),
-                    )
-                    .map(|stream| stream.into_inner()),
+                    ConnectionType::TOR => {
+                        match Socks5Stream::connect(
+                            format!("127.0.0.1:{}", maker.config.socks_port),
+                            dns_address.as_str(),
+                        )
+                        .map(|stream| stream.into_inner())
+                        {
+                            Ok(s) => s,
+                            Err(e) => {
+                                log::warn!(
+                                    "[{}] TCP connection error with directory, reattempting: {}",
+                                    maker_port,
+                                    e
+                                );
+                                thread::sleep(HEART_BEAT_INTERVAL);
+                                continue;
+                            }
+                        }
+                    }
                 };
 
                 log::info!(
@@ -176,19 +201,6 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
                     maker.config.network_port,
                     dns_address
                 );
-
-                let mut stream = match stream {
-                    Ok(s) => s,
-                    Err(e) => {
-                        log::warn!(
-                            "[{}] TCP connection error with directory, reattempting: {}",
-                            maker_port,
-                            e
-                        );
-                        thread::sleep(HEART_BEAT_INTERVAL);
-                        continue;
-                    }
-                };
 
                 if let Err(e) = send_message(&mut stream, &request) {
                     log::warn!(
@@ -200,11 +212,44 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
                     continue;
                 }
 
-                log::info!(
-                    "[{}] Successfully sent our address to DNS at {}",
-                    maker_port,
-                    dns_address
-                );
+                match read_message(&mut stream) {
+                    Ok(dns_msg_bytes) => {
+                        match serde_cbor::from_slice::<DnsResponse>(&dns_msg_bytes) {
+                            Ok(dns_msg) => match dns_msg {
+                                DnsResponse::Ack => {
+                                    log::info!("[{}] <=== {}", maker.config.network_port, dns_msg);
+                                    log::info!(
+                                        "[{}] Successfully sent our address to DNS at {}",
+                                        maker_port,
+                                        dns_address
+                                    );
+                                }
+                                DnsResponse::Nack(reason) => {
+                                    log::error!("<=== DNS Nack: {}", reason);
+                                }
+                            },
+                            Err(e) => {
+                                log::warn!("CBOR deserialization failed: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if let NetError::IO(e) = e {
+                            if e.kind() == ErrorKind::UnexpectedEof {
+                                log::info!("[{}] Connection ended.", maker.config.network_port);
+                                break;
+                            } else {
+                                // For any other errors, report them
+                                log::error!(
+                                    "[{}] DNS Connection Error: {}",
+                                    maker.config.network_port,
+                                    e
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                }
                 // Reset counter when success
                 i = 0;
             }
