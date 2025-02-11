@@ -168,25 +168,22 @@ impl Wallet {
     }
 
     /// Display the fidelity bonds
-    pub fn get_fidelity_bonds_display(&self) -> Result<String, WalletError> {
-        let blockchain_info = self.rpc.get_blockchain_info()?;
-        let current_block = blockchain_info.blocks as u32;
+    pub fn display_fidelity_bonds(&self) -> Result<String, WalletError> {
+        let current_block = self.rpc.get_block_count()? as u32;
 
         let serialized: Vec<serde_json::Value> = self
             .get_fidelity_bonds()
             .iter()
             .map(|(index, (bond, _, _))| {
                 // assuming that lock_time is always in height and never in seconds.
-                let expiring_height = bond.lock_time.to_consensus_u32();
-                let expires_in = expiring_height - current_block;
                 self.calculate_bond_value(index.to_owned())
                     .map(|bond_value| {
                         serde_json::json!({
                             "index": index,
                             "outpoint": bond.outpoint.to_string(),
                             "amount": bond.amount.to_sat(),
-                            "bond-value:": bond_value,
-                            "expires-in": expires_in,
+                            "bond-value": bond_value,
+                            "expires-in": bond.lock_time.to_consensus_u32() - current_block,
                         })
                     })
             })
