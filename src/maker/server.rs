@@ -11,7 +11,7 @@ use std::{
     process::Child,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        Arc,
+        mpsc, Arc,
     },
     thread::{self, sleep},
     time::Duration,
@@ -157,6 +157,8 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
         metadata: dns_metadata,
     };
 
+    let (error_sender, error_recv) = mpsc::channel();
+
     thread::spawn(move || {
         let trigger_count = DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS / HEART_BEAT_INTERVAL.as_secs();
         let mut i = 0;
@@ -214,10 +216,21 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
                             Ok(dns_msg) => match dns_msg {
                                 DnsResponse::Ack => {
                                     log::info!("[{}] <=== {}", maker.config.network_port, dns_msg);
+                                    error_sender
+                                        .send(MakerError::UnexpectedMessage {
+                                            expected: "Ack".to_string(),
+                                            got: "Nack".to_string(),
+                                        })
+                                        .unwrap();
                                 }
                                 DnsResponse::Nack(reason) => {
                                     log::error!("{}", reason);
-                                    return Err(reason);
+                                    error_sender
+                                        .send(MakerError::UnexpectedMessage {
+                                            expected: "Ack".to_string(),
+                                            got: "Nack".to_string(),
+                                        })
+                                        .unwrap();
                                 }
                             },
                             Err(e) => {
@@ -244,8 +257,14 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
             i += 1;
             thread::sleep(HEART_BEAT_INTERVAL);
         }
-        Ok(())
     });
+
+    thread::sleep(HEART_BEAT_INTERVAL);
+
+    if let Ok(err_resp) = error_recv.try_recv() {
+        log::error!("{:?}", err_resp);
+        return Err(err_resp);
+    }
 
     Ok(tor_handle)
 }

@@ -485,16 +485,15 @@ fn handle_client(
                         metadata.url
                     );
 
-                    let dns_address = format!("127.0.0.1:{}", 8080);
                     match directory
-                        .updated_address_map((metadata.url, metadata.proof.bond.outpoint))
+                        .updated_address_map((metadata.url.clone(), metadata.proof.bond.outpoint))
                     {
                         Ok(_) => {
-                            log::info!("Maker posting request successful at {}", dns_address);
+                            log::info!("Maker posting request successful from {}", metadata.url);
                             send_message(stream, &DnsResponse::Ack)?;
                         }
                         Err(e) => {
-                            log::warn!("Maker posting request failed at {}", dns_address);
+                            log::warn!("Maker posting request failed from {}", metadata.url);
                             send_message(
                                 stream,
                                 &DnsResponse::Nack(format!(
@@ -511,6 +510,10 @@ fn handle_client(
                         metadata.url,
                         e
                     );
+                    send_message(
+                        stream,
+                        &DnsResponse::Nack(format!("Fidelity verification failed {:?}", e)),
+                    )?;
                 }
             }
         }
