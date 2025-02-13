@@ -216,12 +216,6 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
                             Ok(dns_msg) => match dns_msg {
                                 DnsResponse::Ack => {
                                     log::info!("[{}] <=== {}", maker.config.network_port, dns_msg);
-                                    error_sender
-                                        .send(MakerError::UnexpectedMessage {
-                                            expected: "Ack".to_string(),
-                                            got: "Nack".to_string(),
-                                        })
-                                        .unwrap();
                                 }
                                 DnsResponse::Nack(reason) => {
                                     log::error!("{}", reason);
