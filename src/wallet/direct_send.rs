@@ -42,24 +42,8 @@ impl FromStr for SendAmount {
 /// Represents different destination options for a transaction.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Destination {
-    /// Represents a wallet as the destination for the transaction.
-    Wallet,
-    /// Represents a specific address as the destination for the transaction.
-    ///
-    /// The `Address` variant contains the address to which the transaction is directed.
-    Address(Address),
-}
-
-impl FromStr for Destination {
-    type Err = bitcoin::address::ParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(if s == "wallet" {
-            Destination::Wallet
-        } else {
-            Destination::Address(Address::from_str(s)?.assume_checked())
-        })
-    }
+    Sweep(Address),
+    Multi(Vec<(Address, Amount)>),
 }
 
 impl Wallet {
@@ -212,32 +196,5 @@ mod tests {
             SendAmount::from_str("100").unwrap()
         );
         assert!(SendAmount::from_str("not a number").is_err());
-    }
-
-    #[test]
-    fn test_destination_parsing() {
-        assert_eq!(
-            Destination::from_str("wallet").unwrap(),
-            Destination::Wallet
-        );
-        let address1 = "32iVBEu4dxkUQk9dJbZUiBiQdmypcEyJRf";
-        assert!(matches!(
-            Destination::from_str(address1),
-            Ok(Destination::Address(_))
-        ));
-
-        let address1 = Destination::Address(
-            Address::from_str("32iVBEu4dxkUQk9dJbZUiBiQdmypcEyJRf")
-                .unwrap()
-                .assume_checked(),
-        );
-
-        let address2 = Destination::Address(
-            Address::from_str("132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM")
-                .unwrap()
-                .assume_checked(),
-        );
-        assert_ne!(address1, address2);
-        assert!(Destination::from_str("invalid address").is_err());
     }
 }
