@@ -7,9 +7,8 @@ use std::{
 
 use crate::{
     protocol::messages::FidelityProof,
-    taker::api::MINER_FEE,
     utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks},
-    wallet::{UTXOSpendInfo, Wallet},
+    wallet::Wallet,
 };
 
 use bitcoin::{
@@ -19,14 +18,12 @@ use bitcoin::{
     opcodes::all::{OP_CHECKSIGVERIFY, OP_CLTV},
     script::{Builder, Instruction},
     secp256k1::{Keypair, Message, Secp256k1},
-    transaction::Version,
-    Address, Amount, OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid,
-    Witness,
+    Address, Amount, OutPoint, PublicKey, ScriptBuf,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Deserialize, Serialize};
 
-use super::WalletError;
+use super::{Destination, WalletError};
 
 // To (strongly) disincentivize Sybil behavior, the value assessment of the bond
 // is based on the (time value of the bond)^x here x is the bond_value_exponent,
@@ -332,93 +329,15 @@ impl Wallet {
         &mut self,
         amount: Amount,
         locktime: LockTime, // The final locktime in blockheight or timestamp
+        feerate: f64,
     ) -> Result<u32, WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
 
-        let all_utxos = self.get_all_utxo()?;
+        let coins = self.coin_select(amount)?;
 
-        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
-        let mut swap_coin_utxo = self.list_incoming_swap_coin_utxo_spend_info(Some(&all_utxos))?;
-        seed_coin_utxo.append(&mut swap_coin_utxo);
+        let destination = Destination::Multi(vec![(fidelity_addr, amount)]);
 
-        // Fetch utxos, filter out existing fidelity coins
-        let mut unspents = seed_coin_utxo
-            .into_iter()
-            .filter(|(_, spend_info)| !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. }))
-            .collect::<Vec<_>>();
-
-        unspents.sort_by(|a, b| b.0.amount.cmp(&a.0.amount));
-
-        let mut selected_utxo = Vec::new();
-        let mut remaining = amount;
-
-        // the simplest largest first coinselection.
-        for unspent in unspents {
-            if remaining.checked_sub(unspent.0.amount).is_none() {
-                selected_utxo.push(unspent);
-                break;
-            } else {
-                remaining -= unspent.0.amount;
-                selected_utxo.push(unspent);
-            }
-        }
-
-        let fee = Amount::from_sat(MINER_FEE); // TODO: Update this with the feerate
-
-        let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
-            acc.checked_add(unspet.amount)
-                .expect("Amount sum overflowed")
-        });
-
-        if total_input_amount < amount + fee {
-            return Err(WalletError::InsufficientFund {
-                available: total_input_amount.to_sat(),
-                required: (amount + fee).to_sat(),
-            });
-        }
-
-        let change_amount = total_input_amount.checked_sub(amount + fee);
-        let tx_inputs = selected_utxo
-            .iter()
-            .map(|(unspent, _)| TxIn {
-                previous_output: OutPoint::new(unspent.txid, unspent.vout),
-                sequence: Sequence(0),
-                witness: Witness::new(),
-                script_sig: ScriptBuf::new(),
-            })
-            .collect::<Vec<_>>();
-
-        let mut tx_outs = vec![TxOut {
-            value: amount,
-            script_pubkey: fidelity_addr.script_pubkey(),
-        }];
-
-        if let Some(change) = change_amount {
-            let change_addrs = self.get_next_internal_addresses(1)?[0].script_pubkey();
-            // check for dust
-            if change > change_addrs.minimal_non_dust() {
-                tx_outs.push(TxOut {
-                    value: change,
-                    script_pubkey: change_addrs,
-                });
-            }
-        }
-
-        // Set the Anti-Fee Snipping Locktime
-        let current_height = self.rpc.get_block_count()?;
-        let lock_time = LockTime::from_height(current_height as u32)?;
-
-        let mut tx = Transaction {
-            input: tx_inputs,
-            output: tx_outs,
-            lock_time,
-            version: Version::TWO,
-        };
-
-        let mut input_info = selected_utxo
-            .iter()
-            .map(|(_, spend_info)| spend_info.clone());
-        self.sign_transaction(&mut tx, &mut input_info)?;
+        let tx = self.spend_coins(&coins, destination, feerate)?;
 
         let txid = self.send_tx(&tx)?;
 
@@ -469,72 +388,6 @@ impl Wallet {
         self.sync()?;
 
         Ok(index)
-    }
-
-    /// Redeem a Fidelity Bond.
-    /// This functions creates a spending transaction from the fidelity bond, signs and broadcasts it.
-    /// Returns the txid of the spending tx, and mark the bond as spent.
-    pub fn redeem_fidelity(&mut self, index: u32) -> Result<Txid, WalletError> {
-        let (bond, _, is_spent) = self
-            .store
-            .fidelity_bond
-            .get(&index)
-            .ok_or(FidelityError::BondDoesNotExist)?;
-
-        if *is_spent {
-            return Err(FidelityError::BondAlreadySpent.into());
-        }
-
-        // create a spending transaction.
-        let txin = TxIn {
-            previous_output: bond.outpoint,
-            sequence: Sequence(0),
-            script_sig: ScriptBuf::new(),
-            witness: Witness::new(),
-        };
-
-        // TODO take feerate as user input
-        let fee = Amount::from_sat(MINER_FEE);
-
-        let change_addr = &self.get_next_internal_addresses(1)?[0];
-
-        let txout = TxOut {
-            script_pubkey: change_addr.script_pubkey(),
-            value: bond.amount - fee,
-        };
-
-        let mut tx = Transaction {
-            input: vec![txin],
-            output: vec![txout],
-            lock_time: bond.lock_time,
-            version: Version::TWO,
-        };
-
-        let utxo_spend_info = UTXOSpendInfo::FidelityBondCoin {
-            index,
-            input_value: bond.amount,
-        };
-
-        self.sign_transaction(&mut tx, vec![utxo_spend_info].into_iter())?;
-
-        let txid = self.send_tx(&tx)?;
-
-        log::info!("Fidelity redeem transaction broadcasted. txid: {}", txid);
-
-        // No need to wait for confirmation as that will delay the rpc call. Just send back the txid.
-
-        // mark is_spent
-        {
-            let (_, _, is_spent) = self
-                .store
-                .fidelity_bond
-                .get_mut(&index)
-                .ok_or(FidelityError::BondDoesNotExist)?;
-
-            *is_spent = true;
-        }
-
-        Ok(txid)
     }
 
     /// Generate a [FidelityProof] for bond at a given index and a specific onion address.

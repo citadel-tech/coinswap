@@ -329,7 +329,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
             let fidelity_result = maker
                 .get_wallet()
                 .write()?
-                .create_fidelity(amount, locktime);
+                .create_fidelity(amount, locktime, 2f64);
 
             match fidelity_result {
                 // Wait for sufficient fund to create fidelity bond.
@@ -520,11 +520,12 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
 /// Periodic checks ensure liquidity availability and backend connectivity.  
 /// It also attempts to recover any incomplete swaps detected in the wallet.  
 ///
-/// The server runs until a shutdown signal is received, at which point it safely terminates  
-/// active processes, synchronizes and saves wallet data, and closes Tor sessions if enabled.
+/// The server continues to run until a shutdown signal is detected, at which point
+/// it performs cleanup tasks, such as saving wallet data and terminating active Tor sessions.
 pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Starting Maker Server");
 
+    // Setup the wallet with fidelity bond.
     let _tor_thread = network_bootstrap(maker.clone())?;
 
     // Tracks the elapsed time in heartbeat intervals to schedule periodic checks and avoid redundant executions.

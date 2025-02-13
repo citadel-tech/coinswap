@@ -35,7 +35,7 @@ pub enum RpcMsgReq {
         /// The amount to send.
         amount: u64,
         /// The transaction fee to include.
-        fee: u64,
+        feerate: f64,
     },
     /// Request to retrieve the Tor address of the Maker.
     GetTorAddress,
@@ -43,8 +43,14 @@ pub enum RpcMsgReq {
     GetDataDir,
     /// Request to stop the Maker server.
     Stop,
-    /// Request to reddem a fidelity bond for a given index.
-    RedeemFidelity(u32),
+    /// Request to reddem a fidelity bond for a given (index, feerate).
+    RedeemFidelity {
+        /// Index of the fidelity bond
+        index: u32,
+
+        /// Feerate in sats/vByte
+        feerate: f64,
+    },
     /// Request to list all active and past fidelity bonds.
     ListFidelity,
     /// Request to sync the internal wallet with blockchain.
