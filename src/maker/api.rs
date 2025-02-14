@@ -31,7 +31,7 @@ use std::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc, Mutex, RwLock,
     },
-    thread::JoinHandle,
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
@@ -49,14 +49,12 @@ use crate::{
 use super::{config::MakerConfig, error::MakerError};
 
 /// Interval for health checks on a stable RPC connection with bitcoind.
-pub const RPC_PING_INTERVAL: Duration = Duration::from_secs(10);
-
-// Currently we don't refresh address at DNS. The Maker only post it once at startup.
-// If the address record gets deleted, or the DNS gets blasted, the Maker won't know.
-// TODO: Make the maker repost their address to DNS once a day in spawned thread.
-// pub const DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = Duartion::from_days(1); // Once a day.
+pub const RPC_PING_INTERVAL: u32 = 9;
 
 /// Maker triggers the recovery mechanism, if Taker is idle for more than 15 mins during a swap.
+#[cfg(feature = "integration-test")]
+pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
+#[cfg(not(feature = "integration-test"))]
 pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60 * 15);
 
 /// The minimum difference in locktime (in blocks) between the incoming and outgoing swaps.
@@ -68,6 +66,21 @@ pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60 * 15);
 /// the estimated minimum `cltv_expiry_delta` is 18 blocks.
 /// To enhance safety, the default value is set to 20 blocks.
 pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
+
+/// Interval for redeeming expired bonds, creating new ones if needed,  
+/// and updating the DNS server with the latest bond proof and maker address.
+///  TODO:Is 10 min interval too less? Can't we just increase it to 1 day?
+#[cfg(feature = "integration-test")]
+pub(crate) const FIDELITY_BOND_DNS_UPDATE_INTERVAL: u32 = 30;
+#[cfg(not(feature = "integration-test"))]
+pub(crate) const FIDELITY_BOND_DNS_UPDATE_INTERVAL: u32 = 600; // 1 Block Interval
+
+/// Interval to check if there is enough liquidity for swaps.
+/// If the available balance is below the minimum, maker server won't listen for any swap requests until funds are added.
+#[cfg(feature = "integration-test")]
+pub(crate) const SWAP_LIQUIDITY_CHECK_INTERVAL: u32 = 5;
+#[cfg(not(feature = "integration-test"))]
+pub(crate) const SWAP_LIQUIDITY_CHECK_INTERVAL: u32 = 30;
 
 /// # Fee Parameters for Coinswap
 ///
@@ -110,8 +123,6 @@ pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
 
 /// Minimum Coinswap amount; makers will not accept amounts below this.
 pub const MIN_SWAP_AMOUNT: u64 = 10_000;
-
-// What's the use of RefundLocktimeStep?
 
 /// Used to configure the maker for testing purposes.
 ///
@@ -238,6 +249,7 @@ pub struct Maker {
 
 #[allow(clippy::too_many_arguments)]
 impl Maker {
+    // TOD0: Update the doc comment here?
     /// Initializes a Maker structure.
     ///
     /// This function sets up a Maker instance with configurable parameters.
@@ -284,6 +296,48 @@ impl Maker {
             log::info!("New Wallet created at : {:?}", wallet_path);
             wallet
         };
+
+        // Check if all wallet's fidelity transaction are confirmed ,if not wait until it get's confirmed.
+        let sleep_increment = 10;
+        let mut sleep_duration = 0;
+
+        let bond_conf_heights= wallet
+        .get_fidelity_bonds()
+        .iter()
+        .filter_map(|(i, (bond, _,_))|{
+            if bond.conf_height.is_none() && bond.cert_expiry.is_none(){
+                 let txid= bond.outpoint.txid;
+
+                 let conf_height= loop{
+                     if let Some(ht) = wallet.rpc.get_transaction(&txid, None).map_err(WalletError::Rpc).unwrap().info.blockheight{
+                        log::info!("Fidelity Transaction {} confirmed at blockheight: {}",txid, ht);
+                        break ht;
+                    }
+                    else{
+                          log::info!("Fidelity Transaction {} seen in mempool, waiting for confirmation.",txid);
+                          sleep_duration= (sleep_duration + sleep_increment).min(60*10); // Capped at 1 Block interval i.e 10 mins
+                            log::info!("Next sync in {:?} secs", sleep_duration);
+                          thread::sleep(Duration::from_secs(sleep_duration));
+                    }
+
+                 };
+                Some((*i, conf_height))
+            }
+            else{
+                None
+            }
+        })
+        .collect::<HashMap<u32, u32>>();
+
+        // update the confirmation height & bond expiry after the bond confirmation.
+        let cert_expiry = wallet.get_fidelity_expiry()?;
+        let fidelity_bonds = wallet.get_fidelity_bonds_mut();
+        bond_conf_heights.into_iter().for_each(|(i, ht)| {
+            let (bond, _, _) = fidelity_bonds.get_mut(&i).unwrap();
+
+            bond.conf_height = Some(ht);
+            bond.cert_expiry = Some(cert_expiry);
+        });
 
         // If config file doesn't exist, default config will be loaded.
         let mut config = MakerConfig::new(Some(&data_dir.join("config.toml")))?;
@@ -648,12 +702,6 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(maker: Arc<Maker>) -> Resu
 pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut bad_ip = Vec::new();
 
-    let conn_timeout = if cfg!(feature = "integration-test") {
-        Duration::from_secs(60)
-    } else {
-        IDLE_CONNECTION_TIMEOUT
-    };
-
     loop {
         if maker.shutdown.load(Relaxed) {
             break;
@@ -670,7 +718,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                 let no_response_since =
                     current_time.saturating_duration_since(*last_connected_time);
 
-                if no_response_since > conn_timeout {
+                if no_response_since > IDLE_CONNECTION_TIMEOUT {
                     log::error!(
                         "[{}] Potential Dropped Connection from taker. No response since : {} secs. Recovering from swap",
                         maker.config.network_port,

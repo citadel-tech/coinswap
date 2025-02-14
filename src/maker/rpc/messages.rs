@@ -43,8 +43,6 @@ pub enum RpcMsgReq {
     GetDataDir,
     /// Request to stop the Maker server.
     Stop,
-    /// Request to reddem a fidelity bond for a given index.
-    RedeemFidelity(u32),
     /// Request to list all active and past fidelity bonds.
     ListFidelity,
     /// Request to sync the internal wallet with blockchain.

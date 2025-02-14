@@ -174,7 +174,7 @@ fn main() -> Result<(), TakerError> {
             }
         }
         Commands::GetBalances => {
-            let balances = taker.get_wallet().get_balances(None)?;
+            let balances = taker.get_wallet().get_balances()?;
             println!(
                 "{}",
                 to_string_pretty(&json!({
