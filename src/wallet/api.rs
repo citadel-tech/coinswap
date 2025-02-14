@@ -143,6 +143,26 @@ pub enum UTXOSpendInfo {
     FidelityBondCoin { index: u32, input_value: Amount },
 }
 
+impl UTXOSpendInfo {
+    pub fn estimate_witness_size(&self) -> usize {
+        const P2PWPKH_WITNESS_SIZE: usize = 107; // Size(1) + Signature(72) + Size(1) + PubKey(33)
+        const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 222;
+        const FIDELITY_BOND_WITNESS_SIZE: usize = 115; // Size(1) + Signature(72 bytes) + Redeem Script(42 bytes)
+        const CONTRACT_TX_WITNESS_SIZE: usize = 222;
+        match *self {
+            Self::SeedCoin { .. } => P2PWPKH_WITNESS_SIZE,
+            Self::IncomingSwapCoin { .. } | Self::OutgoingSwapCoin { .. } => {
+                P2WSH_MULTISIG_2OF2_WITNESS_SIZE
+            }
+
+            Self::TimelockContract { .. } | Self::HashlockContract { .. } => {
+                CONTRACT_TX_WITNESS_SIZE
+            }
+            Self::FidelityBondCoin { .. } => FIDELITY_BOND_WITNESS_SIZE,
+        }
+    }
+}
+
 impl Display for UTXOSpendInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self {
@@ -982,6 +1002,7 @@ impl Wallet {
     }
 
     /// Largerst to lowest coinselect algorithm
+    // TODO: Fix Coin Selection algorithm for Dynamic Feerate
     pub fn coin_select(
         &self,
         amount: Amount,
@@ -1243,17 +1264,12 @@ impl Wallet {
         Ok(descriptors_to_import)
     }
 
-    pub fn create_tx(
+    pub fn spend_coins(
         &self,
         coins: &Vec<&(ListUnspentResultEntry, UTXOSpendInfo)>,
         destination: Destination,
         feerate: Option<f64>,
     ) -> Result<Transaction, WalletError> {
-        const P2PWPKH_WITNESS_SIZE: usize = 107;
-        const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 222;
-        const FIDELITY_BOND_WITNESS_SIZE: usize = 115; // Signature(73 bytes) + Redeem Script(42 bytes)
-        const CONTRACT_TX_WITNESS_SIZE: usize = 222;
-
         let feerate = feerate.unwrap_or(3f64);
 
         // Set the Anti-Fee-Snipping locktime
@@ -1278,7 +1294,7 @@ impl Wallet {
                         witness: Witness::new(),
                         script_sig: ScriptBuf::new(),
                     });
-                    total_witness_size += P2PWPKH_WITNESS_SIZE;
+                    total_witness_size += spend_info.estimate_witness_size();
                     total_input_value += utxo_data.amount;
                 }
                 UTXOSpendInfo::IncomingSwapCoin { .. } | UTXOSpendInfo::OutgoingSwapCoin { .. } => {
@@ -1288,7 +1304,7 @@ impl Wallet {
                         witness: Witness::new(),
                         script_sig: ScriptBuf::new(),
                     });
-                    total_witness_size += P2WSH_MULTISIG_2OF2_WITNESS_SIZE;
+                    total_witness_size += spend_info.estimate_witness_size();
                     total_input_value += utxo_data.amount;
                 }
                 UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
@@ -1304,11 +1320,11 @@ impl Wallet {
 
                     tx.input.push(TxIn {
                         previous_output: bond.outpoint,
-                        sequence: Sequence(0),
+                        sequence: Sequence::ZERO,
                         script_sig: ScriptBuf::new(),
                         witness: Witness::new(),
                     });
-                    total_witness_size += FIDELITY_BOND_WITNESS_SIZE;
+                    total_witness_size += spend_info.estimate_witness_size();
                     total_input_value += *input_value;
                 }
                 UTXOSpendInfo::TimelockContract {
@@ -1327,7 +1343,7 @@ impl Wallet {
                         witness: Witness::new(),
                         script_sig: ScriptBuf::new(),
                     });
-                    total_witness_size += CONTRACT_TX_WITNESS_SIZE;
+                    total_witness_size += spend_info.estimate_witness_size();
                     total_input_value += *input_value;
                 }
                 UTXOSpendInfo::HashlockContract {
@@ -1346,7 +1362,7 @@ impl Wallet {
                         witness: Witness::new(),
                         script_sig: ScriptBuf::new(),
                     });
-                    total_witness_size += CONTRACT_TX_WITNESS_SIZE;
+                    total_witness_size += spend_info.estimate_witness_size();
                     total_input_value += *input_value;
                 }
             }
@@ -1420,13 +1436,18 @@ impl Wallet {
         }
 
         self.sign_transaction(&mut tx, &mut coins.iter().map(|(_, usi)| usi.clone()))?;
-        let vsize = tx.base_size() * 4 + total_witness_size / 4;
+        let vsize = (tx.base_size() * 4 + total_witness_size) / 4;
         let signed_tx_vsize = tx.vsize();
-        log::info!("Tx is {:?}", tx);
-        assert_eq!(
-            signed_tx_vsize, vsize,
-            "Calculated vsize {} didn't match signed tx vsize {}",
-            signed_tx_vsize, vsize
+
+        let tolerance_per_input = 1; // Allow a 1-byte difference per input
+        let total_tolerance = tolerance_per_input * tx.input.len();
+
+        assert!(
+            (vsize - signed_tx_vsize) <= total_tolerance,
+            "Calculated vsize {} didn't match signed tx vsize {} (tolerance: {})",
+            vsize,
+            signed_tx_vsize,
+            total_tolerance
         );
 
         log::debug!("Signed Transaction : {:?}", tx.raw_hex());

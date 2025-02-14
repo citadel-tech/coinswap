@@ -4,12 +4,11 @@ use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
     utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, REQUIRED_CONFIRMS, UTXO},
-    wallet::{Destination, RPCConfig, SendAmount},
+    wallet::{Destination, RPCConfig},
 };
 use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};
-
 /// A simple command line app to operate as coinswap client.
 ///
 /// The app works as regular Bitcoin wallet with added capability to perform coinswaps. The app
@@ -82,7 +81,7 @@ enum Commands {
         amount: u64,
         /// Mining fee to be paid in sats
         #[clap(long, short = 'f')]
-        fee: u64,
+        feerate: Option<f64>,
     },
     /// Update the offerbook with current market offers and display them
     FetchOffers,
@@ -193,7 +192,7 @@ fn main() -> Result<(), TakerError> {
         Commands::SendToAddress {
             address,
             amount,
-            fee,
+            feerate,
         } => {
             // NOTE:
             //
@@ -206,21 +205,19 @@ fn main() -> Result<(), TakerError> {
             //
             // This approach will be improved in the future BDK integration.
 
-            let fee = Amount::from_sat(fee);
-
             let amount = Amount::from_sat(amount);
 
-            let coins_to_spend = taker.get_wallet().coin_select(amount + fee)?;
+            let coins_to_spend = taker.get_wallet().coin_select(amount)?;
 
-            let destination =
-                Destination::Address(Address::from_str(&address).unwrap().assume_checked());
+            let destination = Destination::Multi(vec![(
+                Address::from_str(&address).unwrap().assume_checked(),
+                amount,
+            )]);
 
-            let tx = taker.get_wallet_mut().spend_from_wallet(
-                fee,
-                SendAmount::Amount(amount),
-                destination,
-                &coins_to_spend,
-            )?;
+            let tx =
+                taker
+                    .get_wallet_mut()
+                    .spend_from_wallet(feerate, destination, &coins_to_spend)?;
 
             let txid = taker.get_wallet().send_tx(&tx).unwrap();
 

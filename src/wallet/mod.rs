@@ -10,7 +10,7 @@ mod storage;
 mod swapcoin;
 
 pub(crate) use api::{Balances, UTXOSpendInfo, Wallet};
-pub use direct_send::{Destination, SendAmount};
+pub use direct_send::Destination;
 pub use error::WalletError;
 pub(crate) use fidelity::{fidelity_redeemscript, FidelityBond, FidelityError};
 pub use rpc::RPCConfig;

@@ -35,7 +35,7 @@ pub enum RpcMsgReq {
         /// The amount to send.
         amount: u64,
         /// The transaction fee to include.
-        fee: u64,
+        feerate: Option<f64>,
     },
     /// Request to retrieve the Tor address of the Maker.
     GetTorAddress,

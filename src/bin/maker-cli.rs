@@ -56,7 +56,7 @@ enum Commands {
         amount: u64,
         /// Total fee to be paid in sats
         #[clap(long, short = 'f')]
-        fee: u64,
+        feerate: Option<f64>,
     },
     /// Show the server tor address
     ShowTorAddress,
@@ -106,14 +106,14 @@ fn main() -> Result<(), MakerError> {
         Commands::SendToAddress {
             address,
             amount,
-            fee,
+            feerate,
         } => {
             send_rpc_req(
                 stream,
                 RpcMsgReq::SendToAddress {
                     address,
                     amount,
-                    fee,
+                    feerate,
                 },
             )?;
         }
