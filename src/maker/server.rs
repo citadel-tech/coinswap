@@ -225,6 +225,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
                                             got: "Nack".to_string(),
                                         })
                                         .unwrap();
+                                    break;
                                 }
                             },
                             Err(e) => {
@@ -252,8 +253,6 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
             thread::sleep(HEART_BEAT_INTERVAL);
         }
     });
-
-    thread::sleep(HEART_BEAT_INTERVAL);
 
     if let Ok(err_resp) = error_recv.try_recv() {
         log::error!("{:?}", err_resp);
