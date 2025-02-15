@@ -615,7 +615,22 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(maker: Arc<Maker>) -> Resu
         let next_internal_address = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
         let time_lock_spend = og_sc.create_timelock_spend(next_internal_address)?;
 
-        let tx = og_sc.get_fully_signed_contract_tx()?;
+        let tx = match og_sc.get_fully_signed_contract_tx() {
+            Ok(tx) => tx,
+            Err(e) => {
+                log::error!(
+                    "Error: {:?} \
+                    This was not supposed to happen. \
+                    Kindly open an issue at https://github.com/citadel-tech/coinswap/issues.",
+                    e
+                );
+                maker
+                    .wallet
+                    .write()?
+                    .remove_outgoing_swapcoin(&og_sc.get_multisig_redeemscript())?;
+                continue;
+            }
+        };
         outgoings.push((
             (og_sc.get_multisig_redeemscript(), tx),
             (contract_timelock, time_lock_spend),
@@ -623,7 +638,22 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(maker: Arc<Maker>) -> Resu
     }
 
     for ic_sc in inc.iter() {
-        let tx = ic_sc.get_fully_signed_contract_tx()?;
+        let tx = match ic_sc.get_fully_signed_contract_tx() {
+            Ok(tx) => tx,
+            Err(e) => {
+                log::error!(
+                    "Error: {:?} \
+                    This was not supposed to happen. \
+                    Kindly open an issue at https://github.com/citadel-tech/coinswap/issues.",
+                    e
+                );
+                maker
+                    .wallet
+                    .write()?
+                    .remove_incoming_swapcoin(&ic_sc.get_multisig_redeemscript())?;
+                continue;
+            }
+        };
         incomings.push((ic_sc.get_multisig_redeemscript(), tx));
     }
 
