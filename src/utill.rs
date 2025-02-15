@@ -245,9 +245,16 @@ pub fn setup_directory_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
 pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     Once::new().call_once(|| {
         env::set_var("RUST_LOG", "coinswap=info");
-        setup_taker_logger(filter, true, data_dir.clone());
-        setup_maker_logger(filter, data_dir.clone());
-        setup_directory_logger(filter, data_dir.clone());
+        setup_taker_logger(
+            filter,
+            true,
+            data_dir.clone().and_then(|d| Some(d.join("taker"))),
+        );
+        setup_maker_logger(filter, data_dir.clone().and_then(|d| Some(d.join("maker"))));
+        setup_directory_logger(
+            filter,
+            data_dir.clone().and_then(|d| Some(d.join("directory"))),
+        );
     });
 }
 
