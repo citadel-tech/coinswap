@@ -79,8 +79,7 @@ impl Wallet {
     /// ### Behavior
     /// - If [SendAmount::Max] is used, the function creates a transaction for the maximum possible
     ///   value to the specified destination.
-    /// - If [SendAmount::Amount] is used, a custom value is sent, and any remaining funds
-    ///    are held in a change address, if applicable.
+    /// - If [SendAmount::Amount] is used, a custom value is sent, and any remaining funds are held in a change address, if applicable.
     pub fn spend_from_wallet(
         &mut self,
         fee: Amount,

@@ -140,7 +140,7 @@ impl MakerCli {
 
 #[test]
 fn test_maker_cli() {
-    setup_logger(log::LevelFilter::Info);
+    setup_logger(log::LevelFilter::Info, None);
 
     let maker_cli = MakerCli::new();
 

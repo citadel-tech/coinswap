@@ -243,13 +243,12 @@ pub(crate) fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> proc
     args.push("--ADDRESS:PORT");
     args.push(&rpc_address);
 
-    let mut directoryd_process = process::Command::new("./target/debug/directoryd")
+    let mut directoryd_process = process::Command::new(env!("CARGO_BIN_EXE_directoryd"))
         .args(args) // THINK: Passing network to avoid mitosis problem..
         .stdout(process::Stdio::piped())
         .stderr(process::Stdio::piped())
         .spawn()
-        .unwrap();
-
+        .expect("Failed to spawn directoryd process");
     let stderr = directoryd_process.stderr.take().unwrap();
     let stdout = directoryd_process.stdout.take().unwrap();
 
@@ -495,9 +494,9 @@ impl TestFramework {
         Arc<DirectoryServer>,
         JoinHandle<()>,
     ) {
-        setup_logger(log::LevelFilter::Info);
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
+        setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
         // Remove if previously existing
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
