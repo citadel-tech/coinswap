@@ -278,44 +278,63 @@ pub fn setup_logger(filter: LevelFilter) {
     });
 }
 
+// Static noise key pair for developing pursposes, it must be removed
+pub const STATIC_PRIVATE_KEY: [u8; 32] = [
+    216, 229, 15, 124, 24, 169, 5, 34, 47, 61, 31, 128, 185, 108, 185, 106, 42, 92, 172, 199, 94,
+    7, 186, 43, 130, 241, 117, 21, 242, 204, 164, 27,
+];
+pub const STATIC_PUBLIC_KEY: [u8; 32] = [
+    117, 124, 240, 220, 231, 80, 5, 87, 74, 130, 39, 144, 132, 77, 229, 129, 245, 195, 51, 161,
+    199, 62, 243, 5, 65, 147, 244, 84, 215, 103, 232, 121,
+];
+
 pub fn read_handshake_message(
     noise: Option<&mut snow::HandshakeState>,
-    socket_writer: &mut TcpStream,
-    message: &impl serde::Serialize,
-) -> Result<(), NetError> {
-    let mut writer = BufWriter::new(socket_writer);
-    let mut msg_bytes = serde_cbor::ser::to_vec(message)?;
+    reader: &mut TcpStream,
+) -> Result<Vec<u8>, NetError> {
+    let mut reader = BufReader::new(reader);
+    // length of incoming data
+    let mut len_buff = [0u8; 4];
+    reader.read_exact(&mut len_buff)?; // This can give UnexpectedEOF error if theres no data to read
+    let length = u32::from_be_bytes(len_buff);
 
-    // encrypt the communication if a noise transport state was given. If it was
-    // not given, just sending the plaintext like before.
+    // the actual data
+    let mut buffer = vec![0; length as usize];
+    let mut total_read = 0;
+
+    while total_read < length as usize {
+        match reader.read(&mut buffer[total_read..]) {
+            Ok(0) => return Err(NetError::ReachedEOF), // Connection closed
+            Ok(n) => total_read += n,
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted) => {
+                continue
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    // if a noise transport state was given, assume that we are in a handshake phase
+    // of a noise protocol
     if let Some(noise) = noise {
         // maximum length buf supported by noise, assuming that there is no coinswap
         // message bigger than 65535 bytes.
         let mut buf = vec![0u8; 65535];
 
-        // encrypting the message into the buffer and receiving len,
-        // actual size of the encrypted payload.
+        // receiving the noise handshake data (public key), encrypted if performed any DH
+        // decrypting the coinswap handshake message
         let len = noise
-            .write_message(&msg_bytes, &mut buf)
+            .read_message(&buffer, &mut buf)
             .map_err(NetError::NoiseError)?;
 
-        // truncate the buffer (with max length size) to the actual size of the
-        // encrypted payload
+        // truncate the buf (with max length size) to the actual size of the
+        // decrypted payload
         buf.truncate(len);
 
-        // replacig the previous plaintext payload with the encrypted payload
-        msg_bytes = buf;
-
-        // continue like before ...
+        // replacing the encrypted payload with the decrypted coinswap handshake message
+        buffer = buf;
     }
 
-    let msg_len = (msg_bytes.len() as u32).to_be_bytes();
-    let mut to_send = Vec::with_capacity(msg_bytes.len() + msg_len.len());
-    to_send.extend(msg_len);
-    to_send.extend(msg_bytes);
-    writer.write_all(&to_send)?;
-    writer.flush()?;
-    Ok(())
+    Ok(buffer)
 }
 
 pub fn send_handshake_message(
@@ -341,7 +360,7 @@ pub fn send_handshake_message(
             .map_err(NetError::NoiseError)?;
 
         // truncate the buffer (with max length size) to the actual size of the
-        // handshake payload
+        // handshake
         buf.truncate(len);
 
         // replacing the previous coinswap handshake message with

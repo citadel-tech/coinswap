@@ -40,20 +40,17 @@ use super::{
     routines::*,
 };
 use crate::{
-    protocol::{
+    error::NetError, protocol::{
         error::ProtocolError,
         messages::{
             ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
             ContractSigsForSender, FundingTxInfo, MultisigPrivkey, Preimage, PrivKeyHandover,
             TakerToMakerMessage,
         },
-    },
-    taker::{config::TakerConfig, offers::OfferBook},
-    utill::*,
-    wallet::{
+    }, taker::{config::TakerConfig, offers::OfferBook}, utill::*, wallet::{
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
         WalletSwapCoin, WatchOnlySwapCoin,
-    },
+    }
 };
 
 #[cfg(feature = "tor")]
@@ -572,6 +569,7 @@ impl Taker {
             // Request for Sender's Signatures
             let contract_sigs = match self.req_sigs_for_sender(
                 &maker.address,
+                &STATIC_PUBLIC_KEY,
                 &outgoing_swapcoins,
                 &multisig_nonces,
                 &hashlock_nonces,
@@ -1127,6 +1125,7 @@ impl Taker {
                 )?;
                 let sigs = match self.req_sigs_for_sender(
                     &next_maker.address,
+                    &STATIC_PUBLIC_KEY,
                     &watchonly_swapcoins,
                     &next_peer_multisig_keys_or_nonces,
                     &next_peer_hashlock_keys_or_nonces,
@@ -1476,11 +1475,24 @@ impl Taker {
         socket.set_read_timeout(Some(reconnect_time_out))?;
         socket.set_write_timeout(Some(reconnect_time_out))?;
 
+        // noise builder for the given pattern
+        let noise_builder = snow::Builder::new(NOISE_PARAMS.parse());
+
+        // building the initial noise handshake state. 
+        // In the NK case the initiator knows the static public key of the responder  
+        // before the handshake, so we need to add it, this gives us  the possiblity of 
+        // "zero-RTT" encryption 
+        let mut noise = noise_builder
+            .remote_public_key(maker_noise_static_public_key)
+            .build_initiator()
+            .map_err(|e| TakerError::Net(NetError::NoiseError(e)))?;
+
 
         loop {
             ii += 1;
             log::info!("===> ReqContractSigsForSender | {}", maker_addr_str);
             match req_sigs_for_sender_once(
+                Some(noise),
                 &mut socket,
                 outgoing_swapcoins,
                 maker_multisig_nonces,

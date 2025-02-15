@@ -13,6 +13,7 @@ use socks::Socks5Stream;
 use std::{borrow::BorrowMut, net::TcpStream, thread::sleep, time::Duration};
 
 use crate::{
+    error::NetError,
     protocol::{
         contract::{
             calculate_coinswap_fee, create_contract_redeemscript, find_funding_output_index,
@@ -29,10 +30,12 @@ use crate::{
         Hash160,
     },
     taker::api::MINER_FEE,
-    utill::{read_message, send_handshake_message, send_message, ConnectionType},
+    utill::{
+        read_handshake_message, read_message, send_handshake_message, send_message, ConnectionType,
+    },
     wallet::WalletError,
 };
-use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
+use bitcoin::{secp256k1::SecretKey, Amount, Network, PublicKey, ScriptBuf, Transaction};
 
 use super::{
     config::TakerConfig,
@@ -83,14 +86,31 @@ pub(crate) fn handshake_maker(
         }),
     )?;
 
-    let msg_bytes = read_message(socket)?;
+    // if a noise handshake state was given:
+    // <- e, ee. It means we receive the maker ephemeral public key,
+    // perform DH between our ephemeral private key and the received ephemeral public key from
+    // the maker. We received an encrypted coinswap handshake as the noise handshake payload.
+    // After this the noise handshake is finished (as well as coinswap handshake), and we can move to the noise transport state
+    let msg_bytes = read_handshake_message(noise.as_mut(), socket)?;
     let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+
+    // Moving to noise transport state
+    let noise = if let Some(noise) = noise {
+        Some(
+            noise
+                .into_transport_mode()
+                .map_err(|e| TakerError::Net(NetError::NoiseError(e)))?,
+        )
+    } else {
+        None
+    };
 
     // Check that protocol version is always 1.
     match msg {
         MakerToTakerMessage::MakerHello(m) => {
             if m.protocol_version_max == 1 && m.protocol_version_min == 1 {
-                Ok(())
+                // returning the noise transport state as a result of the handshake
+                Ok(noise)
             } else {
                 Err(ProtocolError::WrongMessage {
                     expected: "Only protocol version 1 is allowed".to_string(),
@@ -112,13 +132,17 @@ pub(crate) fn handshake_maker(
 
 /// Request signatures for sender side of the hop. Attempt once.
 pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
+    noise: Option<snow::HandshakeState>,
     socket: &mut TcpStream,
     outgoing_swapcoins: &[S],
     maker_multisig_nonces: &[SecretKey],
     maker_hashlock_nonces: &[SecretKey],
     locktime: u16,
 ) -> Result<ContractSigsForSender, TakerError> {
-    handshake_maker(socket)?;
+    // if a noise handshake initial state was given, perform noise handshake and
+    // get the noise transport state for further encryption. At the same time
+    // coinswap handshake is performing also
+    let mut noise = handshake_maker(noise, socket)?;
     let txs_info = maker_multisig_nonces
         .iter()
         .zip(maker_hashlock_nonces.iter())
@@ -137,7 +161,10 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
         )
         .collect::<Result<Vec<ContractTxInfoForSender>, WalletError>>()?;
 
+    // sending and receiving other messages with the noise transport state
+    // for encryption
     send_message(
+        noise.as_mut(),
         socket,
         &TakerToMakerMessage::ReqContractSigsForSender(ReqContractSigsForSender {
             txs_info,
@@ -146,7 +173,7 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
         }),
     )?;
 
-    let msg_bytes = read_message(socket)?;
+    let msg_bytes = read_message(noise.as_mut(), socket)?;
     let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
     let contract_sigs_for_sender = match msg {
         MakerToTakerMessage::RespContractSigsForSender(m) => {
