@@ -11,7 +11,7 @@ use std::{
     process::Child,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        Arc,
+        mpsc, Arc,
     },
     thread::{self, sleep},
     time::Duration,
@@ -35,7 +35,7 @@ use crate::{
         handlers::handle_message,
         rpc::start_rpc_server,
     },
-    protocol::messages::{DnsMetadata, DnsRequest, TakerToMakerMessage},
+    protocol::messages::{DnsMetadata, DnsRequest, DnsResponse, TakerToMakerMessage},
     utill::{get_tor_hostname, read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
     wallet::WalletError,
 };
@@ -157,6 +157,8 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
         metadata: dns_metadata,
     };
 
+    let (status_sender, status_recv) = mpsc::channel::<Result<(), MakerError>>();
+
     thread::spawn(move || {
         let trigger_count = DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS / HEART_BEAT_INTERVAL.as_secs();
         let mut i = 0;
@@ -207,6 +209,43 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
                     maker_port,
                     dns_address
                 );
+
+                match read_message(&mut stream) {
+                    Ok(dns_msg_bytes) => {
+                        match serde_cbor::from_slice::<DnsResponse>(&dns_msg_bytes) {
+                            Ok(dns_msg) => match dns_msg {
+                                DnsResponse::Ack => {
+                                    log::info!("[{}] <=== {}", maker.config.network_port, dns_msg);
+                                    status_sender.send(Ok(())).unwrap();
+                                }
+                                DnsResponse::Nack(reason) => {
+                                    log::error!("{}", reason);
+                                    status_sender
+                                        .send(Err(MakerError::UnexpectedMessage {
+                                            expected: "Ack".to_string(),
+                                            got: "Nack".to_string(),
+                                        }))
+                                        .unwrap();
+                                }
+                            },
+                            Err(e) => {
+                                log::warn!("CBOR deserialization failed: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if let NetError::IO(e) = e {
+                            if e.kind() == ErrorKind::UnexpectedEof {
+                                log::info!("[{}] Connection ended.", maker.config.network_port);
+                                break;
+                            } else {
+                                // For any other errors, report them
+                                log::error!("[{}] Net Error: {}", maker.config.network_port, e);
+                                continue;
+                            }
+                        }
+                    }
+                }
                 // Reset counter when success
                 i = 0;
             }
@@ -214,6 +253,18 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
             thread::sleep(HEART_BEAT_INTERVAL);
         }
     });
+
+    match status_recv.recv() {
+        Ok(status) => {
+            if let Err(e) = status {
+                log::error!("{:?}", e);
+                return Err(e);
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to receive from status channel {:?}", e);
+        }
+    }
 
     Ok(tor_handle)
 }
