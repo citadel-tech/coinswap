@@ -584,9 +584,9 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     // Each client connection will spawn a new handler thread, which is added back in the global thread_pool.
     // This loop beats at `maker.config.heart_beat_interval_secs`
     while !maker.shutdown.load(Relaxed) {
-        // Check every 30 secs that we have enough swap liquidity.
+        // Check every 900 secs (15 mins) that we have enough swap liquidity.
         // Raise warning otherwise and don't listen for swap requests.
-        if sync_counter >= 10 || sync_counter == 0 {
+        if sync_counter >= 300 || sync_counter == 0 {
             maker.get_wallet().write()?.sync_no_fail();
             let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;
             if offer_max_size <= maker.config.min_swap_amount {
