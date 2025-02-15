@@ -26,6 +26,8 @@ pub enum NetError {
 
     /// Error indicating an invalid CLI application network.
     InvalidAppNetwork,
+
+    NoiseError(snow::Error),
 }
 
 impl std::fmt::Display for NetError {

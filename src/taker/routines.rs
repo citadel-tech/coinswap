@@ -7,9 +7,10 @@
 //! for communication between taker and maker.
 
 use serde::{Deserialize, Serialize};
+use snow::TransportState;
 #[cfg(feature = "tor")]
 use socks::Socks5Stream;
-use std::{net::TcpStream, thread::sleep, time::Duration};
+use std::{borrow::BorrowMut, net::TcpStream, thread::sleep, time::Duration};
 
 use crate::{
     protocol::{
@@ -28,7 +29,7 @@ use crate::{
         Hash160,
     },
     taker::api::MINER_FEE,
-    utill::{read_message, send_message, ConnectionType},
+    utill::{read_message, send_handshake_message, send_message, ConnectionType},
     wallet::WalletError,
 };
 use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
@@ -64,14 +65,24 @@ pub(crate) struct ContractsInfo {
 /// Ensures that the Maker is alive and responding.
 ///
 // In future, handshake can be used to find protocol compatibility across multiple versions.
-pub(crate) fn handshake_maker(socket: &mut TcpStream) -> Result<(), TakerError> {
-    send_message(
+pub(crate) fn handshake_maker(
+    mut noise: Option<snow::HandshakeState>,
+    socket: &mut TcpStream,
+) -> Result<Option<TransportState>, TakerError> {
+    // if a noise handshake state was given:
+    // -> e, es. It means the initiator sends the ephemeral public key,
+    // performs DH between the ephemeral private key owned and the known static public key
+    // of the maker. We can use that for "zero-RTT" encryption of the the coinswap handshake.
+    // It means that there is no overhead introducing noise in terms of network messages quantity.
+    send_handshake_message(
+        noise.as_mut(),
         socket,
         &TakerToMakerMessage::TakerHello(TakerHello {
             protocol_version_min: 1,
             protocol_version_max: 1,
         }),
     )?;
+
     let msg_bytes = read_message(socket)?;
     let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 

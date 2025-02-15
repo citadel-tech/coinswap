@@ -278,14 +278,122 @@ pub fn setup_logger(filter: LevelFilter) {
     });
 }
 
-/// Send a length-appended Protocol or RPC Message through a stream.
-/// The first byte sent is the length of the actual message.
-pub fn send_message(
+pub fn read_handshake_message(
+    noise: Option<&mut snow::HandshakeState>,
     socket_writer: &mut TcpStream,
     message: &impl serde::Serialize,
 ) -> Result<(), NetError> {
     let mut writer = BufWriter::new(socket_writer);
-    let msg_bytes = serde_cbor::ser::to_vec(message)?;
+    let mut msg_bytes = serde_cbor::ser::to_vec(message)?;
+
+    // encrypt the communication if a noise transport state was given. If it was
+    // not given, just sending the plaintext like before.
+    if let Some(noise) = noise {
+        // maximum length buf supported by noise, assuming that there is no coinswap
+        // message bigger than 65535 bytes.
+        let mut buf = vec![0u8; 65535];
+
+        // encrypting the message into the buffer and receiving len,
+        // actual size of the encrypted payload.
+        let len = noise
+            .write_message(&msg_bytes, &mut buf)
+            .map_err(NetError::NoiseError)?;
+
+        // truncate the buffer (with max length size) to the actual size of the
+        // encrypted payload
+        buf.truncate(len);
+
+        // replacig the previous plaintext payload with the encrypted payload
+        msg_bytes = buf;
+
+        // continue like before ...
+    }
+
+    let msg_len = (msg_bytes.len() as u32).to_be_bytes();
+    let mut to_send = Vec::with_capacity(msg_bytes.len() + msg_len.len());
+    to_send.extend(msg_len);
+    to_send.extend(msg_bytes);
+    writer.write_all(&to_send)?;
+    writer.flush()?;
+    Ok(())
+}
+
+pub fn send_handshake_message(
+    noise: Option<&mut snow::HandshakeState>,
+    socket_writer: &mut TcpStream,
+    message: &impl serde::Serialize,
+) -> Result<(), NetError> {
+    let mut writer = BufWriter::new(socket_writer);
+    let mut msg_bytes = serde_cbor::ser::to_vec(message)?;
+
+    // sending noise handshake + coinswap handshake message if a noise handshake state was given.
+    // if not just send the coinswap handshake message as before
+    if let Some(noise) = noise {
+        // maximum length buf supported by noise, assuming that there is no coinswap
+        // handshake message bigger than 65535 bytes.
+        let mut buf = vec![0u8; 65535];
+
+        // encoding noise handshake message and encoding the coinswap
+        // handshake message as a noise handshake payload
+        // (encrypted if performed already any DH)
+        let len = noise
+            .write_message(&msg_bytes, &mut buf)
+            .map_err(NetError::NoiseError)?;
+
+        // truncate the buffer (with max length size) to the actual size of the
+        // handshake payload
+        buf.truncate(len);
+
+        // replacing the previous coinswap handshake message with
+        // the noise + coinswap handshake message
+        msg_bytes = buf;
+
+        // continue like before ...
+    }
+
+    let msg_len = (msg_bytes.len() as u32).to_be_bytes();
+    let mut to_send = Vec::with_capacity(msg_bytes.len() + msg_len.len());
+    to_send.extend(msg_len);
+    to_send.extend(msg_bytes);
+    writer.write_all(&to_send)?;
+    writer.flush()?;
+    Ok(())
+}
+
+/// Send a length-appended Protocol or RPC Message through a stream.
+/// The first byte sent is the length of the actual message.
+/// Encrypt the Message if a noise transport state is given.
+pub fn send_message(
+    noise: Option<&mut snow::TransportState>,
+    socket_writer: &mut TcpStream,
+    message: &impl serde::Serialize,
+) -> Result<(), NetError> {
+    let mut writer = BufWriter::new(socket_writer);
+    let mut msg_bytes = serde_cbor::ser::to_vec(message)?;
+
+    // encrypt the communication if a noise transport state was given. If it was
+    // not given, just sending the plaintext like before.
+    if let Some(noise) = noise {
+        // maximum length buf supported by noise, assuming that there is no coinswap
+        // message bigger than 65535 bytes.
+        let mut buf = vec![0u8; 65535];
+
+        // encrypting the message into the buffer and receiving len,
+        // actual size of the encrypted payload.
+        let len = noise
+            .write_message(&msg_bytes, &mut buf)
+            .map_err(NetError::NoiseError)?;
+
+        // truncate the buffer (with max length size) to the actual size of the
+        // encrypted payload
+        buf.truncate(len);
+
+        // replacig the previous plaintext payload with the encrypted payload
+        msg_bytes = buf;
+
+        // continue like before ...
+    }
+
     let msg_len = (msg_bytes.len() as u32).to_be_bytes();
     let mut to_send = Vec::with_capacity(msg_bytes.len() + msg_len.len());
     to_send.extend(msg_len);
@@ -297,7 +405,10 @@ pub fn send_message(
 
 /// Reads a response byte_array from a given stream.
 /// Response can be any length-appended data, where the first byte is the length of the actual message.
-pub fn read_message(reader: &mut TcpStream) -> Result<Vec<u8>, NetError> {
+pub fn read_message(
+    noise: Option<&mut snow::TransportState>,
+    reader: &mut TcpStream,
+) -> Result<Vec<u8>, NetError> {
     let mut reader = BufReader::new(reader);
     // length of incoming data
     let mut len_buff = [0u8; 4];
@@ -318,6 +429,28 @@ pub fn read_message(reader: &mut TcpStream) -> Result<Vec<u8>, NetError> {
             Err(e) => return Err(e.into()),
         }
     }
+
+    // if a noise transport state was given, assume that the communication is encrypted
+    // and we need to use that transport state to decrypt
+    if let Some(noise) = noise {
+        // maximum length buf supported by noise, assuming that there is no coinswap
+        // message bigger than 65535 bytes.
+        let mut buf = vec![0u8; 65535];
+
+        // decrypting the message into the buf and receiving len,
+        // actual size of the decrypted payload.
+        let len = noise
+            .read_message(&buffer, &mut buf)
+            .map_err(NetError::NoiseError)?;
+
+        // truncate the buf (with max length size) to the actual size of the
+        // decrypted payload
+        buf.truncate(len);
+
+        // replacing the encrypted payload with the decrypted
+        buffer = buf;
+    }
+
     Ok(buffer)
 }
 

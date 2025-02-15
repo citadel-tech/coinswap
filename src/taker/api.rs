@@ -198,6 +198,8 @@ impl Drop for Taker {
     }
 }
 
+const NOISE_PARAMS = "Noise_NK_25519_ChaChaPoly_SHA256";
+
 impl Taker {
     // ######## MAIN PUBLIC INTERFACE ############
 
@@ -1436,6 +1438,7 @@ impl Taker {
     fn req_sigs_for_sender<S: SwapCoin>(
         &self,
         maker_address: &MakerAddress,
+        maker_noise_static_public_key: &[u8],
         outgoing_swapcoins: &[S],
         maker_multisig_nonces: &[SecretKey],
         maker_hashlock_nonces: &[SecretKey],
@@ -1472,6 +1475,7 @@ impl Taker {
 
         socket.set_read_timeout(Some(reconnect_time_out))?;
         socket.set_write_timeout(Some(reconnect_time_out))?;
+
 
         loop {
             ii += 1;
