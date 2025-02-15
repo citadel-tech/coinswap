@@ -532,9 +532,9 @@ impl TestFramework {
         Arc<DirectoryServer>,
         JoinHandle<()>,
     ) {
-        setup_logger(log::LevelFilter::Info, None);
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
+        setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
         // Remove if previously existing
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();

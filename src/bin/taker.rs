@@ -114,7 +114,7 @@ fn main() -> Result<(), TakerError> {
             args.command,
             Commands::Recover | Commands::FetchOffers | Commands::Coinswap { .. }
         ),
-        None, //default path handled inside the function.
+        args.data_directory.clone(), //default path handled inside the function.
     );
 
     let rpc_config = RPCConfig {
