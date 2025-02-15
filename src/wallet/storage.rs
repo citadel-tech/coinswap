@@ -14,9 +14,11 @@ use std::{
 use super::{error::WalletError, fidelity::FidelityBond};
 
 use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
+use std::sync::RwLock;
+use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 
 /// Represents the internal data store for a Bitcoin wallet.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct WalletStore {
     /// The file name associated with the wallet store.
     pub(crate) file_name: String,
@@ -39,6 +41,9 @@ pub(crate) struct WalletStore {
     pub(super) last_synced_height: Option<u64>,
 
     pub(super) wallet_birthday: Option<u64>,
+
+    #[serde(default)] // Ensures deserialization works if `utxo_cache` is missing
+    pub(super) utxo_cache: RwLock<HashMap<OutPoint, ListUnspentResultEntry>>
 }
 
 impl WalletStore {
@@ -62,6 +67,8 @@ impl WalletStore {
             fidelity_bond: HashMap::new(),
             last_synced_height: None,
             wallet_birthday,
+            utxo_cache: RwLock::new(HashMap::new())
+
         };
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
@@ -72,6 +79,20 @@ impl WalletStore {
         serde_cbor::to_writer(writer, &store)?;
 
         Ok(store)
+    }
+
+    /// Updates the UTXO cache by replacing existing entries with the given UTXOs.
+    pub(crate) fn update_utxo_cache(&self, utxos: Vec<ListUnspentResultEntry>) {
+        let mut cache = self.utxo_cache.write().unwrap(); // Acquire write lock
+        cache.clear();
+        
+        for utxo in utxos {
+            let outpoint = OutPoint {
+                txid: utxo.txid,
+                vout: utxo.vout,
+            };
+            cache.insert(outpoint, utxo);
+        }
     }
 
     /// Load existing file, updates it, writes it back (errors if path doesn't exist).
@@ -107,6 +128,27 @@ impl WalletStore {
         Ok(store)
     }
 }
+
+/// Implements equality check for `WalletStore`, comparing all fields, including the UTXO cache.
+/// Since `RwLock` does not implement `PartialEq`, a custom implementation is required.
+impl PartialEq for WalletStore {
+    fn eq(&self, other: &Self) -> bool {
+        self.file_name == other.file_name &&
+        self.network == other.network &&
+        self.master_key == other.master_key &&
+        self.external_index == other.external_index &&
+        self.offer_maxsize == other.offer_maxsize &&
+        self.incoming_swapcoins == other.incoming_swapcoins &&
+        self.outgoing_swapcoins == other.outgoing_swapcoins &&
+        self.prevout_to_contract_map == other.prevout_to_contract_map &&
+        self.fidelity_bond == other.fidelity_bond &&
+        self.last_synced_height == other.last_synced_height &&
+        self.wallet_birthday == other.wallet_birthday &&
+        *self.utxo_cache.read().unwrap() == *other.utxo_cache.read().unwrap() // Compare contents of RwLock
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

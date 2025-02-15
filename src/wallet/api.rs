@@ -637,10 +637,23 @@ impl Wallet {
 
     /// Returns a list of all UTXOs tracked by the wallet. Including fidelity, live_contracts and swap coins.
     pub fn get_all_utxo(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
+        {
+            // Acquire read lock to check cache
+            let cache = self.store.utxo_cache.read().unwrap();
+            if !cache.is_empty() {
+                log::info!("Using cached UTXO data.");
+                return Ok(cache.values().cloned().collect());
+            }
+        } // Read lock is dropped here to allow a write lock later
+    
         self.rpc.unlock_unspent_all()?;
         let all_utxos = self
             .rpc
             .list_unspent(Some(0), Some(9999999), None, None, None)?;
+    
+        // Acquire write lock to update the cache
+        self.store.update_utxo_cache(all_utxos.clone());
+    
         Ok(all_utxos)
     }
 
