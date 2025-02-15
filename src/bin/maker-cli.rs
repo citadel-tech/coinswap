@@ -64,11 +64,6 @@ enum Commands {
     ShowDataDir,
     /// Shutdown the makerd server
     Stop,
-    /// Redeems the fidelity bond if timelock is matured. Returns the txid of the spending transaction.
-    RedeemFidelity {
-        #[clap(long, short = 'i', default_value = "0")]
-        index: u32,
-    },
     /// Show all the fidelity bonds, current and previous, with an (index, {bond_proof, is_spent}) tupple.
     ShowFidelity,
     /// Sync the maker wallet with current blockchain state.
@@ -125,9 +120,6 @@ fn main() -> Result<(), MakerError> {
         }
         Commands::Stop => {
             send_rpc_req(stream, RpcMsgReq::Stop)?;
-        }
-        Commands::RedeemFidelity { index } => {
-            send_rpc_req(stream, RpcMsgReq::RedeemFidelity(index))?;
         }
         Commands::ShowFidelity => {
             send_rpc_req(stream, RpcMsgReq::ListFidelity)?;

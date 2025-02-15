@@ -80,9 +80,8 @@ fn malice1_taker_broadcast_contract_prematurely() {
 
             // Check balance after setting up maker server.
             let wallet = maker.wallet.read().unwrap();
-            let all_utxos = wallet.get_all_utxo().unwrap();
 
-            let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+            let balances = wallet.get_balances().unwrap();
 
             assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
             assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());

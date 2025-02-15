@@ -64,7 +64,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             RpcMsgResp::SwapUtxoResp { utxos }
         }
         RpcMsgReq::Balances => {
-            let balances = maker.get_wallet().read()?.get_balances(None)?;
+            let balances = maker.get_wallet().read()?.get_balances()?;
             RpcMsgResp::TotalBalanceResp(balances)
         }
         RpcMsgReq::NewAddress => {
@@ -115,11 +115,6 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
         RpcMsgReq::Stop => {
             maker.shutdown.store(true, Relaxed);
             RpcMsgResp::Shutdown
-        }
-
-        RpcMsgReq::RedeemFidelity(index) => {
-            let txid = maker.get_wallet().write()?.redeem_fidelity(index)?;
-            RpcMsgResp::FidelitySpend(txid)
         }
         RpcMsgReq::ListFidelity => {
             let list = maker

@@ -129,7 +129,7 @@ fn test_fidelity() {
     {
         let wallet_read = maker.get_wallet().read().unwrap();
 
-        let balances = wallet_read.get_balances(None).unwrap();
+        let balances = wallet_read.get_balances().unwrap();
 
         assert_eq!(balances.fidelity.to_sat(), 13000000);
         assert_eq!(balances.regular.to_sat(), 90998000);
@@ -184,7 +184,7 @@ fn test_fidelity() {
     // Verify the balances again after all bonds are redeemed.
     {
         let wallet_read = maker.get_wallet().read().unwrap();
-        let balances = wallet_read.get_balances(None).unwrap();
+        let balances = wallet_read.get_balances().unwrap();
 
         assert_eq!(balances.fidelity.to_sat(), 0);
         assert_eq!(balances.regular.to_sat(), 103996000);
