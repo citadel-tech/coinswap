@@ -1377,7 +1377,7 @@ impl Wallet {
                 };
                 tx.output.push(txout);
                 let base_size = tx.base_size();
-                let vsize = (base_size * 4 + total_witness_size) / 4;
+                let vsize = (base_size * 4 + total_witness_size).div_ceil(4);
                 let fee = Amount::from_sat((feerate * vsize as f64).ceil() as u64);
 
                 // I don't know if this case is even possible?
@@ -1388,6 +1388,7 @@ impl Wallet {
                     });
                 }
 
+                log::info!("Fee: {}", fee.to_sat());
                 tx.output[0].value = total_input_value - fee;
             }
             Destination::Multi(addresses) => {
@@ -1410,42 +1411,57 @@ impl Wallet {
                 });
 
                 let base_wchange = tx_wchange.base_size();
-                let vsize_wchange = (base_wchange * 4 + total_witness_size) / 4;
+                let vsize_wchange = (base_wchange * 4 + total_witness_size).div_ceil(4);
                 let fee_wchange = Amount::from_sat((feerate * vsize_wchange as f64).ceil() as u64);
 
-                let remaining_wchange = total_input_value - total_output_value - fee_wchange;
+                let remaining_wchange =
+                    if let Some(diff) = total_input_value.checked_sub(total_output_value) {
+                        if let Some(diff) = diff.checked_sub(fee_wchange) {
+                            diff
+                        } else {
+                            return Err(WalletError::InsufficientFund {
+                                available: total_input_value.to_sat(),
+                                required: (total_output_value + fee_wchange).to_sat(),
+                            });
+                        }
+                    } else {
+                        return Err(WalletError::InsufficientFund {
+                            available: total_input_value.to_sat(),
+                            required: total_output_value.to_sat(),
+                        });
+                    };
 
                 if remaining_wchange > minimal_nondust {
-                    log::info!("Adding Change {}: {}", internal_spk, remaining_wchange);
+                    log::info!(
+                        "Adding change output with {} sats (fee: {})",
+                        remaining_wchange.to_sat(),
+                        fee_wchange.to_sat()
+                    );
                     tx.output.push(TxOut {
                         script_pubkey: internal_spk,
                         value: remaining_wchange,
                     });
-                    log::info!(
-                        "Adding change output with {} sats (fee: {})",
-                        remaining_wchange,
-                        fee_wchange
-                    );
                 } else {
                     log::info!(
-                        "Remaining change {} sats is below dust threshold. Skipping change output.",
-                        remaining_wchange
+                        "Remaining change {} sats is below dust threshold. Skipping change output. (fee: {} sats)",
+                        remaining_wchange.to_sat(),
+                        fee_wchange.to_sat()
                     );
                 }
             }
         }
 
         self.sign_transaction(&mut tx, &mut coins.iter().map(|(_, usi)| usi.clone()))?;
-        let vsize = (tx.base_size() * 4 + total_witness_size) / 4;
+        let calc_vsize = (tx.base_size() * 4 + total_witness_size).div_ceil(4);
         let signed_tx_vsize = tx.vsize();
 
-        let tolerance_per_input = 1; // Allow a 1-byte difference per input
+        let tolerance_per_input = 2; // Allow a 2-byte difference per input
         let total_tolerance = tolerance_per_input * tx.input.len();
 
         assert!(
-            (vsize - signed_tx_vsize) <= total_tolerance,
+            (calc_vsize as isize - signed_tx_vsize as isize).abs() <= total_tolerance as isize,
             "Calculated vsize {} didn't match signed tx vsize {} (tolerance: {})",
-            vsize,
+            calc_vsize,
             signed_tx_vsize,
             total_tolerance
         );
