@@ -4,7 +4,7 @@ use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
     utill::ConnectionType,
-    wallet::{Destination, SendAmount},
+    wallet::Destination,
 };
 use std::sync::Arc;
 
@@ -57,7 +57,7 @@ fn test_standard_coinswap() {
         .map(|maker| {
             let maker_clone = maker.clone();
             thread::spawn(move || {
-                start_maker_server(maker_clone).unwrap();
+                start_maker_server(maker_clone, Some(4.54545454)).unwrap();
             })
         })
         .collect::<Vec<_>>();
@@ -155,13 +155,10 @@ fn test_standard_coinswap() {
         .list_incoming_swap_coin_utxo_spend_info(None)
         .unwrap();
 
+    let addr = taker_wallet_mut.get_next_external_address().unwrap();
+
     let tx = taker_wallet_mut
-        .spend_from_wallet(
-            Amount::from_sat(1000),
-            SendAmount::Max,
-            Destination::Wallet,
-            &swap_coins,
-        )
+        .spend_from_wallet(Some(3.0211), Destination::Sweep(addr), &swap_coins)
         .unwrap();
 
     assert_eq!(

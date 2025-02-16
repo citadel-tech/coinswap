@@ -53,7 +53,7 @@ fn test_fidelity() {
 
     let maker_clone = maker.clone();
 
-    let maker_thread = thread::spawn(move || start_maker_server(maker_clone));
+    let maker_thread = thread::spawn(move || start_maker_server(maker_clone, Some(6.578)));
 
     thread::sleep(Duration::from_secs(6));
 
@@ -105,6 +105,7 @@ fn test_fidelity() {
                 Amount::from_sat(8000000),
                 LockTime::from_height((bitcoind.client.get_block_count().unwrap() as u32) + 950)
                     .unwrap(),
+                Some(6.578),
             )
             .unwrap();
 
@@ -155,7 +156,7 @@ fn test_fidelity() {
             if required_height == first_maturity_height {
                 log::info!("First Fidelity Bond  is matured. Sending redemption transaction");
 
-                let _ = wallet_write.redeem_fidelity(0).unwrap();
+                let _ = wallet_write.redeem_fidelity(0, Some(9.009)).unwrap();
 
                 log::info!("First Fidelity Bond is successfully redeemed.");
 
@@ -169,7 +170,7 @@ fn test_fidelity() {
             } else {
                 log::info!("Second Fidelity Bond  is matured. sending redemption transactions");
 
-                let _ = wallet_write.redeem_fidelity(1).unwrap();
+                let _ = wallet_write.redeem_fidelity(1, Some(9.009)).unwrap();
 
                 log::info!("Second Fidelity Bond is successfully redeemed.");
 

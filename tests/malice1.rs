@@ -62,7 +62,7 @@ fn malice1_taker_broadcast_contract_prematurely() {
         .map(|maker| {
             let maker_clone = maker.clone();
             thread::spawn(move || {
-                start_maker_server(maker_clone).unwrap();
+                start_maker_server(maker_clone, Some(4.54545454)).unwrap();
             })
         })
         .collect::<Vec<_>>();
