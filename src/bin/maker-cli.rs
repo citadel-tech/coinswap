@@ -54,7 +54,7 @@ enum Commands {
         /// Amount to send in sats
         #[clap(long, short = 'a')]
         amount: u64,
-        /// Total fee to be paid in sats
+        /// Feerate in sats/vByte. Defaults to 3 sats/vByte
         #[clap(long, short = 'f')]
         feerate: Option<f64>,
     },
@@ -68,6 +68,9 @@ enum Commands {
     RedeemFidelity {
         #[clap(long, short = 'i', default_value = "0")]
         index: u32,
+        /// Feerate in sats/vByte. Defaults to 3 sats/vByte
+        #[clap(long, short = 'f')]
+        feerate: Option<f64>,
     },
     /// Show all the fidelity bonds, current and previous, with an (index, {bond_proof, is_spent}) tupple.
     ShowFidelity,
@@ -126,8 +129,8 @@ fn main() -> Result<(), MakerError> {
         Commands::Stop => {
             send_rpc_req(stream, RpcMsgReq::Stop)?;
         }
-        Commands::RedeemFidelity { index } => {
-            send_rpc_req(stream, RpcMsgReq::RedeemFidelity(index))?;
+        Commands::RedeemFidelity { index, feerate } => {
+            send_rpc_req(stream, RpcMsgReq::RedeemFidelity(index, feerate))?;
         }
         Commands::ShowFidelity => {
             send_rpc_req(stream, RpcMsgReq::ListFidelity)?;

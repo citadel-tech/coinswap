@@ -145,9 +145,9 @@ pub enum UTXOSpendInfo {
 
 impl UTXOSpendInfo {
     pub fn estimate_witness_size(&self) -> usize {
-        const P2PWPKH_WITNESS_SIZE: usize = 107; // Size(1) + Signature(72) + Size(1) + PubKey(33)
+        const P2PWPKH_WITNESS_SIZE: usize = 107;
         const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 222;
-        const FIDELITY_BOND_WITNESS_SIZE: usize = 115; // Size(1) + Signature(72 bytes) + Redeem Script(42 bytes)
+        const FIDELITY_BOND_WITNESS_SIZE: usize = 115;
         const CONTRACT_TX_WITNESS_SIZE: usize = 222;
         match *self {
             Self::SeedCoin { .. } => P2PWPKH_WITNESS_SIZE,

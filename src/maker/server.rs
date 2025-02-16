@@ -54,7 +54,7 @@ pub(crate) const DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = 60 * 15; // 15 m
 ///
 /// Tor thread is spawned only if ConnectionType=TOR and --feature=tor is enabled.
 /// Errors if ConncetionType=TOR but, the tor feature is not enabled.
-fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
+fn network_bootstrap(maker: Arc<Maker>, feerate: Option<f64>) -> Result<Option<Child>, MakerError> {
     let maker_port = maker.config.network_port;
     let (maker_address, dns_address, tor_handle) = match maker.config.connection_type {
         ConnectionType::CLEARNET => {
@@ -135,7 +135,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
         maker_address
     );
 
-    setup_fidelity_bond(&maker, &maker_address)?;
+    setup_fidelity_bond(&maker, &maker_address, feerate)?;
     log::info!(
         "Max offer size : {} sats",
         maker.get_wallet().read()?.store.offer_maxsize
@@ -219,7 +219,11 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
 }
 
 /// Checks if the wallet already has fidelity bonds. if not, create the first fidelity bond.
-fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), MakerError> {
+fn setup_fidelity_bond(
+    maker: &Arc<Maker>,
+    maker_address: &str,
+    feerate: Option<f64>,
+) -> Result<(), MakerError> {
     let highest_index = maker.get_wallet().read()?.get_highest_fidelity_index()?;
     if let Some(i) = highest_index {
         let wallet_read = maker.get_wallet().read()?;
@@ -286,7 +290,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
             let fidelity_result = maker
                 .get_wallet()
                 .write()?
-                .create_fidelity(amount, locktime);
+                .create_fidelity(amount, locktime, feerate);
 
             match fidelity_result {
                 // Wait for sufficient fund to create fidelity bond.
@@ -464,12 +468,12 @@ fn handle_client(maker: Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerE
 ///
 /// The server continues to run until a shutdown signal is detected, at which point
 /// it performs cleanup tasks, such as saving wallet data and terminating active Tor sessions.
-pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
+pub fn start_maker_server(maker: Arc<Maker>, feerate: Option<f64>) -> Result<(), MakerError> {
     log::info!("Starting Maker Server");
     // Initialize network connections.
 
     // Setup the wallet with fidelity bond.
-    let _tor_thread = network_bootstrap(maker.clone())?;
+    let _tor_thread = network_bootstrap(maker.clone(), feerate)?;
 
     let port = maker.config.network_port;
     let network = maker.get_wallet().read()?.store.network;
