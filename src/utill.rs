@@ -174,10 +174,7 @@ pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<
         };
 
         let config = config.build(root_logger).unwrap();
-
-        if let Err(e) = log4rs::init_config(config) {
-            eprintln!("Failed to initialize logger: {}", e);
-        }
+        log4rs::init_config(config).unwrap();
     })
 }
 
@@ -245,16 +242,9 @@ pub fn setup_directory_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
 pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     Once::new().call_once(|| {
         env::set_var("RUST_LOG", "coinswap=info");
-        setup_taker_logger(
-            filter,
-            true,
-            data_dir.clone().and_then(|d| Some(d.join("taker"))),
-        );
-        setup_maker_logger(filter, data_dir.clone().and_then(|d| Some(d.join("maker"))));
-        setup_directory_logger(
-            filter,
-            data_dir.clone().and_then(|d| Some(d.join("directory"))),
-        );
+        setup_taker_logger(filter, true, data_dir.clone().map(|d| d.join("taker")));
+        setup_maker_logger(filter, data_dir.clone().map(|d| d.join("maker")));
+        setup_directory_logger(filter, data_dir.clone().map(|d| d.join("directory")));
     });
 }
 
