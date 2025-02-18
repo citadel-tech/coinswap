@@ -80,7 +80,7 @@ fn main() -> Result<(), MakerError> {
         MakerBehavior::Normal,
     )?);
 
-    start_maker_server(maker, None)?;
+    start_maker_server(maker)?;
 
     Ok(())
 }

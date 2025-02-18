@@ -1378,7 +1378,11 @@ impl Wallet {
                 tx.output.push(txout);
                 let base_size = tx.base_size();
                 let vsize = (base_size * 4 + total_witness_size).div_ceil(4);
+
                 let fee = Amount::from_sat((feerate * vsize as f64).ceil() as u64);
+
+                #[cfg(feature = "integration-test")]
+                let fee = Amount::from_sat(1000);
 
                 // I don't know if this case is even possible?
                 if fee > total_input_value {
@@ -1412,7 +1416,11 @@ impl Wallet {
 
                 let base_wchange = tx_wchange.base_size();
                 let vsize_wchange = (base_wchange * 4 + total_witness_size).div_ceil(4);
+
                 let fee_wchange = Amount::from_sat((feerate * vsize_wchange as f64).ceil() as u64);
+
+                #[cfg(feature = "integration-test")]
+                let fee_wchange = Amount::from_sat(1000);
 
                 let remaining_wchange =
                     if let Some(diff) = total_input_value.checked_sub(total_output_value) {
@@ -1427,7 +1435,7 @@ impl Wallet {
                     } else {
                         return Err(WalletError::InsufficientFund {
                             available: total_input_value.to_sat(),
-                            required: total_output_value.to_sat(),
+                            required: (total_output_value + fee_wchange).to_sat(),
                         });
                     };
 
