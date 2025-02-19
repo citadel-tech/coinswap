@@ -12,14 +12,14 @@ use std::{
     collections::{HashMap, HashSet},
     io::BufWriter,
     net::TcpStream,
-    path::{Path, PathBuf},
+    path::PathBuf,
     thread::sleep,
     time::{Duration, Instant},
 };
 
 use bitcoind::bitcoincore_rpc::RpcApi;
 
-#[cfg(feature = "tor")]
+#[cfg(not(feature = "integration-test"))]
 use socks::Socks5Stream;
 
 use bitcoin::{
@@ -290,7 +290,7 @@ impl Taker {
 
     ///  Does the coinswap process
     pub fn do_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
-        #[cfg(feature = "tor")]
+        #[cfg(not(feature = "integration-test"))]
         check_tor_status(self.config.control_port, &self.config.tor_auth_password)?;
         self.send_coinswap(swap_params)
     }
@@ -930,7 +930,7 @@ impl Taker {
         let address = this_maker.address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(address)?,
-            #[cfg(feature = "tor")]
+            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 address.as_str(),
@@ -1406,7 +1406,7 @@ impl Taker {
 
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            #[cfg(feature = "tor")]
+            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
@@ -1495,7 +1495,7 @@ impl Taker {
         let maker_addr_str = maker_address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            #[cfg(feature = "tor")]
+            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
@@ -1673,7 +1673,7 @@ impl Taker {
         let maker_addr_str = maker_address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            #[cfg(feature = "tor")]
+            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
@@ -2017,29 +2017,15 @@ impl Taker {
                     self.config.directory_server_address.clone()
                 }
             }
-            #[cfg(feature = "tor")]
-            ConnectionType::TOR => {
-                if cfg!(feature = "integration-test") {
-                    let tor_dir = Path::new("/tmp/coinswap/dns/tor");
-
-                    let hostname = get_tor_hostname(tor_dir)?;
-                    log::info!("---------------hostname : {:?}", hostname);
-                    format!("{}:{}", hostname, 8080)
-                } else {
-                    self.config.directory_server_address.clone()
-                }
-            }
+            #[cfg(not(feature = "integration-test"))]
+            ConnectionType::TOR => self.config.directory_server_address.clone(),
         };
 
-        let socks_port = if cfg!(feature = "tor") {
-            if self.config.connection_type == ConnectionType::CLEARNET {
-                None
-            } else {
-                Some(self.config.socks_port)
-            }
-        } else {
-            None
-        };
+        #[cfg(not(feature = "integration-test"))]
+        let socks_port = Some(self.config.socks_port);
+
+        #[cfg(feature = "integration-test")]
+        let socks_port = None;
 
         log::info!("Fetching addresses from DNS: {}", dns_addr);
 
@@ -2104,7 +2090,7 @@ impl Taker {
         let address = maker_addr.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(address)?,
-            #[cfg(feature = "tor")]
+            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 address.as_str(),

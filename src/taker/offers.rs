@@ -18,7 +18,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "tor")]
+#[cfg(not(feature = "integration-test"))]
 use socks::Socks5Stream;
 
 use crate::{
@@ -200,19 +200,13 @@ pub(crate) fn fetch_offer_from_makers(
     Ok(result)
 }
 
+#[allow(unused_variables)]
 /// Retrieves advertised maker addresses from directory servers based on the specified network.
 pub fn fetch_addresses_from_dns(
     socks_port: Option<u16>,
     dns_addr: String,
     connection_type: ConnectionType,
 ) -> Result<Vec<MakerAddress>, TakerError> {
-    if !cfg!(feature = "tor") {
-        assert!(
-            socks_port.is_none(),
-            "Cannot use socks port without tor feature"
-        );
-    }
-
     loop {
         let mut stream = match connection_type {
             ConnectionType::CLEARNET => match TcpStream::connect(dns_addr.as_str()) {
@@ -223,7 +217,7 @@ pub fn fetch_addresses_from_dns(
                 }
                 Ok(s) => s,
             },
-            #[cfg(feature = "tor")]
+            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => {
                 let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
                 match Socks5Stream::connect(socket_addrs, dns_addr.as_str()) {

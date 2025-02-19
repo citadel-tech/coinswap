@@ -30,11 +30,11 @@ impl Default for TakerConfig {
             directory_server_address:
                 "bhbzkndgad52ojm75w4goii7xsi6ou73fzyvorxas7swg2snlto4c4ad.onion:8080".to_string(),
             connection_type: {
-                #[cfg(feature = "tor")]
+                #[cfg(not(feature = "integration-test"))]
                 {
                     ConnectionType::TOR
                 }
-                #[cfg(not(feature = "tor"))]
+                #[cfg(feature = "integration-test")]
                 {
                     ConnectionType::CLEARNET
                 }

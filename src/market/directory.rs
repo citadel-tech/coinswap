@@ -10,11 +10,14 @@ use crate::{
     market::rpc::start_rpc_server_thread,
     protocol::messages::DnsRequest,
     utill::{
-        check_tor_status, get_dns_dir, parse_field, parse_toml, read_message, send_message,
-        verify_fidelity_checks, ConnectionType, TorError, HEART_BEAT_INTERVAL,
+        get_dns_dir, parse_field, parse_toml, read_message, send_message, verify_fidelity_checks,
+        ConnectionType, TorError, HEART_BEAT_INTERVAL,
     },
     wallet::{RPCConfig, WalletError},
 };
+
+#[cfg(not(feature = "integration-test"))]
+use crate::utill::check_tor_status;
 
 use std::{
     collections::HashMap,
@@ -154,11 +157,11 @@ impl Default for DirectoryServer {
             control_port: 9051,
             tor_auth_password: "".to_string(),
             connection_type: {
-                #[cfg(feature = "tor")]
+                #[cfg(not(feature = "integration-test"))]
                 {
                     ConnectionType::TOR
                 }
-                #[cfg(not(feature = "tor"))]
+                #[cfg(feature = "integration-test")]
                 {
                     ConnectionType::CLEARNET
                 }
@@ -371,10 +374,9 @@ pub fn start_directory_server(
     directory: Arc<DirectoryServer>,
     rpc_config: Option<RPCConfig>,
 ) -> Result<(), DirectoryServerError> {
-    #[cfg(feature = "tor")]
+    #[cfg(not(feature = "integration-test"))]
     check_tor_status(directory.control_port, &directory.tor_auth_password)?;
 
-    #[cfg(feature = "tor")]
     let rpc_config = rpc_config.unwrap_or_default();
 
     let rpc_client = bitcoincore_rpc::Client::try_from(&rpc_config)?;
@@ -389,9 +391,9 @@ pub fn start_directory_server(
 
     match directory.connection_type {
         ConnectionType::CLEARNET => {}
-        #[cfg(feature = "tor")]
+        #[cfg(not(feature = "integration-test"))]
         ConnectionType::TOR => {
-            #[cfg(feature = "tor")]
+            #[cfg(not(feature = "integration-test"))]
             {
                 let network_port = directory.service_port;
 

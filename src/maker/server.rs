@@ -7,7 +7,6 @@
 use std::{
     io::ErrorKind,
     net::{Ipv4Addr, TcpListener, TcpStream},
-    path::Path,
     process::Child,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
@@ -20,7 +19,7 @@ use std::{
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
 
-#[cfg(feature = "tor")]
+#[cfg(not(feature = "integration-test"))]
 use socks::Socks5Stream;
 
 pub(crate) use super::{api::RPC_PING_INTERVAL, Maker};
@@ -36,12 +35,12 @@ use crate::{
         rpc::start_rpc_server,
     },
     protocol::messages::{DnsMetadata, DnsRequest, TakerToMakerMessage},
-    utill::{
-        check_tor_status, get_tor_hostname, read_message, send_message, ConnectionType,
-        HEART_BEAT_INTERVAL,
-    },
+    utill::{read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
     wallet::WalletError,
 };
+
+#[cfg(not(feature = "integration-test"))]
+use crate::utill::check_tor_status;
 
 use crate::maker::error::MakerError;
 
@@ -67,19 +66,12 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
 
             (maker_address, dns_address, None)
         }
-        #[cfg(feature = "tor")]
+        #[cfg(not(feature = "integration-test"))]
         ConnectionType::TOR => {
             let maker_hostname = &maker.config.hostname;
             let maker_address = format!("{}:{}", maker_hostname, maker.config.service_port);
 
-            let dns_address = if cfg!(feature = "integration-test") {
-                let dns_tor_dir = Path::new("/tmp/coinswap/dns/tor");
-                let dns_hostname = get_tor_hostname(dns_tor_dir)?;
-                format!("{}:{}", dns_hostname, 8080)
-            } else {
-                maker.config.directory_server_address.clone()
-            };
-
+            let dns_address = maker.config.directory_server_address.clone();
             (maker_address, dns_address, None)
         }
     };
@@ -120,7 +112,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
             if i >= trigger_count || i == 0 {
                 let stream = match maker.config.connection_type {
                     ConnectionType::CLEARNET => TcpStream::connect(&dns_address),
-                    #[cfg(feature = "tor")]
+                    #[cfg(not(feature = "integration-test"))]
                     ConnectionType::TOR => Socks5Stream::connect(
                         format!("127.0.0.1:{}", maker.config.socks_port),
                         dns_address.as_str(),
@@ -422,7 +414,7 @@ fn handle_client(maker: Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerE
 pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Starting Maker Server");
     // Initialize network connections.
-    #[cfg(feature = "tor")]
+    #[cfg(not(feature = "integration-test"))]
     check_tor_status(maker.config.control_port, &maker.config.tor_auth_password)?;
     // Setup the wallet with fidelity bond.
     let _tor_thread = network_bootstrap(maker.clone())?;

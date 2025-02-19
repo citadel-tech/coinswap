@@ -10,9 +10,7 @@ mod test_framework;
 use test_framework::*;
 
 use log::{info, warn};
-use std::{
-    fs::File, io::Read, path::PathBuf, sync::atomic::Ordering::Relaxed, thread, time::Duration,
-};
+use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// ABORT 2: Maker Drops Before Setup
 /// This test demonstrates the situation where a Maker prematurely drops connections after doing
@@ -183,7 +181,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
                 taker.get_bad_makers()[0].address.to_string()
             );
         }
-        #[cfg(feature = "tor")]
+        #[cfg(not(feature = "integration-test"))]
         ConnectionType::TOR => {
             let onion_addr_path =
                 PathBuf::from(format!("/tmp/tor-rust-maker{}/hs-dir/hostname", 6102));

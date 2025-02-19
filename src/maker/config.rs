@@ -59,11 +59,11 @@ impl Default for MakerConfig {
             #[cfg(not(feature = "integration-test"))]
             fidelity_timelock: 2160, // Approx 15 days of blocks in production
             connection_type: {
-                #[cfg(feature = "tor")]
+                #[cfg(not(feature = "integration-test"))]
                 {
                     ConnectionType::TOR
                 }
-                #[cfg(not(feature = "tor"))]
+                #[cfg(feature = "integration-test")]
                 {
                     ConnectionType::CLEARNET
                 }
