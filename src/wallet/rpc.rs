@@ -139,6 +139,17 @@ impl Wallet {
             }
         }
 
+        match self.get_all_utxo() {
+            Ok(utxos) => {
+                log::info!("SYNCED UTXO From Cache!");
+                self.update_utxo_cache(utxos);
+            }
+            Err(e) => {
+                eprintln!("Error retrieving UTXOs: {:?}", e);
+                return Err(e);
+            }
+        }
+
         let max_external_index = self.find_hd_next_index(KeychainKind::External)?;
         self.update_external_index(max_external_index)?;
         self.refresh_offer_maxsize_cache()?;
