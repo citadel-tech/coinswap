@@ -53,7 +53,7 @@ pub(crate) fn handle_message(
     if let TakerToMakerMessage::WaitingFundingConfirmation(id) = &message {
         log::info!(
             "[{}] Taker is waiting for funding confirmation. Reseting timer.",
-            maker.config.network_port
+            maker.config.target_port
         );
         maker
             .ongoing_swap_state
@@ -244,7 +244,7 @@ impl Maker {
 
         log::info!(
             "[{}] Total Funding Amount = {} | Funding Txids = {:?}",
-            self.config.network_port,
+            self.config.target_port,
             Amount::from_sat(total_funding_amount),
             funding_txids
         );
@@ -280,7 +280,7 @@ impl Maker {
         let hashvalue = self.verify_proof_of_funding(&message)?;
         log::info!(
             "[{}] Validated Proof of Funding of receiving swap. Adding Incoming Swaps.",
-            self.config.network_port
+            self.config.target_port
         );
 
         // Import transactions and addresses into Bitcoin core's wallet.
@@ -412,7 +412,7 @@ impl Maker {
 
         log::info!(
             "[{}] Prepared outgoing funding txs: {:?}.",
-            self.config.network_port,
+            self.config.target_port,
             my_funding_txes
                 .iter()
                 .map(|tx| tx.compute_txid())
@@ -421,7 +421,7 @@ impl Maker {
 
         log::info!(
             "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {} |",
-            self.config.network_port,
+            self.config.target_port,
             Amount::from_sat(incoming_amount),
             Amount::from_sat(outgoing_amount),
             Amount::from_sat(act_coinswap_fees),
@@ -542,7 +542,7 @@ impl Maker {
         }
         log::info!(
             "[{}] Broadcasted funding txs: {:?}",
-            self.config.network_port,
+            self.config.target_port,
             my_funding_txids
         );
 
@@ -608,7 +608,7 @@ impl Maker {
 
         log::info!(
             "[{}] received preimage for hashvalue={}",
-            self.config.network_port,
+            self.config.target_port,
             hashvalue
         );
         let mut swapcoin_private_keys = Vec::<MultisigPrivkey>::new();

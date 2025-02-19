@@ -12,14 +12,22 @@ use super::api::MIN_SWAP_AMOUNT;
 /// Maker Configuration, controlling various maker behavior.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MakerConfig {
-    /// Network listening port
-    pub network_port: u16,
     /// RPC listening port
     pub rpc_port: u16,
     /// Minimum Coinswap amount
     pub min_swap_amount: u64,
+    /// target listening port
+    pub target_port: u16,
+    /// service port
+    pub service_port: u16,
+    /// control port
+    pub control_port: u16,
     /// Socks port
     pub socks_port: u16,
+    /// Authentication password
+    pub tor_auth_password: String,
+    /// Onion hostname
+    pub hostname: String,
     /// Directory server address (can be clearnet or onion)
     pub directory_server_address: String,
     /// Fidelity Bond amount
@@ -33,10 +41,13 @@ pub struct MakerConfig {
 impl Default for MakerConfig {
     fn default() -> Self {
         Self {
-            network_port: 6102,
             rpc_port: 6103,
             min_swap_amount: MIN_SWAP_AMOUNT,
+            target_port: 6102,
+            service_port: 6102,
+            control_port: 9051,
             socks_port: 19050,
+            tor_auth_password: "".to_string(),
             directory_server_address:
                 "bhbzkndgad52ojm75w4goii7xsi6ou73fzyvorxas7swg2snlto4c4ad.onion:8080".to_string(),
             #[cfg(feature = "integration-test")]
@@ -57,6 +68,7 @@ impl Default for MakerConfig {
                     ConnectionType::CLEARNET
                 }
             },
+            hostname: "ocqkq73acs4qryk5snoiwtpskb2w3wp65basfzw2xcw6mrp57yonygyd.onion".to_string(),
         }
     }
 }
@@ -96,13 +108,19 @@ impl MakerConfig {
         );
 
         Ok(MakerConfig {
-            network_port: parse_field(config_map.get("network_port"), default_config.network_port),
             rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
             min_swap_amount: parse_field(
                 config_map.get("min_swap_amount"),
                 default_config.min_swap_amount,
             ),
+            target_port: parse_field(config_map.get("target_port"), default_config.target_port),
+            service_port: parse_field(config_map.get("service_port"), default_config.service_port),
+            control_port: parse_field(config_map.get("control_port"), default_config.control_port),
             socks_port: parse_field(config_map.get("socks_port"), default_config.socks_port),
+            tor_auth_password: parse_field(
+                config_map.get("tor_auth_password"),
+                default_config.tor_auth_password,
+            ),
             directory_server_address: parse_field(
                 config_map.get("directory_server_address"),
                 default_config.directory_server_address,
@@ -119,13 +137,14 @@ impl MakerConfig {
                 config_map.get("connection_type"),
                 default_config.connection_type,
             ),
+            hostname: parse_field(config_map.get("hostname"), default_config.hostname),
         })
     }
 
     // Method to serialize the MakerConfig into a TOML string and write it to a file
     pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
-            "network_port = {}
+            "target_port = {}
 rpc_port = {}
 min_swap_amount = {}
 socks_port = {}
@@ -133,7 +152,7 @@ directory_server_address = {}
 fidelity_amount = {}
 fidelity_timelock = {}
 connection_type = {:?}",
-            self.network_port,
+            self.target_port,
             self.rpc_port,
             self.min_swap_amount,
             self.socks_port,
@@ -175,7 +194,7 @@ mod tests {
     #[test]
     fn test_valid_config() {
         let contents = r#"
-            network_port = 6102
+            target_port = 6102
             rpc_port = 6103
             required_confirms = 1
             min_swap_amount = 10000
@@ -193,16 +212,16 @@ mod tests {
     fn test_missing_fields() {
         let contents = r#"
             [maker_config]
-            network_port = 6103
+            target_port = 6103
         "#;
         let config_path = create_temp_config(contents, "missing_fields_maker_config.toml");
         let config = MakerConfig::new(Some(&config_path)).unwrap();
         remove_temp_config(&config_path);
 
-        assert_eq!(config.network_port, 6103);
+        assert_eq!(config.target_port, 6103);
         assert_eq!(
             MakerConfig {
-                network_port: 6102,
+                target_port: 6102,
                 ..config
             },
             MakerConfig::default()
@@ -213,7 +232,7 @@ mod tests {
     fn test_incorrect_data_type() {
         let contents = r#"
             [maker_config]
-            network_port = "not_a_number"
+            target_port = "not_a_number"
         "#;
         let config_path = create_temp_config(contents, "incorrect_type_maker_config.toml");
         let config = MakerConfig::new(Some(&config_path)).unwrap();
