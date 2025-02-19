@@ -81,6 +81,9 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             let destination =
                 Destination::Address(Address::from_str(&address).unwrap().assume_checked());
 
+            // Sync the Wallet to ensure the UTXOs are updated
+            maker.get_wallet().write()?.sync_no_fail();
+
             let coins_to_send = maker.get_wallet().read()?.coin_select(amount + fee)?;
 
             let tx = maker.get_wallet().write()?.spend_from_wallet(
@@ -118,6 +121,9 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
         }
 
         RpcMsgReq::RedeemFidelity(index) => {
+            // Sync the Wallet to ensure the UTXOs are updated
+            maker.get_wallet().write()?.sync_no_fail();
+
             let txid = maker.get_wallet().write()?.redeem_fidelity(index)?;
             RpcMsgResp::FidelitySpend(txid)
         }

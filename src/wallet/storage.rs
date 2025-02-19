@@ -14,11 +14,11 @@ use std::{
 use super::{error::WalletError, fidelity::FidelityBond};
 
 use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
-use std::sync::RwLock;
 use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
+use crate::wallet::UTXOSpendInfo;
 
 /// Represents the internal data store for a Bitcoin wallet.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct WalletStore {
     /// The file name associated with the wallet store.
     pub(crate) file_name: String,
@@ -43,8 +43,11 @@ pub(crate) struct WalletStore {
 
     pub(super) wallet_birthday: Option<u64>,
 
+    // pub(super) utxo_cache: RwLock<HashMap<OutPoint, ListUnspentResultEntry>>
+
     #[serde(default)] // Ensures deserialization works if `utxo_cache` is missing
-    pub(super) utxo_cache: RwLock<HashMap<OutPoint, ListUnspentResultEntry>>
+    pub(super) utxo_cache: HashMap<OutPoint, (ListUnspentResultEntry, UTXOSpendInfo)>
+
 }
 
 impl WalletStore {
@@ -68,7 +71,7 @@ impl WalletStore {
             fidelity_bond: HashMap::new(),
             last_synced_height: None,
             wallet_birthday,
-            utxo_cache: RwLock::new(HashMap::new())
+            utxo_cache: HashMap::new(),
 
         };
 
@@ -82,18 +85,27 @@ impl WalletStore {
         Ok(store)
     }
 
-    /// Updates the UTXO cache by replacing existing entries with the given UTXOs.
-    pub(crate) fn update_utxo_cache(&self, utxos: Vec<ListUnspentResultEntry>) {
-        let mut cache = self.utxo_cache.write().unwrap(); // Acquire write lock
-        cache.clear();
-        
-        for utxo in utxos {
+    /// Internal function to update the UTXO cache from already-processed UTXOs.
+    pub(crate) fn update_utxo_cache_internal(&mut self, processed_utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>) {
+        // Clear the existing cache
+        self.utxo_cache.clear();
+    
+        // Insert each processed UTXO into the cache using its OutPoint as key.
+        for (utxo, spend_info) in processed_utxos {
             let outpoint = OutPoint {
                 txid: utxo.txid,
                 vout: utxo.vout,
             };
-            cache.insert(outpoint, utxo);
+            self.utxo_cache.insert(outpoint, (utxo, spend_info));
         }
+    }
+
+    /// Constructs a list of UTXOs from the cache.
+    pub fn build_utxo_list_from_cache(&self) -> Vec<ListUnspentResultEntry> {
+        self.utxo_cache
+            .values()
+            .map(|(utxo, _spend_info)| utxo.clone())
+            .collect()
     }
 
     /// Load existing file, updates it, writes it back (errors if path doesn't exist).
@@ -127,25 +139,6 @@ impl WalletStore {
             }
         };
         Ok(store)
-    }
-}
-
-/// Implements equality check for `WalletStore`, comparing all fields, including the UTXO cache.
-/// Since `RwLock` does not implement `PartialEq`, a custom implementation is required.
-impl PartialEq for WalletStore {
-    fn eq(&self, other: &Self) -> bool {
-        self.file_name == other.file_name &&
-        self.network == other.network &&
-        self.master_key == other.master_key &&
-        self.external_index == other.external_index &&
-        self.offer_maxsize == other.offer_maxsize &&
-        self.incoming_swapcoins == other.incoming_swapcoins &&
-        self.outgoing_swapcoins == other.outgoing_swapcoins &&
-        self.prevout_to_contract_map == other.prevout_to_contract_map &&
-        self.fidelity_bond == other.fidelity_bond &&
-        self.last_synced_height == other.last_synced_height &&
-        self.wallet_birthday == other.wallet_birthday &&
-        *self.utxo_cache.read().unwrap() == *other.utxo_cache.read().unwrap() // Compare contents of RwLock
     }
 }
 
