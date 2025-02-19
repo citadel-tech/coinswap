@@ -53,7 +53,7 @@ fn test_fidelity() {
 
     let maker_clone = maker.clone();
 
-    let maker_thread = thread::spawn(move || start_maker_server(maker_clone, Some(6.578)));
+    let maker_thread = thread::spawn(move || start_maker_server(maker_clone));
 
     thread::sleep(Duration::from_secs(6));
 
