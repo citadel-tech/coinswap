@@ -17,7 +17,7 @@ use log4rs::{
 use serde::{Deserialize, Serialize};
 use std::{
     env, fmt,
-    io::{BufReader, BufWriter, ErrorKind, Read},
+    io::{BufRead, BufReader, BufWriter, ErrorKind, Read},
     net::TcpStream,
     path::{Path, PathBuf},
     str::FromStr,
@@ -415,39 +415,6 @@ pub(crate) fn parse_field<T: std::str::FromStr>(value: Option<&String>, default:
         .unwrap_or(default)
 }
 
-/// Function to check if tor log contains a pattern
-pub(crate) fn monitor_log_for_completion(log_file: &Path, pattern: &str) -> io::Result<()> {
-    // TODO: Make this logic work for existing file with previous logs.
-    let mut last_size = 0;
-
-    loop {
-        if log_file.exists() {
-            let file = File::open(log_file)?;
-            let metadata = file.metadata()?;
-            let current_size = metadata.len();
-
-            if current_size != last_size {
-                let reader = io::BufReader::new(file);
-                let lines = reader.lines();
-
-                for line in lines {
-                    if let Ok(line) = line {
-                        log::info!("{}", line);
-                        if line.contains(pattern) {
-                            return Ok(());
-                        }
-                    } else {
-                        return Err(io::Error::new(io::ErrorKind::Other, "Error reading line"));
-                    }
-                }
-
-                last_size = current_size;
-            }
-        }
-        thread::sleep(HEART_BEAT_INTERVAL);
-    }
-}
-
 fn polynomial_modulus(mut checksum: u64, value: u64) -> u64 {
     let upper_bits = checksum >> SHIFT_FOR_C0;
     checksum = ((checksum & MASK_LOW_35_BITS) << 5) ^ value;
@@ -638,9 +605,50 @@ pub(crate) fn verify_fidelity_checks(
     Ok(())
 }
 
+/// Tor Error grades
+#[derive(Debug)]
+pub enum TorError {
+    /// Io error
+    IO(std::io::Error),
+    /// Generic error
+    General(String),
+}
+
+impl From<std::io::Error> for TorError {
+    fn from(value: std::io::Error) -> Self {
+        TorError::IO(value)
+    }
+}
+
+pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), TorError> {
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", control_port))?;
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let auth_command = format!("AUTHENTICATE \"{}\"\r\n", password);
+    stream.write_all(auth_command.as_bytes())?;
+    let mut response = String::new();
+    reader.read_line(&mut response)?;
+    if !response.starts_with("250") {
+        log::error!(
+            "Tor authentication failed: {}, please provide correct password",
+            response
+        );
+        return Err(TorError::General("Tor authentication failed".to_string()));
+    }
+    stream.write_all(b"GETINFO status/bootstrap-phase\r\n")?;
+    response.clear();
+    reader.read_line(&mut response)?;
+
+    if response.contains("PROGRESS=100") {
+        log::info!("Tor is fully started and operational!");
+    } else {
+        log::warn!("Tor is still starting, try again later: {}", response);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use std::net::TcpListener;
+    use std::{net::TcpListener, thread};
 
     use bitcoin::{
         blockdata::{opcodes::all, script::Builder},

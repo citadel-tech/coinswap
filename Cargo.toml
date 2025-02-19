@@ -39,5 +39,5 @@ default = ['tor']
 # The following feature set is in response to the issue described at https://github.com/rust-lang/rust/issues/45599
 # Only used for running the integration tests
 integration-test = ['dep:flate2','dep:tar','dep:minreq']
-#  Used for spawning Tor process and connecting to the Tor socks port
-tor = ['dep:libtor', 'dep:mitosis'] 
+#  Used for connecting to the Tor socks port
+tor = [] 
