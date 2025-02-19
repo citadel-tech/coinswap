@@ -1,0 +1,8 @@
+Optimize UTXO handling with in-memory caching  
+
+- Added `utxo_cache` in `WalletStore` to store UTXOs from `listunspent` RPC calls, reducing redundant network requests.  
+- Implemented `update_utxo_cache` to update and maintain the cache efficiently using `RwLock`.  
+- Overrode `PartialEq` for `WalletStore` since `RwLock` does not implement it, ensuring correct equality checks.  
+- Updated `get_all_utxo` to leverage caching, reducing unnecessary RPC calls while keeping UTXO data fresh.  
+
+This improves wallet performance and reduces RPC overhead. 🚀  
