@@ -13,7 +13,6 @@ use std::{
     io::BufWriter,
     net::TcpStream,
     path::{Path, PathBuf},
-    process::Child,
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -55,9 +54,6 @@ use crate::{
         WalletSwapCoin, WatchOnlySwapCoin,
     },
 };
-
-#[cfg(feature = "tor")]
-use crate::tor::kill_tor_handles;
 
 // Default values for Taker configurations
 pub(crate) const REFUND_LOCKTIME: u16 = 20;
@@ -173,7 +169,6 @@ pub struct Taker {
     offerbook: OfferBook,
     ongoing_swap_state: OngoingSwapState,
     behavior: TakerBehavior,
-    tor_handle: Option<Child>,
     data_dir: PathBuf,
 }
 
@@ -186,15 +181,6 @@ impl Drop for Taker {
         log::info!("offerbook data saved to disk.");
         self.wallet.save_to_disk().unwrap();
         log::info!("Wallet data saved to disk.");
-
-        if !cfg!(feature = "tor") {
-            assert!(self.tor_handle.is_none(), "Tor handle should not exist")
-        }
-
-        #[cfg(feature = "tor")]
-        if let Some(handle) = &mut self.tor_handle {
-            kill_tor_handles(handle);
-        }
     }
 }
 
@@ -288,7 +274,6 @@ impl Taker {
             offerbook,
             ongoing_swap_state: OngoingSwapState::default(),
             behavior,
-            tor_handle: None,
             data_dir,
         })
     }
@@ -305,50 +290,9 @@ impl Taker {
 
     ///  Does the coinswap process
     pub fn do_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
-        self.tor_handle = self.setup_tor()?;
+        #[cfg(feature = "tor")]
+        check_tor_status(self.config.control_port, &self.config.tor_auth_password)?;
         self.send_coinswap(swap_params)
-    }
-
-    fn setup_tor(&self) -> Result<Option<Child>, TakerError> {
-        match self.config.connection_type {
-            ConnectionType::CLEARNET => Ok(None),
-            #[cfg(feature = "tor")]
-            ConnectionType::TOR => {
-                let tor_dir = self.data_dir.join("tor");
-                let tor_log_file = tor_dir.join("log");
-
-                // Hard error if previous log file can't be removed, as monitor_log_for_completion doesn't work with existing file.
-                // Tell the user to manually delete the file and restart.
-                if tor_log_file.exists() {
-                    if let Err(e) = std::fs::remove_file(&tor_log_file) {
-                        log::error!(
-                        "Error removing previous tor log. Please delete the file and restart. | {:?}",
-                        tor_log_file
-                    );
-                        return Err(e.into());
-                    } else {
-                        log::info!("Previous tor log file deleted succesfully");
-                    }
-                }
-
-                let handle = Some(crate::tor::spawn_tor(
-                    self.config.socks_port,
-                    self.config.network_port,
-                    tor_dir.to_str().unwrap().to_owned(),
-                )?);
-
-                if let Err(e) =
-                    monitor_log_for_completion(&tor_log_file, "Bootstrapped 100% (done): Done")
-                {
-                    log::error!("Error monitoring taker log file. Try removing the tor log file {:?} and try again. | {}", tor_log_file, e);
-                    return Err(e.into());
-                }
-
-                log::info!("tor is ready!");
-
-                Ok(handle)
-            }
-        }
     }
 
     /// Perform a coinswap round with given [SwapParams]. The Taker will try to perform swap with makers
@@ -2146,7 +2090,6 @@ impl Taker {
     /// fetches only the offer data from DNS and returns the updated Offerbook.
     /// Used for taker cli app, in `fetch-offers` command.
     pub fn fetch_offers(&mut self) -> Result<&OfferBook, TakerError> {
-        self.tor_handle = self.setup_tor()?;
         self.sync_offerbook()?;
         Ok(&self.offerbook)
     }
