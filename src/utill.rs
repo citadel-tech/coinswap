@@ -28,9 +28,11 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io::{self, BufRead, Write},
+    sync::OnceLock,
     thread,
     time::Duration,
 };
+static LOGGER: OnceLock<()> = OnceLock::new();
 
 use crate::{
     error::NetError,
@@ -147,7 +149,7 @@ pub(crate) fn get_dns_dir() -> PathBuf {
 /// log levels and configures log4rs with the specified filter level for fine-grained control
 /// of log verbosity.
 pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<PathBuf>) {
-    Once::new().call_once(|| {
+    LOGGER.get_or_init(|| {
         let log_dir = datadir.unwrap_or_else(get_taker_dir).join("debug.log");
 
         let file_appender = FileAppender::builder().build(log_dir).unwrap();
@@ -175,7 +177,7 @@ pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<
 
         let config = config.build(root_logger).unwrap();
         log4rs::init_config(config).unwrap();
-    })
+    });
 }
 
 /// Sets up the logger for the maker component.
@@ -185,7 +187,7 @@ pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<
 /// log levels and configures log4rs with the specified filter level for fine-grained control
 /// of log verbosity.
 pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
-    Once::new().call_once(|| {
+    LOGGER.get_or_init(|| {
         let log_dir = data_dir.unwrap_or_else(get_maker_dir).join("debug.log");
 
         let stdout = ConsoleAppender::builder().build();
@@ -201,8 +203,9 @@ pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
             )
             .build(Root::builder().appender("stdout").build(filter))
             .unwrap();
+
         log4rs::init_config(config).unwrap();
-    })
+    });
 }
 
 /// Sets up the logger for the directory component.
@@ -212,7 +215,7 @@ pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
 /// log levels and configures log4rs with the specified filter level for fine-grained control
 /// of log verbosity.
 pub fn setup_directory_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
-    Once::new().call_once(|| {
+    LOGGER.get_or_init(|| {
         let log_dir = data_dir.unwrap_or_else(get_dns_dir).join("debug.log");
 
         let stdout = ConsoleAppender::builder().build();
@@ -230,7 +233,7 @@ pub fn setup_directory_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
             .unwrap();
 
         log4rs::init_config(config).unwrap();
-    })
+    });
 }
 
 /// Setup function that will only run once, even if called multiple times.
