@@ -10,14 +10,11 @@ use crate::{
     market::rpc::start_rpc_server_thread,
     protocol::messages::DnsRequest,
     utill::{
-        get_dns_dir, parse_field, parse_toml, read_message, send_message, verify_fidelity_checks,
-        ConnectionType, HEART_BEAT_INTERVAL,
+        check_tor_status, get_dns_dir, parse_field, parse_toml, read_message, send_message,
+        verify_fidelity_checks, ConnectionType, TorError, HEART_BEAT_INTERVAL,
     },
     wallet::{RPCConfig, WalletError},
 };
-
-#[cfg(feature = "tor")]
-use crate::utill::{get_tor_hostname, monitor_log_for_completion};
 
 use std::{
     collections::HashMap,
@@ -62,6 +59,14 @@ pub enum DirectoryServerError {
     ///
     /// This can occur in case of incomplete shutdown or other ways a file can corrupt.
     AddressFileCorrupted(String),
+    /// Error related to tor
+    TorError(TorError),
+}
+
+impl From<TorError> for DirectoryServerError {
+    fn from(value: TorError) -> Self {
+        Self::TorError(value)
+    }
 }
 
 impl From<WalletError> for DirectoryServerError {
@@ -118,9 +123,17 @@ pub struct DirectoryServer {
     /// RPC listening port
     pub rpc_port: u16,
     /// Network listening port
-    pub network_port: u16,
+    pub target_port: u16,
+    /// Service listening port
+    pub service_port: u16,
+    /// Control port
+    pub control_port: u16,
     /// Socks port
     pub socks_port: u16,
+    ///onion hostname
+    pub hostname: String,
+    /// Authentication password
+    pub tor_auth_password: String,
     /// Connection type
     pub connection_type: ConnectionType,
     /// Directory server data directory
@@ -135,8 +148,11 @@ impl Default for DirectoryServer {
     fn default() -> Self {
         Self {
             rpc_port: 4321,
-            network_port: 8080,
+            target_port: 8080,
+            service_port: 8080,
             socks_port: 19060,
+            control_port: 9051,
+            tor_auth_password: "".to_string(),
             connection_type: {
                 #[cfg(feature = "tor")]
                 {
@@ -150,6 +166,7 @@ impl Default for DirectoryServer {
             data_dir: get_dns_dir(),
             shutdown: AtomicBool::new(false),
             addresses: Arc::new(RwLock::new(HashMap::new())),
+            hostname: "ocqkq73acs4qryk5snoiwtpskb2w3wp65basfzw2xcw6mrp57yonygyd.onion".to_string(),
         }
     }
 }
@@ -215,9 +232,16 @@ impl DirectoryServer {
 
         Ok(DirectoryServer {
             rpc_port: parse_field(config_map.get("rpc_port"), default_dns.rpc_port),
-            network_port: parse_field(config_map.get("port"), default_dns.network_port),
+            target_port: parse_field(config_map.get("target_port"), default_dns.target_port),
+            service_port: parse_field(config_map.get("service_port"), default_dns.service_port),
             socks_port: parse_field(config_map.get("socks_port"), default_dns.socks_port),
+            control_port: parse_field(config_map.get("control_port"), default_dns.control_port),
+            tor_auth_password: parse_field(
+                config_map.get("tor_auth_password"),
+                default_dns.tor_auth_password,
+            ),
             data_dir,
+            hostname: "ocqkq73acs4qryk5snoiwtpskb2w3wp65basfzw2xcw6mrp57yonygyd.onion".to_string(),
             shutdown: AtomicBool::new(false),
             connection_type: parse_field(
                 config_map.get("connection_type"),
@@ -295,7 +319,7 @@ impl DirectoryServer {
 fn write_default_directory_config(config_path: &Path) -> Result<(), DirectoryServerError> {
     let config_string = String::from(
         "\
-            port = 8080\n\
+            target_port = 8080\n\
             socks_port = 19060\n\
             connection_type = tor\n\
             rpc_port = 4321\n\
@@ -348,8 +372,9 @@ pub fn start_directory_server(
     rpc_config: Option<RPCConfig>,
 ) -> Result<(), DirectoryServerError> {
     #[cfg(feature = "tor")]
-    let mut tor_handle = None;
+    check_tor_status(directory.control_port, &directory.tor_auth_password)?;
 
+    #[cfg(feature = "tor")]
     let rpc_config = rpc_config.unwrap_or_default();
 
     let rpc_client = bitcoincore_rpc::Client::try_from(&rpc_config)?;
@@ -368,34 +393,11 @@ pub fn start_directory_server(
         ConnectionType::TOR => {
             #[cfg(feature = "tor")]
             {
-                let tor_dir = directory.data_dir.join("tor");
-                let log_file = tor_dir.join("log");
-                if log_file.exists() {
-                    match fs::remove_file(&log_file) {
-                        Ok(_) => log::info!("Previous tor log file deleted successfully"),
-                        Err(_) => log::error!("Error deleting tor log file"),
-                    }
-                }
-
-                let socks_port = directory.socks_port;
-                let network_port = directory.network_port;
-                tor_handle = Some(crate::tor::spawn_tor(
-                    socks_port,
-                    network_port,
-                    tor_dir.to_str().unwrap().to_string(),
-                )?);
-
-                log::info!("waiting for tor setup completion.");
-
-                if let Err(e) =
-                    monitor_log_for_completion(&log_file, "Bootstrapped 100% (done): Done")
-                {
-                    log::error!("Error monitoring tor log file: {}", e);
-                }
+                let network_port = directory.service_port;
 
                 log::info!("tor is ready!!");
 
-                let hostname = get_tor_hostname(&tor_dir)?;
+                let hostname = &directory.hostname;
 
                 log::info!("DNS is listening at {}:{}", hostname, network_port);
             }
@@ -415,7 +417,7 @@ pub fn start_directory_server(
         start_address_writer_thread(directory_clone)
     });
 
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.network_port))?;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, directory.target_port))?;
 
     while !directory.shutdown.load(Relaxed) {
         match listener.accept() {
@@ -444,14 +446,6 @@ pub fn start_directory_server(
     }
     if let Err(e) = address_writer_thread.join() {
         log::error!("Error closing Address Writer Thread : {:?}", e);
-    }
-
-    #[cfg(feature = "tor")]
-    {
-        if let Some(mut handle) = tor_handle {
-            crate::tor::kill_tor_handles(&mut handle);
-            log::info!("Directory server and Tor instance terminated successfully");
-        }
     }
 
     Ok(())
@@ -551,7 +545,7 @@ mod tests {
         let dns = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
         let default_dns = DirectoryServer::default();
 
-        assert_eq!(dns.network_port, default_dns.network_port);
+        assert_eq!(dns.service_port, default_dns.service_port);
         assert_eq!(dns.socks_port, default_dns.socks_port);
 
         temp_dir.close().unwrap();
@@ -567,7 +561,7 @@ mod tests {
         create_temp_config(contents, &temp_dir);
         let dns = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
 
-        assert_eq!(dns.network_port, 8080);
+        assert_eq!(dns.service_port, 8080);
         assert_eq!(dns.socks_port, DirectoryServer::default().socks_port);
 
         temp_dir.close().unwrap();
@@ -584,7 +578,7 @@ mod tests {
         let dns = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
         let default_dns = DirectoryServer::default();
 
-        assert_eq!(dns.network_port, default_dns.network_port);
+        assert_eq!(dns.service_port, default_dns.service_port);
         assert_eq!(dns.socks_port, default_dns.socks_port);
 
         temp_dir.close().unwrap();
@@ -596,7 +590,7 @@ mod tests {
         let dns = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();
         let default_dns = DirectoryServer::default();
 
-        assert_eq!(dns.network_port, default_dns.network_port);
+        assert_eq!(dns.service_port, default_dns.service_port);
         assert_eq!(dns.socks_port, default_dns.socks_port);
 
         temp_dir.close().unwrap();
