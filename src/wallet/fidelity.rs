@@ -309,11 +309,12 @@ impl Wallet {
     ) -> Result<u32, WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
 
-        let coins = self.coin_select(amount)?;
+        let selected_coins = self.coin_select(amount)?;
 
-        let coins = coins
+        let coins = selected_coins
             .iter()
             .collect::<Vec<&(ListUnspentResultEntry, UTXOSpendInfo)>>();
+
         let destination = Destination::Multi(vec![(fidelity_addr, amount)]);
 
         let tx = self.spend_coins(&coins, destination, feerate)?;
@@ -367,52 +368,6 @@ impl Wallet {
         self.sync()?;
 
         Ok(index)
-    }
-
-    /// Redeem a Fidelity Bond.
-    /// This functions creates a spending transaction from the fidelity bond, signs and broadcasts it.
-    /// Returns the txid of the spending tx, and mark the bond as spent.
-    pub fn redeem_fidelity(
-        &mut self,
-        index: u32,
-        feerate: Option<f64>,
-    ) -> Result<Txid, WalletError> {
-        let (bond, _, is_spent) = self
-            .store
-            .fidelity_bond
-            .get(&index)
-            .ok_or(FidelityError::BondDoesNotExist)?;
-
-        if *is_spent {
-            return Err(FidelityError::BondAlreadySpent.into());
-        }
-        let utxo_spend_info = UTXOSpendInfo::FidelityBondCoin {
-            index,
-            input_value: bond.amount,
-        };
-        let change_addr = &self.get_next_internal_addresses(1)?[0];
-        let destination = Destination::Sweep(change_addr.clone());
-        let dummy_utxo = Wallet::dummy_utxo();
-        let tx = self.spend_coins(&vec![&(dummy_utxo, utxo_spend_info)], destination, feerate)?;
-
-        let txid = self.send_tx(&tx)?;
-
-        log::info!("Fidelity redeem transaction broadcasted. txid: {}", txid);
-
-        // No need to wait for confirmation as that will delay the rpc call. Just send back the txid.
-
-        // mark is_spent
-        {
-            let (_, _, is_spent) = self
-                .store
-                .fidelity_bond
-                .get_mut(&index)
-                .ok_or(FidelityError::BondDoesNotExist)?;
-
-            *is_spent = true;
-        }
-
-        Ok(txid)
     }
 
     /// Generate a [FidelityProof] for bond at a given index and a specific onion address.

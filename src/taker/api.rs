@@ -1968,7 +1968,8 @@ impl Taker {
             let reedemscript = outgoing.get_multisig_redeemscript();
             let timelock = outgoing.get_timelock()?;
             let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
-            let timelock_spend = outgoing.create_timelock_spend(next_internal)?;
+            let timelock_spend =
+                outgoing.create_timelock_spend(next_internal, &self.wallet, None)?;
             outgoing_infos.push(((reedemscript, contract_tx), (timelock, timelock_spend)));
         }
 

@@ -9,22 +9,17 @@ use std::collections::HashMap;
 
 use bip39::Mnemonic;
 use bitcoin::{
-    absolute::LockTime,
     bip32::{ChildNumber, DerivationPath, Xpriv, Xpub},
     hashes::hash160::Hash as Hash160,
     secp256k1,
     secp256k1::{Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
-    transaction::Version,
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid,
 };
-use bitcoin::{Sequence, TxIn, TxOut, Witness};
-use bitcoind::bitcoincore_rpc::RawTx;
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::wallet::FidelityError;
 use crate::{
     protocol::contract,
     utill::{
@@ -33,7 +28,6 @@ use crate::{
     },
 };
 
-use super::Destination;
 use super::{
     error::WalletError,
     rpc::RPCConfig,
@@ -148,13 +142,12 @@ impl UTXOSpendInfo {
         const P2PWPKH_WITNESS_SIZE: usize = 107;
         const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 222;
         const FIDELITY_BOND_WITNESS_SIZE: usize = 115;
-        const CONTRACT_TX_WITNESS_SIZE: usize = 222;
+        const CONTRACT_TX_WITNESS_SIZE: usize = 179;
         match *self {
             Self::SeedCoin { .. } => P2PWPKH_WITNESS_SIZE,
             Self::IncomingSwapCoin { .. } | Self::OutgoingSwapCoin { .. } => {
                 P2WSH_MULTISIG_2OF2_WITNESS_SIZE
             }
-
             Self::TimelockContract { .. } | Self::HashlockContract { .. } => {
                 CONTRACT_TX_WITNESS_SIZE
             }
@@ -1262,220 +1255,6 @@ impl Wallet {
                 .collect::<Result<Vec<String>, WalletError>>()?,
         );
         Ok(descriptors_to_import)
-    }
-
-    pub fn spend_coins(
-        &self,
-        coins: &Vec<&(ListUnspentResultEntry, UTXOSpendInfo)>,
-        destination: Destination,
-        feerate: Option<f64>,
-    ) -> Result<Transaction, WalletError> {
-        let feerate = feerate.unwrap_or(3f64);
-
-        // Set the Anti-Fee-Snipping locktime
-        let current_height = self.rpc.get_block_count()?;
-        let lock_time = LockTime::from_height(current_height as u32)?;
-
-        let mut tx = Transaction {
-            version: Version::TWO,
-            lock_time,
-            input: vec![],
-            output: vec![],
-        };
-
-        let mut total_input_value = Amount::ZERO;
-        let mut total_witness_size = 0;
-        for (utxo_data, spend_info) in coins {
-            match spend_info {
-                UTXOSpendInfo::SeedCoin { .. } => {
-                    tx.input.push(TxIn {
-                        previous_output: OutPoint::new(utxo_data.txid, utxo_data.vout),
-                        sequence: Sequence::ZERO,
-                        witness: Witness::new(),
-                        script_sig: ScriptBuf::new(),
-                    });
-                    total_witness_size += spend_info.estimate_witness_size();
-                    total_input_value += utxo_data.amount;
-                }
-                UTXOSpendInfo::IncomingSwapCoin { .. } | UTXOSpendInfo::OutgoingSwapCoin { .. } => {
-                    tx.input.push(TxIn {
-                        previous_output: OutPoint::new(utxo_data.txid, utxo_data.vout),
-                        sequence: Sequence::ZERO,
-                        witness: Witness::new(),
-                        script_sig: ScriptBuf::new(),
-                    });
-                    total_witness_size += spend_info.estimate_witness_size();
-                    total_input_value += utxo_data.amount;
-                }
-                UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
-                    let (bond, _, is_spent) = self
-                        .store
-                        .fidelity_bond
-                        .get(&index)
-                        .ok_or(FidelityError::BondDoesNotExist)?;
-
-                    if *is_spent {
-                        return Err(FidelityError::BondAlreadySpent.into());
-                    }
-
-                    tx.input.push(TxIn {
-                        previous_output: bond.outpoint,
-                        sequence: Sequence::ZERO,
-                        script_sig: ScriptBuf::new(),
-                        witness: Witness::new(),
-                    });
-                    total_witness_size += spend_info.estimate_witness_size();
-                    total_input_value += *input_value;
-                }
-                UTXOSpendInfo::TimelockContract {
-                    swapcoin_multisig_redeemscript,
-                    input_value,
-                } => {
-                    let outgoing_swap_coin = self
-                        .find_outgoing_swapcoin(swapcoin_multisig_redeemscript)
-                        .expect("Cannot find Outgoin Swap Coin");
-                    tx.input.push(TxIn {
-                        previous_output: OutPoint {
-                            txid: outgoing_swap_coin.contract_tx.compute_txid(),
-                            vout: 0,
-                        },
-                        sequence: Sequence(outgoing_swap_coin.get_timelock()? as u32),
-                        witness: Witness::new(),
-                        script_sig: ScriptBuf::new(),
-                    });
-                    total_witness_size += spend_info.estimate_witness_size();
-                    total_input_value += *input_value;
-                }
-                UTXOSpendInfo::HashlockContract {
-                    swapcoin_multisig_redeemscript,
-                    input_value,
-                } => {
-                    let incoming_swap_coin = self
-                        .find_incoming_swapcoin(swapcoin_multisig_redeemscript)
-                        .expect("Cannot find Incoming Swap Coin");
-                    tx.input.push(TxIn {
-                        previous_output: OutPoint {
-                            txid: incoming_swap_coin.contract_tx.compute_txid(),
-                            vout: 0,
-                        },
-                        sequence: Sequence(1),
-                        witness: Witness::new(),
-                        script_sig: ScriptBuf::new(),
-                    });
-                    total_witness_size += spend_info.estimate_witness_size();
-                    total_input_value += *input_value;
-                }
-            }
-        }
-
-        match destination {
-            Destination::Sweep(addr) => {
-                // Send Max Amount case
-                let txout = TxOut {
-                    script_pubkey: addr.script_pubkey(),
-                    value: Amount::ZERO, // Temp Value
-                };
-                tx.output.push(txout);
-                let base_size = tx.base_size();
-                let vsize = (base_size * 4 + total_witness_size).div_ceil(4);
-
-                let fee = Amount::from_sat((feerate * vsize as f64).ceil() as u64);
-
-                #[cfg(feature = "integration-test")]
-                let fee = Amount::from_sat(1000);
-
-                // I don't know if this case is even possible?
-                if fee > total_input_value {
-                    return Err(WalletError::InsufficientFund {
-                        available: total_input_value.to_sat(),
-                        required: fee.to_sat(),
-                    });
-                }
-
-                log::info!("Fee: {}", fee.to_sat());
-                tx.output[0].value = total_input_value - fee;
-            }
-            Destination::Multi(addresses) => {
-                let mut total_output_value = Amount::ZERO;
-                for (address, amount) in addresses {
-                    total_output_value += amount;
-                    let txout = TxOut {
-                        script_pubkey: address.script_pubkey(),
-                        value: amount,
-                    };
-                    tx.output.push(txout);
-                }
-                let internal_spk = self.get_next_internal_addresses(1)?[0].script_pubkey();
-                let minimal_nondust = internal_spk.minimal_non_dust();
-
-                let mut tx_wchange = tx.clone();
-                tx_wchange.output.push(TxOut {
-                    value: Amount::ZERO, // Adjusted later
-                    script_pubkey: internal_spk.clone(),
-                });
-
-                let base_wchange = tx_wchange.base_size();
-                let vsize_wchange = (base_wchange * 4 + total_witness_size).div_ceil(4);
-
-                let fee_wchange = Amount::from_sat((feerate * vsize_wchange as f64).ceil() as u64);
-
-                #[cfg(feature = "integration-test")]
-                let fee_wchange = Amount::from_sat(1000);
-
-                let remaining_wchange =
-                    if let Some(diff) = total_input_value.checked_sub(total_output_value) {
-                        if let Some(diff) = diff.checked_sub(fee_wchange) {
-                            diff
-                        } else {
-                            return Err(WalletError::InsufficientFund {
-                                available: total_input_value.to_sat(),
-                                required: (total_output_value + fee_wchange).to_sat(),
-                            });
-                        }
-                    } else {
-                        return Err(WalletError::InsufficientFund {
-                            available: total_input_value.to_sat(),
-                            required: (total_output_value + fee_wchange).to_sat(),
-                        });
-                    };
-
-                if remaining_wchange > minimal_nondust {
-                    log::info!(
-                        "Adding change output with {} sats (fee: {})",
-                        remaining_wchange.to_sat(),
-                        fee_wchange.to_sat()
-                    );
-                    tx.output.push(TxOut {
-                        script_pubkey: internal_spk,
-                        value: remaining_wchange,
-                    });
-                } else {
-                    log::info!(
-                        "Remaining change {} sats is below dust threshold. Skipping change output. (fee: {} sats)",
-                        remaining_wchange.to_sat(),
-                        fee_wchange.to_sat()
-                    );
-                }
-            }
-        }
-
-        self.sign_transaction(&mut tx, &mut coins.iter().map(|(_, usi)| usi.clone()))?;
-        let calc_vsize = (tx.base_size() * 4 + total_witness_size).div_ceil(4);
-        let signed_tx_vsize = tx.vsize();
-
-        let tolerance_per_input = 2; // Allow a 2-byte difference per input
-        let total_tolerance = tolerance_per_input * tx.input.len();
-
-        assert!(
-            (calc_vsize as isize - signed_tx_vsize as isize).abs() <= total_tolerance as isize,
-            "Calculated vsize {} didn't match signed tx vsize {} (tolerance: {})",
-            calc_vsize,
-            signed_tx_vsize,
-            total_tolerance
-        );
-
-        log::debug!("Signed Transaction : {:?}", tx.raw_hex());
-        Ok(tx)
     }
 
     /// Uses internal RPC client to braodcast a transaction
