@@ -48,7 +48,7 @@ impl MakerCli {
         let rpc_auth = fs::read_to_string(&self.bitcoind.params.cookie_file).unwrap();
         let rpc_address = self.bitcoind.params.rpc_socket.to_string();
 
-        let mut makerd_process = Command::new("./target/debug/makerd")
+        let mut makerd_process = Command::new(env!("CARGO_BIN_EXE_makerd"))
             .args([
                 "--data-directory",
                 self.data_dir.to_str().unwrap(),
@@ -120,7 +120,7 @@ impl MakerCli {
 
     /// Executes the maker CLI command with given arguments and returns the output.
     fn execute_maker_cli(&self, args: &[&str]) -> String {
-        let output = Command::new("./target/debug/maker-cli")
+        let output = Command::new(env!("CARGO_BIN_EXE_maker-cli"))
             .args(args)
             .output()
             .unwrap();
@@ -140,7 +140,7 @@ impl MakerCli {
 
 #[test]
 fn test_maker_cli() {
-    setup_logger(log::LevelFilter::Info);
+    setup_logger(log::LevelFilter::Info, None);
 
     let maker_cli = MakerCli::new();
 

@@ -3,7 +3,7 @@ use std::{net::TcpStream, time::Duration};
 use clap::Parser;
 use coinswap::{
     maker::{MakerError, RpcMsgReq, RpcMsgResp},
-    utill::{read_message, send_message, setup_maker_logger},
+    utill::{read_message, send_message},
 };
 
 /// A simple command line app to operate the makerd server.
@@ -76,7 +76,6 @@ enum Commands {
 }
 
 fn main() -> Result<(), MakerError> {
-    setup_maker_logger(log::LevelFilter::Info);
     let cli = App::parse();
 
     let stream = TcpStream::connect(cli.rpc_port)?;

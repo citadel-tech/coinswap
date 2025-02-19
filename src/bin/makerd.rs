@@ -49,9 +49,8 @@ struct Cli {
 }
 
 fn main() -> Result<(), MakerError> {
-    setup_maker_logger(log::LevelFilter::Info);
-
     let args = Cli::parse();
+    setup_maker_logger(log::LevelFilter::Info, args.data_directory.clone());
 
     let rpc_config = RPCConfig {
         url: args.rpc,

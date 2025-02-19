@@ -22,7 +22,7 @@ fn send_addresses(addresses: &[(&str, u32)]) {
 }
 
 fn verify_addresses(addresses: &[(&str, u32)]) {
-    let output = Command::new("./target/debug/directory-cli")
+    let output = Command::new(env!("CARGO_BIN_EXE_directory-cli"))
         .arg("list-addresses")
         .output()
         .unwrap();

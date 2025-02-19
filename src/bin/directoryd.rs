@@ -35,9 +35,9 @@ struct Cli {
 }
 
 fn main() -> Result<(), DirectoryServerError> {
-    setup_directory_logger(log::LevelFilter::Info);
-
     let args = Cli::parse();
+    setup_directory_logger(log::LevelFilter::Info, args.data_directory.clone());
+
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
