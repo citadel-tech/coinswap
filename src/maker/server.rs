@@ -474,7 +474,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let port = maker.config.network_port;
     let network = maker.get_wallet().read()?.store.network;
     let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;
-    let utxos = maker.get_wallet().read()?.get_all_utxo()?;
+    let utxos = maker.get_wallet().read()?.store.build_utxo_list_from_cache();
     let balances = maker.get_wallet().read()?.get_balances(Some(&utxos))?;
     log::info!("[{}] Bitcoin Network: {}", port, network);
     log::info!(
