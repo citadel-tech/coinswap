@@ -14,6 +14,8 @@ use std::{
 use super::{error::WalletError, fidelity::FidelityBond};
 
 use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
+use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
+use crate::wallet::UTXOSpendInfo;
 
 /// Represents the internal data store for a Bitcoin wallet.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -40,6 +42,12 @@ pub(crate) struct WalletStore {
     pub(super) last_synced_height: Option<u64>,
 
     pub(super) wallet_birthday: Option<u64>,
+
+    // pub(super) utxo_cache: RwLock<HashMap<OutPoint, ListUnspentResultEntry>>
+
+    #[serde(default)] // Ensures deserialization works if `utxo_cache` is missing
+    pub(super) utxo_cache: HashMap<OutPoint, (ListUnspentResultEntry, UTXOSpendInfo)>
+
 }
 
 impl WalletStore {
@@ -63,6 +71,8 @@ impl WalletStore {
             fidelity_bond: HashMap::new(),
             last_synced_height: None,
             wallet_birthday,
+            utxo_cache: HashMap::new(),
+
         };
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
@@ -73,6 +83,29 @@ impl WalletStore {
         serde_cbor::to_writer(writer, &store)?;
 
         Ok(store)
+    }
+
+    /// Internal function to update the UTXO cache from already-processed UTXOs.
+    pub(crate) fn update_utxo_cache_internal(&mut self, processed_utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>) {
+        // Clear the existing cache
+        self.utxo_cache.clear();
+    
+        // Insert each processed UTXO into the cache using its OutPoint as key.
+        for (utxo, spend_info) in processed_utxos {
+            let outpoint = OutPoint {
+                txid: utxo.txid,
+                vout: utxo.vout,
+            };
+            self.utxo_cache.insert(outpoint, (utxo, spend_info));
+        }
+    }
+
+    /// Constructs a list of UTXOs from the cache.
+    pub fn build_utxo_list_from_cache(&self) -> Vec<ListUnspentResultEntry> {
+        self.utxo_cache
+            .values()
+            .map(|(utxo, _spend_info)| utxo.clone())
+            .collect()
     }
 
     /// Load existing file, updates it, writes it back (errors if path doesn't exist).
@@ -108,6 +141,8 @@ impl WalletStore {
         Ok(store)
     }
 }
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

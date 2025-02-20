@@ -115,7 +115,7 @@ impl FromStr for DisplayAddressType {
 /// Enum representing additional data needed to spend a UTXO, in addition to `ListUnspentResultEntry`.
 // data needed to find information  in addition to ListUnspentResultEntry
 // about a UTXO required to spend it
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum UTXOSpendInfo {
     /// Seed Coin
     SeedCoin { path: String, input_value: Amount },
@@ -641,7 +641,8 @@ impl Wallet {
         let all_utxos = if let Some(utxos) = utxos {
             utxos.clone()
         } else {
-            self.get_all_utxo()?
+            log::info!("FETCHING UTXO From Cache!");
+            self.store.build_utxo_list_from_cache()
         };
 
         let processed_utxos = all_utxos
@@ -802,7 +803,7 @@ impl Wallet {
     /// It will only return an unused address; i.e, an address that doesn't have a transaction associated with it.
     pub(super) fn find_hd_next_index(&self, keychain: KeychainKind) -> Result<u32, WalletError> {
         let mut max_index: i32 = -1;
-        let all_utxos = self.get_all_utxo()?;
+        let all_utxos = self.store.build_utxo_list_from_cache();
         let mut utxos = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
         let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
         utxos.append(&mut swap_coin_utxo);
@@ -882,6 +883,28 @@ impl Wallet {
             inner: privkey.public_key(&secp),
         };
         Ok((privkey, public_key))
+    }
+
+    /// Refreshes the UTXO cache using the wallet's internal spend info checks.
+    pub(crate) fn refresh_utxo_cache(&mut self, utxos: Vec<ListUnspentResultEntry>) {
+        // Process UTXOs to pair each with its spend info using the wallet's private methods.
+        let processed_utxos = utxos
+            .iter()
+            .filter_map(|utxo| {
+                // Try each check in order.
+                let mut spend_info = self.check_if_fidelity(utxo);
+                if spend_info.is_none() {
+                    spend_info = self.check_if_live_contract(utxo).unwrap();
+                }
+                if spend_info.is_none() {
+                    spend_info = self.check_descriptor_utxo_or_swap_coin(utxo).unwrap();
+                }
+                spend_info.map(|info| (utxo.clone(), info))
+            })
+            .collect::<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>();
+
+        // Now update the cache in the store.
+        self.store.update_utxo_cache_internal(processed_utxos);
     }
 
     /// Signs a transaction corresponding to the provided UTXO spend information.
