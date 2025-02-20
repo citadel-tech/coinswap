@@ -9,10 +9,7 @@ use std::{
     net::{Ipv4Addr, TcpListener, TcpStream},
     path::Path,
     process::Child,
-    sync::{
-        atomic::{AtomicBool, Ordering::Relaxed},
-        Arc,
-    },
+    sync::{atomic::Ordering::Relaxed, Arc},
     thread::{self, sleep},
     time::Duration,
 };
@@ -31,6 +28,7 @@ use crate::{
         api::{
             check_for_broadcasted_contracts, check_for_idle_states,
             restore_broadcasted_contracts_on_reboot, ConnectionState,
+            SWAP_LIQUIDITY_CHECK_INTERVAL,
         },
         handlers::handle_message,
         rpc::start_rpc_server,
@@ -338,44 +336,59 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
     Ok(())
 }
 
-/// Keep checking if the Bitcoin Core RPC connection is live. Sets the global `accepting_client` flag as per RPC connection status.
-///
-/// This will not block. Once Core RPC connection is live, accepting_client will set as `true` again.
-fn check_connection_with_core(
-    maker: Arc<Maker>,
-    accepting_clients: Arc<AtomicBool>,
-) -> Result<(), MakerError> {
-    let mut rpc_ping_success = false;
-    let mut i = 0;
+/// Checks if the maker has enough liquidity for swaps.
+/// If funds are below the minimum required, it repeatedly prompts the user to add more
+/// until the liquidity is sufficient.
+fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
+    let sleep_incremental = 10;
+    let mut sleep_duration = 0;
+    let addr = maker.get_wallet().write()?.get_next_external_address()?;
     while !maker.shutdown.load(Relaxed) {
-        // If connection is disrupted keep trying at heart_beat_interval (3 sec).
-        // If connection is live, keep tring at rpc_ping_interval (60 sec).
-        let trigger_count = match rpc_ping_success {
-            true => RPC_PING_INTERVAL.as_secs() / HEART_BEAT_INTERVAL.as_secs(),
-            false => 1,
-        };
+        maker.get_wallet().write()?.sync_no_fail();
+        let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;
 
-        if i >= trigger_count || i == 0 {
-            if let Err(e) = maker.wallet.read()?.rpc.get_blockchain_info() {
-                log::error!(
-                    "[{}] RPC Connection failed. Reattempting {}",
-                    maker.config.network_port,
-                    e
-                );
-                rpc_ping_success = false;
-            } else {
-                if !rpc_ping_success {
-                    log::info!(
-                        "[{}] Bitcoin Core RPC connection is back online.",
-                        maker.config.network_port
-                    );
-                }
-                rpc_ping_success = true;
-            }
-            accepting_clients.store(rpc_ping_success, Relaxed);
-            i = 0;
+        let min_required = maker.config.min_swap_amount;
+        if offer_max_size < min_required {
+            log::warn!(
+                "Low Swap Liquidity | Min: {} sats | Available: {} sats. Add funds to {:?}",
+                min_required,
+                offer_max_size,
+                addr
+            );
+
+            sleep_duration = (sleep_duration + sleep_incremental).min(10 * 60); // Capped at 1 Block interval
+            log::info!("Next sync in {:?} secs", sleep_duration);
+            thread::sleep(Duration::from_secs(sleep_duration));
+        } else {
+            log::info!(
+                "Swap Liquidity: {} sats | Min: {} sats | Listening for requests.",
+                offer_max_size,
+                min_required
+            );
+            break;
         }
-        i += 1;
+    }
+
+    Ok(())
+}
+
+/// Continuously checks if the Bitcoin Core RPC connection is live.
+fn check_connection_with_core(maker: &Maker) -> Result<(), MakerError> {
+    while !maker.shutdown.load(Relaxed) {
+        if let Err(e) = maker.wallet.read()?.rpc.get_blockchain_info() {
+            log::error!(
+                "[{}] RPC Connection failed. Reattempting {}",
+                maker.config.network_port,
+                e
+            );
+        } else {
+            log::info!(
+                "[{}] Bitcoin Core RPC connection is live.",
+                maker.config.network_port
+            );
+            break;
+        }
+
         thread::sleep(HEART_BEAT_INTERVAL);
     }
 
@@ -383,7 +396,7 @@ fn check_connection_with_core(
 }
 
 /// Handle a single client connection.
-fn handle_client(maker: Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerError> {
+fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerError> {
     stream.set_nonblocking(false)?; // Block this thread until message is read.
 
     let mut connection_state = ConnectionState::default();
@@ -409,7 +422,7 @@ fn handle_client(maker: Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerE
         let taker_msg: TakerToMakerMessage = serde_cbor::from_slice(&taker_msg_bytes)?;
         log::info!("[{}] <=== {}", maker.config.network_port, taker_msg);
 
-        let reply = handle_message(&maker, &mut connection_state, taker_msg);
+        let reply = handle_message(maker, &mut connection_state, taker_msg);
 
         match reply {
             Ok(reply) => {
@@ -450,71 +463,59 @@ fn handle_client(maker: Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerE
     Ok(())
 }
 
-/// Starts the main Maker Server process.
+/// Starts the Maker server and manages its core operations.
 ///
-/// This function initializes the Maker server by setting up network connections,
-/// configuring the wallet with fidelity bond, and spawning necessary threads for:
-/// - Checking Bitcoin Core connections.
-/// - Monitoring idle client connections.
-/// - Watching for broadcasted contract transactions.
-/// - Running an RPC server for interacting with `maker-cli`.
+/// This function initializes network connections, sets up the wallet with fidelity bonds,  
+/// and spawns essential threads for:  
+/// - Checking for idle client connections.  
+/// - Detecting and handling broadcasted contract transactions.  
+/// - Running an RPC server for communication with `maker-cli`.  
 ///
-/// It also handles incoming peer-to-peer (P2P) client connections in a loop, where
-/// each connection spawns a dedicated handler thread.
+/// The server continuously listens for incoming P2P client connections.  
+/// Periodic checks ensure liquidity availability and backend connectivity.  
+/// It also attempts to recover any incomplete swaps detected in the wallet.  
 ///
-/// The server continues to run until a shutdown signal is detected, at which point
-/// it performs cleanup tasks, such as saving wallet data and terminating active Tor sessions.
+/// The server runs until a shutdown signal is received, at which point it safely terminates  
+/// active processes, synchronizes and saves wallet data, and closes Tor sessions if enabled.
 pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Starting Maker Server");
-    // Initialize network connections.
 
-    // Setup the wallet with fidelity bond.
     let _tor_thread = network_bootstrap(maker.clone())?;
 
+    // Tracks the elapsed time in heartbeat intervals to schedule periodic checks and avoid redundant executions.
+    let mut interval_tracker = 0;
+
+    check_swap_liquidity(maker.as_ref())?;
+
+    // HEART_BEAT_INTERVAL secs are added to prevent redundant checks for swap liquidity immediately after the Maker server starts.
+    // This ensures these functions are not executed twice in quick succession.
+    interval_tracker += HEART_BEAT_INTERVAL.as_secs() as u32;
+
     let port = maker.config.network_port;
-    let network = maker.get_wallet().read()?.store.network;
-    let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;
-    let utxos = maker.get_wallet().read()?.get_all_utxo()?;
-    let balances = maker.get_wallet().read()?.get_balances(Some(&utxos))?;
-    log::info!("[{}] Bitcoin Network: {}", port, network);
-    log::info!(
-        "[{}] Spendable Wallet Balance: {}",
-        port,
-        balances.spendable
-    );
-    log::info!("[{}] Fidelity Bond Amount : {}", port, balances.fidelity);
-    log::info!(
-        "[{}] Minimum Swap Size {} SATS",
-        port,
-        maker.config.min_swap_amount
-    );
-    log::info!("[{}] Maximum Swap Size {} SATS", port, offer_max_size);
+
+    {
+        let wallet = maker.get_wallet().read()?;
+        log::info!("[{}] Bitcoin Network: {}", port, wallet.store.network);
+        log::info!(
+            "[{}] Spendable Wallet Balance: {}",
+            port,
+            wallet.get_balances(None)?.spendable
+        );
+
+        log::info!(
+            "[{}] Minimum Swap Size {} SATS | Maximum Swap Size {} SATS",
+            port,
+            maker.config.min_swap_amount,
+            wallet.store.offer_maxsize
+        );
+    }
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.network_port))
         .map_err(NetError::IO)?;
     listener.set_nonblocking(true)?; // Needed to not block a thread waiting for incoming connection.
 
-    // Global server Mutex, to switch on/off p2p network.
-    let accepting_clients = Arc::new(AtomicBool::new(false));
-
     if !maker.shutdown.load(Relaxed) {
-        // 1. Bitcoin Core Connection checker thread.
-        // Ensures that Bitcoin Core connection is live.
-        // If not, it will block p2p connections until Core works again.
-        let maker_clone = maker.clone();
-        let acc_client_clone = accepting_clients.clone();
-        let conn_check_thread = thread::Builder::new()
-            .name("Bitcoin Core Connection Checker Thread".to_string())
-            .spawn(move || {
-                log::info!("[{}] Spawning Bitcoin Core connection checker thread", port);
-                if let Err(e) = check_connection_with_core(maker_clone.clone(), acc_client_clone) {
-                    log::error!("[{}] Bitcoin Core connection check failed: {:?}", port, e);
-                    maker_clone.shutdown.store(true, Relaxed);
-                }
-            })?;
-        maker.thread_pool.add_thread(conn_check_thread);
-
-        // 2. Idle Client connection checker thread.
+        // 1. Idle Client connection checker thread.
         // This threads check idelness of peer in live swaps.
         // And takes recovery measure if the peer seems to have disappeared in middlle of a swap.
         let maker_clone = maker.clone();
@@ -532,7 +533,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             })?;
         maker.thread_pool.add_thread(idle_conn_check_thread);
 
-        // 3. Watchtower thread.
+        // 2. Watchtower thread.
         // This thread checks for broadcasted contract transactions, which usually means violation of the protocol.
         // When contract transaction detected in mempool it will attempt recovery.
         // This can get triggered even when contracts of adjacent hops are published. Implying the whole swap route is disrupted.
@@ -548,7 +549,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             })?;
         maker.thread_pool.add_thread(contract_watcher_thread);
 
-        // 4: The RPC server thread.
+        // 3: The RPC server thread.
         // User for responding back to `maker-cli` apps.
         let maker_clone = maker.clone();
         let rpc_thread = thread::Builder::new()
@@ -575,42 +576,17 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let (inc, out) = maker.wallet.read()?.find_unfinished_swapcoins();
     if !inc.is_empty() || !out.is_empty() {
         log::info!("Incomplete swaps detected in the wallet. Starting recovery");
-        let maker_clone = maker.clone();
-        restore_broadcasted_contracts_on_reboot(maker_clone.clone())?;
+        restore_broadcasted_contracts_on_reboot(&maker)?;
     }
 
-    let mut sync_counter = 0;
-    // The P2P Client connection loop.
-    // Each client connection will spawn a new handler thread, which is added back in the global thread_pool.
-    // This loop beats at `maker.config.heart_beat_interval_secs`
     while !maker.shutdown.load(Relaxed) {
-        // Check every 900 secs (15 mins) that we have enough swap liquidity.
-        // Raise warning otherwise and don't listen for swap requests.
-        if sync_counter >= 300 || sync_counter == 0 {
-            maker.get_wallet().write()?.sync_no_fail();
-            let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;
-            if offer_max_size <= maker.config.min_swap_amount {
-                log::warn!("[WARN!] Swaps are disabled due to low balance, Please put more funds in the wallet | Min required {} sats | Available {} sats", maker.config.min_swap_amount, offer_max_size);
-            } else {
-                log::info!(
-                    "Total available balance for swaps: {} sats | Listening for incoming swap requests",
-                    offer_max_size
-                );
-            }
-            sync_counter = 0;
+        if interval_tracker % RPC_PING_INTERVAL == 0 {
+            check_connection_with_core(maker.as_ref())?;
         }
-        sync_counter += 1;
 
-        let maker = maker.clone(); // This clone is needed to avoid moving the Arc<Maker> in each iterations.
-
-        // Block client connections if accepting_client=false
-        if !accepting_clients.load(Relaxed) {
-            log::warn!(
-                "[{}] Temporary failure in Bitcoin Core RPC.",
-                maker.config.network_port
-            );
-            sleep(HEART_BEAT_INTERVAL);
-            continue;
+        if interval_tracker % SWAP_LIQUIDITY_CHECK_INTERVAL == 0 {
+            check_swap_liquidity(maker.as_ref())?;
+            interval_tracker = 0;
         }
 
         match listener.accept() {
@@ -620,7 +596,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                     maker.config.network_port
                 );
 
-                if let Err(e) = handle_client(maker, &mut stream) {
+                if let Err(e) = handle_client(&maker, &mut stream) {
                     log::error!("[{}] Error Handling client request {:?}", port, e);
                 }
             }
@@ -638,6 +614,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             }
         };
 
+        interval_tracker += HEART_BEAT_INTERVAL.as_secs() as u32;
         sleep(HEART_BEAT_INTERVAL);
     }
 

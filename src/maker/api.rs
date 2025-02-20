@@ -49,7 +49,7 @@ use crate::{
 use super::{config::MakerConfig, error::MakerError};
 
 /// Interval for health checks on a stable RPC connection with bitcoind.
-pub const RPC_PING_INTERVAL: Duration = Duration::from_secs(10);
+pub const RPC_PING_INTERVAL: u32 = 9;
 
 // Currently we don't refresh address at DNS. The Maker only post it once at startup.
 // If the address record gets deleted, or the DNS gets blasted, the Maker won't know.
@@ -57,6 +57,9 @@ pub const RPC_PING_INTERVAL: Duration = Duration::from_secs(10);
 // pub const DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = Duartion::from_days(1); // Once a day.
 
 /// Maker triggers the recovery mechanism, if Taker is idle for more than 15 mins during a swap.
+#[cfg(feature = "integration-test")]
+pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
+#[cfg(not(feature = "integration-test"))]
 pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60 * 15);
 
 /// The minimum difference in locktime (in blocks) between the incoming and outgoing swaps.
@@ -108,8 +111,15 @@ pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 0.1;
 #[cfg(not(feature = "integration-test"))]
 pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
 
-/// Minimum Coinswap amount; makers will not accept amounts below this.
+/// Minimum Coinswap amount; makers will not#[cfg(feature = "integration-test")] accept amounts below this.
 pub const MIN_SWAP_AMOUNT: u64 = 10_000;
+
+/// Interval to check if there is enough liquidity for swaps.
+/// If the available balance is below the minimum, maker server won't listen for any swap requests until funds are added.
+#[cfg(feature = "integration-test")]
+pub(crate) const SWAP_LIQUIDITY_CHECK_INTERVAL: u32 = 30;
+#[cfg(not(feature = "integration-test"))]
+pub(crate) const SWAP_LIQUIDITY_CHECK_INTERVAL: u32 = 900; // Equals to DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS.
 
 // What's the use of RefundLocktimeStep?
 
@@ -604,7 +614,9 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
 /// Checks for swapcoins present in wallet store on reboot and starts recovery if found on bitcoind network.
 ///
 /// If any one of the is ever observed, run the recovery routine.
-pub(crate) fn restore_broadcasted_contracts_on_reboot(maker: Arc<Maker>) -> Result<(), MakerError> {
+pub(crate) fn restore_broadcasted_contracts_on_reboot(
+    maker: &Arc<Maker>,
+) -> Result<(), MakerError> {
     let (inc, out) = maker.wallet.read()?.find_unfinished_swapcoins();
     let mut outgoings = Vec::new();
     let mut incomings = Vec::new();
@@ -678,12 +690,6 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(maker: Arc<Maker>) -> Resu
 pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut bad_ip = Vec::new();
 
-    let conn_timeout = if cfg!(feature = "integration-test") {
-        Duration::from_secs(60)
-    } else {
-        IDLE_CONNECTION_TIMEOUT
-    };
-
     loop {
         if maker.shutdown.load(Relaxed) {
             break;
@@ -700,7 +706,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                 let no_response_since =
                     current_time.saturating_duration_since(*last_connected_time);
 
-                if no_response_since > conn_timeout {
+                if no_response_since > IDLE_CONNECTION_TIMEOUT {
                     log::error!(
                         "[{}] Potential Dropped Connection from taker. No response since : {} secs. Recovering from swap",
                         maker.config.network_port,
