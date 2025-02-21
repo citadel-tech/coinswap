@@ -1946,6 +1946,7 @@ impl Taker {
         let mut outgoing_infos = Vec::new();
 
         // Broadcast the Outgoing Contracts
+        self.get_wallet_mut().sync()?;
         for outgoing in outgoings {
             let contract_tx = outgoing.get_fully_signed_contract_tx()?;
             if self

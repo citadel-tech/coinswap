@@ -8,7 +8,7 @@ use std::{
 use crate::{
     protocol::messages::FidelityProof,
     utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks},
-    wallet::{UTXOSpendInfo, Wallet},
+    wallet::Wallet,
 };
 
 use bitcoin::{
@@ -309,11 +309,7 @@ impl Wallet {
     ) -> Result<u32, WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
 
-        let selected_coins = self.coin_select(amount)?;
-
-        let coins = selected_coins
-            .iter()
-            .collect::<Vec<&(ListUnspentResultEntry, UTXOSpendInfo)>>();
+        let coins = self.coin_select(amount)?;
 
         let destination = Destination::Multi(vec![(fidelity_addr, amount)]);
 

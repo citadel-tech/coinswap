@@ -711,6 +711,19 @@ impl Wallet {
         Ok(filtered_utxos)
     }
 
+    pub fn list_live_hashlock_contract_spend_info(
+        &self,
+        all_utxos: Option<&Vec<ListUnspentResultEntry>>,
+    ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+        let all_valid_utxo = self.list_all_utxo_spend_info(all_utxos)?;
+        let filtered_utxos: Vec<_> = all_valid_utxo
+            .iter()
+            .filter(|x| matches!(x.1, UTXOSpendInfo::HashlockContract { .. }))
+            .cloned()
+            .collect();
+        Ok(filtered_utxos)
+    }
+
     /// Lists fidelity UTXOs along with their [UTXOSpendInfo].
     pub fn list_fidelity_spend_info(
         &self,

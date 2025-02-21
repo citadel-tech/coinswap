@@ -54,7 +54,7 @@ impl Wallet {
     ) -> Result<Transaction, WalletError> {
         log::info!("Creating Direct-Spend from Wallet.");
 
-        let mut coins = Vec::<&(ListUnspentResultEntry, UTXOSpendInfo)>::new();
+        let mut coins = Vec::<(ListUnspentResultEntry, UTXOSpendInfo)>::new();
 
         for coin in coins_to_spend {
             // filter all contract and fidelity utxos.
@@ -65,7 +65,7 @@ impl Wallet {
                 log::warn!("Skipping Fidelity Bond or Contract UTXO.");
                 continue;
             } else {
-                coins.push(&coin);
+                coins.push(coin.to_owned());
             }
         }
 
@@ -77,28 +77,34 @@ impl Wallet {
     /// Redeem a Fidelity Bond.
     /// This functions creates a spending transaction from the fidelity bond, signs and broadcasts it.
     /// Returns the txid of the spending tx, and mark the bond as spent.
-    pub fn redeem_fidelity(
-        &mut self,
-        index: u32,
-        feerate: Option<f64>,
-    ) -> Result<Txid, WalletError> {
+    pub fn redeem_fidelity(&mut self, idx: u32, feerate: Option<f64>) -> Result<Txid, WalletError> {
         let (bond, _, is_spent) = self
             .store
             .fidelity_bond
-            .get(&index)
+            .get(&idx)
             .ok_or(FidelityError::BondDoesNotExist)?;
 
         if *is_spent {
             return Err(FidelityError::BondAlreadySpent.into());
         }
         let utxo_spend_info = UTXOSpendInfo::FidelityBondCoin {
-            index,
+            index: idx,
             input_value: bond.amount,
         };
         let change_addr = &self.get_next_internal_addresses(1)?[0];
         let destination = Destination::Sweep(change_addr.clone());
-        let dummy_utxo = Wallet::dummy_utxo();
-        let tx = self.spend_coins(&vec![&(dummy_utxo, utxo_spend_info)], destination, feerate)?;
+        let all_utxo = self.list_fidelity_spend_info(None)?;
+        let mut utxo: Option<ListUnspentResultEntry> = None;
+        for (utxo_data, spend_info) in all_utxo {
+            if let UTXOSpendInfo::FidelityBondCoin { index, input_value } = spend_info.clone() {
+                if index == idx && input_value == bond.amount {
+                    utxo = Some(utxo_data)
+                }
+            }
+        }
+        let utxo = utxo.ok_or(FidelityError::BondAlreadySpent)?;
+
+        let tx = self.spend_coins(&vec![(utxo, utxo_spend_info)], destination, feerate)?;
 
         let txid = self.send_tx(&tx)?;
 
@@ -111,7 +117,7 @@ impl Wallet {
             let (_, _, is_spent) = self
                 .store
                 .fidelity_bond
-                .get_mut(&index)
+                .get_mut(&idx)
                 .ok_or(FidelityError::BondDoesNotExist)?;
 
             *is_spent = true;
@@ -123,7 +129,7 @@ impl Wallet {
     #[allow(unused)]
     pub fn spend_coins(
         &self,
-        coins: &Vec<&(ListUnspentResultEntry, UTXOSpendInfo)>,
+        coins: &Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
         destination: Destination,
         feerate: Option<f64>,
     ) -> Result<Transaction, WalletError> {
@@ -240,10 +246,12 @@ impl Wallet {
 
                 #[cfg(feature = "integration-test")]
                 let fee =
-                    // Timelock spend has fees 128 * 2 for testcases
+                    // Timelock spend has hardcoded fees 128 * 2 Sats for testcases
                     if coins.len() == 1 && matches!(coins[0].1, UTXOSpendInfo::TimelockContract{..}) {
                         Amount::from_sat(256)
-                    } else {
+                    } 
+                    // Otherwise for all the cases fees will be 1000 sats
+                    else {
                         Amount::from_sat(1000)
                     };
 
@@ -255,7 +263,7 @@ impl Wallet {
                     });
                 }
 
-                log::info!("Fee: {}", fee.to_sat());
+                log::info!("Fee: {} sats", fee.to_sat());
                 tx.output[0].value = total_input_value - fee;
             }
             Destination::Multi(addresses) => {
@@ -304,7 +312,7 @@ impl Wallet {
 
                 if remaining_wchange > minimal_nondust {
                     log::info!(
-                        "Adding change output with {} sats (fee: {})",
+                        "Adding change output with {} sats (fee: {} sats)",
                         remaining_wchange.to_sat(),
                         fee_wchange.to_sat()
                     );
@@ -326,6 +334,7 @@ impl Wallet {
         let calc_vsize = (tx.base_size() * 4 + total_witness_size).div_ceil(4);
         let signed_tx_vsize = tx.vsize();
 
+        // As signature size can vary between 71-73 bytes we have a tolerance
         let tolerance_per_input = 2; // Allow a 2-byte difference per input
         let total_tolerance = tolerance_per_input * tx.input.len();
 
@@ -349,17 +358,25 @@ impl OutgoingSwapCoin {
         wallet: &Wallet,
         feerate: Option<f64>,
     ) -> Result<Transaction, WalletError> {
-        let destination = Destination::Sweep(destination_address.clone());
-        let utxo = (
-            Wallet::dummy_utxo(),
-            UTXOSpendInfo::TimelockContract {
-                swapcoin_multisig_redeemscript: self.get_multisig_redeemscript(),
-                input_value: self.contract_tx.output[0].value,
-            },
-        );
-        let coins = vec![&utxo];
-        let tx = wallet.spend_coins(&coins, destination, feerate)?;
-        Ok(tx)
+        let all_utxo = wallet.list_live_timelock_contract_spend_info(None)?;
+        for (utxo, spend_info) in all_utxo {
+            if let UTXOSpendInfo::TimelockContract {
+                swapcoin_multisig_redeemscript,
+                input_value,
+            } = spend_info.clone()
+            {
+                if swapcoin_multisig_redeemscript == self.get_multisig_redeemscript()
+                    && input_value == self.contract_tx.output[0].value
+                {
+                    let destination = Destination::Sweep(destination_address.clone());
+                    let coin = (utxo, spend_info);
+                    let coins = vec![coin];
+                    let tx = wallet.spend_coins(&coins, destination, feerate)?;
+                    return Ok(tx);
+                }
+            }
+        }
+        Err(WalletError::General("Contract Does not exist".to_string()))
     }
 }
 
@@ -371,16 +388,24 @@ impl IncomingSwapCoin {
         wallet: &Wallet,
         feerate: Option<f64>,
     ) -> Result<Transaction, WalletError> {
-        let destination = Destination::Sweep(destination_address.clone());
-        let utxo = (
-            Wallet::dummy_utxo(),
-            UTXOSpendInfo::HashlockContract {
-                swapcoin_multisig_redeemscript: self.get_multisig_redeemscript(),
-                input_value: self.contract_tx.output[0].value,
-            },
-        );
-        let coins = vec![&utxo];
-        let tx = wallet.spend_coins(&coins, destination, feerate)?;
-        Ok(tx)
+        let all_utxo = wallet.list_live_hashlock_contract_spend_info(None)?;
+        for (utxo, spend_info) in all_utxo {
+            if let UTXOSpendInfo::HashlockContract {
+                swapcoin_multisig_redeemscript,
+                input_value,
+            } = spend_info.clone()
+            {
+                if swapcoin_multisig_redeemscript == self.get_multisig_redeemscript()
+                    && input_value == self.contract_tx.output[0].value
+                {
+                    let destination = Destination::Sweep(destination_address.clone());
+                    let coin = (utxo, spend_info);
+                    let coins = vec![coin];
+                    let tx = wallet.spend_coins(&coins, destination, feerate)?;
+                    return Ok(tx);
+                }
+            }
+        }
+        Err(WalletError::General("Contract Does not exist".to_string()))
     }
 }

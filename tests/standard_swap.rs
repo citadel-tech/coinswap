@@ -158,7 +158,7 @@ fn test_standard_coinswap() {
     let addr = taker_wallet_mut.get_next_external_address().unwrap();
 
     let tx = taker_wallet_mut
-        .spend_from_wallet(Some(3.0211), Destination::Sweep(addr), &swap_coins)
+        .spend_from_wallet(None, Destination::Sweep(addr), &swap_coins)
         .unwrap();
 
     assert_eq!(
