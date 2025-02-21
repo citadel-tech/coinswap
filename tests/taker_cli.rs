@@ -52,10 +52,10 @@ impl TakerCli {
             args.push(arg);
         }
 
-        let output = Command::new("./target/debug/taker")
+        let output = Command::new(env!("CARGO_BIN_EXE_taker"))
             .args(args)
             .output()
-            .unwrap();
+            .expect("Failed to execute taker");
 
         // Capture the standard output and error from the command execution
         let mut value = output.stdout;
