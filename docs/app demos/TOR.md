@@ -18,12 +18,23 @@ sudo apt update
 sudo apt install tor -y
 ```
 
+### MacOs
+```bash
+brew install tor
+```
+
+
 ---
 
 ## **2. Configuring Tor (`torrc` File)**
 ### **Locate & Edit `torrc`**
+### Linux
 ```bash
 sudo nano /etc/tor/torrc
+```
+### MacOs
+```bash
+nano /opt/homebrew/etc/tor/torrc
 ```
 
 ---
@@ -92,16 +103,35 @@ A Hidden Service lets you host a `.onion` website or server.
 
 ### **Basic Hidden Service (Port Forwarding)**
 Add this to `torrc`:
+### Linux
 ```ini
 HiddenServiceDir /var/lib/tor/hidden_service/
 HiddenServicePort 6102 127.0.0.1:6102
 ```
-- **Service Port (Virtual Port)**: `80` (Clients use this to connect to the hidden service)
-- **Target Port**: `127.0.0.1:8080` (Local port where traffic is redirected)
+
+### MacOs
+```bash
+HiddenServiceDir /opt/homebrew/var/lib/tor/hidden_service
+HiddenServicePort 6102 127.0.0.1:6102
+```
+Provide required permissions
+```bash
+create sudo mkdir -p /opt/homebrew/var/lib/tor/hidden_service
+chmod 700 hidden_service
+```
+
+- **Service Port (Virtual Port)**: `6102` (Clients use this to connect to the hidden service)
+- **Target Port**: `127.0.0.1:6102` (Local port where traffic is redirected)
 
 After configuring, restart Tor:
+### Linux
 ```bash
 sudo systemctl restart tor
+```
+
+### MacOs
+```bash
+brew services restart tor
 ```
 
 ---
@@ -116,5 +146,11 @@ Example output:
 abcdefg12345.onion
 ```
 This is your **public Tor address**.
+
+Copy this tor address in your local maker/config.toml file.
+
+```bash
+nano ~/.coinswap/maker/config.toml
+```
 
 ---
