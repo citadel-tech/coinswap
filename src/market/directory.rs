@@ -153,7 +153,7 @@ impl Default for DirectoryServer {
             rpc_port: 4321,
             target_port: 8080,
             service_port: 8080,
-            socks_port: 19060,
+            socks_port: 9050,
             control_port: 9051,
             tor_auth_password: "".to_string(),
             connection_type: {
@@ -323,7 +323,7 @@ fn write_default_directory_config(config_path: &Path) -> Result<(), DirectorySer
     let config_string = String::from(
         "\
             target_port = 8080\n\
-            socks_port = 19060\n\
+            socks_port = 9050\n\
             connection_type = tor\n\
             rpc_port = 4321\n\
             ",
@@ -541,7 +541,7 @@ mod tests {
         let contents = r#"
             [directory_config]
             port = 8080
-            socks_port = 19060
+            socks_port = 9050
         "#;
         create_temp_config(contents, &temp_dir);
         let dns = DirectoryServer::new(Some(temp_dir.path().to_path_buf()), None).unwrap();

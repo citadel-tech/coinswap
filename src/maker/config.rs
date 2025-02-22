@@ -46,7 +46,7 @@ impl Default for MakerConfig {
             target_port: 6102,
             service_port: 6102,
             control_port: 9051,
-            socks_port: 19050,
+            socks_port: 9050,
             tor_auth_password: "".to_string(),
             directory_server_address:
                 "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080".to_string(),
@@ -151,7 +151,8 @@ socks_port = {}
 directory_server_address = {}
 fidelity_amount = {}
 fidelity_timelock = {}
-connection_type = {:?}",
+connection_type = {:?}
+hostname = {}",
             self.target_port,
             self.rpc_port,
             self.min_swap_amount,
@@ -160,6 +161,7 @@ connection_type = {:?}",
             self.fidelity_amount,
             self.fidelity_timelock,
             self.connection_type,
+            self.hostname
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
@@ -198,7 +200,7 @@ mod tests {
             rpc_port = 6103
             required_confirms = 1
             min_swap_amount = 10000
-            socks_port = 19050
+            socks_port = 9050
         "#;
         let config_path = create_temp_config(contents, "valid_maker_config.toml");
         let config = MakerConfig::new(Some(&config_path)).unwrap();

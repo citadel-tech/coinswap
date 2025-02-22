@@ -25,7 +25,7 @@ impl Default for TakerConfig {
     fn default() -> Self {
         Self {
             control_port: 9051,
-            socks_port: 19070,
+            socks_port: 9050,
             tor_auth_password: "".to_string(),
             directory_server_address:
                 "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080".to_string(),
@@ -138,7 +138,7 @@ mod tests {
     fn test_valid_config() {
         let contents = r#"
         control_port = 9051
-        socks_port = 19070
+        socks_port = 9050
         connection_type = "TOR"
         rpc_port = 8081
         "#;
@@ -181,7 +181,7 @@ mod tests {
     fn test_different_data() {
         let contents = r#"
             [taker_config]
-            socks_port = 19051
+            socks_port = 9050
         "#;
         let config_path = create_temp_config(contents, "different_data_taker_config.toml");
         let config = TakerConfig::new(Some(&config_path)).unwrap();
@@ -189,7 +189,7 @@ mod tests {
         assert_eq!(REFUND_LOCKTIME, 20);
         assert_eq!(
             TakerConfig {
-                socks_port: 19051,        // Configurable via TOML.
+                socks_port: 9050,         // Configurable via TOML.
                 ..TakerConfig::default()  // Use default for other values.
             },
             config
