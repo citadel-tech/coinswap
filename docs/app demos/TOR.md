@@ -138,9 +138,16 @@ brew services restart tor
 
 ### **6. Retrieving the Hidden Service Hostname**
 Once Tor is running, check:
+### Linux
 ```bash
 sudo cat /var/lib/tor/hidden_service/hostname
 ```
+
+### MacOs
+```bash
+sudo cat /opt/homebrew/var/lib/tor/hidden_service/hostname\
+```
+
 Example output:
 ```
 abcdefg12345.onion
