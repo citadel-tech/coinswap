@@ -94,7 +94,7 @@ A Hidden Service lets you host a `.onion` website or server.
 Add this to `torrc`:
 ```ini
 HiddenServiceDir /var/lib/tor/hidden_service/
-HiddenServicePort 80 127.0.0.1:8080
+HiddenServicePort 6102 127.0.0.1:6102
 ```
 - **Service Port (Virtual Port)**: `80` (Clients use this to connect to the hidden service)
 - **Target Port**: `127.0.0.1:8080` (Local port where traffic is redirected)
