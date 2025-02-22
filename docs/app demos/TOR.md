@@ -145,7 +145,7 @@ sudo cat /var/lib/tor/hidden_service/hostname
 
 ### MacOs
 ```bash
-sudo cat /opt/homebrew/var/lib/tor/hidden_service/hostname\
+sudo cat /opt/homebrew/var/lib/tor/hidden_service/hostname
 ```
 
 Example output:
