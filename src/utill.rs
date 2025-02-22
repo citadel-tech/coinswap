@@ -556,7 +556,6 @@ pub(crate) fn verify_fidelity_checks(
     let networks = vec![
         bitcoin::network::Network::Regtest,
         bitcoin::network::Network::Testnet,
-        bitcoin::network::Network::Testnet4,
         bitcoin::network::Network::Bitcoin,
         bitcoin::network::Network::Signet,
     ];
