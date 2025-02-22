@@ -28,7 +28,7 @@ impl Default for TakerConfig {
             socks_port: 19070,
             tor_auth_password: "".to_string(),
             directory_server_address:
-                "bhbzkndgad52ojm75w4goii7xsi6ou73fzyvorxas7swg2snlto4c4ad.onion:8080".to_string(),
+                "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080".to_string(),
             connection_type: {
                 #[cfg(not(feature = "integration-test"))]
                 {
