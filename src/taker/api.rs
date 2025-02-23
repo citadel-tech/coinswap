@@ -2079,7 +2079,6 @@ impl Taker {
                     let tor_dir = Path::new("/tmp/coinswap/dns/tor");
 
                     let hostname = get_tor_hostname(tor_dir)?;
-                    log::info!("---------------hostname : {:?}", hostname);
                     format!("{}:{}", hostname, 8080)
                 } else {
                     self.config.directory_server_address.clone()
