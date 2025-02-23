@@ -228,6 +228,20 @@ fn test_maker_cli() {
         })
     );
 
+    let fidelity_bonds_str = maker_cli.execute_maker_cli(&["show-fidelity"]);
+    let raw: Value = serde_json::from_str(&fidelity_bonds_str).unwrap();
+    let fidelity_bonds: Vec<Value> = serde_json::from_str(raw.as_str().unwrap()).unwrap();
+    let expected_fields = ["index", "outpoint", "amount", "bond-value", "expires-in"];
+    for fidelity_bond in fidelity_bonds {
+        for field in expected_fields {
+            assert!(
+                fidelity_bond.get(field).is_some(),
+                "expected field '{}' is not present",
+                field
+            )
+        }
+    }
+
     // Verify the seed UTXO count; other balance types remain unaffected when sending funds to an address.
     let seed_utxo = maker_cli.execute_maker_cli(&["list-utxo"]);
     assert_eq!(seed_utxo.matches("ListUnspentResultEntry").count(), 3);
