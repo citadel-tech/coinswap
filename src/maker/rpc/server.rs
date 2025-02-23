@@ -117,10 +117,6 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             RpcMsgResp::Shutdown
         }
 
-        RpcMsgReq::RedeemFidelity(index) => {
-            let txid = maker.get_wallet().write()?.redeem_fidelity(index)?;
-            RpcMsgResp::FidelitySpend(txid)
-        }
         RpcMsgReq::ListFidelity => {
             let list = maker
                 .get_wallet()
