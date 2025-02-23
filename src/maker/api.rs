@@ -121,8 +121,6 @@ pub(crate) const SWAP_LIQUIDITY_CHECK_INTERVAL: u32 = 30;
 #[cfg(not(feature = "integration-test"))]
 pub(crate) const SWAP_LIQUIDITY_CHECK_INTERVAL: u32 = 900; // Equals to DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS.
 
-// What's the use of RefundLocktimeStep?
-
 /// Used to configure the maker for testing purposes.
 ///
 /// This enum defines various behaviors that can be assigned to the maker during testing
@@ -352,6 +350,38 @@ impl Maker {
     /// Returns a reference to the Maker's wallet.
     pub fn get_wallet(&self) -> &RwLock<Wallet> {
         &self.wallet
+    }
+
+    /// Ensures all unconfirmed fidelity bonds in the maker's wallet are tracked until confirmation.  
+    /// Once confirmed, updates their confirmation details in the wallet.
+    pub(super) fn track_and_update_unconfirmed_fidelity_bonds(&self) -> Result<(), MakerError> {
+        let bond_conf_heights = {
+            let wallet_read = self.get_wallet().read()?;
+
+            wallet_read
+                .get_fidelity_bonds()
+                .iter()
+                .filter_map(|(i, (bond, _, _))| {
+                    if bond.conf_height.is_none() && bond.cert_expiry.is_none() {
+                        let conf_height = wallet_read
+                            .wait_for_fidelity_tx_confirmation(bond.outpoint.txid)
+                            .unwrap();
+                        Some((*i, conf_height))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<HashMap<u32, u32>>()
+        };
+
+        bond_conf_heights.into_iter().try_for_each(|(i, ht)| {
+            self.get_wallet()
+                .write()?
+                .update_fidelity_bond_conf_details(i, ht)?;
+            Ok::<(), MakerError>(())
+        })?;
+
+        Ok(())
     }
 
     /// Checks consistency of the [ProofOfFunding] message and return the Hashvalue

@@ -4,6 +4,8 @@
 //! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend and RPC Client Request.
 //! The server listens at two port 6102 for P2P, and 6103 for RPC Client request.
 
+use bitcoin::{absolute::LockTime, Amount};
+use bitcoind::bitcoincore_rpc::RpcApi;
 use std::{
     io::ErrorKind,
     net::{Ipv4Addr, TcpListener, TcpStream},
@@ -12,9 +14,6 @@ use std::{
     thread::{self, sleep},
     time::Duration,
 };
-
-use bitcoin::{absolute::LockTime, Amount};
-use bitcoind::bitcoincore_rpc::RpcApi;
 
 use socks::Socks5Stream;
 
@@ -76,6 +75,10 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
         maker.config.network_port,
         maker_address
     );
+
+    maker
+        .as_ref()
+        .track_and_update_unconfirmed_fidelity_bonds()?;
 
     setup_fidelity_bond(&maker, &maker_address)?;
     log::info!(
@@ -147,7 +150,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
 
                 if let Err(e) = send_message(&mut stream, &request) {
                     log::warn!(
-                        "[{}] Failed to send our address to directory, reattempting: {}",
+                        "[{}] Successfully sent our address and fidelity proof to DNS at {}",
                         maker_port,
                         e
                     );
@@ -230,13 +233,10 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
             wallet_read.calculate_bond_value(i)?.to_sat()
         );
         log::info!("Bond amount : {:?}", bond.amount.to_sat());
-        // TODO: work remainig
-        // log::info!("")
 
         let mut proof = maker.highest_fidelity_proof.write()?;
         *proof = Some(highest_proof);
     } else {
-        // xxxxx
         // No bond in the wallet. Lets attempt to create one.
         let amount = Amount::from_sat(maker.config.fidelity_amount);
         let current_height = maker
@@ -363,18 +363,23 @@ fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
 
 /// Continuously checks if the Bitcoin Core RPC connection is live.
 fn check_connection_with_core(maker: &Maker) -> Result<(), MakerError> {
+    let mut rcp_ping_success = true;
     while !maker.shutdown.load(Relaxed) {
         if let Err(e) = maker.wallet.read()?.rpc.get_blockchain_info() {
             log::error!(
-                "[{}] RPC Connection failed. Reattempting {}",
+                "[{}] RPC Connection failed | Error: {} | Reattempting...",
                 maker.config.network_port,
                 e
             );
+            rcp_ping_success = false;
         } else {
-            log::info!(
-                "[{}] Bitcoin Core RPC connection is live.",
-                maker.config.network_port
-            );
+            if !rcp_ping_success {
+                log::info!(
+                    "[{}] Bitcoin Core RPC connection is live.",
+                    maker.config.network_port
+                );
+            }
+
             break;
         }
 
