@@ -54,7 +54,7 @@ enum Commands {
         /// Amount to send in sats
         #[clap(long, short = 'a')]
         amount: u64,
-        /// Feerate in sats/vByte. Defaults to 3 sats/vByte
+        /// Feerate in sats/vByte. Defaults to 2 sats/vByte
         #[clap(long, short = 'f')]
         feerate: Option<f64>,
     },

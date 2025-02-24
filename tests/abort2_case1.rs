@@ -198,7 +198,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
     let addr = taker_wallet_mut.get_next_external_address().unwrap();
 
     let tx = taker_wallet_mut
-        .spend_from_wallet(None, Destination::Sweep(addr), &swap_coins)
+        .spend_from_wallet(2f64, Destination::Sweep(addr), &swap_coins)
         .unwrap();
 
     assert_eq!(

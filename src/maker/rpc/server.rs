@@ -85,7 +85,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             let coins_to_send = maker.get_wallet().read()?.coin_select(amount)?;
 
             let tx = maker.get_wallet().write()?.spend_from_wallet(
-                feerate,
+                feerate.unwrap_or(2f64),
                 destination,
                 &coins_to_send,
             )?;
@@ -120,7 +120,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             let txid = maker
                 .get_wallet()
                 .write()?
-                .redeem_fidelity(index, feerate)?;
+                .redeem_fidelity(index, feerate.unwrap_or(2f64))?;
             RpcMsgResp::FidelitySpend(txid)
         }
         RpcMsgReq::ListFidelity => {

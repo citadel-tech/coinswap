@@ -79,7 +79,7 @@ enum Commands {
         /// Amount to send in sats
         #[clap(long, short = 'a')]
         amount: u64,
-        /// Mining fee to be paid in sats
+        /// Feerate in sats/vByte. Defaults to 2 sats/vByte
         #[clap(long, short = 'f')]
         feerate: Option<f64>,
     },
@@ -215,10 +215,11 @@ fn main() -> Result<(), TakerError> {
                 amount,
             )]);
 
-            let tx =
-                taker
-                    .get_wallet_mut()
-                    .spend_from_wallet(feerate, destination, &coins_to_spend)?;
+            let tx = taker.get_wallet_mut().spend_from_wallet(
+                feerate.unwrap_or(2f64),
+                destination,
+                &coins_to_spend,
+            )?;
 
             let txid = taker.get_wallet().send_tx(&tx).unwrap();
 

@@ -1970,7 +1970,8 @@ impl Taker {
             let timelock = outgoing.get_timelock()?;
             let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
             let timelock_spend =
-                outgoing.create_timelock_spend(next_internal, &self.wallet, None)?;
+                self.wallet
+                    .create_timelock_spend(&outgoing, next_internal, 2f64)?;
             outgoing_infos.push(((reedemscript, contract_tx), (timelock, timelock_spend)));
         }
 

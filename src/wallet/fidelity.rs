@@ -305,7 +305,7 @@ impl Wallet {
         &mut self,
         amount: Amount,
         locktime: LockTime, // The final locktime in blockheight or timestamp
-        feerate: Option<f64>,
+        feerate: f64,
     ) -> Result<u32, WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
 

@@ -284,7 +284,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
             let fidelity_result = maker
                 .get_wallet()
                 .write()?
-                .create_fidelity(amount, locktime, None);
+                .create_fidelity(amount, locktime, 2f64);
 
             match fidelity_result {
                 // Wait for sufficient fund to create fidelity bond.
