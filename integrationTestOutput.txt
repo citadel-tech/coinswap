@@ -1,0 +1,120 @@
+   Compiling rustls-webpki v0.101.7
+   Compiling libtor-src v47.13.0+0.4.7.13
+   Compiling sct v0.7.1
+   Compiling openssl-sys v0.9.105
+   Compiling ipc-channel v0.15.0
+error[E0433]: failed to resolve: could not find `errhandlingapi` in `um`
+   --> C:\Users\HJ_Home\.cargo\registry\src\index.crates.io-6f17d22bba15001f\ipc-channel-0.15.0\src\platform\windows\mod.rs:93:21
+    |
+93  |         winapi::um::errhandlingapi::GetLastError()
+    |                     ^^^^^^^^^^^^^^ could not find `errhandlingapi` in `um`
+    |
+note: found an item that was configured out
+   --> C:\Users\HJ_Home\.cargo\registry\src\index.crates.io-6f17d22bba15001f\winapi-0.3.9\src\um\mod.rs:113:44
+    |
+113 | #[cfg(feature = "errhandlingapi")] pub mod errhandlingapi;
+    |                                            ^^^^^^^^^^^^^^
+note: the item is gated behind the `errhandlingapi` feature
+   --> C:\Users\HJ_Home\.cargo\registry\src\index.crates.io-6f17d22bba15001f\winapi-0.3.9\src\um\mod.rs:113:7
+    |
+113 | #[cfg(feature = "errhandlingapi")] pub mod errhandlingapi;
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0433]: failed to resolve: could not find `errhandlingapi` in `um`
+    --> C:\Users\HJ_Home\.cargo\registry\src\index.crates.io-6f17d22bba15001f\ipc-channel-0.15.0\src\platform\windows\mod.rs:1758:42
+     |
+1758 |                 let fm_err = winapi::um::errhandlingapi::GetLastError();
+     |                                          ^^^^^^^^^^^^^^ could not find `errhandlingapi` in `um`
+     |
+note: found an item that was configured out
+    --> C:\Users\HJ_Home\.cargo\registry\src\index.crates.io-6f17d22bba15001f\winapi-0.3.9\src\um\mod.rs:113:44
+     |
+113  | #[cfg(feature = "errhandlingapi")] pub mod errhandlingapi;
+     |                                            ^^^^^^^^^^^^^^
+note: the item is gated behind the `errhandlingapi` feature
+    --> C:\Users\HJ_Home\.cargo\registry\src\index.crates.io-6f17d22bba15001f\winapi-0.3.9\src\um\mod.rs:113:7
+     |
+113  | #[cfg(feature = "errhandlingapi")] pub mod errhandlingapi;
+     |       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0433`.
+error: could not compile `ipc-channel` (lib) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: failed to run custom build command for `libtor-src v47.13.0+0.4.7.13`
+
+Caused by:
+  process didn't exit successfully: `E:\coinswap\target\debug\build\libtor-src-ca71cc244349a426\build-script-build` (exit code: 1)
+  --- stderr
+  Error: "Error { kind: NotFound, message: \"program not found\" }"
+warning: openssl-sys@0.9.105: configuring OpenSSL build: Command 'perl' not found. Is perl installed?
+warning: openssl-sys@0.9.105: openssl-src: failed to build OpenSSL from source
+error: failed to run custom build command for `openssl-sys v0.9.105`
+
+Caused by:
+  process didn't exit successfully: `E:\coinswap\target\debug\build\openssl-sys-fd11bd89fee1431b\build-script-main` (exit code: 1)
+  --- stdout
+  cargo:rustc-check-cfg=cfg(osslconf, values("OPENSSL_NO_OCB", "OPENSSL_NO_SM4", "OPENSSL_NO_SEED", "OPENSSL_NO_CHACHA", "OPENSSL_NO_CAST", "OPENSSL_NO_IDEA", "OPENSSL_NO_CAMELLIA", "OPENSSL_NO_RC4", "OPENSSL_NO_BF", "OPENSSL_NO_PSK", "OPENSSL_NO_DEPRECATED_3_0", "OPENSSL_NO_SCRYPT", "OPENSSL_NO_SM3", "OPENSSL_NO_RMD160", "OPENSSL_NO_EC2M", "OPENSSL_NO_OCSP", "OPENSSL_NO_CMS", "OPENSSL_NO_COMP", "OPENSSL_NO_SOCK", "OPENSSL_NO_STDIO", "OPENSSL_NO_EC", "OPENSSL_NO_SSL3_METHOD", "OPENSSL_NO_KRB5", "OPENSSL_NO_TLSEXT", "OPENSSL_NO_SRP", "OPENSSL_NO_RFC3779", "OPENSSL_NO_SHA", "OPENSSL_NO_NEXTPROTONEG", "OPENSSL_NO_ENGINE", "OPENSSL_NO_BUF_FREELISTS"))
+  cargo:rustc-check-cfg=cfg(openssl)
+  cargo:rustc-check-cfg=cfg(libressl)
+  cargo:rustc-check-cfg=cfg(boringssl)
+  cargo:rustc-check-cfg=cfg(libressl250)
+  cargo:rustc-check-cfg=cfg(libressl251)
+  cargo:rustc-check-cfg=cfg(libressl252)
+  cargo:rustc-check-cfg=cfg(libressl261)
+  cargo:rustc-check-cfg=cfg(libressl270)
+  cargo:rustc-check-cfg=cfg(libressl271)
+  cargo:rustc-check-cfg=cfg(libressl273)
+  cargo:rustc-check-cfg=cfg(libressl280)
+  cargo:rustc-check-cfg=cfg(libressl281)
+  cargo:rustc-check-cfg=cfg(libressl291)
+  cargo:rustc-check-cfg=cfg(libressl310)
+  cargo:rustc-check-cfg=cfg(libressl321)
+  cargo:rustc-check-cfg=cfg(libressl332)
+  cargo:rustc-check-cfg=cfg(libressl340)
+  cargo:rustc-check-cfg=cfg(libressl350)
+  cargo:rustc-check-cfg=cfg(libressl360)
+  cargo:rustc-check-cfg=cfg(libressl361)
+  cargo:rustc-check-cfg=cfg(libressl370)
+  cargo:rustc-check-cfg=cfg(libressl380)
+  cargo:rustc-check-cfg=cfg(libressl381)
+  cargo:rustc-check-cfg=cfg(libressl382)
+  cargo:rustc-check-cfg=cfg(libressl390)
+  cargo:rustc-check-cfg=cfg(libressl400)
+  cargo:rustc-check-cfg=cfg(libressl410)
+  cargo:rustc-check-cfg=cfg(ossl101)
+  cargo:rustc-check-cfg=cfg(ossl102)
+  cargo:rustc-check-cfg=cfg(ossl102f)
+  cargo:rustc-check-cfg=cfg(ossl102h)
+  cargo:rustc-check-cfg=cfg(ossl110)
+  cargo:rustc-check-cfg=cfg(ossl110f)
+  cargo:rustc-check-cfg=cfg(ossl110g)
+  cargo:rustc-check-cfg=cfg(ossl110h)
+  cargo:rustc-check-cfg=cfg(ossl111)
+  cargo:rustc-check-cfg=cfg(ossl111b)
+  cargo:rustc-check-cfg=cfg(ossl111c)
+  cargo:rustc-check-cfg=cfg(ossl111d)
+  cargo:rustc-check-cfg=cfg(ossl300)
+  cargo:rustc-check-cfg=cfg(ossl310)
+  cargo:rustc-check-cfg=cfg(ossl320)
+  cargo:rustc-check-cfg=cfg(ossl330)
+  cargo:rustc-check-cfg=cfg(ossl340)
+  cargo:rerun-if-env-changed=X86_64_PC_WINDOWS_MSVC_OPENSSL_NO_VENDOR
+  X86_64_PC_WINDOWS_MSVC_OPENSSL_NO_VENDOR unset
+  cargo:rerun-if-env-changed=OPENSSL_NO_VENDOR
+  OPENSSL_NO_VENDOR unset
+  cargo:rerun-if-env-changed=X86_64_PC_WINDOWS_MSVC_OPENSSL_CONFIG_DIR
+  X86_64_PC_WINDOWS_MSVC_OPENSSL_CONFIG_DIR unset
+  cargo:rerun-if-env-changed=OPENSSL_CONFIG_DIR
+  OPENSSL_CONFIG_DIR unset
+  running "perl" "./Configure" "--prefix=E:/coinswap/target/debug/build/openssl-sys-11155ed129e4ff0e/out/openssl-build/install" "--openssldir=SYS$MANAGER:[OPENSSL]" "no-shared" "no-module" "no-ssl3" "no-tests" "no-comp" "no-zlib" "no-zlib-dynamic" "--libdir=lib" "no-md2" "no-rc5" "no-weak-ssl-ciphers" "no-camellia" "no-idea" "no-seed" "no-capieng" "no-asm" "VC-WIN64A"
+  cargo:warning=configuring OpenSSL build: Command 'perl' not found. Is perl installed?
+  cargo:warning=openssl-src: failed to build OpenSSL from source
+
+  --- stderr
+
+
+
+  Error configuring OpenSSL build:
+      Command 'perl' not found. Is perl installed?
+      Command failed: "perl" "./Configure" "--prefix=E:/coinswap/target/debug/build/openssl-sys-11155ed129e4ff0e/out/openssl-build/install" "--openssldir=SYS$MANAGER:[OPENSSL]" "no-shared" "no-module" "no-ssl3" "no-tests" "no-comp" "no-zlib" "no-zlib-dynamic" "--libdir=lib" "no-md2" "no-rc5" "no-weak-ssl-ciphers" "no-camellia" "no-idea" "no-seed" "no-capieng" "no-asm" "VC-WIN64A"
+
