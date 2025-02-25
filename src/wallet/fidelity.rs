@@ -167,6 +167,30 @@ impl Wallet {
         &self.store.fidelity_bond
     }
 
+    /// Display the fidelity bonds
+    pub fn display_fidelity_bonds(&self) -> Result<String, WalletError> {
+        let current_block = self.rpc.get_block_count()? as u32;
+
+        let serialized: Vec<serde_json::Value> = self
+            .get_fidelity_bonds()
+            .iter()
+            .map(|(index, (bond, _, _))| {
+                // assuming that lock_time is always in height and never in seconds.
+                self.calculate_bond_value(*index).map(|bond_value| {
+                    serde_json::json!({
+                        "index": index,
+                        "outpoint": bond.outpoint.to_string(),
+                        "amount": bond.amount.to_sat(),
+                        "bond-value": bond_value,
+                        "expires-in": bond.lock_time.to_consensus_u32() - current_block,
+                    })
+                })
+            })
+            .collect::<Result<Vec<serde_json::Value>, WalletError>>()?;
+
+        serde_json::to_string_pretty(&serialized).map_err(|e| WalletError::General(e.to_string()))
+    }
+
     /// Get the highest value fidelity bond. Returns None, if no bond exists.
     pub fn get_highest_fidelity_index(&self) -> Result<Option<u32>, WalletError> {
         Ok(self
