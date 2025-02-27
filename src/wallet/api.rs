@@ -137,6 +137,25 @@ pub enum UTXOSpendInfo {
     FidelityBondCoin { index: u32, input_value: Amount },
 }
 
+impl UTXOSpendInfo {
+    pub fn estimate_witness_size(&self) -> usize {
+        const P2PWPKH_WITNESS_SIZE: usize = 107;
+        const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 222;
+        const FIDELITY_BOND_WITNESS_SIZE: usize = 115;
+        const CONTRACT_TX_WITNESS_SIZE: usize = 179;
+        match *self {
+            Self::SeedCoin { .. } => P2PWPKH_WITNESS_SIZE,
+            Self::IncomingSwapCoin { .. } | Self::OutgoingSwapCoin { .. } => {
+                P2WSH_MULTISIG_2OF2_WITNESS_SIZE
+            }
+            Self::TimelockContract { .. } | Self::HashlockContract { .. } => {
+                CONTRACT_TX_WITNESS_SIZE
+            }
+            Self::FidelityBondCoin { .. } => FIDELITY_BOND_WITNESS_SIZE,
+        }
+    }
+}
+
 impl Display for UTXOSpendInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self {
@@ -692,6 +711,19 @@ impl Wallet {
         Ok(filtered_utxos)
     }
 
+    pub fn list_live_hashlock_contract_spend_info(
+        &self,
+        all_utxos: Option<&Vec<ListUnspentResultEntry>>,
+    ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+        let all_valid_utxo = self.list_all_utxo_spend_info(all_utxos)?;
+        let filtered_utxos: Vec<_> = all_valid_utxo
+            .iter()
+            .filter(|x| matches!(x.1, UTXOSpendInfo::HashlockContract { .. }))
+            .cloned()
+            .collect();
+        Ok(filtered_utxos)
+    }
+
     /// Lists fidelity UTXOs along with their [UTXOSpendInfo].
     pub fn list_fidelity_spend_info(
         &self,
@@ -841,10 +873,7 @@ impl Wallet {
     }
 
     /// Gets the next internal addresses from the HD keychain.
-    pub(crate) fn get_next_internal_addresses(
-        &self,
-        count: u32,
-    ) -> Result<Vec<Address>, WalletError> {
+    pub fn get_next_internal_addresses(&self, count: u32) -> Result<Vec<Address>, WalletError> {
         let next_change_addr_index = self.find_hd_next_index(KeychainKind::Internal)?;
         let descriptors = self.get_wallet_descriptors()?;
         let change_branch_descriptor = descriptors
@@ -976,6 +1005,7 @@ impl Wallet {
     }
 
     /// Largerst to lowest coinselect algorithm
+    // TODO: Fix Coin Selection algorithm for Dynamic Feerate
     pub fn coin_select(
         &self,
         amount: Amount,

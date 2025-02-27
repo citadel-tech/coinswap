@@ -1946,6 +1946,7 @@ impl Taker {
         let mut outgoing_infos = Vec::new();
 
         // Broadcast the Outgoing Contracts
+        self.get_wallet_mut().sync()?;
         for outgoing in outgoings {
             let contract_tx = outgoing.get_fully_signed_contract_tx()?;
             if self
@@ -1968,7 +1969,9 @@ impl Taker {
             let reedemscript = outgoing.get_multisig_redeemscript();
             let timelock = outgoing.get_timelock()?;
             let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
-            let timelock_spend = outgoing.create_timelock_spend(next_internal)?;
+            let timelock_spend =
+                self.wallet
+                    .create_timelock_spend(&outgoing, next_internal, DEFAULT_TX_FEE_RATE)?;
             outgoing_infos.push(((reedemscript, contract_tx), (timelock, timelock_spend)));
         }
 

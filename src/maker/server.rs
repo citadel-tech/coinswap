@@ -34,7 +34,10 @@ use crate::{
         rpc::start_rpc_server,
     },
     protocol::messages::{DnsMetadata, DnsRequest, DnsResponse, TakerToMakerMessage},
-    utill::{get_tor_hostname, read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
+    utill::{
+        get_tor_hostname, read_message, send_message, ConnectionType, DEFAULT_TX_FEE_RATE,
+        HEART_BEAT_INTERVAL,
+    },
     wallet::WalletError,
 };
 
@@ -326,10 +329,11 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
             // sync the wallet
             maker.get_wallet().write()?.sync_no_fail();
 
-            let fidelity_result = maker
-                .get_wallet()
-                .write()?
-                .create_fidelity(amount, locktime);
+            let fidelity_result =
+                maker
+                    .get_wallet()
+                    .write()?
+                    .create_fidelity(amount, locktime, DEFAULT_TX_FEE_RATE);
 
             match fidelity_result {
                 // Wait for sufficient fund to create fidelity bond.
@@ -520,11 +524,12 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
 /// Periodic checks ensure liquidity availability and backend connectivity.  
 /// It also attempts to recover any incomplete swaps detected in the wallet.  
 ///
-/// The server runs until a shutdown signal is received, at which point it safely terminates  
-/// active processes, synchronizes and saves wallet data, and closes Tor sessions if enabled.
+/// The server continues to run until a shutdown signal is detected, at which point
+/// it performs cleanup tasks, such as sync and saving wallet data, joining all threads, etc.
 pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Starting Maker Server");
 
+    // Setup the wallet with fidelity bond.
     let _tor_thread = network_bootstrap(maker.clone())?;
 
     // Tracks the elapsed time in heartbeat intervals to schedule periodic checks and avoid redundant executions.

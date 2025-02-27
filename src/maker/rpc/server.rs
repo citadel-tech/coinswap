@@ -12,7 +12,7 @@ use super::messages::RpcMsgReq;
 use crate::{
     maker::{error::MakerError, rpc::messages::RpcMsgResp, Maker},
     utill::{get_tor_hostname, read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
-    wallet::{Destination, SendAmount},
+    wallet::Destination,
 };
 use std::str::FromStr;
 
@@ -74,26 +74,25 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
         RpcMsgReq::SendToAddress {
             address,
             amount,
-            fee,
+            feerate,
         } => {
             let amount = Amount::from_sat(amount);
-            let fee = Amount::from_sat(fee);
-            let destination =
-                Destination::Address(Address::from_str(&address).unwrap().assume_checked());
+            let destination = Destination::Multi(vec![(
+                Address::from_str(&address).unwrap().assume_checked(),
+                amount,
+            )]);
 
-            let coins_to_send = maker.get_wallet().read()?.coin_select(amount + fee)?;
+            let coins_to_send = maker.get_wallet().read()?.coin_select(amount)?;
 
             let tx = maker.get_wallet().write()?.spend_from_wallet(
-                fee,
-                SendAmount::Amount(amount),
+                feerate,
                 destination,
                 &coins_to_send,
             )?;
 
-            let calculated_fee_rate = fee / (tx.weight());
-            log::info!("Calculated FeeRate : {:#}", calculated_fee_rate);
-
             let txid = maker.get_wallet().read()?.send_tx(&tx)?;
+
+            maker.get_wallet().write()?.sync_no_fail();
 
             RpcMsgResp::SendToAddressResp(txid.to_string())
         }
@@ -117,8 +116,13 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             RpcMsgResp::Shutdown
         }
 
-        RpcMsgReq::RedeemFidelity(index) => {
-            let txid = maker.get_wallet().write()?.redeem_fidelity(index)?;
+        RpcMsgReq::RedeemFidelity { index, feerate } => {
+            let txid = maker
+                .get_wallet()
+                .write()?
+                .redeem_fidelity(index, feerate)?;
+
+            maker.get_wallet().write()?.sync_no_fail();
             RpcMsgResp::FidelitySpend(txid)
         }
         RpcMsgReq::ListFidelity => {

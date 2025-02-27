@@ -13,8 +13,8 @@ use crate::{
         Hash160,
     },
     utill::{
-        get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType, HEART_BEAT_INTERVAL,
-        REQUIRED_CONFIRMS,
+        get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType, DEFAULT_TX_FEE_RATE,
+        HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
     },
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
 };
@@ -547,9 +547,11 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                             let contract_timelock = og_sc.get_timelock()?;
                             let next_internal_address =
                                 &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
-                            let time_lock_spend =
-                                og_sc.create_timelock_spend(next_internal_address)?;
-
+                            let time_lock_spend = maker.wallet.read()?.create_timelock_spend(
+                                og_sc,
+                                next_internal_address,
+                                DEFAULT_TX_FEE_RATE,
+                            )?;
                             // Sometimes we might not have other's contact signatures.
                             // This means the protocol have been stopped abruptly.
                             // This needs more careful consideration as this should not happen
@@ -625,7 +627,11 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
     for og_sc in out.iter() {
         let contract_timelock = og_sc.get_timelock()?;
         let next_internal_address = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
-        let time_lock_spend = og_sc.create_timelock_spend(next_internal_address)?;
+        let time_lock_spend = maker.wallet.read()?.create_timelock_spend(
+            og_sc,
+            next_internal_address,
+            DEFAULT_TX_FEE_RATE,
+        )?;
 
         let tx = match og_sc.get_fully_signed_contract_tx() {
             Ok(tx) => tx,
@@ -724,7 +730,11 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                         let contract = og_sc.get_fully_signed_contract_tx()?;
                         let next_internal_address =
                             &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
-                        let time_lock_spend = og_sc.create_timelock_spend(next_internal_address)?;
+                        let time_lock_spend = maker.wallet.read()?.create_timelock_spend(
+                            og_sc,
+                            next_internal_address,
+                            DEFAULT_TX_FEE_RATE,
+                        )?;
                         outgoings.push((
                             (og_sc.get_multisig_redeemscript(), contract),
                             (contract_timelock, time_lock_spend),

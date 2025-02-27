@@ -4,11 +4,11 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
-    utill::ConnectionType,
+    utill::{ConnectionType, DEFAULT_TX_FEE_RATE},
 };
 use std::sync::Arc;
 mod test_framework;
-use coinswap::wallet::{Destination, SendAmount};
+use coinswap::wallet::Destination;
 use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 use test_framework::*;
@@ -195,13 +195,10 @@ fn test_abort_case_2_move_on_with_other_makers() {
         .list_incoming_swap_coin_utxo_spend_info(None)
         .unwrap();
 
+    let addr = taker_wallet_mut.get_next_internal_addresses(1).unwrap()[0].to_owned();
+
     let tx = taker_wallet_mut
-        .spend_from_wallet(
-            Amount::from_sat(1000),
-            SendAmount::Max,
-            Destination::Wallet,
-            &swap_coins,
-        )
+        .spend_from_wallet(DEFAULT_TX_FEE_RATE, Destination::Sweep(addr), &swap_coins)
         .unwrap();
 
     assert_eq!(

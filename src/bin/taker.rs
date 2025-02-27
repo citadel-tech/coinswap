@@ -3,13 +3,15 @@ use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
-    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, REQUIRED_CONFIRMS, UTXO},
-    wallet::{Destination, RPCConfig, SendAmount},
+    utill::{
+        parse_proxy_auth, setup_taker_logger, ConnectionType, DEFAULT_TX_FEE_RATE,
+        REQUIRED_CONFIRMS, UTXO,
+    },
+    wallet::{Destination, RPCConfig},
 };
 use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};
-
 /// A simple command line app to operate as coinswap client.
 ///
 /// The app works as regular Bitcoin wallet with added capability to perform coinswaps. The app
@@ -80,9 +82,9 @@ enum Commands {
         /// Amount to send in sats
         #[clap(long, short = 'a')]
         amount: u64,
-        /// Mining fee to be paid in sats
+        /// Feerate in sats/vByte. Defaults to 2 sats/vByte
         #[clap(long, short = 'f')]
-        fee: u64,
+        feerate: Option<f64>,
     },
     /// Update the offerbook with current market offers and display them
     FetchOffers,
@@ -194,31 +196,19 @@ fn main() -> Result<(), TakerError> {
         Commands::SendToAddress {
             address,
             amount,
-            fee,
+            feerate,
         } => {
-            // NOTE:
-            //
-            // Currently, we take `fee` instead of `fee_rate` because we cannot calculate the fee for a
-            // transaction that hasn't been created yet when only a `fee_rate` is provided.
-            //
-            // As a result, the user must supply the fee as a parameter, and the function will return the
-            // transaction hex and the calculated `fee_rate`.
-            // This allows the user to infer what fee is needed for a successful transaction.
-            //
-            // This approach will be improved in the future BDK integration.
-
-            let fee = Amount::from_sat(fee);
-
             let amount = Amount::from_sat(amount);
 
-            let coins_to_spend = taker.get_wallet().coin_select(amount + fee)?;
+            let coins_to_spend = taker.get_wallet().coin_select(amount)?;
 
-            let destination =
-                Destination::Address(Address::from_str(&address).unwrap().assume_checked());
+            let destination = Destination::Multi(vec![(
+                Address::from_str(&address).unwrap().assume_checked(),
+                amount,
+            )]);
 
             let tx = taker.get_wallet_mut().spend_from_wallet(
-                fee,
-                SendAmount::Amount(amount),
+                feerate.unwrap_or(DEFAULT_TX_FEE_RATE),
                 destination,
                 &coins_to_spend,
             )?;
@@ -226,6 +216,8 @@ fn main() -> Result<(), TakerError> {
             let txid = taker.get_wallet().send_tx(&tx).unwrap();
 
             println!("{}", txid);
+
+            taker.get_wallet_mut().sync_no_fail();
         }
 
         Commands::FetchOffers => {
