@@ -71,31 +71,34 @@ The project also requires working `rust` and `cargo` installation to compile. Pr
 ```console
 git clone https://github.com/citadel-tech/coinswap.git
 cd coinswap
-cargo build
+cargo build --release
 ```
 
-After compilation you will get the binaries in the `./target/debug` folder. 
+After compilation you will get the binaries in the `./target/release` folder. 
 
-Currently, it is required to run the apps from the project root dirtectory only. This can be done by following commands.
-
+Install the necessary binaries in your system:
 ```console
-./target/debug/makerd --help
-./target/debug/maker-cli --help
-./target/debug/taker --help
+sudo install ./target/release/taker /usr/local/bin/
+sudo install ./target/release/maker /usr/local/bin/  
+sudo install ./target/release/maker-cli /usr/local/bin/  
 ```
 
-The apps also requires a fully synced, non-prunded `bitcoind` node with RPC access on Testnet4 with `-txindex` enabled. 
-
-An example `bitcoin.conf` with the required and other optional flags:
-```bash
-testnet4=1 #Required
-server=1
-txindex=1 #Required
-rpcuser=user
-rpcpassword=password
-blockfilterindex=1 #This makes wallet sync faster
-daemon=1
+Run the app help commands to see all available app commands.
+```console
+makerd --help
+maker-cli --help
+taker --help
 ```
+
+Setup Tor in your system following the [Tor Guide](./docs/app%20demos/TOR.md).
+
+The apps also requires a fully synced, non-prunded `bitcoind` node with RPC access on Testnet4 with `-txindex` enabled. Follow the [guide here](./docs/app%20demos/bitcoind.md).
+
+If all is setup, then try out the `taker` app to fetch current market offers.
+```console
+taker fetch-offers`
+```
+If you find any problem setting up and running the apps, feel free to open an Issue.
 
 ### Apps overview
 The apps can be used to run both the swap maker server and the taker client. The maker server is suitable to run inside a full node, or *always online* system. Although shutting down the server, and using it intermittently will also work. 
@@ -115,12 +118,6 @@ Once the `makerd` server setup is complete, always stop the server with `maker-c
 Extensive functional testing to simulate various edge cases of the protocol, is covered. The [functional tests](./tests/) spawns 
 a toy marketplace in Bitcoin regetst and plays out various protocol situation. Functional test logs are a good way to look at simulations of various
 edge cases in the protocol, and how the taker and makers recover from failed swaps. 
-
-The bitcoin binary used for testing is included [here](./bin/bitcoind).
-
-### 💡 Tip
-
-Replace the `bitcoind` binary to run the tests with your custom bitcoind build.
 
 Each test in the [tests](./tests/) folder covers a different edge-case situation and demonstrates how the taker and makers recover
 from various types of swap failures.
