@@ -216,6 +216,8 @@ fn main() -> Result<(), TakerError> {
             let txid = taker.get_wallet().send_tx(&tx).unwrap();
 
             println!("{}", txid);
+
+            taker.get_wallet_mut().sync_no_fail();
         }
 
         Commands::FetchOffers => {

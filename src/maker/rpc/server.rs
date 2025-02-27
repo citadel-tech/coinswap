@@ -92,6 +92,8 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
 
             let txid = maker.get_wallet().read()?.send_tx(&tx)?;
 
+            maker.get_wallet().write()?.sync_no_fail();
+
             RpcMsgResp::SendToAddressResp(txid.to_string())
         }
         RpcMsgReq::GetDataDir => {
@@ -119,6 +121,8 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 .get_wallet()
                 .write()?
                 .redeem_fidelity(index, feerate)?;
+
+            maker.get_wallet().write()?.sync_no_fail();
             RpcMsgResp::FidelitySpend(txid)
         }
         RpcMsgReq::ListFidelity => {
