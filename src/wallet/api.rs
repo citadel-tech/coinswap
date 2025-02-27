@@ -873,10 +873,7 @@ impl Wallet {
     }
 
     /// Gets the next internal addresses from the HD keychain.
-    pub(crate) fn get_next_internal_addresses(
-        &self,
-        count: u32,
-    ) -> Result<Vec<Address>, WalletError> {
+    pub fn get_next_internal_addresses(&self, count: u32) -> Result<Vec<Address>, WalletError> {
         let next_change_addr_index = self.find_hd_next_index(KeychainKind::Internal)?;
         let descriptors = self.get_wallet_descriptors()?;
         let change_branch_descriptor = descriptors

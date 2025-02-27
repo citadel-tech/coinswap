@@ -68,7 +68,7 @@ enum Commands {
     RedeemFidelity {
         #[clap(long, short = 'i', default_value = "0")]
         index: u32,
-        /// Feerate in sats/vByte. Defaults to 3 sats/vByte
+        /// Feerate in sats/vByte. Defaults to 2 sats/vByte
         #[clap(long, short = 'f')]
         feerate: Option<f64>,
     },

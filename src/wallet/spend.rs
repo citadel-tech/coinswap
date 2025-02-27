@@ -119,6 +119,60 @@ impl Wallet {
         Ok(txid)
     }
 
+    pub(crate) fn create_timelock_spend(
+        &self,
+        og_sc: &OutgoingSwapCoin,
+        destination_address: &Address,
+        feerate: f64,
+    ) -> Result<Transaction, WalletError> {
+        let all_utxo = self.list_live_timelock_contract_spend_info(None)?;
+        for (utxo, spend_info) in all_utxo {
+            if let UTXOSpendInfo::TimelockContract {
+                swapcoin_multisig_redeemscript,
+                input_value,
+            } = spend_info.clone()
+            {
+                if swapcoin_multisig_redeemscript == og_sc.get_multisig_redeemscript()
+                    && input_value == og_sc.contract_tx.output[0].value
+                {
+                    let destination = Destination::Sweep(destination_address.clone());
+                    let coins = vec![(utxo, spend_info)];
+                    let tx = self.spend_coins(&coins, destination, feerate)?;
+                    return Ok(tx);
+                }
+            }
+        }
+        Err(WalletError::General("Contract Does not exist".to_string()))
+    }
+
+    #[allow(unused)]
+    pub(crate) fn create_hashlock_spend(
+        &self,
+        ic_sc: &IncomingSwapCoin,
+        destination_address: &Address,
+        feerate: f64,
+    ) -> Result<Transaction, WalletError> {
+        let all_utxo = self.list_live_hashlock_contract_spend_info(None)?;
+        for (utxo, spend_info) in all_utxo {
+            if let UTXOSpendInfo::HashlockContract {
+                swapcoin_multisig_redeemscript,
+                input_value,
+            } = spend_info.clone()
+            {
+                if swapcoin_multisig_redeemscript == ic_sc.get_multisig_redeemscript()
+                    && input_value == ic_sc.contract_tx.output[0].value
+                {
+                    let destination = Destination::Sweep(destination_address.clone());
+                    let coin = (utxo, spend_info);
+                    let coins = vec![coin];
+                    let tx = self.spend_coins(&coins, destination, feerate)?;
+                    return Ok(tx);
+                }
+            }
+        }
+        Err(WalletError::General("Contract Does not exist".to_string()))
+    }
+
     #[allow(unused)]
     pub fn spend_coins(
         &self,
@@ -339,59 +393,5 @@ impl Wallet {
 
         log::debug!("Signed Transaction : {:?}", tx.raw_hex());
         Ok(tx)
-    }
-
-    pub(crate) fn create_timelock_spend(
-        &self,
-        og_sc: &OutgoingSwapCoin,
-        destination_address: &Address,
-        feerate: f64,
-    ) -> Result<Transaction, WalletError> {
-        let all_utxo = self.list_live_timelock_contract_spend_info(None)?;
-        for (utxo, spend_info) in all_utxo {
-            if let UTXOSpendInfo::TimelockContract {
-                swapcoin_multisig_redeemscript,
-                input_value,
-            } = spend_info.clone()
-            {
-                if swapcoin_multisig_redeemscript == og_sc.get_multisig_redeemscript()
-                    && input_value == og_sc.contract_tx.output[0].value
-                {
-                    let destination = Destination::Sweep(destination_address.clone());
-                    let coins = vec![(utxo, spend_info)];
-                    let tx = self.spend_coins(&coins, destination, feerate)?;
-                    return Ok(tx);
-                }
-            }
-        }
-        Err(WalletError::General("Contract Does not exist".to_string()))
-    }
-
-    #[allow(unused)]
-    pub(crate) fn create_hashlock_spend(
-        &self,
-        ic_sc: &IncomingSwapCoin,
-        destination_address: &Address,
-        feerate: f64,
-    ) -> Result<Transaction, WalletError> {
-        let all_utxo = self.list_live_hashlock_contract_spend_info(None)?;
-        for (utxo, spend_info) in all_utxo {
-            if let UTXOSpendInfo::HashlockContract {
-                swapcoin_multisig_redeemscript,
-                input_value,
-            } = spend_info.clone()
-            {
-                if swapcoin_multisig_redeemscript == ic_sc.get_multisig_redeemscript()
-                    && input_value == ic_sc.contract_tx.output[0].value
-                {
-                    let destination = Destination::Sweep(destination_address.clone());
-                    let coin = (utxo, spend_info);
-                    let coins = vec![coin];
-                    let tx = self.spend_coins(&coins, destination, feerate)?;
-                    return Ok(tx);
-                }
-            }
-        }
-        Err(WalletError::General("Contract Does not exist".to_string()))
     }
 }
