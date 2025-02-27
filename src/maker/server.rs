@@ -81,10 +81,6 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
         .track_and_update_unconfirmed_fidelity_bonds()?;
 
     setup_fidelity_bond(&maker, &maker_address)?;
-    log::info!(
-        "Max offer size : {} sats",
-        maker.get_wallet().read()?.store.offer_maxsize
-    );
 
     let proof = maker
         .highest_fidelity_proof
@@ -150,7 +146,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
 
                 if let Err(e) = send_message(&mut stream, &request) {
                     log::warn!(
-                        "[{}] Successfully sent our address and fidelity proof to DNS at {}",
+                        "[{}] Failed to send request to DNS : {} | reattempting..",
                         maker_port,
                         e
                     );
@@ -165,7 +161,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
                                 DnsResponse::Ack => {
                                     log::info!("[{}] <=== {}", maker.config.network_port, dns_msg);
                                     log::info!(
-                                        "[{}] Successfully sent our address to DNS at {}",
+                                        "[{}] Successfully sent our address and fidelity proof to DNS at {}",
                                         maker_port,
                                         dns_address
                                     );
