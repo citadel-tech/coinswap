@@ -611,7 +611,11 @@ impl From<std::io::Error> for TorError {
 }
 
 #[cfg(not(feature = "integration-test"))]
-pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<String, TorError> {
+pub(crate) fn check_tor_status(
+    control_port: u16,
+    password: &str,
+    tor_directory: String,
+) -> Result<String, TorError> {
     use std::io::BufRead;
 
     let mut stream = TcpStream::connect(format!("127.0.0.1:{}", control_port))?;
@@ -640,7 +644,7 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<Stri
         log::warn!("Tor is still starting, try again later: {}", response);
     }
 
-    let hostname = fs::read_to_string("/var/lib/tor/coinswap/hostname")?;
+    let hostname = fs::read_to_string(tor_directory)?;
 
     log::info!("Tor Hidden Service Hostname: {}", hostname);
 

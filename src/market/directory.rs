@@ -240,7 +240,7 @@ impl DirectoryServer {
                 config_map.get("tor_auth_password"),
                 default_dns.tor_auth_password,
             ),
-            data_dir,
+            data_dir: data_dir.clone(),
             hostname: "ocqkq73acs4qryk5snoiwtpskb2w3wp65basfzw2xcw6mrp57yonygyd.onion".to_string(),
             shutdown: AtomicBool::new(false),
             connection_type: parse_field(
@@ -251,7 +251,11 @@ impl DirectoryServer {
         };
         #[cfg(not(feature = "integration-test"))]
         {
-            let tor_hostname = check_tor_status(config.control_port, &config.tor_auth_password)?;
+            let tor_hostname = check_tor_status(
+                config.control_port,
+                &config.tor_auth_password,
+                format!("{:?}/tor", data_dir),
+            )?;
             config.hostname = tor_hostname;
         }
         Ok(config)
