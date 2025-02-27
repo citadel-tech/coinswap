@@ -16,7 +16,7 @@ use log4rs::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    env, fmt,
+    env, fmt, fs,
     io::{BufReader, BufWriter, ErrorKind, Read},
     net::TcpStream,
     path::{Path, PathBuf},
@@ -26,10 +26,8 @@ use std::{
 
 use std::{
     collections::HashMap,
-    fs::{self, File},
-    io::{self, BufRead, Write},
+    io::{self, Write},
     sync::OnceLock,
-    thread,
     time::Duration,
 };
 static LOGGER: OnceLock<()> = OnceLock::new();
@@ -75,7 +73,7 @@ pub enum ConnectionType {
     /// Represents a TOR connection type.
     ///
     /// This variant is only available when the `tor` feature is enabled.
-    #[cfg(feature = "tor")]
+    #[cfg(not(feature = "integration-test"))]
     TOR,
 
     /// Represents a Clearnet connection type.
@@ -87,7 +85,7 @@ impl FromStr for ConnectionType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            #[cfg(feature = "tor")]
+            #[cfg(not(feature = "integration-test"))]
             "tor" => Ok(ConnectionType::TOR),
             "clearnet" => Ok(ConnectionType::CLEARNET),
             _ => Err(NetError::InvalidAppNetwork),
@@ -98,21 +96,11 @@ impl FromStr for ConnectionType {
 impl fmt::Display for ConnectionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            #[cfg(feature = "tor")]
+            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => write!(f, "tor"),
             ConnectionType::CLEARNET => write!(f, "clearnet"),
         }
     }
-}
-
-/// Read the tor address given a tor directory path
-pub(crate) fn get_tor_hostname(tor_dir: &Path) -> io::Result<String> {
-    let hostname_file_path = tor_dir.join("hs-dir").join("hostname");
-    let mut hostname_file = File::open(hostname_file_path)?;
-    let mut tor_addrs: String = String::new();
-    hostname_file.read_to_string(&mut tor_addrs)?;
-    tor_addrs.pop(); // Remove `\n` at the end.
-    Ok(tor_addrs)
 }
 
 /// Get the system specific home directory.
@@ -418,39 +406,6 @@ pub(crate) fn parse_field<T: std::str::FromStr>(value: Option<&String>, default:
         .unwrap_or(default)
 }
 
-/// Function to check if tor log contains a pattern
-pub(crate) fn monitor_log_for_completion(log_file: &Path, pattern: &str) -> io::Result<()> {
-    // TODO: Make this logic work for existing file with previous logs.
-    let mut last_size = 0;
-
-    loop {
-        if log_file.exists() {
-            let file = File::open(log_file)?;
-            let metadata = file.metadata()?;
-            let current_size = metadata.len();
-
-            if current_size != last_size {
-                let reader = io::BufReader::new(file);
-                let lines = reader.lines();
-
-                for line in lines {
-                    if let Ok(line) = line {
-                        log::info!("{}", line);
-                        if line.contains(pattern) {
-                            return Ok(());
-                        }
-                    } else {
-                        return Err(io::Error::new(io::ErrorKind::Other, "Error reading line"));
-                    }
-                }
-
-                last_size = current_size;
-            }
-        }
-        thread::sleep(HEART_BEAT_INTERVAL);
-    }
-}
-
 fn polynomial_modulus(mut checksum: u64, value: u64) -> u64 {
     let upper_bits = checksum >> SHIFT_FOR_C0;
     checksum = ((checksum & MASK_LOW_35_BITS) << 5) ^ value;
@@ -604,7 +559,6 @@ pub(crate) fn verify_fidelity_checks(
     let networks = vec![
         bitcoin::network::Network::Regtest,
         bitcoin::network::Network::Testnet,
-        bitcoin::network::Network::Testnet4,
         bitcoin::network::Network::Bitcoin,
         bitcoin::network::Network::Signet,
     ];
@@ -641,9 +595,61 @@ pub(crate) fn verify_fidelity_checks(
     Ok(())
 }
 
+/// Tor Error grades
+#[derive(Debug)]
+pub enum TorError {
+    /// Io error
+    IO(std::io::Error),
+    /// Generic error
+    General(String),
+}
+
+impl From<std::io::Error> for TorError {
+    fn from(value: std::io::Error) -> Self {
+        TorError::IO(value)
+    }
+}
+
+#[cfg(not(feature = "integration-test"))]
+pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<String, TorError> {
+    use std::io::BufRead;
+
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", control_port))?;
+    let mut reader = BufReader::new(stream.try_clone()?);
+
+    let auth_command = format!("AUTHENTICATE \"{}\"\r\n", password);
+    stream.write_all(auth_command.as_bytes())?;
+
+    let mut response = String::new();
+    reader.read_line(&mut response)?;
+    if !response.starts_with("250") {
+        log::error!(
+            "Tor authentication failed: {}, please provide correct password",
+            response
+        );
+        return Err(TorError::General("Tor authentication failed".to_string()));
+    }
+
+    stream.write_all(b"GETINFO status/bootstrap-phase\r\n")?;
+    response.clear();
+    reader.read_line(&mut response)?;
+
+    if response.contains("PROGRESS=100") {
+        log::info!("Tor is fully started and operational!");
+    } else {
+        log::warn!("Tor is still starting, try again later: {}", response);
+    }
+
+    let hostname = fs::read_to_string("/var/lib/tor/coinswap/hostname")?;
+
+    log::info!("Tor Hidden Service Hostname: {}", hostname);
+
+    Ok(hostname.trim().to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use std::net::TcpListener;
+    use std::{net::TcpListener, thread};
 
     use bitcoin::{
         blockdata::{opcodes::all, script::Builder},

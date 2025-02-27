@@ -8,7 +8,5 @@ pub mod maker;
 pub mod market;
 pub mod protocol;
 pub mod taker;
-#[cfg(feature = "tor")]
-pub mod tor;
 pub mod utill;
 pub mod wallet;

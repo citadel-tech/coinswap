@@ -6,6 +6,8 @@
 //! contract broadcasts and handle idle Taker connections. Additionally, it handles recovery by broadcasting
 //! contract transactions and claiming funds after an unsuccessful swap event.
 
+#[cfg(not(feature = "integration-test"))]
+use crate::utill::check_tor_status;
 use crate::{
     protocol::{
         contract::check_hashvalues_are_equal,
@@ -267,6 +269,8 @@ impl Maker {
         rpc_config: Option<RPCConfig>,
         network_port: Option<u16>,
         rpc_port: Option<u16>,
+        control_port: Option<u16>,
+        tor_auth_password: Option<String>,
         socks_port: Option<u16>,
         connection_type: Option<ConnectionType>,
         behavior: MakerBehavior,
@@ -314,13 +318,24 @@ impl Maker {
             config.connection_type = connection_type;
         }
 
-        let port = config.network_port;
-
-        config.write_to_file(&data_dir.join("config.toml"))?;
+        let network_port = config.network_port;
 
         log::info!("Initializing wallet sync");
         wallet.sync()?;
         log::info!("Completed wallet sync");
+
+        config.control_port = control_port.unwrap_or(config.control_port);
+        config.tor_auth_password =
+            tor_auth_password.unwrap_or_else(|| config.tor_auth_password.clone());
+
+        #[cfg(not(feature = "integration-test"))]
+        {
+            let tor_hostname =
+                check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
+            config.hostname = tor_hostname;
+        }
+
+        config.write_to_file(&data_dir.join("config.toml"))?;
 
         Ok(Self {
             behavior,
@@ -331,7 +346,7 @@ impl Maker {
             highest_fidelity_proof: RwLock::new(None),
             is_setup_complete: AtomicBool::new(false),
             data_dir,
-            thread_pool: Arc::new(ThreadPool::new(port)),
+            thread_pool: Arc::new(ThreadPool::new(network_port)),
         })
     }
 
