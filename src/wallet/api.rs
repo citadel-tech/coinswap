@@ -1004,6 +1004,44 @@ impl Wallet {
         Ok(())
     }
 
+    pub fn coin_select_multiple(
+        &self,
+        amount: Amount,
+        branches: usize,
+    ) -> Result<Vec<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>, WalletError> {
+        let all_utxos = self.get_all_locked_utxo()?;
+
+        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
+        let mut swap_coin_utxo = self.list_incoming_swap_coin_utxo_spend_info(Some(&all_utxos))?;
+        seed_coin_utxo.append(&mut swap_coin_utxo);
+
+        // Fetch utxos, filter out existing fidelity coins
+        let mut unspents = seed_coin_utxo
+            .into_iter()
+            .filter(|(_, spend_info)| !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. }))
+            .collect::<Vec<_>>();
+
+        unspents.sort_by(|a, b| b.0.amount.cmp(&a.0.amount));
+        let mut selections = Vec::new();
+
+        for _ in 0..branches {
+            let mut selected_utxo = Vec::new();
+            let mut remaining = amount / branches as u64;
+            while let Some(unspent) = unspents.pop() {
+                if remaining.checked_sub(unspent.0.amount).is_none() {
+                    selected_utxo.push(unspent);
+                    break;
+                } else {
+                    remaining -= unspent.0.amount;
+                    selected_utxo.push(unspent);
+                }
+            }
+            selections.push(selected_utxo);
+        }
+
+        Ok(selections)
+    }
+
     /// Largerst to lowest coinselect algorithm
     // TODO: Fix Coin Selection algorithm for Dynamic Feerate
     pub fn coin_select(
