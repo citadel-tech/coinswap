@@ -19,6 +19,9 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 #[cfg(not(feature = "integration-test"))]
 use socks::Socks5Stream;
 
+#[cfg(not(feature = "integration-test"))]
+use crate::utill::get_tor_hostname;
+
 pub(crate) use super::{api::RPC_PING_INTERVAL, Maker};
 
 use crate::{
@@ -63,7 +66,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
         }
         #[cfg(not(feature = "integration-test"))]
         ConnectionType::TOR => {
-            let maker_hostname = &maker.config.hostname;
+            let maker_hostname = get_tor_hostname(format!("{:?}/tor", maker.data_dir).as_str())?;
             let maker_address = format!("{}:{}", maker_hostname, maker.config.network_port);
 
             let dns_address = maker.config.directory_server_address.clone();

@@ -244,11 +244,7 @@ impl Taker {
             tor_auth_password.unwrap_or_else(|| config.tor_auth_password.clone());
         #[cfg(not(feature = "integration-test"))]
         {
-            let _tor_hostname = check_tor_status(
-                config.control_port,
-                config.tor_auth_password.as_str(),
-                format!("{:?}/tor", data_dir),
-            )?;
+            check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
 
         config.write_to_file(&data_dir.join("config.toml"))?;

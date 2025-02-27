@@ -330,12 +330,7 @@ impl Maker {
 
         #[cfg(not(feature = "integration-test"))]
         {
-            let tor_hostname = check_tor_status(
-                config.control_port,
-                config.tor_auth_password.as_str(),
-                format!("{:?}/tor", data_dir),
-            )?;
-            config.hostname = tor_hostname;
+            check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
 
         config.write_to_file(&data_dir.join("config.toml"))?;

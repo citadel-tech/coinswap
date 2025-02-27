@@ -611,19 +611,12 @@ impl From<std::io::Error> for TorError {
 }
 
 #[cfg(not(feature = "integration-test"))]
-pub(crate) fn check_tor_status(
-    control_port: u16,
-    password: &str,
-    tor_directory: String,
-) -> Result<String, TorError> {
+pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), TorError> {
     use std::io::BufRead;
-
     let mut stream = TcpStream::connect(format!("127.0.0.1:{}", control_port))?;
     let mut reader = BufReader::new(stream.try_clone()?);
-
     let auth_command = format!("AUTHENTICATE \"{}\"\r\n", password);
     stream.write_all(auth_command.as_bytes())?;
-
     let mut response = String::new();
     reader.read_line(&mut response)?;
     if !response.starts_with("250") {
@@ -633,7 +626,6 @@ pub(crate) fn check_tor_status(
         );
         return Err(TorError::General("Tor authentication failed".to_string()));
     }
-
     stream.write_all(b"GETINFO status/bootstrap-phase\r\n")?;
     response.clear();
     reader.read_line(&mut response)?;
@@ -643,8 +635,12 @@ pub(crate) fn check_tor_status(
     } else {
         log::warn!("Tor is still starting, try again later: {}", response);
     }
+    Ok(())
+}
 
-    let hostname = fs::read_to_string(tor_directory)?;
+#[cfg(not(feature = "integration-test"))]
+pub(crate) fn get_tor_hostname(tor_directory_path: &str) -> Result<String, TorError> {
+    let hostname = fs::read_to_string(tor_directory_path)?;
 
     log::info!("Tor Hidden Service Hostname: {}", hostname);
 

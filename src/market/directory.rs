@@ -17,7 +17,7 @@ use crate::{
 };
 
 #[cfg(not(feature = "integration-test"))]
-use crate::utill::check_tor_status;
+use crate::utill::{check_tor_status, get_tor_hostname};
 
 use std::{
     collections::HashMap,
@@ -131,8 +131,6 @@ pub struct DirectoryServer {
     pub control_port: u16,
     /// Socks port
     pub socks_port: u16,
-    ///onion hostname
-    pub hostname: String,
     /// Authentication password
     pub tor_auth_password: String,
     /// Connection type
@@ -166,7 +164,6 @@ impl Default for DirectoryServer {
             data_dir: get_dns_dir(),
             shutdown: AtomicBool::new(false),
             addresses: Arc::new(RwLock::new(HashMap::new())),
-            hostname: "ocqkq73acs4qryk5snoiwtpskb2w3wp65basfzw2xcw6mrp57yonygyd.onion".to_string(),
         }
     }
 }
@@ -241,7 +238,6 @@ impl DirectoryServer {
                 default_dns.tor_auth_password,
             ),
             data_dir: data_dir.clone(),
-            hostname: "ocqkq73acs4qryk5snoiwtpskb2w3wp65basfzw2xcw6mrp57yonygyd.onion".to_string(),
             shutdown: AtomicBool::new(false),
             connection_type: parse_field(
                 config_map.get("connection_type"),
@@ -251,12 +247,7 @@ impl DirectoryServer {
         };
         #[cfg(not(feature = "integration-test"))]
         {
-            let tor_hostname = check_tor_status(
-                config.control_port,
-                &config.tor_auth_password,
-                format!("{:?}/tor", data_dir),
-            )?;
-            config.hostname = tor_hostname;
+            check_tor_status(config.control_port, &config.tor_auth_password)?;
         }
         Ok(config)
     }
@@ -403,7 +394,7 @@ pub fn start_directory_server(
 
                 log::info!("tor is ready!!");
 
-                let hostname = &directory.hostname;
+                let hostname = get_tor_hostname(format!("{:?}/tor", directory.data_dir).as_str())?;
 
                 log::info!("DNS is listening at {}:{}", hostname, network_port);
             }

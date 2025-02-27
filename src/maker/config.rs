@@ -24,8 +24,6 @@ pub struct MakerConfig {
     pub socks_port: u16,
     /// Authentication password
     pub tor_auth_password: String,
-    /// Onion hostname
-    pub hostname: String,
     /// Directory server address (can be clearnet or onion)
     pub directory_server_address: String,
     /// Fidelity Bond amount
@@ -65,7 +63,6 @@ impl Default for MakerConfig {
                     ConnectionType::CLEARNET
                 }
             },
-            hostname: "ocqkq73acs4qryk5snoiwtpskb2w3wp65basfzw2xcw6mrp57yonygyd.onion".to_string(),
         }
     }
 }
@@ -133,7 +130,6 @@ impl MakerConfig {
                 config_map.get("connection_type"),
                 default_config.connection_type,
             ),
-            hostname: parse_field(config_map.get("hostname"), default_config.hostname),
         })
     }
 
@@ -148,7 +144,7 @@ directory_server_address = {}
 fidelity_amount = {}
 fidelity_timelock = {}
 connection_type = {:?}
-hostname = {}",
+",
             self.network_port,
             self.rpc_port,
             self.min_swap_amount,
@@ -156,8 +152,7 @@ hostname = {}",
             self.directory_server_address,
             self.fidelity_amount,
             self.fidelity_timelock,
-            self.connection_type,
-            self.hostname
+            self.connection_type
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
