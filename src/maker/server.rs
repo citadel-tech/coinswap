@@ -33,10 +33,7 @@ use crate::{
         rpc::start_rpc_server,
     },
     protocol::messages::{DnsMetadata, DnsRequest, DnsResponse, TakerToMakerMessage},
-    utill::{
-        read_message, send_message, ConnectionType, DEFAULT_TX_FEE_RATE,
-        HEART_BEAT_INTERVAL,
-    },
+    utill::{read_message, send_message, ConnectionType, DEFAULT_TX_FEE_RATE, HEART_BEAT_INTERVAL},
     wallet::WalletError,
 };
 
