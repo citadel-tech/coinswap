@@ -25,6 +25,8 @@ pub enum Destination {
     Sweep(Address),
     /// Multi
     Multi(Vec<(Address, Amount)>),
+    /// Wallet: sends funds to an internal wallet change address.
+    Wallet,
 }
 
 impl Wallet {
@@ -325,6 +327,35 @@ impl Wallet {
                         fee_wchange.to_sat()
                     );
                 }
+            },
+            Destination::Wallet => {
+                // New branch for spending to an internal wallet address
+                // Automatically choose an internal address
+                let internal_spk = self.get_next_internal_addresses(1)?[0].script_pubkey();
+                let txout = TxOut {
+                    script_pubkey: internal_spk,
+                    value: Amount::ZERO, // Placeholder; will be calculated below
+                };
+                tx.output.push(txout);
+                let base_size = tx.base_size();
+                let vsize = (base_size * 4 + total_witness_size).div_ceil(4);
+                let fee = Amount::from_sat((feerate * vsize as f64).ceil() as u64);
+        
+                #[cfg(feature = "integration-test")]
+                let fee = if coins.len() == 1 && matches!(coins[0].1, UTXOSpendInfo::TimelockContract { .. }) {
+                    Amount::from_sat(256)
+                } else {
+                    Amount::from_sat(1000)
+                };
+        
+                if fee > total_input_value {
+                    return Err(WalletError::InsufficientFund {
+                        available: total_input_value.to_sat(),
+                        required: fee.to_sat(),
+                    });
+                }
+                log::info!("Fee: {} sats", fee.to_sat());
+                tx.output[0].value = total_input_value - fee;
             }
         }
 
