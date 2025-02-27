@@ -9,15 +9,13 @@
 //! for monitoring the swaps happening between two Makers.
 
 use bitcoin::{
-    absolute::LockTime,
     ecdsa::Signature,
     secp256k1::{self, Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
-    transaction::Version,
-    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
-    Witness,
+    Amount, PublicKey, Script, ScriptBuf, Transaction, TxIn,
 };
 
+use super::WalletError;
 use crate::protocol::{
     contract::{
         apply_two_signatures_to_2of2_multisig_spend, create_multisig_redeemscript,
@@ -30,7 +28,9 @@ use crate::protocol::{
     Hash160,
 };
 
-use super::WalletError;
+use crate::wallet::{UTXOSpendInfo};
+use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
+
 
 /// Defines an incoming swapcoin, which can either be currently active or successfully completed.
 ///
@@ -260,6 +260,45 @@ impl IncomingSwapCoin {
         })
     }
 
+    /// Converts this IncomingSwapCoin into the tuple needed for spending.
+    /// The returned ListUnspentResultEntry contains the necessary UTXO details,
+    /// and the UTXOSpendInfo is set as IncomingSwapCoin with the associated redeemscript.
+    pub fn to_utxo_tuple(&self) -> (ListUnspentResultEntry, UTXOSpendInfo) {
+        // Compute the txid from the contract transaction.
+        let txid = self.contract_tx.compute_txid();
+        // For this example, we assume the UTXO is at index 0.
+        let vout = 0;
+        
+        // Construct the ListUnspentResultEntry.
+        let entry = ListUnspentResultEntry {
+            txid,
+            vout,
+            address: None, // May be unknown for contract txs
+            label: Some("incoming swapcoin".to_string()),
+            // The redeem_script can be set to the contract_redeemscript.
+            redeem_script: Some(self.contract_redeemscript.clone()),
+            // If you have a witness script, set it here; otherwise, None.
+            witness_script: None,
+            // Use the script_pub_key from the contract tx's output.
+            script_pub_key: self.contract_tx.output[0].script_pubkey.clone(),
+            amount: self.funding_amount,
+            // Set confirmations to 0 if not yet confirmed.
+            confirmations: 0,
+            // Mark as spendable/solvable based on your wallet logic.
+            spendable: true,
+            solvable: true,
+            descriptor: None,
+            safe: true,
+        };
+
+        // Create the spend info as an IncomingSwapCoin variant.
+        let spend_info = UTXOSpendInfo::IncomingSwapCoin {
+            multisig_redeemscript: self.contract_redeemscript.clone(),
+        };
+
+        (entry, spend_info)
+    }
+
     pub(crate) fn sign_transaction_input(
         &self,
         index: usize,
@@ -425,38 +464,6 @@ impl OutgoingSwapCoin {
         input.witness.push(Vec::new());
         input.witness.push(self.contract_redeemscript.to_bytes());
         Ok(())
-    }
-
-    pub(crate) fn create_timelock_spend(
-        &self,
-        destination_address: &Address,
-    ) -> Result<Transaction, WalletError> {
-        let miner_fee = 128 * 2; //128 vbytes x 2 sat/vb, size calculated using testmempoolaccept
-        let mut tx = Transaction {
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: self.contract_tx.compute_txid(),
-                    vout: 0, //contract_tx is one-input-one-output
-                },
-                sequence: Sequence(self.get_timelock()? as u32),
-                witness: Witness::new(),
-                script_sig: ScriptBuf::new(),
-            }],
-            output: vec![TxOut {
-                script_pubkey: destination_address.script_pubkey(),
-                value: Amount::from_sat(self.contract_tx.output[0].value.to_sat() - miner_fee),
-            }],
-            lock_time: LockTime::ZERO,
-            version: Version::TWO,
-        };
-        let index = 0;
-        self.sign_timelocked_transaction_input(
-            index,
-            &tx.clone(),
-            &mut tx.input[0],
-            self.contract_tx.output[0].value,
-        )?;
-        Ok(tx)
     }
 
     //"_with_my_privkey" as opposed to with other_privkey
@@ -639,7 +646,14 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
-    use bitcoin::{NetworkKind, PrivateKey};
+
+    use bitcoin::{
+        absolute::LockTime,
+        secp256k1::{self, Secp256k1, SecretKey},
+        transaction::Version,
+        Address, Amount, NetworkKind, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence,
+        Transaction, TxIn, TxOut, Witness,
+    };
 
     const TEST_CURRENT_HEIGHT: u32 = 100;
 

@@ -56,6 +56,8 @@ use crate::{
     },
 };
 
+use crate::wallet::Destination;
+
 #[cfg(feature = "tor")]
 use crate::tor::kill_tor_handles;
 
@@ -293,6 +295,26 @@ impl Taker {
         })
     }
 
+
+    /// Sweeps incoming swapcoins to an internal wallet address using the new spend API.
+    fn sweep_incoming_swapcoins(&mut self, feerate: f64) -> Result<(), TakerError> {
+        let coins_to_spend = self.ongoing_swap_state.incoming_swapcoins
+            .iter()
+            .map(|swapcoin| swapcoin.to_utxo_tuple())
+            .collect::<Vec<_>>();
+    
+        // Use the spend_from_wallet API to create and broadcast the spend transaction.
+        let tx = self.wallet.spend_from_wallet(
+            feerate,
+            Destination::Wallet, // Sends funds to an internal wallet change address.
+            &coins_to_spend,
+        )?;
+        let txid = tx.compute_txid();
+        log::info!("Swept incoming swapcoins, txid: {}", txid);
+    
+        Ok(())
+    }
+    
     /// Get wallet
     pub fn get_wallet(&self) -> &Wallet {
         &self.wallet
@@ -520,6 +542,13 @@ impl Taker {
                 self.recover_from_swap()?;
                 return Ok(());
             }
+        }
+
+
+        // Sweep the incoming swapcoins to an internal wallet address.
+        if !self.ongoing_swap_state.incoming_swapcoins.is_empty() {
+            let feerate = 2f64; // Hardcoded feerate value
+            self.sweep_incoming_swapcoins(feerate)?;
         }
 
         log::info!("Initializing Sync and Save.");
@@ -1946,6 +1975,7 @@ impl Taker {
         let mut outgoing_infos = Vec::new();
 
         // Broadcast the Outgoing Contracts
+        self.get_wallet_mut().sync()?;
         for outgoing in outgoings {
             let contract_tx = outgoing.get_fully_signed_contract_tx()?;
             if self
@@ -1968,7 +1998,9 @@ impl Taker {
             let reedemscript = outgoing.get_multisig_redeemscript();
             let timelock = outgoing.get_timelock()?;
             let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
-            let timelock_spend = outgoing.create_timelock_spend(next_internal)?;
+            let timelock_spend =
+                self.wallet
+                    .create_timelock_spend(&outgoing, next_internal, 2f64)?;
             outgoing_infos.push(((reedemscript, contract_tx), (timelock, timelock_spend)));
         }
 

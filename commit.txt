@@ -1,0 +1,9 @@
+Added Destination::Wallet variant and integrate incoming swapcoin sweeping
+
+- Added new `Destination::Wallet` variant to the Destination enum to support spending funds
+  to an internal wallet change address.
+- Updated the `spend_coins` function to handle the `Destination::Wallet` branch,
+  mirroring the behavior of `Destination::Sweep` but automatically selecting an internal address.
+- Implemented `sweep_incoming_swapcoins` in the Taker module:
+  - Converts each `IncomingSwapCoin` to the corresponding (ListUnspentResultEntry, UTXOSpendInfo) tuple.
+  - Calls `spend_from_wallet` with a hardcoded feerate (2.0) and `Destination::Wallet` to sweep the coins.
