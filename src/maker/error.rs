@@ -4,7 +4,9 @@ use std::sync::{MutexGuard, PoisonError, RwLockReadGuard, RwLockWriteGuard};
 
 use bitcoin::secp256k1;
 
-use crate::{error::NetError, protocol::error::ProtocolError, wallet::WalletError};
+use crate::{
+    error::NetError, protocol::error::ProtocolError, utill::TorError, wallet::WalletError,
+};
 
 use super::MakerBehavior;
 
@@ -38,6 +40,14 @@ pub enum MakerError {
     SpecialBehaviour(MakerBehavior),
     /// Represents a protocol-related error.
     Protocol(ProtocolError),
+    /// Tor Error
+    TorError(TorError),
+}
+
+impl From<TorError> for MakerError {
+    fn from(value: TorError) -> Self {
+        Self::TorError(value)
+    }
 }
 
 impl From<std::io::Error> for MakerError {

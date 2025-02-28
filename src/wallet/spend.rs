@@ -38,7 +38,7 @@ impl Wallet {
     /// - If [Destination::Sweep] is used, the function creates a transaction for the maximum possible
     ///   value to the specified Address.
     /// - If [Destination::Multi] is used, a custom value is sent, and any remaining funds
-    ///    are held in a change address, if applicable.
+    ///   are held in a change address, if applicable.
     pub fn spend_from_wallet(
         &mut self,
         feerate: f64,

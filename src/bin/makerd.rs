@@ -58,20 +58,18 @@ fn main() -> Result<(), MakerError> {
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
 
-    #[cfg(feature = "tor")]
-    let connection_type = if cfg!(feature = "integration-test") {
-        ConnectionType::CLEARNET
-    } else {
-        ConnectionType::TOR
-    };
+    #[cfg(not(feature = "integration-test"))]
+    let connection_type = ConnectionType::TOR;
 
-    #[cfg(not(feature = "tor"))]
+    #[cfg(feature = "integration-test")]
     let connection_type = ConnectionType::CLEARNET;
 
     let maker = Arc::new(Maker::init(
         args.data_directory,
         args.wallet_name,
         Some(rpc_config),
+        None,
+        None,
         None,
         None,
         None,

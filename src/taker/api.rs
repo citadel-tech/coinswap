@@ -12,15 +12,13 @@ use std::{
     collections::{HashMap, HashSet},
     io::BufWriter,
     net::TcpStream,
-    path::{Path, PathBuf},
-    process::Child,
+    path::PathBuf,
     thread::sleep,
     time::{Duration, Instant},
 };
 
 use bitcoind::bitcoincore_rpc::RpcApi;
 
-#[cfg(feature = "tor")]
 use socks::Socks5Stream;
 
 use bitcoin::{
@@ -55,9 +53,6 @@ use crate::{
         WalletSwapCoin, WatchOnlySwapCoin,
     },
 };
-
-#[cfg(feature = "tor")]
-use crate::tor::kill_tor_handles;
 
 // Default values for Taker configurations
 pub(crate) const REFUND_LOCKTIME: u16 = 20;
@@ -173,7 +168,6 @@ pub struct Taker {
     offerbook: OfferBook,
     ongoing_swap_state: OngoingSwapState,
     behavior: TakerBehavior,
-    tor_handle: Option<Child>,
     data_dir: PathBuf,
 }
 
@@ -186,15 +180,6 @@ impl Drop for Taker {
         log::info!("offerbook data saved to disk.");
         self.wallet.save_to_disk().unwrap();
         log::info!("Wallet data saved to disk.");
-
-        if !cfg!(feature = "tor") {
-            assert!(self.tor_handle.is_none(), "Tor handle should not exist")
-        }
-
-        #[cfg(feature = "tor")]
-        if let Some(handle) = &mut self.tor_handle {
-            kill_tor_handles(handle);
-        }
     }
 }
 
@@ -219,6 +204,8 @@ impl Taker {
         wallet_file_name: Option<String>,
         rpc_config: Option<RPCConfig>,
         behavior: TakerBehavior,
+        control_port: Option<u16>,
+        tor_auth_password: Option<String>,
         connection_type: Option<ConnectionType>,
     ) -> Result<Taker, TakerError> {
         // Get provided data directory or the default data directory.
@@ -249,6 +236,13 @@ impl Taker {
 
         if let Some(connection_type) = connection_type {
             config.connection_type = connection_type;
+        }
+
+        config.control_port = control_port.unwrap_or(config.control_port);
+        config.tor_auth_password =
+            tor_auth_password.unwrap_or_else(|| config.tor_auth_password.clone());
+        if matches!(connection_type, Some(ConnectionType::TOR)) {
+            check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
 
         config.write_to_file(&data_dir.join("config.toml"))?;
@@ -288,7 +282,6 @@ impl Taker {
             offerbook,
             ongoing_swap_state: OngoingSwapState::default(),
             behavior,
-            tor_handle: None,
             data_dir,
         })
     }
@@ -305,50 +298,7 @@ impl Taker {
 
     ///  Does the coinswap process
     pub fn do_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
-        self.tor_handle = self.setup_tor()?;
         self.send_coinswap(swap_params)
-    }
-
-    fn setup_tor(&self) -> Result<Option<Child>, TakerError> {
-        match self.config.connection_type {
-            ConnectionType::CLEARNET => Ok(None),
-            #[cfg(feature = "tor")]
-            ConnectionType::TOR => {
-                let tor_dir = self.data_dir.join("tor");
-                let tor_log_file = tor_dir.join("log");
-
-                // Hard error if previous log file can't be removed, as monitor_log_for_completion doesn't work with existing file.
-                // Tell the user to manually delete the file and restart.
-                if tor_log_file.exists() {
-                    if let Err(e) = std::fs::remove_file(&tor_log_file) {
-                        log::error!(
-                        "Error removing previous tor log. Please delete the file and restart. | {:?}",
-                        tor_log_file
-                    );
-                        return Err(e.into());
-                    } else {
-                        log::info!("Previous tor log file deleted succesfully");
-                    }
-                }
-
-                let handle = Some(crate::tor::spawn_tor(
-                    self.config.socks_port,
-                    self.config.network_port,
-                    tor_dir.to_str().unwrap().to_owned(),
-                )?);
-
-                if let Err(e) =
-                    monitor_log_for_completion(&tor_log_file, "Bootstrapped 100% (done): Done")
-                {
-                    log::error!("Error monitoring taker log file. Try removing the tor log file {:?} and try again. | {}", tor_log_file, e);
-                    return Err(e.into());
-                }
-
-                log::info!("tor is ready!");
-
-                Ok(handle)
-            }
-        }
     }
 
     /// Perform a coinswap round with given [SwapParams]. The Taker will try to perform swap with makers
@@ -986,7 +936,6 @@ impl Taker {
         let address = this_maker.address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(address)?,
-            #[cfg(feature = "tor")]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 address.as_str(),
@@ -1462,7 +1411,6 @@ impl Taker {
 
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            #[cfg(feature = "tor")]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
@@ -1551,7 +1499,6 @@ impl Taker {
         let maker_addr_str = maker_address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            #[cfg(feature = "tor")]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
@@ -1729,7 +1676,6 @@ impl Taker {
         let maker_addr_str = maker_address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            #[cfg(feature = "tor")]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
@@ -2076,29 +2022,14 @@ impl Taker {
                     self.config.directory_server_address.clone()
                 }
             }
-            #[cfg(feature = "tor")]
-            ConnectionType::TOR => {
-                if cfg!(feature = "integration-test") {
-                    let tor_dir = Path::new("/tmp/coinswap/dns/tor");
-
-                    let hostname = get_tor_hostname(tor_dir)?;
-                    log::info!("---------------hostname : {:?}", hostname);
-                    format!("{}:{}", hostname, 8080)
-                } else {
-                    self.config.directory_server_address.clone()
-                }
-            }
+            ConnectionType::TOR => self.config.directory_server_address.clone(),
         };
 
-        let socks_port = if cfg!(feature = "tor") {
-            if self.config.connection_type == ConnectionType::CLEARNET {
-                None
-            } else {
-                Some(self.config.socks_port)
-            }
-        } else {
-            None
-        };
+        #[cfg(not(feature = "integration-test"))]
+        let socks_port = Some(self.config.socks_port);
+
+        #[cfg(feature = "integration-test")]
+        let socks_port = None;
 
         log::info!("Fetching addresses from DNS: {}", dns_addr);
 
@@ -2149,7 +2080,6 @@ impl Taker {
     /// fetches only the offer data from DNS and returns the updated Offerbook.
     /// Used for taker cli app, in `fetch-offers` command.
     pub fn fetch_offers(&mut self) -> Result<&OfferBook, TakerError> {
-        self.tor_handle = self.setup_tor()?;
         self.sync_offerbook()?;
         Ok(&self.offerbook)
     }
@@ -2164,7 +2094,6 @@ impl Taker {
         let address = maker_addr.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(address)?,
-            #[cfg(feature = "tor")]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 address.as_str(),
