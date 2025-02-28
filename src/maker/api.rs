@@ -359,7 +359,8 @@ impl Maker {
             let wallet_read = self.get_wallet().read()?;
 
             wallet_read
-                .get_fidelity_bonds()
+                .store
+                .fidelity_bond
                 .iter()
                 .filter_map(|(i, (bond, _, _))| {
                     if bond.conf_height.is_none() && bond.cert_expiry.is_none() {

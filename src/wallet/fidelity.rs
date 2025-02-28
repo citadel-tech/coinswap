@@ -142,23 +142,20 @@ impl FidelityBond {
     }
 
     /// Generate the bond's certificate hash.
-    pub(crate) fn generate_cert_hash(&self, addr: &str) -> Result<sha256d::Hash, FidelityError> {
-        let cert_msg_str = format!(
-            "fidelity-bond-cert|{}|{}|{}|{}|{}|{}",
-            self.outpoint,
-            self.pubkey,
-            self.cert_expiry.ok_or(FidelityError::BondDoesNotExist)?, // TODO: Should We panic or propagate the error here?
-            self.lock_time,
-            self.amount,
-            addr
-        );
-        let cert_msg = cert_msg_str.as_bytes();
-        let mut btc_signed_msg = Vec::<u8>::new();
-        btc_signed_msg.extend("\x18Bitcoin Signed Message:\n".as_bytes());
-        btc_signed_msg.push(cert_msg.len() as u8);
-        btc_signed_msg.extend(cert_msg);
+    pub(crate) fn generate_cert_hash(&self, addr: &str) -> Option<sha256d::Hash> {
+        self.cert_expiry.map(|expiry| {
+            let cert_msg_str = format!(
+                "fidelity-bond-cert|{}|{}|{}|{}|{}|{}",
+                self.outpoint, self.pubkey, expiry, self.lock_time, self.amount, addr
+            );
+            let cert_msg = cert_msg_str.as_bytes();
+            let mut btc_signed_msg = Vec::<u8>::new();
+            btc_signed_msg.extend("\x18Bitcoin Signed Message:\n".as_bytes());
+            btc_signed_msg.push(cert_msg.len() as u8);
+            btc_signed_msg.extend(cert_msg);
 
-        Ok(sha256d::Hash::hash(&btc_signed_msg))
+            sha256d::Hash::hash(&btc_signed_msg)
+        })
     }
 
     /// Calculate the expiry value. This depends on the bond's confirmation height
@@ -174,18 +171,13 @@ impl Wallet {
         &self.store.fidelity_bond
     }
 
-    /// Get a mutable reference to the fidelity bond store.
-    /// TODO: Should we increase the public visibility of  `fidelity_bonds` field of `WalletStore` to  pub(crate) -> this would help in preventing these api's otherwise?
-    pub fn get_fidelity_bonds_mut(&mut self) -> &mut HashMap<u32, (FidelityBond, ScriptBuf, bool)> {
-        &mut self.store.fidelity_bond
-    }
-
     /// Display the fidelity bonds
     pub fn display_fidelity_bonds(&self) -> Result<String, WalletError> {
         let current_block = self.rpc.get_block_count()? as u32;
 
         let serialized: Vec<serde_json::Value> = self
-            .get_fidelity_bonds()
+            .store
+            .fidelity_bond
             .iter()
             .map(|(index, (bond, _, _))| {
                 // assuming that lock_time is always in height and never in seconds.
@@ -455,7 +447,9 @@ impl Wallet {
 
         let fidelity_privkey = self.get_fidelity_keypair(index)?.secret_key();
 
-        let cert_hash = bond.generate_cert_hash(maker_addr)?;
+        let cert_hash = bond
+            .generate_cert_hash(maker_addr)
+            .expect("Bond is not yet confirmed");
 
         let secp = Secp256k1::new();
         let cert_sig = secp.sign_ecdsa(

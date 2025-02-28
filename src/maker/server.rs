@@ -70,17 +70,17 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
         }
     };
 
-    log::info!(
-        "[{}] Server is listening at {}",
-        maker.config.network_port,
-        maker_address
-    );
-
     maker
         .as_ref()
         .track_and_update_unconfirmed_fidelity_bonds()?;
 
     setup_fidelity_bond(&maker, &maker_address)?;
+
+    log::info!(
+        "[{}] Server is listening at {}",
+        maker.config.network_port,
+        maker_address
+    );
 
     let proof = maker
         .highest_fidelity_proof
@@ -208,7 +208,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
     let highest_index = maker.get_wallet().read()?.get_highest_fidelity_index()?;
     if let Some(i) = highest_index {
         let wallet_read = maker.get_wallet().read()?;
-        let (bond, _, _) = wallet_read.get_fidelity_bonds().get(&i).unwrap();
+        let (bond, _, _) = wallet_read.store.fidelity_bond.get(&i).unwrap();
 
         let current_height = wallet_read
             .rpc

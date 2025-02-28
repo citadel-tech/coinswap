@@ -548,7 +548,10 @@ pub(crate) fn verify_fidelity_checks(
     }
 
     // Verify certificate hash
-    let expected_cert_hash = proof.bond.generate_cert_hash(addr)?;
+    let expected_cert_hash = proof
+        .bond
+        .generate_cert_hash(addr)
+        .expect("Bond is not yet confirmed");
     if proof.cert_hash != expected_cert_hash {
         return Err(FidelityError::InvalidCertHash.into());
     }
