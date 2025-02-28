@@ -163,14 +163,10 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
     // The Fee balance would look like `standard_swap` IT for this case.
 
     // Maker gets banned for being naughty.
-    match taker.config.connection_type {
-        ConnectionType::CLEARNET => {
-            assert_eq!(
-                format!("127.0.0.1:{}", 6102),
-                taker.get_bad_makers()[0].address.to_string()
-            );
-        }
-    }
+    assert_eq!(
+        format!("127.0.0.1:{}", 6102),
+        taker.get_bad_makers()[0].address.to_string()
+    );
 
     // After Swap checks:
     verify_swap_results(

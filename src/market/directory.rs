@@ -16,7 +16,6 @@ use crate::{
     wallet::{RPCConfig, WalletError},
 };
 
-#[cfg(not(feature = "integration-test"))]
 use crate::utill::{check_tor_status, get_tor_hostname};
 
 use std::{
@@ -151,15 +150,10 @@ impl Default for DirectoryServer {
             socks_port: 9050,
             control_port: 9051,
             tor_auth_password: "".to_string(),
-            connection_type: {
-                #[cfg(not(feature = "integration-test"))]
-                {
-                    ConnectionType::TOR
-                }
-                #[cfg(feature = "integration-test")]
-                {
-                    ConnectionType::CLEARNET
-                }
+            connection_type: if cfg!(feature = "integration-test") {
+                ConnectionType::CLEARNET
+            } else {
+                ConnectionType::TOR
             },
             data_dir: get_dns_dir(),
             shutdown: AtomicBool::new(false),
@@ -245,8 +239,8 @@ impl DirectoryServer {
             ),
             addresses,
         };
-        #[cfg(not(feature = "integration-test"))]
-        {
+
+        if matches!(connection_type, Some(ConnectionType::TOR)) {
             check_tor_status(config.control_port, &config.tor_auth_password)?;
         }
         Ok(config)
@@ -386,18 +380,11 @@ pub fn start_directory_server(
 
     match directory.connection_type {
         ConnectionType::CLEARNET => {}
-        #[cfg(not(feature = "integration-test"))]
         ConnectionType::TOR => {
-            #[cfg(not(feature = "integration-test"))]
-            {
-                let network_port = directory.network_port;
-
-                log::info!("tor is ready!!");
-
-                let hostname = get_tor_hostname()?;
-
-                log::info!("DNS is listening at {}:{}", hostname, network_port);
-            }
+            let network_port = directory.network_port;
+            log::info!("tor is ready!!");
+            let hostname = get_tor_hostname()?;
+            log::info!("DNS is listening at {}:{}", hostname, network_port);
         }
     }
 

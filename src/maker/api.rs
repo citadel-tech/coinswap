@@ -6,8 +6,6 @@
 //! contract broadcasts and handle idle Taker connections. Additionally, it handles recovery by broadcasting
 //! contract transactions and claiming funds after an unsuccessful swap event.
 
-#[cfg(not(feature = "integration-test"))]
-use crate::utill::check_tor_status;
 use crate::{
     protocol::{
         contract::check_hashvalues_are_equal,
@@ -15,8 +13,8 @@ use crate::{
         Hash160,
     },
     utill::{
-        get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType, DEFAULT_TX_FEE_RATE,
-        HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
+        check_tor_status, get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType,
+        DEFAULT_TX_FEE_RATE, HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
     },
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
 };
@@ -328,8 +326,7 @@ impl Maker {
         config.tor_auth_password =
             tor_auth_password.unwrap_or_else(|| config.tor_auth_password.clone());
 
-        #[cfg(not(feature = "integration-test"))]
-        {
+        if matches!(connection_type, Some(ConnectionType::TOR)) {
             check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
 

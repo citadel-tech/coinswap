@@ -18,7 +18,6 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-#[cfg(not(feature = "integration-test"))]
 use socks::Socks5Stream;
 
 use crate::{
@@ -217,7 +216,6 @@ pub fn fetch_addresses_from_dns(
                 }
                 Ok(s) => s,
             },
-            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => {
                 let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
                 match Socks5Stream::connect(socket_addrs, dns_addr.as_str()) {

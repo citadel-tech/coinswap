@@ -2,8 +2,6 @@
 
 This guide will help you prepare your system for participating in the Coinswap Live Demo. Follow these steps carefully to ensure a smooth experience during the demonstration.
 
-> **NOTE**: The Coinswap apps currently only run on Unix-based systems. macOS is not supported yet.
-
 ## System Prerequisites
 
 ### Required Software

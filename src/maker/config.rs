@@ -53,15 +53,10 @@ impl Default for MakerConfig {
             fidelity_amount: 50_000, // 50K sats for production
             #[cfg(not(feature = "integration-test"))]
             fidelity_timelock: 2160, // Approx 15 days of blocks in production
-            connection_type: {
-                #[cfg(not(feature = "integration-test"))]
-                {
-                    ConnectionType::TOR
-                }
-                #[cfg(feature = "integration-test")]
-                {
-                    ConnectionType::CLEARNET
-                }
+            connection_type: if cfg!(feature = "integration-test") {
+                ConnectionType::CLEARNET
+            } else {
+                ConnectionType::TOR
             },
         }
     }

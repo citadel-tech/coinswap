@@ -49,10 +49,6 @@ For more details on the protocol and market mechanisms, refer to the [Coinswap P
 
 
 # Run the apps
-### ❗ Important
-
-The project currently only compiles on Linux. Mac and Windows are not supported yet. To compile on Mac or Windows, consider using virtual machines.
-
 ### Dependencies
 
 Ensure you have the following dependency installed before compiling.
@@ -63,9 +59,13 @@ sudo apt install build-essential automake libtool
 
 ### **Tor Installation**  
 
-Tor is required to run CoinSwap. If you don't have Tor pre-installed, please follow the instructions in **TOR.md**.
+Tor is required to run CoinSwap. If you don't have Tor pre-installed, please follow the instructions in the [Tor guide](./docs/app%20demos/tor.md).
 
 The project also requires working `rust` and `cargo` installation to compile. Precompile binaries will be available soon. Cargo can be installed from [here](https://www.rust-lang.org/learn/get-started).
+
+### Bitcoind Setup
+
+The apps also requires a fully synced, non-prunded `bitcoind` node with RPC access on Testnet4 with `-txindex` enabled. Follow the [guide here](./docs/app%20demos/bitcoind.md) for setup instructions.
 
 ### Build and Run the Apps
 ```console
@@ -89,11 +89,6 @@ makerd --help
 maker-cli --help
 taker --help
 ```
-
-Setup Tor in your system following the [Tor Guide](./docs/app%20demos/TOR.md).
-
-The apps also requires a fully synced, non-prunded `bitcoind` node with RPC access on Testnet4 with `-txindex` enabled. Follow the [guide here](./docs/app%20demos/bitcoind.md).
-
 If all is setup, then try out the `taker` app to fetch current market offers.
 ```console
 taker fetch-offers`

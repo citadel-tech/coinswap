@@ -19,7 +19,6 @@ use std::{
 
 use bitcoind::bitcoincore_rpc::RpcApi;
 
-#[cfg(not(feature = "integration-test"))]
 use socks::Socks5Stream;
 
 use bitcoin::{
@@ -242,8 +241,7 @@ impl Taker {
         config.control_port = control_port.unwrap_or(config.control_port);
         config.tor_auth_password =
             tor_auth_password.unwrap_or_else(|| config.tor_auth_password.clone());
-        #[cfg(not(feature = "integration-test"))]
-        {
+        if matches!(connection_type, Some(ConnectionType::TOR)) {
             check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
 
@@ -938,7 +936,6 @@ impl Taker {
         let address = this_maker.address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(address)?,
-            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 address.as_str(),
@@ -1414,7 +1411,6 @@ impl Taker {
 
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
@@ -1503,7 +1499,6 @@ impl Taker {
         let maker_addr_str = maker_address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
@@ -1681,7 +1676,6 @@ impl Taker {
         let maker_addr_str = maker_address.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
@@ -2028,7 +2022,6 @@ impl Taker {
                     self.config.directory_server_address.clone()
                 }
             }
-            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => self.config.directory_server_address.clone(),
         };
 
@@ -2101,7 +2094,6 @@ impl Taker {
         let address = maker_addr.to_string();
         let mut socket = match self.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(address)?,
-            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 address.as_str(),

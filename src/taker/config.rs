@@ -29,15 +29,10 @@ impl Default for TakerConfig {
             tor_auth_password: "".to_string(),
             directory_server_address:
                 "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080".to_string(),
-            connection_type: {
-                #[cfg(not(feature = "integration-test"))]
-                {
-                    ConnectionType::TOR
-                }
-                #[cfg(feature = "integration-test")]
-                {
-                    ConnectionType::CLEARNET
-                }
+            connection_type: if cfg!(feature = "integration-test") {
+                ConnectionType::CLEARNET
+            } else {
+                ConnectionType::TOR
             },
         }
     }

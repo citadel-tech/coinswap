@@ -174,27 +174,10 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     // | **Maker16102** | 0                                        |
 
     // Maker gets banned for being naughty.
-    match taker.config.connection_type {
-        ConnectionType::CLEARNET => {
-            assert_eq!(
-                format!("127.0.0.1:{}", 6102),
-                taker.get_bad_makers()[0].address.to_string()
-            );
-        }
-        #[cfg(not(feature = "integration-test"))]
-        ConnectionType::TOR => {
-            let onion_addr_path =
-                PathBuf::from(format!("/tmp/tor-rust-maker{}/hs-dir/hostname", 6102));
-            let mut file = File::open(onion_addr_path).unwrap();
-            let mut onion_addr: String = String::new();
-            file.read_to_string(&mut onion_addr).unwrap();
-            onion_addr.pop();
-            assert_eq!(
-                format!("{}:{}", onion_addr, 6102),
-                taker.get_bad_makers()[0].address.to_string()
-            );
-        }
-    }
+    assert_eq!(
+        format!("127.0.0.1:{}", 6102),
+        taker.get_bad_makers()[0].address.to_string()
+    );
 
     // After Swap checks:
     verify_swap_results(

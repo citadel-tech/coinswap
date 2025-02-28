@@ -73,7 +73,6 @@ pub enum ConnectionType {
     /// Represents a TOR connection type.
     ///
     /// This variant is only available when the `tor` feature is enabled.
-    #[cfg(not(feature = "integration-test"))]
     TOR,
 
     /// Represents a Clearnet connection type.
@@ -85,7 +84,6 @@ impl FromStr for ConnectionType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            #[cfg(not(feature = "integration-test"))]
             "tor" => Ok(ConnectionType::TOR),
             "clearnet" => Ok(ConnectionType::CLEARNET),
             _ => Err(NetError::InvalidAppNetwork),
@@ -96,7 +94,6 @@ impl FromStr for ConnectionType {
 impl fmt::Display for ConnectionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            #[cfg(not(feature = "integration-test"))]
             ConnectionType::TOR => write!(f, "tor"),
             ConnectionType::CLEARNET => write!(f, "clearnet"),
         }
@@ -610,7 +607,6 @@ impl From<std::io::Error> for TorError {
     }
 }
 
-#[cfg(not(feature = "integration-test"))]
 pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), TorError> {
     use std::io::BufRead;
     let mut stream = TcpStream::connect(format!("127.0.0.1:{}", control_port))?;
@@ -638,9 +634,8 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
     Ok(())
 }
 
-#[cfg(not(feature = "integration-test"))]
 pub(crate) fn get_tor_hostname() -> Result<String, TorError> {
-    let hostname = fs::read_to_string("/var/lib/tor/coinswap/hostname".to_string())?;
+    let hostname = fs::read_to_string("/var/lib/tor/coinswap/hostname")?;
 
     log::info!("Tor Hidden Service Hostname: {}", hostname);
 

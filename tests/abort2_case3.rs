@@ -181,14 +181,10 @@ fn maker_drops_after_sending_senders_sigs() {
     // | **Maker16102** | 3,000                              | 768                 | 3,000              | 6,768                      |
 
     // Maker6102 gets banned for being naughty.
-    match taker.config.connection_type {
-        ConnectionType::CLEARNET => {
-            assert_eq!(
-                format!("127.0.0.1:{}", 6102),
-                taker.get_bad_makers()[0].address.to_string()
-            );
-        }
-    }
+    assert_eq!(
+        format!("127.0.0.1:{}", 6102),
+        taker.get_bad_makers()[0].address.to_string()
+    );
 
     // After Swap checks:
     verify_swap_results(

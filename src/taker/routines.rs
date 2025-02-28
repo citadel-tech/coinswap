@@ -7,7 +7,6 @@
 //! for communication between taker and maker.
 
 use serde::{Deserialize, Serialize};
-#[cfg(not(feature = "integration-test"))]
 use socks::Socks5Stream;
 use std::{net::TcpStream, thread::sleep, time::Duration};
 
@@ -440,7 +439,6 @@ fn download_maker_offer_attempt_once(
     log::info!("Attempting to download Offer from {}", maker_addr);
     let mut socket = match config.connection_type {
         ConnectionType::CLEARNET => TcpStream::connect(&maker_addr)?,
-        #[cfg(not(feature = "integration-test"))]
         ConnectionType::TOR => Socks5Stream::connect(
             format!("127.0.0.1:{}", config.socks_port).as_str(),
             maker_addr.as_ref(),
