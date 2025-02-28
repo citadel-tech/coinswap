@@ -66,7 +66,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<Option<Child>, MakerError> {
         }
         #[cfg(not(feature = "integration-test"))]
         ConnectionType::TOR => {
-            let maker_hostname = get_tor_hostname(format!("{:?}/tor", maker.data_dir).as_str())?;
+            let maker_hostname = get_tor_hostname()?;
             let maker_address = format!("{}:{}", maker_hostname, maker.config.network_port);
 
             let dns_address = maker.config.directory_server_address.clone();

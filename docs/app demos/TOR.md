@@ -104,18 +104,22 @@ A Hidden Service lets you host a `.onion` website or server.
 ### **Basic Hidden Service (Port Forwarding)**
 
 To configure a hidden service, add the following to your `torrc` file:  
-
-**For Maker:**  
+### Linux
 ```ini
-HiddenServiceDir ~/.coinswap/maker/tor
+HiddenServiceDir /var/lib/tor/coinswap/
 HiddenServicePort 6102 127.0.0.1:6102
-```  
+```
 
-**For Taker:**  
-```ini
-HiddenServiceDir ~/.coinswap/taker/tor
+### MacOs
+```bash
+HiddenServiceDir /opt/homebrew/var/lib/tor/hidden_service
 HiddenServicePort 6102 127.0.0.1:6102
-```  
+```
+Provide required permissions
+```bash
+create sudo mkdir -p /opt/homebrew/var/lib/tor/hidden_service
+chmod 700 hidden_service
+```
 
 - **Service Port (Virtual Port)**: `6102` (Clients use this to connect to the hidden service)
 - **Target Port**: `127.0.0.1:6102` (Local port where traffic is redirected)

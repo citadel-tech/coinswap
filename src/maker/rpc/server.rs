@@ -109,7 +109,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             } else {
                 #[cfg(not(feature = "integration-test"))]
                 {
-                    let hostname = get_tor_hostname(format!("{:?}/tor", maker.data_dir).as_str())?;
+                    let hostname = get_tor_hostname()?;
                     let address = format!("{}:{}", hostname, maker.config.network_port);
 
                     RpcMsgResp::GetTorAddressResp(address)

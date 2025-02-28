@@ -394,7 +394,7 @@ pub fn start_directory_server(
 
                 log::info!("tor is ready!!");
 
-                let hostname = get_tor_hostname(format!("{:?}/tor", directory.data_dir).as_str())?;
+                let hostname = get_tor_hostname()?;
 
                 log::info!("DNS is listening at {}:{}", hostname, network_port);
             }

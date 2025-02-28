@@ -639,8 +639,8 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
 }
 
 #[cfg(not(feature = "integration-test"))]
-pub(crate) fn get_tor_hostname(tor_directory_path: &str) -> Result<String, TorError> {
-    let hostname = fs::read_to_string(tor_directory_path)?;
+pub(crate) fn get_tor_hostname() -> Result<String, TorError> {
+    let hostname = fs::read_to_string("/var/lib/tor/coinswap/hostname".to_string())?;
 
     log::info!("Tor Hidden Service Hostname: {}", hostname);
 
