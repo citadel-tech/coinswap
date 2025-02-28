@@ -635,11 +635,18 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
 }
 
 pub(crate) fn get_tor_hostname() -> Result<String, TorError> {
-    let hostname = fs::read_to_string("/var/lib/tor/coinswap/hostname")?;
+    let path = if cfg!(target_os = "macos") {
+        "/opt/homebrew/var/lib/tor/coinswap/hostname"
+    } else {
+        "/var/lib/tor/coinswap/hostname"
+    };
+
+    let hostname = fs::read_to_string(path)?;
+    let hostname = hostname.trim().to_string();
 
     log::info!("Tor Hidden Service Hostname: {}", hostname);
 
-    Ok(hostname.trim().to_string())
+    Ok(hostname)
 }
 
 #[cfg(test)]
