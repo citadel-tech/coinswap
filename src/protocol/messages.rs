@@ -253,6 +253,32 @@ pub(crate) struct Offer {
     pub(crate) tweakable_point: PublicKey,
     pub(crate) fidelity: FidelityProof,
 }
+impl Display for Offer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "offer data received:\n\
+            - Base fee: {}\n\
+            - Percent Fee on total amount: {}\n\
+            - Time relative fee: {}\n\
+            - Required Confirms: {}\n\
+            - Minimum locktime: {}\n\
+            - Max size: {}\n\
+            - Min size: {}\n\
+            - Tweakable Point: {}\n\
+            - Fidelity Proof: {:?}",
+            self.base_fee,
+            self.amount_relative_fee_pct,
+            self.time_relative_fee_pct,
+            self.required_confirms,
+            self.minimum_locktime,
+            self.max_size,
+            self.min_size,
+            self.tweakable_point,
+            self.fidelity
+        )
+    }
+}
 
 /// Contract Tx signatures provided by a Sender of a Coinswap.
 #[derive(Debug, Serialize, Deserialize)]
