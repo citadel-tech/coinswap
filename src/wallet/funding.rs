@@ -37,7 +37,7 @@ impl Wallet {
         destinations: &[Address],
         fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
-        let ret = self.create_funding_txes_random_amounts(coinswap_amount, destinations, fee_rate);
+        let ret = self.create_funding_txes_branching(coinswap_amount, destinations, fee_rate);
         if ret.is_ok() {
             log::info!(target: "wallet", "created funding txes with random amounts");
             return ret;
@@ -120,6 +120,124 @@ impl Wallet {
         assert_eq!(output_values.iter().sum::<u64>(), total_amount.to_sat());
 
         Ok(output_values)
+    }
+
+    fn create_funding_txes_branching(
+        &self,
+        coinswap_amount: Amount,
+        destinations: &[Address],
+        fee_rate: Amount,
+    ) -> Result<CreateFundingTxesResult, WalletError> {
+        let num_branches = destinations.len();
+
+        // Generate change addresses for each branch
+        let change_addresses = self.get_next_internal_addresses(num_branches as u32)?;
+
+        // Generate split amounts per branch
+        let output_values = Wallet::generate_amount_fractions(num_branches, coinswap_amount)?;
+
+        // Lock unspendable UTXOs
+        self.lock_unspendable_utxos()?;
+
+        let mut funding_txes = Vec::<Transaction>::new();
+        let mut payment_output_positions = Vec::<u32>::new();
+        let mut total_miner_fee = 0;
+
+        // Get UTXO sets for each branch
+        let selected_utxos_per_branch = self.coin_select_multiple(coinswap_amount, num_branches)?;
+
+        for ((utxo_set, &output_value), (destination, change_address)) in selected_utxos_per_branch
+            .iter()
+            .zip(output_values.iter())
+            .zip(destinations.iter().zip(change_addresses.iter()))
+        {
+            // Create a single output for this destination
+            let mut tx_outs = vec![TxOut {
+                value: Amount::from_sat(output_value),
+                script_pubkey: destination.script_pubkey(),
+            }];
+
+            let fee = fee_rate;
+
+            // Calculate total input amount
+            let total_input_amount = utxo_set.iter().fold(Amount::ZERO, |acc, (unspent, _)| {
+                acc.checked_add(unspent.amount)
+                    .expect("Amount sum overflowed")
+            });
+
+            let change_amount =
+                total_input_amount.checked_sub(Amount::from_sat(output_value) + fee);
+
+            // Add change output if applicable
+            if let Some(change) = change_amount {
+                tx_outs.push(TxOut {
+                    value: change,
+                    script_pubkey: change_address.script_pubkey(),
+                });
+            }
+
+            // Create transaction inputs from selected UTXOs
+            let tx_inputs = utxo_set
+                .iter()
+                .map(|(unspent, _spend_info)| TxIn {
+                    previous_output: OutPoint::new(unspent.txid, unspent.vout),
+                    sequence: Sequence(0),
+                    witness: Witness::new(),
+                    script_sig: ScriptBuf::new(),
+                })
+                .collect::<Vec<_>>();
+
+            // Set locktime for anti-fee-sniping
+            let current_height = self.rpc.get_block_count()?;
+            let lock_time = LockTime::from_height(current_height as u32)?;
+
+            let actual_fee = total_input_amount
+                - (tx_outs.iter().fold(Amount::ZERO, |a, txo| {
+                    a.checked_add(txo.value)
+                        .expect("Output amount summation overflowed")
+                }));
+
+            let mut funding_tx = Transaction {
+                input: tx_inputs,
+                output: tx_outs,
+                lock_time,
+                version: Version::TWO,
+            };
+
+            // Sign the transaction using UTXOSpendInfo
+            let mut input_info = utxo_set.iter().map(|(_, spend_info)| spend_info.clone());
+            self.sign_transaction(&mut funding_tx, &mut input_info)?;
+
+            let tx_size = funding_tx.weight().to_vbytes_ceil();
+            let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
+
+            log::info!(
+                "Created Branching Funding tx, txid: {} | Feerate: {:.2} sats/vb",
+                funding_tx.compute_txid(),
+                actual_feerate
+            );
+
+            // Lock UTXOs
+            self.rpc.lock_unspent(
+                &funding_tx
+                    .input
+                    .iter()
+                    .map(|vin| vin.previous_output)
+                    .collect::<Vec<OutPoint>>(),
+            )?;
+
+            let payment_pos = 0;
+
+            funding_txes.push(funding_tx);
+            payment_output_positions.push(payment_pos);
+            total_miner_fee += fee.to_sat();
+        }
+
+        Ok(CreateFundingTxesResult {
+            funding_txes,
+            payment_output_positions,
+            total_miner_fee,
+        })
     }
 
     /// This function creates funding txes by
@@ -544,5 +662,35 @@ impl Wallet {
                 }),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_generate_amount_fractions_without_correction() {
+        let count: usize = 3;
+        let total_amount: Amount = Amount::from_btc(0.15).unwrap();
+        let lower_limit: u64 = 5000;
+        let fractions =
+            Wallet::generate_amount_fractions_without_correction(count, total_amount, lower_limit)
+                .unwrap();
+        let total: f32 = fractions.iter().sum();
+
+        assert_eq!(fractions.len(), 3);
+        assert_eq!(1.0, total);
+    }
+
+    #[test]
+    fn test_generate_amount_fractions() {
+        let count: usize = 3;
+        let total_amount: Amount = Amount::from_btc(0.15).unwrap();
+        let expected_total_amount_sats = total_amount.to_sat();
+
+        let values = Wallet::generate_amount_fractions(count, total_amount).unwrap();
+        let total_values: u64 = values.iter().sum();
+        assert_eq!(expected_total_amount_sats, total_values);
     }
 }
