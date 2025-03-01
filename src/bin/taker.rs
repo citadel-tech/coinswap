@@ -4,13 +4,12 @@ use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
     utill::{
-        parse_proxy_auth, setup_taker_logger, ConnectionType, DEFAULT_TX_FEE_RATE,
-        REQUIRED_CONFIRMS, UTXO,
+        parse_proxy_auth, randomize_amount, setup_taker_logger, ConnectionType,
+        DEFAULT_TX_FEE_RATE, REQUIRED_CONFIRMS, UTXO,
     },
     wallet::{Destination, RPCConfig},
 };
 use log::LevelFilter;
-use rand::Rng;
 use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};
 /// A simple command line app to operate as coinswap client.
@@ -260,11 +259,4 @@ fn main() -> Result<(), TakerError> {
     }
 
     Ok(())
-}
-
-fn randomize_amount(amount: u64) -> u64 {
-    let mut rng = rand::rng();
-    let percentage: f64 = rng.random_range(-0.05..=0.05);
-    let variation = (amount as f64 * percentage).round() as i64;
-    (amount as i64 + variation).max(0) as u64
 }

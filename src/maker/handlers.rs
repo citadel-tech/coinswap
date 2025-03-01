@@ -38,7 +38,7 @@ use crate::{
         },
         Hash160,
     },
-    utill::{DEFAULT_TX_FEE_RATE, REQUIRED_CONFIRMS},
+    utill::{randomize_amount, DEFAULT_TX_FEE_RATE, REQUIRED_CONFIRMS},
     wallet::{IncomingSwapCoin, SwapCoin, WalletError, WalletSwapCoin},
 };
 
@@ -361,7 +361,7 @@ impl Maker {
         let calc_coinswap_fees = calculate_coinswap_fee(
             incoming_amount,
             message.refund_locktime,
-            BASE_FEE,
+            randomize_amount(BASE_FEE),
             AMOUNT_RELATIVE_FEE_PCT,
             TIME_RELATIVE_FEE_PCT,
         );
