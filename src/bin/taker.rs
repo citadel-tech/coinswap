@@ -10,6 +10,7 @@ use coinswap::{
     wallet::{Destination, RPCConfig},
 };
 use log::LevelFilter;
+use rand::Rng;
 use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};
 /// A simple command line app to operate as coinswap client.
@@ -243,8 +244,9 @@ fn main() -> Result<(), TakerError> {
             }
         }
         Commands::Coinswap { makers, amount } => {
+            let random_amount = randomize_amount(amount);
             let swap_params = SwapParams {
-                send_amount: Amount::from_sat(amount),
+                send_amount: Amount::from_sat(random_amount),
                 maker_count: makers,
                 tx_count: 1,
                 required_confirms: REQUIRED_CONFIRMS,
@@ -258,4 +260,11 @@ fn main() -> Result<(), TakerError> {
     }
 
     Ok(())
+}
+
+fn randomize_amount(amount: u64) -> u64 {
+    let mut rng = rand::rng();
+    let percentage: f64 = rng.random_range(-0.05..=0.05);
+    let variation = (amount as f64 * percentage).round() as i64;
+    (amount as i64 + variation).max(0) as u64
 }
