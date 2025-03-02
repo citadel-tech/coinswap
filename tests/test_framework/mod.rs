@@ -538,6 +538,7 @@ impl TestFramework {
             None,
             None,
             Some(connection_type),
+            false,
         )
         .unwrap();
 
@@ -562,6 +563,7 @@ impl TestFramework {
                         port.1,
                         Some(connection_type),
                         behavior,
+                        AtomicBool::new(false),
                     )
                     .unwrap(),
                 )

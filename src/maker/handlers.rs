@@ -7,7 +7,7 @@
 //! The file includes functions to validate and sign contract transactions, verify proof of funding, and handle unexpected recovery scenarios.
 //! Implements the core functionality for a Maker in a Bitcoin coinswap protocol.
 
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{collections::HashMap, sync::atomic::Ordering::Relaxed, sync::Arc, time::Instant};
 
 use bitcoin::{
     hashes::Hash,
@@ -358,13 +358,17 @@ impl Maker {
                 Ok::<_, MakerError>(acc + txout.value.to_sat())
             })?;
 
-        let calc_coinswap_fees = calculate_coinswap_fee(
+        let mut calc_coinswap_fees = calculate_coinswap_fee(
             incoming_amount,
             message.refund_locktime,
-            randomize_amount(BASE_FEE),
+            BASE_FEE,
             AMOUNT_RELATIVE_FEE_PCT,
             TIME_RELATIVE_FEE_PCT,
         );
+
+        if self.randomize_fees.load(Relaxed) {
+            calc_coinswap_fees = randomize_amount(calc_coinswap_fees);
+        }
 
         // NOTE: The `contract_feerate` currently represents the hardcoded `MINER_FEE` of a transaction, not the fee rate.
         // This will remain unchanged to avoid modifying the structure of the [ProofOfFunding] message.
