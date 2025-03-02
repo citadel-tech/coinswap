@@ -5,7 +5,10 @@ use coinswap::{
     utill::{parse_proxy_auth, setup_maker_logger, ConnectionType},
     wallet::RPCConfig,
 };
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{atomic::AtomicBool, Arc},
+};
 /// Coinswap Maker Server
 ///
 /// The server requires a Bitcoin Core RPC connection running in Testnet4. It requires some starting balance, around 50,000 sats for Fidelity + Swap Liquidity (suggested 50,000 sats).
@@ -46,6 +49,9 @@ struct Cli {
     /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with given name. Default: maker-wallet
     #[clap(name = "WALLET", long, short = 'w')]
     pub(crate) wallet_name: Option<String>,
+    /// Randomize the maker fee (+/- 5%), default: false
+    #[clap(name = "randomize-fee", long)]
+    pub(crate) randomize_fee: bool,
 }
 
 fn main() -> Result<(), MakerError> {
@@ -75,6 +81,7 @@ fn main() -> Result<(), MakerError> {
         None,
         Some(connection_type),
         MakerBehavior::Normal,
+        AtomicBool::new(args.randomize_fee),
     )?);
 
     start_maker_server(maker)?;

@@ -242,6 +242,8 @@ pub struct Maker {
     pub(crate) data_dir: PathBuf,
     /// Thread pool for managing all spawned threads
     pub(crate) thread_pool: Arc<ThreadPool>,
+    /// A flag to randomize fees
+    pub randomize_fees: AtomicBool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -270,6 +272,7 @@ impl Maker {
         socks_port: Option<u16>,
         connection_type: Option<ConnectionType>,
         behavior: MakerBehavior,
+        randomize_fees: AtomicBool,
     ) -> Result<Self, MakerError> {
         // Get provided data directory or the default data directory.
         let data_dir = data_dir.unwrap_or(get_maker_dir());
@@ -340,6 +343,7 @@ impl Maker {
             is_setup_complete: AtomicBool::new(false),
             data_dir,
             thread_pool: Arc::new(ThreadPool::new(network_port)),
+            randomize_fees,
         })
     }
 
