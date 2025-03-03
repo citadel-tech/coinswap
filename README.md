@@ -100,7 +100,7 @@ The apps can be used to run both the swap maker server and the taker client. The
 
   `makerd`: The backend server daemon. This requires continuous uptime and connection to live bitcoin core RPC. App demo [here](./docs/app%20demos/makerd.md)
   
-  `maker-cli`: The RPC controller of the server deamon. This can be used to manage the server, access internal wallet, see swap statistics, etc. App demo [here](./docs/app%20demos/maker-cli.md)
+  `maker-cli`: The RPC controller of the server daemon. This can be used to manage the server, access internal wallet, see swap statistics, etc. App demo [here](./docs/app%20demos/maker-cli.md)
   
   `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App demo [here](./docs/app%20demos/taker.md)
 
