@@ -65,7 +65,7 @@ The project also requires working `rust` and `cargo` installation to compile. Pr
 
 ### Bitcoind Setup
 
-The apps also requires a fully synced, non-prunded `bitcoind` node with RPC access on Testnet4 with `-txindex` enabled. Follow the [guide here](./docs/app%20demos/bitcoind.md) for setup instructions.
+The apps also requires a fully synced, non-pruned `bitcoind` node with RPC access on Testnet4 with `-txindex` enabled. Follow the [guide here](./docs/app%20demos/bitcoind.md) for setup instructions.
 
 ### Build and Run the Apps
 ```console
@@ -96,23 +96,23 @@ taker fetch-offers`
 If you find any problem setting up and running the apps, feel free to open an Issue.
 
 ### Apps overview
-The apps can be used to run both the swap maker server and the taker client. The maker server is suitable to run inside a full node, or *always online* system. Although shutting down the server, and using it intermittently will also work. 
+The apps can be used to run both the swap maker server and the taker client. The maker server is suitable to run inside a full node, or *always online* system. Although shutting down the server and using it intermittently will also work.
 
-  `makerd`: The backend server daemon. This requires continuous uptime and connection to live bitcoin core RPC. App demo [here](./docs/app%20demos/makerd.md)
+  `makerd`: The backend server daemon. This requires continuous uptime and connection to live Bitcoin Core RPC. App demo [here](./docs/app%20demos/makerd.md)
   
-  `maker-cli`: The RPC controler of the server deamon. This can be used to manage the server, access internal wallet, see swap statistics, etc. App demo [here](./docs/app%20demos/maker-cli.md)
+  `maker-cli`: The RPC controller of the server daemon. This can be used to manage the server, access the internal wallet, see swap statistics, etc. App demo [here](./docs/app%20demos/maker-cli.md)
   
-  `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App demo [here](./docs/app%20demos/taker.md)
+  `taker`: The swap client app. This acts as a regular Bitcoin wallet with swap capability. App demo [here](./docs/app%20demos/taker.md)
 
 ### ❗ Important
 
-Once the `makerd` server setup is complete, always stop the server with `maker-cli stop`. Avoid using `ctr+c` to ensure wallet data integrity.
+Once the `makerd` server setup is complete, always stop the server with `maker-cli stop`. Avoid using `ctrl+c` to ensure wallet data integrity.
 
-# [Dev Mode] Checkout the tests
+# [Dev Mode] Check out the tests
 
-Extensive functional testing to simulate various edge cases of the protocol, is covered. The [functional tests](./tests/) spawns 
-a toy marketplace in Bitcoin regetst and plays out various protocol situation. Functional test logs are a good way to look at simulations of various
-edge cases in the protocol, and how the taker and makers recover from failed swaps. 
+Extensive functional testing to simulate various edge cases of the protocol is covered. The [functional tests](./tests/) spawn
+a toy marketplace in Bitcoin regtest and play out various protocol situations. Functional test logs are a good way to look at simulations of various
+edge cases in the protocol, and how the taker and makers recover from failed swaps.
 
 Each test in the [tests](./tests/) folder covers a different edge-case situation and demonstrates how the taker and makers recover
 from various types of swap failures.
@@ -123,7 +123,7 @@ Run all the functional tests and see the logs:
 $ cargo test --features=integration-test -- --nocapture
 ```
 
-A rust based [`TestFramework`](./tests/test_framework/mod.rs) (Inspired from the Bitcoin Core [testframeowrk](https://github.com/bitcoin/bitcoin/tree/master/test/functional)) has been designed to easily spawn the test situations, with many makers and takers. For example checkout the simple [`standard_swap` module](./tests/standard_swap.rs) to see how to simulate a simple swap case programatically. 
+A rust based [`TestFramework`](./tests/test_framework/mod.rs) (Inspired from the Bitcoin Core [testframework](https://github.com/bitcoin/bitcoin/tree/master/test/functional)) has been designed to easily spawn the test situations, with many makers and takers. For example checkout the simple [`standard_swap` module](./tests/standard_swap.rs) to see how to simulate a simple swap case programmatically.
 
 The functional tests is a good place for potential contributors to start tinkering and gathering context.
 
@@ -157,4 +157,4 @@ The dev community lurks [here](https://discord.gg/Wz42hVmrrK).
 
 Dev discussions predominantly happen via FOSS best practices, and by using Github as the major community forum.
 
-The Issues, PRs and Discussions are where all the hard lifting happening.
+The Issues, PRs and Discussions are where all the hard lifting happens.
