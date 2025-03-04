@@ -14,8 +14,8 @@ use std::{
 use super::{error::WalletError, fidelity::FidelityBond};
 
 use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
-use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 use crate::wallet::UTXOSpendInfo;
+use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 
 /// Represents the internal data store for a Bitcoin wallet.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -43,10 +43,8 @@ pub(crate) struct WalletStore {
     pub(super) wallet_birthday: Option<u64>,
 
     // pub(super) utxo_cache: RwLock<HashMap<OutPoint, ListUnspentResultEntry>>
-
     #[serde(default)] // Ensures deserialization works if `utxo_cache` is missing
-    pub(super) utxo_cache: HashMap<OutPoint, (ListUnspentResultEntry, UTXOSpendInfo)>
-
+    pub(super) utxo_cache: HashMap<OutPoint, (ListUnspentResultEntry, UTXOSpendInfo)>,
 }
 
 impl WalletStore {
@@ -71,7 +69,6 @@ impl WalletStore {
             last_synced_height: None,
             wallet_birthday,
             utxo_cache: HashMap::new(),
-
         };
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
@@ -83,7 +80,6 @@ impl WalletStore {
 
         Ok(store)
     }
-
 
     /// Load existing file, updates it, writes it back (errors if path doesn't exist).
     pub(crate) fn write_to_disk(&self, path: &Path) -> Result<(), WalletError> {
@@ -118,7 +114,6 @@ impl WalletStore {
         Ok(store)
     }
 }
-
 
 #[cfg(test)]
 mod tests {

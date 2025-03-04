@@ -661,10 +661,11 @@ impl Wallet {
             utxos.clone()
         } else {
             log::info!("FETCHING UTXO From Cache!");
-            self.store.utxo_cache
-            .values()
-            .map(|(utxo, _spend_info)| utxo.clone())
-            .collect()
+            self.store
+                .utxo_cache
+                .values()
+                .map(|(utxo, _spend_info)| utxo.clone())
+                .collect()
         };
 
         let processed_utxos = all_utxos
@@ -838,9 +839,12 @@ impl Wallet {
     /// It will only return an unused address; i.e, an address that doesn't have a transaction associated with it.
     pub(super) fn find_hd_next_index(&self, keychain: KeychainKind) -> Result<u32, WalletError> {
         let mut max_index: i32 = -1;
-        let all_utxos = self.store.utxo_cache.values()
-        .map(|(utxo, _spend_info)| utxo.clone())
-        .collect();
+        let all_utxos = self
+            .store
+            .utxo_cache
+            .values()
+            .map(|(utxo, _spend_info)| utxo.clone())
+            .collect();
 
         let mut utxos = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
         let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
@@ -938,10 +942,9 @@ impl Wallet {
             })
             .collect::<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>();
 
-
         // Clear the existing cache
         self.store.utxo_cache.clear();
-    
+
         // Insert each processed UTXO into the cache using its OutPoint as key.
         for (utxo, spend_info) in processed_utxos {
             let outpoint = OutPoint {
@@ -949,8 +952,7 @@ impl Wallet {
                 vout: utxo.vout,
             };
             self.store.utxo_cache.insert(outpoint, (utxo, spend_info));
-        }   
-
+        }
     }
 
     /// Signs a transaction corresponding to the provided UTXO spend information.
