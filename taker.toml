@@ -8,3 +8,9 @@ directory_server_address=bhbzkndgad52ojm75w4goii7xsi6ou73fzyvorxas7swg2snlto4c4a
 connection_type= TOR
 # RPC port
 rpc_port= 8081
+
+# Control Port for application to talk to TOR
+control_port = 9051
+
+# TOR auth password in string
+tor_auth_password = yourpassword

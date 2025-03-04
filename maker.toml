@@ -14,3 +14,10 @@ fidelity_amount =  5000000
 fidelity_timelock = 26000
 # Connection type
 connection_type = TOR
+
+# Control Port for application to talk to TOR
+control_port = 9051
+
+# TOR auth password in string
+tor_auth_password = yourpassword
+

@@ -42,7 +42,7 @@ impl Default for MakerConfig {
             network_port: 6102,
             control_port: 9051,
             socks_port: 9050,
-            tor_auth_password: "".to_string(),
+            tor_auth_password: "yourpassword".to_string(),
             directory_server_address:
                 "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080".to_string(),
             #[cfg(feature = "integration-test")]
@@ -139,6 +139,8 @@ directory_server_address = {}
 fidelity_amount = {}
 fidelity_timelock = {}
 connection_type = {:?}
+control_port = {}
+tor_auth_password = {}
 ",
             self.network_port,
             self.rpc_port,
@@ -147,7 +149,9 @@ connection_type = {:?}
             self.directory_server_address,
             self.fidelity_amount,
             self.fidelity_timelock,
-            self.connection_type
+            self.connection_type,
+            self.control_port,
+            self.tor_auth_password
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
