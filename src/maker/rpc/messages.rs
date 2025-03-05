@@ -134,7 +134,7 @@ impl Display for RpcMsgResp {
             Self::Shutdown => write!(f, "Shutdown Initiated"),
             Self::FidelitySpend(txid) => write!(f, "{}", txid),
             Self::ServerError(e) => write!(f, "{}", e),
-            Self::ListBonds(v) => write!(f, "{:#?}", v),
+            Self::ListBonds(v) => write!(f, "{}", v),
         }
     }
 }

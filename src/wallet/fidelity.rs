@@ -179,17 +179,34 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
-            .map(|(index, (bond, _, _))| {
+            .map(|(index, (bond, _, is_spent))| {
                 // assuming that lock_time is always in height and never in seconds.
-                self.calculate_bond_value(*index).map(|bond_value| {
-                    serde_json::json!({
+                match self.calculate_bond_value(*index) {
+                    Ok(bond_value) => Ok(serde_json::json!({
                         "index": index,
                         "outpoint": bond.outpoint.to_string(),
                         "amount": bond.amount.to_sat(),
                         "bond-value": bond_value,
                         "expires-in": bond.lock_time.to_consensus_u32() - current_block,
-                    })
-                })
+                    })),
+                    Err(err) => {
+                        if matches!(
+                            err,
+                            WalletError::Fidelity(FidelityError::BondLocktimeExpired)
+                                | WalletError::Fidelity(FidelityError::BondAlreadySpent)
+                        ) {
+                            Ok(serde_json::json!({
+                                "index": index,
+                                "outpoint": bond.outpoint.to_string(),
+                                "amount": bond.amount.to_sat(),
+                                "is_expired": true,
+                                "is_spent": *is_spent,
+                            }))
+                        } else {
+                            Err(err)
+                        }
+                    }
+                }
             })
             .collect::<Result<Vec<serde_json::Value>, WalletError>>()?;
 
