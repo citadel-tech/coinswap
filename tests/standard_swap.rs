@@ -77,7 +77,7 @@ fn test_standard_coinswap() {
             let wallet = maker.wallet.read().unwrap();
             let all_utxos = wallet.get_all_utxo().unwrap();
 
-            let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+            let balances = wallet.get_balances().unwrap();
 
             assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
             assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
@@ -152,7 +152,7 @@ fn test_standard_coinswap() {
 
     let taker_wallet_mut = taker.get_wallet_mut();
     let swap_coins = taker_wallet_mut
-        .list_incoming_swap_coin_utxo_spend_info(None)
+        .list_incoming_swap_coin_utxo_spend_info()
         .unwrap();
 
     let addr = taker_wallet_mut.get_next_internal_addresses(1).unwrap()[0].to_owned();
@@ -170,7 +170,7 @@ fn test_standard_coinswap() {
     bitcoind.client.send_raw_transaction(&tx).unwrap();
     generate_blocks(bitcoind, 1);
 
-    let balances = taker_wallet_mut.get_balances(None).unwrap();
+    let balances = taker_wallet_mut.get_balances().unwrap();
 
     assert_eq!(balances.swap, Amount::ZERO);
     assert_eq!(balances.regular, Amount::from_btc(0.14934642).unwrap());

@@ -43,7 +43,7 @@ use crate::{
         },
         messages::ProofOfFunding,
     },
-    wallet::{IncomingSwapCoin, OutgoingSwapCoin, Wallet, WalletError},
+    wallet::{CallerType, IncomingSwapCoin, OutgoingSwapCoin, Wallet, WalletError},
 };
 
 use super::{config::MakerConfig, error::MakerError};
@@ -285,12 +285,12 @@ impl Maker {
 
         let mut wallet = if wallet_path.exists() {
             // wallet already exists , load the wallet
-            let wallet = Wallet::load(&wallet_path, &rpc_config)?;
+            let wallet = Wallet::load(&wallet_path, &rpc_config, CallerType::Maker)?;
             log::info!("Wallet file at {:?} successfully loaded.", wallet_path);
             wallet
         } else {
             // wallet doesn't exists at the given path , create a new one
-            let wallet = Wallet::init(&wallet_path, &rpc_config)?;
+            let wallet = Wallet::init(&wallet_path, &rpc_config, CallerType::Maker)?;
             log::info!("New Wallet created at : {:?}", wallet_path);
             wallet
         };

@@ -49,7 +49,7 @@ use crate::{
     taker::{config::TakerConfig, offers::OfferBook},
     utill::*,
     wallet::{
-        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
+        CallerType, IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
         WalletSwapCoin, WatchOnlySwapCoin,
     },
 };
@@ -221,12 +221,12 @@ impl Taker {
 
         let mut wallet = if wallet_path.exists() {
             // wallet already exists , load the wallet
-            let wallet = Wallet::load(&wallet_path, &rpc_config)?;
+            let wallet = Wallet::load(&wallet_path, &rpc_config, CallerType::Taker)?;
             log::info!("Wallet file at {:?} successfully loaded.", wallet_path);
             wallet
         } else {
             // wallet doesn't exists at the given path , create a new one
-            let wallet = Wallet::init(&wallet_path, &rpc_config)?;
+            let wallet = Wallet::init(&wallet_path, &rpc_config, CallerType::Taker)?;
             log::info!("New Wallet created at : {:?}", wallet_path);
             wallet
         };
