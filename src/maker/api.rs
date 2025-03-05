@@ -8,7 +8,7 @@
 
 use crate::{
     protocol::{
-        contract::check_hashvalues_are_equal,
+        contract::{check_hashvalues_are_equal, create_multisig_redeemscript},
         messages::{FidelityProof, ReqContractSigsForSender},
         Hash160,
     },
@@ -478,7 +478,6 @@ impl Maker {
                     "invalid number of inputs or outputs in contract transaction",
                 ));
             }
-
             if !self.wallet.read()?.does_prevout_match_cached_contract(
                 &txinfo.senders_contract_tx.input[0].previous_output,
                 &txinfo.senders_contract_tx.output[0].script_pubkey,
@@ -488,19 +487,22 @@ impl Maker {
                 ));
             }
 
-            let (tweakable_privkey, tweakable_pubkey) =
-                self.wallet.read()?.get_tweakable_keypair()?;
+            let (tweakable_privkey, _) = self.wallet.read()?.get_tweakable_keypair()?;
 
-            check_multisig_has_pubkey(
-                &txinfo.multisig_redeemscript,
-                &tweakable_pubkey,
-                &txinfo.multisig_nonce,
-            )?;
-
+            // Generate the maker's tweaked pubkey using the nonce
             let secp = Secp256k1::new();
+            let multisig_privkey = tweakable_privkey.add_tweak(&txinfo.multisig_nonce.into())?;
+            let maker_tweaked_pubkey = PublicKey {
+                compressed: true,
+                inner: secp256k1::PublicKey::from_secret_key(&secp, &multisig_privkey),
+            };
 
+            // Create the multisig_redeemscript from sender_pubkey and maker's tweaked pubkey
+            let multisig_redeemscript =
+                create_multisig_redeemscript(&txinfo.sender_pubkey, &maker_tweaked_pubkey);
+
+            // Generate the hashlock key
             let hashlock_privkey = tweakable_privkey.add_tweak(&txinfo.hashlock_nonce.into())?;
-
             let hashlock_pubkey = PublicKey {
                 compressed: true,
                 inner: secp256k1::PublicKey::from_secret_key(&secp, &hashlock_privkey),
@@ -520,11 +522,9 @@ impl Maker {
                 txinfo.senders_contract_tx.output[0].script_pubkey.clone(),
             )?;
 
-            let multisig_privkey = tweakable_privkey.add_tweak(&txinfo.multisig_nonce.into())?;
-
             let sig = crate::protocol::contract::sign_contract_tx(
                 &txinfo.senders_contract_tx,
-                &txinfo.multisig_redeemscript,
+                &multisig_redeemscript,
                 txinfo.funding_input_value,
                 &multisig_privkey,
             )?;
