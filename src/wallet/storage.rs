@@ -42,7 +42,7 @@ pub(crate) struct WalletStore {
 
     pub(super) wallet_birthday: Option<u64>,
 
-    // pub(super) utxo_cache: RwLock<HashMap<OutPoint, ListUnspentResultEntry>>
+    /// Maps transaction outpoints to their associated UTXO and spend information.
     #[serde(default)] // Ensures deserialization works if `utxo_cache` is missing
     pub(super) utxo_cache: HashMap<OutPoint, (ListUnspentResultEntry, UTXOSpendInfo)>,
 }

@@ -1,7 +1,0 @@
- Optimize UTXO handling with in-memory caching
-
-- Added `utxo_cache` in `WalletStore` as HashMap<OutPoint, (ListUnspentResultEntry, UTXOSpendInfo)>
-- `update_utxo_cache_internal` fn for updating the cache
-- `build_utxo_list_from_cache` to build original list of utxo from cache(mathches the output format for rpc call `list_unspent`)
-- `refresh_utxo_cache` added inside `wallet/api.rs` to refresh the cache with wallet's internal spend info
-- added wallet sync in `SendToAddress` and `ReedemFidelity`.
