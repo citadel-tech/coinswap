@@ -19,5 +19,5 @@ connection_type = TOR
 control_port = 9051
 
 # TOR auth password in string
-tor_auth_password = yourpassword
+tor_auth_password = 
 

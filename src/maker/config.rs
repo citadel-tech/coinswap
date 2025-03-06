@@ -42,7 +42,7 @@ impl Default for MakerConfig {
             network_port: 6102,
             control_port: 9051,
             socks_port: 9050,
-            tor_auth_password: "yourpassword".to_string(),
+            tor_auth_password: "".to_string(),
             directory_server_address:
                 "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080".to_string(),
             #[cfg(feature = "integration-test")]

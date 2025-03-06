@@ -149,7 +149,7 @@ impl Default for DirectoryServer {
             network_port: 8080,
             socks_port: 9050,
             control_port: 9051,
-            tor_auth_password: "yourpassword".to_string(),
+            tor_auth_password: "".to_string(),
             connection_type: if cfg!(feature = "integration-test") {
                 ConnectionType::CLEARNET
             } else {
