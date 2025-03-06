@@ -197,25 +197,14 @@ fn test_bond_registration_before_confirmation(
     );
     generate_blocks(&maker_cli.bitcoind, bond_timelock);
 
-    let _ = maker_cli.execute_maker_cli(&["redeem-fidelity", "-i", "0"]); // TODO: Hardcoded bond index; will be fixed in PR #424.
-
     await_message(&rx, "Fidelity redeem transaction broadcasted");
 
-    // Restart required for maker to detect bond expiration; will be fixed in PR #424.
-    println!("Shutting down maker server");
+    await_message(&rx, "No active Fidelity Bonds found. Creating one.");
+    await_message(&rx, "seen in mempool, waiting for confirmation");
+
+    println!("Shutting down maker server while waiting for confirmation");
     maker.kill().unwrap();
     maker.wait().unwrap();
-
-    {
-        let (rx, mut maker) = maker_cli.start_makerd();
-
-        await_message(&rx, "No active Fidelity Bonds found. Creating one.");
-        await_message(&rx, "seen in mempool, waiting for confirmation");
-
-        println!("Shutting down maker server while waiting for confirmation");
-        maker.kill().unwrap();
-        maker.wait().unwrap();
-    }
 
     println!("Generate a block to confirm the new fidelity bond");
     generate_blocks(&maker_cli.bitcoind, 1);

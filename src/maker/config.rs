@@ -52,7 +52,7 @@ impl Default for MakerConfig {
             #[cfg(not(feature = "integration-test"))]
             fidelity_amount: 50_000, // 50K sats for production
             #[cfg(not(feature = "integration-test"))]
-            fidelity_timelock: 2160, // Approx 15 days of blocks in production
+            fidelity_timelock: 13104, // Approx 3 months of blocks in production
             connection_type: if cfg!(feature = "integration-test") {
                 ConnectionType::CLEARNET
             } else {
