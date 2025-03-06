@@ -14,7 +14,7 @@ use bitcoin::{
     secp256k1,
     secp256k1::{Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
-    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid,
+    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, VarInt, Weight,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,12 @@ use crate::{
         compute_checksum, generate_keypair, get_hd_path_from_descriptor,
         redeemscript_to_scriptpubkey,
     },
+};
+
+use rust_coinselect::{
+    selectcoin::select_coin,
+    types::{CoinSelectionOpt, ExcessStrategy, OutputGroup},
+    utils::{calculate_base_weight_btc, calculate_fee},
 };
 
 use super::{
@@ -69,6 +75,14 @@ impl KeychainKind {
             Self::External => 0,
             Self::Internal => 1,
         }
+    }
+}
+
+use rust_coinselect::types::SelectionError;
+
+impl From<SelectionError> for WalletError {
+    fn from(err: SelectionError) -> Self {
+        WalletError::General(format!("Coin selection error: {}", err))
     }
 }
 
@@ -1057,48 +1071,160 @@ impl Wallet {
         Ok(())
     }
 
-    /// Largerst to lowest coinselect algorithm
-    // TODO: Fix Coin Selection algorithm for Dynamic Feerate
+    /// Performs coin selection to choose UTXOs that sum to a target amount.
+    ///
+    /// Uses the rust-coinselect library to implement Bitcoin Core's coin selection algorithm.
+    /// The algorithm tries to minimize the number of inputs while accounting for:
+    /// - Transaction fees and weight
+    /// - Long-term UTXO pool management
+    /// - Change output costs
+    /// - Privacy considerations
+    ///
+    /// # Arguments
+    /// * `amount` - The target amount to select coins for
+    ///
+    /// # Returns
+    /// * `Ok(Vec<(ListUnspentResultEntry, UTXOSpendInfo)>)` - Selected UTXOs and their spend info
+    /// * `Err(WalletError)` - If coin selection fails or there are insufficient funds
+    ///
+    /// # Note
+    /// Only considers spendable UTXOs (regular coins and swap coins), filtering out:
+    /// - Fidelity bond UTXOs
+    /// - Locked UTXOs
+    /// - Unconfirmed UTXOs
     pub fn coin_select(
-        &self,
+        &mut self,
         amount: Amount,
+        feerate: f64,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        // Get UTXOs from the descriptor and swap coin methods.
-        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info()?;
-        let mut swap_coin_utxo = self.list_incoming_swap_coin_utxo_spend_info()?;
-        seed_coin_utxo.append(&mut swap_coin_utxo);
+        // TODO : Create a user input variable with the boarder merge split refactor
+        let num_outputs = 1; // Number of outputs
 
-        // Retrieve currently locked UTXOs via RPC.
-        // Assume that self.rpc.listlockunspent() returns a Vec<OutPoint>.
+        // Get spendable UTXOs (regular coins and incoming swap coins)
+        let mut unspents = self.list_descriptor_utxo_spend_info()?;
+        unspents.extend(self.list_incoming_swap_coin_utxo_spend_info()?);
+
+        // P2PWKH Breaks down as:
+        // Non-witness data (multiplied by 4):
+        // - Previous txid (32 bytes) * 4     = 128 WU
+        // - Prev vout (4 bytes) * 4          = 16 WU
+        // - Script length (1 byte) * 4       = 4 WU
+        // - Empty scriptsig (0 bytes) * 4    = 0 WU
+        // - nSequence (4 bytes) * 4          = 16 WU
+        // Subtotal non-witness:              = 164 WU
+
+        // Witness data (counted as-is):
+        // - Num witness elements (1 byte)    = 1 WU
+        // - DER signature (~72 bytes)        = 72 WU
+        // - Pubkey (33 bytes)                = 33 WU
+        // Subtotal witness:                  = 106 WU
+
+        // Total: 164 + 106 = 270 WU
+        // Adding 2 bytes as a buffer : 270 + 2 = 272 WU
+        const P2WPKH_INPUT_WEIGHT: u64 = 272; // Total weight units
+
+        // P2WPKH script-pubkey size:
+        // - OP_0 (1 byte)
+        // - OP_PUSH_20 (1 byte)
+        // - 20-byte pubkey hash
+        // Total: 22 bytes
+        const P2WPKH_SPK_SIZE: usize = 22;
+
+        // Filter out locked UTXOs
         let locked_utxos: Vec<OutPoint> = self.list_lock_unspent()?;
-
-        // Filter out UTXOs that are already locked and exclude fidelity coins.
-        let mut unspents = seed_coin_utxo
+        let unspents = unspents
             .into_iter()
-            .filter(|(utxo, spend_info)| {
+            .filter(|(utxo, _)| {
                 let outpoint = OutPoint::new(utxo.txid, utxo.vout);
                 !locked_utxos.contains(&outpoint)
-                    && !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. })
             })
             .collect::<Vec<_>>();
 
-        // Sort in descending order so that we use the largest UTXOs first.
-        unspents.sort_by(|a, b| b.0.amount.cmp(&a.0.amount));
+        // Prepare CoinSelectionOpt: Calculate required weights and costs, additional metrics
+        const LONG_TERM_FEERATE: f32 = 10.0;
+        let change_weight = Weight::from_vb_unwrap(
+            (Amount::SIZE // 8 bytes for amount
+                    + VarInt::from(P2WPKH_SPK_SIZE).size() // VarInt size for script_pubkey
+                    + P2WPKH_SPK_SIZE) as u64, // script_pubkey size
+        );
+        // Total cost associated with creating and later spending a change output in a transaction.
+        // This includes the transaction fees for both the current transaction (where the change is created) and the future transaction (where the change is spent).
+        // Calculate fee generally uses the units :- vbytes * sats/vbyte
+        let cost_of_change = {
+            let creation_cost = calculate_fee(change_weight.to_vbytes_ceil(), feerate as f32)
+                .map_err(|e| WalletError::General(format!("Fee calculation failed: {}", e)))?;
 
-        let mut selected_utxo = Vec::new();
-        let mut remaining = amount;
+            let future_spending_cost = calculate_fee(P2WPKH_INPUT_WEIGHT / 4, LONG_TERM_FEERATE) // divide by 4 to convert weight to vbytes
+                .map_err(|e| WalletError::General(format!("Fee calculation failed: {}", e)))?;
 
-        // Simple largest-first coin selection.
-        for unspent in unspents {
-            if remaining.checked_sub(unspent.0.amount).is_none() {
-                selected_utxo.push(unspent);
-                break;
-            } else {
-                remaining -= unspent.0.amount;
-                selected_utxo.push(unspent);
+            creation_cost + future_spending_cost
+        };
+
+        // Assuming target is a p2wpkh.
+        // TODO: Add provision for other targets
+        let target_weight = Weight::from_vb_unwrap(
+            (Amount::SIZE + VarInt::from(P2WPKH_SPK_SIZE).size() + P2WPKH_SPK_SIZE) as u64,
+        );
+        let avg_output_weight =
+            (change_weight.to_wu() + (target_weight.to_wu() * num_outputs)) / (1 + num_outputs);
+        let avg_input_weight = unspents
+            .iter()
+            .map(|(_, spend_info)| {
+                // Base weight of the input (OutPoint + sequence + empty script_sig)
+                let base_weight = 32 + 4 + 4 + 1; // 32 bytes for OutPoint, 4 bytes for sequence,4 bytes for vout, 1 byte for empty script_sig
+                let witness_weight = spend_info.estimate_witness_size();
+                base_weight + witness_weight as u64
+            })
+            .sum::<u64>()
+            / unspents.len() as u64;
+
+        // Convert UTXOs to OutputGroups
+        // TODO: Group UTXOs by address into single OutputGroups to mitigate privacy leaks from address reuse
+        // TODO: Consider more sophisticated grouping policies in the future
+        let output_groups: Vec<OutputGroup> = unspents
+            .iter()
+            .map(|(utxo, spend_info)| OutputGroup {
+                value: utxo.amount.to_sat(),
+                weight: 36 + spend_info.estimate_witness_size() as u64,
+                input_count: 1,
+                creation_sequence: None,
+            })
+            .collect();
+        // Create coin selection options
+        let coin_selection_option = CoinSelectionOpt {
+            target_value: amount.to_sat(),
+            target_feerate: feerate as f32,
+            long_term_feerate: Some(LONG_TERM_FEERATE),
+            min_absolute_fee: 500,
+            base_weight: calculate_base_weight_btc(
+                (target_weight.to_wu() * num_outputs) + change_weight.to_wu(),
+            ),
+            change_weight: change_weight.to_wu(),
+            change_cost: cost_of_change,
+            avg_input_weight,
+            avg_output_weight,
+            min_change_value: 100,
+            excess_strategy: ExcessStrategy::ToChange,
+        };
+
+        match select_coin(&output_groups, &coin_selection_option) {
+            Ok(selection) => {
+                let selected_utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)> = selection
+                    .selected_inputs
+                    .iter()
+                    .map(|&index| unspents[index].clone())
+                    .collect();
+                log::info!("Coinselection concluded with {:?}", selection.waste);
+                Ok(selected_utxos)
+            }
+            Err(e) => {
+                log::error!("Coin selection failed: {}", e);
+                Err(WalletError::General(format!(
+                    "Coin selection failed: {}",
+                    e
+                )))
             }
         }
-        Ok(selected_utxo)
     }
 
     pub(crate) fn get_utxo(
