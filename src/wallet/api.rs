@@ -14,7 +14,8 @@ use bitcoin::{
     secp256k1,
     secp256k1::{Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
-    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Sequence, Transaction, Txid, TxIn, TxOut, Witness
+    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
+    Txid, Witness,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
 use serde::{Deserialize, Serialize};
@@ -1039,144 +1040,148 @@ impl Wallet {
     /// - Fidelity bond UTXOs
     /// - Locked UTXOs
     /// - Unconfirmed UTXOs
-        pub fn coin_select(
-            &self,
-            amount: Amount,
-        ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-            let all_utxos = self.get_all_locked_utxo()?;
-    
-            // Get spendable UTXOs (regular coins and swap coins)
-            let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
-            let mut swap_coin_utxo = self.list_incoming_swap_coin_utxo_spend_info(Some(&all_utxos))?;
-            seed_coin_utxo.append(&mut swap_coin_utxo);
-    
-            // Filter out existing fidelity coins
-            let unspents: Vec<_> = seed_coin_utxo
-                .into_iter()
-                .filter(|(_, spend_info)| !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. }))
-                .collect();
-    
-            // Construct TxIn from unspents
-            let inputs: Vec<TxIn> = unspents
-                .iter()
-                .map(|(utxo, _)| TxIn {
-                    previous_output: OutPoint {
-                        txid: utxo.txid,
-                        vout: utxo.vout,
-                    },
-                    script_sig: utxo.script_pub_key.clone(),
-                    sequence: Sequence::MAX, // Default sequence number
-                    witness: utxo.witness_script.as_ref().map_or_else(Witness::default, |script| {
+    pub fn coin_select(
+        &self,
+        amount: Amount,
+    ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+        let all_utxos = self.get_all_locked_utxo()?;
+
+        // Get spendable UTXOs (regular coins and swap coins)
+        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
+        let mut swap_coin_utxo = self.list_incoming_swap_coin_utxo_spend_info(Some(&all_utxos))?;
+        seed_coin_utxo.append(&mut swap_coin_utxo);
+
+        // Filter out existing fidelity coins
+        let unspents: Vec<_> = seed_coin_utxo
+            .into_iter()
+            .filter(|(_, spend_info)| !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. }))
+            .collect();
+
+        // Construct TxIn from unspents
+        let inputs: Vec<TxIn> = unspents
+            .iter()
+            .map(|(utxo, _)| TxIn {
+                previous_output: OutPoint {
+                    txid: utxo.txid,
+                    vout: utxo.vout,
+                },
+                script_sig: utxo.script_pub_key.clone(),
+                sequence: Sequence::MAX, // Default sequence number
+                witness: utxo
+                    .witness_script
+                    .as_ref()
+                    .map_or_else(Witness::default, |script| {
                         let mut witness = Witness::new();
                         witness.push(script.as_bytes());
                         witness
                     }),
-                })
-                .collect();
-    
-            // Get next indexes without modifying state
-            let next_external_index = self.find_hd_next_index(KeychainKind::External)?;
-            let next_internal_index = self.find_hd_next_index(KeychainKind::Internal)?;
-    
-            // Get descriptors
-            let descriptors = self.get_wallet_descriptors()?;
-    
-            // Get external address
-            let external_descriptor = descriptors
-                .get(&KeychainKind::External)
-                .expect("external keychain expected");
-            let external_address = self.rpc.derive_addresses(
-                external_descriptor,
-                Some([next_external_index, next_external_index]),
-            )?[0]
-                .clone()
-                .assume_checked();
-    
-            // Get internal address
-            let internal_descriptor = descriptors
-                .get(&KeychainKind::Internal)
-                .expect("internal keychain expected");
-            let internal_address = self.rpc.derive_addresses(
-                internal_descriptor,
-                Some([next_internal_index, next_internal_index]),
-            )?[0]
-                .clone()
-                .assume_checked();
-    
-            // Prepare target output
-            let target_output = TxOut {
+            })
+            .collect();
+
+        // Get next indexes without modifying state
+        let next_external_index = self.find_hd_next_index(KeychainKind::External)?;
+        let next_internal_index = self.find_hd_next_index(KeychainKind::Internal)?;
+
+        // Get descriptors
+        let descriptors = self.get_wallet_descriptors()?;
+
+        // Get external address
+        let external_descriptor = descriptors
+            .get(&KeychainKind::External)
+            .expect("external keychain expected");
+        let external_address = self.rpc.derive_addresses(
+            external_descriptor,
+            Some([next_external_index, next_external_index]),
+        )?[0]
+            .clone()
+            .assume_checked();
+
+        // Get internal address
+        let internal_descriptor = descriptors
+            .get(&KeychainKind::Internal)
+            .expect("internal keychain expected");
+        let internal_address = self.rpc.derive_addresses(
+            internal_descriptor,
+            Some([next_internal_index, next_internal_index]),
+        )?[0]
+            .clone()
+            .assume_checked();
+
+        // Prepare target output
+        let target_output =
+            TxOut {
                 value: amount,
                 script_pubkey: ScriptBuf::new_p2pkh(&external_address.pubkey_hash().ok_or_else(
                     || WalletError::General("Could not get pubkey hash".to_string()),
                 )?),
             };
-    
-            // Create dummy change output
-            let change_output = TxOut {
-                value: Amount::ZERO,
-                script_pubkey: ScriptBuf::new_p2pkh(&internal_address.pubkey_hash().ok_or_else(
-                    || WalletError::General("Could not get change pubkey hash".to_string()),
-                )?),
-            };
-    
-            // Prepare CoinSelectionOpt: Calculate required weights and costs, additional metrics
-            let long_term_feerate = 10.0;
-            let change_weight = change_output.weight().to_wu();
-            let change_cost = calculate_fee(change_weight, long_term_feerate)
-                .map_err(|e| WalletError::General(format!("Fee calculation failed: {}", e)))?;
-            let target_weight = target_output.weight().to_wu();
-            let avg_output_weight = (change_weight + target_weight) / 2;
-            let avg_input_weight = inputs
-                .iter()
-                .map(|input| input.segwit_weight().to_wu())
-                .sum::<u64>()
-                / inputs.len() as u64;
-    
-            // Convert UTXOs to OutputGroups
-            let output_groups: Vec<OutputGroup> = inputs
-                .iter()
-                .zip(unspents.iter())
-                .map(|(input, (utxo, _))| OutputGroup {
-                    value: utxo.amount.to_sat(),
-                    weight: input.segwit_weight().to_wu(),
-                    input_count: 1,
-                    creation_sequence: None,
-                })
-                .collect();
-    
-            // Create coin selection options
-            let coin_selection_option = CoinSelectionOpt {
-                target_value: amount.to_sat(),
-                target_feerate: 15.0,
-                long_term_feerate: Some(long_term_feerate),
-                min_absolute_fee: 4000,
-                base_weight: calculate_base_weight_btc(target_weight + change_weight),
-                change_weight,
-                change_cost,
-                avg_input_weight,
-                avg_output_weight,
-                min_change_value: 100,
-                excess_strategy: ExcessStrategy::ToChange,
-            };
-    
-            match select_coin(&output_groups, &coin_selection_option) {
-                Ok(selection) => {
-                    let selected_utxos = selection
-                        .selected_inputs
-                        .iter()
-                        .map(|&index| unspents[index].clone())
-                        .collect();
-                    Ok(selected_utxos)
-                }
-                Err(e) => {
-                    log::error!("Coin selection failed: {}", e);
-                    Err(WalletError::General(format!(
-                        "Coin selection failed: {}",
-                        e
-                    )))
-                }
+
+        // Create dummy change output
+        let change_output = TxOut {
+            value: Amount::ZERO,
+            script_pubkey: ScriptBuf::new_p2pkh(&internal_address.pubkey_hash().ok_or_else(
+                || WalletError::General("Could not get change pubkey hash".to_string()),
+            )?),
+        };
+
+        // Prepare CoinSelectionOpt: Calculate required weights and costs, additional metrics
+        let long_term_feerate = 10.0;
+        let change_weight = change_output.weight().to_wu();
+        let change_cost = calculate_fee(change_weight, long_term_feerate)
+            .map_err(|e| WalletError::General(format!("Fee calculation failed: {}", e)))?;
+        let target_weight = target_output.weight().to_wu();
+        let avg_output_weight = (change_weight + target_weight) / 2;
+        let avg_input_weight = inputs
+            .iter()
+            .map(|input| input.segwit_weight().to_wu())
+            .sum::<u64>()
+            / inputs.len() as u64;
+
+        // Convert UTXOs to OutputGroups
+        let output_groups: Vec<OutputGroup> = inputs
+            .iter()
+            .zip(unspents.iter())
+            .map(|(input, (utxo, _))| OutputGroup {
+                value: utxo.amount.to_sat(),
+                weight: input.segwit_weight().to_wu(),
+                input_count: 1,
+                creation_sequence: None,
+            })
+            .collect();
+
+        // Create coin selection options
+        let coin_selection_option = CoinSelectionOpt {
+            target_value: amount.to_sat(),
+            target_feerate: 15.0,
+            long_term_feerate: Some(long_term_feerate),
+            min_absolute_fee: 4000,
+            base_weight: calculate_base_weight_btc(target_weight + change_weight),
+            change_weight,
+            change_cost,
+            avg_input_weight,
+            avg_output_weight,
+            min_change_value: 100,
+            excess_strategy: ExcessStrategy::ToChange,
+        };
+
+        match select_coin(&output_groups, &coin_selection_option) {
+            Ok(selection) => {
+                let selected_utxos = selection
+                    .selected_inputs
+                    .iter()
+                    .map(|&index| unspents[index].clone())
+                    .collect();
+                Ok(selected_utxos)
+            }
+            Err(e) => {
+                log::error!("Coin selection failed: {}", e);
+                Err(WalletError::General(format!(
+                    "Coin selection failed: {}",
+                    e
+                )))
             }
         }
+    }
 
     pub(crate) fn get_utxo(
         &self,
