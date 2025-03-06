@@ -159,6 +159,39 @@ pub enum TakerBehavior {
     BroadcastContractAfterFullSetup,
 }
 
+use bincode;
+use chrono::{DateTime, Utc};
+use std::{
+    fs,
+    io::{Error as IoError, ErrorKind},
+    path::Path,
+};
+
+/// Defined the CachedOffer struct for storing offers with a timestamp
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct CachedOffer {
+    address: MakerAddress,  // Replace with your actual Address type.
+    offer: OfferAndAddress, // Replace with the actual type used for an offer.
+    timestamp: DateTime<Utc>,
+}
+
+/// Helper functions to load and save the offer cache using bincode.
+fn load_offer_cache<P: AsRef<Path>>(path: P) -> Result<Vec<CachedOffer>, IoError> {
+    if path.as_ref().exists() {
+        let data = fs::read(path)?;
+        let offers: Vec<CachedOffer> =
+            bincode::deserialize(&data).map_err(|e| IoError::new(ErrorKind::Other, e))?;
+        Ok(offers)
+    } else {
+        Ok(vec![])
+    }
+}
+
+fn save_offer_cache<P: AsRef<Path>>(path: P, offers: &Vec<CachedOffer>) -> Result<(), IoError> {
+    let data = bincode::serialize(offers).map_err(|e| IoError::new(ErrorKind::Other, e))?;
+    fs::write(path, data)
+}
+
 /// The Taker structure that performs bulk of the coinswap protocol. Taker connects
 /// to multiple Makers and send protocol messages sequentially to them. The communication
 ///
@@ -2061,39 +2094,84 @@ impl Taker {
                 }
             };
 
+        // Define the cache file name. (Using a binary file for bincode.)
+        let cache_file = "offerbook_cache.bin";
+        let mut cached_offers: Vec<CachedOffer> =
+            load_offer_cache(cache_file).unwrap_or_else(|_| vec![]);
+        let now = Utc::now();
+
+        // Partition cached offers into fresh (< 30 minutes old) and stale.
+        let fresh_offers: Vec<CachedOffer> = cached_offers
+            .iter()
+            .cloned()
+            .filter(|co| (now - co.timestamp).num_minutes() < 30)
+            .collect();
+
+        // Determine which addresses need to be refreshed.
+        let mut addresses_to_fetch = Vec::new();
+        for addr in addresses_from_dns {
+            if !fresh_offers.iter().any(|co| co.address == addr) {
+                addresses_to_fetch.push(addr);
+            }
+        }
+
+        // Fetch new offers only for addresses that do not have a fresh cached offer.
+        let new_offers = fetch_offer_from_makers(addresses_to_fetch, &self.config)?;
+        for offer in new_offers {
+            if let Some(existing) = cached_offers
+                .iter_mut()
+                .find(|co| co.address == offer.address)
+            {
+                existing.offer = offer.clone();
+                existing.timestamp = now;
+            } else {
+                cached_offers.push(CachedOffer {
+                    address: offer.address.clone(),
+                    offer: offer.clone(),
+                    timestamp: now,
+                });
+            }
+        }
+
         // For now, ask offers from everyone,
         // Because we don not have any smart update mechanism, not asking again could cause problem.
         // if a maker changes their offer without changing tor address, the taker will not ask them again for updated offer.
         // TODO: Add smarter update mechanism, where DNS would keep a flag for every update of maker offers and taker
         // will selectively redownload the offer from those makers only.
         // Further TODO: The Offer book needs to be restructured to store a unqiue value per fidelity bond. Similar to DNS.
-        let offers = fetch_offer_from_makers(addresses_from_dns, &self.config)?;
+        // let offers = fetch_offer_from_makers(addresses_from_dns, &self.config)?;
 
         // TODO: Use better logic to update offerbook than to just rewrite everything.
+        // self.offerbook = OfferBook::default();
+
+        // Rebuild the in-memory OfferBook using the updated cache.
         self.offerbook = OfferBook::default();
-
-        for offer in offers {
+        for cached_offer in &cached_offers {
             log::info!(
-                "Verifying Fidelity Bond | Maker: {} | Outpoint: {}",
-                offer.address,
-                offer.offer.fidelity.bond.outpoint
+                "Found offer from {}. Verifying Fidelity Proof",
+                cached_offer.address.to_string()
             );
-
-            if let Err(e) = self
-                .wallet
-                .verify_fidelity_proof(&offer.offer.fidelity, &offer.address.to_string())
-            {
+            log::debug!("{:?}", cached_offer.offer);
+            if let Err(e) = self.wallet.verify_fidelity_proof(
+                &cached_offer.offer.offer.fidelity,
+                &cached_offer.address.to_string(),
+            ) {
                 log::warn!(
-                    "Fidelity Proof Verification failed with error: {:?}. Adding this to bad maker list : {}",
-                    e,
-                    offer.address
-                );
-                self.offerbook.add_bad_maker(&offer);
+                     "Fidelity Proof Verification failed with error: {:?}. Adding this to bad maker list: {}",
+                     e,
+                     cached_offer.address.to_string()
+                 );
+                self.offerbook.add_bad_maker(&cached_offer.offer);
             } else {
-                log::info!("Fideity Bond verified. Adding offer from {}", offer.address);
-                self.offerbook.add_new_offer(&offer);
+                log::info!("Fidelity Bond verification success. Adding offer to our OfferBook");
+                self.offerbook.add_new_offer(&cached_offer.offer);
             }
         }
+
+        // Save the updated cache back to disk.
+        save_offer_cache(cache_file, &cached_offers)
+            .map_err(|e| TakerError::from(IoError::new(ErrorKind::Other, e)))?;
+
         Ok(())
     }
 
