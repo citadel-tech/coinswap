@@ -86,7 +86,7 @@ impl Wallet {
         };
         let change_addr = &self.get_next_internal_addresses(1)?[0];
         let destination = Destination::Sweep(change_addr.clone());
-        let all_utxo = self.list_fidelity_spend_info(None)?;
+        let all_utxo = self.list_fidelity_spend_info()?;
         let mut utxo: Option<ListUnspentResultEntry> = None;
         for (utxo_data, spend_info) in all_utxo {
             if let UTXOSpendInfo::FidelityBondCoin { index, input_value } = spend_info.clone() {
@@ -125,7 +125,7 @@ impl Wallet {
         destination_address: &Address,
         feerate: f64,
     ) -> Result<Transaction, WalletError> {
-        let all_utxo = self.list_live_timelock_contract_spend_info(None)?;
+        let all_utxo = self.list_live_timelock_contract_spend_info()?;
         for (utxo, spend_info) in all_utxo {
             if let UTXOSpendInfo::TimelockContract {
                 swapcoin_multisig_redeemscript,
@@ -152,7 +152,7 @@ impl Wallet {
         destination_address: &Address,
         feerate: f64,
     ) -> Result<Transaction, WalletError> {
-        let all_utxo = self.list_live_hashlock_contract_spend_info(None)?;
+        let all_utxo = self.list_live_hashlock_contract_spend_info()?;
         for (utxo, spend_info) in all_utxo {
             if let UTXOSpendInfo::HashlockContract {
                 swapcoin_multisig_redeemscript,

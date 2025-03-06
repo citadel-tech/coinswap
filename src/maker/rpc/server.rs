@@ -27,7 +27,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             let utxos = maker
                 .get_wallet()
                 .read()?
-                .list_live_timelock_contract_spend_info(None)?
+                .list_live_timelock_contract_spend_info()?
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect::<Vec<_>>();
@@ -37,7 +37,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             let utxos = maker
                 .get_wallet()
                 .read()?
-                .list_fidelity_spend_info(None)?
+                .list_fidelity_spend_info()?
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect::<Vec<_>>();
@@ -47,7 +47,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             let utxos = maker
                 .get_wallet()
                 .read()?
-                .list_all_utxo_spend_info(None)?
+                .list_all_utxo_spend_info()?
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect::<Vec<_>>();
@@ -57,14 +57,14 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             let utxos = maker
                 .get_wallet()
                 .read()?
-                .list_incoming_swap_coin_utxo_spend_info(None)?
+                .list_incoming_swap_coin_utxo_spend_info()?
                 .iter()
                 .map(|(l, _)| l.clone())
                 .collect::<Vec<_>>();
             RpcMsgResp::SwapUtxoResp { utxos }
         }
         RpcMsgReq::Balances => {
-            let balances = maker.get_wallet().read()?.get_balances(None)?;
+            let balances = maker.get_wallet().read()?.get_balances()?;
             RpcMsgResp::TotalBalanceResp(balances)
         }
         RpcMsgReq::NewAddress => {
