@@ -198,7 +198,9 @@ fn main() -> Result<(), TakerError> {
         } => {
             let amount = Amount::from_sat(amount);
 
-            let coins_to_spend = taker.get_wallet().coin_select(amount)?;
+            let coins_to_spend = taker
+                .get_wallet()
+                .coin_select(amount, feerate.unwrap_or_default())?;
 
             let destination = Destination::Multi(vec![(
                 Address::from_str(&address).unwrap().assume_checked(),

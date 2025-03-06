@@ -1043,6 +1043,7 @@ impl Wallet {
     pub fn coin_select(
         &self,
         amount: Amount,
+        feerate: f64,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
         let all_utxos = self.get_all_locked_utxo()?;
 
@@ -1152,7 +1153,7 @@ impl Wallet {
         // Create coin selection options
         let coin_selection_option = CoinSelectionOpt {
             target_value: amount.to_sat(),
-            target_feerate: 15.0,
+            target_feerate: feerate as f32,
             long_term_feerate: Some(long_term_feerate),
             min_absolute_fee: 4000,
             base_weight: calculate_base_weight_btc(target_weight + change_weight),
