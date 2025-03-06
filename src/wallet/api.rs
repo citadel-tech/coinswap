@@ -41,24 +41,12 @@ use super::{
 
 const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
 
-/// Represents the type of caller interacting with the wallet.
-/// `Maker` indicates an internal call using cached UTXOs,
-/// while `Taker` indicates an external call requiring fresh UTXO retrieval.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CallerType {
-    Maker,
-    Taker,
-}
-
 /// Represents a Bitcoin wallet with associated functionality and data.
 #[derive(Debug)]
 pub struct Wallet {
     pub(crate) rpc: Client,
     wallet_file_path: PathBuf,
     pub(crate) store: WalletStore,
-
-    /// Specifies whether the wallet is operating as a Maker or Taker.
-    pub(crate) caller_type: CallerType,
 }
 
 /// Speicfy the keychain derivation path from [`HARDENDED_DERIVATION`]
@@ -202,11 +190,7 @@ impl Wallet {
     ///
     /// The path should include the full path for a wallet file.
     /// If the wallet file doesn't exist it will create a new wallet file.
-    pub fn init(
-        path: &Path,
-        rpc_config: &RPCConfig,
-        caller_type: CallerType,
-    ) -> Result<Self, WalletError> {
+    pub fn init(path: &Path, rpc_config: &RPCConfig) -> Result<Self, WalletError> {
         let rpc = Client::try_from(rpc_config)?;
         let network = rpc.get_blockchain_info()?.chain;
 
@@ -234,17 +218,12 @@ impl Wallet {
             rpc,
             wallet_file_path: path.to_path_buf(),
             store,
-            caller_type,
         })
     }
 
     /// Load wallet data from file and connects to a core RPC.
     /// The core rpc wallet name, and wallet_id field in the file should match.
-    pub(crate) fn load(
-        path: &Path,
-        rpc_config: &RPCConfig,
-        caller_type: CallerType,
-    ) -> Result<Wallet, WalletError> {
+    pub(crate) fn load(path: &Path, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
         let store = WalletStore::read_from_disk(path)?;
         if rpc_config.wallet_name != store.file_name {
             return Err(WalletError::General(format!(
@@ -276,7 +255,6 @@ impl Wallet {
             rpc,
             wallet_file_path: path.to_path_buf(),
             store,
-            caller_type,
         })
     }
 
@@ -676,20 +654,13 @@ impl Wallet {
     pub fn list_all_utxo_spend_info(
         &self,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        let all_utxos: Vec<ListUnspentResultEntry> = match self.caller_type {
-            CallerType::Maker => {
-                // Use cached UTXOs for Maker
-                self.store
-                    .utxo_cache
-                    .values()
-                    .map(|(utxo, _spend_info)| utxo.clone())
-                    .collect()
-            }
-            CallerType::Taker => {
-                // Fetch all UTXOs for Taker
-                self.get_all_utxo()?
-            }
-        };
+        // Use cached UTXOs for Maker
+        let all_utxos: Vec<ListUnspentResultEntry> = self
+            .store
+            .utxo_cache
+            .values()
+            .map(|(utxo, _spend_info)| utxo.clone())
+            .collect();
 
         let processed_utxos = all_utxos
             .iter()
