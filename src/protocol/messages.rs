@@ -92,7 +92,7 @@ pub(crate) struct ContractTxInfoForSender {
     pub(crate) hashlock_nonce: SecretKey,
     pub(crate) timelock_pubkey: PublicKey,
     pub(crate) senders_contract_tx: Transaction,
-    pub(crate) multisig_redeemscript: ScriptBuf,
+    pub(crate) sender_pubkey: PublicKey,
     pub(crate) funding_input_value: Amount,
 }
 

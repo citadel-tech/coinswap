@@ -118,7 +118,7 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
                     hashlock_nonce: hashlock_key_nonce,
                     timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey()?,
                     senders_contract_tx: outgoing_swapcoin.get_contract_tx(),
-                    multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
+                    sender_pubkey: outgoing_swapcoin.get_sender_pubkey()?,
                     funding_input_value: outgoing_swapcoin.get_funding_amount(),
                 })
             },

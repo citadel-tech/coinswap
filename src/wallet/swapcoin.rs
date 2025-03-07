@@ -118,6 +118,8 @@ pub(crate) trait SwapCoin {
     fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> Result<(), WalletError>;
     /// Apply a private key to the swap coin.
     fn apply_privkey(&mut self, privkey: SecretKey) -> Result<(), ProtocolError>;
+
+    fn get_sender_pubkey(&self) -> Result<PublicKey, WalletError>;
 }
 
 /// Trait representing swap coin functionality specific to a wallet.
@@ -514,6 +516,9 @@ impl SwapCoin for IncomingSwapCoin {
         self.other_privkey = Some(privkey);
         Ok(())
     }
+    fn get_sender_pubkey(&self) -> Result<PublicKey, WalletError> {
+        Ok(self.other_pubkey)
+    }
 }
 
 impl SwapCoin for OutgoingSwapCoin {
@@ -549,6 +554,9 @@ impl SwapCoin for OutgoingSwapCoin {
         } else {
             Err(ProtocolError::General("not correct privkey"))
         }
+    }
+    fn get_sender_pubkey(&self) -> Result<PublicKey, WalletError> {
+        Ok(self.other_pubkey)
     }
 }
 
@@ -595,6 +603,9 @@ impl SwapCoin for WatchOnlySwapCoin {
             &self.sender_pubkey,
             &sig.signature,
         )?)
+    }
+    fn get_sender_pubkey(&self) -> Result<PublicKey, WalletError> {
+        Ok(self.sender_pubkey)
     }
 }
 
