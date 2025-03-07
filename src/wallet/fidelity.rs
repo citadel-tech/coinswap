@@ -1,13 +1,6 @@
-use std::{
-    collections::HashMap,
-    str::FromStr,
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
-
 use crate::{
     protocol::messages::FidelityProof,
-    utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks},
+    utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks, DEFAULT_TX_FEE_RATE},
     wallet::Wallet,
 };
 use bitcoin::{
@@ -21,6 +14,12 @@ use bitcoin::{
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use super::{Destination, WalletError};
 
@@ -223,19 +222,11 @@ impl Wallet {
                 if !is_spent {
                     match self.calculate_bond_value(*i) {
                         Ok(v) => {
-                            log::info!("Fidelity Bond found | Index: {},  Bond Value : {}", i, v);
+                            log::info!("Fidelity Bond found | Index: {} | Bond Value : {}", i, v);
                             Some((i, v))
                         }
                         Err(e) => {
                             log::error!("Fidelity valuation failed for index {}:  {:?} ", i, e);
-                            if matches!(
-                                e,
-                                WalletError::Fidelity(FidelityError::BondLocktimeExpired)
-                            ) {
-                                log::info!(
-                                    "Use `maker-cli redeem-fildeity <index>` to redeem the bond"
-                                );
-                            }
                             None
                         }
                     }
@@ -443,6 +434,29 @@ impl Wallet {
         self.sync()?;
 
         Ok(())
+    }
+
+    /// Redeems all expired fidelity bonds in the wallet ,if found any.
+    pub fn redeem_expired_fidelity_bonds(&mut self) -> Result<(), WalletError> {
+        let curr_height = self.rpc.get_block_count()? as u32;
+
+        let expired_bond_indices = self
+            .store
+            .fidelity_bond
+            .iter()
+            .filter_map(|(&i, (bond, _, is_spent))| {
+                if !is_spent && curr_height > bond.lock_time.to_consensus_u32() {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        expired_bond_indices.into_iter().try_for_each(|i| {
+            log::info!("Fidelity Bond at index: {:?} expired | Redeeming it.", i);
+            self.redeem_fidelity(i, DEFAULT_TX_FEE_RATE).map(|_| ())
+        })
     }
 
     /// Generate a [FidelityProof] for bond at a given index and a specific onion address.
