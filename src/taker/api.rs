@@ -44,14 +44,14 @@ use crate::{
         error::ProtocolError,
         messages::{
             ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
-            ContractSigsForSender, FundingTxInfo, MultisigPrivkey, Offer, Preimage,
-            PrivKeyHandover, TakerToMakerMessage,
+            ContractSigsForSender, FundingTxInfo, MultisigPrivkey, Preimage, PrivKeyHandover,
+            TakerToMakerMessage,
         },
     },
     taker::{config::TakerConfig, offers::OfferBook},
     utill::*,
     wallet::{
-        FidelityBond, IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
+        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
         WalletSwapCoin, WatchOnlySwapCoin,
     },
 };
@@ -2178,6 +2178,7 @@ impl Taker {
 
         Ok(())
     }
+    #[allow(dead_code)]
     /// Displays offer
     pub(crate) fn display_offer(offer_and_address: &OfferAndAddress, wallet: &Wallet) -> String {
         let index = wallet.get_highest_fidelity_index().unwrap().unwrap();
