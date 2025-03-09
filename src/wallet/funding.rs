@@ -150,7 +150,7 @@ impl Wallet {
 
             let fee = fee_rate;
             let remaining = Amount::from_sat(output_value);
-            let selected_utxo = self.coin_select(remaining)?;
+            let selected_utxo = self.coin_select(remaining, fee_rate.to_btc())?;
             let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
                 acc.checked_add(unspet.amount)
                     .expect("Amount sum overflowed")
@@ -406,7 +406,7 @@ impl Wallet {
 
         let remaining = coinswap_amount;
 
-        let selected_utxo = self.coin_select(remaining + fee)?;
+        let selected_utxo = self.coin_select(remaining + fee, fee_rate.to_btc())?;
 
         let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
             acc.checked_add(unspet.amount)
