@@ -44,14 +44,14 @@ use crate::{
         error::ProtocolError,
         messages::{
             ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
-            ContractSigsForSender, FundingTxInfo, MultisigPrivkey, Preimage, PrivKeyHandover,
-            TakerToMakerMessage,
+            ContractSigsForSender, FundingTxInfo, MultisigPrivkey, Offer, Preimage,
+            PrivKeyHandover, TakerToMakerMessage,
         },
     },
     taker::{config::TakerConfig, offers::OfferBook},
     utill::*,
     wallet::{
-        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
+        FidelityBond, IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
         WalletSwapCoin, WatchOnlySwapCoin,
     },
 };
@@ -2177,5 +2177,31 @@ impl Taker {
         log::info!("===> {} | {}", msg, maker_addr);
 
         Ok(())
+    }
+    /// Displays offer
+    pub(crate) fn display_offer(offer_and_address: &OfferAndAddress, wallet: &Wallet) -> String {
+        let index = wallet.get_highest_fidelity_index().unwrap().unwrap();
+        let bond_value = wallet.calculate_bond_value(index).unwrap();
+        format!(
+            "offer data received:\n\
+            - Base fee: {}\n\
+            - Percent Fee on total amount: {}\n\
+            - Time relative fee: {}\n\
+            - Required Confirms: {}\n\
+            - Minimum locktime: {}\n\
+            - Max size: {}\n\
+            - Min size: {}\n\
+            - Fidelity_bond_value: {}\n\
+            - Tor Address: {}",
+            offer_and_address.offer.base_fee,
+            offer_and_address.offer.amount_relative_fee_pct,
+            offer_and_address.offer.time_relative_fee_pct,
+            offer_and_address.offer.required_confirms,
+            offer_and_address.offer.minimum_locktime,
+            offer_and_address.offer.max_size,
+            offer_and_address.offer.min_size,
+            bond_value,
+            offer_and_address.address
+        )
     }
 }
