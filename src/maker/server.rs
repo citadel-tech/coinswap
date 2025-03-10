@@ -202,7 +202,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
             i,
             bond.amount.to_sat(),
             bond.lock_time.to_consensus_u32() - current_height,
-            wallet_read.calculate_bond_value(i)?.to_sat()
+            wallet_read.calculate_bond_value(bond)?.to_sat()
         );
 
         *proof = Some(highest_proof);
