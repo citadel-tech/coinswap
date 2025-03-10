@@ -180,7 +180,7 @@ impl Wallet {
             .iter()
             .map(|(index, (bond, _, is_spent))| {
                 // assuming that lock_time is always in height and never in seconds.
-                match self.calculate_bond_value(*index) {
+                match self.calculate_bond_value(bond) {
                     Ok(bond_value) => Ok(serde_json::json!({
                         "index": index,
                         "outpoint": bond.outpoint.to_string(),
