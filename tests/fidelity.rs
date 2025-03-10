@@ -78,9 +78,11 @@ fn test_fidelity() {
         let highest_bond_index = wallet_read.get_highest_fidelity_index().unwrap().unwrap();
         assert_eq!(highest_bond_index, 0);
 
-        let bond_value = wallet_read
-            .calculate_bond_value(highest_bond_index)
+        let (bond, _, _) = wallet_read
+            .get_fidelity_bonds()
+            .get(&highest_bond_index)
             .unwrap();
+        let bond_value = wallet_read.calculate_bond_value(bond).unwrap();
         assert_eq!(bond_value, Amount::from_sat(10814));
 
         let (bond, _, is_spent) = wallet_read

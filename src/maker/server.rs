@@ -241,7 +241,7 @@ fn setup_fidelity_bond(maker: &Arc<Maker>, maker_address: &str) -> Result<(), Ma
             i,
             bond.amount.to_sat(),
             bond.lock_time.to_consensus_u32() - current_height,
-            wallet_read.calculate_bond_value(i)?.to_sat()
+            wallet_read.calculate_bond_value(bond)?.to_sat()
         );
         log::info!("Bond amount : {:?}", bond.amount.to_sat());
         // TODO: work remainig

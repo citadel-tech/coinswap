@@ -173,9 +173,9 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
-            .filter_map(|(i, (_, _, is_spent))| {
+            .filter_map(|(i, (bond, _, is_spent))| {
                 if !is_spent {
-                    match self.calculate_bond_value(*i) {
+                    match self.calculate_bond_value(bond) {
                         Ok(v) => {
                             log::info!("Fidelity Bond found | Index: {}, Value : {}", i, v);
                             Some((i, v))
@@ -260,12 +260,7 @@ impl Wallet {
     /// Calculate the theoretical fidelity bond value.
     /// Bond value calculation is described in the document below.
     /// https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds
-    pub fn calculate_bond_value(&self, index: u32) -> Result<Amount, WalletError> {
-        let (bond, _, _) = self
-            .store
-            .fidelity_bond
-            .get(&index)
-            .ok_or(FidelityError::BondDoesNotExist)?;
+    pub fn calculate_bond_value(&self, bond: &FidelityBond) -> Result<Amount, WalletError> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("This can't error")

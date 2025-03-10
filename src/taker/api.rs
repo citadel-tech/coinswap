@@ -51,7 +51,7 @@ use crate::{
     taker::{config::TakerConfig, offers::OfferBook},
     utill::*,
     wallet::{
-        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
+        FidelityBond, IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
         WalletSwapCoin, WatchOnlySwapCoin,
     },
 };
@@ -2180,9 +2180,12 @@ impl Taker {
     }
     #[allow(dead_code)]
     /// Displays offer
-    pub(crate) fn display_offer(offer_and_address: &OfferAndAddress, wallet: &Wallet) -> String {
-        let index = wallet.get_highest_fidelity_index().unwrap().unwrap();
-        let bond_value = wallet.calculate_bond_value(index).unwrap();
+    pub(crate) fn display_offer(
+        offer_and_address: &OfferAndAddress,
+        wallet: &Wallet,
+        bond: &FidelityBond,
+    ) -> String {
+        let bond_value = wallet.calculate_bond_value(bond).unwrap();
         format!(
             "offer data received:\n\
             - Base fee: {}\n\
