@@ -106,6 +106,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
+        branches: 1,
     };
     taker.do_coinswap(swap_params).unwrap();
 

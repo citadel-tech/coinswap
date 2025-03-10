@@ -8,11 +8,13 @@
 //!
 //! [Taker::do_coinswap]: The routine running all other protocol subroutines.
 
+use std::sync::{Arc, Mutex};
 use std::{
     collections::{HashMap, HashSet},
     io::BufWriter,
     net::TcpStream,
     path::PathBuf,
+    thread,
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -94,6 +96,8 @@ pub struct SwapParams {
     // TODO: Following two should be moved to TakerConfig as global configuration.
     /// Confirmation count required for funding txs.
     pub required_confirms: u32,
+    /// How many branches
+    pub branches: u32,
 }
 
 // Defines the Taker's position in the current ongoing swap.
@@ -298,7 +302,25 @@ impl Taker {
 
     ///  Does the coinswap process
     pub fn do_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
-        self.send_coinswap(swap_params)
+        let branches = swap_params.branches;
+        let swap_params = Arc::new(Mutex::new(swap_params)); // Use Arc if swap_params is expensive to clone
+        let self_arc = Arc::new(Mutex::new(self));
+
+        thread::scope(|scope| {
+            for _ in 0..branches {
+                let swap_params = Arc::clone(&swap_params);
+
+                let self_arc = Arc::clone(&self_arc);
+                scope.spawn(move || {
+                    let mut locked_swap_params = swap_params.lock().unwrap();
+                    locked_swap_params.send_amount /= branches.into();
+                    let mut locked_self = self_arc.lock().unwrap(); // Lock before using
+                    let _ = locked_self.send_coinswap(*locked_swap_params);
+                });
+            }
+        });
+
+        Ok(())
     }
 
     /// Perform a coinswap round with given [SwapParams]. The Taker will try to perform swap with makers

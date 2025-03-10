@@ -97,6 +97,7 @@ fn test_standard_coinswap() {
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
+        branches: 1,
     };
     taker.do_coinswap(swap_params).unwrap();
 

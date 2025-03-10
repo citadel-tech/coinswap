@@ -228,6 +228,7 @@ fn main() -> Result<(), TakerError> {
                 maker_count: makers,
                 tx_count: 1,
                 required_confirms: REQUIRED_CONFIRMS,
+                branches: 1,
             };
             taker.do_coinswap(swap_params)?;
         }
