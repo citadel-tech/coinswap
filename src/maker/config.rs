@@ -12,14 +12,18 @@ use super::api::MIN_SWAP_AMOUNT;
 /// Maker Configuration, controlling various maker behavior.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MakerConfig {
-    /// Network listening port
-    pub network_port: u16,
     /// RPC listening port
     pub rpc_port: u16,
     /// Minimum Coinswap amount
     pub min_swap_amount: u64,
+    /// target listening port
+    pub network_port: u16,
+    /// control port
+    pub control_port: u16,
     /// Socks port
     pub socks_port: u16,
+    /// Authentication password
+    pub tor_auth_password: String,
     /// Directory server address (can be clearnet or onion)
     pub directory_server_address: String,
     /// Fidelity Bond amount
@@ -33,12 +37,14 @@ pub struct MakerConfig {
 impl Default for MakerConfig {
     fn default() -> Self {
         Self {
-            network_port: 6102,
             rpc_port: 6103,
             min_swap_amount: MIN_SWAP_AMOUNT,
-            socks_port: 19050,
+            network_port: 6102,
+            control_port: 9051,
+            socks_port: 9050,
+            tor_auth_password: "".to_string(),
             directory_server_address:
-                "bhbzkndgad52ojm75w4goii7xsi6ou73fzyvorxas7swg2snlto4c4ad.onion:8080".to_string(),
+                "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080".to_string(),
             #[cfg(feature = "integration-test")]
             fidelity_amount: 5_000_000, // 0.05 BTC for tests
             #[cfg(feature = "integration-test")]
@@ -46,16 +52,11 @@ impl Default for MakerConfig {
             #[cfg(not(feature = "integration-test"))]
             fidelity_amount: 50_000, // 50K sats for production
             #[cfg(not(feature = "integration-test"))]
-            fidelity_timelock: 2160, // Approx 15 days of blocks in production
-            connection_type: {
-                #[cfg(feature = "tor")]
-                {
-                    ConnectionType::TOR
-                }
-                #[cfg(not(feature = "tor"))]
-                {
-                    ConnectionType::CLEARNET
-                }
+            fidelity_timelock: 13104, // Approx 3 months of blocks in production
+            connection_type: if cfg!(feature = "integration-test") {
+                ConnectionType::CLEARNET
+            } else {
+                ConnectionType::TOR
             },
         }
     }
@@ -96,13 +97,18 @@ impl MakerConfig {
         );
 
         Ok(MakerConfig {
-            network_port: parse_field(config_map.get("network_port"), default_config.network_port),
             rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
             min_swap_amount: parse_field(
                 config_map.get("min_swap_amount"),
                 default_config.min_swap_amount,
             ),
+            network_port: parse_field(config_map.get("network_port"), default_config.network_port),
+            control_port: parse_field(config_map.get("control_port"), default_config.control_port),
             socks_port: parse_field(config_map.get("socks_port"), default_config.socks_port),
+            tor_auth_password: parse_field(
+                config_map.get("tor_auth_password"),
+                default_config.tor_auth_password,
+            ),
             directory_server_address: parse_field(
                 config_map.get("directory_server_address"),
                 default_config.directory_server_address,
@@ -132,7 +138,8 @@ socks_port = {}
 directory_server_address = {}
 fidelity_amount = {}
 fidelity_timelock = {}
-connection_type = {:?}",
+connection_type = {:?}
+",
             self.network_port,
             self.rpc_port,
             self.min_swap_amount,
@@ -140,7 +147,7 @@ connection_type = {:?}",
             self.directory_server_address,
             self.fidelity_amount,
             self.fidelity_timelock,
-            self.connection_type,
+            self.connection_type
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
@@ -179,7 +186,7 @@ mod tests {
             rpc_port = 6103
             required_confirms = 1
             min_swap_amount = 10000
-            socks_port = 19050
+            socks_port = 9050
         "#;
         let config_path = create_temp_config(contents, "valid_maker_config.toml");
         let config = MakerConfig::new(Some(&config_path)).unwrap();

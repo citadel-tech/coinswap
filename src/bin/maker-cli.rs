@@ -3,7 +3,7 @@ use std::{net::TcpStream, time::Duration};
 use clap::Parser;
 use coinswap::{
     maker::{MakerError, RpcMsgReq, RpcMsgResp},
-    utill::{read_message, send_message},
+    utill::{read_message, send_message, DEFAULT_TX_FEE_RATE},
 };
 
 /// A simple command line app to operate the makerd server.
@@ -54,9 +54,9 @@ enum Commands {
         /// Amount to send in sats
         #[clap(long, short = 'a')]
         amount: u64,
-        /// Total fee to be paid in sats
+        /// Feerate in sats/vByte. Defaults to 2 sats/vByte
         #[clap(long, short = 'f')]
-        fee: u64,
+        feerate: Option<f64>,
     },
     /// Show the server tor address
     ShowTorAddress,
@@ -64,11 +64,6 @@ enum Commands {
     ShowDataDir,
     /// Shutdown the makerd server
     Stop,
-    /// Redeems the fidelity bond if timelock is matured. Returns the txid of the spending transaction.
-    RedeemFidelity {
-        #[clap(long, short = 'i', default_value = "0")]
-        index: u32,
-    },
     /// Show all the fidelity bonds, current and previous, with an (index, {bond_proof, is_spent}) tupple.
     ShowFidelity,
     /// Sync the maker wallet with current blockchain state.
@@ -105,14 +100,14 @@ fn main() -> Result<(), MakerError> {
         Commands::SendToAddress {
             address,
             amount,
-            fee,
+            feerate,
         } => {
             send_rpc_req(
                 stream,
                 RpcMsgReq::SendToAddress {
                     address,
                     amount,
-                    fee,
+                    feerate: feerate.unwrap_or(DEFAULT_TX_FEE_RATE),
                 },
             )?;
         }
@@ -124,9 +119,6 @@ fn main() -> Result<(), MakerError> {
         }
         Commands::Stop => {
             send_rpc_req(stream, RpcMsgReq::Stop)?;
-        }
-        Commands::RedeemFidelity { index } => {
-            send_rpc_req(stream, RpcMsgReq::RedeemFidelity(index))?;
         }
         Commands::ShowFidelity => {
             send_rpc_req(stream, RpcMsgReq::ListFidelity)?;

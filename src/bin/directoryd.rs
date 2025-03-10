@@ -44,14 +44,10 @@ fn main() -> Result<(), DirectoryServerError> {
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
 
-    #[cfg(feature = "tor")]
-    let connection_type = if cfg!(feature = "integration-test") {
-        ConnectionType::CLEARNET
-    } else {
-        ConnectionType::TOR
-    };
+    #[cfg(not(feature = "integration-test"))]
+    let connection_type = ConnectionType::TOR;
 
-    #[cfg(not(feature = "tor"))]
+    #[cfg(feature = "integration-test")]
     let connection_type = ConnectionType::CLEARNET;
 
     let directory = Arc::new(DirectoryServer::new(

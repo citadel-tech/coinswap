@@ -9,10 +9,12 @@ use std::{io, io::Write, path::Path};
 /// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
-    /// Network connection port
-    pub network_port: u16,
+    /// Control port
+    pub control_port: u16,
     /// Socks proxy port used to connect TOR
     pub socks_port: u16,
+    /// Authentication password
+    pub tor_auth_password: String,
     /// Directory server address (can be clearnet or onion)
     pub directory_server_address: String,
     /// Connection type
@@ -22,19 +24,15 @@ pub struct TakerConfig {
 impl Default for TakerConfig {
     fn default() -> Self {
         Self {
-            network_port: 8000,
-            socks_port: 19070,
+            control_port: 9051,
+            socks_port: 9050,
+            tor_auth_password: "".to_string(),
             directory_server_address:
-                "bhbzkndgad52ojm75w4goii7xsi6ou73fzyvorxas7swg2snlto4c4ad.onion:8080".to_string(),
-            connection_type: {
-                #[cfg(feature = "tor")]
-                {
-                    ConnectionType::TOR
-                }
-                #[cfg(not(feature = "tor"))]
-                {
-                    ConnectionType::CLEARNET
-                }
+                "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080".to_string(),
+            connection_type: if cfg!(feature = "integration-test") {
+                ConnectionType::CLEARNET
+            } else {
+                ConnectionType::TOR
             },
         }
     }
@@ -74,8 +72,12 @@ impl TakerConfig {
         );
 
         Ok(TakerConfig {
-            network_port: parse_field(config_map.get("network_port"), default_config.network_port),
+            control_port: parse_field(config_map.get("control_port"), default_config.control_port),
             socks_port: parse_field(config_map.get("socks_port"), default_config.socks_port),
+            tor_auth_password: parse_field(
+                config_map.get("tor_auth_password"),
+                default_config.tor_auth_password,
+            ),
             directory_server_address: parse_field(
                 config_map.get("directory_server_address"),
                 default_config.directory_server_address,
@@ -94,7 +96,7 @@ impl TakerConfig {
 socks_port = {}
 directory_server_address = {}
 connection_type = {:?}",
-            self.network_port, self.socks_port, self.directory_server_address, self.connection_type
+            self.control_port, self.socks_port, self.directory_server_address, self.connection_type
         );
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;
@@ -130,8 +132,8 @@ mod tests {
     #[test]
     fn test_valid_config() {
         let contents = r#"
-        network_port = 8000
-        socks_port = 19070
+        control_port = 9051
+        socks_port = 9050
         connection_type = "TOR"
         rpc_port = 8081
         "#;
@@ -174,7 +176,7 @@ mod tests {
     fn test_different_data() {
         let contents = r#"
             [taker_config]
-            socks_port = 19051
+            socks_port = 9050
         "#;
         let config_path = create_temp_config(contents, "different_data_taker_config.toml");
         let config = TakerConfig::new(Some(&config_path)).unwrap();
@@ -182,7 +184,7 @@ mod tests {
         assert_eq!(REFUND_LOCKTIME, 20);
         assert_eq!(
             TakerConfig {
-                socks_port: 19051,        // Configurable via TOML.
+                socks_port: 9050,         // Configurable via TOML.
                 ..TakerConfig::default()  // Use default for other values.
             },
             config

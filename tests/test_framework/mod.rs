@@ -536,6 +536,8 @@ impl TestFramework {
             None,
             Some(taker_rpc_config),
             taker_behavior,
+            None,
+            None,
             Some(connection_type),
         )
         .unwrap();
@@ -556,6 +558,8 @@ impl TestFramework {
                         Some(maker_rpc_config),
                         Some(port.0),
                         Some(base_rpc_port),
+                        None,
+                        None,
                         port.1,
                         Some(connection_type),
                         behavior,

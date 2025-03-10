@@ -38,7 +38,7 @@ use crate::{
         },
         Hash160,
     },
-    utill::REQUIRED_CONFIRMS,
+    utill::{DEFAULT_TX_FEE_RATE, REQUIRED_CONFIRMS},
     wallet::{IncomingSwapCoin, SwapCoin, WalletError, WalletSwapCoin},
 };
 
@@ -699,7 +699,11 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
                 }
             };
             let next_internal_address = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
-            let time_lock_spend = og_sc.create_timelock_spend(next_internal_address)?;
+            let time_lock_spend = maker.wallet.read()?.create_timelock_spend(
+                og_sc,
+                next_internal_address,
+                DEFAULT_TX_FEE_RATE,
+            )?;
             outgoings.push((
                 (og_sc.get_multisig_redeemscript(), contract),
                 (contract_timelock, time_lock_spend),

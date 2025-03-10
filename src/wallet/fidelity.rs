@@ -1,17 +1,8 @@
-use std::{
-    collections::HashMap,
-    str::FromStr,
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
-
 use crate::{
     protocol::messages::FidelityProof,
-    taker::api::MINER_FEE,
-    utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks},
-    wallet::{UTXOSpendInfo, Wallet},
+    utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks, DEFAULT_TX_FEE_RATE},
+    wallet::Wallet,
 };
-
 use bitcoin::{
     absolute::LockTime,
     bip32::{ChildNumber, DerivationPath},
@@ -19,14 +10,18 @@ use bitcoin::{
     opcodes::all::{OP_CHECKSIGVERIFY, OP_CLTV},
     script::{Builder, Instruction},
     secp256k1::{Keypair, Message, Secp256k1},
-    transaction::Version,
-    Address, Amount, OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid,
-    Witness,
+    Address, Amount, OutPoint, PublicKey, ScriptBuf, Txid,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
-use super::WalletError;
+use super::{Destination, WalletError};
 
 // To (strongly) disincentivize Sybil behavior, the value assessment of the bond
 // is based on the (time value of the bond)^x here x is the bond_value_exponent,
@@ -129,9 +124,9 @@ pub struct FidelityBond {
     pub lock_time: LockTime,
     pub(crate) pubkey: PublicKey,
     // Height at which the bond was confirmed.
-    pub(crate) conf_height: u32,
+    pub(crate) conf_height: Option<u32>,
     // Cert expiry denoted in multiple of difficulty adjustment period (2016 blocks)
-    pub(crate) cert_expiry: u64,
+    pub(crate) cert_expiry: Option<u32>,
 }
 
 impl FidelityBond {
@@ -146,17 +141,25 @@ impl FidelityBond {
     }
 
     /// Generate the bond's certificate hash.
-    pub(crate) fn generate_cert_hash(&self, addr: &str) -> sha256d::Hash {
-        let cert_msg_str = format!(
-            "fidelity-bond-cert|{}|{}|{}|{}|{}|{}",
-            self.outpoint, self.pubkey, self.cert_expiry, self.lock_time, self.amount, addr
-        );
-        let cert_msg = cert_msg_str.as_bytes();
-        let mut btc_signed_msg = Vec::<u8>::new();
-        btc_signed_msg.extend("\x18Bitcoin Signed Message:\n".as_bytes());
-        btc_signed_msg.push(cert_msg.len() as u8);
-        btc_signed_msg.extend(cert_msg);
-        sha256d::Hash::hash(&btc_signed_msg)
+    pub(crate) fn generate_cert_hash(&self, addr: &str) -> Option<sha256d::Hash> {
+        self.cert_expiry.map(|expiry| {
+            let cert_msg_str = format!(
+                "fidelity-bond-cert|{}|{}|{}|{}|{}|{}",
+                self.outpoint, self.pubkey, expiry, self.lock_time, self.amount, addr
+            );
+            let cert_msg = cert_msg_str.as_bytes();
+            let mut btc_signed_msg = Vec::<u8>::new();
+            btc_signed_msg.extend("\x18Bitcoin Signed Message:\n".as_bytes());
+            btc_signed_msg.push(cert_msg.len() as u8);
+            btc_signed_msg.extend(cert_msg);
+
+            sha256d::Hash::hash(&btc_signed_msg)
+        })
+    }
+
+    /// Calculate the expiry value. This depends on the bond's confirmation height
+    pub(crate) fn get_fidelity_expiry(conf_height: u32) -> u32 {
+        (conf_height + 2) /* safety buffer */ / 2016 + 5
     }
 }
 
@@ -165,6 +168,48 @@ impl Wallet {
     /// Get a reference to the fidelity bond store
     pub fn get_fidelity_bonds(&self) -> &HashMap<u32, (FidelityBond, ScriptBuf, bool)> {
         &self.store.fidelity_bond
+    }
+
+    /// Display the fidelity bonds
+    pub fn display_fidelity_bonds(&self) -> Result<String, WalletError> {
+        let current_block = self.rpc.get_block_count()? as u32;
+
+        let serialized: Vec<serde_json::Value> = self
+            .store
+            .fidelity_bond
+            .iter()
+            .map(|(index, (bond, _, is_spent))| {
+                // assuming that lock_time is always in height and never in seconds.
+                match self.calculate_bond_value(*index) {
+                    Ok(bond_value) => Ok(serde_json::json!({
+                        "index": index,
+                        "outpoint": bond.outpoint.to_string(),
+                        "amount": bond.amount.to_sat(),
+                        "bond-value": bond_value,
+                        "expires-in": bond.lock_time.to_consensus_u32() - current_block,
+                    })),
+                    Err(err) => {
+                        if matches!(
+                            err,
+                            WalletError::Fidelity(FidelityError::BondLocktimeExpired)
+                                | WalletError::Fidelity(FidelityError::BondAlreadySpent)
+                        ) {
+                            Ok(serde_json::json!({
+                                "index": index,
+                                "outpoint": bond.outpoint.to_string(),
+                                "amount": bond.amount.to_sat(),
+                                "is_expired": true,
+                                "is_spent": *is_spent,
+                            }))
+                        } else {
+                            Err(err)
+                        }
+                    }
+                }
+            })
+            .collect::<Result<Vec<serde_json::Value>, WalletError>>()?;
+
+        serde_json::to_string_pretty(&serialized).map_err(|e| WalletError::General(e.to_string()))
     }
 
     /// Get the highest value fidelity bond. Returns None, if no bond exists.
@@ -177,19 +222,11 @@ impl Wallet {
                 if !is_spent {
                     match self.calculate_bond_value(bond) {
                         Ok(v) => {
-                            log::info!("Fidelity Bond found | Index: {}, Value : {}", i, v);
+                            log::info!("Fidelity Bond found | Index: {} | Bond Value : {}", i, v);
                             Some((i, v))
                         }
                         Err(e) => {
                             log::error!("Fidelity valuation failed for index {}:  {:?} ", i, e);
-                            if matches!(
-                                e,
-                                WalletError::Fidelity(FidelityError::BondLocktimeExpired)
-                            ) {
-                                log::info!(
-                                    "Use `maker-cli redeem-fildeity <index>` to redeem the bond"
-                                );
-                            }
                             None
                         }
                     }
@@ -266,7 +303,9 @@ impl Wallet {
             .expect("This can't error")
             .as_secs();
 
-        let hash = self.rpc.get_block_hash(bond.conf_height as u64)?;
+        let hash = self
+            .rpc
+            .get_block_hash(bond.conf_height.ok_or(FidelityError::BondDoesNotExist)? as u64)?;
 
         let confirmation_time = self.rpc.get_block_header_info(&hash)?.time as u64;
 
@@ -296,107 +335,58 @@ impl Wallet {
         Ok(bond_value)
     }
 
-    /// Create a new fidelity bond with given amount and locktime.
+    /// Create a new fidelity bond with given amount and absolute height based locktime.
     /// This functions creates the fidelity transaction, signs and broadcast it.
     /// Upon confirmation it stores the fidelity information in the wallet data.
     pub fn create_fidelity(
         &mut self,
         amount: Amount,
-        locktime: LockTime, // The final locktime in blockheight or timestamp
+        locktime: LockTime,
+        feerate: f64,
     ) -> Result<u32, WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
 
-        let all_utxos = self.get_all_utxo()?;
+        let coins = self.coin_select(amount)?;
 
-        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
-        let mut swap_coin_utxo = self.list_incoming_swap_coin_utxo_spend_info(Some(&all_utxos))?;
-        seed_coin_utxo.append(&mut swap_coin_utxo);
+        let destination = Destination::Multi(vec![(fidelity_addr, amount)]);
 
-        // Fetch utxos, filter out existing fidelity coins
-        let mut unspents = seed_coin_utxo
-            .into_iter()
-            .filter(|(_, spend_info)| !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. }))
-            .collect::<Vec<_>>();
-
-        unspents.sort_by(|a, b| b.0.amount.cmp(&a.0.amount));
-
-        let mut selected_utxo = Vec::new();
-        let mut remaining = amount;
-
-        // the simplest largest first coinselection.
-        for unspent in unspents {
-            if remaining.checked_sub(unspent.0.amount).is_none() {
-                selected_utxo.push(unspent);
-                break;
-            } else {
-                remaining -= unspent.0.amount;
-                selected_utxo.push(unspent);
-            }
-        }
-
-        let fee = Amount::from_sat(MINER_FEE); // TODO: Update this with the feerate
-
-        let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
-            acc.checked_add(unspet.amount)
-                .expect("Amount sum overflowed")
-        });
-
-        if total_input_amount < amount + fee {
-            return Err(WalletError::InsufficientFund {
-                available: total_input_amount.to_sat(),
-                required: (amount + fee).to_sat(),
-            });
-        }
-
-        let change_amount = total_input_amount.checked_sub(amount + fee);
-        let tx_inputs = selected_utxo
-            .iter()
-            .map(|(unspent, _)| TxIn {
-                previous_output: OutPoint::new(unspent.txid, unspent.vout),
-                sequence: Sequence(0),
-                witness: Witness::new(),
-                script_sig: ScriptBuf::new(),
-            })
-            .collect::<Vec<_>>();
-
-        let mut tx_outs = vec![TxOut {
-            value: amount,
-            script_pubkey: fidelity_addr.script_pubkey(),
-        }];
-
-        if let Some(change) = change_amount {
-            let change_addrs = self.get_next_internal_addresses(1)?[0].script_pubkey();
-            // check for dust
-            if change > change_addrs.minimal_non_dust() {
-                tx_outs.push(TxOut {
-                    value: change,
-                    script_pubkey: change_addrs,
-                });
-            }
-        }
-
-        // Set the Anti-Fee Snipping Locktime
-        let current_height = self.rpc.get_block_count()?;
-        let lock_time = LockTime::from_height(current_height as u32)?;
-
-        let mut tx = Transaction {
-            input: tx_inputs,
-            output: tx_outs,
-            lock_time,
-            version: Version::TWO,
-        };
-
-        let mut input_info = selected_utxo
-            .iter()
-            .map(|(_, spend_info)| spend_info.clone());
-        self.sign_transaction(&mut tx, &mut input_info)?;
+        let tx = self.spend_coins(&coins, destination, feerate)?;
 
         let txid = self.send_tx(&tx)?;
 
+        // Register this bond even it is in mempool and not yet confirmed to avoid the edge case when the maker server
+        // unexpectedly shutdown while it was waiting for the fidelity transaction confirmation.
+        // Otherwise the wallet wouldn't know about this bond in this case and would attempt to create a new bond again.
+        {
+            let bond = FidelityBond {
+                outpoint: OutPoint::new(txid, 0),
+                amount,
+                lock_time: locktime,
+                pubkey: fidelity_pubkey,
+                // `Conf_height` & `cert_expiry` are considered None as they can't be known before the confirmation.
+                conf_height: None,
+                cert_expiry: None,
+            };
+            let bond_spk = bond.script_pub_key();
+            self.store
+                .fidelity_bond
+                .insert(index, (bond, bond_spk, false));
+            self.save_to_disk()?;
+        }
+
+        let conf_height = self.wait_for_fidelity_tx_confirmation(txid)?;
+
+        self.update_fidelity_bond_conf_details(index, conf_height)?;
+
+        Ok(index)
+    }
+
+    /// Waits for the fidelity transaction to confirm and returns its block height.  
+    pub(crate) fn wait_for_fidelity_tx_confirmation(&self, txid: Txid) -> Result<u32, WalletError> {
         let sleep_increment = 10;
         let mut sleep_multiplier = 0;
 
-        let conf_height = loop {
+        let ht = loop {
             sleep_multiplier += 1;
 
             let get_tx_result = self.rpc.get_transaction(&txid, None)?;
@@ -412,100 +402,56 @@ impl Wallet {
                     "Fidelity Transaction {} seen in mempool, waiting for confirmation.",
                     txid
                 );
-                log::warn!("ATTENTION ! DO NOT SHUTDOWN THE MAKER UNTIL CONFIRMATION");
-
-                let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60); // Caps at 1 Block interval i.e 10 mins
+                let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60); // Caps at 10 minutes
                 log::info!("Next sync in {:?} secs", total_sleep);
                 thread::sleep(Duration::from_secs(total_sleep));
             }
         };
 
-        let cert_expiry = self.get_fidelity_expiry()?;
+        Ok(ht)
+    }
 
-        let bond = FidelityBond {
-            outpoint: OutPoint::new(txid, 0),
-            amount,
-            lock_time: locktime,
-            pubkey: fidelity_pubkey,
-            conf_height,
-            cert_expiry,
-        };
-
-        let bond_spk = bond.script_pub_key();
-
-        self.store
+    pub(crate) fn update_fidelity_bond_conf_details(
+        &mut self,
+        index: u32,
+        conf_height: u32,
+    ) -> Result<(), WalletError> {
+        let cert_expiry = FidelityBond::get_fidelity_expiry(conf_height);
+        let (bond, _, _) = self
+            .store
             .fidelity_bond
-            .insert(index, (bond, bond_spk, false));
+            .get_mut(&index)
+            .ok_or(FidelityError::BondDoesNotExist)?;
+
+        bond.cert_expiry = Some(cert_expiry);
+        bond.conf_height = Some(conf_height);
 
         self.sync()?;
 
-        Ok(index)
+        Ok(())
     }
 
-    /// Redeem a Fidelity Bond.
-    /// This functions creates a spending transaction from the fidelity bond, signs and broadcasts it.
-    /// Returns the txid of the spending tx, and mark the bond as spent.
-    pub fn redeem_fidelity(&mut self, index: u32) -> Result<Txid, WalletError> {
-        let (bond, _, is_spent) = self
+    /// Redeems all expired fidelity bonds in the wallet ,if found any.
+    pub fn redeem_expired_fidelity_bonds(&mut self) -> Result<(), WalletError> {
+        let curr_height = self.rpc.get_block_count()? as u32;
+
+        let expired_bond_indices = self
             .store
             .fidelity_bond
-            .get(&index)
-            .ok_or(FidelityError::BondDoesNotExist)?;
+            .iter()
+            .filter_map(|(&i, (bond, _, is_spent))| {
+                if !is_spent && curr_height > bond.lock_time.to_consensus_u32() {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
 
-        if *is_spent {
-            return Err(FidelityError::BondAlreadySpent.into());
-        }
-
-        // create a spending transaction.
-        let txin = TxIn {
-            previous_output: bond.outpoint,
-            sequence: Sequence(0),
-            script_sig: ScriptBuf::new(),
-            witness: Witness::new(),
-        };
-
-        // TODO take feerate as user input
-        let fee = Amount::from_sat(MINER_FEE);
-
-        let change_addr = &self.get_next_internal_addresses(1)?[0];
-
-        let txout = TxOut {
-            script_pubkey: change_addr.script_pubkey(),
-            value: bond.amount - fee,
-        };
-
-        let mut tx = Transaction {
-            input: vec![txin],
-            output: vec![txout],
-            lock_time: bond.lock_time,
-            version: Version::TWO,
-        };
-
-        let utxo_spend_info = UTXOSpendInfo::FidelityBondCoin {
-            index,
-            input_value: bond.amount,
-        };
-
-        self.sign_transaction(&mut tx, vec![utxo_spend_info].into_iter())?;
-
-        let txid = self.send_tx(&tx)?;
-
-        log::info!("Fidelity redeem transaction broadcasted. txid: {}", txid);
-
-        // No need to wait for confirmation as that will delay the rpc call. Just send back the txid.
-
-        // mark is_spent
-        {
-            let (_, _, is_spent) = self
-                .store
-                .fidelity_bond
-                .get_mut(&index)
-                .ok_or(FidelityError::BondDoesNotExist)?;
-
-            *is_spent = true;
-        }
-
-        Ok(txid)
+        expired_bond_indices.into_iter().try_for_each(|i| {
+            log::info!("Fidelity Bond at index: {:?} expired | Redeeming it.", i);
+            self.redeem_fidelity(i, DEFAULT_TX_FEE_RATE).map(|_| ())
+        })
     }
 
     /// Generate a [FidelityProof] for bond at a given index and a specific onion address.
@@ -527,7 +473,9 @@ impl Wallet {
 
         let fidelity_privkey = self.get_fidelity_keypair(index)?.secret_key();
 
-        let cert_hash = bond.generate_cert_hash(maker_addr);
+        let cert_hash = bond
+            .generate_cert_hash(maker_addr)
+            .expect("Bond is not yet confirmed");
 
         let secp = Secp256k1::new();
         let cert_sig = secp.sign_ecdsa(
@@ -553,12 +501,6 @@ impl Wallet {
         let current_height = self.rpc.get_block_count()?;
 
         verify_fidelity_checks(proof, onion_addr, transaction, current_height)
-    }
-
-    /// Calculate the expiry value. This depends on the current block height.
-    pub(crate) fn get_fidelity_expiry(&self) -> Result<u64, WalletError> {
-        let current_height = self.rpc.get_block_count()?;
-        Ok((current_height + 2) /* safety buffer */ / 2016 + 5)
     }
 }
 

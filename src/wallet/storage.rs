@@ -35,8 +35,7 @@ pub(crate) struct WalletStore {
     /// Map of prevout to contract redeemscript.
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
     /// Map for all the fidelity bond information. (index, (Bond, script_pubkey, is_spent)).
-    pub(super) fidelity_bond: HashMap<u32, (FidelityBond, ScriptBuf, bool)>,
-    //TODO: Add last synced height and Wallet birthday.
+    pub(crate) fidelity_bond: HashMap<u32, (FidelityBond, ScriptBuf, bool)>,
     pub(super) last_synced_height: Option<u64>,
 
     pub(super) wallet_birthday: Option<u64>,

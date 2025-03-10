@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display};
+use std::fmt::Display;
 
 use bitcoin::Txid;
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string_pretty};
 use std::path::PathBuf;
 
-use crate::wallet::{Balances, FidelityBond};
+use crate::wallet::Balances;
 
 /// Enum representing RPC message requests.
 ///
@@ -35,7 +35,7 @@ pub enum RpcMsgReq {
         /// The amount to send.
         amount: u64,
         /// The transaction fee to include.
-        fee: u64,
+        feerate: f64,
     },
     /// Request to retrieve the Tor address of the Maker.
     GetTorAddress,
@@ -43,8 +43,6 @@ pub enum RpcMsgReq {
     GetDataDir,
     /// Request to stop the Maker server.
     Stop,
-    /// Request to reddem a fidelity bond for a given index.
-    RedeemFidelity(u32),
     /// Request to list all active and past fidelity bonds.
     ListFidelity,
     /// Request to sync the internal wallet with blockchain.
@@ -96,7 +94,7 @@ pub enum RpcMsgResp {
     /// Response with the internal server error.
     ServerError(String),
     /// Response listing all current and past fidelity bonds.
-    ListBonds(HashMap<u32, (FidelityBond, bool)>),
+    ListBonds(String),
 }
 
 impl Display for RpcMsgResp {
@@ -128,7 +126,7 @@ impl Display for RpcMsgResp {
             Self::Shutdown => write!(f, "Shutdown Initiated"),
             Self::FidelitySpend(txid) => write!(f, "{}", txid),
             Self::ServerError(e) => write!(f, "{}", e),
-            Self::ListBonds(v) => write!(f, "{:#?}", v),
+            Self::ListBonds(v) => write!(f, "{}", v),
         }
     }
 }

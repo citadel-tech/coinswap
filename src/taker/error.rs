@@ -1,7 +1,7 @@
 //! All Taker-related errors.
 use crate::{
     error::NetError, market::directory::DirectoryServerError, protocol::error::ProtocolError,
-    wallet::WalletError,
+    utill::TorError, wallet::WalletError,
 };
 
 /// Represents errors that can occur during Taker operations.
@@ -33,6 +33,14 @@ pub enum TakerError {
     ///
     /// This error occurs during internal thread communication.
     MPSC(String),
+    /// Tor error
+    TorError(TorError),
+}
+
+impl From<TorError> for TakerError {
+    fn from(value: TorError) -> Self {
+        Self::TorError(value)
+    }
 }
 
 impl From<serde_cbor::Error> for TakerError {
