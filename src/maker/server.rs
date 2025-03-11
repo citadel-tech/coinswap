@@ -11,7 +11,6 @@ use socks::Socks5Stream;
 use std::{
     io::ErrorKind,
     net::{Ipv4Addr, TcpListener, TcpStream},
-    process::Child,
     sync::{atomic::Ordering::Relaxed, Arc},
     thread::{self, sleep},
     time::Duration,
@@ -45,9 +44,9 @@ use crate::maker::error::MakerError;
 ///
 /// Tor thread is spawned only if ConnectionType=TOR and --feature=tor is enabled.
 /// Errors if ConncetionType=TOR but, the tor feature is not enabled.
-fn network_bootstrap(maker: Arc<Maker>) -> Result<(Option<Child>, String, String), MakerError> {
+fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> {
     let maker_port = maker.config.network_port;
-    let (maker_address, dns_address, tor_handle) = match maker.config.connection_type {
+    let (maker_address, dns_address) = match maker.config.connection_type {
         ConnectionType::CLEARNET => {
             let maker_address = format!("127.0.0.1:{}", maker_port);
             let dns_address = if cfg!(feature = "integration-test") {
@@ -56,14 +55,14 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(Option<Child>, String, String
                 maker.config.directory_server_address.clone()
             };
 
-            (maker_address, dns_address, None)
+            (maker_address, dns_address)
         }
         ConnectionType::TOR => {
             let maker_hostname = get_tor_hostname()?;
             let maker_address = format!("{}:{}", maker_hostname, maker.config.network_port);
 
             let dns_address = maker.config.directory_server_address.clone();
-            (maker_address, dns_address, None)
+            (maker_address, dns_address)
         }
     };
 
@@ -75,7 +74,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(Option<Child>, String, String
 
     manage_fidelity_bonds_and_update_dns(maker.as_ref(), &maker_address, &dns_address)?;
 
-    Ok((tor_handle, maker_address, dns_address))
+    Ok((maker_address, dns_address))
 }
 
 /// Manages the maker's fidelity bonds and ensures the DNS server is updated with the latest bond proof and maker address.
@@ -451,7 +450,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Starting Maker Server");
 
     // Setup the wallet with fidelity bond.
-    let (_tor_thread, maker_addr, dns_addr) = network_bootstrap(maker.clone())?;
+    let (maker_addr, dns_addr) = network_bootstrap(maker.clone())?;
 
     // Tracks the elapsed time in heartbeat intervals to schedule periodic checks and avoid redundant executions.
     let mut interval_tracker = 0;
