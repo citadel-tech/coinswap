@@ -219,8 +219,18 @@ fn main() -> Result<(), TakerError> {
         }
 
         Commands::FetchOffers => {
-            let offerbook = taker.fetch_offers()?;
-            println!("{:#?}", offerbook)
+            let all_offers = {
+                let offerbook = taker.fetch_offers()?;
+                offerbook
+                    .all_makers()
+                    .iter()
+                    .cloned()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            all_offers
+                .iter()
+                .for_each(|offer| println!("{}", taker.display_offer(offer)));
         }
         Commands::Coinswap { makers, amount } => {
             let swap_params = SwapParams {
