@@ -40,10 +40,7 @@ use crate::maker::error::MakerError;
 
 /// Fetches the Maker and DNS address, and sends maker address to the DNS server.
 /// Depending upon ConnectionType and test/prod environment, different maker address and DNS addresses are returned.
-/// Return the Maker address and an optional tor thread handle.
-///
-/// Tor thread is spawned only if ConnectionType=TOR and --feature=tor is enabled.
-/// Errors if ConncetionType=TOR but, the tor feature is not enabled.
+/// Return the Maker address and the DNS address.
 fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> {
     let maker_port = maker.config.network_port;
     let (maker_address, dns_address) = match maker.config.connection_type {
