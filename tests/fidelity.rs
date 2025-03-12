@@ -83,13 +83,13 @@ fn test_fidelity() {
             .unwrap();
         assert_eq!(bond_value, Amount::from_sat(10814));
 
-        let (bond, _, is_spent) = wallet_read
+        let (bond, redeemed) = wallet_read
             .get_fidelity_bonds()
             .get(&highest_bond_index)
             .unwrap();
 
         assert_eq!(bond.amount, Amount::from_sat(5000000));
-        assert!(!is_spent);
+        assert!(!redeemed);
 
         bond.lock_time.to_consensus_u32()
     };
@@ -119,9 +119,9 @@ fn test_fidelity() {
         //let bond_value = wallet_read.calculate_bond_value(index).unwrap();
         // assert_eq!(bond_value, Amount::from_sat(1474));
 
-        let (bond, _, is_spent) = wallet_read.get_fidelity_bonds().get(&index).unwrap();
+        let (bond, redeemed) = wallet_read.get_fidelity_bonds().get(&index).unwrap();
         assert_eq!(bond.amount, Amount::from_sat(8000000));
-        assert!(!is_spent);
+        assert!(!redeemed);
 
         bond.lock_time.to_consensus_u32()
     };

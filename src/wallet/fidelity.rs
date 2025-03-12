@@ -43,7 +43,7 @@ const FIDELITY_DERIVATION_PATH: &str = "m/84'/0'/0'/2";
 pub enum FidelityError {
     WrongScriptType,
     BondDoesNotExist,
-    BondAlreadySpent,
+    BondAlreadyRedeemed,
     BondLocktimeExpired,
     CertExpired,
     InvalidCertHash,
@@ -166,48 +166,34 @@ impl FidelityBond {
 // Wallet APIs related to fidelity bonds.
 impl Wallet {
     /// Get a reference to the fidelity bond store
-    pub fn get_fidelity_bonds(&self) -> &HashMap<u32, (FidelityBond, ScriptBuf, bool)> {
+    pub fn get_fidelity_bonds(&self) -> &HashMap<u32, (FidelityBond, bool)> {
         &self.store.fidelity_bond
     }
 
     /// Display the fidelity bonds
     pub fn display_fidelity_bonds(&self) -> Result<String, WalletError> {
-        let current_block = self.rpc.get_block_count()? as u32;
-
-        let serialized: Vec<serde_json::Value> = self
+        let serialized = self
             .store
             .fidelity_bond
             .iter()
-            .map(|(index, (bond, _, is_spent))| {
-                // assuming that lock_time is always in height and never in seconds.
-                match self.calculate_bond_value(*index) {
-                    Ok(bond_value) => Ok(serde_json::json!({
+            .map(|(index, (bond, redeemed))| {
+                let mut bond_info = serde_json::json!({
                         "index": index,
                         "outpoint": bond.outpoint.to_string(),
                         "amount": bond.amount.to_sat(),
-                        "bond-value": bond_value,
-                        "expires-in": bond.lock_time.to_consensus_u32() - current_block,
-                    })),
-                    Err(err) => {
-                        if matches!(
-                            err,
-                            WalletError::Fidelity(FidelityError::BondLocktimeExpired)
-                                | WalletError::Fidelity(FidelityError::BondAlreadySpent)
-                        ) {
-                            Ok(serde_json::json!({
-                                "index": index,
-                                "outpoint": bond.outpoint.to_string(),
-                                "amount": bond.amount.to_sat(),
-                                "is_expired": true,
-                                "is_spent": *is_spent,
-                            }))
-                        } else {
-                            Err(err)
-                        }
-                    }
+                        "status": if *redeemed {"Redeemed"} else {"Live"}
+                });
+
+                if !*redeemed {
+                    let bond_value = self
+                        .calculate_bond_value(*index)
+                        .expect("Bond value calculation must not fail for valid bonds.");
+                    bond_info["bond_value"] = serde_json::json!(bond_value);
                 }
+
+                bond_info
             })
-            .collect::<Result<Vec<serde_json::Value>, WalletError>>()?;
+            .collect::<Vec<serde_json::Value>>();
 
         serde_json::to_string_pretty(&serialized).map_err(|e| WalletError::General(e.to_string()))
     }
@@ -218,8 +204,8 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
-            .filter_map(|(i, (_, _, is_spent))| {
-                if !is_spent {
+            .filter_map(|(i, (_, expired))| {
+                if !expired {
                     match self.calculate_bond_value(*i) {
                         Ok(v) => {
                             log::info!("Fidelity Bond found | Index: {} | Bond Value : {}", i, v);
@@ -255,7 +241,7 @@ impl Wallet {
 
     /// Derives the fidelity redeemscript from bond values at given index.
     pub(crate) fn get_fidelity_reedemscript(&self, index: u32) -> Result<ScriptBuf, WalletError> {
-        let (bond, _, _) = self
+        let (bond, _) = self
             .store
             .fidelity_bond
             .get(&index)
@@ -298,7 +284,7 @@ impl Wallet {
     /// Bond value calculation is described in the document below.
     /// https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds
     pub fn calculate_bond_value(&self, index: u32) -> Result<Amount, WalletError> {
-        let (bond, _, _) = self
+        let (bond, _) = self
             .store
             .fidelity_bond
             .get(&index)
@@ -372,10 +358,7 @@ impl Wallet {
                 conf_height: None,
                 cert_expiry: None,
             };
-            let bond_spk = bond.script_pub_key();
-            self.store
-                .fidelity_bond
-                .insert(index, (bond, bond_spk, false));
+            self.store.fidelity_bond.insert(index, (bond, false));
             self.save_to_disk()?;
         }
 
@@ -422,7 +405,7 @@ impl Wallet {
         conf_height: u32,
     ) -> Result<(), WalletError> {
         let cert_expiry = FidelityBond::get_fidelity_expiry(conf_height);
-        let (bond, _, _) = self
+        let (bond, _) = self
             .store
             .fidelity_bond
             .get_mut(&index)
@@ -444,8 +427,8 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
-            .filter_map(|(&i, (bond, _, is_spent))| {
-                if !is_spent && curr_height > bond.lock_time.to_consensus_u32() {
+            .filter_map(|(&i, (bond, redeemed))| {
+                if !redeemed && curr_height > bond.lock_time.to_consensus_u32() {
                     Some(i)
                 } else {
                     None
@@ -466,14 +449,14 @@ impl Wallet {
         maker_addr: &str,
     ) -> Result<FidelityProof, WalletError> {
         // Generate a fidelity bond proof from the fidelity data.
-        let (bond, _, is_spent) = self
+        let (bond, redeemed) = self
             .store
             .fidelity_bond
             .get(&index)
             .ok_or(FidelityError::BondDoesNotExist)?;
 
-        if *is_spent {
-            return Err(FidelityError::BondAlreadySpent.into());
+        if *redeemed {
+            return Err(FidelityError::BondAlreadyRedeemed.into());
         }
 
         let fidelity_privkey = self.get_fidelity_keypair(index)?.secret_key();

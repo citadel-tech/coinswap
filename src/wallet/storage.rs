@@ -34,8 +34,10 @@ pub(crate) struct WalletStore {
     pub(super) outgoing_swapcoins: HashMap<ScriptBuf, OutgoingSwapCoin>,
     /// Map of prevout to contract redeemscript.
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
-    /// Map for all the fidelity bond information. (index, (Bond, script_pubkey, is_spent)).
-    pub(crate) fidelity_bond: HashMap<u32, (FidelityBond, ScriptBuf, bool)>,
+    /// Map for all the fidelity bond information. (index, (Bond, redeemed)).
+    /// TODO: Should we make `status\is_redeemed` field inside the FidelityBond struct , we then no longer
+    /// to keep other bool inside the map..
+    pub(crate) fidelity_bond: HashMap<u32, (FidelityBond, bool)>,
     pub(super) last_synced_height: Option<u64>,
 
     pub(super) wallet_birthday: Option<u64>,

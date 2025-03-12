@@ -71,14 +71,14 @@ impl Wallet {
     /// This functions creates a spending transaction from the fidelity bond, signs and broadcasts it.
     /// Returns the txid of the spending tx, and mark the bond as spent.
     pub fn redeem_fidelity(&mut self, idx: u32, feerate: f64) -> Result<Txid, WalletError> {
-        let (bond, _, is_spent) = self
+        let (bond, redeemed) = self
             .store
             .fidelity_bond
             .get(&idx)
             .ok_or(FidelityError::BondDoesNotExist)?;
 
-        if *is_spent {
-            return Err(FidelityError::BondAlreadySpent.into());
+        if *redeemed {
+            return Err(FidelityError::BondAlreadyRedeemed.into());
         }
         let utxo_spend_info = UTXOSpendInfo::FidelityBondCoin {
             index: idx,
@@ -95,7 +95,7 @@ impl Wallet {
                 }
             }
         }
-        let utxo = utxo.ok_or(FidelityError::BondAlreadySpent)?;
+        let utxo = utxo.ok_or(FidelityError::BondAlreadyRedeemed)?;
 
         let tx = self.spend_coins(&vec![(utxo, utxo_spend_info)], destination, feerate)?;
 
@@ -105,15 +105,15 @@ impl Wallet {
 
         // No need to wait for confirmation as that will delay the rpc call. Just send back the txid.
 
-        // mark is_spent
+        // mark the bond as redeemed.
         {
-            let (_, _, is_spent) = self
+            let (_, redeemed) = self
                 .store
                 .fidelity_bond
                 .get_mut(&idx)
                 .ok_or(FidelityError::BondDoesNotExist)?;
 
-            *is_spent = true;
+            *redeemed = true;
         }
 
         Ok(txid)
@@ -216,14 +216,14 @@ impl Wallet {
                     total_input_value += utxo_data.amount;
                 }
                 UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
-                    let (bond, _, is_spent) = self
+                    let (bond, redeemed) = self
                         .store
                         .fidelity_bond
                         .get(index)
                         .ok_or(FidelityError::BondDoesNotExist)?;
 
-                    if *is_spent {
-                        return Err(FidelityError::BondAlreadySpent.into());
+                    if *redeemed {
+                        return Err(FidelityError::BondAlreadyRedeemed.into());
                     }
 
                     tx.input.push(TxIn {
