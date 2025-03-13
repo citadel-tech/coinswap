@@ -32,7 +32,7 @@ impl Wallet {
     // Attempts to create the funding transactions.
     /// Returns Ok(None) if there was no error but the wallet was unable to create funding txes
     pub(crate) fn create_funding_txes(
-        &self,
+        &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: Amount,
@@ -126,7 +126,7 @@ impl Wallet {
     /// Randomly generating some satoshi amounts and send them into
     /// walletcreatefundedpsbt to create txes that create change
     fn create_funding_txes_random_amounts(
-        &self,
+        &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: Amount,
@@ -386,7 +386,7 @@ impl Wallet {
     }
 
     fn create_funding_txes_utxo_max_sends(
-        &self,
+        &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: Amount,
