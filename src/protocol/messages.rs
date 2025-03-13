@@ -58,8 +58,8 @@
 use std::fmt::Display;
 
 use bitcoin::{
-    ecdsa::Signature, hashes::sha256d::Hash, secp256k1::SecretKey, Amount, PublicKey, ScriptBuf,
-    Transaction,
+    ecdsa::Signature, hashes::sha256d::Hash, relative::LockTime as RelativeLockTime,
+    secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction,
 };
 
 use serde::{Deserialize, Serialize};
@@ -101,7 +101,7 @@ pub(crate) struct ContractTxInfoForSender {
 pub(crate) struct ReqContractSigsForSender {
     pub(crate) txs_info: Vec<ContractTxInfoForSender>,
     pub(crate) hashvalue: Hash160,
-    pub(crate) locktime: u16,
+    pub(crate) locktime: RelativeLockTime,
 }
 
 /// Contract Sigs requesting information for the Receiver side of the hop.
@@ -142,7 +142,7 @@ pub(crate) struct ProofOfFunding {
     pub(crate) confirmed_funding_txes: Vec<FundingTxInfo>,
     // TODO: Directly use Vec of Pubkeys.
     pub(crate) next_coinswap_info: Vec<NextHopInfo>,
-    pub(crate) refund_locktime: u16,
+    pub(crate) refund_locktime: RelativeLockTime,
     pub(crate) contract_feerate: u64,
     pub(crate) id: String,
 }
@@ -247,7 +247,7 @@ pub(crate) struct Offer {
     pub(crate) amount_relative_fee_pct: f64, // % fee on total amount
     pub(crate) time_relative_fee_pct: f64, // amount * refund_locktime * TRF% = fees for locking the fund.
     pub(crate) required_confirms: u32,
-    pub(crate) minimum_locktime: u16,
+    pub(crate) minimum_locktime: RelativeLockTime,
     pub(crate) max_size: u64,
     pub(crate) min_size: u64,
     pub(crate) tweakable_point: PublicKey,

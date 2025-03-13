@@ -247,7 +247,7 @@ impl Wallet {
                             txid: outgoing_swap_coin.contract_tx.compute_txid(),
                             vout: 0,
                         },
-                        sequence: Sequence(outgoing_swap_coin.get_timelock()? as u32),
+                        sequence: Sequence(outgoing_swap_coin.get_timelock()?.to_consensus_u32()),
                         witness: Witness::new(),
                         script_sig: ScriptBuf::new(),
                     });

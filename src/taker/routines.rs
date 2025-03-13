@@ -31,7 +31,8 @@ use crate::{
     wallet::WalletError,
 };
 use bitcoin::{
-    locktime::relative::LockTime, secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction,
+    locktime::relative::LockTime as RelativeLockTime, secp256k1::SecretKey, Amount, PublicKey,
+    ScriptBuf, Transaction,
 };
 
 use super::{
@@ -106,7 +107,7 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
     outgoing_swapcoins: &[S],
     maker_multisig_nonces: &[SecretKey],
     maker_hashlock_nonces: &[SecretKey],
-    locktime: u16,
+    locktime: RelativeLockTime,
 ) -> Result<ContractSigsForSender, TakerError> {
     handshake_maker(socket)?;
     let txs_info = maker_multisig_nonces
@@ -231,7 +232,7 @@ pub(crate) struct ThisMakerInfo {
     pub(crate) this_maker: OfferAndAddress,
     pub(crate) funding_tx_infos: Vec<FundingTxInfo>,
     pub(crate) this_maker_contract_txs: Vec<Transaction>,
-    pub this_maker_refund_locktime: u16,
+    pub this_maker_refund_locktime: RelativeLockTime,
 }
 
 // Type for information related to the next peer // why not next Maker?
@@ -327,7 +328,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
 
     let coinswap_fees = calculate_coinswap_fee(
         Amount::from_sat(this_amount),
-        LockTime::from_height(tmi.this_maker_refund_locktime),
+        tmi.this_maker_refund_locktime,
         Amount::from_sat(tmi.this_maker.offer.base_fee),
         tmi.this_maker.offer.amount_relative_fee_pct,
         tmi.this_maker.offer.time_relative_fee_pct,
