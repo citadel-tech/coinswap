@@ -71,20 +71,25 @@ impl Wallet {
     /// This functions creates a spending transaction from the fidelity bond, signs and broadcasts it.
     /// Returns the txid of the spending tx, and mark the bond as spent.
     pub fn redeem_fidelity(&mut self, idx: u32, feerate: f64) -> Result<Txid, WalletError> {
-        let (bond, _, is_spent) = self
-            .store
-            .fidelity_bond
-            .get(&idx)
+    // Create a local copy of the fidelity bond data to end the immutable borrow.
+    let (bond, _, is_spent) = {
+        let entry = self.store.fidelity_bond.get(&idx)
             .ok_or(FidelityError::BondDoesNotExist)?;
+        // Clone the bond (and other necessary data) so that we don't hold on to the borrow.
+        (entry.0.clone(), /* you can ignore the second field if unused */ entry.1.clone(), entry.2)
+    };
 
-        if *is_spent {
-            return Err(FidelityError::BondAlreadySpent.into());
-        }
-        let utxo_spend_info = UTXOSpendInfo::FidelityBondCoin {
-            index: idx,
-            input_value: bond.amount,
-        };
-        let change_addr = &self.get_next_internal_addresses(1)?[0];
+    if is_spent {
+        return Err(FidelityError::BondAlreadySpent.into());
+    }
+
+    let utxo_spend_info = UTXOSpendInfo::FidelityBondCoin {
+        index: idx,
+        input_value: bond.amount,
+    };
+
+    // Now that the immutable borrow is done, it's safe to call a mutable method.
+    let change_addr = &self.get_next_internal_addresses(1)?[0];
         let destination = Destination::Sweep(change_addr.clone());
         let all_utxo = self.list_fidelity_spend_info()?;
         let mut utxo: Option<ListUnspentResultEntry> = None;
@@ -120,7 +125,7 @@ impl Wallet {
     }
 
     pub(crate) fn create_timelock_spend(
-        &self,
+        &mut self,
         og_sc: &OutgoingSwapCoin,
         destination_address: &Address,
         feerate: f64,
@@ -147,7 +152,7 @@ impl Wallet {
 
     #[allow(unused)]
     pub(crate) fn create_hashlock_spend(
-        &self,
+        &mut self,
         ic_sc: &IncomingSwapCoin,
         destination_address: &Address,
         feerate: f64,
@@ -175,7 +180,7 @@ impl Wallet {
 
     #[allow(unused)]
     pub fn spend_coins(
-        &self,
+        &mut self,
         coins: &Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
         destination: Destination,
         feerate: f64,

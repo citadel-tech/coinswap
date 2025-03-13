@@ -3,7 +3,7 @@ use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
-    utill::ConnectionType,
+    utill::ConnectionType, wallet,
 };
 mod test_framework;
 use log::{info, warn};
@@ -61,6 +61,11 @@ fn test_stop_taker_after_setup() {
         Amount::from_btc(0.05).unwrap(),
     );
 
+    // for maker in &makers {
+    //     let mut wallet = maker.get_wallet().write().expect("Failed to acquire wallet lock");
+    //     wallet.sync().expect("Failed to sync wallet");
+    // }
+    
     //  Start the Maker Server threads
     log::info!("Initiating Maker...");
 
@@ -73,6 +78,7 @@ fn test_stop_taker_after_setup() {
             })
         })
         .collect::<Vec<_>>();
+
 
     // Makers take time to fully setup.
     let org_maker_spend_balances = makers

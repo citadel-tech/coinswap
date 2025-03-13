@@ -28,11 +28,18 @@ pub(crate) struct CreateFundingTxesResult {
     pub(crate) total_miner_fee: u64,
 }
 
+#[derive(serde::Deserialize)]
+struct LockedUtxo {
+    txid: Txid,
+    vout: u32,
+}
+
+
 impl Wallet {
     // Attempts to create the funding transactions.
     /// Returns Ok(None) if there was no error but the wallet was unable to create funding txes
     pub(crate) fn create_funding_txes(
-        &self,
+        &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: Amount,
@@ -122,11 +129,12 @@ impl Wallet {
         Ok(output_values)
     }
 
+    
     /// This function creates funding txes by
     /// Randomly generating some satoshi amounts and send them into
     /// walletcreatefundedpsbt to create txes that create change
     fn create_funding_txes_random_amounts(
-        &self,
+        &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: Amount,
@@ -136,6 +144,8 @@ impl Wallet {
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
         self.lock_unspendable_utxos()?;
+
+        log::info!("NO issues in lcoking unspendables");
 
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
@@ -208,13 +218,37 @@ impl Wallet {
                 actual_feerate
             );
 
-            self.rpc.lock_unspent(
-                &funding_tx
-                    .input
-                    .iter()
-                    .map(|vin| vin.previous_output)
-                    .collect::<Vec<OutPoint>>(),
-            )?;
+
+            // self.rpc.lock_unspent(
+            //     &funding_tx
+            //         .input
+            //         .iter()
+            //         .map(|vin| vin.previous_output)
+            //         .collect::<Vec<OutPoint>>(),
+            // )?;
+
+            // Retrieve currently locked UTXOs
+            let locked_utxos: Vec<LockedUtxo> = self.rpc.call("listlockunspent", &[])?;
+
+            // Convert to a Vec<OutPoint>
+            let locked_outpoints: Vec<OutPoint> = locked_utxos
+                .into_iter()
+                .map(|lu| OutPoint { txid: lu.txid, vout: lu.vout })
+                .collect();
+
+            // Filter the inputs: only include those not already locked.
+            let inputs_to_lock: Vec<OutPoint> = funding_tx
+                .input
+                .iter()
+                .map(|vin| vin.previous_output)
+                .filter(|outpoint| !locked_outpoints.contains(outpoint))
+                .collect();
+
+            // Only call lock_unspent if there are any UTXOs to lock.
+            if !inputs_to_lock.is_empty() {
+                self.rpc.lock_unspent(&inputs_to_lock)?;
+            }
+
 
             let payment_pos = 0;
 
@@ -386,7 +420,7 @@ impl Wallet {
     }
 
     fn create_funding_txes_utxo_max_sends(
-        &self,
+        &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: Amount,
@@ -472,7 +506,7 @@ impl Wallet {
     }
 
     fn create_funding_txes_use_biggest_utxos(
-        &self,
+        &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: Amount,

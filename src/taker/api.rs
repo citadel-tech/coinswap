@@ -314,6 +314,8 @@ impl Taker {
         // Check if we have enough balance.
         let available = self.wallet.get_balances()?.spendable;
 
+        log::info!("Available balance is {:#?}", available);
+
         // TODO: Make more exact estimate of swap cost and ensure balance.
         // For now ensure at least swap_amount + 1000 sats is available.
         let required = swap_params.send_amount + Amount::from_sat(1000);

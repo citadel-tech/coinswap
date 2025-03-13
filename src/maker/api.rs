@@ -587,8 +587,8 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                         {
                             let contract_timelock = og_sc.get_timelock()?;
                             let next_internal_address =
-                                &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
-                            let time_lock_spend = maker.wallet.read()?.create_timelock_spend(
+                                &maker.wallet.write()?.get_next_internal_addresses(1)?[0];
+                            let time_lock_spend = maker.wallet.write()?.create_timelock_spend(
                                 og_sc,
                                 next_internal_address,
                                 DEFAULT_TX_FEE_RATE,
@@ -667,8 +667,8 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
     // fully signed.
     for og_sc in out.iter() {
         let contract_timelock = og_sc.get_timelock()?;
-        let next_internal_address = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
-        let time_lock_spend = maker.wallet.read()?.create_timelock_spend(
+        let next_internal_address = &maker.wallet.write()?.get_next_internal_addresses(1)?[0];
+        let time_lock_spend = maker.wallet.write()?.create_timelock_spend(
             og_sc,
             next_internal_address,
             DEFAULT_TX_FEE_RATE,
@@ -770,8 +770,8 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                         let contract_timelock = og_sc.get_timelock()?;
                         let contract = og_sc.get_fully_signed_contract_tx()?;
                         let next_internal_address =
-                            &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
-                        let time_lock_spend = maker.wallet.read()?.create_timelock_spend(
+                            &maker.wallet.write()?.get_next_internal_addresses(1)?[0];
+                        let time_lock_spend = maker.wallet.write()?.create_timelock_spend(
                             og_sc,
                             next_internal_address,
                             DEFAULT_TX_FEE_RATE,

@@ -304,13 +304,13 @@ pub fn fund_and_verify_taker(
 
     //------Basic Checks-----
 
-    let wallet = taker.get_wallet();
+    let wallet = taker.get_wallet_mut();
     // Assert external address index reached to 3.
     assert_eq!(wallet.get_external_index(), &utxo_count);
 
     // Check if utxo list looks good.
     // TODO: Assert other interesting things from the utxo list.
-
+    wallet.sync();
     let all_utxos = wallet.get_all_utxo().unwrap();
 
     let balances = wallet.get_balances().unwrap();
@@ -320,6 +320,8 @@ pub fn fund_and_verify_taker(
     assert_eq!(balances.fidelity, Amount::ZERO);
     assert_eq!(balances.swap, Amount::ZERO);
     assert_eq!(balances.contract, Amount::ZERO);
+
+    wallet.sync();
 
     balances.spendable
 }

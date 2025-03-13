@@ -824,8 +824,10 @@ impl Wallet {
     /// Finds the next unused index in the HD keychain.
     ///
     /// It will only return an unused address; i.e, an address that doesn't have a transaction associated with it.
-    pub(super) fn find_hd_next_index(&self, keychain: KeychainKind) -> Result<u32, WalletError> {
+    pub(super) fn find_hd_next_index(&mut self, keychain: KeychainKind) -> Result<u32, WalletError> {
         let mut max_index: i32 = -1;
+
+        self.update_utxo_cache(self.get_all_utxo()?);
 
         let mut utxos = self.list_descriptor_utxo_spend_info()?;
         let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info()?;
@@ -865,7 +867,7 @@ impl Wallet {
     }
 
     /// Gets the next internal addresses from the HD keychain.
-    pub fn get_next_internal_addresses(&self, count: u32) -> Result<Vec<Address>, WalletError> {
+    pub fn get_next_internal_addresses(&mut self, count: u32) -> Result<Vec<Address>, WalletError> {
         let next_change_addr_index = self.find_hd_next_index(KeychainKind::Internal)?;
         let descriptors = self.get_wallet_descriptors()?;
         let change_branch_descriptor = descriptors
@@ -934,6 +936,9 @@ impl Wallet {
             };
             self.store.utxo_cache.insert(outpoint, (utxo, spend_info));
         }
+
+        // log::info!("THE UTXO CACHE IS {:#?}", self.store.utxo_cache)
+
     }
 
     /// Signs a transaction corresponding to the provided UTXO spend information.
