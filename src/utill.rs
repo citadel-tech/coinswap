@@ -602,11 +602,19 @@ pub enum TorError {
     IO(std::io::Error),
     /// Generic error
     General(String),
+    /// Cbor error
+    Serde(serde_cbor::Error),
 }
 
 impl From<std::io::Error> for TorError {
     fn from(value: std::io::Error) -> Self {
         TorError::IO(value)
+    }
+}
+
+impl From<serde_cbor::Error> for TorError {
+    fn from(value: serde_cbor::Error) -> Self {
+        TorError::Serde(value)
     }
 }
 
@@ -637,17 +645,69 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
     Ok(())
 }
 
-pub(crate) fn get_tor_hostname() -> Result<String, TorError> {
-    let path = if cfg!(target_os = "macos") {
-        "/opt/homebrew/var/lib/tor/coinswap/hostname"
-    } else {
-        "/var/lib/tor/coinswap/hostname"
-    };
+pub(crate) fn get_emphemeral_address(
+    control_port: u16,
+    target_port: u16,
+    password: &str,
+) -> Result<String, TorError> {
+    use std::io::BufRead;
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", control_port))?;
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let auth_command = format!("AUTHENTICATE \"{}\"\r\n", password);
+    stream.write_all(auth_command.as_bytes())?;
+    let add_onion_command = format!(
+        "ADD_ONION NEW:BEST Port={},127.0.0.1:{}\r\n",
+        target_port, target_port
+    );
+    stream.write_all(add_onion_command.as_bytes())?;
+    let mut response = String::new();
+    let mut service_id = String::new();
 
-    let hostname = fs::read_to_string(path)?;
-    let hostname = hostname.trim().to_string();
+    while reader.read_line(&mut response)? > 0 {
+        if response.starts_with("250-ServiceID=") {
+            service_id = response
+                .trim_start_matches("250-ServiceID=")
+                .trim()
+                .to_string();
+            break;
+        }
+        response.clear();
+    }
 
-    log::info!("Tor Hidden Service Hostname: {}", hostname);
+    if service_id.is_empty() {
+        return Err(TorError::General(
+            "Failed to retrieve ephemeral onion service details".to_string(),
+        ));
+    }
+    Ok(format!("{}.onion", service_id))
+}
+
+pub(crate) fn get_tor_hostname(
+    datadir: PathBuf,
+    control_port: u16,
+    target_port: u16,
+    password: &str,
+) -> Result<String, TorError> {
+    let tor_config_path = datadir.join("tor/hostname");
+
+    if tor_config_path.exists() {
+        if let Ok(hostname) = fs::read(&tor_config_path) {
+            let hostname: String = serde_cbor::de::from_slice(&hostname)?;
+            let hostname = hostname.trim().to_string();
+            log::info!("Loaded existing Tor hostname: {}", hostname);
+            return Ok(hostname);
+        }
+    }
+
+    let hostname = get_emphemeral_address(control_port, target_port, password)?;
+
+    if let Some(parent) = tor_config_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    fs::write(&tor_config_path, serde_cbor::ser::to_vec(&hostname)?)?;
+
+    log::info!("Generated new Tor Hidden Service Hostname: {}", hostname);
 
     Ok(hostname)
 }
