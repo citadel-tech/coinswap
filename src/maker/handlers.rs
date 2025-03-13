@@ -11,6 +11,7 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use bitcoin::{
     hashes::Hash,
+    relative::{Height, LockTime as RelativeLockTime},
     secp256k1::{self, Secp256k1},
     Amount, OutPoint, PublicKey, Transaction, Txid,
 };
@@ -359,9 +360,9 @@ impl Maker {
             })?;
 
         let calc_coinswap_fees = calculate_coinswap_fee(
-            incoming_amount,
-            message.refund_locktime,
-            BASE_FEE,
+            Amount::from_sat(incoming_amount),
+            RelativeLockTime::Blocks(Height::from_height(message.refund_locktime)),
+            Amount::from_sat(BASE_FEE),
             AMOUNT_RELATIVE_FEE_PCT,
             TIME_RELATIVE_FEE_PCT,
         );
@@ -377,7 +378,7 @@ impl Maker {
         // This can happen if the fee_rate for funding tx is very high and incoming_amount is very low.
         // TODO: Ensure at Taker protocol that this never happens.
         let outgoing_amount = if let Some(a) =
-            incoming_amount.checked_sub(calc_coinswap_fees + calc_funding_tx_fees)
+            incoming_amount.checked_sub(calc_coinswap_fees.to_sat() + calc_funding_tx_fees)
         {
             a
         } else {

@@ -12,6 +12,7 @@ use bitcoin::{
     },
     ecdsa::Signature,
     hashes::Hash,
+    relative::{Height, LockTime as RelativeLockTime},
     secp256k1::{
         rand::{rngs::OsRng, RngCore},
         Message, Secp256k1, SecretKey,
@@ -55,18 +56,21 @@ const PUBKEY2_OFFSET: usize = PUBKEY1_OFFSET + PUBKEY_LENGTH + 1;
 /// swap_amount in sats, refund_locktime in blocks.
 pub(crate) fn calculate_coinswap_fee(
     // Should we consider value in Amount?
-    swap_amount: u64,
-    refund_locktime: u16,
-    base_fee: u64,
+    swap_amount: Amount,
+    refund_locktime: RelativeLockTime,
+    base_fee: Amount,
     amt_rel_fee_pct: f64,
     time_rel_fee_pct: f64,
-) -> u64 {
+) -> Amount {
     // swap_amount as f64 * refund_locktime as f64 -> can  overflow inside f64?
-    let total_fee = base_fee as f64
-        + (swap_amount as f64 * amt_rel_fee_pct) / 1_00.00
-        + (swap_amount as f64 * refund_locktime as f64 * time_rel_fee_pct) / 1_00.00;
+    let total_fee = base_fee.to_sat() as f64
+        + (swap_amount.to_sat() as f64 * amt_rel_fee_pct) / 1_00.00
+        + (swap_amount.to_sat() as f64
+            * refund_locktime.to_consensus_u32() as f64
+            * time_rel_fee_pct)
+            / 1_00.00;
 
-    total_fee.ceil() as u64
+    Amount::from_sat(total_fee.ceil() as u64)
 }
 
 /// Apply two signatures to a 2-of-2 multisig spend.
@@ -200,7 +204,7 @@ pub(crate) fn check_hashlock_has_pubkey(
     }
 }
 
-/// Create a contract redeem script for a coinswap transaction.
+/// Create a contract redeem script for a coinswap transaction.create_contract
 #[rustfmt::skip]
 pub(crate) fn create_contract_redeemscript(
     pub_hashlock: &PublicKey,
@@ -434,7 +438,7 @@ pub(crate) fn is_contract_out_valid(
     }
 
     let redeemscript_from_request =
-        create_contract_redeemscript(hashlock_pubkey, timelock_pubkey, hashvalue, locktime);
+        create_contract_redeemscript(hashlock_pubkey, timelock_pubkey, hashvalue, &locktime);
     let contract_spk_from_request = redeemscript_to_scriptpubkey(&redeemscript_from_request)?;
     if contract_output.script_pubkey != contract_spk_from_request {
         return Err(ProtocolError::General(
@@ -1101,13 +1105,13 @@ mod test {
     #[test]
     fn calculate_coinswap_fee_normal() {
         // Test with typical values
-        let base_fee_sat = 1000;
+        let base_fee_sat = Amount::from_sat(1000);
         let amt_rel_fee_pct = 2.5;
         let time_rel_fee_pct = 0.1;
-        let swap_amount = 100_000;
-        let refund_locktime = 20;
+        let swap_amount = Amount::from_sat(100_000);
+        let refund_locktime = RelativeLockTime::Blocks(Height::from_height(20));
 
-        let expected_fee = 5500;
+        let expected_fee = Amount::from_sat(5500);
 
         let calculated_fee = calculate_coinswap_fee(
             swap_amount,
@@ -1121,14 +1125,14 @@ mod test {
 
         // Test with zero values
         assert_eq!(
-            calculate_coinswap_fee(swap_amount, refund_locktime, 0, 0.0, 0.0),
-            0
+            calculate_coinswap_fee(swap_amount, refund_locktime, Amount::ZERO, 0.0, 0.0),
+            Amount::ZERO
         );
 
         // Test with only the absolute fee being non-zero
         assert_eq!(
             calculate_coinswap_fee(swap_amount, refund_locktime, base_fee_sat, 0.0, 0.0),
-            1000
+            Amount::from_sat(1000)
         );
 
         // Test with only the relative fees being non-zero
@@ -1136,11 +1140,11 @@ mod test {
             calculate_coinswap_fee(
                 swap_amount,
                 refund_locktime,
-                0,
+                Amount::ZERO,
                 amt_rel_fee_pct,
                 time_rel_fee_pct
             ),
-            4500
+            Amount::from_sat(4500)
         );
     }
 
