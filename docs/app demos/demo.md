@@ -130,30 +130,30 @@ All relevant files and wallets used by the server will be located in `~/.coinswa
 
 ## Run The Swap Client
 
-The swap client is run with the `taker-cli` app. 
+The swap client is run with the `taker` app. 
 
 From a new terminal, go to the project root directory and perform basic client operations:
 
 ### Get Some Money
 ```bash
-./target/release/taker-cli get-new-address
+./target/release/taker get-new-address
 ```
 
 Use a testnet4 faucet to send some funds at the above address. Then check the client wallet balance with
 ```bash
-./target/release/taker-cli get-balances
+./target/release/taker get-balances
 ```
 
 ### Fetch Market Offers
 Fetch all the current existing market offers with 
 ```bash
-./target/release/taker-cli fetch-offers
+./target/release/taker fetch-offers
 ```
 
 ### Perform a Coinswap
 Attempt a coinswap process with
 ```bash
-./target/release/taker-cli coinswap
+./target/release/taker coinswap
 ```
 
 If all goes well, you will see the coinswap process starting in the logs.
