@@ -303,8 +303,8 @@ impl Wallet {
                 // I don't know if this case is even possible?
                 if fee > total_input_value {
                     return Err(WalletError::InsufficientFund {
-                        available: total_input_value.to_sat(),
-                        required: fee.to_sat(),
+                        available: total_input_value,
+                        required: fee,
                     });
                 }
 
@@ -344,14 +344,14 @@ impl Wallet {
                             diff
                         } else {
                             return Err(WalletError::InsufficientFund {
-                                available: total_input_value.to_sat(),
-                                required: (total_output_value + fee_wchange).to_sat(),
+                                available: total_input_value,
+                                required: (total_output_value + fee_wchange),
                             });
                         }
                     } else {
                         return Err(WalletError::InsufficientFund {
-                            available: total_input_value.to_sat(),
-                            required: (total_output_value + fee_wchange).to_sat(),
+                            available: total_input_value,
+                            required: (total_output_value + fee_wchange),
                         });
                     };
 

@@ -78,7 +78,7 @@ pub(crate) const MINER_FEE: u64 = 1000;
 
 /// This fee is used for both funding and contract txs.
 #[cfg(not(feature = "integration-test"))]
-pub(crate) const MINER_FEE: u64 = 300; // around 2 sats/vb for funding tx
+pub(crate) const MINER_FEE: Amount = Amount::from_sat(300); // around 2 sats/vb for funding tx
 
 /// Swap specific parameters. These are user's policy and can differ among swaps.
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
@@ -320,8 +320,8 @@ impl Taker {
         let required = swap_params.send_amount + Amount::from_sat(1000);
         if available < required {
             let err = WalletError::InsufficientFund {
-                available: available.to_sat(),
-                required: required.to_sat(),
+                available,
+                required,
             };
             log::error!("Not enough balance to do swap : {:?}", err);
             return Err(err.into());
@@ -516,7 +516,7 @@ impl Taker {
                     &hashlock_pubkeys,
                     self.get_preimage_hash(),
                     swap_locktime,
-                    Amount::from_sat(MINER_FEE),
+                    MINER_FEE,
                 )?;
 
             let contract_reedemscripts = outgoing_swapcoins
@@ -1266,7 +1266,7 @@ impl Taker {
                         previous_funding_output,
                         maker_funding_tx_value,
                         next_contract_redeemscript,
-                        Amount::from_sat(MINER_FEE),
+                        MINER_FEE,
                     )
                 },
             )
@@ -1762,8 +1762,8 @@ impl Taker {
             .all_good_makers()
             .iter()
             .find(|oa| {
-                send_amount >= Amount::from_sat(oa.offer.min_size)
-                    && send_amount <= Amount::from_sat(oa.offer.max_size)
+                send_amount >= oa.offer.min_size
+                    && send_amount <= oa.offer.max_size
                     && !self
                         .ongoing_swap_state
                         .peer_infos

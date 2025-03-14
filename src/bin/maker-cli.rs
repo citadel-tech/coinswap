@@ -1,5 +1,6 @@
 use std::{net::TcpStream, time::Duration};
 
+use bitcoin::Amount;
 use clap::Parser;
 use coinswap::{
     maker::{MakerError, RpcMsgReq, RpcMsgResp},
@@ -53,7 +54,7 @@ enum Commands {
         address: String,
         /// Amount to send in sats
         #[clap(long, short = 'a')]
-        amount: u64,
+        amount: Amount,
         /// Feerate in sats/vByte. Defaults to 2 sats/vByte
         #[clap(long, short = 'f')]
         feerate: Option<f64>,

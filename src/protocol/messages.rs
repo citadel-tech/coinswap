@@ -243,13 +243,13 @@ pub struct FidelityProof {
 /// Represents an offer in the context of the Coinswap protocol.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub(crate) struct Offer {
-    pub(crate) base_fee: u64,                // base fee in sats
+    pub(crate) base_fee: Amount,             // base fee in sats
     pub(crate) amount_relative_fee_pct: f64, // % fee on total amount
     pub(crate) time_relative_fee_pct: f64, // amount * refund_locktime * TRF% = fees for locking the fund.
     pub(crate) required_confirms: u32,
     pub(crate) minimum_locktime: RelativeLockTime,
-    pub(crate) max_size: u64,
-    pub(crate) min_size: u64,
+    pub(crate) max_size: Amount,
+    pub(crate) min_size: Amount,
     pub(crate) tweakable_point: PublicKey,
     pub(crate) fidelity: FidelityProof,
 }

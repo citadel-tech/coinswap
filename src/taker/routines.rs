@@ -267,7 +267,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         confirmed_funding_txes: tmi.funding_tx_infos.clone(),
         next_coinswap_info,
         refund_locktime: tmi.this_maker_refund_locktime,
-        contract_feerate: MINER_FEE,
+        contract_feerate: MINER_FEE.to_sat(),
         id,
     });
 
@@ -318,7 +318,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         })
         .collect::<Result<Vec<u64>, TakerError>>()?;
 
-    let this_amount = funding_tx_values.iter().sum::<u64>();
+    let this_amount = Amount::from_sat(funding_tx_values.iter().sum::<u64>());
 
     let next_amount = contract_sigs_as_recvr_and_sender
         .senders_contract_txs_info
@@ -327,19 +327,20 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         .sum::<Amount>();
 
     let coinswap_fees = calculate_coinswap_fee(
-        Amount::from_sat(this_amount),
+        this_amount,
         tmi.this_maker_refund_locktime,
-        Amount::from_sat(tmi.this_maker.offer.base_fee),
+        tmi.this_maker.offer.base_fee,
         tmi.this_maker.offer.amount_relative_fee_pct,
         tmi.this_maker.offer.time_relative_fee_pct,
     );
 
-    let miner_fees_paid_by_taker = (tmi.funding_tx_infos.len() as u64) * MINER_FEE;
-    let calculated_next_amount = this_amount - coinswap_fees.to_sat() - miner_fees_paid_by_taker;
+    let miner_fees_paid_by_taker =
+        Amount::from_sat((tmi.funding_tx_infos.len() as u64) * MINER_FEE.to_sat());
+    let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
 
-    if Amount::from_sat(calculated_next_amount) != next_amount {
+    if calculated_next_amount != next_amount {
         return Err((ProtocolError::IncorrectFundingAmount {
-            expected: Amount::from_sat(calculated_next_amount),
+            expected: calculated_next_amount,
             found: next_amount,
         })
         .into());
@@ -347,7 +348,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
 
     log::info!(
         "Maker Received = {} | Maker is Forwarding = {} |  Coinswap Fees = {}  | Miner Fees paid by us = {} ",
-        Amount::from_sat(this_amount),
+        this_amount,
         next_amount,
         Amount::from_sat(coinswap_fees.to_sat()),
         miner_fees_paid_by_taker,

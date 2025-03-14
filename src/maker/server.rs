@@ -5,7 +5,7 @@
 //! The server listens at two port 6102 for P2P, and 6103 for RPC Client request.
 
 use crate::{protocol::messages::FidelityProof, taker::api::MINER_FEE};
-use bitcoin::{absolute::LockTime, Amount};
+use bitcoin::absolute::LockTime;
 use bitcoind::bitcoincore_rpc::RpcApi;
 use socks::Socks5Stream;
 use std::{
@@ -205,7 +205,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
     } else {
         log::info!("No active Fidelity Bonds found. Creating one.");
 
-        let amount = Amount::from_sat(maker.config.fidelity_amount);
+        let amount = maker.config.fidelity_amount;
 
         log::info!("Fidelity value chosen = {:?} sats", amount.to_sat());
         log::info!("Fidelity Tx fee = {} sats", MINER_FEE);
@@ -257,7 +257,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
                         let amount = required - available;
                         let addr = maker.get_wallet().write()?.get_next_external_address()?;
 
-                        log::info!("Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", Amount::from_sat(amount).to_btc(), addr);
+                        log::info!("Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", amount.to_btc(), addr);
 
                         let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60);
                         log::info!("Next sync in {:?} secs", total_sleep);

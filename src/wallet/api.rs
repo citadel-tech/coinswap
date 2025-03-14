@@ -894,7 +894,7 @@ impl Wallet {
     /// Refreshes the offer maximum size cache based on the current wallet's unspent transaction outputs (UTXOs).
     pub(crate) fn refresh_offer_maxsize_cache(&mut self) -> Result<(), WalletError> {
         let balance = self.get_balances(None)?.spendable;
-        self.store.offer_maxsize = balance.to_sat();
+        self.store.offer_maxsize = balance;
         Ok(())
     }
 

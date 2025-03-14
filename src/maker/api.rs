@@ -22,7 +22,7 @@ use bitcoin::{
     ecdsa::Signature,
     relative::LockTime as RelativeLockTime,
     secp256k1::{self, Secp256k1},
-    OutPoint, PublicKey, ScriptBuf, Transaction,
+    Amount, OutPoint, PublicKey, ScriptBuf, Transaction,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use std::{
@@ -101,14 +101,14 @@ pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 2.50;
 pub const TIME_RELATIVE_FEE_PCT: f64 = 0.10;
 
 #[cfg(not(feature = "integration-test"))]
-pub const BASE_FEE: u64 = 100;
+pub const BASE_FEE: Amount = Amount::from_sat(100);
 #[cfg(not(feature = "integration-test"))]
 pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 0.1;
 #[cfg(not(feature = "integration-test"))]
 pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
 
 /// Minimum Coinswap amount; makers will not#[cfg(feature = "integration-test")] accept amounts below this.
-pub const MIN_SWAP_AMOUNT: u64 = 10_000;
+pub const MIN_SWAP_AMOUNT: Amount = Amount::from_sat(10_000);
 
 /// Interval for redeeming expired bonds, creating new ones if needed,  
 /// and updating the DNS server with the latest bond proof and maker address.

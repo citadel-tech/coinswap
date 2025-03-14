@@ -402,7 +402,7 @@ impl Wallet {
 
         self.lock_unspendable_utxos()?;
 
-        let fee = Amount::from_sat(MINER_FEE);
+        let fee = MINER_FEE;
 
         let remaining = coinswap_amount;
 
