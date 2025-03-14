@@ -10,13 +10,11 @@ use crate::{
     market::rpc::start_rpc_server_thread,
     protocol::messages::{DnsRequest, DnsResponse},
     utill::{
-        get_dns_dir, parse_field, parse_toml, read_message, send_message, verify_fidelity_checks,
-        ConnectionType, TorError, HEART_BEAT_INTERVAL,
+        check_tor_status, get_dns_dir, get_tor_hostname, parse_field, parse_toml, read_message,
+        send_message, verify_fidelity_checks, ConnectionType, TorError, HEART_BEAT_INTERVAL,
     },
     wallet::{RPCConfig, WalletError},
 };
-
-use crate::utill::{check_tor_status, get_tor_hostname};
 
 use std::{
     collections::HashMap,
@@ -383,7 +381,12 @@ pub fn start_directory_server(
         ConnectionType::TOR => {
             let network_port = directory.network_port;
             log::info!("tor is ready!!");
-            let hostname = get_tor_hostname()?;
+            let hostname = get_tor_hostname(
+                directory.data_dir.clone(),
+                directory.control_port,
+                directory.network_port,
+                &directory.tor_auth_password,
+            )?;
             log::info!("DNS is listening at {}:{}", hostname, network_port);
         }
     }
