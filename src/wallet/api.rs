@@ -14,7 +14,7 @@ use bitcoin::{
     secp256k1,
     secp256k1::{Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
-    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid,
+    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, VarInt,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,12 @@ use crate::{
         compute_checksum, generate_keypair, get_hd_path_from_descriptor,
         redeemscript_to_scriptpubkey,
     },
+};
+
+use rust_coinselect::{
+    selectcoin::select_coin,
+    types::{CoinSelectionOpt, ExcessStrategy, OutputGroup},
+    utils::{calculate_base_weight_btc, calculate_fee},
 };
 
 use super::{
@@ -62,6 +68,14 @@ impl KeychainKind {
             Self::External => 0,
             Self::Internal => 1,
         }
+    }
+}
+
+use rust_coinselect::types::SelectionError;
+
+impl From<SelectionError> for WalletError {
+    fn from(err: SelectionError) -> Self {
+        WalletError::General(format!("Coin selection error: {}", err))
     }
 }
 
@@ -1004,40 +1018,130 @@ impl Wallet {
         Ok(())
     }
 
-    /// Largerst to lowest coinselect algorithm
-    // TODO: Fix Coin Selection algorithm for Dynamic Feerate
+    /// Performs coin selection to choose UTXOs that sum to a target amount.
+    ///
+    /// Uses the rust-coinselect library to implement Bitcoin Core's coin selection algorithm.
+    /// The algorithm tries to minimize the number of inputs while accounting for:
+    /// - Transaction fees and weight
+    /// - Long-term UTXO pool management
+    /// - Change output costs
+    /// - Privacy considerations
+    ///
+    /// # Arguments
+    /// * `amount` - The target amount to select coins for
+    ///
+    /// # Returns
+    /// * `Ok(Vec<(ListUnspentResultEntry, UTXOSpendInfo)>)` - Selected UTXOs and their spend info
+    /// * `Err(WalletError)` - If coin selection fails or there are insufficient funds
+    ///
+    /// # Note
+    /// Only considers spendable UTXOs (regular coins and swap coins), filtering out:
+    /// - Fidelity bond UTXOs
+    /// - Locked UTXOs
+    /// - Unconfirmed UTXOs
     pub fn coin_select(
-        &self,
+        &mut self,
         amount: Amount,
+        feerate: f64,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
         let all_utxos = self.get_all_locked_utxo()?;
 
-        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
+        // Get spendable UTXOs (regular coins and swap coins)
+        let seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
         let mut swap_coin_utxo = self.list_incoming_swap_coin_utxo_spend_info(Some(&all_utxos))?;
-        seed_coin_utxo.append(&mut swap_coin_utxo);
 
-        // Fetch utxos, filter out existing fidelity coins
-        let mut unspents = seed_coin_utxo
-            .into_iter()
-            .filter(|(_, spend_info)| !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. }))
-            .collect::<Vec<_>>();
+        let mut unspents = seed_coin_utxo;
+        unspents.append(&mut swap_coin_utxo);
 
-        unspents.sort_by(|a, b| b.0.amount.cmp(&a.0.amount));
+        // Assertion statement : fidelity coins are not included
+        assert!(
+            unspents.iter().all(|(_, spend_info)| matches!(
+                spend_info,
+                UTXOSpendInfo::FidelityBondCoin { .. }
+            )),
+            "Fidelity coins are not included in coin selection"
+        );
 
-        let mut selected_utxo = Vec::new();
-        let mut remaining = amount;
+        // Get next external and internal addresses using dedicated wallet APIs
+        let external_address = self.get_next_external_address()?;
+        let internal_address = self.get_next_internal_addresses(1)?[0].clone();
 
-        // the simplest largest first coinselection.
-        for unspent in unspents {
-            if remaining.checked_sub(unspent.0.amount).is_none() {
-                selected_utxo.push(unspent);
-                break;
-            } else {
-                remaining -= unspent.0.amount;
-                selected_utxo.push(unspent);
+        let external_address_script_pubkey = ScriptBuf::new_p2pkh(
+            &external_address
+                .pubkey_hash()
+                .ok_or_else(|| WalletError::General("Could not get pubkey hash".to_string()))?,
+        );
+
+        let internal_address_script_pubkey =
+            ScriptBuf::new_p2pkh(&internal_address.pubkey_hash().ok_or_else(|| {
+                WalletError::General("Could not get change pubkey hash".to_string())
+            })?);
+
+        // Prepare CoinSelectionOpt: Calculate required weights and costs, additional metrics
+        let long_term_feerate = 10.0;
+        let change_weight = (Amount::SIZE
+            + VarInt::from(internal_address_script_pubkey.len()).size()
+            + internal_address_script_pubkey.len()) as u64;
+        let change_cost = calculate_fee(change_weight, long_term_feerate)
+            .map_err(|e| WalletError::General(format!("Fee calculation failed: {}", e)))?;
+        let target_weight = (Amount::SIZE
+            + VarInt::from(external_address_script_pubkey.len()).size()
+            + external_address_script_pubkey.len()) as u64;
+        let avg_output_weight = (change_weight + target_weight) / 2;
+        let avg_input_weight = unspents
+            .iter()
+            .map(|(_, spend_info)| {
+                // Base weight of the input (OutPoint + sequence + empty script_sig)
+                let base_weight = 32 + 4 + 1; // 32 bytes for OutPoint, 4 bytes for sequence, 1 byte for empty script_sig
+                let witness_weight = spend_info.estimate_witness_size();
+                base_weight + witness_weight as u64
+            })
+            .sum::<u64>()
+            / unspents.len() as u64;
+
+        // Convert UTXOs to OutputGroups
+        let output_groups: Vec<OutputGroup> = unspents
+            .iter()
+            .map(|(utxo, spend_info)| OutputGroup {
+                value: utxo.amount.to_sat(),
+                weight: 36 + spend_info.estimate_witness_size() as u64,
+                input_count: 1,
+                creation_sequence: None,
+            })
+            .collect();
+
+        // Create coin selection options
+        let coin_selection_option = CoinSelectionOpt {
+            target_value: amount.to_sat(),
+            target_feerate: feerate as f32,
+            long_term_feerate: Some(long_term_feerate),
+            min_absolute_fee: 4000,
+            base_weight: calculate_base_weight_btc(target_weight + change_weight),
+            change_weight,
+            change_cost,
+            avg_input_weight,
+            avg_output_weight,
+            min_change_value: 100,
+            excess_strategy: ExcessStrategy::ToChange,
+        };
+
+        match select_coin(&output_groups, &coin_selection_option) {
+            Ok(selection) => {
+                let selected_utxos = selection
+                    .selected_inputs
+                    .iter()
+                    .map(|&index| unspents[index].clone())
+                    .collect();
+                Ok(selected_utxos)
+            }
+            Err(e) => {
+                log::error!("Coin selection failed: {}", e);
+                Err(WalletError::General(format!(
+                    "Coin selection failed: {}",
+                    e
+                )))
             }
         }
-        Ok(selected_utxo)
     }
 
     pub(crate) fn get_utxo(
