@@ -485,11 +485,11 @@ impl TestFramework {
     #[allow(clippy::type_complexity)]
     pub fn init(
         makers_config_map: Vec<((u16, Option<u16>), MakerBehavior)>,
-        taker_behavior: TakerBehavior,
+        taker_config: Vec<(u16, TakerBehavior)>,
         connection_type: ConnectionType,
     ) -> (
         Arc<Self>,
-        Taker,
+        Vec<Taker>,
         Vec<Arc<Maker>>,
         Arc<DirectoryServer>,
         JoinHandle<()>,
@@ -531,17 +531,21 @@ impl TestFramework {
 
         // Create the Taker.
         let taker_rpc_config = rpc_config.clone();
-        let taker = Taker::init(
-            Some(temp_dir.join("taker")),
-            None,
-            Some(taker_rpc_config),
-            taker_behavior,
-            None,
-            None,
-            Some(connection_type),
-        )
-        .unwrap();
-
+        let takers = taker_config
+            .into_iter()
+            .map(|(port, behavior)| {
+                Taker::init(
+                    Some(temp_dir.join(format!("taker{}", port))),
+                    None,
+                    Some(taker_rpc_config.clone()),
+                    behavior,
+                    Some(port),
+                    None,
+                    Some(connection_type),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
         let mut base_rpc_port = 3500; // Random port for RPC connection in tests. (Not used)
                                       // Create the Makers as per given configuration map.
         let makers = makers_config_map
@@ -585,7 +589,7 @@ impl TestFramework {
 
         (
             test_framework,
-            taker,
+            takers,
             makers,
             directory_server_instance,
             generate_blocks_handle,

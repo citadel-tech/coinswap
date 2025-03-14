@@ -28,13 +28,14 @@ fn test_standard_coinswap() {
         ((16102, Some(19052)), MakerBehavior::Normal),
     ];
 
+    let taker_config_map = [(7102, TakerBehavior::Normal)];
     let connection_type = ConnectionType::CLEARNET;
 
     // Initiate test framework, Makers and a Taker with default behavior.
-    let (test_framework, mut taker, makers, directory_server_instance, block_generation_handle) =
+    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            TakerBehavior::Normal,
+            taker_config_map.into(),
             connection_type,
         );
 
@@ -42,8 +43,9 @@ fn test_standard_coinswap() {
     let bitcoind = &test_framework.bitcoind;
 
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
+    let taker = &mut takers[0];
     let org_taker_spend_balance =
-        fund_and_verify_taker(&mut taker, bitcoind, 3, Amount::from_btc(0.05).unwrap());
+        fund_and_verify_taker(taker, bitcoind, 3, Amount::from_btc(0.05).unwrap());
 
     // Fund the Maker with 4 utxos of 0.05 btc each and do basic checks on the balance.
     let makers_ref = makers.iter().map(Arc::as_ref).collect::<Vec<_>>();
@@ -139,7 +141,7 @@ fn test_standard_coinswap() {
 
     //  After Swap Asserts
     verify_swap_results(
-        &taker,
+        taker,
         &makers,
         org_taker_spend_balance,
         org_maker_spend_balances,
