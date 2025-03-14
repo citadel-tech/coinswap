@@ -105,6 +105,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
+        branches: 1,
     };
     taker.do_coinswap(swap_params).unwrap();
 

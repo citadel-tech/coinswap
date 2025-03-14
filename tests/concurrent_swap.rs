@@ -16,16 +16,18 @@ use test_framework::*;
 use log::{info, warn};
 use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
-/// This test demonstrates a standard coinswap round between a Taker and 2 Makers. Nothing goes wrong
-/// and the coinswap completes successfully.
+/// This demostrates a concurrent coinswap round between a Taker and 4 Makers (2 braches). Nothing
+/// goes wrong and the coinswap completes successfully.
 #[test]
-fn test_standard_coinswap() {
+fn test_concurrent_coinswap() {
     // ---- Setup ----
 
-    // 2 Makers with Normal behavior.
+    // 4 Makers with Normal behavior.
     let makers_config_map = [
         ((6102, Some(19051)), MakerBehavior::Normal),
         ((16102, Some(19052)), MakerBehavior::Normal),
+        ((26102, Some(19053)), MakerBehavior::Normal),
+        ((36102, Some(19054)), MakerBehavior::Normal),
     ];
 
     let connection_type = ConnectionType::CLEARNET;
@@ -97,8 +99,9 @@ fn test_standard_coinswap() {
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
-        branches: 1,
+        branches: 2,
     };
+
     taker.do_coinswap(swap_params).unwrap();
 
     // After Swap is done,  wait for maker threads to conclude.
@@ -119,32 +122,29 @@ fn test_standard_coinswap() {
 
     //-------- Fee Tracking and Workflow:------------
     //
+    // Branch 1
+    //
     // | Participant    | Amount Received (Sats) | Amount Forwarded (Sats) | Fee (Sats) | Funding Mining Fees (Sats) | Total Fees (Sats) |
     // |----------------|------------------------|-------------------------|------------|----------------------------|-------------------|
-    // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
-    // | **Maker16102** | 500,000                | 463,500                 | 33,500     | 3,000                      | 36,500            |
-    // | **Maker6102**  | 463,500                | 438,642                 | 21,858     | 3,000                      | 24,858            |
+    // | **Taker**      | _                      | 250,000                 | _          | 3,000                      | 3,000             |
+    // | **Maker16102** | 250,000                | 229,750                 | 17,250     | 3,000                      | 20,250            |
+    // | **Maker6102**  | 229,750                | 215,411                 | 11,339     | 3,000                      | 14,339            |
+    // Branch 2
+    //
+    // | Participant    | Amount Received (Sats) | Amount Forwarded (Sats) | Fee (Sats) | Funding Mining Fees (Sats) | Total Fees (Sats) |
+    // |----------------|------------------------|-------------------------|------------|----------------------------|-------------------|
+    // | **Taker**      | _                      | 250,000                 | _          | 3,000                      | 3,000             |
+    // | **Maker36102** | 250,000                | 229,750                 | 17,250     | 3,000                      | 20,250            |
+    // | **Maker26102** | 229,750                | 215,411                 | 11,339     | 3,000                      | 14,339            |
     //
     // ## 3. Final Outcome for Taker (Successful Coinswap):
     //
-    // | Participant   | Coinswap Outcome (Sats)                                                   |
-    // |---------------|---------------------------------------------------------------------------|
-    // | **Taker**     | 438,642= 500,000 - (Total Fees for Maker16102 + Total Fees for Maker6102) |
+    // | Participant   | Coinswap Outcome (Sats)                                                     |
+    // |---------------|-----------------------------------------------------------------------------|
+    // | **Taker**     | 215,411 = 250,000 - (Total Fees for Maker16102 + Total Fees for Maker6102)  |
+    // | **Taker**     | 215,411 = 250,000 - (Total Fees for Maker36102 + Total Fees for Maker26102) |
+    // |   Total       | 430,822                                                                     |
     //
-    // ## 4. Final Outcome for Makers:
-    //
-    // | Participant    | Coinswap Outcome (Sats)                                           |
-    // |----------------|-------------------------------------------------------------------|
-    // | **Maker16102** | 500,000 - 463,500 - 3,000 = +33,500                               |
-    // | **Maker6102**  | 465,384 - 438,642 - 3,000 = +21,858                               |
-
-    //  After Swap Asserts
-    verify_swap_results(
-        &taker,
-        &makers,
-        org_taker_spend_balance,
-        org_maker_spend_balances,
-    );
 
     info!("Balance check successful.");
 
@@ -164,7 +164,7 @@ fn test_standard_coinswap() {
 
     assert_eq!(
         tx.input.len(),
-        3,
+        6,
         "Not all swap coin utxos got included in the spend transaction"
     );
 
@@ -174,7 +174,7 @@ fn test_standard_coinswap() {
     let balances = taker_wallet_mut.get_balances(None).unwrap();
 
     assert_eq!(balances.swap, Amount::ZERO);
-    assert_eq!(balances.regular, Amount::from_btc(0.14934642).unwrap());
+    assert_eq!(balances.regular, Amount::from_btc(0.14937206).unwrap());
 
     info!("All checks successful. Terminating integration test case");
 

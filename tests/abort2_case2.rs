@@ -110,6 +110,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
+        branches: 1,
     };
 
     if let Err(e) = taker.do_coinswap(swap_params) {
