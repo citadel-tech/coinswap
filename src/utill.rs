@@ -4,7 +4,10 @@ use bitcoin::{
     absolute::LockTime,
     hashes::Hash,
     key::{rand::thread_rng, Keypair},
-    secp256k1::{Message, Secp256k1, SecretKey},
+    secp256k1::{
+        rand::{distributions::Uniform, rngs::OsRng, Rng},
+        Message, Secp256k1, SecretKey,
+    },
     Address, Amount, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
 };
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
@@ -652,6 +655,16 @@ pub(crate) fn get_tor_hostname() -> Result<String, TorError> {
     Ok(hostname)
 }
 
+/// randomize the given amount +/- 5%.
+pub fn randomize_amount(amount: u64) -> u64 {
+    let mut rng = OsRng; // Secure random number generator
+    let range = Uniform::from(-0.05..=0.05);
+    let percentage: f64 = rng.sample(range);
+
+    let variation = (amount as f64 * percentage).round() as i64;
+    (amount as i64 + variation).max(0) as u64
+}
+
 #[cfg(test)]
 mod tests {
     use std::{net::TcpListener, thread};
@@ -827,5 +840,12 @@ mod tests {
             .add_exp_tweak(&secp, &scalar_from_nonce)
             .unwrap();
         assert_eq!(returned_pubkey.to_string(), tweaked_pubkey.to_string());
+    }
+
+    #[test]
+    fn test_randomize_amount() {
+        let amount = 20000;
+        let randomized_amount = randomize_amount(amount);
+        assert_ne!(amount, randomized_amount)
     }
 }
