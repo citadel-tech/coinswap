@@ -40,7 +40,7 @@ struct Cli {
         short = 'a',
         long,
         value_parser = parse_proxy_auth,
-        default_value = "user:password",
+        default_value = "demo:demo",
     )]
     pub auth: (String, String),
     /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with given name. Default: maker-wallet
