@@ -4,11 +4,10 @@ use crate::{
     wallet::Wallet,
 };
 use bitcoin::{
-    absolute::LockTime,
+    absolute::{Height as AbsoluteHeight, LockTime},
     bip32::{ChildNumber, DerivationPath},
     hashes::{sha256d, Hash},
     opcodes::all::{OP_CHECKSIGVERIFY, OP_CLTV},
-    relative::Height,
     script::{Builder, Instruction},
     secp256k1::{Keypair, Message, Secp256k1},
     Address, Amount, FeeRate, OutPoint, PublicKey, ScriptBuf, Txid,
@@ -125,9 +124,9 @@ pub struct FidelityBond {
     pub lock_time: LockTime,
     pub(crate) pubkey: PublicKey,
     // Height at which the bond was confirmed.
-    pub(crate) conf_height: Option<Height>,
+    pub(crate) conf_height: Option<AbsoluteHeight>,
     // Cert expiry denoted in multiple of difficulty adjustment period (2016 blocks)
-    pub(crate) cert_expiry: Option<Height>,
+    pub(crate) cert_expiry: Option<AbsoluteHeight>,
 }
 
 impl FidelityBond {
@@ -159,8 +158,11 @@ impl FidelityBond {
     }
 
     /// Calculate the expiry value. This depends on the bond's confirmation height
-    pub(crate) fn get_fidelity_expiry(conf_height: Height) -> Height {
-        Height::from_height((conf_height.value() + 2) /* safety buffer */ / 2016 + 5)
+    pub(crate) fn get_fidelity_expiry(conf_height: AbsoluteHeight) -> AbsoluteHeight {
+        AbsoluteHeight::from_consensus(
+            (conf_height.to_consensus_u32() + 2) /* safety buffer */ / 2016 + 5,
+        )
+        .unwrap()
     }
 }
 
@@ -307,7 +309,7 @@ impl Wallet {
         let hash = self.rpc.get_block_hash(
             bond.conf_height
                 .ok_or(FidelityError::BondDoesNotExist)?
-                .value() as u64,
+                .to_consensus_u32() as u64,
         )?;
 
         let confirmation_time = self.rpc.get_block_header_info(&hash)?.time as u64;
@@ -388,7 +390,7 @@ impl Wallet {
     pub(crate) fn wait_for_fidelity_tx_confirmation(
         &self,
         txid: Txid,
-    ) -> Result<Height, WalletError> {
+    ) -> Result<AbsoluteHeight, WalletError> {
         let sleep_increment = 10;
         let mut sleep_multiplier = 0;
 
@@ -414,13 +416,13 @@ impl Wallet {
             }
         };
 
-        Ok(Height::from_height(ht as u16))
+        Ok(AbsoluteHeight::from_consensus(ht).unwrap())
     }
 
     pub(crate) fn update_fidelity_bond_conf_details(
         &mut self,
         index: u32,
-        conf_height: Height,
+        conf_height: AbsoluteHeight,
     ) -> Result<(), WalletError> {
         let cert_expiry = FidelityBond::get_fidelity_expiry(conf_height);
         let (bond, _, _) = self
@@ -504,7 +506,8 @@ impl Wallet {
     ) -> Result<(), WalletError> {
         let txid = proof.bond.outpoint.txid;
         let transaction = self.rpc.get_raw_transaction(&txid, None)?;
-        let current_height = self.rpc.get_block_count()?;
+        let current_height =
+            AbsoluteHeight::from_consensus(self.rpc.get_block_count()? as u32).unwrap();
 
         verify_fidelity_checks(proof, onion_addr, transaction, current_height)
     }

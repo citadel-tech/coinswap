@@ -19,8 +19,9 @@ use crate::{
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
 };
 use bitcoin::{
+    absolute::Height as AbsoluteHeight,
     ecdsa::Signature,
-    relative::{Height, LockTime as RelativeLockTime},
+    relative::LockTime as RelativeLockTime,
     secp256k1::{self, Secp256k1},
     Amount, OutPoint, PublicKey, ScriptBuf, Transaction,
 };
@@ -375,7 +376,7 @@ impl Maker {
                         None
                     }
                 })
-                .collect::<HashMap<u32, Height>>()
+                .collect::<HashMap<u32, AbsoluteHeight>>()
         };
 
         bond_conf_heights.into_iter().try_for_each(|(i, ht)| {
