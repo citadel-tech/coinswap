@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use bitcoin::Txid;
+use bitcoin::{Amount, FeeRate, Txid};
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string_pretty};
@@ -33,9 +33,9 @@ pub enum RpcMsgReq {
         /// The recipient's address.
         address: String,
         /// The amount to send.
-        amount: u64,
+        amount: Amount,
         /// The transaction fee to include.
-        feerate: f64,
+        feerate: FeeRate,
     },
     /// Request to retrieve the Tor address of the Maker.
     GetTorAddress,

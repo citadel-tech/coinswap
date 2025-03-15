@@ -1,11 +1,11 @@
 //! Various utility and helper functions for both Taker and Maker.
 
 use bitcoin::{
-    absolute::LockTime,
+    absolute::{Height as AbsoluteHeight, LockTime},
     hashes::Hash,
     key::{rand::thread_rng, Keypair},
     secp256k1::{Message, Secp256k1, SecretKey},
-    Address, Amount, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
+    Address, Amount, FeeRate, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
 };
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use log::LevelFilter;
@@ -63,7 +63,7 @@ pub(crate) const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 pub const REQUIRED_CONFIRMS: u32 = 1;
 
 /// Default Transaction Fees in sats/vByte
-pub const DEFAULT_TX_FEE_RATE: f64 = 2.0;
+pub const DEFAULT_TX_FEE_RATE: FeeRate = FeeRate::from_sat_per_vb_unchecked(2); // 2 sat/vB
 
 /// Specifies the type of connection: TOR or Clearnet.
 ///
@@ -539,10 +539,10 @@ pub(crate) fn verify_fidelity_checks(
     proof: &FidelityProof,
     addr: &str,
     tx: Transaction,
-    current_height: u64,
+    current_height: AbsoluteHeight,
 ) -> Result<(), WalletError> {
     // Check if bond lock time has expired
-    let lock_time = LockTime::from_height(current_height as u32)?;
+    let lock_time = LockTime::from_height(current_height.to_consensus_u32())?;
     if lock_time > proof.bond.lock_time {
         return Err(FidelityError::BondLocktimeExpired.into());
     }

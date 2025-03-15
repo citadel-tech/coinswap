@@ -206,7 +206,7 @@ fn main() -> Result<(), TakerError> {
             )]);
 
             let tx = taker.get_wallet_mut().spend_from_wallet(
-                feerate.unwrap_or(DEFAULT_TX_FEE_RATE),
+                DEFAULT_TX_FEE_RATE,
                 destination,
                 &coins_to_spend,
             )?;

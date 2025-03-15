@@ -1,4 +1,4 @@
-# Listening port  
+# Listening port
 port = 6102 
 # RPC listening port
 rpc_port

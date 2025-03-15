@@ -19,9 +19,11 @@ use crate::{
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
 };
 use bitcoin::{
+    absolute::Height as AbsoluteHeight,
     ecdsa::Signature,
+    relative::LockTime as RelativeLockTime,
     secp256k1::{self, Secp256k1},
-    OutPoint, PublicKey, ScriptBuf, Transaction,
+    Amount, OutPoint, PublicKey, ScriptBuf, Transaction,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use std::{
@@ -65,7 +67,7 @@ pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60 * 15);
 /// According to [BOLT #2](https://github.com/lightning/bolts/blob/aa5207aeaa32d841353dd2df3ce725a4046d528d/02-peer-protocol.md?plain=1#L1798),
 /// the estimated minimum `cltv_expiry_delta` is 18 blocks.
 /// To enhance safety, the default value is set to 20 blocks.
-pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
+pub const MIN_CONTRACT_REACTION_TIME: RelativeLockTime = RelativeLockTime::from_height(20);
 
 /// # Fee Parameters for Coinswap
 ///
@@ -100,14 +102,14 @@ pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 2.50;
 pub const TIME_RELATIVE_FEE_PCT: f64 = 0.10;
 
 #[cfg(not(feature = "integration-test"))]
-pub const BASE_FEE: u64 = 100;
+pub const BASE_FEE: Amount = Amount::from_sat(100);
 #[cfg(not(feature = "integration-test"))]
 pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 0.1;
 #[cfg(not(feature = "integration-test"))]
 pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
 
 /// Minimum Coinswap amount; makers will not#[cfg(feature = "integration-test")] accept amounts below this.
-pub const MIN_SWAP_AMOUNT: u64 = 10_000;
+pub const MIN_SWAP_AMOUNT: Amount = Amount::from_sat(10_000);
 
 /// Interval for redeeming expired bonds, creating new ones if needed,  
 /// and updating the DNS server with the latest bond proof and maker address.
@@ -374,7 +376,7 @@ impl Maker {
                         None
                     }
                 })
-                .collect::<HashMap<u32, u32>>()
+                .collect::<HashMap<u32, AbsoluteHeight>>()
         };
 
         bond_conf_heights.into_iter().try_for_each(|(i, ht)| {
@@ -401,7 +403,9 @@ impl Maker {
             // check that the new locktime is sufficently short enough compared to the
             // locktime in the provided funding tx
             let locktime = read_contract_locktime(&funding_info.contract_redeemscript)?;
-            if locktime - message.refund_locktime < MIN_CONTRACT_REACTION_TIME {
+            if locktime.to_consensus_u32() - message.refund_locktime.to_consensus_u32()
+                < MIN_CONTRACT_REACTION_TIME.to_consensus_u32()
+            {
                 return Err(MakerError::General(
                     "Next hop locktime too close to current hop locktime",
                 ));
@@ -823,7 +827,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
 pub(crate) fn recover_from_swap(
     maker: Arc<Maker>,
     // Tuple of ((Multisig_reedemscript, Contract Tx), (Timelock, Timelock Tx))
-    outgoings: Vec<((ScriptBuf, Transaction), (u16, Transaction))>,
+    outgoings: Vec<((ScriptBuf, Transaction), (RelativeLockTime, Transaction))>,
     // Tuple of (Multisig Reedemscript, Contract Tx)
     incomings: Vec<(ScriptBuf, Transaction)>,
 ) -> Result<(), MakerError> {
@@ -955,7 +959,7 @@ pub(crate) fn recover_from_swap(
 
                 if let Some(confirmation) = tx_from_chain.confirmations {
                     // Now the transaction is confirmed in a block, check for required maturity
-                    if confirmation > (*timelock as u32) {
+                    if confirmation > (timelock.to_consensus_u32()) {
                         log::info!(
                             "[{}] Timelock maturity of {} blocks reached for Contract Txid : {}",
                             maker.config.network_port,

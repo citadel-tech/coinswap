@@ -5,8 +5,8 @@
 //! parsing mechanisms for transaction inputs and outputs.
 
 use bitcoin::{
-    absolute::LockTime, transaction::Version, Address, Amount, OutPoint, ScriptBuf, Sequence,
-    Transaction, TxIn, TxOut, Txid, Witness,
+    absolute::LockTime, transaction::Version, Address, Amount, FeeRate, OutPoint, ScriptBuf,
+    Sequence, Transaction, TxIn, TxOut, Txid, Witness,
 };
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RawTx, RpcApi};
 
@@ -41,7 +41,7 @@ impl Wallet {
     ///   are held in a change address, if applicable.
     pub fn spend_from_wallet(
         &mut self,
-        feerate: f64,
+        feerate: FeeRate,
         destination: Destination,
         coins_to_spend: &[(ListUnspentResultEntry, UTXOSpendInfo)],
     ) -> Result<Transaction, WalletError> {
@@ -70,7 +70,7 @@ impl Wallet {
     /// Redeem a Fidelity Bond.
     /// This functions creates a spending transaction from the fidelity bond, signs and broadcasts it.
     /// Returns the txid of the spending tx, and mark the bond as spent.
-    pub fn redeem_fidelity(&mut self, idx: u32, feerate: f64) -> Result<Txid, WalletError> {
+    pub fn redeem_fidelity(&mut self, idx: u32, feerate: FeeRate) -> Result<Txid, WalletError> {
         let (bond, _, is_spent) = self
             .store
             .fidelity_bond
@@ -123,7 +123,7 @@ impl Wallet {
         &self,
         og_sc: &OutgoingSwapCoin,
         destination_address: &Address,
-        feerate: f64,
+        feerate: FeeRate,
     ) -> Result<Transaction, WalletError> {
         let all_utxo = self.list_live_timelock_contract_spend_info(None)?;
         for (utxo, spend_info) in all_utxo {
@@ -150,7 +150,7 @@ impl Wallet {
         &self,
         ic_sc: &IncomingSwapCoin,
         destination_address: &Address,
-        feerate: f64,
+        feerate: FeeRate,
     ) -> Result<Transaction, WalletError> {
         let all_utxo = self.list_live_hashlock_contract_spend_info(None)?;
         for (utxo, spend_info) in all_utxo {
@@ -178,7 +178,7 @@ impl Wallet {
         &self,
         coins: &Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
         destination: Destination,
-        feerate: f64,
+        feerate: FeeRate,
     ) -> Result<Transaction, WalletError> {
         // Set the Anti-Fee-Snipping locktime
         let current_height = self.rpc.get_block_count()?;
@@ -247,7 +247,7 @@ impl Wallet {
                             txid: outgoing_swap_coin.contract_tx.compute_txid(),
                             vout: 0,
                         },
-                        sequence: Sequence(outgoing_swap_coin.get_timelock()? as u32),
+                        sequence: Sequence(outgoing_swap_coin.get_timelock()?.to_consensus_u32()),
                         witness: Witness::new(),
                         script_sig: ScriptBuf::new(),
                     });
@@ -287,7 +287,9 @@ impl Wallet {
                 let base_size = tx.base_size();
                 let vsize = (base_size * 4 + total_witness_size).div_ceil(4);
 
-                let fee = Amount::from_sat((feerate * vsize as f64).ceil() as u64);
+                let fee = Amount::from_sat(
+                    (feerate.to_sat_per_vb_ceil() as f64 * vsize as f64).ceil() as u64,
+                );
 
                 #[cfg(feature = "integration-test")]
                 let fee =
@@ -303,8 +305,8 @@ impl Wallet {
                 // I don't know if this case is even possible?
                 if fee > total_input_value {
                     return Err(WalletError::InsufficientFund {
-                        available: total_input_value.to_sat(),
-                        required: fee.to_sat(),
+                        available: total_input_value,
+                        required: fee,
                     });
                 }
 
@@ -333,7 +335,9 @@ impl Wallet {
                 let base_wchange = tx_wchange.base_size();
                 let vsize_wchange = (base_wchange * 4 + total_witness_size).div_ceil(4);
 
-                let fee_wchange = Amount::from_sat((feerate * vsize_wchange as f64).ceil() as u64);
+                let fee_wchange = Amount::from_sat(
+                    (feerate.to_sat_per_vb_ceil() as f64 * vsize_wchange as f64).ceil() as u64,
+                );
 
                 #[cfg(feature = "integration-test")]
                 let fee_wchange = Amount::from_sat(1000);
@@ -344,14 +348,14 @@ impl Wallet {
                             diff
                         } else {
                             return Err(WalletError::InsufficientFund {
-                                available: total_input_value.to_sat(),
-                                required: (total_output_value + fee_wchange).to_sat(),
+                                available: total_input_value,
+                                required: (total_output_value + fee_wchange),
                             });
                         }
                     } else {
                         return Err(WalletError::InsufficientFund {
-                            available: total_input_value.to_sat(),
-                            required: (total_output_value + fee_wchange).to_sat(),
+                            available: total_input_value,
+                            required: (total_output_value + fee_wchange),
                         });
                     };
 
