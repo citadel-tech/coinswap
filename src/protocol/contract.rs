@@ -1,4 +1,4 @@
-//! Definition of the Cract Transaction.
+//! Definition of the Coinswap Contract Transaction.
 //!
 //! This module includes most of the fundamental functions defining the coinswap protocol.
 
@@ -448,7 +448,7 @@ pub(crate) fn is_contract_out_valid(
     }
 
     let redeemscript_from_request =
-        create_contract_redeemscript(hashlock_pubkey, timelock_pubkey, hashvalue, &locktime);
+        create_contract_redeemscript(hashlock_pubkey, timelock_pubkey, hashvalue, locktime);
     let contract_spk_from_request = redeemscript_to_scriptpubkey(&redeemscript_from_request)?;
     if contract_output.script_pubkey != contract_spk_from_request {
         return Err(ProtocolError::General(

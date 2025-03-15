@@ -25,7 +25,7 @@ use super::error::WalletError;
 pub(crate) struct CreateFundingTxesResult {
     pub(crate) funding_txes: Vec<Transaction>,
     pub(crate) payment_output_positions: Vec<u32>,
-    pub(crate) total_miner_fee: u64,
+    pub(crate) total_miner_fee: Amount,
 }
 
 impl Wallet {
@@ -139,7 +139,7 @@ impl Wallet {
 
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
-        let mut total_miner_fee = 0;
+        let mut total_miner_fee = Amount::ZERO;
         for ((address, &output_value), change_address) in destinations
             .iter()
             .zip(output_values.iter())
@@ -220,7 +220,7 @@ impl Wallet {
 
             funding_txes.push(funding_tx);
             payment_output_positions.push(payment_pos);
-            total_miner_fee += fee_rate.to_sat();
+            total_miner_fee += fee_rate;
         }
 
         Ok(CreateFundingTxesResult {
@@ -241,7 +241,7 @@ impl Wallet {
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
-        let mut total_miner_fee = 0;
+        let mut total_miner_fee = Amount::ZERO;
 
         let mut leftover_coinswap_amount = coinswap_amount;
         let mut destinations_iter = destinations.iter();
@@ -282,7 +282,7 @@ impl Wallet {
 
             leftover_coinswap_amount -= funding_tx.output[0].value;
 
-            total_miner_fee += fee_rate.to_sat();
+            total_miner_fee += fee_rate;
 
             funding_txes.push(funding_tx);
             payment_output_positions.push(0);
@@ -332,7 +332,7 @@ impl Wallet {
 
         leftover_coinswap_amount -= funding_tx.output[0].value;
 
-        total_miner_fee += fee_rate.to_sat();
+        total_miner_fee += fee_rate;
 
         funding_txes.push(funding_tx);
         payment_output_positions.push(0);
@@ -373,7 +373,7 @@ impl Wallet {
         let mut info = iter::once(self.get_utxo((first_txid, first_vout))?.unwrap());
         self.sign_transaction(&mut funding_tx, &mut info)?;
 
-        total_miner_fee += fee_rate.to_sat();
+        total_miner_fee += fee_rate;
 
         funding_txes.push(funding_tx);
         payment_output_positions.push(1);

@@ -6,7 +6,7 @@ use std::{io, path::Path};
 use std::io::Write;
 
 use crate::utill::{get_maker_dir, parse_field, ConnectionType};
-use bitcoin::Amount;
+use bitcoin::{relative::Height, Amount};
 
 use super::api::MIN_SWAP_AMOUNT;
 
@@ -30,7 +30,7 @@ pub struct MakerConfig {
     /// Fidelity Bond amount
     pub fidelity_amount: Amount,
     /// Fidelity Bond timelock in Block heights.
-    pub fidelity_timelock: u32,
+    pub fidelity_timelock: Height,
     /// Connection type
     pub connection_type: ConnectionType,
 }
@@ -53,7 +53,7 @@ impl Default for MakerConfig {
             #[cfg(not(feature = "integration-test"))]
             fidelity_amount: Amount::from_sat(50_000), // 50K sats for production
             #[cfg(not(feature = "integration-test"))]
-            fidelity_timelock: 13104, // Approx 3 months of blocks in production
+            fidelity_timelock: Height::from_height(13104), // Approx 3 months of blocks in production
             connection_type: if cfg!(feature = "integration-test") {
                 ConnectionType::CLEARNET
             } else {

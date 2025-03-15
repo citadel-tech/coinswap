@@ -1160,7 +1160,7 @@ impl Wallet {
         Ok((
             create_funding_txes_result.funding_txes,
             outgoing_swapcoins,
-            Amount::from_sat(create_funding_txes_result.total_miner_fee),
+            create_funding_txes_result.total_miner_fee,
         ))
     }
 

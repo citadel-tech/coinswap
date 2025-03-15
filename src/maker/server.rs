@@ -5,7 +5,7 @@
 //! The server listens at two port 6102 for P2P, and 6103 for RPC Client request.
 
 use crate::{protocol::messages::FidelityProof, taker::api::MINER_FEE};
-use bitcoin::absolute::LockTime;
+use bitcoin::{absolute::LockTime, relative::Height};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use socks::Socks5Stream;
 use std::{
@@ -210,24 +210,29 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
         log::info!("Fidelity value chosen = {:?} sats", amount.to_sat());
         log::info!("Fidelity Tx fee = {} sats", MINER_FEE);
 
-        let current_height = maker
-            .get_wallet()
-            .read()?
-            .rpc
-            .get_block_count()
-            .map_err(WalletError::Rpc)? as u32;
+        let current_height = Height::from_height(
+            maker
+                .get_wallet()
+                .read()?
+                .rpc
+                .get_block_count()
+                .map_err(WalletError::Rpc)? as u16,
+        );
 
         // Set 950 blocks locktime for test
         let locktime = if cfg!(feature = "integration-test") {
-            LockTime::from_height(current_height + 950).map_err(WalletError::Locktime)?
-        } else {
-            LockTime::from_height(maker.config.fidelity_timelock + current_height)
+            LockTime::from_height(current_height.value() as u32 + 950)
                 .map_err(WalletError::Locktime)?
+        } else {
+            LockTime::from_height(
+                maker.config.fidelity_timelock.value() as u32 + current_height.value() as u32,
+            )
+            .map_err(WalletError::Locktime)?
         };
 
         log::info!(
             "Fidelity timelock {:?} blocks",
-            locktime.to_consensus_u32() - current_height
+            locktime.to_consensus_u32() - current_height.value() as u32
         );
 
         let sleep_increment = 10;

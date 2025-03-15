@@ -12,7 +12,7 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 use bitcoin::{
     hashes::Hash,
     secp256k1::{self, Secp256k1},
-    Amount, OutPoint, PublicKey, Transaction, Txid,
+    Amount, FeeRate, OutPoint, PublicKey, Transaction, Txid,
 };
 
 use super::{
@@ -372,15 +372,16 @@ impl Maker {
         // This will remain unchanged to avoid modifying the structure of the [ProofOfFunding] message.
         // Once issue https://github.com/citadel-tech/coinswap/issues/309 is resolved,
         //`contract_feerate` will represent the actual fee rate instead of the `MINER_FEE`.
-        let calc_funding_tx_fees =
-            message.contract_feerate * (message.next_coinswap_info.len() as u64);
+        let calc_funding_tx_fees = FeeRate::from_sat_per_vb_unchecked(
+            message.contract_feerate * (message.next_coinswap_info.len() as u64),
+        );
 
         // Check for overflow. If happens hard error.
         // This can happen if the fee_rate for funding tx is very high and incoming_amount is very low.
         // TODO: Ensure at Taker protocol that this never happens.
-        let outgoing_amount = if let Some(a) =
-            incoming_amount.checked_sub(calc_coinswap_fees + Amount::from_sat(calc_funding_tx_fees))
-        {
+        let outgoing_amount = if let Some(a) = incoming_amount.checked_sub(Amount::from_sat(
+            calc_coinswap_fees.to_sat() + calc_funding_tx_fees.to_sat_per_vb_ceil(),
+        )) {
             a
         } else {
             return Err(MakerError::General(

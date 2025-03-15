@@ -20,7 +20,7 @@ use crate::{
 };
 use bitcoin::{
     ecdsa::Signature,
-    relative::LockTime as RelativeLockTime,
+    relative::{Height, LockTime as RelativeLockTime},
     secp256k1::{self, Secp256k1},
     Amount, OutPoint, PublicKey, ScriptBuf, Transaction,
 };
@@ -375,7 +375,7 @@ impl Maker {
                         None
                     }
                 })
-                .collect::<HashMap<u32, u32>>()
+                .collect::<HashMap<u32, Height>>()
         };
 
         bond_conf_heights.into_iter().try_for_each(|(i, ht)| {

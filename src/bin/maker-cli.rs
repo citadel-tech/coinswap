@@ -108,7 +108,7 @@ fn main() -> Result<(), MakerError> {
                 RpcMsgReq::SendToAddress {
                     address,
                     amount,
-                    feerate: feerate.unwrap_or(DEFAULT_TX_FEE_RATE),
+                    feerate: DEFAULT_TX_FEE_RATE,
                 },
             )?;
         }
