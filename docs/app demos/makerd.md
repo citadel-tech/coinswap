@@ -19,26 +19,27 @@ Maker stores all its data in a directory located at `$HOME/.coinswap/maker`. Thi
 
 This configuration file contains all the settings for the Maker. The fields are:
 
-- **network_port**: The port through which the Maker listens for requests.
-- **rpc_port**: The port through which `makerd` listens for RPC commands from `maker-cli`.
-- **min_swap_amount**: The minimum amount (in sats) for a swap. Requests below this limit will be rejected.
-- **socks_port**: The port for Tor connections.
-- **directory_server_address**: The address of the DNS server (currently set to use Tor).
-- **fidelity_amount**: The amount (in sats) used to create the fidelity bond.
-- **fidelity_timelock**: The timelock for the fidelity bond, measured in block heights.
-- **connection_type**: The network type `makerd` uses (currently only `TOR`).
+- `network_port:` Defines the TCP port on which the Maker listens for incoming Coinswap protocol messages.  
+- `rpc_port:` The port through which `makerd` listens for RPC commands from `maker-cli`. 
+- `min_swap_amount:` Sets the minimum swap amount (in satoshis) that the Maker will process. Requests below this limit will be rejected. 
+- `socks_port:` Defines the SOCKS5 proxy port used for routing Maker traffic through Tor.  
+- `directory_server_address:` Indicates the Directory Server’s Tor hidden service address for Maker registration and discovery by Takers.  
+- `fidelity_amount:` Specifies the amount to be locked as a fidelity bond to deter Sybil attacks.  
+- `fidelity_timelock:` Sets the duration (in block heights) for which the fidelity bond remains locked.  
+- `connection_type:`The network type `makerd` uses (currently only `TOR`).
 
-**Default Configuration:**
+
+**Default Maker Configuration (`~/.coinswap/maker/config.toml`):**
 
 ```toml
-port = 6102
+network_port = 6102
 rpc_port = 6103
-min_swap_amount = 100000
-socks_port = 19050
-directory_server_address = "127.0.0.1:8080" # Fix: Send Tor Address Instead
-fidelity_amount = 5000000
-fidelity_timelock = 26000
-connection_type = "TOR"
+min_swap_amount = 10000
+socks_port = 9050
+directory_server_address =ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080
+fidelity_amount = 50000
+fidelity_timelock = 2160
+connection_type = TOR
 ```
 
 > **Important:**  

@@ -128,12 +128,24 @@ The data directory contains the following files:
 
 The configuration is stored in the `config.toml` file. You can edit this file to change the configuration of the taker. The configuration file contains the following fields:
 
-1. `port` - The port via which the Taker listens and serves requests.
-2. `socks_port` - The port via which the Taker listens and serves requests for the Socks5 proxy.
-3. `rpc_port` - The port which serves the RPC server.
-4. `directory_server_address` - The address of the directory server.
-5. `connection_type` - The connection type to use for the directory server. Possible values are `CLEARNET` and `TOR`.
+- `network_port`:** Specifies the TCP port on which the Taker listens for incoming Coinswap protocol messages.  
+- `socks_port`:** Defines the SOCKS5 proxy port used to route network traffic through Tor.  
+- `directory_server_address:` Sets the Tor hidden service address of the Coinswap Directory Server for discovering Maker services.  
+- `connection_type:` The connection type to use for the directory server.(currently using `TOR`)
 
+
+---
+
+**Default Taker Configuration (`~/.coinswap/taker/config.toml`):**
+
+```toml
+network_port = 9051
+socks_port = 9050
+directory_server_address = ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080
+connection_type = TOR
+```
+ 
+---
 ### Wallets
 
 The taker uses wallet files to store the wallet data. The wallet files are stored in the `wallets` directory. These wallet files should be safely backed up as they contain the private keys to the wallet.
