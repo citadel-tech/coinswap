@@ -136,9 +136,9 @@ connection_type = "TOR"
 
 ```
  
-- `control_port`: The port via which the Taker listens and serves requests.
-- `socks_port`:The port via which the Taker listens and serves requests for the Socks5 proxy.
-- `tor_auth_password`: Optional password for authenticating with the Tor control interface; empty by default.
+- `control_port`: The Tor Control Port. Check the [tor doc](tor.md) for more details.
+- `socks_port`: The Tor Socks Port.  Check the [tor doc](tor.md) for more details.
+- `tor_auth_password`: Optional password for Tor control authentication; empty by default.
 - `directory_server_address`: Address of the Directory Server (an onion address in production) for discovering Maker nodes.
 - `connection_type`:- The connection type to use for the directory server. Possible values are `CLEARNET` and `TOR`.
 

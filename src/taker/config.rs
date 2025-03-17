@@ -92,7 +92,7 @@ impl TakerConfig {
     // Method to manually serialize the Taker Config into a TOML string
     pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
-            "network_port = {}
+            "control_port = {}
 socks_port = {}
 directory_server_address = {}
 connection_type = {:?}",
