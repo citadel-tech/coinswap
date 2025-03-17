@@ -649,19 +649,28 @@ pub(crate) fn get_emphemeral_address(
     control_port: u16,
     target_port: u16,
     password: &str,
-) -> Result<String, TorError> {
+    private_key_data: Option<&str>,
+) -> Result<(String, String), TorError> {
     use std::io::BufRead;
     let mut stream = TcpStream::connect(format!("127.0.0.1:{}", control_port))?;
     let mut reader = BufReader::new(stream.try_clone()?);
-    let auth_command = format!("AUTHENTICATE \"{}\"\r\n", password);
-    stream.write_all(auth_command.as_bytes())?;
-    let add_onion_command = format!(
-        "ADD_ONION NEW:BEST Port={},127.0.0.1:{}\r\n",
-        target_port, target_port
-    );
-    stream.write_all(add_onion_command.as_bytes())?;
     let mut response = String::new();
     let mut service_id = String::new();
+    let mut private_key = String::new();
+    let auth_command = format!("AUTHENTICATE \"{}\"\r\n", password);
+    stream.write_all(auth_command.as_bytes())?;
+    let mut add_onion_command = format!(
+        "ADD_ONION NEW:BEST Flags=Detach Port={},127.0.0.1:{}\r\n",
+        target_port, target_port
+    );
+    if let Some(pk) = private_key_data {
+        add_onion_command = format!(
+            "ADD_ONION {} Flags=Detach Port={},127.0.0.1:{}\r\n",
+            pk, target_port, target_port
+        );
+        private_key = pk.to_string();
+    }
+    stream.write_all(add_onion_command.as_bytes())?;
 
     while reader.read_line(&mut response)? > 0 {
         if response.starts_with("250-ServiceID=") {
@@ -669,17 +678,25 @@ pub(crate) fn get_emphemeral_address(
                 .trim_start_matches("250-ServiceID=")
                 .trim()
                 .to_string();
+            if private_key_data.is_some() {
+                break;
+            }
+        } else if response.starts_with("250-PrivateKey=") {
+            private_key = response
+                .trim_start_matches("250-PrivateKey=")
+                .trim()
+                .to_string();
             break;
         }
         response.clear();
     }
 
-    if service_id.is_empty() {
+    if service_id.is_empty() || private_key.is_empty() {
         return Err(TorError::General(
             "Failed to retrieve ephemeral onion service details".to_string(),
         ));
     }
-    Ok(format!("{}.onion", service_id))
+    Ok((format!("{}.onion", service_id), private_key))
 }
 
 pub(crate) fn get_tor_hostname(
@@ -691,21 +708,42 @@ pub(crate) fn get_tor_hostname(
     let tor_config_path = datadir.join("tor/hostname");
 
     if tor_config_path.exists() {
-        if let Ok(hostname) = fs::read(&tor_config_path) {
-            let hostname: String = serde_cbor::de::from_slice(&hostname)?;
-            let hostname = hostname.trim().to_string();
-            log::info!("Loaded existing Tor hostname: {}", hostname);
+        if let Ok(tor_metadata) = fs::read(&tor_config_path) {
+            let data: [&str; 2] = serde_cbor::de::from_slice(&tor_metadata)?;
+
+            let hostname_data = data[1];
+            let private_key_data = data[0];
+
+            let (hostname, private_key) = get_emphemeral_address(
+                control_port,
+                target_port,
+                password,
+                Some(private_key_data),
+            )?;
+
+            assert_eq!(hostname, hostname_data);
+            assert_eq!(private_key, private_key_data);
+
+            log::info!(
+                "Generated existing Tor Hidden Service Hostname: {}",
+                hostname
+            );
+
             return Ok(hostname);
         }
     }
 
-    let hostname = get_emphemeral_address(control_port, target_port, password)?;
+    let (hostname, private_key) =
+        get_emphemeral_address(control_port, target_port, password, None)?;
 
     if let Some(parent) = tor_config_path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    fs::write(&tor_config_path, serde_cbor::ser::to_vec(&hostname)?)?;
+    fs::write(
+        &tor_config_path,
+        serde_cbor::ser::to_vec(&[private_key, hostname.clone()])?,
+    )?;
 
     log::info!("Generated new Tor Hidden Service Hostname: {}", hostname);
 
