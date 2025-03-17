@@ -21,7 +21,6 @@ sudo apt install tor -y
 brew install tor
 ```
 
-
 ---
 
 ## **2. Configuring Tor (`torrc` File)**
@@ -35,6 +34,21 @@ sudo nano /etc/tor/torrc
 nano /opt/homebrew/etc/tor/torrc
 ```
 
+---
+
+## **4. Configuring the SOCKS Proxy**
+Tor acts as a **SOCKS5 Proxy** for anonymous traffic.
+
+Add this to `torrc`:
+```ini
+SOCKSPort 9050
+```
+Now, you can route applications through `127.0.0.1:9050`.
+
+To test it:
+```bash
+curl --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/
+```
 ---
 
 ## **3. Configuring Control Port**
@@ -80,19 +94,6 @@ This allows unrestricted access—use it **only for testing**.
    ```
 4. Use it in your applications for authentication.
 
----
 
-## **4. Configuring the SOCKS Proxy**
-Tor acts as a **SOCKS5 Proxy** for anonymous traffic.
 
-Add this to `torrc`:
-```ini
-SOCKSPort 9050
-```
-Now, you can route applications through `127.0.0.1:9050`.
-
-To test it:
-```bash
-curl --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/
-```
 
