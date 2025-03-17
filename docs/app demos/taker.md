@@ -124,27 +124,24 @@ The data directory contains the following files:
 2. `debug.log` - The log file for the taker.
 3. `wallets` directory - Contains the wallet files for the taker.
 
-### Configuration
-
-The configuration is stored in the `config.toml` file. You can edit this file to change the configuration of the taker. The configuration file contains the following fields:
-
-- `network_port`:** Specifies the TCP port on which the Taker listens for incoming Coinswap protocol messages.  
-- `socks_port`:** Defines the SOCKS5 proxy port used to route network traffic through Tor.  
-- `directory_server_address:` Sets the Tor hidden service address of the Coinswap Directory Server for discovering Maker services.  
-- `connection_type:` The connection type to use for the directory server.(currently using `TOR`)
-
-
----
 
 **Default Taker Configuration (`~/.coinswap/taker/config.toml`):**
 
 ```toml
-network_port = 9051
+control_port = 9051
 socks_port = 9050
-directory_server_address = ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080
-connection_type = TOR
+tor_auth_password = ""
+directory_server_address = "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080"
+connection_type = "TOR"
+
 ```
  
+- `control_port`: The port via which the Taker listens and serves requests.
+- `socks_port`:The port via which the Taker listens and serves requests for the Socks5 proxy.
+- `tor_auth_password`: Optional password for authenticating with the Tor control interface; empty by default.
+- `directory_server_address`: Address of the Directory Server (an onion address in production) for discovering Maker nodes.
+- `connection_type`:- The connection type to use for the directory server. Possible values are `CLEARNET` and `TOR`.
+
 ---
 ### Wallets
 

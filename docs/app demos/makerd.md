@@ -15,32 +15,32 @@ The `maker-cli` is a command-line application that allows you to operate and man
 
 Maker stores all its data in a directory located at `$HOME/.coinswap/maker`. This directory contains the following important files:
 
-### 1. **config.toml**
-
-This configuration file contains all the settings for the Maker. The fields are:
-
-- `network_port:` Defines the TCP port on which the Maker listens for incoming Coinswap protocol messages.  
-- `rpc_port:` The port through which `makerd` listens for RPC commands from `maker-cli`. 
-- `min_swap_amount:` Sets the minimum swap amount (in satoshis) that the Maker will process. Requests below this limit will be rejected. 
-- `socks_port:` Defines the SOCKS5 proxy port used for routing Maker traffic through Tor.  
-- `directory_server_address:` Indicates the Directory Server’s Tor hidden service address for Maker registration and discovery by Takers.  
-- `fidelity_amount:` Specifies the amount to be locked as a fidelity bond to deter Sybil attacks.  
-- `fidelity_timelock:` Sets the duration (in block heights) for which the fidelity bond remains locked.  
-- `connection_type:`The network type `makerd` uses (currently only `TOR`).
-
-
 **Default Maker Configuration (`~/.coinswap/maker/config.toml`):**
 
 ```toml
-network_port = 6102
 rpc_port = 6103
 min_swap_amount = 10000
+network_port = 6102
+control_port = 9051
 socks_port = 9050
-directory_server_address =ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080
+tor_auth_password = ""
+directory_server_address = "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080"
 fidelity_amount = 50000
-fidelity_timelock = 2160
-connection_type = TOR
+fidelity_timelock = 13104
+connection_type = "TOR"
 ```
+
+- `rpc_port`: The port through which `makerd` listens for RPC commands from `maker-cli`.
+- `min_swap_amount`: Minimum swap amount in satoshis.
+- `network_port`: TCP port where the Maker listens for incoming Coinswap protocol messages.
+- `control_port`: The port via which the Maker listens and serves requests.
+- `socks_port`: Port for the Tor SOCKS proxy that routes traffic through Tor for anonymity.
+- `tor_auth_password`: Optional password for Tor control authentication; empty by default.
+- `directory_server_address`: The Directory Server’s address (typically an onion address) for Maker registration and discovery by Takers.
+- `fidelity_amount`: Amount in satoshis locked as a fidelity bond to deter Sybil attacks.
+- `fidelity_timelock`: Lock duration in block heights for the fidelity bond.
+- `connection_type`: Specifies the network mode; set to "TOR" in production for privacy, or "CLEARNET" during testing.
+
 
 > **Important:**  
 > At the moment, Coinswap operates only on the **TOR** network. The `connection_type` is hardcoded to `TOR`, and the app will only work with this network until multi-network support is added.
