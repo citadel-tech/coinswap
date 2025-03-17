@@ -650,6 +650,7 @@ pub(crate) fn get_emphemeral_address(
     target_port: u16,
     password: &str,
     private_key_data: Option<&str>,
+    service_id_data: Option<&str>,
 ) -> Result<(String, String), TorError> {
     use std::io::BufRead;
     let mut stream = TcpStream::connect(format!("127.0.0.1:{}", control_port))?;
@@ -659,6 +660,10 @@ pub(crate) fn get_emphemeral_address(
     let mut private_key = String::new();
     let auth_command = format!("AUTHENTICATE \"{}\"\r\n", password);
     stream.write_all(auth_command.as_bytes())?;
+    if let Some(service_id) = service_id_data {
+        let remove_command = format!("DEL_ONION {}\r\n", service_id);
+        stream.write_all(remove_command.as_bytes())?;
+    }
     let mut add_onion_command = format!(
         "ADD_ONION NEW:BEST Flags=Detach Port={},127.0.0.1:{}\r\n",
         target_port, target_port
@@ -719,6 +724,7 @@ pub(crate) fn get_tor_hostname(
                 target_port,
                 password,
                 Some(private_key_data),
+                Some(hostname_data.replace(".onion", "").as_str()),
             )?;
 
             assert_eq!(hostname, hostname_data);
@@ -734,7 +740,7 @@ pub(crate) fn get_tor_hostname(
     }
 
     let (hostname, private_key) =
-        get_emphemeral_address(control_port, target_port, password, None)?;
+        get_emphemeral_address(control_port, target_port, password, None, None)?;
 
     if let Some(parent) = tor_config_path.parent() {
         fs::create_dir_all(parent)?;
