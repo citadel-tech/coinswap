@@ -104,7 +104,12 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             if maker.config.connection_type == ConnectionType::CLEARNET {
                 RpcMsgResp::GetTorAddressResp("Maker is not running on TOR".to_string())
             } else {
-                let hostname = get_tor_hostname()?;
+                let hostname = get_tor_hostname(
+                    maker.data_dir.clone(),
+                    maker.config.control_port,
+                    maker.config.network_port,
+                    &maker.config.tor_auth_password,
+                )?;
                 let address = format!("{}:{}", hostname, maker.config.network_port);
                 RpcMsgResp::GetTorAddressResp(address)
             }

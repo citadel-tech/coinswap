@@ -6,8 +6,6 @@ This guide covers:
 - Setting up a Hidden Service  
 - Configuring the Control Port (with/without password)  
 - Setting the SOCKS Port  
-- Configuring the Service Port and Target Port  
-- Finding the `.onion` hostname  
 
 ---
 
@@ -23,7 +21,6 @@ sudo apt install tor -y
 brew install tor
 ```
 
-
 ---
 
 ## **2. Configuring Tor (`torrc` File)**
@@ -37,6 +34,21 @@ sudo nano /etc/tor/torrc
 nano /opt/homebrew/etc/tor/torrc
 ```
 
+---
+
+## **4. Configuring the SOCKS Proxy**
+Tor acts as a **SOCKS5 Proxy** for anonymous traffic.
+
+Add this to `torrc`:
+```ini
+SOCKSPort 9050
+```
+Now, you can route applications through `127.0.0.1:9050`.
+
+To test it:
+```bash
+curl --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/
+```
 ---
 
 ## **3. Configuring Control Port**
@@ -69,6 +81,8 @@ This allows unrestricted access—use it **only for testing**.
    ```ini
    ControlPort 9051
    CookieAuthentication 1
+   CookieAuthFileGroupReadable 1
+   DataDirectoryGroupReadable 1
    ```
 2. Restart Tor:
    ```bash
@@ -80,61 +94,6 @@ This allows unrestricted access—use it **only for testing**.
    ```
 4. Use it in your applications for authentication.
 
----
 
-## **4. Configuring the SOCKS Proxy**
-Tor acts as a **SOCKS5 Proxy** for anonymous traffic.
 
-Add this to `torrc`:
-```ini
-SOCKSPort 9050
-```
-Now, you can route applications through `127.0.0.1:9050`.
 
-To test it:
-```bash
-curl --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/
-```
-
----
-
-## **5. Setting Up a Hidden Service**
-A Hidden Service lets you host a `.onion` website or server.
-
-### **Basic Hidden Service (Port Forwarding)**
-
-### Linux
-```ini
-HiddenServiceDir /var/lib/tor/coinswap/
-HiddenServicePort 6102 127.0.0.1:6102
-```
-
-### MacOs
-```bash
-HiddenServiceDir /opt/homebrew/var/lib/tor/coinswap
-HiddenServicePort 6102 127.0.0.1:6102
-```
-
-Provide required permissions
-```bash
-create sudo mkdir -p /opt/homebrew/var/lib/tor/coinswap
-chmod 700 coinswap
-```
-
-- **Service Port (Virtual Port)**: `6102` (Clients use this to connect to the hidden service)
-- **Target Port**: `127.0.0.1:6102` (Local port where traffic is redirected)
-
-Tor run the taker client, hidden service is not required.
-
-After configuring, restart Tor:
-### Linux
-```bash
-sudo systemctl restart tor
-```
-
-### MacOs
-```bash
-brew services restart tor
-```
-
----
