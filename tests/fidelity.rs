@@ -158,7 +158,7 @@ fn test_fidelity() {
             if required_height == first_maturity_height {
                 log::info!("First Fidelity Bond  is matured. Sending redemption transaction");
 
-                let _ = wallet_write
+                wallet_write
                     .redeem_fidelity(0, DEFAULT_TX_FEE_RATE)
                     .unwrap();
 
@@ -174,7 +174,7 @@ fn test_fidelity() {
             } else {
                 log::info!("Second Fidelity Bond  is matured. sending redemption transactions");
 
-                let _ = wallet_write
+                wallet_write
                     .redeem_fidelity(1, DEFAULT_TX_FEE_RATE)
                     .unwrap();
 
