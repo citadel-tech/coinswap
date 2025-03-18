@@ -25,6 +25,7 @@ use bitcoin::{
     consensus::encode::deserialize,
     hashes::{hash160::Hash as Hash160, Hash},
     hex::{Case, DisplayHex},
+    relative::LockTime as RelativeLockTime,
     secp256k1::{
         rand::{rngs::OsRng, RngCore},
         SecretKey,
@@ -55,8 +56,8 @@ use crate::{
 };
 
 // Default values for Taker configurations
-pub(crate) const REFUND_LOCKTIME: u16 = 20;
-pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
+pub(crate) const REFUND_LOCKTIME: RelativeLockTime = RelativeLockTime::from_height(20);
+pub(crate) const REFUND_LOCKTIME_STEP: RelativeLockTime = RelativeLockTime::from_height(20);
 pub(crate) const FIRST_CONNECT_ATTEMPTS: u32 = 5;
 pub(crate) const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1;
 pub(crate) const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 30;
@@ -73,11 +74,11 @@ pub(crate) const TCP_TIMEOUT_SECONDS: u64 = 300;
 // TODO: Maker should decide this miner fee
 // This fee is used for both funding and contract txs.
 #[cfg(feature = "integration-test")]
-pub(crate) const MINER_FEE: u64 = 1000;
+pub(crate) const MINER_FEE: Amount = Amount::from_sat(1000);
 
 /// This fee is used for both funding and contract txs.
 #[cfg(not(feature = "integration-test"))]
-pub(crate) const MINER_FEE: u64 = 300; // around 2 sats/vb for funding tx
+pub(crate) const MINER_FEE: Amount = Amount::from_sat(300); // around 2 sats/vb for funding tx
 
 /// Swap specific parameters. These are user's policy and can differ among swaps.
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
@@ -319,8 +320,8 @@ impl Taker {
         let required = swap_params.send_amount + Amount::from_sat(1000);
         if available < required {
             let err = WalletError::InsufficientFund {
-                available: available.to_sat(),
-                required: required.to_sat(),
+                available,
+                required,
             };
             log::error!("Not enough balance to do swap : {:?}", err);
             return Err(err.into());
@@ -375,9 +376,12 @@ impl Taker {
             }
 
             // Refund lock time decreases by `refund_locktime_step` for each hop.
-            let maker_refund_locktime = REFUND_LOCKTIME
-                + REFUND_LOCKTIME_STEP
-                    * (self.ongoing_swap_state.swap_params.maker_count - maker_index - 1) as u16;
+            let maker_refund_locktime = RelativeLockTime::from_height(
+                REFUND_LOCKTIME.to_consensus_u32() as u16
+                    + REFUND_LOCKTIME_STEP.to_consensus_u32() as u16
+                        * (self.ongoing_swap_state.swap_params.maker_count - maker_index - 1)
+                            as u16,
+            );
 
             let funding_tx_infos = self.funding_info_for_next_maker();
 
@@ -490,8 +494,11 @@ impl Taker {
         self.ongoing_swap_state.taker_position = TakerPosition::FirstPeer;
 
         // Locktime to be used for this swap.
-        let swap_locktime = REFUND_LOCKTIME
-            + REFUND_LOCKTIME_STEP * self.ongoing_swap_state.swap_params.maker_count as u16;
+        let swap_locktime = RelativeLockTime::from_height(
+            REFUND_LOCKTIME.to_consensus_u32() as u16
+                + REFUND_LOCKTIME_STEP.to_consensus_u32() as u16
+                    * self.ongoing_swap_state.swap_params.maker_count as u16,
+        );
 
         // Loop until we find a live maker who responded to our signature request.
         let (maker, funding_txs) = loop {
@@ -509,7 +516,7 @@ impl Taker {
                     &hashlock_pubkeys,
                     self.get_preimage_hash(),
                     swap_locktime,
-                    Amount::from_sat(MINER_FEE),
+                    MINER_FEE,
                 )?;
 
             let contract_reedemscripts = outgoing_swapcoins
@@ -856,7 +863,7 @@ impl Taker {
     /// If no suitable makers are found in [OfferBook], next swap will not initiate and the swap round will fail.
     fn send_sigs_init_next_hop(
         &mut self,
-        maker_refund_locktime: u16,
+        maker_refund_locktime: RelativeLockTime,
         funding_tx_infos: &[FundingTxInfo],
     ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TakerError> {
         // Configurable reconnection attempts for testing
@@ -917,7 +924,7 @@ impl Taker {
     /// [Internal] Single attempt to send signatures and initiate next hop.
     fn send_sigs_init_next_hop_once(
         &mut self,
-        maker_refund_locktime: u16,
+        maker_refund_locktime: RelativeLockTime,
         funding_tx_infos: &[FundingTxInfo],
     ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TakerError> {
         let this_maker = &self
@@ -1259,7 +1266,7 @@ impl Taker {
                         previous_funding_output,
                         maker_funding_tx_value,
                         next_contract_redeemscript,
-                        Amount::from_sat(MINER_FEE),
+                        MINER_FEE,
                     )
                 },
             )
@@ -1388,7 +1395,7 @@ impl Taker {
         outgoing_swapcoins: &[S],
         maker_multisig_nonces: &[SecretKey],
         maker_hashlock_nonces: &[SecretKey],
-        locktime: u16,
+        locktime: RelativeLockTime,
     ) -> Result<ContractSigsForSender, TakerError> {
         let reconnect_time_out = Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC);
         // Configurable reconnection attempts for testing
@@ -1755,8 +1762,8 @@ impl Taker {
             .all_good_makers()
             .iter()
             .find(|oa| {
-                send_amount >= Amount::from_sat(oa.offer.min_size)
-                    && send_amount <= Amount::from_sat(oa.offer.max_size)
+                send_amount >= oa.offer.min_size
+                    && send_amount <= oa.offer.max_size
                     && !self
                         .ongoing_swap_state
                         .peer_infos
@@ -1956,7 +1963,7 @@ impl Taker {
                     );
                     if let Some(confirmation) = result.confirmations {
                         // Now the transaction is confirmed in a block, check for required maturity
-                        if confirmation > (*timelock as u32) {
+                        if confirmation > (timelock.to_consensus_u32()) {
                             log::info!(
                                 "Timelock maturity of {} blocks for Contract Tx is reached : {}",
                                 timelock,

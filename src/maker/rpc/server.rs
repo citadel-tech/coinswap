@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use bitcoin::{Address, Amount};
+use bitcoin::Address;
 
 use super::messages::RpcMsgReq;
 use crate::{
@@ -76,7 +76,6 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             amount,
             feerate,
         } => {
-            let amount = Amount::from_sat(amount);
             let destination = Destination::Multi(vec![(
                 Address::from_str(&address).unwrap().assume_checked(),
                 amount,

@@ -1,4 +1,4 @@
-use bitcoin::{Address, Amount};
+use bitcoin::{Address, Amount, FeeRate};
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
@@ -84,7 +84,7 @@ enum Commands {
         amount: u64,
         /// Feerate in sats/vByte. Defaults to 2 sats/vByte
         #[clap(long, short = 'f')]
-        feerate: Option<f64>,
+        feerate: Option<FeeRate>,
     },
     /// Update the offerbook with current market offers and display them
     FetchOffers,

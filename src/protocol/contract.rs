@@ -12,6 +12,7 @@ use bitcoin::{
     },
     ecdsa::Signature,
     hashes::Hash,
+    relative::LockTime as RelativeLockTime,
     secp256k1::{
         rand::{rngs::OsRng, RngCore},
         Message, Secp256k1, SecretKey,
@@ -55,18 +56,21 @@ const PUBKEY2_OFFSET: usize = PUBKEY1_OFFSET + PUBKEY_LENGTH + 1;
 /// swap_amount in sats, refund_locktime in blocks.
 pub(crate) fn calculate_coinswap_fee(
     // Should we consider value in Amount?
-    swap_amount: u64,
-    refund_locktime: u16,
-    base_fee: u64,
+    swap_amount: Amount,
+    refund_locktime: RelativeLockTime,
+    base_fee: Amount,
     amt_rel_fee_pct: f64,
     time_rel_fee_pct: f64,
-) -> u64 {
+) -> Amount {
     // swap_amount as f64 * refund_locktime as f64 -> can  overflow inside f64?
-    let total_fee = base_fee as f64
-        + (swap_amount as f64 * amt_rel_fee_pct) / 1_00.00
-        + (swap_amount as f64 * refund_locktime as f64 * time_rel_fee_pct) / 1_00.00;
+    let total_fee = base_fee.to_sat() as f64
+        + (swap_amount.to_sat() as f64 * amt_rel_fee_pct) / 1_00.00
+        + (swap_amount.to_sat() as f64
+            * refund_locktime.to_consensus_u32() as f64
+            * time_rel_fee_pct)
+            / 1_00.00;
 
-    total_fee.ceil() as u64
+    Amount::from_sat(total_fee.ceil() as u64)
 }
 
 /// Apply two signatures to a 2-of-2 multisig spend.
@@ -200,13 +204,13 @@ pub(crate) fn check_hashlock_has_pubkey(
     }
 }
 
-/// Create a contract redeem script for a coinswap transaction.
+/// Create a contract redeem script for a coinswap transaction.create_contract
 #[rustfmt::skip]
 pub(crate) fn create_contract_redeemscript(
     pub_hashlock: &PublicKey,
     pub_timelock: &PublicKey,
     hashvalue: &Hash160,
-    locktime: &u16,
+    locktime: &RelativeLockTime,
 ) -> ScriptBuf {
     //avoid the malleability from OP_IF attack, see:
     //https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-September/000605.html
@@ -268,7 +272,7 @@ pub(crate) fn create_contract_redeemscript(
         .push_opcode(opcodes::all::OP_ELSE)
             .push_key(pub_timelock)
             .push_int(0)
-            .push_int(*locktime as i64)
+            .push_int(locktime.to_consensus_u32() as i64)
         .push_opcode(opcodes::all::OP_ENDIF)
         .push_opcode(opcodes::all::OP_CSV)
         .push_opcode(opcodes::all::OP_DROP)
@@ -317,21 +321,27 @@ pub(crate) fn check_hashvalues_are_equal(
 }
 
 /// Read the locktime from a contract redeem script.
-pub(crate) fn read_contract_locktime(redeemscript: &Script) -> Result<u16, ProtocolError> {
+pub(crate) fn read_contract_locktime(
+    redeemscript: &Script,
+) -> Result<RelativeLockTime, ProtocolError> {
     match redeemscript
         .instructions()
         .nth(12)
         .expect("Insctructions expected")?
     {
         Instruction::PushBytes(locktime_bytes) => match locktime_bytes.len() {
-            1 => Ok(locktime_bytes[0] as u16),
+            1 => Ok(RelativeLockTime::from_height(locktime_bytes[0] as u16)),
             2 | 3 => {
                 let (int_bytes, _rest) = locktime_bytes
                     .as_bytes()
                     .split_at(std::mem::size_of::<u16>());
-                Ok(u16::from_le_bytes(int_bytes.try_into().map_err(|_| {
-                    ProtocolError::General("Can't read locktime value from contract reedemscript")
-                })?))
+                Ok(RelativeLockTime::from_height(u16::from_le_bytes(
+                    int_bytes.try_into().map_err(|_| {
+                        ProtocolError::General(
+                            "Can't read locktime value from contract reedemscript",
+                        )
+                    })?,
+                )))
             }
             _ => Err(ProtocolError::General(
                 "Can't read locktime value from contract reedemscript",
@@ -339,9 +349,13 @@ pub(crate) fn read_contract_locktime(redeemscript: &Script) -> Result<u16, Proto
         },
         Instruction::Op(opcode) => {
             if let opcodes::Class::PushNum(n) = opcode.classify(opcodes::ClassifyContext::Legacy) {
-                Ok(n.try_into().map_err(|_| {
-                    ProtocolError::General("Can't read locktime value from contract reedemscript")
-                })?)
+                Ok(RelativeLockTime::from_height(n.try_into().map_err(
+                    |_| {
+                        ProtocolError::General(
+                            "Can't read locktime value from contract reedemscript",
+                        )
+                    },
+                )?))
             } else {
                 Err(ProtocolError::General(
                     "Can't read locktime value from contract reedemscript",
@@ -426,8 +440,8 @@ pub(crate) fn is_contract_out_valid(
     hashlock_pubkey: &PublicKey,
     timelock_pubkey: &PublicKey,
     hashvalue: &Hash160,
-    locktime: &u16,
-    minimum_locktime: &u16,
+    locktime: &RelativeLockTime,
+    minimum_locktime: &RelativeLockTime,
 ) -> Result<(), ProtocolError> {
     if minimum_locktime > locktime {
         return Err(ProtocolError::General("locktime too short"));
@@ -593,13 +607,15 @@ mod test {
         .unwrap();
 
         // Use an u16 to strictly positive 2 byte integer
-        let locktime = random::<u16>();
+        let locktime = RelativeLockTime::from_height(random::<u16>());
 
         let contract_script =
             create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hashvalue, &locktime);
 
         // Get the byte encoded locktime for script
-        let locktime_bytecode = Builder::new().push_int(locktime as i64).into_script();
+        let locktime_bytecode = Builder::new()
+            .push_int(locktime.to_consensus_u32() as i64)
+            .into_script();
 
         // Below is hand made script string that should be expected
         let expected = "827ca914".to_owned()
@@ -753,7 +769,7 @@ mod test {
             &pub2,
             &hashvalue,
             &locktime,
-            &2
+            &RelativeLockTime::from_height(2)
         )
         .is_ok());
 
@@ -957,7 +973,7 @@ mod test {
         )
         .unwrap();
 
-        let locktime = random::<u16>();
+        let locktime = RelativeLockTime::from_height(random::<u16>());
 
         let contract_script =
             create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hash_value, &locktime);
@@ -994,7 +1010,7 @@ mod test {
         )
         .unwrap();
 
-        let locktime = random::<u16>();
+        let locktime = RelativeLockTime::from_height(random::<u16>());
 
         let contract_script =
             create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hashvalue, &locktime);
@@ -1034,7 +1050,7 @@ mod test {
         )
         .unwrap();
 
-        let locktime = random::<u16>();
+        let locktime = RelativeLockTime::from_height(random::<u16>());
 
         let contract_script =
             create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hashvalue, &locktime);
@@ -1101,13 +1117,13 @@ mod test {
     #[test]
     fn calculate_coinswap_fee_normal() {
         // Test with typical values
-        let base_fee_sat = 1000;
+        let base_fee_sat = Amount::from_sat(1000);
         let amt_rel_fee_pct = 2.5;
         let time_rel_fee_pct = 0.1;
-        let swap_amount = 100_000;
-        let refund_locktime = 20;
+        let swap_amount = Amount::from_sat(100_000);
+        let refund_locktime = RelativeLockTime::from_height(20);
 
-        let expected_fee = 5500;
+        let expected_fee = Amount::from_sat(5500);
 
         let calculated_fee = calculate_coinswap_fee(
             swap_amount,
@@ -1121,14 +1137,14 @@ mod test {
 
         // Test with zero values
         assert_eq!(
-            calculate_coinswap_fee(swap_amount, refund_locktime, 0, 0.0, 0.0),
-            0
+            calculate_coinswap_fee(swap_amount, refund_locktime, Amount::ZERO, 0.0, 0.0),
+            Amount::ZERO
         );
 
         // Test with only the absolute fee being non-zero
         assert_eq!(
             calculate_coinswap_fee(swap_amount, refund_locktime, base_fee_sat, 0.0, 0.0),
-            1000
+            Amount::from_sat(1000)
         );
 
         // Test with only the relative fees being non-zero
@@ -1136,11 +1152,11 @@ mod test {
             calculate_coinswap_fee(
                 swap_amount,
                 refund_locktime,
-                0,
+                Amount::ZERO,
                 amt_rel_fee_pct,
                 time_rel_fee_pct
             ),
-            4500
+            Amount::from_sat(4500)
         );
     }
 
@@ -1273,7 +1289,7 @@ mod test {
         .unwrap();
 
         // Use an u16 to strictly positive 2 byte integer
-        let locktime = random::<u16>();
+        let locktime = RelativeLockTime::from_height(random::<u16>());
 
         let contract_script_1 =
             create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hash_value_1, &locktime);
@@ -1293,7 +1309,7 @@ mod test {
                 next_hashlock_pubkey: pub_1,
                 next_multisig_pubkey: pub_2,
             }],
-            refund_locktime: u16::default(),
+            refund_locktime: RelativeLockTime::from_height(u16::default()),
             contract_feerate: u64::default(),
             id: "random".to_string(),
         };
@@ -1323,7 +1339,7 @@ mod test {
                 next_hashlock_pubkey: pub_1,
                 next_multisig_pubkey: pub_2,
             }],
-            refund_locktime: u16::default(),
+            refund_locktime: RelativeLockTime::from_height(u16::default()),
             contract_feerate: u64::default(),
             id: "random".to_string(),
         };

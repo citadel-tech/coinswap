@@ -11,6 +11,7 @@ use bip39::Mnemonic;
 use bitcoin::{
     bip32::{ChildNumber, DerivationPath, Xpriv, Xpub},
     hashes::hash160::Hash as Hash160,
+    relative::LockTime as RelativeLocktime,
     secp256k1,
     secp256k1::{Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
@@ -893,7 +894,7 @@ impl Wallet {
     /// Refreshes the offer maximum size cache based on the current wallet's unspent transaction outputs (UTXOs).
     pub(crate) fn refresh_offer_maxsize_cache(&mut self) -> Result<(), WalletError> {
         let balance = self.get_balances(None)?.spendable;
-        self.store.offer_maxsize = balance.to_sat();
+        self.store.offer_maxsize = balance;
         Ok(())
     }
 
@@ -1094,7 +1095,7 @@ impl Wallet {
         other_multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
         hashvalue: Hash160,
-        locktime: u16,
+        locktime: RelativeLocktime,
         fee_rate: Amount,
     ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, Amount), WalletError> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
@@ -1159,7 +1160,7 @@ impl Wallet {
         Ok((
             create_funding_txes_result.funding_txes,
             outgoing_swapcoins,
-            Amount::from_sat(create_funding_txes_result.total_miner_fee),
+            create_funding_txes_result.total_miner_fee,
         ))
     }
 

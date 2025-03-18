@@ -12,7 +12,7 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 use bitcoin::{
     hashes::Hash,
     secp256k1::{self, Secp256k1},
-    Amount, OutPoint, PublicKey, Transaction, Txid,
+    Amount, FeeRate, OutPoint, PublicKey, Transaction, Txid,
 };
 
 use super::{
@@ -238,14 +238,15 @@ impl Maker {
             .map(|txinfo| txinfo.senders_contract_tx.input[0].previous_output.txid)
             .collect::<Vec<_>>();
 
-        let total_funding_amount = message.txs_info.iter().fold(0u64, |acc, txinfo| {
-            acc + txinfo.funding_input_value.to_sat()
-        });
+        let total_funding_amount =
+            Amount::from_sat(message.txs_info.iter().fold(0u64, |acc, txinfo| {
+                acc + txinfo.funding_input_value.to_sat()
+            }));
 
         log::info!(
             "[{}] Total Funding Amount = {} | Funding Txids = {:?}",
             self.config.network_port,
-            Amount::from_sat(total_funding_amount),
+            total_funding_amount,
             funding_txids
         );
 
@@ -345,18 +346,19 @@ impl Maker {
         }
 
         // Calculate output amounts for the next hop
-        let incoming_amount = message
-            .confirmed_funding_txes
-            .iter()
-            .try_fold(0u64, |acc, fi| {
-                let index = find_funding_output_index(fi)?;
-                let txout = fi
-                    .funding_tx
-                    .output
-                    .get(index as usize)
-                    .expect("output at index expected");
-                Ok::<_, MakerError>(acc + txout.value.to_sat())
-            })?;
+        let incoming_amount =
+            message
+                .confirmed_funding_txes
+                .iter()
+                .try_fold(Amount::from_sat(0u64), |acc, fi| {
+                    let index = find_funding_output_index(fi)?;
+                    let txout = fi
+                        .funding_tx
+                        .output
+                        .get(index as usize)
+                        .expect("output at index expected");
+                    Ok::<_, MakerError>(acc + txout.value)
+                })?;
 
         let calc_coinswap_fees = calculate_coinswap_fee(
             incoming_amount,
@@ -370,15 +372,16 @@ impl Maker {
         // This will remain unchanged to avoid modifying the structure of the [ProofOfFunding] message.
         // Once issue https://github.com/citadel-tech/coinswap/issues/309 is resolved,
         //`contract_feerate` will represent the actual fee rate instead of the `MINER_FEE`.
-        let calc_funding_tx_fees =
-            message.contract_feerate * (message.next_coinswap_info.len() as u64);
+        let calc_funding_tx_fees = FeeRate::from_sat_per_vb_unchecked(
+            message.contract_feerate * (message.next_coinswap_info.len() as u64),
+        );
 
         // Check for overflow. If happens hard error.
         // This can happen if the fee_rate for funding tx is very high and incoming_amount is very low.
         // TODO: Ensure at Taker protocol that this never happens.
-        let outgoing_amount = if let Some(a) =
-            incoming_amount.checked_sub(calc_coinswap_fees + calc_funding_tx_fees)
-        {
+        let outgoing_amount = if let Some(a) = incoming_amount.checked_sub(Amount::from_sat(
+            calc_coinswap_fees.to_sat() + calc_funding_tx_fees.to_sat_per_vb_ceil(),
+        )) {
             a
         } else {
             return Err(MakerError::General(
@@ -389,7 +392,7 @@ impl Maker {
         // Create outgoing coinswap of the next hop
         let (my_funding_txes, outgoing_swapcoins, act_funding_txs_fees) = {
             self.wallet.write()?.initalize_coinswap(
-                Amount::from_sat(outgoing_amount),
+                outgoing_amount,
                 &message
                     .next_coinswap_info
                     .iter()
@@ -407,7 +410,7 @@ impl Maker {
         };
 
         let act_coinswap_fees = incoming_amount
-            .checked_sub(outgoing_amount + act_funding_txs_fees.to_sat())
+            .checked_sub(outgoing_amount + act_funding_txs_fees)
             .expect("This should not overflow as we just above.");
 
         log::info!(
@@ -422,9 +425,9 @@ impl Maker {
         log::info!(
             "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {} |",
             self.config.network_port,
-            Amount::from_sat(incoming_amount),
-            Amount::from_sat(outgoing_amount),
-            Amount::from_sat(act_coinswap_fees),
+            incoming_amount,
+            outgoing_amount,
+            act_coinswap_fees,
             message.refund_locktime,
             act_funding_txs_fees
         );

@@ -3,7 +3,7 @@
 //! Handles market-related logic where Makers post their offers. Also provides functions to synchronize
 //! maker addresses from directory servers, post maker addresses to directory servers,
 
-use bitcoin::{transaction::ParseOutPointError, OutPoint};
+use bitcoin::{absolute::Height as AbsoluteHeight, transaction::ParseOutPointError, OutPoint};
 use bitcoind::bitcoincore_rpc::{self, Client, RpcApi};
 
 use crate::{
@@ -452,7 +452,8 @@ fn handle_client(
 
             let txid = metadata.proof.bond.outpoint.txid;
             let transaction = rpc.get_raw_transaction(&txid, None)?;
-            let current_height = rpc.get_block_count()?;
+            let current_height =
+                AbsoluteHeight::from_consensus(rpc.get_block_count()? as u32).unwrap();
 
             match verify_fidelity_checks(
                 &metadata.proof,

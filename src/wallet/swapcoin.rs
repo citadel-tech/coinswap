@@ -10,6 +10,7 @@
 
 use bitcoin::{
     ecdsa::Signature,
+    relative::LockTime as RelativeLockTime,
     secp256k1::{self, Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
     Amount, PublicKey, Script, ScriptBuf, Transaction, TxIn,
@@ -107,7 +108,7 @@ pub(crate) trait SwapCoin {
     /// Get the timelock public key.
     fn get_timelock_pubkey(&self) -> Result<PublicKey, WalletError>;
     /// Get the timelock value.
-    fn get_timelock(&self) -> Result<u16, WalletError>;
+    fn get_timelock(&self) -> Result<RelativeLockTime, WalletError>;
     /// Get the hash value.
     fn get_hashvalue(&self) -> Result<Hash160, WalletError>;
     /// Get the funding amount.
@@ -200,7 +201,7 @@ macro_rules! impl_swapcoin_getters {
             )?)
         }
 
-        fn get_timelock(&self) -> Result<u16, WalletError> {
+        fn get_timelock(&self) -> Result<RelativeLockTime, WalletError> {
             Ok(read_contract_locktime(&self.contract_redeemscript)?)
         }
 

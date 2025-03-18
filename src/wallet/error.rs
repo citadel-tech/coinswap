@@ -3,6 +3,7 @@
 use crate::protocol::error::ProtocolError;
 
 use super::fidelity::FidelityError;
+use bitcoin::Amount;
 
 /// Represents various errors that can occur within a wallet.
 ///
@@ -69,9 +70,9 @@ pub enum WalletError {
     /// - `required`: The amount of funds needed to complete the operation.
     InsufficientFund {
         /// The amount of funds available in the wallet.
-        available: u64,
+        available: Amount,
         /// The amount of funds needed to complete the operation.
-        required: u64,
+        required: Amount,
     },
 }
 
