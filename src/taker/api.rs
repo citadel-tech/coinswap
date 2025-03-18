@@ -169,6 +169,7 @@ pub struct Taker {
     ongoing_swap_state: OngoingSwapState,
     behavior: TakerBehavior,
     data_dir: PathBuf,
+    randomize_fee: bool,
 }
 
 impl Drop for Taker {
@@ -207,6 +208,7 @@ impl Taker {
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
         connection_type: Option<ConnectionType>,
+        randomize_fee: bool,
     ) -> Result<Taker, TakerError> {
         // Get provided data directory or the default data directory.
         let data_dir = data_dir.unwrap_or(get_taker_dir());
@@ -283,6 +285,7 @@ impl Taker {
             ongoing_swap_state: OngoingSwapState::default(),
             behavior,
             data_dir,
+            randomize_fee,
         })
     }
 
@@ -502,6 +505,10 @@ impl Taker {
                     &maker.offer.tweakable_point,
                     self.ongoing_swap_state.swap_params.tx_count,
                 )?;
+            let mut fee = MINER_FEE;
+            if self.randomize_fee {
+                fee = randomize_amount(MINER_FEE);
+            }
             let (funding_txs, mut outgoing_swapcoins, funding_fee) =
                 self.wallet.initalize_coinswap(
                     self.ongoing_swap_state.swap_params.send_amount,
@@ -509,7 +516,7 @@ impl Taker {
                     &hashlock_pubkeys,
                     self.get_preimage_hash(),
                     swap_locktime,
-                    Amount::from_sat(MINER_FEE),
+                    Amount::from_sat(fee),
                 )?;
 
             let contract_reedemscripts = outgoing_swapcoins
