@@ -29,13 +29,13 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         ((16102, None), MakerBehavior::Normal),
     ];
 
-    let taker_config_map = [(7102, TakerBehavior::Normal)];
+    let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
     let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            taker_config_map.into(),
+            taker_behavior,
             ConnectionType::CLEARNET,
         );
 

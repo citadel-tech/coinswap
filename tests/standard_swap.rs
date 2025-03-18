@@ -28,16 +28,12 @@ fn test_standard_coinswap() {
         ((16102, Some(19052)), MakerBehavior::Normal),
     ];
 
-    let taker_config_map = [(7102, TakerBehavior::Normal)];
+    let taker_behavior = vec![TakerBehavior::Normal];
     let connection_type = ConnectionType::CLEARNET;
 
     // Initiate test framework, Makers and a Taker with default behavior.
     let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
-        TestFramework::init(
-            makers_config_map.into(),
-            taker_config_map.into(),
-            connection_type,
-        );
+        TestFramework::init(makers_config_map.into(), taker_behavior, connection_type);
 
     warn!("Running Test: Standard Coinswap Procedure");
     let bitcoind = &test_framework.bitcoind;
