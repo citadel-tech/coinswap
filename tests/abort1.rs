@@ -33,14 +33,14 @@ fn test_stop_taker_after_setup() {
         ((16102, None), MakerBehavior::Normal),
     ];
 
-    let taker_config_map = [(7102, TakerBehavior::DropConnectionAfterFullSetup)];
+    let taker_behavior = vec![TakerBehavior::DropConnectionAfterFullSetup];
 
     // Initiate test framework, Makers.
     // Taker has a special behavior DropConnectionAfterFullSetup.
     let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            taker_config_map.into(),
+            taker_behavior,
             ConnectionType::CLEARNET,
         );
 
