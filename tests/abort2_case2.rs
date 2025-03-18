@@ -29,7 +29,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
         ((16102, None), MakerBehavior::Normal),
     ];
 
-    let taker_config_map = [(7102, TakerBehavior::Normal)];
+    let taker_behavior = vec![TakerBehavior::Normal];
 
     warn!(
         "Running test: Maker 6102 Closes before sending sender's sigs. Taker recovers. Or Swap cancels"
@@ -43,7 +43,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            taker_config_map.into(),
+            taker_behavior,
             ConnectionType::CLEARNET,
         );
 
