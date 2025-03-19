@@ -87,23 +87,27 @@ cd coinswap
 cargo build --release
 ```
 
-The compiled binaries will be in `target/release/`:
-- `maker` - The maker server daemon
-- `maker-cli` - CLI tool for managing the maker server
-- `taker` - The taker client application
+After compilation you will get the binaries in the `./target/release` folder. 
+
+Install the necessary binaries in your system:
+```console
+sudo install ./target/release/taker /usr/local/bin/
+sudo install ./target/release/maker /usr/local/bin/  
+sudo install ./target/release/maker-cli /usr/local/bin/  
+```
 
 ## Running the Swap Server
 
 The swap server is run using two apps `makerd` and `maker-cli`. The `makerd` app runs a server, and `maker-cli` is used to operate the server using RPC commands.
 
-From the project repo directory, check the available `makerd` commands with
+Check the available `makerd` commands with
 ```bash
-./target/release/makerd --help
+makerd --help
 ```
 
 Start the `makerd` daemon with all default parameters:
 ```bash
-./target/release/makerd
+makerd
 ```
 
 This will spawn the maker server and you will start seeing the logs. The server is operated with the `maker-cli` app. Follow the log, and it will show you the next instructions.
@@ -118,9 +122,9 @@ At this stage you can start using the `maker-cli` app to query the server and ge
 
 On a new terminal, try out a few operations like:
 ```bash
-./target/release/maker-cli --help
-./target/release/maker-cli get-balances
-./target/release/maker-cli list-utxo
+maker-cli --help
+maker-cli get-balances
+maker-cli list-utxo
 ```
 
 If everything goes all right you will be able to see balances and utxos in the `maker-cli` outputs.
@@ -136,24 +140,24 @@ From a new terminal, go to the project root directory and perform basic client o
 
 ### Get Some Money
 ```bash
-./target/release/taker get-new-address
+taker get-new-address
 ```
 
 Use a testnet4 faucet to send some funds at the above address. Then check the client wallet balance with
 ```bash
-./target/release/taker get-balances
+taker get-balances
 ```
 
 ### Fetch Market Offers
 Fetch all the current existing market offers with 
 ```bash
-./target/release/taker fetch-offers
+taker fetch-offers
 ```
 
 ### Perform a Coinswap
 Attempt a coinswap process with
 ```bash
-./target/release/taker coinswap
+taker coinswap
 ```
 
 If all goes well, you will see the coinswap process starting in the logs.
