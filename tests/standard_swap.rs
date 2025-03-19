@@ -75,7 +75,6 @@ fn test_standard_coinswap() {
 
             // Check balance after setting up maker server.
             let wallet = maker.wallet.read().unwrap();
-            let all_utxos = wallet.get_all_utxo().unwrap();
 
             let balances = wallet.get_balances().unwrap();
 
@@ -137,6 +136,14 @@ fn test_standard_coinswap() {
     // | **Maker16102** | 500,000 - 463,500 - 3,000 = +33,500                               |
     // | **Maker6102**  | 465,384 - 438,642 - 3,000 = +21,858                               |
 
+    let taker_wallet = taker.get_wallet_mut();
+    taker_wallet.sync().unwrap();
+
+    // Synchronize each maker's wallet.
+    for maker in makers.iter() {
+        let mut wallet = maker.get_wallet().write().unwrap();
+        wallet.sync().unwrap();
+    }
     //  After Swap Asserts
     verify_swap_results(
         &taker,
@@ -170,6 +177,7 @@ fn test_standard_coinswap() {
     bitcoind.client.send_raw_transaction(&tx).unwrap();
     generate_blocks(bitcoind, 1);
 
+    taker_wallet_mut.sync().unwrap();
     let balances = taker_wallet_mut.get_balances().unwrap();
 
     assert_eq!(balances.swap, Amount::ZERO);

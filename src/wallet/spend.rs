@@ -126,6 +126,7 @@ impl Wallet {
         feerate: f64,
     ) -> Result<Transaction, WalletError> {
         let all_utxo = self.list_live_timelock_contract_spend_info()?;
+
         for (utxo, spend_info) in all_utxo {
             if let UTXOSpendInfo::TimelockContract {
                 swapcoin_multisig_redeemscript,

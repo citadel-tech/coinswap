@@ -57,6 +57,12 @@ pub(crate) enum KeychainKind {
     Internal,
 }
 
+#[derive(Deserialize)]
+struct LockedUtxo {
+    txid: Txid,
+    vout: u32,
+}
+
 impl KeychainKind {
     fn index_num(&self) -> u32 {
         match self {
@@ -523,6 +529,20 @@ impl Wallet {
         Ok(())
     }
 
+    fn list_lock_unspent(&self) -> Result<Vec<OutPoint>, WalletError> {
+        // Call the RPC method "listlockunspent" with no parameters.
+        let locked_utxos: Vec<LockedUtxo> = self.rpc.call("listlockunspent", &[])?;
+
+        // Convert each LockedUtxo into an OutPoint.
+        Ok(locked_utxos
+            .into_iter()
+            .map(|lu| OutPoint {
+                txid: lu.txid,
+                vout: lu.vout,
+            })
+            .collect())
+    }
+
     /// Checks if a UTXO belongs to fidelity bonds, and then returns corresponding UTXOSpendInfo
     fn check_if_fidelity(&self, utxo: &ListUnspentResultEntry) -> Option<UTXOSpendInfo> {
         self.store
@@ -648,6 +668,7 @@ impl Wallet {
     //         .list_unspent(Some(0), Some(9999999), None, None, None)?;
     //     Ok(all_utxos)
     // }
+
     /// Returns a list all utxos with their spend info tracked by the wallet.
     /// Optionally takes in an Utxo list to reduce RPC calls. If None is given, the
     /// full list of utxo is fetched from core rpc.
@@ -1033,22 +1054,32 @@ impl Wallet {
         &self,
         amount: Amount,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+        // Get UTXOs from the descriptor and swap coin methods.
         let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info()?;
         let mut swap_coin_utxo = self.list_incoming_swap_coin_utxo_spend_info()?;
         seed_coin_utxo.append(&mut swap_coin_utxo);
 
-        // Fetch utxos, filter out existing fidelity coins
+        // Retrieve currently locked UTXOs via RPC.
+        // Assume that self.rpc.listlockunspent() returns a Vec<OutPoint>.
+        let locked_utxos: Vec<OutPoint> = self.list_lock_unspent()?;
+
+        // Filter out UTXOs that are already locked and exclude fidelity coins.
         let mut unspents = seed_coin_utxo
             .into_iter()
-            .filter(|(_, spend_info)| !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. }))
+            .filter(|(utxo, spend_info)| {
+                let outpoint = OutPoint::new(utxo.txid, utxo.vout);
+                !locked_utxos.contains(&outpoint)
+                    && !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. })
+            })
             .collect::<Vec<_>>();
 
+        // Sort in descending order so that we use the largest UTXOs first.
         unspents.sort_by(|a, b| b.0.amount.cmp(&a.0.amount));
 
         let mut selected_utxo = Vec::new();
         let mut remaining = amount;
 
-        // the simplest largest first coinselection.
+        // Simple largest-first coin selection.
         for unspent in unspents {
             if remaining.checked_sub(unspent.0.amount).is_none() {
                 selected_utxo.push(unspent);

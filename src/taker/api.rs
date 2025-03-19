@@ -577,6 +577,14 @@ impl Taker {
         let funding_txids = funding_txs
             .iter()
             .map(|tx| {
+                // Calculate the virtual size in bytes (vbytes)
+                let tx_vbytes = tx.weight().to_vbytes_ceil();
+
+                // Convert vbytes to kilovirtual bytes (kvB)
+                let tx_kvb = (tx_vbytes as f32) / 1000.0;
+
+                log::info!("Transaction size: {} vB ({:.3} kvB)", tx_vbytes, tx_kvb);
+
                 let txid = self.wallet.send_tx(tx)?;
                 log::info!("Broadcasted Funding tx. txid: {}", txid);
                 assert_eq!(txid, tx.compute_txid());
@@ -1893,6 +1901,7 @@ impl Taker {
 
         // Broadcast the Outgoing Contracts
         self.get_wallet_mut().sync()?;
+
         for outgoing in outgoings {
             let contract_tx = outgoing.get_fully_signed_contract_tx()?;
             if self
@@ -1915,6 +1924,9 @@ impl Taker {
             let reedemscript = outgoing.get_multisig_redeemscript();
             let timelock = outgoing.get_timelock()?;
             let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
+
+            self.get_wallet_mut().sync()?;
+
             let timelock_spend =
                 self.wallet
                     .create_timelock_spend(&outgoing, next_internal, DEFAULT_TX_FEE_RATE)?;

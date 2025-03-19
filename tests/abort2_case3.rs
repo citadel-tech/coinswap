@@ -85,7 +85,6 @@ fn maker_drops_after_sending_senders_sigs() {
 
             // Check balance after setting up maker server.
             let wallet = maker.wallet.read().unwrap();
-            let all_utxos = wallet.get_all_utxo().unwrap();
 
             let balances = wallet.get_balances().unwrap();
 
@@ -125,6 +124,17 @@ fn maker_drops_after_sending_senders_sigs() {
     directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
+
+    ///////////////////
+    let taker_wallet = taker.get_wallet_mut();
+    taker_wallet.sync().unwrap();
+
+    // Synchronize each maker's wallet.
+    for maker in makers.iter() {
+        let mut wallet = maker.get_wallet().write().unwrap();
+        wallet.sync().unwrap();
+    }
+    ///////////////
 
     // -------- Fee Tracking and Workflow --------
     // Case 1: Taker recovers from initiated swap with Maker6102 (CloseAtProofOfFunding)

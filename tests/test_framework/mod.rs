@@ -304,14 +304,14 @@ pub fn fund_and_verify_taker(
 
     //------Basic Checks-----
 
-    let wallet = taker.get_wallet();
+    let wallet = taker.get_wallet_mut();
     // Assert external address index reached to 3.
     assert_eq!(wallet.get_external_index(), &utxo_count);
 
+    let _ = wallet.sync();
+
     // Check if utxo list looks good.
     // TODO: Assert other interesting things from the utxo list.
-
-    let all_utxos = wallet.get_all_utxo().unwrap();
 
     let balances = wallet.get_balances().unwrap();
 
@@ -354,8 +354,8 @@ pub fn fund_and_verify_maker(
         // Assert external address index reached to 4.
         assert_eq!(wallet.get_external_index(), &utxo_count);
 
-        // let all_utxos = wallet.get_all_utxo().unwrap();
-        wallet.sync();
+        //
+        wallet.sync().unwrap();
 
         let balances = wallet.get_balances().unwrap();
 
@@ -378,7 +378,6 @@ pub fn verify_swap_results(
     // Check Taker balances
     {
         let wallet = taker.get_wallet();
-        let all_utxos = wallet.get_all_utxo().unwrap();
         let balances = wallet.get_balances().unwrap();
 
         assert!(
@@ -416,7 +415,6 @@ pub fn verify_swap_results(
         .zip(org_maker_spend_balances.iter())
         .for_each(|(maker, org_spend_balance)| {
             let wallet = maker.get_wallet().read().unwrap();
-            let all_utxos = wallet.get_all_utxo().unwrap();
             let balances = wallet.get_balances().unwrap();
 
             assert!(
