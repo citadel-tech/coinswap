@@ -170,6 +170,7 @@ pub(crate) struct ConnectionState {
     pub(crate) incoming_swapcoins: Vec<IncomingSwapCoin>,
     pub(crate) outgoing_swapcoins: Vec<OutgoingSwapCoin>,
     pub(crate) pending_funding_txes: Vec<Transaction>,
+    pub(crate) negotiated_feerate: Option<u64>
 }
 
 pub(crate) struct ThreadPool {

@@ -22,11 +22,11 @@ use crate::{
             ContractTxInfoForRecvr, ContractTxInfoForSender, FundingTxInfo, GiveOffer,
             HashPreimage, MakerToTakerMessage, NextHopInfo, Offer, Preimage, PrivKeyHandover,
             ProofOfFunding, ReqContractSigsForRecvr, ReqContractSigsForSender, TakerHello,
-            TakerToMakerMessage,
+            TakerToMakerMessage,FeeNegotiationResponse,FeeNegotiationProposal
         },
         Hash160,
     },
-    taker::api::MINER_FEE,
+    taker::api::{MINER_FEE,OngoingSwapState},
     utill::{read_message, send_message, ConnectionType},
     wallet::WalletError,
 };
@@ -434,6 +434,7 @@ pub(crate) fn send_hash_preimage_and_get_private_keys(
 fn download_maker_offer_attempt_once(
     addr: &MakerAddress,
     config: &TakerConfig,
+    ongoing_swap_state: &mut OngoingSwapState,
 ) -> Result<Offer, TakerError> {
     let maker_addr = addr.to_string();
     log::info!("Attempting to download Offer from {}", maker_addr);
@@ -466,6 +467,51 @@ fn download_maker_offer_attempt_once(
         }
     };
 
+     // --- Begin Fee Negotiation ---
+    // Choose a proposed fee (for example, 20 sat/vByte)
+    let proposed_fee = 20;
+    log::info!("Proposing fee of {} sat/vByte", proposed_fee);
+
+    send_message(
+        &mut socket,
+        &TakerToMakerMessage::FeeNegotiationProposal(FeeNegotiationProposal {
+            proposed_fee_sat_per_vbyte: proposed_fee,
+        }),
+    )?;
+
+    // Now wait for the fee negotiation response from the Maker.
+    let fee_resp_bytes = read_message(&mut socket)?;
+    let fee_msg: MakerToTakerMessage = serde_cbor::from_slice(&fee_resp_bytes)?;
+    match fee_msg {
+        MakerToTakerMessage::FeeNegotiationResponse(resp) => {
+            match resp {
+                FeeNegotiationResponse::Accept(fee) => {
+                    log::info!("Maker accepted fee of {} sat/vByte", fee);
+                    // Store the negotiated fee in your ongoing swap state.
+                    ongoing_swap_state.negotiated_feerate = Some(fee);
+                }
+                FeeNegotiationResponse::Counter(counter_fee) => {
+                    log::warn!("Maker countered with {} sat/vByte", counter_fee);
+                    // For simplicity, we choose to accept the counter offer.
+                    ongoing_swap_state.negotiated_feerate = Some(counter_fee);
+                }
+                FeeNegotiationResponse::Reject(reason) => {
+                    log::error!("Maker rejected fee negotiation: {}", reason);
+                    return Err(TakerError::General(format!(
+                        "Fee negotiation failed: {}",
+                        reason
+                    )));
+                }
+            }
+        }
+        _ => {
+            return Err(TakerError::General(
+                "Unexpected message during fee negotiation".to_string(),
+            ));
+        }
+    }
+    // --- End Fee Negotiation ---
+
     log::info!("Got offer from : {} ", maker_addr);
 
     Ok(*offer)
@@ -479,7 +525,7 @@ pub(crate) fn download_maker_offer(
 
     loop {
         ii += 1;
-        match download_maker_offer_attempt_once(&address, &config) {
+        match download_maker_offer_attempt_once(&address, &config, &mut OngoingSwapState::default()) {
             Ok(offer) => return Some(OfferAndAddress { offer, address }),
             Err(e) => {
                 if ii <= FIRST_CONNECT_ATTEMPTS {
@@ -503,3 +549,5 @@ pub(crate) fn download_maker_offer(
         }
     }
 }
+
+

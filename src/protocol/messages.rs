@@ -185,6 +185,19 @@ pub(crate) struct PrivKeyHandover {
     pub(crate) multisig_privkeys: Vec<MultisigPrivkey>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct FeeNegotiationProposal {
+    /// Proposed fee in sat/vByte
+    pub proposed_fee_sat_per_vbyte: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) enum FeeNegotiationResponse {
+    Accept(u64),    // Maker accepts the proposed fee
+    Counter(u64),   // Maker counters with a new fee
+    Reject(String), // Maker rejects the proposal (with a reason)
+}
+
 /// All messages sent from Taker to Maker.
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum TakerToMakerMessage {
@@ -205,6 +218,9 @@ pub(crate) enum TakerToMakerMessage {
     /// Respond by handing over the Private Keys of coinswap multisig. This denotes the completion of the whole swap.
     RespPrivKeyHandover(PrivKeyHandover),
     WaitingFundingConfirmation(String),
+    //fee rate negotiation proposal
+    FeeNegotiationProposal(FeeNegotiationProposal),
+
 }
 
 impl Display for TakerToMakerMessage {
@@ -221,6 +237,8 @@ impl Display for TakerToMakerMessage {
             Self::RespHashPreimage(_) => write!(f, "RespHashPreimage"),
             Self::RespPrivKeyHandover(_) => write!(f, "RespPrivKeyHandover"),
             Self::WaitingFundingConfirmation(_) => write!(f, "WaitingFundingConfirmation"),
+            Self::FeeNegotiationProposal(_) => write!(f, "FeeNegotiationProposal"), 
+
         }
     }
 }
@@ -302,6 +320,9 @@ pub(crate) enum MakerToTakerMessage {
     RespContractSigsForRecvr(ContractSigsForRecvr),
     /// Send the multisig private keys of the swap, declaring completion of the contract.
     RespPrivKeyHandover(PrivKeyHandover),
+    //reponse to fee rate negotiation
+    FeeNegotiationResponse(FeeNegotiationResponse),
+
 }
 
 impl Display for MakerToTakerMessage {
@@ -317,6 +338,7 @@ impl Display for MakerToTakerMessage {
                 write!(f, "RespContractSigsForRecvr")
             }
             Self::RespPrivKeyHandover(_) => write!(f, "RespPrivKeyHandover"),
+            Self::FeeNegotiationResponse(_) => write!(f, "FeeNegotiationResponse"),
         }
     }
 }

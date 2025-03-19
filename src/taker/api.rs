@@ -114,7 +114,7 @@ enum TakerPosition {
 ///
 /// This states can be used to recover from a failed swap round.
 #[derive(Default)]
-struct OngoingSwapState {
+pub struct OngoingSwapState {
     /// SwapParams used in current swap round.
     pub(crate) swap_params: SwapParams,
     /// SwapCoins going out from the Taker.
@@ -134,6 +134,10 @@ struct OngoingSwapState {
     pub(crate) taker_position: TakerPosition,
     /// Unique ID for a swap
     pub(crate) id: String,
+    /// Negotiated fee rate in sat/vByte, as agreed during fee negotiation.
+    pub negotiated_feerate: Option<u64>,
+
+
 }
 
 /// Information for the next maker in the hop.
@@ -493,6 +497,14 @@ impl Taker {
         let swap_locktime = REFUND_LOCKTIME
             + REFUND_LOCKTIME_STEP * self.ongoing_swap_state.swap_params.maker_count as u16;
 
+        
+    // *** NEW: Retrieve the negotiated fee ***
+    // If fee negotiation was performed earlier, it will be stored in ongoing_swap_state.
+    // Otherwise, fallback to MINER_FEE.
+    let negotiated_fee = self.ongoing_swap_state.negotiated_feerate.unwrap_or(MINER_FEE);
+    log::info!("Using negotiated fee of {} sat/vByte", negotiated_fee);
+
+
         // Loop until we find a live maker who responded to our signature request.
         let (maker, funding_txs) = loop {
             let maker = self.choose_next_maker()?.clone();
@@ -502,6 +514,9 @@ impl Taker {
                     &maker.offer.tweakable_point,
                     self.ongoing_swap_state.swap_params.tx_count,
                 )?;
+
+                // *** Modification: Use negotiated_fee here ***
+
             let (funding_txs, mut outgoing_swapcoins, funding_fee) =
                 self.wallet.initalize_coinswap(
                     self.ongoing_swap_state.swap_params.send_amount,
@@ -509,7 +524,7 @@ impl Taker {
                     &hashlock_pubkeys,
                     self.get_preimage_hash(),
                     swap_locktime,
-                    Amount::from_sat(MINER_FEE),
+                    Amount::from_sat(negotiated_fee), // Use negotiated fee instead of MINER_FEE
                 )?;
 
             let contract_reedemscripts = outgoing_swapcoins

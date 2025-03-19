@@ -35,6 +35,8 @@ pub enum TakerError {
     MPSC(String),
     /// Tor error
     TorError(TorError),
+    /// A general error message.
+    General(String),
 }
 
 impl From<TorError> for TakerError {

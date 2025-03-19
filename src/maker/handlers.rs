@@ -34,7 +34,8 @@ use crate::{
             ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
             ContractSigsForSender, HashPreimage, MakerHello, MakerToTakerMessage, MultisigPrivkey,
             Offer, PrivKeyHandover, ProofOfFunding, ReqContractSigsForRecvr,
-            ReqContractSigsForSender, SenderContractTxInfo, TakerToMakerMessage,
+            ReqContractSigsForSender, SenderContractTxInfo, TakerToMakerMessage,FeeNegotiationProposal, FeeNegotiationResponse,
+
         },
         Hash160,
     },
@@ -90,6 +91,23 @@ pub(crate) fn handle_message(
             }
         }
         ExpectedMessage::NewlyConnectedTaker => match message {
+
+            TakerToMakerMessage::FeeNegotiationProposal(proposal) => {
+                // Call our helper to decide on the fee.
+                let maker_decision = decide_fee(&proposal);
+
+                // If the decision is Accept, store the final negotiated fee in our connection state.
+                if let FeeNegotiationResponse::Accept(final_fee) = maker_decision {
+                    connection_state.negotiated_feerate = Some(final_fee);
+                }
+
+                // Prepare the response message to send back to the Taker.
+                let response = MakerToTakerMessage::FeeNegotiationResponse(maker_decision);
+
+                // Advance to the next expected state (for example, asking for contract signatures).
+                connection_state.allowed_message = ExpectedMessage::ReqContractSigsForSender;
+                Some(response)
+            },
             TakerToMakerMessage::ReqGiveOffer(_) => {
                 let (tweakable_point, max_size) = {
                     let wallet_reader = maker.wallet.read()?;
@@ -211,6 +229,8 @@ pub(crate) fn handle_message(
                 return Err(MakerError::General("expected privatekey handover"));
             }
         }
+
+        
     };
 
     Ok(outgoing_message)
@@ -723,4 +743,22 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
         maker.thread_pool.add_thread(handle);
     }
     Ok(())
+}
+
+fn decide_fee(proposal: &FeeNegotiationProposal) -> FeeNegotiationResponse {
+    let min_acceptable = 5;   // Minimum acceptable fee in sat/vByte.
+    let max_acceptable = 200; // Maximum acceptable fee in sat/vByte.
+
+    if proposal.proposed_fee_sat_per_vbyte < min_acceptable {
+        FeeNegotiationResponse::Reject(format!(
+            "Minimum acceptable fee is {} sat/vByte",
+            min_acceptable
+        ))
+    } else if proposal.proposed_fee_sat_per_vbyte > max_acceptable {
+        // Counter with the maximum acceptable fee.
+        FeeNegotiationResponse::Counter(max_acceptable)
+    } else {
+        // Accept the proposed fee.
+        FeeNegotiationResponse::Accept(proposal.proposed_fee_sat_per_vbyte)
+    }
 }
