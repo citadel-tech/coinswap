@@ -134,6 +134,9 @@ impl MakerCli {
 
         await_message(&rx, "Server Setup completed!!");
 
+        // sync the wallet cache
+        // maker_cli.execute_maker_cli(&["sync-wallet"])
+
         (rx, makerd)
     }
 
@@ -234,6 +237,9 @@ fn test_maker_cli(maker_cli: &MakerCli, rx: &Receiver<String>) {
     await_message(rx, "RPC request received: GetTorAddress");
     assert_eq!(tor_addr, "Maker is not running on TOR");
 
+    // sync the wallet cache
+    maker_cli.execute_maker_cli(&["sync-wallet"]);
+
     // Initial Balance checks
     let balances = maker_cli.execute_maker_cli(&["get-balances"]);
     await_message(rx, "RPC request received: Balances");
@@ -284,6 +290,9 @@ fn test_maker_cli(maker_cli: &MakerCli, rx: &Receiver<String>) {
         "1000",
     ]);
     generate_blocks(&maker_cli.bitcoind, 1);
+
+    // sync the wallet cache
+    maker_cli.execute_maker_cli(&["sync-wallet"]);
 
     // Check balances
     let balances = maker_cli.execute_maker_cli(&["get-balances"]);

@@ -122,39 +122,46 @@ impl Wallet {
         Ok(output_values)
     }
 
-    /// This function creates funding txes by
-    /// Randomly generating some satoshi amounts and send them into
-    /// walletcreatefundedpsbt to create txes that create change
     fn create_funding_txes_random_amounts(
         &self,
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
-        let change_addresses = self.get_next_internal_addresses(destinations.len() as u32)?;
-
-        let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
-
+        // Lock UTXOs that are not meant for spending (e.g. fidelity coins)
         self.lock_unspendable_utxos()?;
+
+        let change_addresses = self.get_next_internal_addresses(destinations.len() as u32)?;
+        let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
         let mut total_miner_fee = 0;
+
         for ((address, &output_value), change_address) in destinations
             .iter()
             .zip(output_values.iter())
             .zip(change_addresses.iter())
         {
+            // Build the outputs mapping (if needed for walletcreatefundedpsbt)
             let mut outputs = HashMap::<String, Amount>::new();
             outputs.insert(address.to_string(), Amount::from_sat(output_value));
 
+            // Use the provided fee rate for this funding transaction.
             let fee = fee_rate;
             let remaining = Amount::from_sat(output_value);
+
+            // Select UTXOs (assume coin_select now filters out already locked UTXOs)
             let selected_utxo = self.coin_select(remaining)?;
-            let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
-                acc.checked_add(unspet.amount)
-                    .expect("Amount sum overflowed")
-            });
+            let total_input_amount =
+                selected_utxo
+                    .iter()
+                    .fold(Amount::ZERO, |acc, (unspent, _)| {
+                        acc.checked_add(unspent.amount)
+                            .expect("Amount sum overflowed")
+                    });
+
+            // Calculate change: total inputs minus (output amount + fee)
             let change_amount = total_input_amount.checked_sub(remaining + fee);
             let mut tx_outs = vec![TxOut {
                 value: Amount::from_sat(output_value),
@@ -167,6 +174,8 @@ impl Wallet {
                     script_pubkey: change_address.script_pubkey(),
                 });
             }
+
+            // Build transaction inputs from selected UTXOs
             let tx_inputs = selected_utxo
                 .iter()
                 .map(|(unspent, _)| TxIn {
@@ -177,17 +186,18 @@ impl Wallet {
                 })
                 .collect::<Vec<_>>();
 
-            // Set the Anti-Fee-Snipping locktime
+            // Set Anti-Fee-Snipping locktime based on current block height
             let current_height = self.rpc.get_block_count()?;
-
             let lock_time = LockTime::from_height(current_height as u32)?;
 
+            // Compute the actual fee (difference between inputs and outputs)
             let actual_fee = total_input_amount
                 - (tx_outs.iter().fold(Amount::ZERO, |a, txo| {
                     a.checked_add(txo.value)
-                        .expect("output amount sumation overflowred")
+                        .expect("output amount summation overflowed")
                 }));
 
+            // Build the funding transaction
             let mut funding_tx = Transaction {
                 input: tx_inputs,
                 output: tx_outs,
@@ -195,19 +205,22 @@ impl Wallet {
                 version: Version::TWO,
             };
 
+            // Sign the transaction with the corresponding UTXO spending info
             let mut input_info = selected_utxo
                 .iter()
                 .map(|(_, spend_info)| spend_info.clone());
             self.sign_transaction(&mut funding_tx, &mut input_info)?;
-            let tx_size = funding_tx.weight().to_vbytes_ceil();
-            let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
 
+            // Optionally, log the virtual size and effective fee rate
+            let tx_size = funding_tx.weight().to_vbytes_ceil();
+            let effective_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
             log::info!(
                 "Created Funding tx, txid : {} | Feerate: {:.2} sats/vb",
                 funding_tx.compute_txid(),
-                actual_feerate
+                effective_feerate
             );
 
+            // Lock the UTXOs used by this funding transaction.
             self.rpc.lock_unspent(
                 &funding_tx
                     .input
@@ -216,8 +229,8 @@ impl Wallet {
                     .collect::<Vec<OutPoint>>(),
             )?;
 
-            let payment_pos = 0;
-
+            // Record this transaction in our results.
+            let payment_pos = 0; // assuming the payment output position is 0
             funding_txes.push(funding_tx);
             payment_output_positions.push(payment_pos);
             total_miner_fee += fee_rate.to_sat();
@@ -480,10 +493,8 @@ impl Wallet {
         //this function will pick the top most valuable UTXOs and use them
         //to create funding transactions
 
-        let all_utxos = self.get_all_utxo()?;
-
-        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
-        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
+        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info()?;
+        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info()?;
         seed_coin_utxo.append(&mut swap_coin_utxo);
 
         let mut list_unspent_result = seed_coin_utxo;

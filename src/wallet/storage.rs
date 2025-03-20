@@ -14,6 +14,8 @@ use std::{
 use super::{error::WalletError, fidelity::FidelityBond};
 
 use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
+use crate::wallet::UTXOSpendInfo;
+use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 
 /// Represents the internal data store for a Bitcoin wallet.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -39,6 +41,10 @@ pub(crate) struct WalletStore {
     pub(super) last_synced_height: Option<u64>,
 
     pub(super) wallet_birthday: Option<u64>,
+
+    /// Maps transaction outpoints to their associated UTXO and spend information.
+    #[serde(default)] // Ensures deserialization works if `utxo_cache` is missing
+    pub(super) utxo_cache: HashMap<OutPoint, (ListUnspentResultEntry, UTXOSpendInfo)>,
 }
 
 impl WalletStore {
@@ -62,6 +68,7 @@ impl WalletStore {
             fidelity_bond: HashMap::new(),
             last_synced_height: None,
             wallet_birthday,
+            utxo_cache: HashMap::new(),
         };
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
@@ -107,6 +114,7 @@ impl WalletStore {
         Ok(store)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

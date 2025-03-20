@@ -474,7 +474,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         log::info!(
             "[{}] Spendable Wallet Balance: {}",
             network_port,
-            wallet.get_balances(None)?.spendable
+            wallet.get_balances()?.spendable
         );
     }
 

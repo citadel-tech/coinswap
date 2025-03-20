@@ -304,16 +304,16 @@ pub fn fund_and_verify_taker(
 
     //------Basic Checks-----
 
-    let wallet = taker.get_wallet();
+    let wallet = taker.get_wallet_mut();
     // Assert external address index reached to 3.
     assert_eq!(wallet.get_external_index(), &utxo_count);
+
+    let _ = wallet.sync();
 
     // Check if utxo list looks good.
     // TODO: Assert other interesting things from the utxo list.
 
-    let all_utxos = wallet.get_all_utxo().unwrap();
-
-    let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+    let balances = wallet.get_balances().unwrap();
 
     // TODO: Think about this: utxo_count*utxo_amt.
     assert_eq!(balances.regular, Amount::from_btc(0.15).unwrap());
@@ -350,13 +350,14 @@ pub fn fund_and_verify_maker(
 
     // --- Basic Checks ----
     makers.iter().for_each(|&maker| {
-        let wallet = maker.get_wallet().read().unwrap();
+        let mut wallet = maker.get_wallet().write().unwrap();
         // Assert external address index reached to 4.
         assert_eq!(wallet.get_external_index(), &utxo_count);
 
-        let all_utxos = wallet.get_all_utxo().unwrap();
+        //
+        wallet.sync().unwrap();
 
-        let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+        let balances = wallet.get_balances().unwrap();
 
         // TODO: Think about this: utxo_count*utxo_amt.
         assert_eq!(balances.regular, Amount::from_btc(0.20).unwrap());
@@ -377,8 +378,7 @@ pub fn verify_swap_results(
     // Check Taker balances
     {
         let wallet = taker.get_wallet();
-        let all_utxos = wallet.get_all_utxo().unwrap();
-        let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+        let balances = wallet.get_balances().unwrap();
 
         assert!(
             balances.regular == Amount::from_btc(0.14497).unwrap() // Successful coinswap
@@ -415,8 +415,7 @@ pub fn verify_swap_results(
         .zip(org_maker_spend_balances.iter())
         .for_each(|(maker, org_spend_balance)| {
             let wallet = maker.get_wallet().read().unwrap();
-            let all_utxos = wallet.get_all_utxo().unwrap();
-            let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+            let balances = wallet.get_balances().unwrap();
 
             assert!(
                 balances.regular == Amount::from_btc(0.14557358).unwrap() // First maker on successful coinswap
