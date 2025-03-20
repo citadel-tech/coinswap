@@ -27,18 +27,20 @@ fn malice2_maker_broadcast_contract_prematurely() {
         ((16102, None), MakerBehavior::Normal),
     ];
 
+    let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut taker, makers, directory_server_instance, block_generation_handle) =
+    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            TakerBehavior::Normal,
+            taker_behavior,
             ConnectionType::CLEARNET,
         );
 
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
+    let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
-        &mut taker,
+        taker,
         &test_framework.bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
@@ -180,7 +182,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
 
     // After Swap checks:
     verify_swap_results(
-        &taker,
+        taker,
         &makers,
         org_taker_spend_balance,
         org_maker_spend_balances,
