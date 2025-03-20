@@ -15,7 +15,7 @@ use bitcoind::bitcoincore_rpc::{json::CreateRawTransactionInput, RpcApi};
 
 use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
 
-use crate::taker::api::MINER_FEE;
+use crate::{taker::api::MINER_FEE, wallet::Destination};
 
 use super::Wallet;
 
@@ -132,82 +132,42 @@ impl Wallet {
         fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let change_addresses = self.get_next_internal_addresses(destinations.len() as u32)?;
-
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
+        // Lock Mechanism.
         self.lock_unspendable_utxos()?;
 
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
         let mut total_miner_fee = 0;
+
         for ((address, &output_value), change_address) in destinations
             .iter()
             .zip(output_values.iter())
             .zip(change_addresses.iter())
         {
-            let mut outputs = HashMap::<String, Amount>::new();
-            outputs.insert(address.to_string(), Amount::from_sat(output_value));
-
-            let fee = fee_rate;
             let remaining = Amount::from_sat(output_value);
             let selected_utxo = self.coin_select(remaining)?;
-            let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
-                acc.checked_add(unspet.amount)
-                    .expect("Amount sum overflowed")
-            });
-            let change_amount = total_input_amount.checked_sub(remaining + fee);
-            let mut tx_outs = vec![TxOut {
-                value: Amount::from_sat(output_value),
-                script_pubkey: address.script_pubkey(),
-            }];
 
-            if let Some(change) = change_amount {
-                tx_outs.push(TxOut {
-                    value: change,
-                    script_pubkey: change_address.script_pubkey(),
-                });
-            }
-            let tx_inputs = selected_utxo
+            // Prepare coins for spend_coins API
+            let coins_to_spend = selected_utxo
                 .iter()
-                .map(|(unspent, _)| TxIn {
-                    previous_output: OutPoint::new(unspent.txid, unspent.vout),
-                    sequence: Sequence(0),
-                    witness: Witness::new(),
-                    script_sig: ScriptBuf::new(),
-                })
+                .map(|(unspent, spend_info)| (unspent.clone(), spend_info.clone()))
                 .collect::<Vec<_>>();
 
-            // Set the Anti-Fee-Snipping locktime
-            let current_height = self.rpc.get_block_count()?;
+            // Create destination with output and change address
+            let destination = Destination::Multi(vec![
+                (address.clone(), Amount::from_sat(output_value)),
+                (change_address.clone(), Amount::ZERO),
+            ]);
 
-            let lock_time = LockTime::from_height(current_height as u32)?;
+            // Creates and Signs Transactions
+            let funding_tx =
+                self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
 
-            let actual_fee = total_input_amount
-                - (tx_outs.iter().fold(Amount::ZERO, |a, txo| {
-                    a.checked_add(txo.value)
-                        .expect("output amount sumation overflowred")
-                }));
+            log::info!("Created Funding tx, txid : {}", funding_tx.compute_txid(),);
 
-            let mut funding_tx = Transaction {
-                input: tx_inputs,
-                output: tx_outs,
-                lock_time,
-                version: Version::TWO,
-            };
-
-            let mut input_info = selected_utxo
-                .iter()
-                .map(|(_, spend_info)| spend_info.clone());
-            self.sign_transaction(&mut funding_tx, &mut input_info)?;
-            let tx_size = funding_tx.weight().to_vbytes_ceil();
-            let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
-
-            log::info!(
-                "Created Funding tx, txid : {} | Feerate: {:.2} sats/vb",
-                funding_tx.compute_txid(),
-                actual_feerate
-            );
-
+            // Lock Mechanism.
             self.rpc.lock_unspent(
                 &funding_tx
                     .input
