@@ -94,9 +94,14 @@ impl TakerConfig {
         let toml_data = format!(
             "control_port = {}
 socks_port = {}
+tor_auth_password = {}
 directory_server_address = {}
 connection_type = {:?}",
-            self.control_port, self.socks_port, self.directory_server_address, self.connection_type
+            self.control_port,
+            self.socks_port,
+            self.tor_auth_password,
+            self.directory_server_address,
+            self.connection_type
         );
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;

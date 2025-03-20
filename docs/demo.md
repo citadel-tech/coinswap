@@ -22,8 +22,8 @@ This guide will help you prepare your system for participating in the Coinswap L
    wget https://bitcoincore.org/bin/bitcoin-core-28.1/bitcoin-28.1-x86_64-linux-gnu.tar.gz
    
    # Download and verify signatures
-   wget https://bitcoin.org/bin/bitcoin-core-28.1/SHA256SUMS
-   wget https://bitcoin.org/bin/bitcoin-core-28.1/SHA256SUMS.asc
+   wget https://bitcoincore.org/bin/bitcoin-core-28.1//SHA256SUMS
+   wget https://bitcoincore.org/bin/bitcoin-core-28.1//SHA256SUMS.asc
    
    # Verify download
    sha256sum --check SHA256SUMS --ignore-missing
@@ -61,7 +61,6 @@ txindex=1 #Required
 rpcuser=user
 rpcpassword=password
 blockfilterindex=1 #This makes wallet sync faster
-daemon=1
 ```
 
 > **NOTE**: Change `testnet4=1` to `regtest=1` if you want to run the apps on local regtest node.
@@ -90,9 +89,9 @@ cargo build --release
 After compilation you will get the binaries in the `./target/release` folder. 
 
 Install the necessary binaries in your system:
-```console
+```bash
 sudo install ./target/release/taker /usr/local/bin/
-sudo install ./target/release/maker /usr/local/bin/  
+sudo install ./target/release/makerd /usr/local/bin/  
 sudo install ./target/release/maker-cli /usr/local/bin/  
 ```
 

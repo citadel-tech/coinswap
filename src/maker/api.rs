@@ -316,21 +316,20 @@ impl Maker {
             config.connection_type = connection_type;
         }
 
-        let network_port = config.network_port;
+        config.control_port = control_port.unwrap_or(config.control_port);
+        config.tor_auth_password =
+            tor_auth_password.unwrap_or_else(|| config.tor_auth_password.clone());
+
+        config.write_to_file(&data_dir.join("config.toml"))?;
+        if matches!(connection_type, Some(ConnectionType::TOR)) {
+            check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
+        }
 
         log::info!("Initializing wallet sync");
         wallet.sync()?;
         log::info!("Completed wallet sync");
 
-        config.control_port = control_port.unwrap_or(config.control_port);
-        config.tor_auth_password =
-            tor_auth_password.unwrap_or_else(|| config.tor_auth_password.clone());
-
-        if matches!(connection_type, Some(ConnectionType::TOR)) {
-            check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
-        }
-
-        config.write_to_file(&data_dir.join("config.toml"))?;
+        let network_port = config.network_port;
 
         Ok(Self {
             behavior,

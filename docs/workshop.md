@@ -1,20 +1,24 @@
 ## What Is Coinswap?
 
-Coinswap is a generic atomic swaps protocol designed to operate over a peer-to-peer network using Tor. The protocol provides a mechanism for peers to swap their UTXOs with other peers in the network, resulting in the transfer of ownership between the two UTXOs without leaving an on-chain footprint.
+Coinswap is a decentralized atomic swaps protocol designed to operate over a peer-to-peer network using Tor. The protocol provides a mechanism for peers to swap their UTXOs with other peers in the network, resulting in the transfer of ownership between the two UTXOs without leaving an on-chain footprint.
 
-The protocol includes a peer-to-peer messaging system, similar to the Lightning Network, enabling peers to perform swaps without trusting each other by utilizing the well-established HTLC (Hashed Time-Locked Contract) script constructions. The protocol supports *composable swaps*, allowing for the creation of swap chains such as `Alice > Bob > Carol > Alice`. At the end of the swap, Alice ends up with Carol's UTXO, Carol ends up with Bob's, and Bob ends up with Alice's. 
+The protocol includes a peer-to-peer messaging system, similar to the Lightning Network, enabling peers to perform swaps without trusting each other by utilizing the well-established HTLC (Hashed Time-Locked Contract) script constructions. The protocol supports *composable swaps*, allowing for the creation of swap chains such as `Alice --> Bob --> Carol --> Alice`. At the end of the swap, Alice ends up with Carol's UTXO, Carol ends up with Bob's, and Bob ends up with Alice's. 
 
-In this scenario, Alice acts as the client, while Bob and Carol act as service providers. The client is responsible for paying all the fees, which consist of two components: swap transaction fees and service provider fees. For each swap, the service providers earn fees, incentivizing node operators to *lock liquidity* and *earn yield*. Unlike the Lightning Network, swap service software does not require active node management. It is a plug-and-play system, making it much easier to integrate swap services into existing node modules.
+In this scenario, Alice acts as the client, while Bob and Carol act as service providers. The client is responsible for paying all the fees, which consist of two components: 
+- swap transaction fees 
+- service provider fees. 
+
+For each swap, the service providers earn fees, incentivizing node operators to *lock liquidity* and *earn yield*. Unlike the Lightning Network, swap service software does not require active node management. It is a plug-and-play system, making it much easier to integrate swap services into existing node modules.
 
 The service providers are invisible to each other and only relay messages via the client. The client acts as the relay and handles the majority of protocol validations, while the service providers act as simple daemons that respond to client messages. The protocol follows the `smart-client-dumb-server` design philosophy, making the servers lightweight and capable of running in constrained environments. 
 
 At any point during a swap, if any party misbehaves, the other parties can recover their funds from the swap using the HTLC's time-lock path.
 
-The protocol also includes a marketplace with dynamic offer data attached to a *Fidelity Bond* and a Tor address. The Fidelity Bond is a time-locked Bitcoin UTXO that service providers must display in the marketplace to be accepted for swaps. If a provider misbehaves, clients in the marketplace can punish them by refusing to swap with the same Fidelity Bond in the future. Fidelity Bonds thus serve as an identity mechanism, providing *provable costliness* to create Sybil resistance in the decentralized marketplace.
+The protocol also includes a marketplace with dynamic offer data attached to a **Fidelity Bond** and a Tor address. The Fidelity Bond is a time-locked Bitcoin UTXO that service providers must display in the marketplace to be accepted for swaps. If a provider misbehaves, clients in the marketplace can punish them by refusing to swap with the same Fidelity Bond in the future. Fidelity Bonds thus serve as an identity mechanism, providing **provable costliness** to create Sybil resistance in the decentralized marketplace.
 
 The protocol is in its early stages and has several open questions and potential vulnerabilities. At this summit, we will explore some of these challenges, discuss open design questions, and provide a hands-on demonstration of the entire swap process.
 
-For more details, please refer to the project [README](../../../README.md) and check out the [App Demos](../../app%20demos/). 
+For more details, please refer to the project [README](../../README.md) and check out the [App Demos](../app_demos/). 
 
 A more detailed [protocol specification](https://github.com/citadel-tech/Coinswap-Protocol-Specification) is also available.
 
@@ -35,10 +39,10 @@ A more detailed [protocol specification](https://github.com/citadel-tech/Coinswa
 
 To actively engage in the session, please prepare with the following:
 
-- **Readup on Coinswap**: start with the project [README](../../README.md), and follow from there. 
-- **Set up your environment**: Follow the [demo documentation](../demo.md) to set up your system. You will need:
+- **Readup on Coinswap**: start with the project [README](../../README.md) and follow from there. 
+- **Set up your environment**: Follow the [demo documentation](./demo.md) to set up your system. You will need:
   - A running `bitcoind` node on your local machine, synced on Testnet4.
-  - At least 500,000 sats of balance in your wallet.
+  - At least 501,000 sats (500,000 sats for the Fidelity Bond + 1000 sats for fidelity tx fee + 10,000 sats as minimum swap liquidity) of balance in your wallet if you are running maker.
   - Instructions for setting up `bitcoind`, connecting the apps, and running the entire Coinswap process are provided in the demo documentation.
 
 ---

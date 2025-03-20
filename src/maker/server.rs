@@ -4,7 +4,7 @@
 //! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend and RPC Client Request.
 //! The server listens at two port 6102 for P2P, and 6103 for RPC Client request.
 
-use crate::{protocol::messages::FidelityProof, taker::api::MINER_FEE};
+use crate::protocol::messages::FidelityProof;
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use socks::Socks5Stream;
@@ -213,7 +213,6 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
         let amount = Amount::from_sat(maker.config.fidelity_amount);
 
         log::info!("Fidelity value chosen = {:?} sats", amount.to_sat());
-        log::info!("Fidelity Tx fee = {} sats", MINER_FEE);
 
         let current_height = maker
             .get_wallet()
