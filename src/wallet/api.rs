@@ -516,7 +516,7 @@ impl Wallet {
         let utxos_to_lock = &all_unspents
             .into_iter()
             .filter(|u| {
-                self.check_descriptor_utxo_or_swap_coin(u)
+                self.check_and_derive_descriptor_utxo_or_swap_coin(u)
                     .unwrap()
                     .is_none()
             })
@@ -561,7 +561,9 @@ impl Wallet {
     }
 
     /// Checks if a UTXO belongs to live contracts, and then returns corresponding UTXOSpendInfo
-    fn check_if_live_contract(
+    /// ### Note
+    /// This is a costly search and should be used with care.
+    fn check_and_derive_live_contract_spend_info(
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Result<Option<UTXOSpendInfo>, WalletError> {
@@ -592,7 +594,9 @@ impl Wallet {
     }
 
     /// Checks if a UTXO belongs to descriptor or swap coin, and then returns corresponding UTXOSpendInfo
-    fn check_descriptor_utxo_or_swap_coin(
+    /// ### Note
+    /// This is a costly search and should be used with care.
+    fn check_and_derive_descriptor_utxo_or_swap_coin(
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Result<Option<UTXOSpendInfo>, WalletError> {
@@ -672,12 +676,7 @@ impl Wallet {
             .store
             .utxo_cache
             .values()
-            .filter_map(|(utxo, _)| {
-                self.check_if_fidelity(utxo)
-                    .or_else(|| self.check_if_live_contract(utxo).unwrap())
-                    .or_else(|| self.check_descriptor_utxo_or_swap_coin(utxo).unwrap())
-                    .map(|info| (utxo.clone(), info))
-            })
+            .map(|(utxo, spend_info)| (utxo.clone(), spend_info.clone()))
             .collect();
         Ok(processed_utxos)
     }
@@ -918,7 +917,7 @@ impl Wallet {
                 vout: utxo.vout,
             })
             .collect();
-    
+
         // Identify UTXOs to be removed (present in store but missing in utxos parameter passed)
         let mut to_remove = Vec::new();
         for existing_outpoint in self.store.utxo_cache.keys().cloned().collect::<Vec<_>>() {
@@ -926,44 +925,49 @@ impl Wallet {
                 to_remove.push(existing_outpoint);
             }
         }
-    
+
         // Remove UTXOs that no longer exis in the received utxos list
         for outpoint in to_remove {
             self.store.utxo_cache.remove(&outpoint);
             log::debug!("[UTXO Cache] Removed UTXO: {:?}", outpoint);
         }
-    
+
         // Process and add only new UTXOs
         for utxo in utxos {
             let outpoint = OutPoint {
                 txid: utxo.txid,
                 vout: utxo.vout,
             };
-    
+
             // Skip if the UTXO already exists in the cache
             if self.store.utxo_cache.contains_key(&outpoint) {
                 continue;
             }
-    
+
             // Process UTXOs to pair each with its spend info using the wallet's private methods.
             let spend_info = self
                 .check_if_fidelity(&utxo)
-                .or_else(|| self.check_if_live_contract(&utxo).unwrap())
-                .or_else(|| self.check_descriptor_utxo_or_swap_coin(&utxo).unwrap());
-    
+                .or_else(|| {
+                    self.check_and_derive_live_contract_spend_info(&utxo)
+                        .unwrap()
+                })
+                .or_else(|| {
+                    self.check_and_derive_descriptor_utxo_or_swap_coin(&utxo)
+                        .unwrap()
+                });
+
             // If we found valid spend info, store it in the cache
             if let Some(info) = spend_info {
                 log::debug!("[UTXO Cache] Added UTXO: {:?} -> {:?}", outpoint, info);
                 new_entries.push((outpoint, (utxo, info)));
             }
         }
-    
+
         // Insert only new entries into the cache
         for (outpoint, entry) in new_entries {
             self.store.utxo_cache.insert(outpoint, entry);
         }
     }
-    
 
     /// Signs a transaction corresponding to the provided UTXO spend information.
     pub(crate) fn sign_transaction(
