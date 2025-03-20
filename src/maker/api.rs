@@ -71,8 +71,6 @@ pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
 ///
 /// These parameters define the fees charged by Makers in a coinswap transaction.
 ///
-/// TODO: These parameters are currently hardcoded. Consider making them configurable for Makers in the future.
-///p
 /// - `BASE_FEE`: A fixed base fee charged by the Maker for providing its services
 /// - `AMOUNT_RELATIVE_FEE_PCT`: A percentage fee based on the swap amount.
 /// - `TIME_RELATIVE_FEE_PCT`: A percentage fee based on the refund locktime (duration the Maker must wait for a refund).
@@ -92,20 +90,7 @@ pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
 /// - `total_fee` = 5,500 sats (5.5%)
 ///
 /// Fee rates are designed to asymptotically approach 5% of the swap amount as the swap amount increases..
-#[cfg(feature = "integration-test")]
-pub const BASE_FEE: u64 = 1000;
-#[cfg(feature = "integration-test")]
-pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 2.50;
-#[cfg(feature = "integration-test")]
-pub const TIME_RELATIVE_FEE_PCT: f64 = 0.10;
-
-#[cfg(not(feature = "integration-test"))]
-pub const BASE_FEE: u64 = 100;
-#[cfg(not(feature = "integration-test"))]
-pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 0.1;
-#[cfg(not(feature = "integration-test"))]
-pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
-
+///
 /// Minimum Coinswap amount; makers will not#[cfg(feature = "integration-test")] accept amounts below this.
 pub const MIN_SWAP_AMOUNT: u64 = 10_000;
 
