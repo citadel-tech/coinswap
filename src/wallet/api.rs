@@ -662,41 +662,23 @@ impl Wallet {
         Ok(all_utxos)
     }
 
-    // pub(crate) fn get_all_locked_utxo(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
-    //     let all_utxos = self
-    //         .rpc
-    //         .list_unspent(Some(0), Some(9999999), None, None, None)?;
-    //     Ok(all_utxos)
-    // }
-
     /// Returns a list all utxos with their spend info tracked by the wallet.
     /// Optionally takes in an Utxo list to reduce RPC calls. If None is given, the
     /// full list of utxo is fetched from core rpc.
     pub fn list_all_utxo_spend_info(
         &self,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        // Use cached UTXOs for Maker
-        let all_utxos: Vec<ListUnspentResultEntry> = self
+        let processed_utxos = self
             .store
             .utxo_cache
             .values()
-            .map(|(utxo, _spend_info)| utxo.clone())
-            .collect();
-
-        let processed_utxos = all_utxos
-            .iter()
-            .filter_map(|utxo| {
-                let mut spend_info = self.check_if_fidelity(utxo);
-                if spend_info.is_none() {
-                    spend_info = self.check_if_live_contract(utxo).unwrap();
-                }
-                if spend_info.is_none() {
-                    spend_info = self.check_descriptor_utxo_or_swap_coin(utxo).unwrap();
-                }
-                spend_info.map(|info| (utxo.clone(), info))
+            .filter_map(|(utxo, _)| {
+                self.check_if_fidelity(utxo)
+                    .or_else(|| self.check_if_live_contract(utxo).unwrap())
+                    .or_else(|| self.check_descriptor_utxo_or_swap_coin(utxo).unwrap())
+                    .map(|info| (utxo.clone(), info))
             })
-            .collect::<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>();
-
+            .collect();
         Ok(processed_utxos)
     }
 
@@ -926,36 +908,62 @@ impl Wallet {
         Ok((privkey, public_key))
     }
 
-    /// Refreshes the UTXO cache using the wallet's internal spend info checks.
+    /// Refreshes the UTXO cache by adding only new UTXOs while preserving existing ones.
     pub(crate) fn update_utxo_cache(&mut self, utxos: Vec<ListUnspentResultEntry>) {
-        // Process UTXOs to pair each with its spend info using the wallet's private methods.
-        let processed_utxos = utxos
+        let mut new_entries = Vec::new();
+        let existing_outpoints: std::collections::HashSet<OutPoint> = utxos
             .iter()
-            .filter_map(|utxo| {
-                // Try each check in order.
-                let mut spend_info = self.check_if_fidelity(utxo);
-                if spend_info.is_none() {
-                    spend_info = self.check_if_live_contract(utxo).unwrap();
-                }
-                if spend_info.is_none() {
-                    spend_info = self.check_descriptor_utxo_or_swap_coin(utxo).unwrap();
-                }
-                spend_info.map(|info| (utxo.clone(), info))
+            .map(|utxo| OutPoint {
+                txid: utxo.txid,
+                vout: utxo.vout,
             })
-            .collect::<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>();
-
-        // Clear the existing cache
-        self.store.utxo_cache.clear();
-
-        // Insert each processed UTXO into the cache using its OutPoint as key.
-        for (utxo, spend_info) in processed_utxos {
+            .collect();
+    
+        // Identify UTXOs to be removed (present in store but missing in utxos parameter passed)
+        let mut to_remove = Vec::new();
+        for existing_outpoint in self.store.utxo_cache.keys().cloned().collect::<Vec<_>>() {
+            if !existing_outpoints.contains(&existing_outpoint) {
+                to_remove.push(existing_outpoint);
+            }
+        }
+    
+        // Remove UTXOs that no longer exis in the received utxos list
+        for outpoint in to_remove {
+            self.store.utxo_cache.remove(&outpoint);
+            log::debug!("[UTXO Cache] Removed UTXO: {:?}", outpoint);
+        }
+    
+        // Process and add only new UTXOs
+        for utxo in utxos {
             let outpoint = OutPoint {
                 txid: utxo.txid,
                 vout: utxo.vout,
             };
-            self.store.utxo_cache.insert(outpoint, (utxo, spend_info));
+    
+            // Skip if the UTXO already exists in the cache
+            if self.store.utxo_cache.contains_key(&outpoint) {
+                continue;
+            }
+    
+            // Process UTXOs to pair each with its spend info using the wallet's private methods.
+            let spend_info = self
+                .check_if_fidelity(&utxo)
+                .or_else(|| self.check_if_live_contract(&utxo).unwrap())
+                .or_else(|| self.check_descriptor_utxo_or_swap_coin(&utxo).unwrap());
+    
+            // If we found valid spend info, store it in the cache
+            if let Some(info) = spend_info {
+                log::debug!("[UTXO Cache] Added UTXO: {:?} -> {:?}", outpoint, info);
+                new_entries.push((outpoint, (utxo, info)));
+            }
+        }
+    
+        // Insert only new entries into the cache
+        for (outpoint, entry) in new_entries {
+            self.store.utxo_cache.insert(outpoint, entry);
         }
     }
+    
 
     /// Signs a transaction corresponding to the provided UTXO spend information.
     pub(crate) fn sign_transaction(
