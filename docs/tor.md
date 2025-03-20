@@ -47,16 +47,19 @@ Now, you can route applications through `127.0.0.1:9050`.
 
 To test it:
 ```bash
+sudo systemctl start tor
 curl --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/
 ```
 ---
 
 ## **3. Configuring Control Port**
 The **Control Port** allows applications to talk to Tor.
+```ini
+ControlPort 9051
+```
 
 ### **Option 1: No Authentication (Not Recommended for Production)**
 ```ini
-ControlPort 9051
 CookieAuthentication 0
 ```
 This allows unrestricted access—use it **only for testing**.
@@ -72,7 +75,6 @@ This allows unrestricted access—use it **only for testing**.
    ```
 2. Add it to `torrc`:
    ```ini
-   ControlPort 9051
    HashedControlPassword 16:872860B76453A77D60CA2BB8C1A7042072093276A3D701AD684053EC4C
    ```
 
