@@ -105,6 +105,12 @@ enum Commands {
         // /// Increasing this number also increases total swap fee.
         // #[clap(long, short = 'u', default_value = "1")]
         // utxos: u32,
+        /// Sets the amount of branches or concurrent coinswaps for better privacy.
+        #[clap(long, short = 'b', default_value = "1")]
+        branches: u32,
+        /// Sets how may transactions the amount sent will be randomly divided.
+        #[clap(long, short = 's', default_value = "1")]
+        splits: u32,
     },
     /// Recover from all failed swaps
     Recover,
@@ -234,12 +240,18 @@ fn main() -> Result<(), TakerError> {
                 .iter()
                 .for_each(|offer| println!("{}", taker.display_offer(offer)));
         }
-        Commands::Coinswap { makers, amount } => {
+        Commands::Coinswap {
+            makers,
+            amount,
+            branches,
+            splits,
+        } => {
             let swap_params = SwapParams {
                 send_amount: Amount::from_sat(amount),
                 maker_count: makers,
-                tx_count: 1,
+                tx_count: splits,
                 required_confirms: REQUIRED_CONFIRMS,
+                branches,
             };
             taker.do_coinswap(swap_params)?;
         }
