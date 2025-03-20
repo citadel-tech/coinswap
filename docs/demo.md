@@ -22,8 +22,8 @@ This guide will help you prepare your system for participating in the Coinswap L
    wget https://bitcoincore.org/bin/bitcoin-core-28.1/bitcoin-28.1-x86_64-linux-gnu.tar.gz
    
    # Download and verify signatures
-   wget https://bitcoin.org/bin/bitcoin-core-28.1/SHA256SUMS
-   wget https://bitcoin.org/bin/bitcoin-core-28.1/SHA256SUMS.asc
+   wget https://bitcoincore.org/bin/bitcoin-core-28.1//SHA256SUMS
+   wget https://bitcoincore.org/bin/bitcoin-core-28.1//SHA256SUMS.asc
    
    # Verify download
    sha256sum --check SHA256SUMS --ignore-missing
@@ -61,7 +61,6 @@ txindex=1 #Required
 rpcuser=user
 rpcpassword=password
 blockfilterindex=1 #This makes wallet sync faster
-daemon=1
 ```
 
 > **NOTE**: Change `testnet4=1` to `regtest=1` if you want to run the apps on local regtest node.
@@ -87,23 +86,27 @@ cd coinswap
 cargo build --release
 ```
 
-The compiled binaries will be in `target/release/`:
-- `maker` - The maker server daemon
-- `maker-cli` - CLI tool for managing the maker server
-- `taker` - The taker client application
+After compilation you will get the binaries in the `./target/release` folder. 
+
+Install the necessary binaries in your system:
+```bash
+sudo install ./target/release/taker /usr/local/bin/
+sudo install ./target/release/makerd /usr/local/bin/  
+sudo install ./target/release/maker-cli /usr/local/bin/  
+```
 
 ## Running the Swap Server
 
 The swap server is run using two apps `makerd` and `maker-cli`. The `makerd` app runs a server, and `maker-cli` is used to operate the server using RPC commands.
 
-From the project repo directory, check the available `makerd` commands with
+Check the available `makerd` commands with
 ```bash
-./target/release/makerd --help
+makerd --help
 ```
 
 Start the `makerd` daemon with all default parameters:
 ```bash
-./target/release/makerd
+makerd
 ```
 
 This will spawn the maker server and you will start seeing the logs. The server is operated with the `maker-cli` app. Follow the log, and it will show you the next instructions.
@@ -118,9 +121,9 @@ At this stage you can start using the `maker-cli` app to query the server and ge
 
 On a new terminal, try out a few operations like:
 ```bash
-./target/release/maker-cli --help
-./target/release/maker-cli get-balances
-./target/release/maker-cli list-utxo
+maker-cli --help
+maker-cli get-balances
+maker-cli list-utxo
 ```
 
 If everything goes all right you will be able to see balances and utxos in the `maker-cli` outputs.
@@ -130,30 +133,30 @@ All relevant files and wallets used by the server will be located in `~/.coinswa
 
 ## Run The Swap Client
 
-The swap client is run with the `taker-cli` app. 
+The swap client is run with the `taker` app. 
 
 From a new terminal, go to the project root directory and perform basic client operations:
 
 ### Get Some Money
 ```bash
-./target/release/taker-cli get-new-address
+taker get-new-address
 ```
 
 Use a testnet4 faucet to send some funds at the above address. Then check the client wallet balance with
 ```bash
-./target/release/taker-cli get-balances
+taker get-balances
 ```
 
 ### Fetch Market Offers
 Fetch all the current existing market offers with 
 ```bash
-./target/release/taker-cli fetch-offers
+taker fetch-offers
 ```
 
 ### Perform a Coinswap
 Attempt a coinswap process with
 ```bash
-./target/release/taker-cli coinswap
+taker coinswap
 ```
 
 If all goes well, you will see the coinswap process starting in the logs.

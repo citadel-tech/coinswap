@@ -238,9 +238,14 @@ impl Taker {
             config.connection_type = connection_type;
         }
 
-        config.control_port = control_port.unwrap_or(config.control_port);
-        config.tor_auth_password =
-            tor_auth_password.unwrap_or_else(|| config.tor_auth_password.clone());
+        if let Some(control_port) = control_port {
+            config.control_port = control_port;
+        }
+
+        if let Some(tor_auth_password) = tor_auth_password {
+            config.tor_auth_password = tor_auth_password;
+        }
+
         if matches!(connection_type, Some(ConnectionType::TOR)) {
             check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
@@ -2121,5 +2126,31 @@ impl Taker {
         log::info!("===> {} | {}", msg, maker_addr);
 
         Ok(())
+    }
+    /// Displays offer
+    pub fn display_offer(&self, offer_and_address: &OfferAndAddress) -> String {
+        let bond = offer_and_address.offer.fidelity.bond.clone();
+        let bond_value = self.get_wallet().calculate_bond_value(&bond).unwrap();
+        format!(
+            "offer data received:\n\
+            - Base fee: {}\n\
+            - Percent Fee on total amount: {}\n\
+            - Time relative fee: {}\n\
+            - Required Confirms: {}\n\
+            - Minimum locktime: {}\n\
+            - Max size: {}\n\
+            - Min size: {}\n\
+            - Fidelity_bond_value: {}\n\
+            - Tor Address: {}",
+            offer_and_address.offer.base_fee,
+            offer_and_address.offer.amount_relative_fee_pct,
+            offer_and_address.offer.time_relative_fee_pct,
+            offer_and_address.offer.required_confirms,
+            offer_and_address.offer.minimum_locktime,
+            offer_and_address.offer.max_size,
+            offer_and_address.offer.min_size,
+            bond_value,
+            offer_and_address.address
+        )
     }
 }

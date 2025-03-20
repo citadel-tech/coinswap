@@ -51,11 +51,6 @@ use super::{config::MakerConfig, error::MakerError};
 /// Interval for health checks on a stable RPC connection with bitcoind.
 pub const RPC_PING_INTERVAL: u32 = 9;
 
-// Currently we don't refresh address at DNS. The Maker only post it once at startup.
-// If the address record gets deleted, or the DNS gets blasted, the Maker won't know.
-// TODO: Make the maker repost their address to DNS once a day in spawned thread.
-// pub const DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS: u64 = Duartion::from_days(1); // Once a day.
-
 /// Maker triggers the recovery mechanism, if Taker is idle for more than 15 mins during a swap.
 #[cfg(feature = "integration-test")]
 pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
@@ -114,12 +109,19 @@ pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
 /// Minimum Coinswap amount; makers will not#[cfg(feature = "integration-test")] accept amounts below this.
 pub const MIN_SWAP_AMOUNT: u64 = 10_000;
 
+/// Interval for redeeming expired bonds, creating new ones if needed,  
+/// and updating the DNS server with the latest bond proof and maker address.
+#[cfg(feature = "integration-test")]
+pub(crate) const FIDELITY_BOND_DNS_UPDATE_INTERVAL: u32 = 30;
+#[cfg(not(feature = "integration-test"))]
+pub(crate) const FIDELITY_BOND_DNS_UPDATE_INTERVAL: u32 = 600; // 1 Block Interval
+
 /// Interval to check if there is enough liquidity for swaps.
 /// If the available balance is below the minimum, maker server won't listen for any swap requests until funds are added.
 #[cfg(feature = "integration-test")]
 pub(crate) const SWAP_LIQUIDITY_CHECK_INTERVAL: u32 = 30;
 #[cfg(not(feature = "integration-test"))]
-pub(crate) const SWAP_LIQUIDITY_CHECK_INTERVAL: u32 = 900; // Equals to DIRECTORY_SERVERS_REFRESH_INTERVAL_SECS.
+pub(crate) const SWAP_LIQUIDITY_CHECK_INTERVAL: u32 = 600; // Equals to FIDELITY_BOND_DNS_UPDATE_INTERVAL
 
 /// Used to configure the maker for testing purposes.
 ///
@@ -314,21 +316,25 @@ impl Maker {
             config.connection_type = connection_type;
         }
 
-        let network_port = config.network_port;
+        if let Some(control_port) = control_port {
+            config.control_port = control_port;
+        }
 
-        log::info!("Initializing wallet sync");
-        wallet.sync()?;
-        log::info!("Completed wallet sync");
-
-        config.control_port = control_port.unwrap_or(config.control_port);
-        config.tor_auth_password =
-            tor_auth_password.unwrap_or_else(|| config.tor_auth_password.clone());
+        if let Some(tor_auth_password) = tor_auth_password {
+            config.tor_auth_password = tor_auth_password;
+        }
 
         if matches!(connection_type, Some(ConnectionType::TOR)) {
             check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
 
         config.write_to_file(&data_dir.join("config.toml"))?;
+
+        log::info!("Initializing wallet sync");
+        wallet.sync()?;
+        log::info!("Completed wallet sync");
+
+        let network_port = config.network_port;
 
         Ok(Self {
             behavior,

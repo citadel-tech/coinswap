@@ -101,6 +101,10 @@ impl OfferBook {
             .filter(|offer| !self.bad_makers.contains(offer))
             .collect()
     }
+    ///Gets all offers.
+    pub fn all_makers(&self) -> Vec<&OfferAndAddress> {
+        self.all_makers.iter().collect()
+    }
 
     /// Adds a new offer to the offer book.
     pub(crate) fn add_new_offer(&mut self, offer: &OfferAndAddress) -> bool {

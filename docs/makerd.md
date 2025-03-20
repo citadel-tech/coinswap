@@ -13,33 +13,34 @@ The `maker-cli` is a command-line application that allows you to operate and man
 
 ## Data, Configuration, and Wallets
 
-Maker stores all its data in a directory located at `$HOME/.coinswap/maker`. This directory contains the following important files:
+Maker stores all its data in a directory located by default at `$HOME/.coinswap/maker`. This directory contains the following important files:
 
-### 1. **config.toml**
-
-This configuration file contains all the settings for the Maker. The fields are:
-
-- **network_port**: The port through which the Maker listens for requests.
-- **rpc_port**: The port through which `makerd` listens for RPC commands from `maker-cli`.
-- **min_swap_amount**: The minimum amount (in sats) for a swap. Requests below this limit will be rejected.
-- **socks_port**: The port for Tor connections.
-- **directory_server_address**: The address of the DNS server (currently set to use Tor).
-- **fidelity_amount**: The amount (in sats) used to create the fidelity bond.
-- **fidelity_timelock**: The timelock for the fidelity bond, measured in block heights.
-- **connection_type**: The network type `makerd` uses (currently only `TOR`).
-
-**Default Configuration:**
+**Default Maker Configuration (`~/.coinswap/maker/config.toml`):**
 
 ```toml
-port = 6102
+network_port = 6102
 rpc_port = 6103
-min_swap_amount = 100000
-socks_port = 19050
-directory_server_address = "127.0.0.1:8080" # Fix: Send Tor Address Instead
-fidelity_amount = 5000000
-fidelity_timelock = 26000
-connection_type = "TOR"
+socks_port = 9050
+control_port = 9051
+tor_auth_password = ""
+min_swap_amount = 10000
+fidelity_amount = 50000
+fidelity_timelock = 13104
+connection_type = TOR
+directory_server_address = ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080
 ```
+- `network_port`: TCP port where the Maker listens for incoming Coinswap protocol messages.
+- `rpc_port`: The port through which `makerd` listens for RPC commands from `maker-cli`.
+- `socks_port`: The Tor Socks Port.  Check the [tor doc](tor.md) for more details.
+- `control_port`: The Tor Control Port. Check the [tor doc](tor.md) for more details.
+- `tor_auth_password`: Optional password for Tor control authentication; empty by default.
+- `min_swap_amount`: Minimum swap amount in satoshis.
+- `fidelity_amount`: Amount in satoshis locked as a fidelity bond to deter Sybil attacks.
+- `fidelity_timelock`: Lock duration in block heights for the fidelity bond.
+- `connection_type`: Specifies the network mode; set to "TOR" in production for privacy, or "CLEARNET" during testing.
+- `directory_server_address`: The Tor address of the DNS Server. This value is set to a fixed default for now.
+
+
 
 > **Important:**  
 > At the moment, Coinswap operates only on the **TOR** network. The `connection_type` is hardcoded to `TOR`, and the app will only work with this network until multi-network support is added.
@@ -47,6 +48,8 @@ connection_type = "TOR"
 ### 2. **wallets Directory**
 
 This folder contains the wallet files used by the Maker to store wallet data, including private keys. Ensure these wallet files are backed up securely.
+
+The default wallet directory is `$HOME/.coinswap/maker/wallets`.
 
 ### 3. **debug.log**
 

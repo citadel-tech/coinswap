@@ -104,7 +104,12 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             if maker.config.connection_type == ConnectionType::CLEARNET {
                 RpcMsgResp::GetTorAddressResp("Maker is not running on TOR".to_string())
             } else {
-                let hostname = get_tor_hostname()?;
+                let hostname = get_tor_hostname(
+                    maker.data_dir.clone(),
+                    maker.config.control_port,
+                    maker.config.network_port,
+                    &maker.config.tor_auth_password,
+                )?;
                 let address = format!("{}:{}", hostname, maker.config.network_port);
                 RpcMsgResp::GetTorAddressResp(address)
             }
@@ -114,15 +119,6 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             RpcMsgResp::Shutdown
         }
 
-        RpcMsgReq::RedeemFidelity { index, feerate } => {
-            let txid = maker
-                .get_wallet()
-                .write()?
-                .redeem_fidelity(index, feerate)?;
-
-            maker.get_wallet().write()?.sync_no_fail();
-            RpcMsgResp::FidelitySpend(txid)
-        }
         RpcMsgReq::ListFidelity => {
             let list = maker.get_wallet().read()?.display_fidelity_bonds()?;
             RpcMsgResp::ListBonds(list)

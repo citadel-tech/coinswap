@@ -43,14 +43,6 @@ pub enum RpcMsgReq {
     GetDataDir,
     /// Request to stop the Maker server.
     Stop,
-    /// Request to reddem a fidelity bond for a given (index, feerate).
-    RedeemFidelity {
-        /// Index of the fidelity bond
-        index: u32,
-
-        /// Feerate in sats/vByte
-        feerate: f64,
-    },
     /// Request to list all active and past fidelity bonds.
     ListFidelity,
     /// Request to sync the internal wallet with blockchain.
@@ -134,7 +126,7 @@ impl Display for RpcMsgResp {
             Self::Shutdown => write!(f, "Shutdown Initiated"),
             Self::FidelitySpend(txid) => write!(f, "{}", txid),
             Self::ServerError(e) => write!(f, "{}", e),
-            Self::ListBonds(v) => write!(f, "{:#?}", v),
+            Self::ListBonds(v) => write!(f, "{}", v),
         }
     }
 }

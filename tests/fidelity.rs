@@ -78,9 +78,11 @@ fn test_fidelity() {
         let highest_bond_index = wallet_read.get_highest_fidelity_index().unwrap().unwrap();
         assert_eq!(highest_bond_index, 0);
 
-        let bond_value = wallet_read
-            .calculate_bond_value(highest_bond_index)
+        let (bond, _, _) = wallet_read
+            .get_fidelity_bonds()
+            .get(&highest_bond_index)
             .unwrap();
+        let bond_value = wallet_read.calculate_bond_value(bond).unwrap();
         assert_eq!(bond_value, Amount::from_sat(10814));
 
         let (bond, _, is_spent) = wallet_read
@@ -156,7 +158,7 @@ fn test_fidelity() {
             if required_height == first_maturity_height {
                 log::info!("First Fidelity Bond  is matured. Sending redemption transaction");
 
-                let _ = wallet_write
+                wallet_write
                     .redeem_fidelity(0, DEFAULT_TX_FEE_RATE)
                     .unwrap();
 
@@ -172,7 +174,7 @@ fn test_fidelity() {
             } else {
                 log::info!("Second Fidelity Bond  is matured. sending redemption transactions");
 
-                let _ = wallet_write
+                wallet_write
                     .redeem_fidelity(1, DEFAULT_TX_FEE_RATE)
                     .unwrap();
 

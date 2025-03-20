@@ -41,6 +41,8 @@ struct Cli {
     /// Bitcoin Core RPC authentication string. Ex: username:password
     #[clap(name="USER:PASSWORD",short='a',long, value_parser = parse_proxy_auth, default_value = "user:password")]
     pub auth: (String, String),
+    #[clap(long, short = 't', default_value = "")]
+    pub tor_auth: String,
 
     /// Sets the taker wallet's name. If the wallet file already exists, it will load that wallet. Default: taker-wallet
     #[clap(name = "WALLET", long, short = 'w')]
@@ -137,7 +139,7 @@ fn main() -> Result<(), TakerError> {
         Some(rpc_config.clone()),
         TakerBehavior::Normal,
         None,
-        None,
+        Some(args.tor_auth),
         Some(connection_type),
     )?;
 
@@ -219,8 +221,18 @@ fn main() -> Result<(), TakerError> {
         }
 
         Commands::FetchOffers => {
-            let offerbook = taker.fetch_offers()?;
-            println!("{:#?}", offerbook)
+            let all_offers = {
+                let offerbook = taker.fetch_offers()?;
+                offerbook
+                    .all_makers()
+                    .iter()
+                    .cloned()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            all_offers
+                .iter()
+                .for_each(|offer| println!("{}", taker.display_offer(offer)));
         }
         Commands::Coinswap { makers, amount } => {
             let swap_params = SwapParams {

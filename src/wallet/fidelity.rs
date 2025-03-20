@@ -1,13 +1,6 @@
-use std::{
-    collections::HashMap,
-    str::FromStr,
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
-
 use crate::{
     protocol::messages::FidelityProof,
-    utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks},
+    utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks, DEFAULT_TX_FEE_RATE},
     wallet::Wallet,
 };
 use bitcoin::{
@@ -21,6 +14,12 @@ use bitcoin::{
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use super::{Destination, WalletError};
 
@@ -179,17 +178,34 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
-            .map(|(index, (bond, _, _))| {
+            .map(|(index, (bond, _, is_spent))| {
                 // assuming that lock_time is always in height and never in seconds.
-                self.calculate_bond_value(*index).map(|bond_value| {
-                    serde_json::json!({
+                match self.calculate_bond_value(bond) {
+                    Ok(bond_value) => Ok(serde_json::json!({
                         "index": index,
                         "outpoint": bond.outpoint.to_string(),
                         "amount": bond.amount.to_sat(),
                         "bond-value": bond_value,
                         "expires-in": bond.lock_time.to_consensus_u32() - current_block,
-                    })
-                })
+                    })),
+                    Err(err) => {
+                        if matches!(
+                            err,
+                            WalletError::Fidelity(FidelityError::BondLocktimeExpired)
+                                | WalletError::Fidelity(FidelityError::BondAlreadySpent)
+                        ) {
+                            Ok(serde_json::json!({
+                                "index": index,
+                                "outpoint": bond.outpoint.to_string(),
+                                "amount": bond.amount.to_sat(),
+                                "is_expired": true,
+                                "is_spent": *is_spent,
+                            }))
+                        } else {
+                            Err(err)
+                        }
+                    }
+                }
             })
             .collect::<Result<Vec<serde_json::Value>, WalletError>>()?;
 
@@ -202,23 +218,15 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
-            .filter_map(|(i, (_, _, is_spent))| {
+            .filter_map(|(i, (bond, _, is_spent))| {
                 if !is_spent {
-                    match self.calculate_bond_value(*i) {
+                    match self.calculate_bond_value(bond) {
                         Ok(v) => {
-                            log::info!("Fidelity Bond found | Index: {},  Bond Value : {}", i, v);
+                            log::info!("Fidelity Bond found | Index: {} | Bond Value : {}", i, v);
                             Some((i, v))
                         }
                         Err(e) => {
                             log::error!("Fidelity valuation failed for index {}:  {:?} ", i, e);
-                            if matches!(
-                                e,
-                                WalletError::Fidelity(FidelityError::BondLocktimeExpired)
-                            ) {
-                                log::info!(
-                                    "Use `maker-cli redeem-fildeity <index>` to redeem the bond"
-                                );
-                            }
                             None
                         }
                     }
@@ -289,12 +297,7 @@ impl Wallet {
     /// Calculate the theoretical fidelity bond value.
     /// Bond value calculation is described in the document below.
     /// https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds
-    pub fn calculate_bond_value(&self, index: u32) -> Result<Amount, WalletError> {
-        let (bond, _, _) = self
-            .store
-            .fidelity_bond
-            .get(&index)
-            .ok_or(FidelityError::BondDoesNotExist)?;
+    pub fn calculate_bond_value(&self, bond: &FidelityBond) -> Result<Amount, WalletError> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("This can't error")
@@ -426,6 +429,29 @@ impl Wallet {
         self.sync()?;
 
         Ok(())
+    }
+
+    /// Redeems all expired fidelity bonds in the wallet ,if found any.
+    pub fn redeem_expired_fidelity_bonds(&mut self) -> Result<(), WalletError> {
+        let curr_height = self.rpc.get_block_count()? as u32;
+
+        let expired_bond_indices = self
+            .store
+            .fidelity_bond
+            .iter()
+            .filter_map(|(&i, (bond, _, is_spent))| {
+                if !is_spent && curr_height > bond.lock_time.to_consensus_u32() {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        expired_bond_indices.into_iter().try_for_each(|i| {
+            log::info!("Fidelity Bond at index: {:?} expired | Redeeming it.", i);
+            self.redeem_fidelity(i, DEFAULT_TX_FEE_RATE).map(|_| ())
+        })
     }
 
     /// Generate a [FidelityProof] for bond at a given index and a specific onion address.
