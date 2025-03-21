@@ -436,7 +436,7 @@ fn download_maker_offer_attempt_once(
     config: &TakerConfig,
 ) -> Result<Offer, TakerError> {
     let maker_addr = addr.to_string();
-    log::info!("Attempting to download Offer from {}", maker_addr);
+    log::info!("Downloading offer from {}", maker_addr);
     let mut socket = match config.connection_type {
         ConnectionType::CLEARNET => TcpStream::connect(&maker_addr)?,
         ConnectionType::TOR => Socks5Stream::connect(
@@ -466,7 +466,7 @@ fn download_maker_offer_attempt_once(
         }
     };
 
-    log::info!("Got offer from : {} ", maker_addr);
+    log::info!("Downloaded offer from : {} ", maker_addr);
 
     Ok(*offer)
 }

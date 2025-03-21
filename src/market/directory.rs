@@ -448,10 +448,13 @@ fn handle_client(
     let dns_request: DnsRequest = serde_cbor::de::from_reader(&buf[..])?;
     match dns_request {
         DnsRequest::Post { metadata } => {
-            log::info!("Received POST | From {}", &metadata.url);
-
-            let txid = metadata.proof.bond.outpoint.txid;
-            let transaction = rpc.get_raw_transaction(&txid, None)?;
+            let fidelity_op = metadata.proof.bond.outpoint;
+            log::info!(
+                "Received POST | Maker {} | Outpoint {}",
+                &metadata.url,
+                fidelity_op
+            );
+            let transaction = rpc.get_raw_transaction(&fidelity_op.txid, None)?;
             let current_height = rpc.get_block_count()?;
 
             match verify_fidelity_checks(
