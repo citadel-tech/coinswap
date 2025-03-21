@@ -15,6 +15,9 @@ use bitcoin::{
     Amount, PublicKey, Script, ScriptBuf, Transaction, TxIn,
 };
 
+use crate::wallet::UTXOSpendInfo;
+use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
+
 use super::WalletError;
 use crate::protocol::{
     contract::{
@@ -254,6 +257,39 @@ impl IncomingSwapCoin {
             others_contract_sig: None,
             hash_preimage: None,
         })
+    }
+
+    /// Converts this IncomingSwapCoin into the tuple
+    /// (ListUnspentResultEntry, UTXOSpendInfo) needed for spending.
+    pub fn to_utxo_tuple(&self) -> (ListUnspentResultEntry, UTXOSpendInfo) {
+        // Compute the txid from the contract transaction.
+        let txid = self.contract_tx.compute_txid();
+        let vout = 0;
+
+        // Construct the ListUnspentResultEntry.
+        let entry = ListUnspentResultEntry {
+            txid,
+            vout,
+            address: None,
+            label: Some("incoming swapcoin".to_string()),
+            // The redeem_script can be set to the contract_redeemscript.
+            redeem_script: Some(self.contract_redeemscript.clone()),
+            witness_script: None,
+            // Using the script_pub_key from the contract tx's output.
+            script_pub_key: self.contract_tx.output[0].script_pubkey.clone(),
+            amount: self.funding_amount,
+            confirmations: 0,
+            spendable: true,
+            solvable: true,
+            descriptor: None,
+            safe: true,
+        };
+
+        let spend_info = UTXOSpendInfo::IncomingSwapCoin {
+            multisig_redeemscript: self.contract_redeemscript.clone(),
+        };
+
+        (entry, spend_info)
     }
 
     pub(crate) fn sign_transaction_input(
