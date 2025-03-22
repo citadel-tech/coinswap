@@ -545,19 +545,16 @@ impl Wallet {
 
     /// Checks if a UTXO belongs to fidelity bonds, and then returns corresponding UTXOSpendInfo
     fn check_if_fidelity(&self, utxo: &ListUnspentResultEntry) -> Option<UTXOSpendInfo> {
-        self.store
-            .fidelity_bond
-            .iter()
-            .find_map(|(i, (bond, _, _))| {
-                if bond.script_pub_key() == utxo.script_pub_key && bond.amount == utxo.amount {
-                    Some(UTXOSpendInfo::FidelityBondCoin {
-                        index: *i,
-                        input_value: bond.amount,
-                    })
-                } else {
-                    None
-                }
-            })
+        self.store.fidelity_bond.iter().find_map(|(i, (bond, _))| {
+            if bond.script_pub_key() == utxo.script_pub_key && bond.amount == utxo.amount {
+                Some(UTXOSpendInfo::FidelityBondCoin {
+                    index: *i,
+                    input_value: bond.amount,
+                })
+            } else {
+                None
+            }
+        })
     }
 
     /// Checks if a UTXO belongs to live contracts, and then returns corresponding UTXOSpendInfo
@@ -1315,9 +1312,9 @@ impl Wallet {
         descriptors_to_import.extend(
             self.store
                 .fidelity_bond
-                .iter()
-                .map(|(_, (_, spk, _))| {
-                    let descriptor_without_checksum = format!("raw({:x})", spk);
+                .values()
+                .map(|(bond, _)| {
+                    let descriptor_without_checksum = format!("raw({:x})", bond.script_pub_key());
                     Ok(format!(
                         "{}#{}",
                         descriptor_without_checksum,
