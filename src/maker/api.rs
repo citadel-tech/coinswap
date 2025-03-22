@@ -241,7 +241,7 @@ pub struct Maker {
     /// Is setup complete
     pub is_setup_complete: AtomicBool,
     /// Path for the data directory.
-    pub(crate) data_dir: PathBuf,
+    data_dir: PathBuf,
     /// Thread pool for managing all spawned threads
     pub(crate) thread_pool: Arc<ThreadPool>,
 }
@@ -349,8 +349,9 @@ impl Maker {
         })
     }
 
-    pub(crate) fn get_data_dir(&self) -> &PathBuf {
-        &self.data_dir
+    /// Returns data directory of Maker
+    pub fn get_data_dir(&self) -> PathBuf {
+        self.data_dir.clone()
     }
 
     /// Returns a reference to the Maker's wallet.
