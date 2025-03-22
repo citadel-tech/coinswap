@@ -56,7 +56,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> 
         }
         ConnectionType::TOR => {
             let maker_hostname = get_tor_hostname(
-                maker.data_dir.clone(),
+                maker.get_data_dir(),
                 maker.config.control_port,
                 maker.config.network_port,
                 &maker.config.tor_auth_password,

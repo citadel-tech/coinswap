@@ -26,7 +26,7 @@ use bitcoin::{
 use bitcoind::bitcoincore_rpc::RpcApi;
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc, Mutex, RwLock,
@@ -241,7 +241,7 @@ pub struct Maker {
     /// Is setup complete
     pub is_setup_complete: AtomicBool,
     /// Path for the data directory.
-    pub(crate) data_dir: PathBuf,
+    data_dir: PathBuf,
     /// Thread pool for managing all spawned threads
     pub(crate) thread_pool: Arc<ThreadPool>,
 }
@@ -349,7 +349,8 @@ impl Maker {
         })
     }
 
-    pub(crate) fn get_data_dir(&self) -> &PathBuf {
+    /// Returns data directory of Maker
+    pub fn get_data_dir(&self) -> &Path {
         &self.data_dir
     }
 
