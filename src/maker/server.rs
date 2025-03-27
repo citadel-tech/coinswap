@@ -56,7 +56,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> 
         }
         ConnectionType::TOR => {
             let maker_hostname = get_tor_hostname(
-                maker.data_dir.clone(),
+                maker.get_data_dir(),
                 maker.config.control_port,
                 maker.config.network_port,
                 &maker.config.tor_auth_password,
@@ -71,8 +71,6 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> 
     maker
         .as_ref()
         .track_and_update_unconfirmed_fidelity_bonds()?;
-
-    setup_fidelity_bond(&maker, &maker_address)?;
 
     manage_fidelity_bonds_and_update_dns(maker.as_ref(), &maker_address, &dns_address)?;
 
@@ -185,7 +183,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
 
     if let Some(i) = highest_index {
         let wallet_read = maker.get_wallet().read()?;
-        let (bond, _, _) = wallet_read.store.fidelity_bond.get(&i).unwrap();
+        let (bond, _) = wallet_read.store.fidelity_bond.get(&i).unwrap();
 
         let current_height = wallet_read
             .rpc

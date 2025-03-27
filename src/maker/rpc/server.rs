@@ -105,7 +105,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 RpcMsgResp::GetTorAddressResp("Maker is not running on TOR".to_string())
             } else {
                 let hostname = get_tor_hostname(
-                    maker.data_dir.clone(),
+                    maker.get_data_dir(),
                     maker.config.control_port,
                     maker.config.network_port,
                     &maker.config.tor_auth_password,
