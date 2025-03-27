@@ -47,6 +47,7 @@ This guide will help you prepare your system for participating in the Coinswap L
    ```
 
 4. **Setup Tor**
+   
    Coinswap requires Tor exclusively for all communication. You will need to have Tor running in your local to run the apps.
    For Tor setup instructions follow the [Tor Doc](tor.md). 
    
