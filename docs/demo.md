@@ -55,17 +55,19 @@ mkdir -p ~/.bitcoin
 
 Add to `~/.bitcoin/bitcoin.conf`:
 ```bash
-testnet4=1 #Required
+regtest=1
+
+[regtest]
 server=1
-txindex=1 #Required
+txindex=1
 rpcuser=user
 rpcpassword=password
-blockfilterindex=1 #This makes wallet sync faster
+fallbackfee=0.00001000
+blockfilterindex=1
+addnode=172.81.178.3:18444
 ```
 
-> **NOTE**: Change `testnet4=1` to `regtest=1` if you want to run the apps on local regtest node.
-
-> **Important**: We will use testnet4 for the live demo to ensure network compatibility with other participants and the directory server.
+> **NOTE**: Change `regtest=1` to `testnet4=1` if you want to run the apps on testnet, or other networks.
 
 ### 2. Start Bitcoin Core
 ```bash
