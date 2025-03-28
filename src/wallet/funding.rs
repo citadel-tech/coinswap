@@ -131,7 +131,6 @@ impl Wallet {
         destinations: &[Address],
         fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
-        let change_addresses = self.get_next_internal_addresses(destinations.len() as u32)?;
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
         // Lock Mechanism.
@@ -141,11 +140,9 @@ impl Wallet {
         let mut payment_output_positions = Vec::<u32>::new();
         let mut total_miner_fee = 0;
 
-
-        for ((address, &output_value), change_address) in destinations
+        for (address, &output_value) in destinations
             .iter()
             .zip(output_values.iter())
-            .zip(change_addresses.iter())
         {
             let remaining = Amount::from_sat(output_value);
             let selected_utxo = self.coin_select(remaining)?;
@@ -160,7 +157,6 @@ impl Wallet {
             // Create destination with output and change address
             let destination = Destination::Multi(vec![
                 (address.clone(), Amount::from_sat(output_value)),
-                (change_address.clone(), Amount::ZERO),
             ]);
 
             // Creates and Signs Transactions
