@@ -121,7 +121,7 @@ impl Wallet {
 
         Ok(output_values)
     }
-
+  
     /// This function creates funding txes by
     /// Randomly generating some satoshi amounts and send them into
     /// walletcreatefundedpsbt to create txes that create change
@@ -153,7 +153,7 @@ impl Wallet {
                 .map(|(unspent, spend_info)| (unspent.clone(), spend_info.clone()))
                 .collect::<Vec<_>>();
 
-            // Create destination with output and change address
+            // Create destination with output
             let destination = Destination::Multi(vec![
                 (address.clone(), Amount::from_sat(output_value)),
             ]);
@@ -164,7 +164,7 @@ impl Wallet {
 
             log::info!("Created Funding tx, txid : {}", funding_tx.compute_txid(),);
 
-            // Lock Mechanism.
+            // TODO : Discussion on Lock Mechanism 
             self.rpc.lock_unspent(
                 &funding_tx
                     .input
@@ -186,7 +186,7 @@ impl Wallet {
             total_miner_fee,
         })
     }
-
+  
     fn create_mostly_sweep_txes_with_one_tx_having_change(
         &self,
         coinswap_amount: Amount,
@@ -437,10 +437,8 @@ impl Wallet {
         //this function will pick the top most valuable UTXOs and use them
         //to create funding transactions
 
-        let all_utxos = self.get_all_utxo()?;
-
-        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
-        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
+        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info()?;
+        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info()?;
         seed_coin_utxo.append(&mut swap_coin_utxo);
 
         let mut list_unspent_result = seed_coin_utxo;

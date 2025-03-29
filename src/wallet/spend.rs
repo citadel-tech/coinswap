@@ -6,7 +6,7 @@
 
 use bitcoin::{
     absolute::LockTime, transaction::Version, Address, Amount, OutPoint, ScriptBuf, Sequence,
-    Transaction, TxIn, TxOut, Txid, Witness,
+    Transaction, TxIn, TxOut, Witness,
 };
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RawTx, RpcApi};
 
@@ -70,7 +70,7 @@ impl Wallet {
     /// Redeem a Fidelity Bond.
     /// This functions creates a spending transaction from the fidelity bond, signs and broadcasts it.
     /// Returns the txid of the spending tx, and mark the bond as spent.
-    pub fn redeem_fidelity(&mut self, idx: u32, feerate: f64) -> Result<Txid, WalletError> {
+    pub fn redeem_fidelity(&mut self, idx: u32, feerate: f64) -> Result<(), WalletError> {
         let (bond, _, is_spent) = self
             .store
             .fidelity_bond
@@ -78,7 +78,8 @@ impl Wallet {
             .ok_or(FidelityError::BondDoesNotExist)?;
 
         if *is_spent {
-            return Err(FidelityError::BondAlreadySpent.into());
+            log::info!("Fidelity bond already spent.");
+            return Ok(());
         }
         let utxo_spend_info = UTXOSpendInfo::FidelityBondCoin {
             index: idx,
@@ -86,7 +87,7 @@ impl Wallet {
         };
         let change_addr = &self.get_next_internal_addresses(1)?[0];
         let destination = Destination::Sweep(change_addr.clone());
-        let all_utxo = self.list_fidelity_spend_info(None)?;
+        let all_utxo = self.list_fidelity_spend_info()?;
         let mut utxo: Option<ListUnspentResultEntry> = None;
         for (utxo_data, spend_info) in all_utxo {
             if let UTXOSpendInfo::FidelityBondCoin { index, input_value } = spend_info.clone() {
@@ -95,7 +96,13 @@ impl Wallet {
                 }
             }
         }
-        let utxo = utxo.ok_or(FidelityError::BondAlreadySpent)?;
+        let utxo = match utxo {
+            Some(u) => u,
+            None => {
+                log::info!("Fidelity bond already spent.");
+                return Ok(());
+            }
+        };
 
         let tx = self.spend_coins(&vec![(utxo, utxo_spend_info)], destination, feerate)?;
 
@@ -116,7 +123,7 @@ impl Wallet {
             *is_spent = true;
         }
 
-        Ok(txid)
+        Ok(())
     }
 
     pub(crate) fn create_timelock_spend(
@@ -125,7 +132,8 @@ impl Wallet {
         destination_address: &Address,
         feerate: f64,
     ) -> Result<Transaction, WalletError> {
-        let all_utxo = self.list_live_timelock_contract_spend_info(None)?;
+        let all_utxo = self.list_live_timelock_contract_spend_info()?;
+
         for (utxo, spend_info) in all_utxo {
             if let UTXOSpendInfo::TimelockContract {
                 swapcoin_multisig_redeemscript,
@@ -152,7 +160,7 @@ impl Wallet {
         destination_address: &Address,
         feerate: f64,
     ) -> Result<Transaction, WalletError> {
-        let all_utxo = self.list_live_hashlock_contract_spend_info(None)?;
+        let all_utxo = self.list_live_hashlock_contract_spend_info()?;
         for (utxo, spend_info) in all_utxo {
             if let UTXOSpendInfo::HashlockContract {
                 swapcoin_multisig_redeemscript,

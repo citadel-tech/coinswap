@@ -3,7 +3,7 @@
 # Check Rust formatting and automatically correct it
 echo "Auto-correcting code style with rustfmt..."
 rustup override set nightly
-cargo fmt
+cargo fmt --all -- --check
 
 # Check Clippy lints
 echo "Checking code quality with Clippy..."

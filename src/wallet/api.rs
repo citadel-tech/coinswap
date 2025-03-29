@@ -42,6 +42,7 @@ use super::{
 const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
 
 /// Represents a Bitcoin wallet with associated functionality and data.
+#[derive(Debug)]
 pub struct Wallet {
     pub(crate) rpc: Client,
     wallet_file_path: PathBuf,
@@ -54,6 +55,12 @@ pub struct Wallet {
 pub(crate) enum KeychainKind {
     External = 0isize,
     Internal,
+}
+
+#[derive(Deserialize)]
+struct LockedUtxo {
+    txid: Txid,
+    vout: u32,
 }
 
 impl KeychainKind {
@@ -115,7 +122,7 @@ impl FromStr for DisplayAddressType {
 /// Enum representing additional data needed to spend a UTXO, in addition to `ListUnspentResultEntry`.
 // data needed to find information  in addition to ListUnspentResultEntry
 // about a UTXO required to spend it
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum UTXOSpendInfo {
     /// Seed Coin
     SeedCoin { path: String, input_value: Amount },
@@ -341,24 +348,21 @@ impl Wallet {
     /// Calculates the total balances of different categories in the wallet.
     /// Includes regular, swap, contract, fidelitly and spendable (regular + swap) utxos.
     /// Optionally takes in a list of UTXOs to reduce rpc call. If None is provided, the full list is fetched from core rpc.
-    pub fn get_balances(
-        &self,
-        all_utxos: Option<&Vec<ListUnspentResultEntry>>,
-    ) -> Result<Balances, WalletError> {
+    pub fn get_balances(&self) -> Result<Balances, WalletError> {
         let regular = self
-            .list_descriptor_utxo_spend_info(all_utxos)?
+            .list_descriptor_utxo_spend_info()?
             .iter()
             .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount);
         let contract = self
-            .list_live_timelock_contract_spend_info(all_utxos)?
+            .list_live_timelock_contract_spend_info()?
             .iter()
             .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount);
         let swap = self
-            .list_incoming_swap_coin_utxo_spend_info(all_utxos)?
+            .list_incoming_swap_coin_utxo_spend_info()?
             .iter()
             .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount);
         let fidelity = self
-            .list_fidelity_spend_info(all_utxos)?
+            .list_fidelity_spend_info()?
             .iter()
             .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount);
         let spendable = regular + swap;
@@ -512,7 +516,7 @@ impl Wallet {
         let utxos_to_lock = &all_unspents
             .into_iter()
             .filter(|u| {
-                self.check_descriptor_utxo_or_swap_coin(u)
+                self.check_and_derive_descriptor_utxo_or_swap_coin(u)
                     .unwrap()
                     .is_none()
             })
@@ -523,6 +527,20 @@ impl Wallet {
             .collect::<Vec<OutPoint>>();
         self.rpc.lock_unspent(utxos_to_lock)?;
         Ok(())
+    }
+
+    fn list_lock_unspent(&self) -> Result<Vec<OutPoint>, WalletError> {
+        // Call the RPC method "listlockunspent" with no parameters.
+        let locked_utxos: Vec<LockedUtxo> = self.rpc.call("listlockunspent", &[])?;
+
+        // Convert each LockedUtxo into an OutPoint.
+        Ok(locked_utxos
+            .into_iter()
+            .map(|lu| OutPoint {
+                txid: lu.txid,
+                vout: lu.vout,
+            })
+            .collect())
     }
 
     /// Checks if a UTXO belongs to fidelity bonds, and then returns corresponding UTXOSpendInfo
@@ -543,7 +561,9 @@ impl Wallet {
     }
 
     /// Checks if a UTXO belongs to live contracts, and then returns corresponding UTXOSpendInfo
-    fn check_if_live_contract(
+    /// ### Note
+    /// This is a costly search and should be used with care.
+    fn check_and_derive_live_contract_spend_info(
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Result<Option<UTXOSpendInfo>, WalletError> {
@@ -574,7 +594,9 @@ impl Wallet {
     }
 
     /// Checks if a UTXO belongs to descriptor or swap coin, and then returns corresponding UTXOSpendInfo
-    fn check_descriptor_utxo_or_swap_coin(
+    /// ### Note
+    /// This is a costly search and should be used with care.
+    fn check_and_derive_descriptor_utxo_or_swap_coin(
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Result<Option<UTXOSpendInfo>, WalletError> {
@@ -644,48 +666,26 @@ impl Wallet {
         Ok(all_utxos)
     }
 
-    pub(crate) fn get_all_locked_utxo(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
-        let all_utxos = self
-            .rpc
-            .list_unspent(Some(0), Some(9999999), None, None, None)?;
-        Ok(all_utxos)
-    }
     /// Returns a list all utxos with their spend info tracked by the wallet.
     /// Optionally takes in an Utxo list to reduce RPC calls. If None is given, the
     /// full list of utxo is fetched from core rpc.
     pub fn list_all_utxo_spend_info(
         &self,
-        utxos: Option<&Vec<ListUnspentResultEntry>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        let all_utxos = if let Some(utxos) = utxos {
-            utxos.clone()
-        } else {
-            self.get_all_utxo()?
-        };
-
-        let processed_utxos = all_utxos
-            .iter()
-            .filter_map(|utxo| {
-                let mut spend_info = self.check_if_fidelity(utxo);
-                if spend_info.is_none() {
-                    spend_info = self.check_if_live_contract(utxo).unwrap();
-                }
-                if spend_info.is_none() {
-                    spend_info = self.check_descriptor_utxo_or_swap_coin(utxo).unwrap();
-                }
-                spend_info.map(|info| (utxo.clone(), info))
-            })
-            .collect::<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>();
-
+        let processed_utxos = self
+            .store
+            .utxo_cache
+            .values()
+            .map(|(utxo, spend_info)| (utxo.clone(), spend_info.clone()))
+            .collect();
         Ok(processed_utxos)
     }
 
     /// Lists live contract UTXOs along with their [UTXOSpendInfo].
     pub fn list_live_contract_spend_info(
         &self,
-        all_utxos: Option<&Vec<ListUnspentResultEntry>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        let all_valid_utxo = self.list_all_utxo_spend_info(all_utxos)?;
+        let all_valid_utxo = self.list_all_utxo_spend_info()?;
         let filtered_utxos: Vec<_> = all_valid_utxo
             .iter()
             .filter(|x| {
@@ -700,9 +700,8 @@ impl Wallet {
     /// Lists live timelock contract UTXOs along with their [UTXOSpendInfo].
     pub fn list_live_timelock_contract_spend_info(
         &self,
-        all_utxos: Option<&Vec<ListUnspentResultEntry>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        let all_valid_utxo = self.list_all_utxo_spend_info(all_utxos)?;
+        let all_valid_utxo = self.list_all_utxo_spend_info()?;
         let filtered_utxos: Vec<_> = all_valid_utxo
             .iter()
             .filter(|x| matches!(x.1, UTXOSpendInfo::TimelockContract { .. }))
@@ -713,9 +712,8 @@ impl Wallet {
 
     pub fn list_live_hashlock_contract_spend_info(
         &self,
-        all_utxos: Option<&Vec<ListUnspentResultEntry>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        let all_valid_utxo = self.list_all_utxo_spend_info(all_utxos)?;
+        let all_valid_utxo = self.list_all_utxo_spend_info()?;
         let filtered_utxos: Vec<_> = all_valid_utxo
             .iter()
             .filter(|x| matches!(x.1, UTXOSpendInfo::HashlockContract { .. }))
@@ -727,9 +725,8 @@ impl Wallet {
     /// Lists fidelity UTXOs along with their [UTXOSpendInfo].
     pub fn list_fidelity_spend_info(
         &self,
-        all_utxos: Option<&Vec<ListUnspentResultEntry>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        let all_valid_utxo = self.list_all_utxo_spend_info(all_utxos)?;
+        let all_valid_utxo = self.list_all_utxo_spend_info()?;
         let filtered_utxos: Vec<_> = all_valid_utxo
             .iter()
             .filter(|x| matches!(x.1, UTXOSpendInfo::FidelityBondCoin { .. }))
@@ -741,9 +738,8 @@ impl Wallet {
     /// Lists descriptor UTXOs along with their [UTXOSpendInfo].
     pub fn list_descriptor_utxo_spend_info(
         &self,
-        all_utxos: Option<&Vec<ListUnspentResultEntry>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        let all_valid_utxo = self.list_all_utxo_spend_info(all_utxos)?;
+        let all_valid_utxo = self.list_all_utxo_spend_info()?;
         let filtered_utxos: Vec<_> = all_valid_utxo
             .iter()
             .filter(|x| matches!(x.1, UTXOSpendInfo::SeedCoin { .. }))
@@ -755,9 +751,8 @@ impl Wallet {
     /// Lists swap coin UTXOs along with their [UTXOSpendInfo].
     pub fn list_swap_coin_utxo_spend_info(
         &self,
-        all_utxos: Option<&Vec<ListUnspentResultEntry>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        let all_valid_utxo = self.list_all_utxo_spend_info(all_utxos)?;
+        let all_valid_utxo = self.list_all_utxo_spend_info()?;
         let filtered_utxos: Vec<_> = all_valid_utxo
             .iter()
             .filter(|x| {
@@ -774,9 +769,8 @@ impl Wallet {
     /// Lists all incoming swapcoin UTXOs along with their [UTXOSpendInfo].
     pub fn list_incoming_swap_coin_utxo_spend_info(
         &self,
-        all_utxos: Option<&Vec<ListUnspentResultEntry>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        let all_valid_utxo = self.list_all_utxo_spend_info(all_utxos)?;
+        let all_valid_utxo = self.list_all_utxo_spend_info()?;
         let filtered_utxos: Vec<_> = all_valid_utxo
             .iter()
             .filter(|x| matches!(x.1, UTXOSpendInfo::IncomingSwapCoin { .. }))
@@ -834,9 +828,9 @@ impl Wallet {
     /// It will only return an unused address; i.e, an address that doesn't have a transaction associated with it.
     pub(super) fn find_hd_next_index(&self, keychain: KeychainKind) -> Result<u32, WalletError> {
         let mut max_index: i32 = -1;
-        let all_utxos = self.get_all_utxo()?;
-        let mut utxos = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
-        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
+
+        let mut utxos = self.list_descriptor_utxo_spend_info()?;
+        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info()?;
         utxos.append(&mut swap_coin_utxo);
 
         for (utxo, _) in utxos {
@@ -892,7 +886,7 @@ impl Wallet {
 
     /// Refreshes the offer maximum size cache based on the current wallet's unspent transaction outputs (UTXOs).
     pub(crate) fn refresh_offer_maxsize_cache(&mut self) -> Result<(), WalletError> {
-        let balance = self.get_balances(None)?.spendable;
+        let balance = self.get_balances()?.spendable;
         self.store.offer_maxsize = balance.to_sat();
         Ok(())
     }
@@ -911,6 +905,68 @@ impl Wallet {
             inner: privkey.public_key(&secp),
         };
         Ok((privkey, public_key))
+    }
+
+    /// Refreshes the UTXO cache by adding only new UTXOs while preserving existing ones.
+    pub(crate) fn update_utxo_cache(&mut self, utxos: Vec<ListUnspentResultEntry>) {
+        let mut new_entries = Vec::new();
+        let existing_outpoints: std::collections::HashSet<OutPoint> = utxos
+            .iter()
+            .map(|utxo| OutPoint {
+                txid: utxo.txid,
+                vout: utxo.vout,
+            })
+            .collect();
+
+        // Identify UTXOs to be removed (present in store but missing in utxos parameter passed)
+        let mut to_remove = Vec::new();
+        for existing_outpoint in self.store.utxo_cache.keys().cloned().collect::<Vec<_>>() {
+            if !existing_outpoints.contains(&existing_outpoint) {
+                to_remove.push(existing_outpoint);
+            }
+        }
+
+        // Remove UTXOs that no longer exis in the received utxos list
+        for outpoint in to_remove {
+            self.store.utxo_cache.remove(&outpoint);
+            log::debug!("[UTXO Cache] Removed UTXO: {:?}", outpoint);
+        }
+
+        // Process and add only new UTXOs
+        for utxo in utxos {
+            let outpoint = OutPoint {
+                txid: utxo.txid,
+                vout: utxo.vout,
+            };
+
+            // Skip if the UTXO already exists in the cache
+            if self.store.utxo_cache.contains_key(&outpoint) {
+                continue;
+            }
+
+            // Process UTXOs to pair each with its spend info using the wallet's private methods.
+            let spend_info = self
+                .check_if_fidelity(&utxo)
+                .or_else(|| {
+                    self.check_and_derive_live_contract_spend_info(&utxo)
+                        .unwrap()
+                })
+                .or_else(|| {
+                    self.check_and_derive_descriptor_utxo_or_swap_coin(&utxo)
+                        .unwrap()
+                });
+
+            // If we found valid spend info, store it in the cache
+            if let Some(info) = spend_info {
+                log::debug!("[UTXO Cache] Added UTXO: {:?} -> {:?}", outpoint, info);
+                new_entries.push((outpoint, (utxo, info)));
+            }
+        }
+
+        // Insert only new entries into the cache
+        for (outpoint, entry) in new_entries {
+            self.store.utxo_cache.insert(outpoint, entry);
+        }
     }
 
     /// Signs a transaction corresponding to the provided UTXO spend information.
@@ -1010,24 +1066,32 @@ impl Wallet {
         &self,
         amount: Amount,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        let all_utxos = self.get_all_locked_utxo()?;
-
-        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
-        let mut swap_coin_utxo = self.list_incoming_swap_coin_utxo_spend_info(Some(&all_utxos))?;
+        // Get UTXOs from the descriptor and swap coin methods.
+        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info()?;
+        let mut swap_coin_utxo = self.list_incoming_swap_coin_utxo_spend_info()?;
         seed_coin_utxo.append(&mut swap_coin_utxo);
 
-        // Fetch utxos, filter out existing fidelity coins
+        // Retrieve currently locked UTXOs via RPC.
+        // Assume that self.rpc.listlockunspent() returns a Vec<OutPoint>.
+        let locked_utxos: Vec<OutPoint> = self.list_lock_unspent()?;
+
+        // Filter out UTXOs that are already locked and exclude fidelity coins.
         let mut unspents = seed_coin_utxo
             .into_iter()
-            .filter(|(_, spend_info)| !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. }))
+            .filter(|(utxo, spend_info)| {
+                let outpoint = OutPoint::new(utxo.txid, utxo.vout);
+                !locked_utxos.contains(&outpoint)
+                    && !matches!(spend_info, UTXOSpendInfo::FidelityBondCoin { .. })
+            })
             .collect::<Vec<_>>();
 
+        // Sort in descending order so that we use the largest UTXOs first.
         unspents.sort_by(|a, b| b.0.amount.cmp(&a.0.amount));
 
         let mut selected_utxo = Vec::new();
         let mut remaining = amount;
 
-        // the simplest largest first coinselection.
+        // Simple largest-first coin selection.
         for unspent in unspents {
             if remaining.checked_sub(unspent.0.amount).is_none() {
                 selected_utxo.push(unspent);
@@ -1044,10 +1108,8 @@ impl Wallet {
         &self,
         (txid, vout): (Txid, u32),
     ) -> Result<Option<UTXOSpendInfo>, WalletError> {
-        let all_utxos = self.get_all_utxo()?;
-
-        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
-        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
+        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info()?;
+        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info()?;
         seed_coin_utxo.append(&mut swap_coin_utxo);
 
         for utxo in seed_coin_utxo {

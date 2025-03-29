@@ -238,9 +238,14 @@ impl Taker {
             config.connection_type = connection_type;
         }
 
-        config.control_port = control_port.unwrap_or(config.control_port);
-        config.tor_auth_password =
-            tor_auth_password.unwrap_or_else(|| config.tor_auth_password.clone());
+        if let Some(control_port) = control_port {
+            config.control_port = control_port;
+        }
+
+        if let Some(tor_auth_password) = tor_auth_password {
+            config.tor_auth_password = tor_auth_password;
+        }
+
         if matches!(connection_type, Some(ConnectionType::TOR)) {
             check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
@@ -312,7 +317,7 @@ impl Taker {
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub(crate) fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         // Check if we have enough balance.
-        let available = self.wallet.get_balances(None)?.spendable;
+        let available = self.wallet.get_balances()?.spendable;
 
         // TODO: Make more exact estimate of swap cost and ensure balance.
         // For now ensure at least swap_amount + 1000 sats is available.
@@ -577,6 +582,14 @@ impl Taker {
         let funding_txids = funding_txs
             .iter()
             .map(|tx| {
+                // Calculate the virtual size in bytes (vbytes)
+                let tx_vbytes = tx.weight().to_vbytes_ceil();
+
+                // Convert vbytes to kilovirtual bytes (kvB)
+                let tx_kvb = (tx_vbytes as f32) / 1000.0;
+
+                log::info!("Transaction size: {} vB ({:.3} kvB)", tx_vbytes, tx_kvb);
+
                 let txid = self.wallet.send_tx(tx)?;
                 log::info!("Broadcasted Funding tx. txid: {}", txid);
                 assert_eq!(txid, tx.compute_txid());
@@ -1893,6 +1906,7 @@ impl Taker {
 
         // Broadcast the Outgoing Contracts
         self.get_wallet_mut().sync()?;
+
         for outgoing in outgoings {
             let contract_tx = outgoing.get_fully_signed_contract_tx()?;
             if self
@@ -1915,6 +1929,9 @@ impl Taker {
             let reedemscript = outgoing.get_multisig_redeemscript();
             let timelock = outgoing.get_timelock()?;
             let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
+
+            self.get_wallet_mut().sync()?;
+
             let timelock_spend =
                 self.wallet
                     .create_timelock_spend(&outgoing, next_internal, DEFAULT_TX_FEE_RATE)?;

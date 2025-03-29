@@ -124,16 +124,25 @@ The data directory contains the following files:
 2. `debug.log` - The log file for the taker.
 3. `wallets` directory - Contains the wallet files for the taker.
 
-### Configuration
 
-The configuration is stored in the `config.toml` file. You can edit this file to change the configuration of the taker. The configuration file contains the following fields:
+**Default Taker Configuration (`~/.coinswap/taker/config.toml`):**
 
-1. `port` - The port via which the Taker listens and serves requests.
-2. `socks_port` - The port via which the Taker listens and serves requests for the Socks5 proxy.
-3. `rpc_port` - The port which serves the RPC server.
-4. `directory_server_address` - The address of the directory server.
-5. `connection_type` - The connection type to use for the directory server. Possible values are `CLEARNET` and `TOR`.
+```toml
+control_port = 9051
+socks_port = 9050
+tor_auth_password = ""
+directory_server_address = "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080"
+connection_type = "TOR"
 
+```
+ 
+- `control_port`: The Tor Control Port. Check the [tor doc](tor.md) for more details.
+- `socks_port`: The Tor Socks Port.  Check the [tor doc](tor.md) for more details.
+- `tor_auth_password`: Optional password for Tor control authentication; empty by default.
+- `directory_server_address`: Address of the Directory Server (an onion address in production) for discovering Maker nodes.
+- `connection_type`:- The connection type to use for the directory server. Possible values are `CLEARNET` and `TOR`.
+
+---
 ### Wallets
 
 The taker uses wallet files to store the wallet data. The wallet files are stored in the `wallets` directory. These wallet files should be safely backed up as they contain the private keys to the wallet.
