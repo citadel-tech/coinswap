@@ -79,9 +79,8 @@ fn malice2_maker_broadcast_contract_prematurely() {
 
             // Check balance after setting up maker server.
             let wallet = maker.wallet.read().unwrap();
-            let all_utxos = wallet.get_all_utxo().unwrap();
 
-            let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+            let balances = wallet.get_balances().unwrap();
 
             assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
             assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
@@ -119,6 +118,17 @@ fn malice2_maker_broadcast_contract_prematurely() {
     directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
+
+    ///////////////////
+    let taker_wallet = taker.get_wallet_mut();
+    taker_wallet.sync().unwrap();
+
+    // Synchronize each maker's wallet.
+    for maker in makers.iter() {
+        let mut wallet = maker.get_wallet().write().unwrap();
+        wallet.sync().unwrap();
+    }
+    ///////////////
 
     // -------- Fee Tracking and Workflow --------
     //

@@ -4,7 +4,7 @@
 //! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend and RPC Client Request.
 //! The server listens at two port 6102 for P2P, and 6103 for RPC Client request.
 
-use crate::{protocol::messages::FidelityProof, taker::api::MINER_FEE};
+use crate::protocol::messages::FidelityProof;
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use socks::Socks5Stream;
@@ -55,7 +55,12 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> 
             (maker_address, dns_address)
         }
         ConnectionType::TOR => {
-            let maker_hostname = get_tor_hostname()?;
+            let maker_hostname = get_tor_hostname(
+                maker.data_dir.clone(),
+                maker.config.control_port,
+                maker.config.network_port,
+                &maker.config.tor_auth_password,
+            )?;
             let maker_address = format!("{}:{}", maker_hostname, maker.config.network_port);
 
             let dns_address = maker.config.directory_server_address.clone();
@@ -208,7 +213,6 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
         let amount = Amount::from_sat(maker.config.fidelity_amount);
 
         log::info!("Fidelity value chosen = {:?} sats", amount.to_sat());
-        log::info!("Fidelity Tx fee = {} sats", MINER_FEE);
 
         let current_height = maker
             .get_wallet()
@@ -470,7 +474,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         log::info!(
             "[{}] Spendable Wallet Balance: {}",
             network_port,
-            wallet.get_balances(None)?.spendable
+            wallet.get_balances()?.spendable
         );
     }
 

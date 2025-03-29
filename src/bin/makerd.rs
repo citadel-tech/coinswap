@@ -36,13 +36,15 @@ struct Cli {
     pub rpc: String,
     /// Bitcoin Core RPC authentication string (username, password).
     #[clap(
-        name = "USER:PASSWD",
+        name = "USER:PASSWORD",
         short = 'a',
         long,
         value_parser = parse_proxy_auth,
         default_value = "user:password",
     )]
     pub auth: (String, String),
+    #[clap(long, short = 't', default_value = "")]
+    pub tor_auth: String,
     /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with given name. Default: maker-wallet
     #[clap(name = "WALLET", long, short = 'w')]
     pub(crate) wallet_name: Option<String>,
@@ -71,7 +73,7 @@ fn main() -> Result<(), MakerError> {
         None,
         None,
         None,
-        None,
+        Some(args.tor_auth),
         None,
         Some(connection_type),
         MakerBehavior::Normal,

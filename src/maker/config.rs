@@ -133,21 +133,25 @@ impl MakerConfig {
         let toml_data = format!(
             "network_port = {}
 rpc_port = {}
-min_swap_amount = {}
 socks_port = {}
-directory_server_address = {}
+control_port = {}
+tor_auth_password = {}
+min_swap_amount = {}
 fidelity_amount = {}
 fidelity_timelock = {}
 connection_type = {:?}
+directory_server_address = {}
 ",
             self.network_port,
             self.rpc_port,
-            self.min_swap_amount,
             self.socks_port,
-            self.directory_server_address,
+            self.control_port,
+            self.tor_auth_password,
+            self.min_swap_amount,
             self.fidelity_amount,
             self.fidelity_timelock,
-            self.connection_type
+            self.connection_type,
+            self.directory_server_address,
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
