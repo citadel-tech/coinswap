@@ -53,7 +53,7 @@ pub const RPC_PING_INTERVAL: u32 = 9;
 
 /// Maker triggers the recovery mechanism, if Taker is idle for more than 15 mins during a swap.
 #[cfg(feature = "integration-test")]
-pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
+pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(120);
 #[cfg(not(feature = "integration-test"))]
 pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60 * 15);
 
