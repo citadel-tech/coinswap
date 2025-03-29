@@ -423,7 +423,8 @@ pub fn verify_swap_results(
                 balances.regular == Amount::from_btc(0.14557358).unwrap() // First maker on successful coinswap
                     || balances.regular == Amount::from_btc(0.14532500).unwrap() // Second maker on successful coinswap
                     || balances.regular == Amount::from_btc(0.14999).unwrap() // No spending
-                    || balances.regular == Amount::from_btc(0.14992232).unwrap(), // Recovery via timelock
+                    || balances.regular == Amount::from_btc(0.14992232).unwrap() // Recovery via timelock
+                    || balances.regular == Amount::from_btc(0.14090858).unwrap(), // Mutli-taker case
                 "Maker seed balance mismatch"
             );
 
@@ -455,7 +456,9 @@ pub fn verify_swap_results(
                     || balance_diff == Amount::ZERO // No spending
                     || balance_diff == Amount::from_sat(6768) // Recovery via timelock
                     || balance_diff == Amount::from_sat(466500) // TODO: Investigate this value
-                    || balance_diff == Amount::from_sat(441642), // TODO: Investigate this value
+                    || balance_diff == Amount::from_sat(441642) // TODO: Investigate this value
+                    || balance_diff == Amount::from_sat(408142) // Multi-taker first maker
+                    || balance_diff == Amount::from_sat(444642), // Multi-taker second maker
                 "Maker spendable balance change mismatch"
             );
         });
