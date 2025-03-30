@@ -194,7 +194,8 @@ impl Wallet {
                     .collect::<Vec<OutPoint>>(),
             )?;
 
-            let payment_pos = 0;
+            // Record this transaction in our results.
+            let payment_pos = 0; // assuming the payment output position is 0
 
             funding_txes.push(funding_tx);
             payment_output_positions.push(payment_pos);
