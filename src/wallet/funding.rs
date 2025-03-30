@@ -121,7 +121,7 @@ impl Wallet {
 
         Ok(output_values)
     }
-  
+
     /// This function creates funding txes by
     /// Randomly generating some satoshi amounts and send them into
     /// walletcreatefundedpsbt to create txes that create change
@@ -140,12 +140,18 @@ impl Wallet {
         let mut payment_output_positions = Vec::<u32>::new();
         let mut total_miner_fee = 0;
 
-        for (address, &output_value) in destinations
-            .iter()
-            .zip(output_values.iter())
-        {
+        for (address, &output_value) in destinations.iter().zip(output_values.iter()) {
             let remaining = Amount::from_sat(output_value);
             let selected_utxo = self.coin_select(remaining)?;
+
+            // Calculate total input amount
+            let total_input_amount =
+                selected_utxo
+                    .iter()
+                    .fold(Amount::ZERO, |acc, (unspent, _)| {
+                        acc.checked_add(unspent.amount)
+                            .expect("Amount sum overflowed")
+                    });
 
             // Prepare coins for spend_coins API
             let coins_to_spend = selected_utxo
@@ -154,17 +160,32 @@ impl Wallet {
                 .collect::<Vec<_>>();
 
             // Create destination with output
-            let destination = Destination::Multi(vec![
-                (address.clone(), Amount::from_sat(output_value)),
-            ]);
+            let destination =
+                Destination::Multi(vec![(address.clone(), Amount::from_sat(output_value))]);
 
             // Creates and Signs Transactions
             let funding_tx =
                 self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
 
-            log::info!("Created Funding tx, txid : {}", funding_tx.compute_txid(),);
+            // Calculate actual fee
+            let actual_fee = total_input_amount
+                - (funding_tx.output.iter().fold(Amount::ZERO, |a, txo| {
+                    a.checked_add(txo.value)
+                        .expect("output amount summation overflowed")
+                }));
 
-            // TODO : Discussion on Lock Mechanism 
+            let tx_size = funding_tx.weight().to_vbytes_ceil();
+            let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
+
+            log::info!(
+                "Created Funding tx, txid: {} | Size: {} vB | Fee: {} sats | Feerate: {:.2} sat/vB",
+                funding_tx.compute_txid(),
+                tx_size,
+                actual_fee.to_sat(),
+                actual_feerate
+            );
+
+            // TODO : Discussion on Lock Mechanism
             self.rpc.lock_unspent(
                 &funding_tx
                     .input
@@ -186,7 +207,7 @@ impl Wallet {
             total_miner_fee,
         })
     }
-  
+
     fn create_mostly_sweep_txes_with_one_tx_having_change(
         &self,
         coinswap_amount: Amount,
