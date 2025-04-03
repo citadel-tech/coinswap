@@ -133,81 +133,93 @@ impl Wallet {
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
-        // Lock Mechanism.
+        // Flow of Lock Step 1. Unlock all unspent UTXOs
+        self.rpc.unlock_unspent_all()?;
+
+        // FLow of Lock Step 2. Lock all unspendable UTXOs
         self.lock_unspendable_utxos()?;
 
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
         let mut total_miner_fee = 0;
+        let mut locked_utxos = Vec::new();
 
-        for (address, &output_value) in destinations.iter().zip(output_values.iter()) {
-            let remaining = Amount::from_sat(output_value);
-            let selected_utxo = self.coin_select(remaining)?;
+        // Here, we are gonna use a closure to ensure proper cleanup on error (since we need a rollback)
+        let result = (|| {
+            for (address, &output_value) in destinations.iter().zip(output_values.iter()) {
+                let remaining = Amount::from_sat(output_value);
+                let selected_utxo = self.coin_select(remaining)?;
 
-            // Calculate total input amount
-            let total_input_amount =
-                selected_utxo
+                let outpoints: Vec<OutPoint> = selected_utxo
                     .iter()
-                    .fold(Amount::ZERO, |acc, (unspent, _)| {
-                        acc.checked_add(unspent.amount)
-                            .expect("Amount sum overflowed")
-                    });
+                    .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                    .collect();
+                // Flow of Lock Step 3. Lock the selected UTXOs immediately after selection
+                self.rpc.lock_unspent(&outpoints)?;
+                // Flow of Lock Step 4. Store the locked UTXOs for later unlocking in case of error
+                locked_utxos.extend(outpoints);
 
-            // Prepare coins for spend_coins API
-            let coins_to_spend = selected_utxo
-                .iter()
-                .map(|(unspent, spend_info)| (unspent.clone(), spend_info.clone()))
-                .map(|(unspent, spend_info)| (unspent.clone(), spend_info.clone()))
-                .collect::<Vec<_>>();
+                let total_input_amount =
+                    selected_utxo
+                        .iter()
+                        .fold(Amount::ZERO, |acc, (unspent, _)| {
+                            acc.checked_add(unspent.amount)
+                                .expect("Amount sum overflowed")
+                        });
 
-            // Create destination with output
-            let destination =
-                Destination::Multi(vec![(address.clone(), Amount::from_sat(output_value))]);
-
-            // Creates and Signs Transactions
-            let funding_tx =
-                self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
-
-            // Calculate actual fee
-            let actual_fee = total_input_amount
-                - (funding_tx.output.iter().fold(Amount::ZERO, |a, txo| {
-                    a.checked_add(txo.value)
-                        .expect("output amount summation overflowed")
-                }));
-
-            let tx_size = funding_tx.weight().to_vbytes_ceil();
-            let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
-
-            log::info!(
-                "Created Funding tx, txid: {} | Size: {} vB | Fee: {} sats | Feerate: {:.2} sat/vB",
-                funding_tx.compute_txid(),
-                tx_size,
-                actual_fee.to_sat(),
-                actual_feerate
-            );
-
-            // TODO : Discussion on Lock Mechanism
-            self.rpc.lock_unspent(
-                &funding_tx
-                    .input
+                // Here, prepare coins for spend_coins API, since this API would require owned data to avoid lifetime issues
+                let coins_to_spend = selected_utxo
                     .iter()
-                    .map(|vin| vin.previous_output)
-                    .collect::<Vec<OutPoint>>(),
-            )?;
+                    .map(|(unspent, spend_info)| (unspent.clone(), spend_info.clone()))
+                    .collect::<Vec<_>>();
 
-            // Record this transaction in our results.
-            let payment_pos = 0; // assuming the payment output position is 0
+                // Create destination with output - currently, destination is an array with a single address, i.e only a single transaction.
+                let destination =
+                    Destination::Multi(vec![(address.clone(), Amount::from_sat(output_value))]);
 
-            funding_txes.push(funding_tx);
-            payment_output_positions.push(payment_pos);
-            total_miner_fee += fee_rate.to_sat();
+                // Creates and Signs Transactions via the spend_coins API
+                let funding_tx =
+                    self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
+
+                // The actual fee is the difference between the sum of output amounts from the total input amount
+                let actual_fee = total_input_amount
+                    - (funding_tx.output.iter().fold(Amount::ZERO, |a, txo| {
+                        a.checked_add(txo.value)
+                            .expect("output amount summation overflowed")
+                    }));
+
+                let tx_size = funding_tx.weight().to_vbytes_ceil();
+                // Note : The feerates are sats/vbyte
+                let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
+
+                log::info!(
+                    "Created Funding tx, txid: {} | Size: {} vB | Fee: {} sats | Feerate: {:.2} sat/vB",
+                    funding_tx.compute_txid(),
+                    tx_size,
+                    actual_fee.to_sat(),
+                    actual_feerate
+                );
+
+                // Record this transaction in our results.
+                let payment_pos = 0; // assuming the payment output position is 0
+
+                funding_txes.push(funding_tx);
+                payment_output_positions.push(payment_pos);
+                total_miner_fee += fee_rate.to_sat();
+            }
+            Ok(CreateFundingTxesResult {
+                funding_txes,
+                payment_output_positions,
+                total_miner_fee,
+            })
+        })();
+
+        // FLow of Lock Step 5. We unlock the UTXOs on error i.e a rollback mechanism, OR keep locked on success
+        if result.is_err() {
+            self.rpc.unlock_unspent(&locked_utxos)?;
         }
 
-        Ok(CreateFundingTxesResult {
-            funding_txes,
-            payment_output_positions,
-            total_miner_fee,
-        })
+        result
     }
 
     fn create_mostly_sweep_txes_with_one_tx_having_change(
