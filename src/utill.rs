@@ -705,12 +705,12 @@ pub(crate) fn get_emphemeral_address(
 }
 
 pub(crate) fn get_tor_hostname(
-    datadir: PathBuf,
+    data_dir: &Path,
     control_port: u16,
     target_port: u16,
     password: &str,
 ) -> Result<String, TorError> {
-    let tor_config_path = datadir.join("tor/hostname");
+    let tor_config_path = data_dir.join("tor/hostname");
 
     if tor_config_path.exists() {
         if let Ok(tor_metadata) = fs::read(&tor_config_path) {
