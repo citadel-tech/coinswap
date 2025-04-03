@@ -244,8 +244,8 @@ impl Wallet {
         if store.network != network {
             log::error!(
                 "Wallet file is created for {}, backend Bitcoin Core is running on {}",
-                store.network.to_string(),
-                network.to_string()
+                store.network,
+                network
             );
             return Err(WalletError::General("Wrong Bitcoin Network".to_string()));
         }

@@ -582,6 +582,8 @@ impl TestFramework {
             generate_blocks(&tf_clone.bitcoind, 10);
         });
 
+        let _ = taker.delete_offer_cache();
+
         (
             test_framework,
             taker,
