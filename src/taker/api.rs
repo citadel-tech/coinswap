@@ -159,37 +159,15 @@ pub enum TakerBehavior {
     BroadcastContractAfterFullSetup,
 }
 
-use bincode;
 use chrono::{DateTime, Utc};
-use std::{
-    fs,
-    io::{Error as IoError, ErrorKind},
-    path::Path,
-};
+use std::{fs, io::Error as IoError};
 
 /// Defined the CachedOffer struct for storing offers with a timestamp
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct CachedOffer {
-    address: MakerAddress,  // Replace with your actual Address type.
-    offer: OfferAndAddress, // Replace with the actual type used for an offer.
+pub struct CachedOffer {
+    address: MakerAddress,
+    offer: OfferAndAddress,
     timestamp: DateTime<Utc>,
-}
-
-/// Helper functions to load and save the offer cache using bincode.
-fn load_offer_cache<P: AsRef<Path>>(path: P) -> Result<Vec<CachedOffer>, IoError> {
-    if path.as_ref().exists() {
-        let data = fs::read(path)?;
-        let offers: Vec<CachedOffer> =
-            bincode::deserialize(&data).map_err(|e| IoError::new(ErrorKind::Other, e))?;
-        Ok(offers)
-    } else {
-        Ok(vec![])
-    }
-}
-
-fn save_offer_cache<P: AsRef<Path>>(path: P, offers: &Vec<CachedOffer>) -> Result<(), IoError> {
-    let data = bincode::serialize(offers).map_err(|e| IoError::new(ErrorKind::Other, e))?;
-    fs::write(path, data)
 }
 
 /// The Taker structure that performs bulk of the coinswap protocol. Taker connects
@@ -324,6 +302,37 @@ impl Taker {
             behavior,
             data_dir,
         })
+    }
+
+    /// Helper functions to load and save the offer cache.
+    pub fn load_offer_cache(&self, path: &PathBuf) -> Result<Vec<CachedOffer>, IoError> {
+        if path.exists() {
+            let data = fs::read_to_string(path)?;
+            let offers: Vec<CachedOffer> = serde_json::from_str(&data).map_err(IoError::other)?;
+            Ok(offers)
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    /// Saves the offer cache
+    pub fn save_offer_cache(
+        &self,
+        path: &PathBuf,
+        offers: &Vec<CachedOffer>,
+    ) -> Result<(), IoError> {
+        let data = serde_json::to_string_pretty(offers).map_err(IoError::other)?;
+        fs::write(path, data)
+    }
+
+    #[allow(dead_code)]
+    /// Deletes the offerbook cache file if it exists.
+    pub fn delete_offer_cache(&self) -> Result<(), IoError> {
+        let cache_file = get_taker_dir().join("offerbook_cache.json");
+        if cache_file.exists() {
+            fs::remove_file(cache_file)?;
+        }
+        Ok(())
     }
 
     /// Get wallet
@@ -2095,16 +2104,17 @@ impl Taker {
             };
 
         // Define the cache file name. (Using a binary file for bincode.)
-        let cache_file = "offerbook_cache.bin";
-        let mut cached_offers: Vec<CachedOffer> =
-            load_offer_cache(cache_file).unwrap_or_else(|_| vec![]);
+        let cache_file = get_taker_dir().join("offerbook_cache.json");
+        let mut cached_offers: Vec<CachedOffer> = self
+            .load_offer_cache(&cache_file)
+            .unwrap_or_else(|_| vec![]);
         let now = Utc::now();
 
         // Partition cached offers into fresh (< 30 minutes old) and stale.
         let fresh_offers: Vec<CachedOffer> = cached_offers
             .iter()
-            .cloned()
             .filter(|co| (now - co.timestamp).num_minutes() < 30)
+            .cloned()
             .collect();
 
         // Determine which addresses need to be refreshed.
@@ -2149,7 +2159,7 @@ impl Taker {
         for cached_offer in &cached_offers {
             log::info!(
                 "Found offer from {}. Verifying Fidelity Proof",
-                cached_offer.address.to_string()
+                cached_offer.address
             );
             log::debug!("{:?}", cached_offer.offer);
             if let Err(e) = self.wallet.verify_fidelity_proof(
@@ -2159,7 +2169,7 @@ impl Taker {
                 log::warn!(
                      "Fidelity Proof Verification failed with error: {:?}. Adding this to bad maker list: {}",
                      e,
-                     cached_offer.address.to_string()
+                     cached_offer.address
                  );
                 self.offerbook.add_bad_maker(&cached_offer.offer);
             } else {
@@ -2169,8 +2179,8 @@ impl Taker {
         }
 
         // Save the updated cache back to disk.
-        save_offer_cache(cache_file, &cached_offers)
-            .map_err(|e| TakerError::from(IoError::new(ErrorKind::Other, e)))?;
+        self.save_offer_cache(&cache_file, &cached_offers)
+            .map_err(TakerError::from)?;
 
         Ok(())
     }
