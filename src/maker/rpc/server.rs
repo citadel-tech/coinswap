@@ -96,10 +96,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
 
             RpcMsgResp::SendToAddressResp(txid.to_string())
         }
-        RpcMsgReq::GetDataDir => {
-            let path = maker.get_data_dir();
-            RpcMsgResp::GetDataDirResp(path.clone())
-        }
+        RpcMsgReq::GetDataDir => RpcMsgResp::GetDataDirResp(maker.get_data_dir().to_path_buf()),
         RpcMsgReq::GetTorAddress => {
             if maker.config.connection_type == ConnectionType::CLEARNET {
                 RpcMsgResp::GetTorAddressResp("Maker is not running on TOR".to_string())

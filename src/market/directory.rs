@@ -382,7 +382,7 @@ pub fn start_directory_server(
             let network_port = directory.network_port;
             log::info!("tor is ready!!");
             let hostname = get_tor_hostname(
-                directory.data_dir.clone(),
+                &directory.data_dir,
                 directory.control_port,
                 directory.network_port,
                 &directory.tor_auth_password,
