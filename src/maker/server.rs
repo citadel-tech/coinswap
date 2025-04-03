@@ -72,8 +72,6 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> 
         .as_ref()
         .track_and_update_unconfirmed_fidelity_bonds()?;
 
-    setup_fidelity_bond(&maker, &maker_address)?;
-
     manage_fidelity_bonds_and_update_dns(maker.as_ref(), &maker_address, &dns_address)?;
 
     Ok((maker_address, dns_address))
