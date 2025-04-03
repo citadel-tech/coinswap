@@ -26,7 +26,7 @@ use bitcoin::{
 use bitcoind::bitcoincore_rpc::RpcApi;
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc, Mutex, RwLock,
@@ -241,7 +241,7 @@ pub struct Maker {
     /// Is setup complete
     pub is_setup_complete: AtomicBool,
     /// Path for the data directory.
-    pub(crate) data_dir: PathBuf,
+    data_dir: PathBuf,
     /// Thread pool for managing all spawned threads
     pub(crate) thread_pool: Arc<ThreadPool>,
 }
@@ -349,7 +349,8 @@ impl Maker {
         })
     }
 
-    pub(crate) fn get_data_dir(&self) -> &PathBuf {
+    /// Returns data directory of Maker
+    pub fn get_data_dir(&self) -> &Path {
         &self.data_dir
     }
 
@@ -368,7 +369,7 @@ impl Maker {
                 .store
                 .fidelity_bond
                 .iter()
-                .filter_map(|(i, (bond, _, _))| {
+                .filter_map(|(i, (bond, _))| {
                     if bond.conf_height.is_none() && bond.cert_expiry.is_none() {
                         let conf_height = wallet_read
                             .wait_for_fidelity_tx_confirmation(bond.outpoint.txid)
