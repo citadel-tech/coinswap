@@ -2073,7 +2073,7 @@ impl Taker {
         for offer in offers {
             log::info!(
                 "Found offer from {}. Verifying Fidelity Proof",
-                offer.address.to_string()
+                offer.address
             );
             log::debug!("{:?}", offer);
             if let Err(e) = self
@@ -2083,7 +2083,7 @@ impl Taker {
                 log::warn!(
                     "Fidelity Proof Verification failed with error: {:?}. Adding this to bad maker list : {}",
                     e,
-                    offer.address.to_string()
+                    offer.address
                 );
                 self.offerbook.add_bad_maker(&offer);
             } else {
