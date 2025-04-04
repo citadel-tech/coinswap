@@ -1093,7 +1093,7 @@ impl Wallet {
     /// - Locked UTXOs
     /// - Unconfirmed UTXOs
     pub fn coin_select(
-        &mut self,
+        &self,
         amount: Amount,
         feerate: f64,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
@@ -1140,8 +1140,6 @@ impl Wallet {
             })
             .collect::<Vec<_>>();
 
-<<<<<<< HEAD
-=======
         if unspents.is_empty() {
             return Err(WalletError::General(
                 "No spendable UTXOs available".to_string(),
@@ -1158,22 +1156,21 @@ impl Wallet {
         );
 
         // Get next external and internal addresses using dedicated wallet APIs
-        let external_address = self.get_next_external_address()?;
-        let internal_address = self.get_next_internal_addresses(1)?[0].clone();
+        // let external_address = self.get_next_external_address()?;
+        // let internal_address = self.get_next_internal_addresses(1)?[0].clone();
 
         // TODO : Add support for addresses other than P2PKH
-        let external_address_script_pubkey = ScriptBuf::new_p2pkh(
-            &external_address
-                .pubkey_hash()
-                .ok_or_else(|| WalletError::General("Could not get pubkey hash".to_string()))?,
-        );
+        // let external_address_script_pubkey = ScriptBuf::new_p2pkh(
+        //     &external_address
+        //         .pubkey_hash()
+        //         .ok_or_else(|| WalletError::General("Could not get pubkey hash".to_string()))?,
+        // );
 
-        let internal_address_script_pubkey =
-            ScriptBuf::new_p2pkh(&internal_address.pubkey_hash().ok_or_else(|| {
-                WalletError::General("Could not get change pubkey hash".to_string())
-            })?);
+        // let internal_address_script_pubkey =
+        //     ScriptBuf::new_p2pkh(&internal_address.pubkey_hash().ok_or_else(|| {
+        //         WalletError::General("Could not get change pubkey hash".to_string())
+        //     })?);
 
->>>>>>> e53f006 (Added an unspents empty safe condition)
         // Prepare CoinSelectionOpt: Calculate required weights and costs, additional metrics
         const LONG_TERM_FEERATE: f32 = 10.0;
         let change_weight = Weight::from_vb_unwrap(

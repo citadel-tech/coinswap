@@ -82,7 +82,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 amount,
             )]);
 
-            let coins_to_send = maker.get_wallet().write()?.coin_select(amount, feerate)?;
+            let coins_to_send = maker.get_wallet().read()?.coin_select(amount, feerate)?;
 
             let tx = maker.get_wallet().write()?.spend_from_wallet(
                 feerate,
