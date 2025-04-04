@@ -188,6 +188,8 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
 }
 
 /// Generate Blocks in regtest node.
+// TODO: Rethink this approach considering the resource unavailability of RPC and wallet rescanning.
+//       Block generation in regtest halts everything, causing a major disruption in rescanning.
 pub(crate) fn generate_blocks(bitcoind: &BitcoinD, n: u64) {
     let mining_address = bitcoind
         .client

@@ -18,11 +18,10 @@ mod test_framework;
 use test_framework::*;
 
 /// Multiple Takers with Different Behaviors
-/// This test demonstrates a scenario where a single Maker is connected to multiple Takers
+/// This test demonstrates a scenario where a single Maker is connected to two Takers
 /// exhibiting different behaviors:
-/// - Taker1: Broadcasts contract transactions after full setup
+/// - Taker1: Normal
 /// - Taker2: Drops connection after full setup
-/// - Taker3: Normal
 ///
 /// The test verifies that the Maker can properly manage multiple concurrent swaps with
 /// different taker behaviors and recover appropriately in each case if required.
