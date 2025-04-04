@@ -3,10 +3,7 @@ use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
-    utill::{
-        parse_proxy_auth, setup_taker_logger, ConnectionType, DEFAULT_TX_FEE_RATE,
-        REQUIRED_CONFIRMS, UTXO,
-    },
+    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, DEFAULT_TX_FEE_RATE, UTXO},
     wallet::{Destination, RPCConfig},
 };
 use log::LevelFilter;
@@ -239,7 +236,6 @@ fn main() -> Result<(), TakerError> {
                 send_amount: Amount::from_sat(amount),
                 maker_count: makers,
                 tx_count: 1,
-                required_confirms: REQUIRED_CONFIRMS,
             };
             taker.do_coinswap(swap_params)?;
         }
