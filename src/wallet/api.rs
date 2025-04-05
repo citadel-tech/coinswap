@@ -1155,11 +1155,11 @@ impl Wallet {
             "Fidelity coins are not included in coin selection"
         );
 
-        // Get next external and internal addresses using dedicated wallet APIs
+        // // Get next external and internal addresses using dedicated wallet APIs
         // let external_address = self.get_next_external_address()?;
         // let internal_address = self.get_next_internal_addresses(1)?[0].clone();
 
-        // TODO : Add support for addresses other than P2PKH
+        // // TODO : Add support for addresses other than P2PKH
         // let external_address_script_pubkey = ScriptBuf::new_p2pkh(
         //     &external_address
         //         .pubkey_hash()
@@ -1178,6 +1178,7 @@ impl Wallet {
                     + VarInt::from(P2WPKH_SPK_SIZE).size() // VarInt size for script_pubkey
                     + P2WPKH_SPK_SIZE) as u64, // script_pubkey size
         );
+
         // Total cost associated with creating and later spending a change output in a transaction.
         // This includes the transaction fees for both the current transaction (where the change is created) and the future transaction (where the change is spent).
         // Calculate fee generally uses the units :- vbytes * sats/vbyte
@@ -1221,6 +1222,7 @@ impl Wallet {
                 creation_sequence: None,
             })
             .collect();
+
         // Create coin selection options
         let coin_selection_option = CoinSelectionOpt {
             target_value: amount.to_sat(),

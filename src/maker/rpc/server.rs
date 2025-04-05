@@ -3,7 +3,7 @@ use std::{
     net::{TcpListener, TcpStream},
     sync::{atomic::Ordering::Relaxed, Arc},
     thread::sleep,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use bitcoin::{Address, Amount};
@@ -82,7 +82,27 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 amount,
             )]);
 
-            let coins_to_send = maker.get_wallet().read()?.coin_select(amount, feerate)?;
+            // A timeout for coin selection
+            let start_time = Instant::now();
+            let timeout = Duration::from_secs(120); // 2 minute timeout
+
+            let coins_to_send = loop {
+                match maker.get_wallet().read()?.coin_select(amount, feerate) {
+                    Ok(coins) => break coins,
+                    Err(e) => {
+                        if start_time.elapsed() > timeout {
+                            log::error!(
+                                "Coin selection timed out after {}s: {:?}",
+                                start_time.elapsed().as_secs(),
+                                e
+                            );
+                            return Err(MakerError::from(e));
+                        }
+                        sleep(Duration::from_secs(1));
+                        continue;
+                    }
+                }
+            };
 
             let tx = maker.get_wallet().write()?.spend_from_wallet(
                 feerate,
