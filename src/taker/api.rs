@@ -19,9 +19,11 @@ use std::{
 
 use bitcoind::bitcoincore_rpc::RpcApi;
 
+use serde::{Deserialize, Serialize};
 use socks::Socks5Stream;
 
 use bitcoin::{
+    absolute::LockTime,
     consensus::encode::deserialize,
     hashes::{hash160::Hash as Hash160, Hash},
     hex::{Case, DisplayHex},
@@ -2072,10 +2074,11 @@ impl Taker {
 
         for offer in offers {
             log::info!(
-                "Found offer from {}. Verifying Fidelity Proof",
-                offer.address
+                "Verifying Fidelity Bond | Maker: {} | Outpoint: {}",
+                offer.address,
+                offer.offer.fidelity.bond.outpoint
             );
-            log::debug!("{:?}", offer);
+
             if let Err(e) = self
                 .wallet
                 .verify_fidelity_proof(&offer.offer.fidelity, &offer.address.to_string())
@@ -2087,7 +2090,7 @@ impl Taker {
                 );
                 self.offerbook.add_bad_maker(&offer);
             } else {
-                log::info!("Fideity Bond verification succes. Adding offer to our OfferBook");
+                log::info!("Fideity Bond verified. Adding offer from {}", offer.address);
                 self.offerbook.add_new_offer(&offer);
             }
         }
@@ -2128,29 +2131,39 @@ impl Taker {
         Ok(())
     }
     /// Displays offer
-    pub fn display_offer(&self, offer_and_address: &OfferAndAddress) -> String {
+    pub fn display_offer(&self, offer_and_address: &OfferAndAddress) -> Result<String, TakerError> {
+        #[derive(Serialize, Deserialize, Debug)]
+        struct Offer {
+            base_fee: u64,
+            amount_relative_fee_pct: f64,
+            time_relative_fee_pct: f64,
+            required_confirms: u32,
+            minimum_locktime: u16,
+            max_size: u64,
+            min_size: u64,
+            bond_outpoint: OutPoint,
+            bond_value: Amount,
+            bond_expiry: LockTime,
+            tor_address: String,
+        }
+
         let bond = offer_and_address.offer.fidelity.bond.clone();
         let bond_value = self.get_wallet().calculate_bond_value(&bond).unwrap();
-        format!(
-            "offer data received:\n\
-            - Base fee: {}\n\
-            - Percent Fee on total amount: {}\n\
-            - Time relative fee: {}\n\
-            - Required Confirms: {}\n\
-            - Minimum locktime: {}\n\
-            - Max size: {}\n\
-            - Min size: {}\n\
-            - Fidelity_bond_value: {}\n\
-            - Tor Address: {}",
-            offer_and_address.offer.base_fee,
-            offer_and_address.offer.amount_relative_fee_pct,
-            offer_and_address.offer.time_relative_fee_pct,
-            offer_and_address.offer.required_confirms,
-            offer_and_address.offer.minimum_locktime,
-            offer_and_address.offer.max_size,
-            offer_and_address.offer.min_size,
+
+        let offer = Offer {
+            base_fee: offer_and_address.offer.base_fee,
+            amount_relative_fee_pct: offer_and_address.offer.amount_relative_fee_pct,
+            time_relative_fee_pct: offer_and_address.offer.time_relative_fee_pct,
+            required_confirms: offer_and_address.offer.required_confirms,
+            minimum_locktime: offer_and_address.offer.minimum_locktime,
+            max_size: offer_and_address.offer.max_size,
+            min_size: offer_and_address.offer.min_size,
+            bond_outpoint: bond.outpoint,
             bond_value,
-            offer_and_address.address
-        )
+            bond_expiry: bond.lock_time,
+            tor_address: offer_and_address.address.to_string(),
+        };
+
+        Ok(serde_json::to_string_pretty(&offer)?)
     }
 }

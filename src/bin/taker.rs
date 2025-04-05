@@ -232,9 +232,15 @@ fn main() -> Result<(), TakerError> {
                     .cloned()
                     .collect::<Vec<_>>()
             };
-            all_offers
-                .iter()
-                .for_each(|offer| println!("{}", taker.display_offer(offer)));
+            if all_offers.is_empty() {
+                println!("NO LIVE OFFERS FOUND!! You should run a maker!!");
+                return Ok(());
+            } else {
+                all_offers.iter().try_for_each(|offer| {
+                    println!("{}", taker.display_offer(offer)?);
+                    Ok::<_, TakerError>(())
+                })?;
+            }
         }
         Commands::Coinswap { makers, amount } => {
             let swap_params = SwapParams {
