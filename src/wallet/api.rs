@@ -1145,30 +1145,17 @@ impl Wallet {
             return Ok(Vec::new());
         }
 
-        // Assertion statement : fidelity coins are not included
+        // Assert: fidelity, outgoing swapcoins, hashlock and timelock coins are not included
         assert!(
             unspents.iter().all(|(_, spend_info)| !matches!(
                 spend_info,
                 UTXOSpendInfo::FidelityBondCoin { .. }
+                    | UTXOSpendInfo::OutgoingSwapCoin { .. }
+                    | UTXOSpendInfo::TimelockContract { .. }
+                    | UTXOSpendInfo::HashlockContract { .. }
             )),
             "Fidelity coins are not included in coin selection"
         );
-
-        // // Get next external and internal addresses using dedicated wallet APIs
-        // let external_address = self.get_next_external_address()?;
-        // let internal_address = self.get_next_internal_addresses(1)?[0].clone();
-
-        // // TODO : Add support for addresses other than P2PKH
-        // let external_address_script_pubkey = ScriptBuf::new_p2pkh(
-        //     &external_address
-        //         .pubkey_hash()
-        //         .ok_or_else(|| WalletError::General("Could not get pubkey hash".to_string()))?,
-        // );
-
-        // let internal_address_script_pubkey =
-        //     ScriptBuf::new_p2pkh(&internal_address.pubkey_hash().ok_or_else(|| {
-        //         WalletError::General("Could not get change pubkey hash".to_string())
-        //     })?);
 
         // Prepare CoinSelectionOpt: Calculate required weights and costs, additional metrics
         const LONG_TERM_FEERATE: f32 = 10.0;
@@ -1258,8 +1245,7 @@ impl Wallet {
 
                 // If error is insufficient funds, return all available UTXOs
                 if e.to_string().contains("The Inputs funds are insufficient") {
-                    let available_utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)> = unspents;
-                    let total_available = available_utxos
+                    let total_available = unspents
                         .iter()
                         .map(|(utxo, _)| utxo.amount.to_sat())
                         .sum::<u64>();
@@ -1270,7 +1256,7 @@ impl Wallet {
                         amount.to_sat()
                     );
 
-                    Ok(available_utxos)
+                    Ok(unspents)
                 } else {
                     // For other errors, return the original error
                     Err(WalletError::General(format!(
