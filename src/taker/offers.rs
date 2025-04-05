@@ -146,10 +146,10 @@ impl OfferBook {
             Ok(book) => book,
             Err(e) => {
                 let err_string = format!("{:?}", e);
+                // TODO: Investigate why files end up with trailing data.
                 if err_string.contains("code: TrailingData") {
-                    log::info!("Offerbook has trailing data, trying to restore");
+                    // loop until all trailing bytes are removed.
                     loop {
-                        // pop the last byte and try again.
                         reader.pop();
                         match serde_cbor::from_slice::<Self>(&reader) {
                             Ok(book) => break book,
