@@ -24,6 +24,7 @@ use std::{
     sync::Once,
 };
 
+use rand::Rng;
 use std::{
     collections::HashMap,
     io::{self, Write},
@@ -756,6 +757,14 @@ pub(crate) fn get_tor_hostname(
     Ok(hostname)
 }
 
+/// randomize the given amount +/- 5%.
+pub fn randomize_amount(amount: u64) -> u64 {
+    let mut rng = rand::rng();
+    let percentage: f64 = rng.random_range(-0.05..=0.05);
+    let variation = (amount as f64 * percentage).round() as i64;
+    (amount as i64 + variation).max(0) as u64
+}
+
 #[cfg(test)]
 mod tests {
     use std::{net::TcpListener, thread};
@@ -931,5 +940,12 @@ mod tests {
             .add_exp_tweak(&secp, &scalar_from_nonce)
             .unwrap();
         assert_eq!(returned_pubkey.to_string(), tweaked_pubkey.to_string());
+    }
+
+    #[test]
+    fn test_randomize_amount() {
+        let amount = 20000;
+        let randomized_amount = randomize_amount(amount);
+        assert_ne!(amount, randomized_amount)
     }
 }

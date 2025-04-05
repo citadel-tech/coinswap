@@ -4,8 +4,8 @@ use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
     utill::{
-        parse_proxy_auth, setup_taker_logger, ConnectionType, DEFAULT_TX_FEE_RATE,
-        REQUIRED_CONFIRMS, UTXO,
+        parse_proxy_auth, randomize_amount, setup_taker_logger, ConnectionType,
+        DEFAULT_TX_FEE_RATE, REQUIRED_CONFIRMS, UTXO,
     },
     wallet::{Destination, RPCConfig},
 };
@@ -51,6 +51,10 @@ struct Cli {
     /// Sets the verbosity level of debug.log file
     #[clap(long, short = 'v', possible_values = &["off", "error", "warn", "info", "debug", "trace"], default_value = "info")]
     pub verbosity: String,
+
+    /// Randomize the founding transaction fees for better privacy (+/- 5%)
+    #[clap(name = "randomize-fee", long)]
+    random_fee: bool,
 
     /// List of commands for various wallet operations
     #[clap(subcommand)]
@@ -105,6 +109,9 @@ enum Commands {
         // /// Increasing this number also increases total swap fee.
         // #[clap(long, short = 'u', default_value = "1")]
         // utxos: u32,
+        /// Randomize the amount to spend to reduce amount correlation (+/- 5%)
+        #[clap(long, short = 'r')]
+        random_amount: bool,
     },
     /// Recover from all failed swaps
     Recover,
@@ -141,6 +148,7 @@ fn main() -> Result<(), TakerError> {
         None,
         Some(args.tor_auth),
         Some(connection_type),
+        args.random_fee,
     )?;
 
     match args.command {
@@ -234,9 +242,17 @@ fn main() -> Result<(), TakerError> {
                 .iter()
                 .for_each(|offer| println!("{}", taker.display_offer(offer)));
         }
-        Commands::Coinswap { makers, amount } => {
+        Commands::Coinswap {
+            makers,
+            amount,
+            random_amount,
+        } => {
+            let mut amount_to_spend = amount;
+            if random_amount {
+                amount_to_spend = randomize_amount(amount);
+            }
             let swap_params = SwapParams {
-                send_amount: Amount::from_sat(amount),
+                send_amount: Amount::from_sat(amount_to_spend),
                 maker_count: makers,
                 tx_count: 1,
                 required_confirms: REQUIRED_CONFIRMS,
