@@ -12,7 +12,11 @@ if ! cargo clippy --all-targets -- -D warnings; then
     echo "Please fix the Clippy issues before committing."
     exit 1 
 fi
-
+# Check if cargo-hack is installed
+if ! command -v cargo-hack >/dev/null 2>&1; then
+    echo "cargo-hack is not installed. Installing..."
+    cargo install cargo-hack
+fi
 # Check for feature combinations
 echo "Checking feature combinations with cargo-hack..."
 if ! cargo hack --feature-powerset check; then

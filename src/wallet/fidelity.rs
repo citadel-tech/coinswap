@@ -332,7 +332,7 @@ impl Wallet {
     ) -> Result<u32, WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
 
-        let coins = self.coin_select(amount)?;
+        let coins = self.coin_select(amount, feerate)?;
 
         let destination = Destination::Multi(vec![(fidelity_addr, amount)]);
 
