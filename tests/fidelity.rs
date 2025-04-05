@@ -48,8 +48,15 @@ fn test_fidelity() {
         .get_next_external_address()
         .unwrap();
     send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.04).unwrap());
-
     generate_blocks(bitcoind, 1);
+
+    // Add sync and verification before starting maker server
+    {
+        let mut wallet = maker.get_wallet().write().unwrap();
+        wallet.sync().unwrap();
+        let balances = wallet.get_balances().unwrap();
+        log::info!("Initial wallet balance: {} sats", balances.regular.to_sat());
+    }
 
     let maker_clone = maker.clone();
 
@@ -62,6 +69,14 @@ fn test_fidelity() {
     // Provide the maker with more funds.
     send_to_address(bitcoind, &maker_addrs, Amount::ONE_BTC);
     generate_blocks(bitcoind, 1);
+
+    // Add sync and verification after adding more funds
+    {
+        let mut wallet = maker.get_wallet().write().unwrap();
+        wallet.sync().unwrap();
+        let balances = wallet.get_balances().unwrap();
+        log::info!("Updated wallet balance: {} sats", balances.regular.to_sat());
+    }
 
     thread::sleep(Duration::from_secs(6));
     // stop the maker server
@@ -92,6 +107,14 @@ fn test_fidelity() {
 
         assert_eq!(bond.amount, Amount::from_sat(5000000));
         assert!(!redeemed);
+
+        // Log the bond details for debugging
+        log::info!(
+            "First bond created - Amount: {}, Value: {}, Maturity Height: {}",
+            bond.amount.to_sat(),
+            bond_value.to_sat(),
+            bond.lock_time.to_consensus_u32()
+        );
 
         bond.lock_time.to_consensus_u32()
     };
