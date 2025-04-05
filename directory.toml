@@ -1,8 +1,0 @@
-# Listening port  
-port = 8080
-# Socks port
-socks_port = 19060
-# Connection type
-connection_type = TOR
-# RPC listening port
-rpc_port = 4321
