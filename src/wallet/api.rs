@@ -1154,7 +1154,7 @@ impl Wallet {
                     | UTXOSpendInfo::TimelockContract { .. }
                     | UTXOSpendInfo::HashlockContract { .. }
             )),
-            "Fidelity coins are not included in coin selection"
+            "Fidelity, Outgoing Swapcoins, Hashlock and Timelock coins are not included in coin selection"
         );
 
         // Prepare CoinSelectionOpt: Calculate required weights and costs, additional metrics
