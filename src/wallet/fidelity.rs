@@ -238,7 +238,7 @@ impl Wallet {
             .to_keypair(&secp))
     }
 
-    /// Derives the fidelity redeemscript from bond values at given index.
+    /// Derives the fidelity redeemscript from bond values at a given index.
     pub(crate) fn get_fidelity_reedemscript(&self, index: u32) -> Result<ScriptBuf, WalletError> {
         let (bond, _) = self
             .store
@@ -321,7 +321,7 @@ impl Wallet {
     }
 
     /// Create a new fidelity bond with given amount and absolute height based locktime.
-    /// This functions creates the fidelity transaction, signs and broadcast it.
+    /// This function creates the fidelity transaction, signs and broadcast it.
     /// Upon confirmation it stores the fidelity information in the wallet data.
     pub fn create_fidelity(
         &mut self,
@@ -339,7 +339,7 @@ impl Wallet {
 
         let txid = self.send_tx(&tx)?;
 
-        // Register this bond even it is in mempool and not yet confirmed to avoid the edge case when the maker server
+        // Register this bond even if it is in mempool and not yet confirmed to avoid the edge case when the maker server
         // unexpectedly shutdown while it was waiting for the fidelity transaction confirmation.
         // Otherwise the wallet wouldn't know about this bond in this case and would attempt to create a new bond again.
         {
@@ -363,7 +363,7 @@ impl Wallet {
         Ok(index)
     }
 
-    /// Waits for the fidelity transaction to confirm and returns its block height.  
+    /// Waits for the fidelity transaction to confirm and returns its block height.
     pub(crate) fn wait_for_fidelity_tx_confirmation(&self, txid: Txid) -> Result<u32, WalletError> {
         let sleep_increment = 10;
         let mut sleep_multiplier = 0;
@@ -576,7 +576,7 @@ mod test {
         let confirmation_time = 50_000;
         let current_time = 60_000;
 
-        // Following is a (locktime, fidelity_value) tupple series to show how fidelity_value increases with locktimes
+        // Following is a (locktime, fidelity_value) tuple series to show how fidelity_value increases with locktimes
         let test_vectors = [
             (55000, 0), // Value is zero for expired timelocks
             (60000, 3020),

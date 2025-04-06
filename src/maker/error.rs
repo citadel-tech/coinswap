@@ -40,7 +40,7 @@ pub enum MakerError {
     SpecialBehaviour(MakerBehavior),
     /// Represents a protocol-related error.
     Protocol(ProtocolError),
-    /// Tor Error
+    /// Tor Error.
     TorError(TorError),
 }
 

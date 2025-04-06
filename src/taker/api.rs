@@ -109,10 +109,10 @@ enum TakerPosition {
 }
 
 /// The Swap State defining a current ongoing swap. This structure is managed by the Taker while
-/// performing a swap. Various data are appended into the lists and are oly read from the last entry as the
+/// performing a swap. Various data are appended into the lists and are only read from the last entry as the
 /// swap progresses. This ensures the swap state is always consistent.
 ///
-/// This states can be used to recover from a failed swap round.
+/// These states can be used to recover from a failed swap round.
 #[derive(Default)]
 struct OngoingSwapState {
     /// SwapParams used in current swap round.
@@ -188,9 +188,9 @@ impl Drop for Taker {
 impl Taker {
     // ######## MAIN PUBLIC INTERFACE ############
 
-    ///  Initializes a Maker structure.
+    ///  Initializes a Taker structure.
     ///
-    /// This function sets up a Maker instance with configurable parameters.
+    /// This function sets up a Taker instance with configurable parameters.
     /// It handles the initialization of data directories, wallet files, and RPC configurations.
     ///
     /// ### Parameters:
@@ -254,7 +254,7 @@ impl Taker {
 
         config.write_to_file(&data_dir.join("config.toml"))?;
 
-        // Load offerbook. If doesn't exists, creates fresh file.
+        // Load offerbook. If it doesn't exist, creates fresh file.
         let offerbook_path = data_dir.join("offerbook.dat");
         let offerbook = if offerbook_path.exists() {
             // If read fails, recreate a fresh offerbook.
@@ -271,7 +271,7 @@ impl Taker {
                 }
             }
         } else {
-            // Crewate a new offer book
+            // Create a new offer book
             let empty_book = OfferBook::default();
             let file = std::fs::File::create(&offerbook_path)?;
             let writer = BufWriter::new(file);
@@ -774,7 +774,7 @@ impl Taker {
     /// Create [FundingTxInfo] for the "next_maker". Next maker is the last stored [NextPeerInfo] in the swp state.
     /// All other data from the swap state's last entries are collected and a [FundingTxInfo] protocol message data is generated.
     fn funding_info_for_next_maker(&self) -> Vec<FundingTxInfo> {
-        // Get the reedemscripts.
+        // Get the redeemscripts.
         let (this_maker_multisig_redeemscripts, this_maker_contract_redeemscripts) =
             if self.ongoing_swap_state.taker_position == TakerPosition::FirstPeer {
                 (
@@ -2010,7 +2010,7 @@ impl Taker {
                 timelock_boardcasted.len()
             );
             if timelock_boardcasted.len() == outgoing_infos.len() {
-                log::info!("All outgoing contracts reedemed. Cleared ongoing swap state");
+                log::info!("All outgoing contracts redeemed. Cleared ongoing swap state");
                 // TODO: Reevaluate this.
                 self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
                 break;
