@@ -100,7 +100,7 @@ $ taker -r 127.0.0.1:38332 -a user:pass get-balances
 }
 ```
 
-Now we are ready to initate a coinswap. We are first going to sync the offer book to get a list of available makers.
+Now we are ready to initiate a coinswap. We are first going to sync the offer book to get a list of available makers.
 
 ```sh
 $ taker -r 127.0.0.1:38332 -a user:pass fetch-offers
@@ -112,7 +112,7 @@ This will fetch the list of available makers from the directory server. Now we c
 $ taker -r 127.0.0.1:38332 -a user:pass coinswap
 ```
 
-This will initiate a coinswap with the default parameters. This will take some time. You can check swap progress at the log file in data diectory. In an new terminal do `tail -f <datadir>/debug.log`.
+This will initiate a coinswap with the default parameters. This will take some time. You can check swap progress at the log file in the data directory. In a new terminal do `tail -f <datadir>/debug.log`.
 
 ## Data, Config and Wallets
 

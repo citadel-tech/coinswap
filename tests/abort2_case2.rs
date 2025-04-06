@@ -45,7 +45,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
             ConnectionType::CLEARNET,
         );
 
-    // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
+    // Fund the Taker with 3 utxos of 0.05 btc each and do basic checks on the balance
     let org_taker_spend_balance = fund_and_verify_taker(
         &mut taker,
         &test_framework.bitcoind,
@@ -116,7 +116,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
         info!("Coinswap failed because the first maker rejected for signature");
     }
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));

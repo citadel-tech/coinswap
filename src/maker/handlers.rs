@@ -42,7 +42,7 @@ use crate::{
     wallet::{IncomingSwapCoin, SwapCoin, WalletError, WalletSwapCoin},
 };
 
-/// The Global Handle Message function. Takes in a [`Arc<Maker>`] and handle messages
+/// The Global Handle Message function. Takes in a [`Arc<Maker>`] and handles messages
 /// according to a [ConnectionState].
 pub(crate) fn handle_message(
     maker: &Arc<Maker>,
@@ -204,7 +204,7 @@ pub(crate) fn handle_message(
         }
         ExpectedMessage::PrivateKeyHandover => {
             if let TakerToMakerMessage::RespPrivKeyHandover(message) = message {
-                // Nothing to send. Succesfully completed swap
+                // Nothing to send. Successfully completed swap
                 maker.handle_private_key_handover(message)?;
                 None
             } else {
@@ -218,7 +218,7 @@ pub(crate) fn handle_message(
 
 impl Maker {
     /// This is the first message handler for the Maker. It receives a [ReqContractSigsForSender] message,
-    /// checks the validity of contract transactions, and provide's the signature for the sender side.
+    /// checks the validity of contract transactions, and provides the signature for the sender side.
     /// This will fail if the maker doesn't have enough utxos to fund the next coinswap hop, or the contract
     /// transaction isn't valid.
     pub(crate) fn handle_req_contract_sigs_for_sender(
@@ -229,7 +229,7 @@ impl Maker {
             return Err(self.behavior.into());
         }
 
-        // Verify and sign the contract transaction, check function definition for all the checks.
+        // Verify and sign the contract transaction, and check the function definition for all the checks.
         let sigs = self.verify_and_sign_contract_tx(&message)?;
 
         let funding_txids = message
@@ -326,8 +326,8 @@ impl Maker {
             let hashlock_privkey =
                 tweakable_privkey.add_tweak(&funding_info.hashlock_nonce.into())?;
 
-            // Taker can send same funding transactions twice. Happens when one maker in the
-            // path fails. Only add it if it din't already existed.
+            // Taker can send the same funding transactions twice. Happens when one maker in the
+            // path fails. Only add it if it didn't already exist.
             let incoming_swapcoin = IncomingSwapCoin::new(
                 multisig_privkey,
                 other_pubkey,
@@ -373,7 +373,7 @@ impl Maker {
         let calc_funding_tx_fees =
             message.contract_feerate * (message.next_coinswap_info.len() as u64);
 
-        // Check for overflow. If happens hard error.
+        // Check for overflow. If this happens, hard error.
         // This can happen if the fee_rate for funding tx is very high and incoming_amount is very low.
         // TODO: Ensure at Taker protocol that this never happens.
         let outgoing_amount = if let Some(a) =

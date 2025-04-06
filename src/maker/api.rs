@@ -72,7 +72,7 @@ pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
 /// These parameters define the fees charged by Makers in a coinswap transaction.
 ///
 /// TODO: These parameters are currently hardcoded. Consider making them configurable for Makers in the future.
-///p
+///
 /// - `BASE_FEE`: A fixed base fee charged by the Maker for providing its services
 /// - `AMOUNT_RELATIVE_FEE_PCT`: A percentage fee based on the swap amount.
 /// - `TIME_RELATIVE_FEE_PCT`: A percentage fee based on the refund locktime (duration the Maker must wait for a refund).
@@ -91,7 +91,7 @@ pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
 /// - `time_relative_fee` = (100,000 * 20 * 0.1) / 100 = 2,000 sats
 /// - `total_fee` = 5,500 sats (5.5%)
 ///
-/// Fee rates are designed to asymptotically approach 5% of the swap amount as the swap amount increases..
+/// Fee rates are designed to asymptotically approach 5% of the swap amount as the swap amount increases...
 #[cfg(feature = "integration-test")]
 pub const BASE_FEE: u64 = 1000;
 #[cfg(feature = "integration-test")]
@@ -106,10 +106,10 @@ pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 0.1;
 #[cfg(not(feature = "integration-test"))]
 pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
 
-/// Minimum Coinswap amount; makers will not#[cfg(feature = "integration-test")] accept amounts below this.
+/// Minimum Coinswap amount; makers will not accept amounts below this.
 pub const MIN_SWAP_AMOUNT: u64 = 10_000;
 
-/// Interval for redeeming expired bonds, creating new ones if needed,  
+/// Interval for redeeming expired bonds, creating new ones if needed, 
 /// and updating the DNS server with the latest bond proof and maker address.
 #[cfg(feature = "integration-test")]
 pub(crate) const FIDELITY_BOND_DNS_UPDATE_INTERVAL: u32 = 30;
@@ -148,7 +148,7 @@ pub enum MakerBehavior {
 
 /// Expected messages for the taker in the context of [ConnectionState] structure.
 ///
-/// If the received message doesn't match expected message,
+/// If the received message doesn't match the expected message,
 /// a protocol error will be returned.
 #[derive(Debug, Default, PartialEq, Clone)]
 pub(crate) enum ExpectedMessage {
@@ -273,7 +273,7 @@ impl Maker {
         connection_type: Option<ConnectionType>,
         behavior: MakerBehavior,
     ) -> Result<Self, MakerError> {
-        // Get provided data directory or the default data directory.
+        // Get the provided data directory or the default data directory.
         let data_dir = data_dir.unwrap_or(get_maker_dir());
         let wallets_dir = data_dir.join("wallets");
 
@@ -286,18 +286,18 @@ impl Maker {
         rpc_config.wallet_name = wallet_file_name;
 
         let mut wallet = if wallet_path.exists() {
-            // wallet already exists , load the wallet
+            // wallet already exists, load the wallet
             let wallet = Wallet::load(&wallet_path, &rpc_config)?;
             log::info!("Wallet file at {:?} successfully loaded.", wallet_path);
             wallet
         } else {
-            // wallet doesn't exists at the given path , create a new one
+            // wallet doesn't exist at the given path, create a new one
             let wallet = Wallet::init(&wallet_path, &rpc_config)?;
             log::info!("New Wallet created at : {:?}", wallet_path);
             wallet
         };
 
-        // If config file doesn't exist, default config will be loaded.
+        // If the config file doesn't exist, the default config will be loaded.
         let mut config = MakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
         if let Some(port) = network_port {
@@ -403,7 +403,7 @@ impl Maker {
         }
 
         for funding_info in &message.confirmed_funding_txes {
-            // check that the new locktime is sufficently short enough compared to the
+            // check that the new locktime is sufficiently short enough compared to the
             // locktime in the provided funding tx
             let locktime = read_contract_locktime(&funding_info.contract_redeemscript)?;
             if locktime - message.refund_locktime < MIN_CONTRACT_REACTION_TIME {
@@ -414,7 +414,7 @@ impl Maker {
 
             let funding_output_index = find_funding_output_index(funding_info)?;
 
-            //check the funding_tx is confirmed to required depth
+            // check the funding_tx is confirmed to required depth
             if let Some(txout) = self
                 .wallet
                 .read()?
@@ -451,8 +451,8 @@ impl Maker {
                 &funding_info.hashlock_nonce,
             )?;
 
-            //check that the provided contract matches the scriptpubkey from the
-            //cache which was populated when the ReqContractSigsForSender message arrived
+            // check that the provided contract matches the scriptpubkey from the
+            // cache which was populated when the ReqContractSigsForSender message arrived
             let contract_spk = redeemscript_to_scriptpubkey(&funding_info.contract_redeemscript)?;
 
             if !self.wallet.read()?.does_prevout_match_cached_contract(
@@ -544,7 +544,7 @@ impl Maker {
 /// Constantly checks for contract transactions in the bitcoin network for all
 /// unsettled swap.
 ///
-/// If any one of the is ever observed, run the recovery routine.
+/// If any one of them is ever observed, run the recovery routine.
 pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut failed_swap_ip = Vec::new();
     loop {
@@ -600,11 +600,11 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                                 next_internal_address,
                                 DEFAULT_TX_FEE_RATE,
                             )?;
-                            // Sometimes we might not have other's contact signatures.
-                            // This means the protocol have been stopped abruptly.
+                            // Sometimes we might not have other's contract signatures.
+                            // This means the protocol has been stopped abruptly.
                             // This needs more careful consideration as this should not happen
                             // after funding transactions have been broadcasted for outgoing contracts.
-                            // For incomings, its less lethal as thats mostly the other party's burden.
+                            // For incomings, its less lethal as that's mostly the other party's burden.
                             if let Ok(tx) = og_sc.get_fully_signed_contract_tx() {
                                 outgoings.push((
                                     (og_sc.get_multisig_redeemscript(), tx),
@@ -663,7 +663,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
 
 /// Checks for swapcoins present in wallet store on reboot and starts recovery if found on bitcoind network.
 ///
-/// If any one of the is ever observed, run the recovery routine.
+/// If any one of them is ever observed, run the recovery routine.
 pub(crate) fn restore_broadcasted_contracts_on_reboot(
     maker: &Arc<Maker>,
 ) -> Result<(), MakerError> {
@@ -739,7 +739,7 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
 
 /// Check that if any Taker connection went idle.
 ///
-/// If a connection remains idle for more than idle timeout time, thats a potential DOS attack.
+/// If a connection remains idle for more than idle timeout time, that's a potential DOS attack.
 /// Broadcast the contract transactions and claim funds via timelock.
 pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut bad_ip = Vec::new();
@@ -938,7 +938,7 @@ pub(crate) fn recover_from_swap(
                 if timelock_boardcasted.contains(&timelocked_tx) {
                     continue;
                 }
-                // Check if the contract tx has reached required maturity
+                // Check if the contract tx has reached the required maturity
                 // Failure here means the transaction hasn't been broadcasted yet. So do nothing and try again.
                 let tx_from_chain = if let Ok(result) = maker
                     .wallet

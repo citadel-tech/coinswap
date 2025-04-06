@@ -911,7 +911,7 @@ mod tests {
                 &preimage,
             )
             .unwrap();
-        // If the tx is succesful, check some field like:
+        // If the tx is successful, check some field like:
         assert!(tx.input[0].witness.len() == 3);
     }
 

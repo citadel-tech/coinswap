@@ -238,7 +238,7 @@ For more details about fidelity bonds, refer to the [Fidelity Bond Documentation
 Next, we’ll explore other UTXOs and balances in Coinswap.
 
 
-### Other utxos and thier balance:
+### Other utxos and their balance:
  #### Swap utxos:
 
  ```bash 
@@ -270,7 +270,7 @@ $ ./maker-cli  list-utxo-contract
 []
 ```
 
-As mentioned above -> we have not paritcipated in any coinswap till now, thus have no unsuccessfull coinswap currently -> thus we have no `contract utxos` and have no balance in this category as shown:
+As mentioned above -> we have not participated in any coinswap till now, thus have no unsuccessful coinswap currently -> thus we have no `contract utxos` and have no balance in this category as shown:
 
 ```bash
 $  ./maker-cli  get-balances
@@ -287,7 +287,7 @@ $  ./maker-cli  get-balances
 
 >[!IMPORTANT]
 > we have to manually figure utxos and their balances by using  `list-utxo` and `get-balances` command respectively.
-> where `list-utxo` returns all the utxos present in the maker wallet including the `fidleity utxos` also.
+> where `list-utxo` returns all the utxos present in the maker wallet including the `fidelity utxos` also.
 > and `get-balances` returns the total wallet balances of different categories which includes balance of normal utxos, swap utxos, contract utxos, fidelitly utxos and spendable utxos (normal + swap utxos).
 
 Let's find them out: 
@@ -571,7 +571,7 @@ $ ./maker-cli get-balances
 ```
 
 ---
-### *Rredeem Fidelity**:
+### **Redeem Fidelity**:
 [TODO]
 
 ### **Shutting Down Maker Server**:

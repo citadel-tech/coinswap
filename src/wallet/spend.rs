@@ -68,7 +68,7 @@ impl Wallet {
     }
 
     /// Redeem a Fidelity Bond.
-    /// This functions creates a spending transaction from the fidelity bond, signs and broadcasts it.
+    /// This function creates a spending transaction from the fidelity bond, signs and broadcasts it.
     /// Returns the txid of the spending tx, and mark the bond as spent.
     pub fn redeem_fidelity(&mut self, idx: u32, feerate: f64) -> Result<(), WalletError> {
         let (bond, redeemed) = self

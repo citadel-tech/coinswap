@@ -34,12 +34,12 @@ use super::{
 // to have the same size, and taker will pay all the maker's miner fees based on that
 // taker will choose what fee rate they will use, and how many funding transactions they want
 // the makers to create
-// this doesnt take into account the different sizes of single-sig, 2of2 multisig or htlc contracts
+// this doesn't take into account the different sizes of single-sig, 2of2 multisig or htlc contracts
 // but all those complications will go away when we move to ecdsa2p and scriptless scripts
-// so theres no point adding complications for something that we'll hopefully get rid of soon
+// so there's no point adding complications for something that we'll hopefully get rid of soon
 // this size here is for a tx with 2 p2wpkh outputs, 3 singlesig inputs and 1 2of2 multisig input
 // if the maker can get stuff confirmed cheaper than this then they can keep that money
-// if the maker ends up paying more then thats their problem
+// if the maker ends up paying more then that's their problem
 // we could avoid this guessing by adding one more round trip to the protocol where the maker
 // calculates exactly how big the transactions will be and then taker knows exactly the miner fee
 // to pay for
@@ -415,8 +415,8 @@ pub(crate) fn create_receivers_contract_tx(
     contract_redeemscript: &ScriptBuf,
     fee_rate: Amount,
 ) -> Result<Transaction, ProtocolError> {
-    //exactly the same thing as senders contract for now, until collateral
-    //inputs are implemented
+    // exactly the same thing as senders contract for now, until collateral
+    // inputs are implemented
     create_senders_contract_tx(input, input_value, contract_redeemscript, fee_rate)
 }
 

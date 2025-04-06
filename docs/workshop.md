@@ -55,7 +55,7 @@ We will begin with a basic introduction to Coinswap and lay the foundation for t
 ---
 
 ### **Demo**
-In this segment, we will set up a complete swap marketplace with multiple makers and takers on our systems. Participants will role-play as takers and makers, performing a multi-hop swap with each other. We will monitor the live system logs on our laptops to observe the progress of the swap in real time.
+In this segment, we will set up a complete swap marketplace with multiple makers and takers on our systems. Participants will role-play as takers and makers, performing a multi-hop swap with each other. We will monitor the live system logs on our laptops to observe the progress of the swap in real-time.
 
 If time permits, we will conduct another swap round with a malicious maker who drops out during the swap. This will demonstrate the recovery process and highlight any potential traces left on the blockchain.
 
