@@ -18,7 +18,7 @@ The protocol also includes a marketplace with dynamic offer data attached to a *
 
 The protocol is in its early stages and has several open questions and potential vulnerabilities. At this summit, we will explore some of these challenges, discuss open design questions, and provide a hands-on demonstration of the entire swap process.
 
-For more details, please refer to the project [README](../../README.md) and check out the [App Demos](../app_demos/). 
+For more details, please refer to the project [README](../README.md) and check out the [App Demos](./). 
 
 A more detailed [protocol specification](https://github.com/citadel-tech/Coinswap-Protocol-Specification) is also available.
 
@@ -39,7 +39,7 @@ A more detailed [protocol specification](https://github.com/citadel-tech/Coinswa
 
 To actively engage in the session, please prepare with the following:
 
-- **Readup on Coinswap**: start with the project [README](../../README.md) and follow from there. 
+- **Readup on Coinswap**: start with the project [README](../README.md) and follow from there. 
 - **Set up your environment**: Follow the [demo documentation](./demo.md) to set up your system. You will need:
   - A running `bitcoind` node on your local machine, synced on Testnet4.
   - At least 501,000 sats (500,000 sats for the Fidelity Bond + 1000 sats for fidelity tx fee + 10,000 sats as minimum swap liquidity) of balance in your wallet if you are running maker.
@@ -55,7 +55,7 @@ We will begin with a basic introduction to Coinswap and lay the foundation for t
 ---
 
 ### **Demo**
-In this segment, we will set up a complete swap marketplace with multiple makers and takers on our systems. Participants will role-play as takers and makers, performing a multi-hop swap with each other. We will monitor the live system logs on our laptops to observe the progress of the swap in real time.
+In this segment, we will set up a complete swap marketplace with multiple makers and takers on our systems. Participants will role-play as takers and makers, performing a multi-hop swap with each other. We will monitor the live system logs on our laptops to observe the progress of the swap in real-time.
 
 If time permits, we will conduct another swap round with a malicious maker who drops out during the swap. This will demonstrate the recovery process and highlight any potential traces left on the blockchain.
 
