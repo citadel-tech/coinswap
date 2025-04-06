@@ -16,8 +16,8 @@ use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 /// ABORT 3: Maker Drops After Setup
 /// Case 3: CloseAtHashPreimage
 ///
-/// Maker closes connection at hash preimage handling. Funding txs are already broadcasted.
-/// The Maker will loose contract txs fees in that case, so it's not a malice.
+/// Maker closes the connection at hash preimage handling. Funding txs are already broadcasted.
+/// The Maker will lose contract txs fees in that case, so it's not malice.
 /// Taker waits for the response until timeout. Aborts if the Maker doesn't show up.
 #[test]
 fn abort3_case3_close_at_hash_preimage_handover() {
@@ -109,7 +109,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));

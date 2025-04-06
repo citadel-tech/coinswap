@@ -16,9 +16,9 @@ use std::{
 use test_framework::*;
 
 /// Abort 1: TAKER Drops After Full Setup.
-/// This test demonstrates the situation where the Taker drops connection after broadcasting all the
-/// funding transactions. The Makers identifies this and waits for a timeout (5mins in prod, 30 secs in test)
-/// for the Taker to come back. If the Taker doesn't come back within timeout, the Makers broadcasts the contract
+/// This test demonstrates the situation where the Taker drops the connection after broadcasting all the
+/// funding transactions. The Makers identify this and wait for a timeout (5mins in prod, 30 secs in test)
+/// for the Taker to come back. If the Taker doesn't come back within timeout, the Makers broadcast the contract
 /// transactions and reclaims their funds via timelock.
 ///
 /// The Taker after coming live again will see unfinished coinswaps in his wallet. He can reclaim his funds via
@@ -113,12 +113,12 @@ fn test_stop_taker_after_setup() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     maker_threads
         .into_iter()
         .for_each(|thread| thread.join().unwrap());

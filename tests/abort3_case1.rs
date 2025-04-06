@@ -18,7 +18,7 @@ use test_framework::*;
 /// ABORT 3: Maker Drops After Setup
 /// Case 1: CloseAtContractSigsForRecvrAndSender
 ///
-/// Maker closes connection after receiving a `RespContractSigsForRecvrAndSender` and doesn't broadcasts it's funding txs.
+/// Maker closes the connection after receiving a `RespContractSigsForRecvrAndSender` and doesn't broadcast its funding txs.
 /// Taker wait until a timeout (10ses for test, 5mins for prod) and starts recovery after that.
 // This is problematic. Needs more detailed thought.
 #[test]
@@ -115,7 +115,7 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
