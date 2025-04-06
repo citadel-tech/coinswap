@@ -59,7 +59,7 @@ sudo apt install build-essential automake libtool
 
 ### **Tor Installation**  
 
-Tor is required to run CoinSwap. If you don't have Tor pre-installed, please follow the instructions in the [Tor guide](./docs/app%20demos/tor.md).
+Tor is required to run CoinSwap. If you don't have Tor pre-installed, please follow the instructions in the [Tor guide](./docs/tor.md).
 
 The project also requires working `rust` and `cargo` installation to compile. Precompile binaries will be available soon. Cargo can be installed from [here](https://www.rust-lang.org/learn/get-started).
 
