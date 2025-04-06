@@ -79,7 +79,7 @@ After compilation you will get the binaries in the `./target/release` folder.
 Install the necessary binaries in your system:
 ```console
 sudo install ./target/release/taker /usr/local/bin/
-sudo install ./target/release/maker /usr/local/bin/  
+sudo install ./target/release/makerd /usr/local/bin/  
 sudo install ./target/release/maker-cli /usr/local/bin/  
 ```
 
