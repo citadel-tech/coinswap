@@ -197,7 +197,7 @@ impl DirectoryServer {
 
         // Update the connection type in config if given.
         if let Some(conn_type) = connection_type {
-            // update the config map
+            // Update the config map
             let value = config_map.get_mut("connection_type").expect("must exist");
             let conn_type_string = format!("{:?}", conn_type);
             *value = conn_type_string;

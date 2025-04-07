@@ -52,7 +52,7 @@ pub(crate) fn handle_message(
     // If taker is waiting for funding confirmation, reset the timer.
     if let TakerToMakerMessage::WaitingFundingConfirmation(id) = &message {
         log::info!(
-            "[{}] Taker is waiting for funding confirmation. Reseting timer.",
+            "[{}] Taker is waiting for funding confirmation. Resetting timer.",
             maker.config.network_port
         );
         maker
@@ -179,7 +179,7 @@ pub(crate) fn handle_message(
                 }
                 _ => {
                     return Err(MakerError::General(
-                        "Expected proof of funding or sender's and reciever's contract signatures",
+                        "Expected proof of funding or sender's and receiver's contract signatures",
                     ));
                 }
             }
@@ -190,7 +190,7 @@ pub(crate) fn handle_message(
                 Some(maker.handle_req_contract_sigs_for_recvr(message)?)
             } else {
                 return Err(MakerError::General(
-                    "Expected reciever's contract transaction",
+                    "Expected receiver's contract transaction",
                 ));
             }
         }
@@ -199,7 +199,7 @@ pub(crate) fn handle_message(
                 connection_state.allowed_message = ExpectedMessage::PrivateKeyHandover;
                 Some(maker.handle_hash_preimage(message)?)
             } else {
-                return Err(MakerError::General("Expected hash preimgae"));
+                return Err(MakerError::General("Expected hash preimage"));
             }
         }
         ExpectedMessage::PrivateKeyHandover => {
@@ -208,7 +208,7 @@ pub(crate) fn handle_message(
                 maker.handle_private_key_handover(message)?;
                 None
             } else {
-                return Err(MakerError::General("expected privatekey handover"));
+                return Err(MakerError::General("Expected privatekey handover"));
             }
         }
     };
@@ -260,7 +260,7 @@ impl Maker {
                 self.config.min_swap_amount,
                 max_size
             );
-            Err(MakerError::General("not enough funds"))
+            Err(MakerError::General("Not enough funds"))
         }
     }
 
@@ -408,7 +408,7 @@ impl Maker {
 
         let act_coinswap_fees = incoming_amount
             .checked_sub(outgoing_amount + act_funding_txs_fees.to_sat())
-            .expect("This should not overflow as we just above.");
+            .expect("This should not overflow as we just checked above.");
 
         log::info!(
             "[{}] Prepared outgoing funding txs: {:?}.",
@@ -472,7 +472,7 @@ impl Maker {
             (connection_state.clone(), Instant::now()),
         );
 
-        log::info!("Connection state initiatilzed for swap id: {}", message.id);
+        log::info!("Connection state initialized for swap id: {}", message.id);
 
         Ok(MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(
             ContractSigsAsRecvrAndSender {
@@ -494,7 +494,7 @@ impl Maker {
 
         if message.receivers_sigs.len() != connection_state.incoming_swapcoins.len() {
             return Err(MakerError::General(
-                "invalid number of reciever's signatures",
+                "Invalid number of receiver's signatures",
             ));
         }
         for (receivers_sig, incoming_swapcoin) in message
@@ -507,7 +507,7 @@ impl Maker {
         }
 
         if message.senders_sigs.len() != connection_state.outgoing_swapcoins.len() {
-            return Err(MakerError::General("invalid number of sender's signatures"));
+            return Err(MakerError::General("Invalid number of sender's signatures"));
         }
 
         for (senders_sig, outgoing_swapcoin) in message
@@ -598,10 +598,10 @@ impl Maker {
             let mut wallet_write = self.wallet.write()?;
             let incoming_swapcoin = wallet_write
                 .find_incoming_swapcoin_mut(multisig_redeemscript)
-                .expect("Incoming swampcoin expected");
+                .expect("Incoming swapcoin expected");
             if read_hashvalue_from_contract(&incoming_swapcoin.contract_redeemscript)? != hashvalue
             {
-                return Err(MakerError::General("not correct hash preimage"));
+                return Err(MakerError::General("Incorrect hash preimage"));
             }
             incoming_swapcoin.hash_preimage = Some(message.preimage);
         }
@@ -621,7 +621,7 @@ impl Maker {
                 .expect("outgoing swapcoin expected");
             if read_hashvalue_from_contract(&outgoing_swapcoin.contract_redeemscript)? != hashvalue
             {
-                return Err(MakerError::General("not correct hash preimage"));
+                return Err(MakerError::General("Incorrect hash preimage"));
             } else {
                 outgoing_swapcoin.hash_preimage.replace(message.preimage);
             }

@@ -271,7 +271,7 @@ impl Wallet {
                 } => {
                     let outgoing_swap_coin = self
                         .find_outgoing_swapcoin(swapcoin_multisig_redeemscript)
-                        .expect("Cannot find Outgoin Swap Coin");
+                        .expect("Cannot find Outgoing Swap Coin");
                     tx.input.push(TxIn {
                         previous_output: OutPoint {
                             txid: outgoing_swap_coin.contract_tx.compute_txid(),

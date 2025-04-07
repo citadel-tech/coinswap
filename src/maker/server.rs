@@ -607,6 +607,6 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Shutdown wallet syncing completed.");
     maker.get_wallet().read()?.save_to_disk()?;
     log::info!("Wallet file saved to disk.");
-    log::info!("Maker Server is shut down successfully");
+    log::info!("Maker Server is shut down successfully.");
     Ok(())
 }

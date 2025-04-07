@@ -260,7 +260,7 @@ impl Taker {
             // If read fails, recreate a fresh offerbook.
             match OfferBook::read_from_disk(&offerbook_path) {
                 Ok(offerbook) => {
-                    log::info!("Succesfully loaded offerbook at : {:?}", offerbook_path);
+                    log::info!("Successfully loaded offerbook at : {:?}", offerbook_path);
                     offerbook
                 }
                 Err(e) => {
@@ -339,7 +339,7 @@ impl Taker {
         // Error early if hop_count > available good makers.
         if swap_params.maker_count > self.offerbook.all_good_makers().len() {
             log::error!(
-                "Not enough makers in the offerbook. Required {}, avaialable {}",
+                "Not enough makers in the offerbook. Required {}, available {}",
                 swap_params.maker_count,
                 self.offerbook.all_good_makers().len()
             );
@@ -2012,7 +2012,7 @@ impl Taker {
                 timelock_boardcasted.len()
             );
             if timelock_boardcasted.len() == outgoing_infos.len() {
-                log::info!("All outgoing contracts reedemed. Cleared ongoing swap state");
+                log::info!("All outgoing contracts redeemed. Cleared ongoing swap state");
                 // TODO: Reevaluate this.
                 self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
                 break;

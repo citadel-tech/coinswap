@@ -109,7 +109,7 @@ pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
 /// Minimum Coinswap amount; makers will not accept amounts below this.
 pub const MIN_SWAP_AMOUNT: u64 = 10_000;
 
-/// Interval for redeeming expired bonds, creating new ones if needed, 
+/// Interval for redeeming expired bonds, creating new ones if needed,
 /// and updating the DNS server with the latest bond proof and maker address.
 #[cfg(feature = "integration-test")]
 pub(crate) const FIDELITY_BOND_DNS_UPDATE_INTERVAL: u32 = 30;
@@ -428,11 +428,11 @@ impl Maker {
             {
                 if txout.confirmations < REQUIRED_CONFIRMS {
                     return Err(MakerError::General(
-                        "funding tx not confirmed to required depth",
+                        "Funding tx not confirmed to required depth",
                     ));
                 }
             } else {
-                return Err(MakerError::General("funding tx output doesnt exist"));
+                return Err(MakerError::General("Funding tx output doesn't exist"));
             }
 
             check_reedemscript_is_multisig(&funding_info.multisig_redeemscript)?;
@@ -463,7 +463,7 @@ impl Maker {
                 &contract_spk,
             )? {
                 return Err(MakerError::General(
-                    "provided contract does not match sender contract tx, rejecting",
+                    "Provided contract does not match sender contract tx, rejecting",
                 ));
             }
         }
@@ -482,7 +482,7 @@ impl Maker {
                 || txinfo.senders_contract_tx.output.len() != 1
             {
                 return Err(MakerError::General(
-                    "invalid number of inputs or outputs in contract transaction",
+                    "Invalid number of inputs or outputs in contract transaction",
                 ));
             }
 
@@ -491,7 +491,7 @@ impl Maker {
                 &txinfo.senders_contract_tx.output[0].script_pubkey,
             )? {
                 return Err(MakerError::General(
-                    "taker attempting multiple contract attack, rejecting",
+                    "Taker attempting multiple contract attacks, rejecting",
                 ));
             }
 
@@ -612,7 +612,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                                 ));
                             } else {
                                 log::warn!(
-                                    "[{}] Outgoing contact signature not known. Not Broadcasting",
+                                    "[{}] Outgoing contract signature not known. Not Broadcasting",
                                     maker.config.network_port
                                 );
                             }
@@ -620,7 +620,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                                 incomings.push((ic_sc.get_multisig_redeemscript(), tx));
                             } else {
                                 log::warn!(
-                                    "[{}] Incoming contact signature not known. Not Broadcasting",
+                                    "[{}] Incoming contract signature not known. Not Broadcasting",
                                     maker.config.network_port
                                 );
                             }
@@ -832,7 +832,7 @@ pub(crate) fn recover_from_swap(
     // Tuple of (Multisig Reedemscript, Contract Tx)
     incomings: Vec<(ScriptBuf, Transaction)>,
 ) -> Result<(), MakerError> {
-    // broadcast all the incoming contracts and remove them from the wallet.
+    // Broadcast all the incoming contracts and remove them from the wallet.
     for (incoming_reedemscript, tx) in incomings {
         if maker
             .wallet
@@ -871,7 +871,7 @@ pub(crate) fn recover_from_swap(
         );
     }
 
-    //broadcast all the outgoing contracts
+    // Broadcast all the outgoing contracts
     for ((og_rs, tx), _) in outgoings.iter() {
         let check_tx_result = maker
             .wallet
@@ -898,7 +898,7 @@ pub(crate) fn recover_from_swap(
                     }
                     Err(e) => {
                         log::info!(
-                            "Can't send ougoing contract: {} | {:?}",
+                            "Can't send outgoing contract: {} | {:?}",
                             tx.compute_txid(),
                             e
                         );

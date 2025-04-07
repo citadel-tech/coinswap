@@ -247,7 +247,7 @@ impl Wallet {
         let store = WalletStore::read_from_disk(path)?;
         if rpc_config.wallet_name != store.file_name {
             return Err(WalletError::General(format!(
-                "Wallet name of database file and core missmatch, expected {}, found {}",
+                "Wallet name of database file and core mismatch, expected {}, found {}",
                 rpc_config.wallet_name, store.file_name
             )));
         }
@@ -1045,7 +1045,7 @@ impl Wallet {
                     input_value,
                 } => self
                     .find_incoming_swapcoin(&swapcoin_multisig_redeemscript)
-                    .expect("Incmoing swapcoin expected")
+                    .expect("Incoming swapcoin expected")
                     .sign_hashlocked_transaction_input(ix, &tx_clone, input, input_value)?,
                 UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
                     let privkey = self.get_fidelity_keypair(index)?.secret_key();
