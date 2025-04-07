@@ -115,18 +115,18 @@ fn test_fidelity() {
         let highest_bond_index = wallet_read.get_highest_fidelity_index().unwrap().unwrap();
         assert_eq!(highest_bond_index, 0);
 
-        let (bond, _) = wallet_read
+        let bond = wallet_read
             .get_fidelity_bonds()
             .get(&highest_bond_index)
             .unwrap();
         let bond_value = wallet_read.calculate_bond_value(bond).unwrap();
         assert_eq!(bond_value, Amount::from_sat(10814));
 
-        let (bond, redeemed) = wallet_read
+        let bond = wallet_read
             .get_fidelity_bonds()
             .get(&highest_bond_index)
             .unwrap();
-
+        let redeemed = bond.redeem_tx.is_some();
         assert_eq!(bond.amount, Amount::from_sat(5000000));
         assert!(!redeemed);
 
@@ -164,7 +164,12 @@ fn test_fidelity() {
         let highest_bond_index = wallet_read.get_highest_fidelity_index().unwrap().unwrap();
         assert_eq!(highest_bond_index, index);
 
-        let (bond, redeemed) = wallet_read.get_fidelity_bonds().get(&index).unwrap();
+        // TODO: Figure out why this sporadically fails.
+        //let bond_value = wallet_read.calculate_bond_value(index).unwrap();
+        // assert_eq!(bond_value, Amount::from_sat(1474));
+
+        let bond = wallet_read.get_fidelity_bonds().get(&index).unwrap();
+        let redeemed = bond.redeem_tx.is_some();
         assert_eq!(bond.amount, Amount::from_sat(8000000));
         assert!(!redeemed);
 
