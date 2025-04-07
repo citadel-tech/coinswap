@@ -5,8 +5,8 @@
 //! parsing mechanisms for transaction inputs and outputs.
 
 use bitcoin::{
-    absolute::LockTime, transaction::Version, Address, Amount, OutPoint, ScriptBuf, Sequence,
-    Transaction, TxIn, TxOut, Witness,
+    absolute::LockTime, hashes::Hash, transaction::Version, Address, Amount, OutPoint, ScriptBuf,
+    Sequence, Transaction, TxIn, TxOut, Txid, Witness,
 };
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RawTx, RpcApi};
 
@@ -71,13 +71,13 @@ impl Wallet {
     /// This functions creates a spending transaction from the fidelity bond, signs and broadcasts it.
     /// Returns the txid of the spending tx, and mark the bond as spent.
     pub fn redeem_fidelity(&mut self, idx: u32, feerate: f64) -> Result<(), WalletError> {
-        let (bond, redeemed) = self
+        let bond = self
             .store
             .fidelity_bond
             .get(&idx)
             .ok_or(FidelityError::BondDoesNotExist)?;
-
-        if *redeemed {
+        let redeemed = bond.redeem_tx.is_some();
+        if redeemed {
             log::info!("Fidelity bond already spent.");
             return Ok(());
         }
@@ -104,12 +104,13 @@ impl Wallet {
                 // As a temporary fix, we mark the bond as redeemed and exit gracefully.
                 log::info!("Fidelity bond already spent.");
 
-                let (_, redeemed) = self
+                let bond = self
                     .store
                     .fidelity_bond
                     .get_mut(&idx)
                     .ok_or(FidelityError::BondDoesNotExist)?;
-                *redeemed = true;
+                let dummy_txid = Txid::from_slice(&[0u8; 32]).unwrap();
+                bond.redeem_tx = Some(dummy_txid);
 
                 return Ok(());
             }
@@ -136,13 +137,13 @@ impl Wallet {
 
         // mark is_spent
         {
-            let (_, redeemed) = self
+            let bond = self
                 .store
                 .fidelity_bond
                 .get_mut(&idx)
                 .ok_or(FidelityError::BondDoesNotExist)?;
 
-            *redeemed = true;
+            bond.redeem_tx = Some(txid);
         }
 
         Ok(())
@@ -246,13 +247,13 @@ impl Wallet {
                     total_input_value += utxo_data.amount;
                 }
                 UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
-                    let (bond, redeemed) = self
+                    let bond = self
                         .store
                         .fidelity_bond
                         .get(index)
                         .ok_or(FidelityError::BondDoesNotExist)?;
-
-                    if *redeemed {
+                    let redeemed = bond.redeem_tx.is_some();
+                    if redeemed {
                         return Err(FidelityError::BondAlreadyRedeemed.into());
                     }
 
