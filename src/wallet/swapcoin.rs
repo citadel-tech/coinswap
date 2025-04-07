@@ -509,7 +509,7 @@ impl SwapCoin for IncomingSwapCoin {
             inner: secp256k1::PublicKey::from_secret_key(&secp, &privkey),
         };
         if pubkey != self.other_pubkey {
-            return Err(ProtocolError::General("Not correct privkey"));
+            return Err(ProtocolError::General("Incorrect privkey"));
         }
         self.other_privkey = Some(privkey);
         Ok(())
@@ -547,7 +547,7 @@ impl SwapCoin for OutgoingSwapCoin {
         if pubkey == self.other_pubkey {
             Ok(())
         } else {
-            Err(ProtocolError::General("Not correct privkey"))
+            Err(ProtocolError::General("Incorrect privkey"))
         }
     }
 }
@@ -564,7 +564,7 @@ impl SwapCoin for WatchOnlySwapCoin {
         if pubkey == self.sender_pubkey || pubkey == self.receiver_pubkey {
             Ok(())
         } else {
-            Err(ProtocolError::General("Not correct privkey"))
+            Err(ProtocolError::General("Incorrect privkey"))
         }
     }
 

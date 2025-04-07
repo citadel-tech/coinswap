@@ -1078,7 +1078,7 @@ mod test {
             check_reedemscript_is_multisig(Script::from_bytes(&invalid_length_script)).unwrap_err();
         let error_message_invalid_length = match result_invalid_length {
             ProtocolError::General(msg) => msg,
-            _ => "Not correct path",
+            _ => "Incorrect path",
         };
         assert_eq!(
             error_message_invalid_length,
@@ -1090,7 +1090,7 @@ mod test {
 
         let error_message_invalid_template = match result_invalid_template {
             ProtocolError::General(msg) => msg,
-            _ => "Not correct path",
+            _ => "Incorrect path",
         };
         assert_eq!(
             error_message_invalid_template,
@@ -1332,7 +1332,7 @@ mod test {
 
         let error_message_invalid_length = match hash_value_from_fn {
             ProtocolError::General(msg) => msg,
-            _ => "Not correct path",
+            _ => "Incorrect path",
         };
         assert_eq!(
             error_message_invalid_length,
