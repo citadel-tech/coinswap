@@ -34,20 +34,22 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
         ((16102, None), MakerBehavior::Normal),
     ];
 
+    let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut taker, makers, directory_server_instance, block_generation_handle) =
+    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            TakerBehavior::Normal,
+            taker_behavior,
             ConnectionType::CLEARNET,
         );
 
     warn!("Running Test: Maker closes connection after receiving a ContractSigsForRecvrAndSender");
 
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
+    let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
-        &mut taker,
+        taker,
         &test_framework.bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
@@ -201,7 +203,7 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
 
     // After Swap checks:
     verify_swap_results(
-        &taker,
+        taker,
         &makers,
         org_taker_spend_balance,
         org_maker_spend_balances,
