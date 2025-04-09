@@ -27,6 +27,8 @@ pub enum TakerError {
     SendAmountNotSet,
     /// Error indicating a timeout while waiting for the funding transaction.
     FundingTxWaitTimeOut,
+    /// Error indicating a thread panicked
+    ThreadPanicked,
     /// Error deserializing data, typically related to CBOR-encoded data.
     Deserialize(String),
     /// Error indicating an MPSC channel failure.
