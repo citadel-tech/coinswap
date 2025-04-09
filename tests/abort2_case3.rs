@@ -42,7 +42,7 @@ fn maker_drops_after_sending_senders_sigs() {
         "Running Test: Maker 6102 Closes after sending sender's signature. This is really bad. Recovery is the only option."
     );
 
-    // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
+    // Fund the Taker with 3 utxos of 0.05 btc each and do basic checks on the balance
     let org_taker_spend_balance = fund_and_verify_taker(
         &mut taker,
         &test_framework.bitcoind,
@@ -109,7 +109,7 @@ fn maker_drops_after_sending_senders_sigs() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));

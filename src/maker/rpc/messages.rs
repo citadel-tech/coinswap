@@ -24,7 +24,7 @@ pub enum RpcMsgReq {
     ContractUtxo,
     /// Request to fetch UTXOs in the fidelity pool.
     FidelityUtxo,
-    /// Request to retreive the total wallet balances of different categories.
+    /// Request to retrieve the total wallet balances of different categories.
     Balances,
     /// Request for generating a new wallet address.
     NewAddress,
@@ -59,7 +59,7 @@ pub enum RpcMsgResp {
     Pong,
     /// Response containing all spendable UTXOs
     UtxoResp {
-        /// List of spndable UTXOs in the wallet.
+        /// List of spendable UTXOs in the wallet.
         utxos: Vec<ListUnspentResultEntry>,
     },
     /// Response containing UTXOs in the swap pool.
