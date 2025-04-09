@@ -48,7 +48,7 @@ This guide will help you prepare your system for participating in the Coinswap L
 
 4. **Setup Tor**
    
-   Coinswap requires Tor exclusively for all communication. You will need to have Tor running in your local to run the apps.
+   Coinswap requires Tor exclusively for all communication. You will need to have Tor running locally to run the apps.
    For Tor setup instructions follow the [Tor Doc](tor.md). 
    
    Use the below sample `torrc` config for quick setup.
@@ -103,7 +103,7 @@ cargo build --release
 
 After compilation you will get the binaries in the `./target/release` folder. 
 
-Install the necessary binaries in your system:
+Install the necessary binaries on your system:
 ```bash
 sudo install ./target/release/taker /usr/local/bin/
 sudo install ./target/release/makerd /usr/local/bin/  

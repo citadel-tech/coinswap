@@ -176,7 +176,7 @@ This will return a list of block hashes in hex format, corresponding to the 101 
 We can now check the balance in `alice`'s wallet:
 
 ```bash
-$ bitcoin-cli -rpcwallet=alice getbalance
+$ bitcoin-cli -rpcwallet=alice getbalances
 ```
 
 This will show a balance corresponding to the block rewards for the generated blocks:
