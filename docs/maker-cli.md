@@ -32,12 +32,13 @@ This will display a detailed guide about the app and its capabilities.
 ```bash
 coinswap 0.1.0
 Developers at Citadel-Tech
-A simple command-line app to operate the makerd server.
+A simple command line app to operate the makerd server.
 
-The app works as an RPC client for makerd, useful to access the server, retrieve information, and
+The app works as a RPC client for makerd, useful to access the server, retrieve information, and
 manage server operations.
 
-For more detailed usage information, please refer: [maker demo doc link]
+For more detailed usage information, please refer:
+https://github.com/citadel-tech/coinswap/blob/master/docs/makerd.md
 
 This is early beta, and there are known and unknown bugs. Please report issues at:
 https://github.com/citadel-tech/coinswap/issues
@@ -50,7 +51,7 @@ OPTIONS:
             Print help information
 
     -p, --rpc-port <RPC_PORT>
-            Set the RPC port for `makerd`
+            Sets the rpc-port of Makerd
             
             [default: 127.0.0.1:6103]
 
@@ -58,21 +59,39 @@ OPTIONS:
             Print version information
 
 SUBCOMMANDS:
-    get-balances              Retrieve the total wallet balances of different categories (sats)
-    get-new-address           Generate a new Bitcoin receiving address
-    list-utxo                 List all UTXOs in the wallet, including fidelity bonds
-    list-utxo-contract        List HTLC contract UTXOs
-    list-utxo-fidelity        List fidelity bond UTXOs
-    list-utxo-swap            List UTXOs from incoming swaps
-    redeem-fidelity           Redeem fidelity bonds if their timelock has matured
-    send-ping                 Ping `makerd` and receive a pong response
-    send-to-address           Send Bitcoin to an external address
-    show-data-dir             Display the data directory path
-    show-fidelity             Show current and previous fidelity bonds
-    show-tor-address          Display the server’s Tor address
-    stop                      Shut down the `makerd` server
-    sync-wallet               Synchronize the wallet with the blockchain
-
+    get-balances
+            Get total wallet balances of different categories. regular: All single signature regular
+            wallet coins (seed balance). swap: All 2of2 multisig coins received in swaps. contract:
+            All live contract transaction balance locked in timelocks. If you see value in this
+            field, you have unfinished or malfinished swaps. You can claim them back with recover
+            command. fidelity: All coins locked in fidelity bonds. spendable: Spendable amount in
+            wallet (regular + swap balance)
+    get-new-address
+            Gets a new bitcoin receiving address
+    help
+            Print this message or the help of the given subcommand(s)
+    list-utxo
+            Lists all utxos in the wallet. Including fidelity bonds
+    list-utxo-contract
+            Lists HTLC contract utxos
+    list-utxo-fidelity
+            Lists fidelity bond utxos
+    list-utxo-swap
+            Lists utxos received from incoming swaps
+    send-ping
+            Sends a ping to makerd. Will return a pong
+    send-to-address
+            Send Bitcoin to an external address and returns the txid
+    show-data-dir
+            Show the data directory path
+    show-fidelity
+            Show all the fidelity bonds, current and previous, with an (index, {bond_proof,is_spent}) tupple
+    show-tor-address
+            Show the server tor address
+    stop
+            Shutdown the makerd server
+    sync-wallet
+            Sync the maker wallet with current blockchain state
 ```
 
 ### Key Points About the `rpc-port` Argument
@@ -238,7 +257,7 @@ For more details about fidelity bonds, refer to the [Fidelity Bond Documentation
 Next, we’ll explore other UTXOs and balances in Coinswap.
 
 
-### Other utxos and thier balance:
+### Other utxos and their balance:
  #### Swap utxos:
 
  ```bash 
@@ -270,7 +289,7 @@ $ ./maker-cli  list-utxo-contract
 []
 ```
 
-As mentioned above -> we have not paritcipated in any coinswap till now, thus have no unsuccessfull coinswap currently -> thus we have no `contract utxos` and have no balance in this category as shown:
+As mentioned above: We haven't participated in any coinswap transactions yet, so we don't have any unsuccessful coinswaps. Therefore, we have no `contract utxos` and no balance in this category, as shown:
 
 ```bash
 $  ./maker-cli  get-balances
@@ -286,9 +305,9 @@ $  ./maker-cli  get-balances
 
 
 >[!IMPORTANT]
-> we have to manually figure utxos and their balances by using  `list-utxo` and `get-balances` command respectively.
-> where `list-utxo` returns all the utxos present in the maker wallet including the `fidleity utxos` also.
-> and `get-balances` returns the total wallet balances of different categories which includes balance of normal utxos, swap utxos, contract utxos, fidelitly utxos and spendable utxos (normal + swap utxos).
+> We need to manually check UTXOs and their balances using the `list-utxo` and `get-balances` commands respectively.
+> The `list-utxo` command returns all UTXOs present in the maker wallet, including the fidelity UTXOs.
+> The `get-balances` command returns the total wallet balances of different categories, including normal UTXOs, swap UTXOs, contract UTXOs, fidelity UTXOs, and spendable UTXOs (normal + swap UTXOs).
 
 Let's find them out: 
 
@@ -571,7 +590,7 @@ $ ./maker-cli get-balances
 ```
 
 ---
-### *Rredeem Fidelity**:
+### **Redeem Fidelity**:
 [TODO]
 
 ### **Shutting Down Maker Server**:
@@ -602,6 +621,6 @@ Once you run this command, the maker server initiates a shutdown, and we’ll se
 
 ---
 
-And that's it! Now you are ready to be a maker in the coinswap network. Start your maker servers, perform coinswaps, and enjoy earning fees from takers who participate in coinswaps with you.
+And that's it! Now you are ready to be a maker in the Coinswap network. Start your maker servers, perform coinswaps, and enjoy earning fees from takers who participate in coinswaps with you.
 
 

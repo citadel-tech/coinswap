@@ -43,7 +43,9 @@ USAGE:
 
 OPTIONS:
     -a, --USER:PASSWORD <USER:PASSWORD>
-            Bitcoin Core RPC authentication string. Ex: username:password [default: user:password]
+            Bitcoin Core RPC authentication string. Ex: username:password
+            
+            [default: user:password]
 
     -d, --data-directory <DATA_DIRECTORY>
             Optional data directory. Default value : "~/.coinswap/taker"
@@ -52,11 +54,18 @@ OPTIONS:
             Print help information
 
     -r, --ADDRESS:PORT <ADDRESS:PORT>
-            Bitcoin Core RPC address:port value [default: 127.0.0.1:18443]
+            Bitcoin Core RPC address:port value
+            
+            [default: 127.0.0.1:48332]
+
+    -t, --tor-auth <TOR_AUTH>
+            [default: ]
 
     -v, --verbosity <VERBOSITY>
-            Sets the verbosity level of debug.log file [default: info] [possible values: off, error,
-            warn, info, debug, trace]
+            Sets the verbosity level of debug.log file
+            
+            [default: info]
+            [possible values: off, error, warn, info, debug, trace]
 
     -V, --version
             Print version information
@@ -66,15 +75,33 @@ OPTIONS:
             wallet. Default: taker-wallet
 
 SUBCOMMANDS:
-    do-coinswap             Initiate the coinswap process
-    fetch-offers            Update the offerbook with current market offers and display them
-    get-balances            Retrieve the total wallet balances of different categories (sats)
-    get-new-address         Returns a new address
-    help                    Print this message or the help of the given subcommand(s)
-    list-utxo               Lists all currently spendable utxos
-    list-utxo-contract      Lists all HTLC utxos (if any)
-    list-utxo-swap          Lists all utxos received in incoming swaps
-    send-to-address         Send to an external wallet address
+    coinswap
+            Initiate the coinswap process
+    fetch-offers
+            Update the offerbook with current market offers and display them
+    get-balances
+            Get total wallet balances of different categories. regular: All single signature regular
+            wallet coins (seed balance). swap: All 2of2 multisig coins received in swaps. contract:
+            All live contract transaction balance locked in timelocks. If you see value in this
+            field, you have unfinished or malfinished swaps. You can claim them back with recover
+            command. spendable: Spendable amount in wallet (regular + swap balance)
+    get-new-address
+            Returns a new address
+    help
+            Print this message or the help of the given subcommand(s)
+    list-utxo
+            Lists all utxos we know about along with their spend info. This is useful for debugging
+    list-utxo-contract
+            Lists all utxos that we need to claim via timelock. If you see entries in this list, do
+            a `taker recover` to claim them
+    list-utxo-regular
+            List all signle signature wallet Utxos. These are all non-swap regular wallet utxos
+    list-utxo-swap
+            Lists all utxos received in incoming swaps
+    recover
+            Recover from all failed swaps
+    send-to-address
+            Send to an external wallet address
 ```
 
 In order to do a coinswap, we first need to get some coins in our wallet. Let's generate a new address and send some coins to it.

@@ -117,27 +117,30 @@ USAGE:
     makerd [OPTIONS]
 
 OPTIONS:
-    -a, --USER:PASSWD <USER:PASSWD>
+    -a, --USER:PASSWORD <USER:PASSWORD>
             Bitcoin Core RPC authentication string (username, password)
-
+            
             [default: user:password]
 
     -d, --data-directory <DATA_DIRECTORY>
-            Optional DNS data directory. Default value: "~/.coinswap/maker"
+            Optional DNS data directory. Default value : "~/.coinswap/maker"
 
     -h, --help
             Print help information
 
     -r, --ADDRESS:PORT <ADDRESS:PORT>
-            Bitcoin Core RPC network address
+            Bitcoin Core  RPC network address
+            
+            [default: 127.0.0.1:48332]
 
-            [default: 127.0.0.1:18443]
+    -t, --tor-auth <TOR_AUTH>
+            [default: ]
 
     -V, --version
             Print version information
 
     -w, --WALLET <WALLET>
-            Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with the given name. Default: maker-wallet
+            Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with given name. Default: maker-wallet
 ```
 
 This will give you detailed information about the options and arguments available for `Makerd`.
