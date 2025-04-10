@@ -1,97 +1,105 @@
 # Taker Tutorial
 
-The taker is the party that initiates the coinswap. It queries the directory server for a list of makers, requests offers from them and selects suitable makers for the swap. It then conducts the swap with the selected makers.
+The **Taker** is the party that initiates a CoinSwap. It connects to the Directory Server, fetches available Maker offers, selects suitable ones, and coordinates the swap.
 
-In this tutorial, we will guide you through the process of setting up and running the taker, and conducting a coinswap.
+This guide walks you through setting up and using the Taker CLI to perform a CoinSwap on **testnet4**.
 
-## Setup
+---
 
+## Prerequisites
 
-## Taker CLI
+Before starting, ensure:
 
-The taker CLI is an application that allows you to perform coinswaps as a taker.
+- You have **bitcoind** running with RPC enabled on `testnet4`.
+- You have some **testnet4 coins** (via faucet).
+- Tor is set up (for `.onion` access to Directory Server).
 
-### Start Bitcoin Core (Pre-requisite)
+>  All components are designed to run on **testnet4**. The Taker will not function properly on other networks without custom DNS coordination.
 
-`Taker` requires a **Bitcoin Core** RPC connection running on **testnet4** for its operation. To get started, you need to start `bitcoind`:
+---
 
-> **Important:**  
-> All apps are designed to run on **testnet4** for testing purposes. The DNS server that Taker connects to will also be on testnet4. While you can run these apps on other networks, there won't be any DNS available, so Taker won’t be able to connect to the DNS server fir getting maker's offers and can't do coinswap with makers.
-
-To start `bitcoind`:
+## Start Bitcoin Core
 
 ```bash
-$ bitcoind
+bitcoind -testnet -daemon
 ```
 
-**Note:** If you don’t have `bitcoind` installed or need help setting it up, refer to the [bitcoind demo documentation](./bitcoind.md).
+Check it’s running:
 
+```bash
+bitcoin-cli -testnet getblockchaininfo
+```
 
-### Usage
+If `bitcoind` isn't installed, refer to the [bitcoind demo](./bitcoind.md).
 
-Run the `taker` command to see the list of available commands and options.
+---
 
-```sh
-$ ./taker --help
+## Running Taker CLI
 
-coinswap 0.1.0
-Developers at Citadel-Tech
-A simple command line app to operate as coinswap client
+To view all commands:
+
+```bash
+./taker --help
+```
+
+Example:
+
+```bash
+taker 0.1.0
+A command-line client for initiating CoinSwaps
 
 USAGE:
     taker [OPTIONS] <SUBCOMMAND>
 
 OPTIONS:
-    -a, --USER:PASSWORD <USER:PASSWORD>
-            Bitcoin Core RPC authentication string. Ex: username:password [default: user:password]
-
-    -d, --data-directory <DATA_DIRECTORY>
-            Optional data directory. Default value : "~/.coinswap/taker"
-
-    -h, --help
-            Print help information
-
-    -r, --ADDRESS:PORT <ADDRESS:PORT>
-            Bitcoin Core RPC address:port value [default: 127.0.0.1:18443]
-
-    -v, --verbosity <VERBOSITY>
-            Sets the verbosity level of debug.log file [default: info] [possible values: off, error,
-            warn, info, debug, trace]
-
-    -V, --version
-            Print version information
-
-    -w, --WALLET <WALLET>
-            Sets the taker wallet's name. If the wallet file already exists, it will load that
-            wallet. Default: taker-wallet
+    -a, --USER:PASSWORD     Bitcoin RPC auth (e.g., user:pass)
+    -r, --ADDRESS:PORT      RPC address (default: 127.0.0.1:18443)
+    -d, --data-directory    Custom data dir (default: ~/.coinswap/taker)
+    -w, --WALLET            Wallet name (default: taker-wallet)
+    -v, --verbosity         Log level (default: info)
+    -V, --version           Show version
+    -h, --help              Show help
 
 SUBCOMMANDS:
-    do-coinswap             Initiate the coinswap process
-    fetch-offers            Update the offerbook with current market offers and display them
-    get-balances            Retrieve the total wallet balances of different categories (sats)
-    get-new-address         Returns a new address
-    help                    Print this message or the help of the given subcommand(s)
-    list-utxo               Lists all currently spendable utxos
-    list-utxo-contract      Lists all HTLC utxos (if any)
-    list-utxo-swap          Lists all utxos received in incoming swaps
-    send-to-address         Send to an external wallet address
+    get-new-address         Generates a new receiving address
+    get-balances            Shows wallet balances
+    list-utxo               Shows spendable UTXOs
+    list-utxo-contract      Shows contract UTXOs (HTLC)
+    list-utxo-swap          Shows UTXOs from swaps
+    fetch-offers            Sync and display current Maker offers
+    do-coinswap             Initiates a CoinSwap
+    send-to-address         Sends funds to another address
 ```
 
-In order to do a coinswap, we first need to get some coins in our wallet. Let's generate a new address and send some coins to it.
+---
 
-```sh
-$ taker -r 127.0.0.1:38332 -a user:pass get-new-address
+## Step-by-Step Demo
 
+### 1. Get a New Address
+
+```bash
+./taker -r 127.0.0.1:38332 -a user:pass get-new-address
+```
+
+Example output:
+
+```
 bcrt1qyywgd4we5y7u05lnrgs8runc3j7sspwqhekrdd
 ```
 
-Now we can use a testnet4 faucet to send some coins to this address. You can find a testnet4 faucet [here](https://mempool.space/testnet4/faucet).
+### 2. Fund Your Wallet
 
-Once you have some coins in your wallet, you can check your balance by running the following command:
+Send coins from a testnet4 faucet: [https://mempool.space/testnet4/faucet](https://mempool.space/testnet4/faucet)
 
-```sh
-$ taker -r 127.0.0.1:38332 -a user:pass get-balances
+### 3. Check Balances
 
+```bash
+./taker -r 127.0.0.1:38332 -a user:pass get-balances
+```
+
+Example output:
+
+```json
 {
     "regular": 10000000,
     "swap": 0,
@@ -100,32 +108,41 @@ $ taker -r 127.0.0.1:38332 -a user:pass get-balances
 }
 ```
 
-Now we are ready to initate a coinswap. We are first going to sync the offer book to get a list of available makers.
+### 4. Fetch Available Offers
 
-```sh
-$ taker -r 127.0.0.1:38332 -a user:pass fetch-offers
+```bash
+./taker -r 127.0.0.1:38332 -a user:pass fetch-offers
 ```
 
-This will fetch the list of available makers from the directory server. Now we can initiate a coinswap with the makers.
+This updates the offer book from the Directory Server.
 
-```sh
-$ taker -r 127.0.0.1:38332 -a user:pass coinswap
+### 5. Start a CoinSwap
+
+```bash
+./taker -r 127.0.0.1:38332 -a user:pass do-coinswap
 ```
 
-This will initiate a coinswap with the default parameters. This will take some time. You can check swap progress at the log file in data diectory. In an new terminal do `tail -f <datadir>/debug.log`.
+This starts a CoinSwap using fetched maker offers. Follow the terminal prompts.
 
-## Data, Config and Wallets
+To monitor progress:
 
-The taker stores all its data in a data directory. By default, the data directory is located at `$HOME/.coinswap/taker`. You can change the data directory by passing the `--data-directory` option to the `taker` command.
+```bash
+tail -f ~/.coinswap/taker/debug.log
+```
 
-The data directory contains the following files:
+---
 
-1. `config.toml` - The configuration file for the taker.
-2. `debug.log` - The log file for the taker.
-3. `wallets` directory - Contains the wallet files for the taker.
+## Data, Config, and Wallets
 
+By default, Taker saves everything to `~/.coinswap/taker`. You can override with `--data-directory`.
 
-**Default Taker Configuration (`~/.coinswap/taker/config.toml`):**
+### Folder Structure:
+
+- `config.toml`: Taker configuration
+- `debug.log`: Logs
+- `wallets/`: Wallet storage
+
+### Example `config.toml`
 
 ```toml
 control_port = 9051
@@ -133,16 +150,18 @@ socks_port = 9050
 tor_auth_password = ""
 directory_server_address = "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080"
 connection_type = "TOR"
-
 ```
- 
-- `control_port`: The Tor Control Port. Check the [tor doc](tor.md) for more details.
-- `socks_port`: The Tor Socks Port.  Check the [tor doc](tor.md) for more details.
-- `tor_auth_password`: Optional password for Tor control authentication; empty by default.
-- `directory_server_address`: Address of the Directory Server (an onion address in production) for discovering Maker nodes.
-- `connection_type`:- The connection type to use for the directory server. Possible values are `CLEARNET` and `TOR`.
+
+#### Fields:
+
+- **control_port**: Tor Control Port (see [tor.md](./tor.md))
+- **socks_port**: Tor SOCKS Port
+- **tor_auth_password**: Optional password for Tor auth
+- **directory_server_address**: Onion address of Directory Server
+- **connection_type**: `TOR` or `CLEARNET`
 
 ---
-### Wallets
 
-The taker uses wallet files to store the wallet data. The wallet files are stored in the `wallets` directory. These wallet files should be safely backed up as they contain the private keys to the wallet.
+## Backup Notice
+
+Taker wallet files are stored in `wallets/`. These contain your **private keys** — make sure to back them up securely.
