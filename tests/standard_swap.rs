@@ -95,7 +95,6 @@ fn test_standard_coinswap() {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
         tx_count: 3,
-        required_confirms: 1,
     };
     taker.do_coinswap(swap_params).unwrap();
 
