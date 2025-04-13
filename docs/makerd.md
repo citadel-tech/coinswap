@@ -1,6 +1,6 @@
 # Maker Overview
 
-The **Maker** provides liquidity for a coin swap initiated by a **Taker**. In return, the Maker earns fees for facilitating the swap.
+The **Maker** is the party that provides liquidity for a coin swap initiated by a **Taker**. In return, the Maker earns a fee for facilitating the swap.
 
 This component consists of two key tools:
 
@@ -13,7 +13,7 @@ The `makerd` daemon handles:
 - Fidelity bond processing
 - Taker coordination
 
->  **Warning:**  
+> **Warning:**  
 > Maker private keys reside in a hot wallet managed by `makerd`. Ensure the server is secure and access-controlled.
 
 ---
@@ -50,7 +50,7 @@ directory_server_address = ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz6
 - `connection_type`: Network type (currently hardcoded to `TOR`)
 - `directory_server_address`: DNS server address
 
->  **Note:**  
+> **Note:**  
 > Coinswap currently supports only the **TOR** network. `CLEARNET` is not supported in production.
 
 ---
@@ -151,7 +151,7 @@ $ ./makerd --USER:PASSWD user:password --ADDRESS:PORT 127.0.0.1:18443
   INFO - Fidelity value = 0.0005 BTC, Fee = 1000 sats
   ```
 
->  Fee is currently hardcoded. Will be improved in v0.1.1.
+> Fee is currently hardcoded. Will be improved in v0.1.1.
 
 ---
 
@@ -196,7 +196,7 @@ INFO - Spawning RPC server (bound at 127.0.0.1:6103)
 
 ---
 
-##  Setup Complete
+## Setup Complete
 
 ```bash
 INFO - Server Setup completed!! Use maker-cli to operate the server and wallet.
@@ -204,4 +204,4 @@ INFO - Server Setup completed!! Use maker-cli to operate the server and wallet.
 
 You can now operate your Maker via the `maker-cli` tool.
 
->  Continue to the [maker-cli demo](./maker-cli.md) for wallet management, swap inspection, and other commands.
+> Continue to the [maker-cli demo](./maker-cli.md) for wallet management, swap inspection, and other commands.

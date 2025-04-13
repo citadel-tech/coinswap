@@ -1,13 +1,19 @@
-#  `maker-cli` Demo
+# `maker-cli` Demo
 
-###  Create Maker Wallet and Sync
+`maker-cli` is a straightforward command-line tool designed as an RPC client for `makerd`. It allows you to connect to the server, retrieve vital information, and manage various server operations efficiently.
+
+---
+
+##  1. Create Maker Wallet and Sync
+
+Use the following command to create a new wallet named `maker`. This generates a BIP84 descriptor wallet for the Signet test network.
 
 ```bash
 maker-cli wallet --name maker
 ```
 
 <details>
-<summary> Output</summary>
+<summary> Sample Output</summary>
 
 ```json
 {
@@ -21,26 +27,32 @@ maker-cli wallet --name maker
 
 </details>
 
+After wallet creation, sync it with the blockchain to see your current UTXOs and balances:
+
 ```bash
 maker-cli sync
 ```
 
 ---
 
-###  Fund Maker Wallet via Faucet
+##  2. Fund the Maker Wallet (via Faucet)
+
+Get a receiving address for your wallet:
 
 ```bash
 maker-cli address
 ```
 
-Then visit: [https://signetfaucet.com](https://signetfaucet.com) and paste the generated address to get some Signet coins.
+Copy the address and go to the [Signet Faucet](https://signetfaucet.com) to receive testnet BTC.
+
+After receiving coins, check your balance:
 
 ```bash
 maker-cli balance
 ```
 
 <details>
-<summary> Output</summary>
+<summary> Sample Output</summary>
 
 ```json
 {
@@ -56,7 +68,9 @@ maker-cli balance
 
 ---
 
-###  Create a New Offer (Maker Contract)
+##  3. Create a New Offer
+
+Use the `create-offer` command to initiate a new coinswap offer. You specify how much BTC you're offering (maker amount), how much you expect from the taker (taker amount), and a lock time (in blocks) for the contract.
 
 ```bash
 maker-cli create-offer \
@@ -66,7 +80,7 @@ maker-cli create-offer \
 ```
 
 <details>
-<summary> Output</summary>
+<summary> Sample Output</summary>
 
 ```json
 {
@@ -76,16 +90,20 @@ maker-cli create-offer \
 
 </details>
 
+This command will create and lock funds into a new offer contract.
+
 ---
 
-###  Check Status of All Offers
+##  4. Check the Status of Offers
+
+To see all active offers and their current state:
 
 ```bash
 maker-cli status
 ```
 
 <details>
-<summary> Output</summary>
+<summary> Sample Output</summary>
 
 ```json
 [
@@ -100,14 +118,16 @@ maker-cli status
 
 ---
 
-###  View Offer Details
+##  5. View Specific Offer Details
+
+To get more info about a particular offer, run:
 
 ```bash
 maker-cli offer --offer-id 48b42aef-46aa-46ae-afe0-02302d5f52d1
 ```
 
 <details>
-<summary> Output</summary>
+<summary> Sample Output</summary>
 
 ```json
 {
@@ -123,14 +143,16 @@ maker-cli offer --offer-id 48b42aef-46aa-46ae-afe0-02302d5f52d1
 
 ---
 
-###  Balance After Funding the Offer
+##  6. Check Updated Balance After Offer Lock
+
+Since the maker funds are locked in the offer, your spendable balance will reduce:
 
 ```bash
 maker-cli balance
 ```
 
 <details>
-<summary> Output</summary>
+<summary> Sample Output</summary>
 
 ```json
 {
@@ -143,5 +165,19 @@ maker-cli balance
 ```
 
 </details>
+
+---
+
+##  Summary
+
+| Step                | Command                         |
+|---------------------|----------------------------------|
+| Create Wallet       | `maker-cli wallet --name maker` |
+| Sync Blockchain     | `maker-cli sync`                |
+| Get Address         | `maker-cli address`             |
+| Check Balance       | `maker-cli balance`             |
+| Create Offer        | `maker-cli create-offer`        |
+| Check Offer Status  | `maker-cli status`              |
+| View Offer Details  | `maker-cli offer --offer-id`    |
 
 ---

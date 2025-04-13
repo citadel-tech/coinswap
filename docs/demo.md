@@ -1,79 +1,72 @@
-# Coinswap Live Demo – Prerequisites & Setup
+# Coinswap Live Demo – Updated Prerequisites and Setup Guide
 
-This guide helps you prepare your system to participate in the Coinswap Live Demo. Follow the steps below to ensure a smooth setup.
-
----
-
-##  System Prerequisites
-
-### 1. Install Required Software
-
-####  Rust & Cargo
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-Verify:
-```bash
-rustc --version
-cargo --version
-```
+This guide will help you prepare your system for participating in the Coinswap Live Demo. Follow these steps carefully to ensure a smooth experience during the demonstration.
 
 ---
 
-####  Bitcoin Core
-```bash
-# Download Bitcoin Core 28.1
-wget https://bitcoincore.org/bin/bitcoin-core-28.1/bitcoin-28.1-x86_64-linux-gnu.tar.gz
+##  System Requirements
 
-# Download and verify signatures
-wget https://bitcoincore.org/bin/bitcoin-core-28.1/SHA256SUMS
-wget https://bitcoincore.org/bin/bitcoin-core-28.1/SHA256SUMS.asc
+### Required Software
 
-# Verify the binary
-sha256sum --check SHA256SUMS --ignore-missing
+1. **Rust and Cargo**
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   source $HOME/.cargo/env
+   ```
 
-# Extract and install
-tar xzf bitcoin-28.1-x86_64-linux-gnu.tar.gz
-sudo install -m 0755 -o root -g root -t /usr/local/bin bitcoin-28.1/bin/*
-```
+   Verify installation:
+   ```bash
+   rustc --version
+   cargo --version
+   ```
 
-Verify:
-```bash
-bitcoind --version
-```
+2. **Bitcoin Core (v28.1)**
+   ```bash
+   wget https://bitcoincore.org/bin/bitcoin-core-28.1/bitcoin-28.1-x86_64-linux-gnu.tar.gz
+   wget https://bitcoincore.org/bin/bitcoin-core-28.1/SHA256SUMS
+   wget https://bitcoincore.org/bin/bitcoin-core-28.1/SHA256SUMS.asc
+   sha256sum --check SHA256SUMS --ignore-missing
 
----
+   tar xzf bitcoin-28.1-x86_64-linux-gnu.tar.gz
+   sudo install -m 0755 -o root -g root -t /usr/local/bin bitcoin-28.1/bin/*
+   ```
 
-####  Build Dependencies
-```bash
-sudo apt-get update
-sudo apt install build-essential automake libtool
-```
+   Verify:
+   ```bash
+   bitcoind --version
+   ```
 
----
+3. **Build Dependencies**
+   ```bash
+   sudo apt update
+   sudo apt install -y build-essential automake libtool pkg-config
+   ```
 
-####  Setup Tor
-Tor is required for all Coinswap communication.
+4. **Tor (for anonymity & networking)**
 
-- See [Tor Setup Guide](tor.md).
-- Sample `torrc`:
-```ini
-ControlPort 9051
-CookieAuthentication 0
-SOCKSPort 9050
-```
+   Coinswap uses Tor for all communications.
+
+   **Quick `torrc` config** (usually at `/etc/tor/torrc` or `~/.tor/torrc`):
+   ```conf
+   ControlPort 9051
+   CookieAuthentication 0
+   SOCKSPort 9050
+   ```
+
+   For complete setup, refer to [tor.md](./tor.md)
 
 ---
 
 ##  Bitcoin Core Setup
 
-### 1. Create Configuration File
+### Step 1: Configuration File
 ```bash
 mkdir -p ~/.bitcoin
+nano ~/.bitcoin/bitcoin.conf
 ```
 
-Add to `~/.bitcoin/bitcoin.conf`:
-```ini
+Paste:
+```conf
 regtest=1
 
 [regtest]
@@ -86,23 +79,21 @@ blockfilterindex=1
 addnode=172.81.178.3:18444
 ```
 
-> ℹ️ Change `regtest=1` to `testnet4=1` to run on testnet.
+> To run on testnet4, change `regtest=1` to `testnet4=1`.
 
----
-
-### 2. Start Bitcoin Core
+### Step 2: Start the Bitcoin Node
 ```bash
 bitcoind
 ```
 
-Wait for IBD (Initial Block Download). Verify:
+Check sync status:
 ```bash
 bitcoin-cli getblockchaininfo
 ```
 
 ---
 
-##  Compile the Coinswap Apps
+##  Compile Coinswap Apps
 
 ```bash
 git clone https://github.com/citadel-tech/coinswap.git
@@ -110,7 +101,7 @@ cd coinswap
 cargo build --release
 ```
 
-After build, install binaries:
+Install binaries:
 ```bash
 sudo install ./target/release/taker /usr/local/bin/
 sudo install ./target/release/makerd /usr/local/bin/
@@ -119,81 +110,98 @@ sudo install ./target/release/maker-cli /usr/local/bin/
 
 ---
 
-##  Run the Swap Server
+##  Running the Maker Server
 
-`makerd` runs the server. `maker-cli` controls it.
+The server consists of two apps: `makerd` (daemon) and `maker-cli` (RPC client).
 
-### Start `makerd`
+Start daemon:
 ```bash
 makerd
 ```
 
-Follow logs. You'll be asked to send BTC to a generated address (min: **20,000 sats**).
+Once logs appear, you’ll see instructions for funding and setting up a fidelity bond.
 
-Use [mempool.space Testnet4 faucet](https://mempool.space/testnet4/faucet) or another to fund.
+###  Fund the Maker
+- Wait for `makerd` to show a funding address.
+- Use [mempool.space testnet4 faucet](https://mempool.space/testnet4/faucet) to send **≥ 20,000 sats**.
 
-Once funded and confirmed, the server will:
+Maker will:
+- Auto-create a fidelity bond
+- Wait for confirmation
+- Publish offers to the DNS
+- Start accepting swaps
 
-- Create a fidelity bond
-- Broadcast offers to the DNS server
-- Listen for swaps
-
-### Use `maker-cli`
+###  Use `maker-cli`
+Try:
 ```bash
-maker-cli --help
 maker-cli get-balances
 maker-cli list-utxo
+maker-cli get-offers
 ```
 
->  Wallet & data at: `~/.coinswap/maker/`. Backup `wallets/maker-wallet`.
+> **Note**: All data is stored at `~/.coinswap/maker/`. Back up the wallet:
+```bash
+cp ~/.coinswap/maker/wallets/maker-wallet ./maker-wallet.backup
+```
 
 ---
 
-##  Run the Swap Client
+##  Run the Taker Client
 
-Run from a separate terminal with the `taker` app.
+From a separate terminal:
 
-### 1. Get an Address & Fund It
+### Step 1: Get a Receiving Address
 ```bash
 taker get-new-address
 ```
 
-Fund via a faucet, then:
+Fund it using the testnet4 faucet.
+
+### Step 2: Check Balance
 ```bash
 taker get-balances
 ```
 
-### 2. Fetch Offers
+### Step 3: Fetch Market Offers
 ```bash
 taker fetch-offers
 ```
 
-### 3. Attempt Coinswap
+### Step 4: Perform a Coinswap
 ```bash
 taker coinswap
 ```
 
+You’ll see the swap progress in logs.
+
 ---
 
-##  Troubleshooting
+##  Troubleshooting Tips
 
 ### Bitcoin Core
-- Is it running? → `bitcoin-cli getblockchaininfo`
-- Are RPC credentials matching?
-- Are you on the right network?
+- `bitcoin-cli getblockchaininfo`
+- Match `rpcuser/password` in `bitcoin.conf`
+- Ensure correct network (regtest/testnet4)
 
-### Maker Server
-- Check `debug.log`
-- Was fidelity bond created?
-- Are funds sufficient?
-- Is Tor connected?
+### Maker Issues
+- Check logs: `~/.coinswap/maker/debug.log`
+- Confirm fidelity bond creation
+- Ensure funding address has ≥ 20,000 sats
+- Verify Tor is running
 
-### Taker Client
-- Is the wallet funded?
-- Check logs and network status
+### Taker Issues
+- Ensure wallet is funded
+- Watch logs: `~/.coinswap/taker/debug.log`
+- Confirm network connectivity
 
-### Still stuck?
-Join our [Discord](https://discord.gg/gs5R6pmAbR) for support.
+---
+
+##  Need Help?
+
+Still stuck?
+
+- Join the [Discord Support Server](https://discord.gg/gs5R6pmAbR)
+- Tag developers or ask in #coinswap-support
 
 ---
 
@@ -201,12 +209,11 @@ Join our [Discord](https://discord.gg/gs5R6pmAbR) for support.
 
 - [Bitcoin Core Docs](https://bitcoin.org/en/developer-reference)
 - [Coinswap Protocol Spec](https://github.com/citadel-tech/Coinswap-Protocol-Specification)
-- [Project Repo](https://github.com/citadel-tech/coinswap)
+- [Coinswap GitHub Repo](https://github.com/citadel-tech/coinswap)
 
-### Related Guides:
+Component Guides:
 - [Bitcoin Core Setup](./bitcoind.md)
-- [Maker Server Guide](./makerd.md)
-- [Maker CLI Reference](./maker-cli.md)
-- [Taker Client Guide](./taker.md)
-
----
+- [Maker Server](./makerd.md)
+- [Maker CLI](./maker-cli.md)
+- [Taker Client](./taker.md)
+- [Tor Setup](./tor.md)
