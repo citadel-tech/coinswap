@@ -18,7 +18,7 @@ This guide will help you prepare your system for participating in the Coinswap L
 
 2. **Bitcoin Core**
    ```bash
-   # Download Bitcoin Core 28.1
+   # Download Bitcoin Core 28.1(Or whatever is the newest version at this point)
    wget https://bitcoincore.org/bin/bitcoin-core-28.1/bitcoin-28.1-x86_64-linux-gnu.tar.gz
    
    # Download and verify signatures
@@ -126,7 +126,7 @@ makerd
 
 This will spawn the maker server and you will start seeing the logs. The server is operated with the `maker-cli` app. Follow the log, and it will show you the next instructions.
 
-To successfully set up the swap server, it needs to have a fidelity bond and enough balance (minimum 20,000 sats) to start providing swap services.
+To successfully set up the swap server, it needs to have a fidelity bond and enough balance (minimum 50,000 sats+ + 1,000 sats for tx fee) to start providing swap services.
 
 In the log you will see the server is asking for some BTC at a given address. Fund that address with the given minimum amount or more. We recommend using the [mempool.space Testnet4 faucet](https://mempool.space/testnet4/faucet), but you can use any other faucet of your choice.
 

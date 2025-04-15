@@ -15,7 +15,7 @@ The `maker-cli` is a command-line application that allows you to operate and man
 
 Maker stores all its data in a directory located by default at `$HOME/.coinswap/maker`. This directory contains the following important files:
 
-**Default Maker Configuration (`~/.coinswap/maker/config.toml`):**
+### **1. Default Maker Configuration (`~/.coinswap/maker/config.toml`):**
 
 ```toml
 network_port = 6102
@@ -123,13 +123,13 @@ OPTIONS:
             [default: user:password]
 
     -d, --data-directory <DATA_DIRECTORY>
-            Optional DNS data directory. Default value : "~/.coinswap/maker"
+            Optional DNS data directory. Default value:"~/.coinswap/maker"
 
     -h, --help
             Print help information
 
     -r, --ADDRESS:PORT <ADDRESS:PORT>
-            Bitcoin Core  RPC network address
+            Bitcoin Core RPC network address
             
             [default: 127.0.0.1:48332]
 
@@ -150,10 +150,10 @@ This will give you detailed information about the options and arguments availabl
 To start `makerd`, run the following command:
 
 ```bash
-./makerd --USER:PASSWD <username>:<password> --ADDRESS:PORT 127.0.0.1:<bitcoind rpc port>
+./makerd --USER:PASSWORD <USER:PASSWORD> --ADDRESS:PORT 127.0.0.1:<bitcoind rpc port>
 ```
 
-This will launch `makerd` and connect it to the Bitcoin RPC core running on it's rpc port, using the default data directory for `maker` located at `$HOME/.coinswap/maker`.
+This will launch `makerd` and connect it to the Bitcoin RPC core running on its rpc port, using the default data directory for `maker` located at `$HOME/.coinswap/maker`.
 
 
 **What happens next:**
@@ -164,7 +164,7 @@ This will launch `makerd` and connect it to the Bitcoin RPC core running on it's
   INFO coinswap::wallet::api - Backup the Wallet Mnemonics.
   ["harvest", "trust", "catalog", "degree", "oxygen", "business", "crawl", "enemy", "hamster", "music", "this", "idle"]
   
-  INFO coinswap::maker::api - New Wallet created at: "$HOME/.coinswap/maker/wallets/maker-wallet"
+  INFO coinswap::maker::api - New Wallet created at: "$HOME/.coinswap/maker/wallets/maker-wallet".
   ```
 
 - If no `config` file exists, `makerd` will create a default `config.toml` file at `$HOME/.coinswap/maker/config.toml`.
@@ -187,7 +187,7 @@ This will launch `makerd` and connect it to the Bitcoin RPC core running on it's
   INFO coinswap::maker::server - [6102] Server is listening at 3xvc6tvf455afnogiwhzpztp7r5w43kq4r2yb5oootu7rog6k6rnq4id.onion:6102
   ```
 
-- `makerd` checks for existing fidelity bonds. If none are found, it will create one using the fidelity amount and timelock from the configuration file. By default, the fidelity amount is `50,000 sats` and the timelock is `2160 blocks`.
+- `makerd` checks for existing fidelity bonds. If none are found, it will create one using the fidelity amount and timelock from the configuration file. By default, the fidelity amount is `50,000 sats` and the timelock is `13104 blocks`.
 
   ```bash
   INFO coinswap::maker::server - No active Fidelity Bonds found. Creating one.
@@ -195,10 +195,10 @@ This will launch `makerd` and connect it to the Bitcoin RPC core running on it's
   INFO coinswap::maker::server - Fidelity Tx fee = 1000 sats
   ```
 
-  > **Note**: Currently The transaction fee for the fidelity bond is hardcoded at `1000 sats`. This approach of directly considering `fee` not `fee rate` will be improved in v0.1.1 milestones.
+  > **Note**: Currently the transaction fee for the fidelity bond is hardcoded at `1000 sats`. This approach of directly considering `fee` not `fee rate` will be improved in v0.1.1 milestones.
 
 - Since the maker wallet is empty, we'll need to fund it with at least `0.00051000 BTC` to cover the fidelity amount and transaction fee. To fund the wallet, we can use a testnet4 faucet from [testnet4 Faucets](https://mempool.space/testnet4/faucet).
-  Let's just take `0.01 BTC`testcoins as extra amount will be used in doing wallet related operations in [maker-cli demo](./maker-cli.md)
+  Let's just take `0.01 BTC` testcoins as extra amount will be used in doing wallet related operations in [maker-cli demo](./maker-cli.md)
 
 - The server will regularly sync the wallet every 10 seconds, increasing the interval in the pattern 10,20,30,40..., to detect any incoming funds.
 

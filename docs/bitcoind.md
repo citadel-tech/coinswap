@@ -1,12 +1,12 @@
 # Working with `bitcoind` in regtest
 
-In this tutorial, we will guide you through setting up a Bitcoin Core `bitcoind` node in `regtest` mode. We'll cover basic operations like creating wallets, generating blocks, checking balances, and sending Bitcoin between two wallets.
+In this tutorial, we will guide you through setting up a Bitcoin Core `bitcoind` node in `regtest` mode. We will cover basic operations like creating wallets, generating blocks, checking balances, and sending Bitcoin between two wallets.
 
 ---
 
 ### **1. Installing `bitcoind`**
 
-To start working with Bitcoin, it's necessary for us to install the Bitcoin Core software, which includes the `bitcoind` daemon.
+To start working with Bitcoin, You need to install the Bitcoin Core software, which includes the `bitcoind` daemon.
 
 #### **Steps:**
 
@@ -60,7 +60,7 @@ After setting up the configuration file, our node will be ready to run in `regte
 
 
 
-> **NOTE**: `Regtest` is a toy network that allows for creating custom blocks and generating coins, making it ideal for easy integration testing of applications.  
+> **NOTE**: `regtest` is a toy network that allows for creating custom blocks and generating coins, making it ideal for easy integration testing of applications.  
 > For actual swap markets, use `testnet4`. Switch to `testnet4` by setting `testnet4=1` in the configuration.
 ---
 
