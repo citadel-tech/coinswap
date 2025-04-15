@@ -5,6 +5,7 @@
 //! protocol workflow is described in the [protocol between takers and makers](https://github.com/citadel-tech/Coinswap-Protocol-Specification/blob/main/v1/3_protocol-flow.md)
 
 pub mod api;
+pub mod api2;
 mod config;
 pub mod error;
 pub(crate) mod offers;
