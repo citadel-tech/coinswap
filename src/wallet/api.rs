@@ -1462,7 +1462,7 @@ impl Wallet {
 
     /// Initialize a Coinswap with the Other party.
     /// Returns, the Funding Transactions, [`OutgoingSwapCoin`]s and the Total Miner fees.
-    pub(crate) fn initalize_coinswap(
+    pub(crate) fn initialize_coinswap(
         &mut self,
         total_coinswap_amount: Amount,
         other_multisig_pubkeys: &[PublicKey],
