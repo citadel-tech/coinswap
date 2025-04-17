@@ -44,7 +44,6 @@ use coinswap::{
 };
 
 const BITCOIN_VERSION: &str = "28.1";
-const REGTEST_TAKER_ID: &[&str] = &["7102", "17102", "27102", "37102", "47102"];
 
 fn download_bitcoind_tarball(download_url: &str, retries: usize) -> Vec<u8> {
     for attempt in 1..=retries {
@@ -542,7 +541,7 @@ impl TestFramework {
             .enumerate()
             .map(|(i, behavior)| {
                 Taker::init(
-                    Some(temp_dir.join(format!("taker{}", REGTEST_TAKER_ID[i]))),
+                    Some(temp_dir.join(format!("taker{}", i + 1))),
                     None,
                     Some(taker_rpc_config.clone()),
                     behavior,

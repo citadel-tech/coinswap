@@ -363,36 +363,10 @@ impl Taker {
         self.ongoing_swap_state.id = unique_id;
 
         // Try first hop. Abort if error happens.
-        let mut retry_interval = 1;
-        let mut attempts = 0;
-        let max_attempts = 5;
-        while attempts < max_attempts {
-            match self.init_first_hop() {
-                Ok(_) => break,
-                Err(e)
-                    if format!("{:?}", e).contains("WouldBlock")
-                        || format!("{:?}", e).contains("Wallet is currently rescanning") =>
-                {
-                    log::warn!(
-                        "Error: {:?}. Retrying in {} seconds... (Attempt {}/{})",
-                        e,
-                        retry_interval,
-                        attempts + 1,
-                        max_attempts
-                    );
-                    std::thread::sleep(Duration::from_secs(retry_interval));
-                    retry_interval *= 2;
-                    attempts += 1;
-                }
-                Err(e) => {
-                    log::error!("Fatal error: {:?}", e);
-                }
-            }
-        }
-
-        if attempts == max_attempts {
-            log::error!("Wallet is still rescanning after 5 attempts...Triggering recovery",);
+        if let Err(e) = self.init_first_hop() {
+            log::error!("Could not initiate first hop: {:?}", e);
             self.recover_from_swap()?;
+            return Err(e);
         }
 
         // Iterate until `maker_count` numbers of Makers are found and initiate swap between them sequentially.
