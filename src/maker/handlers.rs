@@ -389,7 +389,7 @@ impl Maker {
 
         // Create outgoing coinswap of the next hop
         let (my_funding_txes, outgoing_swapcoins, act_funding_txs_fees) = {
-            self.wallet.write()?.initalize_coinswap(
+            self.wallet.write()?.initialize_coinswap(
                 Amount::from_sat(outgoing_amount),
                 &message
                     .next_coinswap_info
