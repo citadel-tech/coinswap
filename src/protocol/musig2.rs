@@ -6,8 +6,7 @@ use bitcoin::key::rand;
 use secp256k1::musig::{
     new_nonce_pair, AggregatedNonce, AggregatedSignature, KeyAggCache, PartialSignature, PublicNonce, SecretNonce, Session, SessionSecretRand
 };
-use bitcoin::secp256k1::{ Keypair, Message, PublicKey, Secp256k1, SecretKey, XOnlyPublicKey};
-use secp256k1::{pubkey_sort};
+use secp256k1::{pubkey_sort, Keypair, Message, PublicKey, Secp256k1, SecretKey, XOnlyPublicKey};
 
 /// Generates a new keypair
 pub fn generate_new_keypair() -> Keypair {
@@ -91,6 +90,8 @@ pub fn verify_aggregated_signature(
 mod tests {
     use std::str::FromStr;
 
+    use bitcoin::key;
+
     use super::*;
 
     #[test]
@@ -118,5 +119,77 @@ mod tests {
         let pubkeys = vec![&key1, &key2, &key3];
         let agg_pubkey = aggregate_public_keys(&pubkeys);
         assert_eq!(agg_pubkey.to_string().to_uppercase(), "90539EEDE565F5D054F32CC0C220126889ED1E5D193BAF15AEF344FE59D4610C");
+    }
+
+    #[test]
+    fn end_to_end() {
+        let key1 = generate_new_keypair();
+        let key2 = generate_new_keypair();
+        let key3 = generate_new_keypair();
+        let key4 = generate_new_keypair();
+        println!("Generated keypairs.");
+
+        let message = Message::from_digest([0; 32]);
+        println!("Message created: {:?}", message);
+
+        let pubkey1 = key1.public_key();
+        let pubkey2 = key2.public_key();
+        let pubkey3 = key3.public_key();
+        let pubkey4 = key4.public_key();
+        println!("Public keys: \n  pubkey1: {:?}\n  pubkey2: {:?}\n  pubkey3: {:?}\n  pubkey4: {:?}", pubkey1, pubkey2, pubkey3, pubkey4);
+
+        let mut pubkeys = vec![&pubkey1, &pubkey2, &pubkey3, &pubkey4];
+        sort_public_keys(&mut pubkeys);
+        println!("Sorted public keys: {:?}", pubkeys);
+
+        let agg_pubkey = aggregate_public_keys(&pubkeys);
+        println!("Aggregated public key: {:?}", agg_pubkey);
+
+        let musig_key_agg_cache = KeyAggCache::new(&Secp256k1::new(), pubkeys.as_slice());
+        println!("Key aggregation cache created.");
+
+        let (sec_nonce1, pub_nonce1) = generate_new_nonce_pair(&musig_key_agg_cache, pubkey1, message, None);
+        let (sec_nonce2, pub_nonce2) = generate_new_nonce_pair(&musig_key_agg_cache, pubkey2, message, None);
+        let (sec_nonce3, pub_nonce3) = generate_new_nonce_pair(&musig_key_agg_cache, pubkey3, message, None);
+        let (sec_nonce4, pub_nonce4) = generate_new_nonce_pair(&musig_key_agg_cache, pubkey4, message, None);
+        println!("Generated nonce pairs.");
+        println!("  sec_nonce1: {:?}\n  sec_nonce2: {:?}\n  sec_nonce3: {:?}\n  sec_nonce4: {:?}", sec_nonce1, sec_nonce2, sec_nonce3, sec_nonce4);
+        println!("  pub_nonce1: {:?}\n  pub_nonce2: {:?}\n  pub_nonce3: {:?}\n  pub_nonce4: {:?}", pub_nonce1, pub_nonce2, pub_nonce3, pub_nonce4);
+
+        let agg_nonce = get_aggregated_nonce(&vec![&pub_nonce1, &pub_nonce2, &pub_nonce3, &pub_nonce4]);
+        println!("Aggregated nonce: {:?}", agg_nonce);
+
+        let session = Session::new(&Secp256k1::new(), &musig_key_agg_cache, agg_nonce, message);
+        println!("Session created.");
+
+        let partial_sig1 = generate_partial_signature(&session, sec_nonce1, key1, &musig_key_agg_cache);
+        let partial_sig2 = generate_partial_signature(&session, sec_nonce2, key2, &musig_key_agg_cache);
+        let partial_sig3 = generate_partial_signature(&session, sec_nonce3, key3, &musig_key_agg_cache);
+        let partial_sig4 = generate_partial_signature(&session, sec_nonce4, key4, &musig_key_agg_cache);
+        println!("Generated partial signatures.");
+        println!("  partial_sig1: {:?}\n  partial_sig2: {:?}\n  partial_sig3: {:?}\n  partial_sig4: {:?}", partial_sig1, partial_sig2, partial_sig3, partial_sig4);
+
+        let partial_sigs = vec![&partial_sig1, &partial_sig2, &partial_sig3, &partial_sig4];
+        let agg_sig = aggregate_partial_signatures(&partial_sigs, &session);
+        println!("Aggregated signature: {:?}", agg_sig);
+
+        let msg_bytes = message.as_ref();
+        let is_valid = verify_aggregated_signature(&agg_pubkey, msg_bytes, &agg_sig);
+        println!("Aggregated signature valid: {}", is_valid);
+        assert!(is_valid);
+
+        let is_valid_partial_sig1 = verify_partial_signature(&session, &musig_key_agg_cache, partial_sig1, pub_nonce1, pubkey1);
+        let is_valid_partial_sig2 = verify_partial_signature(&session, &musig_key_agg_cache, partial_sig2, pub_nonce2, pubkey2);
+        let is_valid_partial_sig3 = verify_partial_signature(&session, &musig_key_agg_cache, partial_sig3, pub_nonce3, pubkey3);
+        let is_valid_partial_sig4 = verify_partial_signature(&session, &musig_key_agg_cache, partial_sig4, pub_nonce4, pubkey4);
+        println!("Partial signature 1 valid: {}", is_valid_partial_sig1);
+        println!("Partial signature 2 valid: {}", is_valid_partial_sig2);
+        println!("Partial signature 3 valid: {}", is_valid_partial_sig3);
+        println!("Partial signature 4 valid: {}", is_valid_partial_sig4);
+
+        assert!(is_valid_partial_sig1);
+        assert!(is_valid_partial_sig2);
+        assert!(is_valid_partial_sig3);
+        assert!(is_valid_partial_sig4);
     }
 }
