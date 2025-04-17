@@ -16,7 +16,7 @@ The taker CLI is an application that allows you to perform coinswaps as a taker.
 
 ### Start Bitcoin Core (Pre-requisite)
 
-`Taker` requires a **Bitcoin Core** RPC connection running on a **custom signet** for its operation(check [bicoind setup](./bitcoind.md)). To get started, you need to start `bitcoind`:
+`Taker` requires a **Bitcoin Core** RPC connection running on a **custom signet** for its operation(check demo doc](./demo.md)). To get started, you need to start `bitcoind`:
 
 > **Important:**  
 > All apps are designed to run on our **custom signet** for testing purposes. The DNS server that Taker connects to will also be on signet. While you can run these apps on other networks, there won't be any DNS available, so Taker won't be able to connect to the DNS server for getting maker's offers and can't do coinswap with makers. Alternatively, you can run your own DNS server on the network of your choice.
