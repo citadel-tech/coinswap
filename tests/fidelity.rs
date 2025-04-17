@@ -25,11 +25,12 @@ use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
 fn test_fidelity() {
     // ---- Setup ----
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
+    let taker_behavior = vec![TakerBehavior::Normal];
 
     let (test_framework, _, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            TakerBehavior::Normal,
+            taker_behavior,
             ConnectionType::CLEARNET,
         );
 

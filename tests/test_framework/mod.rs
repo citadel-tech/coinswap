@@ -187,6 +187,8 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
 }
 
 /// Generate Blocks in regtest node.
+// TODO: Rethink this approach considering the resource unavailability of RPC and wallet rescanning.
+//       Block generation in regtest halts everything, causing a major disruption in rescanning.
 pub(crate) fn generate_blocks(bitcoind: &BitcoinD, n: u64) {
     let mining_address = bitcoind
         .client
@@ -404,6 +406,7 @@ pub fn verify_swap_results(
         assert!(
             balance_diff == Amount::from_sat(64358) // Successful coinswap
                 || balance_diff == Amount::from_sat(6768) // Recovery via timelock
+                || balance_diff == Amount::from_sat(503000) // Spent swapcoin
                 || balance_diff == Amount::ZERO, // No spending
             "Taker spendable balance change mismatch"
         );
@@ -421,7 +424,8 @@ pub fn verify_swap_results(
                 balances.regular == Amount::from_btc(0.14557358).unwrap() // First maker on successful coinswap
                     || balances.regular == Amount::from_btc(0.14532500).unwrap() // Second maker on successful coinswap
                     || balances.regular == Amount::from_btc(0.14999).unwrap() // No spending
-                    || balances.regular == Amount::from_btc(0.14992232).unwrap(), // Recovery via timelock
+                    || balances.regular == Amount::from_btc(0.14992232).unwrap() // Recovery via timelock
+                    || balances.regular == Amount::from_btc(0.14090858).unwrap(), // Mutli-taker case
                 "Maker seed balance mismatch"
             );
 
@@ -453,7 +457,9 @@ pub fn verify_swap_results(
                     || balance_diff == Amount::ZERO // No spending
                     || balance_diff == Amount::from_sat(6768) // Recovery via timelock
                     || balance_diff == Amount::from_sat(466500) // TODO: Investigate this value
-                    || balance_diff == Amount::from_sat(441642), // TODO: Investigate this value
+                    || balance_diff == Amount::from_sat(441642) // TODO: Investigate this value
+                    || balance_diff == Amount::from_sat(408142) // Multi-taker first maker
+                    || balance_diff == Amount::from_sat(444642), // Multi-taker second maker
                 "Maker spendable balance change mismatch"
             );
         });
@@ -484,11 +490,11 @@ impl TestFramework {
     #[allow(clippy::type_complexity)]
     pub fn init(
         makers_config_map: Vec<((u16, Option<u16>), MakerBehavior)>,
-        taker_behavior: TakerBehavior,
+        taker_behavior: Vec<TakerBehavior>,
         connection_type: ConnectionType,
     ) -> (
         Arc<Self>,
-        Taker,
+        Vec<Taker>,
         Vec<Arc<Maker>>,
         Arc<DirectoryServer>,
         JoinHandle<()>,
@@ -530,20 +536,25 @@ impl TestFramework {
 
         // Create the Taker.
         let taker_rpc_config = rpc_config.clone();
-        let taker = Taker::init(
-            Some(temp_dir.join("taker")),
-            None,
-            Some(taker_rpc_config),
-            taker_behavior,
-            None,
-            None,
-            Some(connection_type),
-        )
-        .unwrap();
-
+        let takers = taker_behavior
+            .into_iter()
+            .enumerate()
+            .map(|(i, behavior)| {
+                Taker::init(
+                    Some(temp_dir.join(format!("taker{}", i + 1))),
+                    None,
+                    Some(taker_rpc_config.clone()),
+                    behavior,
+                    None,
+                    None,
+                    Some(connection_type),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
         let mut base_rpc_port = 3500; // Random port for RPC connection in tests. (Not used)
-                                      // Create the Makers as per given configuration map.
-        let makers = makers_config_map
+
+        let makers = makers_config_map // Create the Makers as per given configuration map.
             .into_iter()
             .map(|(port, behavior)| {
                 base_rpc_port += 1;
@@ -584,7 +595,7 @@ impl TestFramework {
 
         (
             test_framework,
-            taker,
+            takers,
             makers,
             directory_server_instance,
             generate_blocks_handle,
