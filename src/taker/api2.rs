@@ -387,7 +387,7 @@ impl Taker {
             // If error then aborts from current swap. Ban the Peer.
             let (contract_outpoints, contract_details) =
                 match self.init_next_hop(maker_refund_locktime, &contracts_info) {
-                    Ok((next_peer_info, contract_sigs)) => {
+                    Ok((next_peer_info)) => {
                         self.ongoing_swap_state.peer_infos.push(next_peer_info);
                         let multisig_reedemscripts = contract_sigs
                             .senders_contract_txs_info
@@ -804,11 +804,11 @@ impl Taker {
 
     /// Send signatures to a maker, and initiate the next hop of the swap by finding a new maker.
     /// If no suitable makers are found in [OfferBook], next swap will not initiate and the swap round will fail.
-    fn send_sigs_init_next_hop(
+    fn init_next_hop(
         &mut self,
         maker_refund_locktime: u16,
-        contracts_info: &[FundingTxInfo],
-    ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TakerError> {
+        contracts_info: &[ContractInfo],
+    ) -> Result<NextPeerInfo, TakerError> {
         // Configurable reconnection attempts for testing
         let reconnect_attempts = if cfg!(feature = "integration-test") {
             10
@@ -835,7 +835,7 @@ impl Taker {
 
         loop {
             ii += 1;
-            match self.send_sigs_init_next_hop_once(maker_refund_locktime, funding_tx_infos) {
+            match self.init_next_hop_once(maker_refund_locktime, funding_tx_infos) {
                 Ok(ret) => return Ok(ret),
                 Err(e) => {
                     log::warn!(
