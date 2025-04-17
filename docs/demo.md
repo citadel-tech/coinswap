@@ -68,19 +68,20 @@ mkdir -p ~/.bitcoin
 
 Add to `~/.bitcoin/bitcoin.conf`:
 ```bash
-regtest=1
+signet=1
 
-[regtest]
+[signet]
 server=1
 txindex=1
 rpcuser=user
 rpcpassword=password
 fallbackfee=0.00001000
 blockfilterindex=1
-addnode=172.81.178.3:18444
+addnode=172.81.178.3:38333
+signetchallenge=0014c9e9f8875a25c3cc6d99ad3e5fd54254d00fed44
 ```
 
-> **NOTE**: Change `regtest=1` to `testnet4=1` if you want to run the apps on testnet, or other networks.
+> **NOTE**: Change `signet=1` to `testnet4=1` if you want to run the apps on testnet, or other networks.
 
 ### 2. Start Bitcoin Core
 ```bash
@@ -128,7 +129,7 @@ This will spawn the maker server and you will start seeing the logs. The server 
 
 To successfully set up the swap server, it needs to have a fidelity bond and enough balance (minimum 50,000 sats+ + 1,000 sats for tx fee) to start providing swap services.
 
-In the log you will see the server is asking for some BTC at a given address. Fund that address with the given minimum amount or more. We recommend using the [mempool.space Testnet4 faucet](https://mempool.space/testnet4/faucet), but you can use any other faucet of your choice.
+In the log you will see the server is asking for some BTC at a given address. Fund that address with the given minimum amount or more. Use [this faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/)(open in Tor browser) to get some signet coins.
 
 Once the funds are sent, the server will automatically create a fidelity bond transaction, wait for its confirmation, and when confirmed, send its offers and details to the DNS server and start listening for incoming swap requests.
 
@@ -157,7 +158,7 @@ From a new terminal, go to the project root directory and perform basic client o
 taker get-new-address
 ```
 
-Use a testnet4 faucet to send some funds at the above address. Then check the client wallet balance with
+Use [this faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/)(open in Tor browser) to send some funds at the above address. Then check the client wallet balance with
 ```bash
 taker get-balances
 ```
@@ -182,7 +183,7 @@ If all goes well, you will see the coinswap process starting in the logs.
 ### Bitcoin Core Issues
 - Verify bitcoind is running: `bitcoin-cli getblockchaininfo`
 - Check rpcuser/rpcpassword attempted by the apps are matching with the bitcoin.conf file values
-- Ensure correct network (testnet4)
+- Ensure correct network (signet)
 
 ### Maker Server Issues
 - Check debug.log for errors

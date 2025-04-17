@@ -16,10 +16,10 @@ The taker CLI is an application that allows you to perform coinswaps as a taker.
 
 ### Start Bitcoin Core (Pre-requisite)
 
-`Taker` requires a **Bitcoin Core** RPC connection running on **testnet4** for its operation. To get started, you need to start `bitcoind`:
+`Taker` requires a **Bitcoin Core** RPC connection running on a **custom signet** for its operation(check [bicoind setup](./bitcoind.md)). To get started, you need to start `bitcoind`:
 
 > **Important:**  
-> All apps are designed to run on **testnet4** for testing purposes. The DNS server that Taker connects to will also be on testnet4. While you can run these apps on other networks, there won't be any DNS available, so Taker won't be able to connect to the DNS server for getting maker's offers and can't do coinswap with makers.
+> All apps are designed to run on our **custom signet** for testing purposes. The DNS server that Taker connects to will also be on signet. While you can run these apps on other networks, there won't be any DNS available, so Taker won't be able to connect to the DNS server for getting maker's offers and can't do coinswap with makers. Alternatively, you can run your own DNS server on the network of your choice.
 
 To start `bitcoind`:
 
@@ -41,8 +41,8 @@ Developers at Citadel-Tech
 A simple command line app to operate as coinswap client.
 
 The app works as regular Bitcoin wallet with added capability to perform coinswaps. The app requires
-a running Bitcoin Core node with RPC access. It currently only runs on Testnet4. Suggested faucet
-for getting Testnet4 coins: https://mempool.space/testnet4/faucet
+a running Bitcoin Core node with RPC access.
+Use this faucet: http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/(open in Tor browser) to get some signet coins.
 
 For more detailed usage information, please refer:
 https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker.md
@@ -68,7 +68,7 @@ OPTIONS:
     -r, --ADDRESS:PORT <ADDRESS:PORT>
             Bitcoin Core RPC address:port value
             
-            [default: 127.0.0.1:48332]
+            [default: 127.0.0.1:38332]
 
     -t, --tor-auth <TOR_AUTH>
             [default: ]
@@ -119,17 +119,17 @@ SUBCOMMANDS:
 In order to do a coinswap, we first need to get some coins in our wallet. Let's generate a new address and send some coins to it.
 
 ```sh
-$ taker -r 127.0.0.1:48332 -a user:pass get-new-address
+$ taker -r 127.0.0.1:38332 -a user:pass get-new-address
 
 bcrt1qyywgd4we5y7u05lnrgs8runc3j7sspwqhekrdd
 ```
 
-Now we can use a testnet4 faucet to send some coins to this address. You can find a testnet4 faucet [here](https://mempool.space/testnet4/faucet).
+Now we can use the signet faucet to send some coins to this address. Use [this faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/)(open in Tor browser) to get some signet coins.
 
 Once you have some coins in your wallet, you can check your balance by running the following command:
 
 ```sh
-$ taker -r 127.0.0.1:48332 -a user:pass get-balances
+$ taker -r 127.0.0.1:38332 -a user:pass get-balances
 
 {
     "regular": 10000000,
@@ -148,13 +148,13 @@ The balance categories are explained as follows:
 Now we are ready to initiate a coinswap. We are first going to sync the offer book to get a list of available makers.
 
 ```sh
-$ taker -r 127.0.0.1:48332 -a user:pass fetch-offers
+$ taker -r 127.0.0.1:38332 -a user:pass fetch-offers
 ```
 
 This will fetch the list of available makers from the directory server. Now we can initiate a coinswap with the makers.
 
 ```sh
-$ taker -r 127.0.0.1:48332 -a user:pass coinswap
+$ taker -r 127.0.0.1:38332 -a user:pass coinswap
 ```
 
 This will initiate a coinswap with the default parameters. This will take some time. You can check swap progress at the log file in data directory. In a new terminal do `tail -f <datadir>/debug.log`.
@@ -164,13 +164,13 @@ This will initiate a coinswap with the default parameters. This will take some t
 If a swap fails for any reason, the funds might be locked in a timelock contract. To check if you have any such locked funds, run:
 
 ```sh
-$ ./taker -r 127.0.0.1:48332 -a user:pass list-utxo-contract
+$ ./taker -r 127.0.0.1:38332 -a user:pass list-utxo-contract
 ```
 
 If you see any UTXOs in the output, you can recover them using the `recover` command:
 
 ```sh
-$ ./taker -r 127.0.0.1:48332 -a user:pass recover
+$ ./taker -r 127.0.0.1:38332 -a user:pass recover
 ```
 
 This will attempt to recover all funds from failed swaps.
