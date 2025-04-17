@@ -38,7 +38,7 @@ fn test_standard_coinswap() {
     warn!("Running Test: Standard Coinswap Procedure");
     let bitcoind = &test_framework.bitcoind;
 
-    // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
+    // Fund the Taker with 3 utxos of 0.05 btc each and do basic checks on the balance
     let taker = &mut takers[0];
     let org_taker_spend_balance =
         fund_and_verify_taker(taker, bitcoind, 3, Amount::from_btc(0.05).unwrap());
@@ -97,7 +97,7 @@ fn test_standard_coinswap() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
