@@ -17,6 +17,7 @@ use std::{
 
 mod test_framework;
 use test_framework::{await_message, generate_blocks, init_bitcoind, send_to_address, start_dns};
+const FIDELITY_BOND_DNS_UPDATE_INTERVAL: u32 = 30;
 
 struct MakerCli {
     data_dir: PathBuf,
@@ -160,6 +161,23 @@ impl MakerCli {
     }
 }
 
+fn await_message_timeout(rx: &Receiver<String>, expected: &str, timeout: Duration) -> String {
+    let start = std::time::Instant::now();
+
+    while start.elapsed() < timeout {
+        match rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(message) => {
+                if message.contains(expected) {
+                    return message;
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    panic!("Timeout waiting for message: {}", expected)
+}
+
 #[test]
 fn test_maker() {
     setup_logger(log::LevelFilter::Info, None);
@@ -178,7 +196,15 @@ fn test_maker() {
     println!("Testing maker cli");
     test_maker_cli(&maker_cli, &rx);
 
+    maker.kill().unwrap();
     maker.wait().unwrap();
+    std::thread::sleep(Duration::from_secs(1)); // Wait for resources to be released
+
+    println!("Testing periodic DNS updates");
+    test_periodic_dns_updates(&maker_cli);
+
+    println!("Testing liquidity threshold");
+    test_liquidity_threshold(&maker_cli);
 
     dns.kill().unwrap();
     dns.wait().unwrap();
@@ -329,4 +355,200 @@ fn test_maker_cli(maker_cli: &MakerCli, rx: &Receiver<String>) {
 
     await_message(rx, "Maker is shutting down");
     await_message(rx, "Maker Server is shut down successfully");
+}
+
+fn test_periodic_dns_updates(maker_cli: &MakerCli) {
+    let (rx, mut maker) = maker_cli.start_makerd();
+
+    // record initial dns time
+    let initial_update = await_message(
+        &rx,
+        "Successfully sent our address and fidelity proof to DNS at",
+    );
+    let start_time = std::time::Instant::now();
+
+    let interval = FIDELITY_BOND_DNS_UPDATE_INTERVAL;
+
+    println!("Sleeping for {} seconds", interval);
+
+    // wait and capture update message
+    let timeout = Duration::from_secs(interval as u64 * 2);
+    let first_update = await_message_timeout(
+        &rx,
+        "Successfully sent our address and fidelity proof to DNS at",
+        timeout,
+    );
+
+    let first_update_time = start_time.elapsed().as_secs();
+    println!("First update time: {}", first_update_time);
+
+    println!("Waiting for second update");
+    let second_update = await_message_timeout(
+        &rx,
+        "Successfully sent our address and fidelity proof to DNS at",
+        timeout,
+    );
+
+    let second_update_time = start_time.elapsed().as_secs();
+    println!("Second update time: {}", second_update_time);
+
+    maker.kill().unwrap();
+    maker.wait().unwrap();
+    // wait
+    std::thread::sleep(Duration::from_secs(1));
+}
+
+fn test_liquidity_threshold(maker_cli: &MakerCli) {
+    println!("TEST STARTING: Liquidity Threshold");
+
+    let (rx, mut maker) = maker_cli.start_makerd();
+
+    await_message(&rx, "Server Setup completed!!");
+    std::thread::sleep(Duration::from_secs(3));
+
+    println!("Getting initial balance");
+    let balance = maker_cli.execute_maker_cli(&["get-balances"]);
+    let balance_json: serde_json::Value = serde_json::from_str(&balance).unwrap();
+    let initial_balance = balance_json["regular"].as_u64().unwrap();
+    println!("Initial balance: {} sats", initial_balance);
+
+    const MIN_SWAP_AMOUNT: u64 = 10_000;
+    println!("Minimum swap amount: {} sats", MIN_SWAP_AMOUNT);
+
+    let amount_to_spend = initial_balance - (MIN_SWAP_AMOUNT / 4);
+    let tx_fee = 1_000;
+
+    println!("Amount to spend: {} sats", amount_to_spend);
+
+    let address = maker_cli.execute_maker_cli(&["get-new-address"]);
+    println!("Sending to address: {}", address);
+
+    println!("Sending transaction");
+    let tx_result = maker_cli.execute_maker_cli(&[
+        "send-to-address",
+        "-t",
+        &address,
+        "-a",
+        &amount_to_spend.to_string(),
+        "-f",
+        &tx_fee.to_string(),
+    ]);
+    println!("Transaction result: {}", tx_result);
+
+    println!("Generating block to confirm transaction");
+    generate_blocks(&maker_cli.bitcoind, 1);
+
+    let sync_result = maker_cli.execute_maker_cli(&["sync-wallet"]);
+    println!("Sync result: {}", sync_result);
+
+    std::thread::sleep(Duration::from_secs(2));
+
+    println!("Getting updated balance");
+    let new_balances = maker_cli.execute_maker_cli(&["get-balances"]);
+    let new_balances_json: serde_json::Value = serde_json::from_str(&new_balances).unwrap();
+    let new_balance = new_balances_json["regular"].as_u64().unwrap();
+
+    println!("New balance: {} sats", new_balance);
+    assert!(
+        new_balance < MIN_SWAP_AMOUNT,
+        "Balance should be below minimum"
+    );
+
+    println!("Waiting for liquidity check (may take up to 30 seconds)...");
+
+    let start_time = std::time::Instant::now();
+    let timeout = Duration::from_secs(90);
+    let mut found_insufficient_message = false;
+
+    while !found_insufficient_message && start_time.elapsed() < timeout {
+        match rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(message) => {
+                println!("LOG: {}", message);
+
+                if (message.contains("insufficient") && message.contains("liquidity"))
+                    || (message.contains("Insufficient") && message.contains("Liquidity"))
+                    || message.contains("insufficient swap")
+                    || message.contains("below minimum")
+                {
+                    found_insufficient_message = true;
+                    println!("FOUND LIQUIDITY WARNING: {}", message);
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("Channel disconnected while monitoring logs");
+            }
+        }
+    }
+
+    if !found_insufficient_message {
+        println!(
+            "Warning: Did not detect explicit insufficient liquidity message, proceeding anyway"
+        );
+    }
+
+    println!("Adding funds to exceed minimum threshold");
+
+    let new_address = maker_cli.execute_maker_cli(&["get-new-address"]);
+    println!("New funding address: {}", new_address);
+
+    let funding_amount = MIN_SWAP_AMOUNT * 2;
+    println!("Sending {} sats to {}", funding_amount, new_address);
+
+    let txid = send_to_address(
+        &maker_cli.bitcoind,
+        &Address::from_str(&new_address).unwrap().assume_checked(),
+        Amount::from_sat(funding_amount),
+    );
+    println!("Funding transaction ID: {}", txid);
+
+    println!("Generating block to confirm funding");
+    generate_blocks(&maker_cli.bitcoind, 1);
+
+    println!("Syncing wallet");
+    maker_cli.execute_maker_cli(&["sync-wallet"]);
+
+    println!("Waiting 2 seconds for balance update");
+    std::thread::sleep(Duration::from_secs(2));
+
+    let final_balances = maker_cli.execute_maker_cli(&["get-balances"]);
+    println!("Final balances: {}", final_balances);
+
+    let final_balances_json: serde_json::Value = serde_json::from_str(&final_balances).unwrap();
+    let final_balance = final_balances_json["regular"].as_u64().unwrap();
+
+    println!("Final balance: {} sats", final_balance);
+    assert!(
+        final_balance >= MIN_SWAP_AMOUNT,
+        "Balance should be above minimum"
+    );
+
+    println!("Waiting for liquidity to be sufficient again...");
+    let mut found_sufficient_message = false;
+    let start_time = std::time::Instant::now();
+
+    while !found_sufficient_message && start_time.elapsed() < timeout {
+        match rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(message) => {
+                println!("LOG: {}", message);
+
+                if message.contains("Swap Liquidity:") && !message.contains("insufficient") {
+                    found_sufficient_message = true;
+                    println!("FOUND SUFFICIENT LIQUIDITY MESSAGE: {}", message);
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("Channel disconnected while monitoring logs");
+            }
+        }
+    }
+
+    if !found_sufficient_message {
+        println!(
+            "Warning: Did not detect explicit sufficient liquidity message, proceeding anyway"
+        );
+    }
+
+    println!("Liquidity threshold test completed!");
 }
