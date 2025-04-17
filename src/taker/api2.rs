@@ -42,9 +42,10 @@ use crate::{
         error::ProtocolError,
         messages::{
             ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
-            ContractSigsForSender, FundingTxInfo, MultisigPrivkey, Preimage, PrivKeyHandover,
+            ContractSigsForSender, MultisigPrivkey, Preimage, PrivKeyHandover,
             TakerToMakerMessage,
         },
+        messages2::{ContractInfo}
     },
     taker::{config::TakerConfig, offers::OfferBook},
     utill::*,
@@ -154,7 +155,7 @@ pub enum TakerBehavior {
     /// This depicts the behavior when the taker drops connections after the full coinswap setup.
     DropConnectionAfterFullSetup,
     /// Behavior to broadcast the contract after the full coinswap setup.
-    BroadcastContractAfterFullSetup,
+    UseScriptPathAfterFullSetup,
 }
 
 /// The Taker structure that performs bulk of the coinswap protocol. Taker connects
@@ -264,7 +265,7 @@ impl Taker {
                 }
             }
         } else {
-            // Crewate a new offer book
+            // Create a new offer book
             let empty_book = OfferBook::default();
             let file = std::fs::File::create(&offerbook_path)?;
             let writer = BufWriter::new(file);
@@ -379,14 +380,14 @@ impl Taker {
                 + REFUND_LOCKTIME_STEP
                     * (self.ongoing_swap_state.swap_params.maker_count - maker_index - 1) as u16;
 
-            let funding_tx_infos = self.funding_info_for_next_maker();
+            let contracts_info = self.contract_info_for_next_maker();
 
             // Attempt to initiate the next hop of the swap. If anything goes wrong, abort immediately.
             // If succeeded, collect the funding_outpoints and multisig_reedemscripts of the next hop.
             // If error then aborts from current swap. Ban the Peer.
-            let (funding_outpoints, multisig_reedemscripts) =
-                match self.send_sigs_init_next_hop(maker_refund_locktime, &funding_tx_infos) {
-                    Ok((next_peer_info, contract_sigs)) => {
+            let (contract_outpoints, contract_details) =
+                match self.init_next_hop(maker_refund_locktime, &contracts_info) {
+                    Ok((next_peer_info)) => {
                         self.ongoing_swap_state.peer_infos.push(next_peer_info);
                         let multisig_reedemscripts = contract_sigs
                             .senders_contract_txs_info
@@ -497,15 +498,16 @@ impl Taker {
         let (maker, funding_txs) = loop {
             let maker = self.choose_next_maker()?.clone();
             log::info!("Choosing next maker: {}", maker.address);
-            let (multisig_pubkeys, multisig_nonces, hashlock_pubkeys, hashlock_nonces) =
+            let (maker_pubkeys, maker_salts, hashlock_pubkeys, hashlock_salts) =
                 generate_maker_keys(
                     &maker.offer.tweakable_point,
                     self.ongoing_swap_state.swap_params.tx_count,
                 )?;
-            let (funding_txs, mut outgoing_swapcoins, funding_fee) =
+            let (funding_txs, mut outgoing_swapcoins, transaction_fee) =
+            // [Taproot] TODO: create a new initialize coinswap method in wallet
                 self.wallet.initialize_coinswap(
                     self.ongoing_swap_state.swap_params.send_amount,
-                    &multisig_pubkeys,
+                    &maker_pubkeys,
                     &hashlock_pubkeys,
                     self.get_preimage_hash(),
                     swap_locktime,
@@ -756,22 +758,17 @@ impl Taker {
         }
     }
 
-    /// Create [FundingTxInfo] for the "next_maker". Next maker is the last stored [NextPeerInfo] in the swap state.
+    /// Create [ContractInfo] for the "next_maker". Next maker is the last stored [NextPeerInfo] in the swap state.
     /// All other data from the swap state's last entries are collected and a [FundingTxInfo] protocol message data is generated.
-    fn funding_info_for_next_maker(&self) -> Vec<FundingTxInfo> {
+    fn contract_info_for_next_maker(&self) -> Vec<ContractInfo> {
         // Get the reedemscripts.
-        let (this_maker_multisig_redeemscripts, this_maker_contract_redeemscripts) =
+        let (this_maker_contract_details: ) =
             if self.ongoing_swap_state.taker_position == TakerPosition::FirstPeer {
                 (
                     self.ongoing_swap_state
                         .outgoing_swapcoins
                         .iter()
-                        .map(|s| s.get_multisig_redeemscript())
-                        .collect::<Vec<_>>(),
-                    self.ongoing_swap_state
-                        .outgoing_swapcoins
-                        .iter()
-                        .map(|s| s.get_contract_redeemscript())
+                        .map(|s| s.get_contract_details())
                         .collect::<Vec<_>>(),
                 )
             } else {
@@ -781,84 +778,37 @@ impl Taker {
                         .last()
                         .expect("swapcoin expected")
                         .iter()
-                        .map(|s| s.get_multisig_redeemscript())
-                        .collect::<Vec<_>>(),
-                    self.ongoing_swap_state
-                        .watchonly_swapcoins
-                        .last()
-                        .expect("swapcoin expected")
-                        .iter()
-                        .map(|s| s.get_contract_redeemscript())
+                        .map(|s| s.get_contract_details())
                         .collect::<Vec<_>>(),
                 )
             };
 
-        // Get the nonces.
-        let maker_multisig_nonces = self
+        // Get the salts.
+        let maker_multisig_salts= self
             .ongoing_swap_state
             .peer_infos
             .last()
             .expect("maker should exist")
-            .multisig_nonces
+            .multisig_salts
             .iter();
-        let maker_hashlock_nonces = self
+        let maker_hashlock_salts= self
             .ongoing_swap_state
             .peer_infos
             .last()
             .expect("maker should exist")
-            .hashlock_nonces
+            .hashlock_salts
             .iter();
 
-        // Get the funding txs and merkle proofs.
-        let (funding_txs, funding_txs_merkleproof) = self
-            .ongoing_swap_state
-            .funding_txs
-            .last()
-            .expect("funding txs should be known");
-
-        let funding_tx_infos = funding_txs
-            .iter()
-            .zip(funding_txs_merkleproof.iter())
-            .zip(this_maker_multisig_redeemscripts.iter())
-            .zip(maker_multisig_nonces)
-            .zip(this_maker_contract_redeemscripts.iter())
-            .zip(maker_hashlock_nonces)
-            .map(
-                |(
-                    (
-                        (
-                            (
-                                (funding_tx, funding_tx_merkle_proof),
-                                this_maker_multisig_reedeemscript,
-                            ),
-                            maker_multisig_nonce,
-                        ),
-                        this_maker_contract_reedemscript,
-                    ),
-                    maker_hashlock_nonce,
-                )| {
-                    FundingTxInfo {
-                        funding_tx: funding_tx.clone(),
-                        funding_tx_merkleproof: funding_tx_merkle_proof.clone(),
-                        multisig_redeemscript: this_maker_multisig_reedeemscript.clone(),
-                        multisig_nonce: *maker_multisig_nonce,
-                        contract_redeemscript: this_maker_contract_reedemscript.clone(),
-                        hashlock_nonce: *maker_hashlock_nonce,
-                    }
-                },
-            )
-            .collect::<Vec<_>>();
-
-        funding_tx_infos
+        contract_info
     }
 
     /// Send signatures to a maker, and initiate the next hop of the swap by finding a new maker.
     /// If no suitable makers are found in [OfferBook], next swap will not initiate and the swap round will fail.
-    fn send_sigs_init_next_hop(
+    fn init_next_hop(
         &mut self,
         maker_refund_locktime: u16,
-        funding_tx_infos: &[FundingTxInfo],
-    ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TakerError> {
+        contracts_info: &[ContractInfo],
+    ) -> Result<NextPeerInfo, TakerError> {
         // Configurable reconnection attempts for testing
         let reconnect_attempts = if cfg!(feature = "integration-test") {
             10
@@ -885,7 +835,7 @@ impl Taker {
 
         loop {
             ii += 1;
-            match self.send_sigs_init_next_hop_once(maker_refund_locktime, funding_tx_infos) {
+            match self.init_next_hop_once(maker_refund_locktime, funding_tx_infos) {
                 Ok(ret) => return Ok(ret),
                 Err(e) => {
                     log::warn!(
@@ -915,11 +865,11 @@ impl Taker {
     }
 
     /// [Internal] Single attempt to send signatures and initiate next hop.
-    fn send_sigs_init_next_hop_once(
+    fn init_next_hop_once(
         &mut self,
         maker_refund_locktime: u16,
-        funding_tx_infos: &[FundingTxInfo],
-    ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TakerError> {
+        contract_tx_infos: &[ContractInfo],
+    ) -> Result<(NextPeerInfo), TakerError> {
         let this_maker = &self
             .ongoing_swap_state
             .peer_infos

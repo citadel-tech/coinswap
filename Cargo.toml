@@ -39,3 +39,5 @@ default = []
 # Only used for running the integration tests
 integration-test = ['dep:flate2','dep:tar','dep:minreq']
 
+[patch.crates-io]
+secp256k1 = { git = "https://github.com/jlest01/rust-secp256k1.git", branch = "musig2-module" }
