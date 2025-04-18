@@ -96,14 +96,8 @@ impl TakerConfig {
 
     /// Writes the current configuration to a TOML file at the specified path.
     ///
-    /// This function serializes the TakerConfig into a TOML format and writes it to disk.
-    /// It creates the parent directory if it doesn't exist and ensures the file is properly flushed.
-    ///
-    /// # Arguments
-    /// * `path` - The path where the config file should be written
-    ///
-    /// # Returns
-    /// * `io::Result<()>` - Ok if successful, Err if there was an I/O error
+    /// This method serializes the TakerConfig into a TOML format and writes it to disk.
+    /// It creates the parent directory if it doesn't exist.
     pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
             "# Taker Configuration File
@@ -126,7 +120,6 @@ connection_type = {:?}",
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;
         file.write_all(toml_data.as_bytes())?;
-        // Flush to ensure all data is written to disk
         file.flush()?;
         Ok(())
     }
