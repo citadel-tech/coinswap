@@ -32,6 +32,12 @@ pub struct MakerConfig {
     pub fidelity_timelock: u32,
     /// Connection type
     pub connection_type: ConnectionType,
+    /// A fixed base fee charged by the Maker for providing its services
+    pub base_fee: u64,
+    /// A percentage fee based on the swap amount.
+    pub amount_relative_fee_pct: f64,
+    /// A percentage fee based on the refund locktime (duration the Maker must wait for a refund).
+    pub time_relative_fee_pct: f64,
 }
 
 impl Default for MakerConfig {
@@ -58,6 +64,18 @@ impl Default for MakerConfig {
             } else {
                 ConnectionType::TOR
             },
+            #[cfg(feature = "integration-test")]
+            base_fee: 1000,
+            #[cfg(feature = "integration-test")]
+            amount_relative_fee_pct: 2.50,
+            #[cfg(feature = "integration-test")]
+            time_relative_fee_pct: 0.10,
+            #[cfg(not(feature = "integration-test"))]
+            base_fee: 100,
+            #[cfg(not(feature = "integration-test"))]
+            amount_relative_fee_pct: 0.1,
+            #[cfg(not(feature = "integration-test"))]
+            time_relative_fee_pct: 0.005,
         }
     }
 }
@@ -124,6 +142,15 @@ impl MakerConfig {
             connection_type: parse_field(
                 config_map.get("connection_type"),
                 default_config.connection_type,
+            ),
+            base_fee: parse_field(config_map.get("base_fee"), default_config.base_fee),
+            amount_relative_fee_pct: parse_field(
+                config_map.get("amount_relative_fee_pct"),
+                default_config.amount_relative_fee_pct,
+            ),
+            time_relative_fee_pct: parse_field(
+                config_map.get("time_relative_fee_pct"),
+                default_config.time_relative_fee_pct,
             ),
         })
     }
