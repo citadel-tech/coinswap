@@ -1,23 +1,28 @@
 //! Taker configuration. Controlling various behavior.
 //!
-//!  Represents the configuration options for the Taker module, controlling behaviors
-//! such as refund locktime, connection attempts, sleep delays, and timeouts.
+//! This module defines the configuration options for the Taker module, controlling various aspects
+//! of the taker's behavior including network settings, connection preferences, and security settings.
 
 use crate::utill::{get_taker_dir, parse_field, parse_toml, ConnectionType};
 use std::{io, io::Write, path::Path};
 
-/// Taker configuration with refund, connection, and sleep settings.
+/// Taker configuration with network and security settings.
+///
+/// This struct defines all configurable parameters for the Taker module, including:
+/// - Network ports for different services
+/// - Security settings
+/// - Connection preferences
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
-    /// Control port
+    /// Control port for Tor control interface (default: 9051)
     pub control_port: u16,
-    /// Socks proxy port used to connect TOR
+    /// Socks port for Tor proxy (default: 9050)
     pub socks_port: u16,
-    /// Authentication password
+    /// Authentication password for Tor control interface
     pub tor_auth_password: String,
-    /// Directory server address (can be clearnet or onion)
+    /// Directory server address (can be clearnet or onion) for maker discovery
     pub directory_server_address: String,
-    /// Connection type
+    /// Connection type (TOR or CLEARNET)
     pub connection_type: ConnectionType,
 }
 
@@ -89,13 +94,28 @@ impl TakerConfig {
         })
     }
 
-    // Method to manually serialize the Taker Config into a TOML string
+    /// Writes the current configuration to a TOML file at the specified path.
+    ///
+    /// This function serializes the TakerConfig into a TOML format and writes it to disk.
+    /// It creates the parent directory if it doesn't exist and ensures the file is properly flushed.
+    ///
+    /// # Arguments
+    /// * `path` - The path where the config file should be written
+    ///
+    /// # Returns
+    /// * `io::Result<()>` - Ok if successful, Err if there was an I/O error
     pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
-            "control_port = {}
+            "# Taker Configuration File
+# Control port for Tor control interface
+control_port = {}
+# Socks port for Tor proxy
 socks_port = {}
+# Authentication password for Tor control interface
 tor_auth_password = {}
+# Directory server address (can be clearnet or onion)
 directory_server_address = {}
+# Connection type (TOR or CLEARNET)
 connection_type = {:?}",
             self.control_port,
             self.socks_port,
@@ -106,6 +126,7 @@ connection_type = {:?}",
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;
         file.write_all(toml_data.as_bytes())?;
+        // Flush to ensure all data is written to disk
         file.flush()?;
         Ok(())
     }
