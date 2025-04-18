@@ -1292,19 +1292,16 @@ impl Taker {
                     (
                         (
                             (
-                                (
-                                    (multisig_redeemscript, &maker_funded_multisig_pubkey),
-                                    &maker_funded_multisig_privkey,
-                                ),
-                                my_receivers_contract_tx,
+                                (multisig_redeemscript, &maker_funded_multisig_pubkey),
+                                &maker_funded_multisig_privkey,
                             ),
-                            next_contract_redeemscript,
+                            my_receivers_contract_tx,
                         ),
-                        &hashlock_privkey,
+                        next_contract_redeemscript,
                     ),
-                    &maker_funding_tx_value,
+                    &hashlock_privkey,
                 ),
-                _,
+                &maker_funding_tx_value,
             ),
             _,
         ) in multisig_redeemscripts
@@ -1759,19 +1756,36 @@ impl Taker {
 
     /// Choose a suitable **untried** maker address from the offerbook that fits the swap params.
     fn choose_next_maker(&self) -> Result<&OfferAndAddress, TakerError> {
-        let send_amount = self.ongoing_swap_state.swap_params.send_amount;
-        if send_amount == Amount::ZERO {
+        let base_send_amount = self.ongoing_swap_state.swap_params.send_amount;
+        if base_send_amount == Amount::ZERO {
             return Err(TakerError::SendAmountNotSet);
         }
 
+        // Calculate the dynamic send amount for this hop
+        // This includes the base amount plus fees for this hop
+        let hop_index = self.ongoing_swap_state.peer_infos.len();
+        let total_hops = self.ongoing_swap_state.swap_params.maker_count;
+        
+        // Calculate the amount for this hop (split evenly across hops)
+        let per_hop_amount = base_send_amount / total_hops as u64;
+        
         // Ensure that we don't select a maker we are already swaping with.
         Ok(self
             .offerbook
             .all_good_makers()
             .iter()
             .find(|oa| {
-                send_amount >= Amount::from_sat(oa.offer.min_size)
-                    && send_amount <= Amount::from_sat(oa.offer.max_size)
+                // Calculate total fees for this hop
+                let base_fee = Amount::from_sat(oa.offer.base_fee);
+                let amount_fee = per_hop_amount * (oa.offer.amount_relative_fee_pct / 100.0) as u64;
+                let total_fees = base_fee + amount_fee;
+                
+                // Calculate total amount needed for this hop
+                let total_amount = per_hop_amount + total_fees;
+                
+                // Check if the maker can handle this amount
+                total_amount >= Amount::from_sat(oa.offer.min_size)
+                    && total_amount <= Amount::from_sat(oa.offer.max_size)
                     && !self
                         .ongoing_swap_state
                         .peer_infos
