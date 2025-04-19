@@ -346,6 +346,17 @@ impl Taker {
             return Err(TakerError::NotEnoughMakersInOfferBook);
         }
 
+        // Error early if there aren't enough suitable makers for the given amount
+        let suitable_makers = self.offerbook.suitable_makers_for_amount(swap_params.send_amount);
+        if swap_params.maker_count > suitable_makers.len() {
+            log::error!(
+                "Not enough suitable makers for the requested amount. Required {}, available {}",
+                swap_params.maker_count,
+                suitable_makers.len()
+            );
+            return Err(TakerError::NotEnoughSuitableMakersForAmount);
+        }
+
         // Error early if less than 2 makers.
         if swap_params.maker_count < 2 {
             log::error!("Cannot swap with less than 2 makers");
@@ -1764,22 +1775,21 @@ impl Taker {
             return Err(TakerError::SendAmountNotSet);
         }
 
+        // Get suitable makers for the amount and ensure we don't select a maker we are already swapping with
+        let suitable_makers = self.offerbook.suitable_makers_for_amount(send_amount);
+
         // Ensure that we don't select a maker we are already swaping with.
-        Ok(self
-            .offerbook
-            .all_good_makers()
+        Ok(suitable_makers
             .iter()
             .find(|oa| {
-                send_amount >= Amount::from_sat(oa.offer.min_size)
-                    && send_amount <= Amount::from_sat(oa.offer.max_size)
-                    && !self
-                        .ongoing_swap_state
-                        .peer_infos
-                        .iter()
-                        .map(|pi| &pi.peer)
-                        .any(|noa| noa == **oa)
+                !self
+                    .ongoing_swap_state
+                    .peer_infos
+                    .iter()
+                    .map(|pi| &pi.peer)
+                    .any(|noa| noa == **oa)
             })
-            .ok_or(TakerError::NotEnoughMakersInOfferBook)?)
+            .ok_or(TakerError::NotEnoughSuitableMakersForAmount)?)
     }
 
     /// Get the [Preimage] of the ongoing swap. If no swap is in progress will return a `[0u8; 32]`.
@@ -1951,7 +1961,7 @@ impl Taker {
         // Start the loop to keep checking for timelock maturity, and spend from the contract asap.
         loop {
             // Break early if nothing to broadcast.
-            // This happens only when init_first_hop() fails at `NotEnoughMakersInOfferBook`
+            // This happens only when init_first_hop() fails at `NotEnoughMakersInOfferBook` or `NotEnoughSuitableMakersForAmount`
             if outgoing_infos.is_empty() {
                 break;
             }

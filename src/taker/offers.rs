@@ -106,6 +106,18 @@ impl OfferBook {
         self.all_makers.iter().collect()
     }
 
+    /// Gets all good makers that can handle a specific amount.
+    /// Filters makers based on their min_size and max_size limits.
+    pub fn suitable_makers_for_amount(&self, amount: bitcoin::Amount) -> Vec<&OfferAndAddress> {
+        self.all_good_makers()
+            .into_iter()
+            .filter(|oa| {
+                amount >= bitcoin::Amount::from_sat(oa.offer.min_size)
+                    && amount <= bitcoin::Amount::from_sat(oa.offer.max_size)
+            })
+            .collect()
+    }
+
     /// Adds a new offer to the offer book.
     pub(crate) fn add_new_offer(&mut self, offer: &OfferAndAddress) -> bool {
         if !self.all_makers.contains(offer) {
