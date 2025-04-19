@@ -17,6 +17,8 @@ pub enum TakerError {
     ContractsBroadcasted(Vec<bitcoin::Txid>),
     /// Error indicating there are not enough makers available in the offer book.
     NotEnoughMakersInOfferBook,
+    /// Error indicating there are not enough suitable makers for the requested amount.
+    NotEnoughSuitableMakersForAmount,
     /// Error related to wallet operations.
     Wallet(WalletError),
     /// Error encountered during interaction with the directory server.
