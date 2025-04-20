@@ -437,10 +437,10 @@ fn download_maker_offer_attempt_once(
 ) -> Result<Offer, TakerError> {
     let maker_addr = addr.to_string();
     log::info!("Downloading offer from {}", maker_addr);
-    let mut socket = match config.connection_type {
+    let mut socket = match config.get_connection_type() {
         ConnectionType::CLEARNET => TcpStream::connect(&maker_addr)?,
         ConnectionType::TOR => Socks5Stream::connect(
-            format!("127.0.0.1:{}", config.socks_port).as_str(),
+            format!("127.0.0.1:{}", config.get_socks_port()).as_str(),
             maker_addr.as_ref(),
         )?
         .into_inner(),
