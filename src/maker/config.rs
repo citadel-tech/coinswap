@@ -13,25 +13,165 @@ use super::api::MIN_SWAP_AMOUNT;
 #[derive(Debug, Clone, PartialEq)]
 pub struct MakerConfig {
     /// RPC listening port
-    pub rpc_port: u16,
+    rpc_port: u16,
     /// Minimum Coinswap amount
-    pub min_swap_amount: u64,
+    min_swap_amount: u64,
     /// target listening port
-    pub network_port: u16,
+    network_port: u16,
     /// control port
-    pub control_port: u16,
+    control_port: u16,
     /// Socks port
-    pub socks_port: u16,
+    socks_port: u16,
     /// Authentication password
-    pub tor_auth_password: String,
+    tor_auth_password: String,
     /// Directory server address (can be clearnet or onion)
-    pub directory_server_address: String,
+    directory_server_address: String,
     /// Fidelity Bond amount
-    pub fidelity_amount: u64,
+    fidelity_amount: u64,
     /// Fidelity Bond timelock in Block heights.
-    pub fidelity_timelock: u32,
+    fidelity_timelock: u32,
     /// Connection type
-    pub connection_type: ConnectionType,
+    connection_type: ConnectionType,
+}
+
+#[derive(Default, Clone, PartialEq)]
+pub struct MakerConfigBuilder {
+    rpc_port: Option<u16>,
+    /// Minimum Coinswap amount
+    min_swap_amount: Option<u64>,
+    /// target listening port
+    network_port: Option<u16>,
+    /// control port
+    control_port: Option<u16>,
+    /// Socks port
+    socks_port: Option<u16>,
+    /// Authentication password
+    tor_auth_password: Option<String>,
+    /// Directory server address (can be clearnet or onion)
+    directory_server_address: Option<String>,
+    /// Fidelity Bond amount
+    fidelity_amount: Option<u64>,
+    /// Fidelity Bond timelock in Block heights.
+    fidelity_timelock: Option<u32>,
+    /// Connection type
+    connection_type: Option<ConnectionType>,
+    // MakerConfig
+    config: MakerConfig,
+}
+
+impl MakerConfigBuilder {
+    /// Create a new MakerConfigBuilder with default values
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the RPC port
+    pub fn rpc_port(mut self, rpc_port: u16) -> Self {
+        self.rpc_port = Some(rpc_port);
+        self
+    }
+
+    /// Set the minimum swap amount
+    pub fn min_swap_amount(mut self, min_swap_amount: u64) -> Self {
+        self.min_swap_amount = Some(min_swap_amount);
+        self
+    }
+
+    /// Set the network port
+    pub fn network_port(mut self, network_port: u16) -> Self {
+        self.network_port = Some(network_port);
+        self
+    }
+
+    /// Set the control port
+    pub fn control_port(mut self, control_port: u16) -> Self {
+        self.control_port = Some(control_port);
+        self
+    }
+
+    /// Set the socks port
+    pub fn socks_port(mut self, socks_port: u16) -> Self {
+        self.socks_port = Some(socks_port);
+        self
+    }
+
+    /// Set the Tor authentication password
+    pub fn tor_auth_password(mut self, tor_auth_password: impl Into<String>) -> Self {
+        self.tor_auth_password = Some(tor_auth_password.into());
+        self
+    }
+
+    /// Set the directory server address
+    pub fn directory_server_address(mut self, directory_server_address: impl Into<String>) -> Self {
+        self.directory_server_address = Some(directory_server_address.into());
+        self
+    }
+
+    /// Set the fidelity bond amount
+    pub fn fidelity_amount(mut self, fidelity_amount: u64) -> Self {
+        self.fidelity_amount = Some(fidelity_amount);
+        self
+    }
+
+    /// Set the fidelity timelock
+    pub fn fidelity_timelock(mut self, fidelity_timelock: u32) -> Self {
+        self.fidelity_timelock = Some(fidelity_timelock);
+        self
+    }
+
+    /// Set the connection type
+    pub fn connection_type(mut self, connection_type: ConnectionType) -> Self {
+        self.connection_type = Some(connection_type);
+        self
+    }
+
+    /// Build the MakerConfig using the provided values or defaults
+    pub fn build(self) -> MakerConfig {
+        let default_config = MakerConfig::default();
+
+        MakerConfig {
+            rpc_port: self.rpc_port.unwrap_or(default_config.rpc_port),
+            min_swap_amount: self
+                .min_swap_amount
+                .unwrap_or(default_config.min_swap_amount),
+            network_port: self.network_port.unwrap_or(default_config.network_port),
+            control_port: self.control_port.unwrap_or(default_config.control_port),
+            socks_port: self.socks_port.unwrap_or(default_config.socks_port),
+            tor_auth_password: self
+                .tor_auth_password
+                .unwrap_or(default_config.tor_auth_password),
+            directory_server_address: self
+                .directory_server_address
+                .unwrap_or(default_config.directory_server_address),
+            fidelity_amount: self
+                .fidelity_amount
+                .unwrap_or(default_config.fidelity_amount),
+            fidelity_timelock: self
+                .fidelity_timelock
+                .unwrap_or(default_config.fidelity_timelock),
+            connection_type: self
+                .connection_type
+                .unwrap_or(default_config.connection_type),
+        }
+    }
+
+    // Load configuration from file
+    pub fn from_file(mut self, config_path: Option<&Path>) -> io::Result<Self> {
+        let config = MakerConfig::new(config_path)?;
+
+        self.rpc_port = Some(config.rpc_port);
+        self.min_swap_amount = Some(config.min_swap_amount);
+        self.network_port = Some(config.network_port);
+        self.control_port = Some(config.control_port);
+        self.socks_port = Some(config.socks_port);
+        self.tor_auth_password = Some(config.tor_auth_password);
+        self.directory_server_address = Some(config.directory_server_address);
+        self.fidelity_amount = Some(config.fidelity_amount);
+        self.fidelity_timelock = Some(config.fidelity_timelock);
+        self.connection_type = Some(config.connection_type);
+
+        Ok(self)
+    }
 }
 
 impl Default for MakerConfig {
@@ -63,6 +203,51 @@ impl Default for MakerConfig {
 }
 
 impl MakerConfig {
+    /// Creates a new builder for MakerConfig
+    pub fn builder() -> MakerConfigBuilder {
+        MakerConfigBuilder::new()
+    }
+
+    pub fn get_rpc_port(&self) -> u16 {
+        self.rpc_port
+    }
+
+    pub fn get_min_swap_amount(&self) -> u64 {
+        self.min_swap_amount
+    }
+
+    pub fn get_network_port(&self) -> u16 {
+        self.network_port
+    }
+
+    pub fn get_control_port(&self) -> u16 {
+        self.control_port
+    }
+
+    pub fn get_socks_port(&self) -> u16 {
+        self.socks_port
+    }
+
+    pub fn get_tor_auth_password(&self) -> &str {
+        &self.tor_auth_password
+    }
+
+    pub fn get_directory_server_address(&self) -> &str {
+        &self.directory_server_address
+    }
+
+    pub fn get_fidelity_amount(&self) -> u64 {
+        self.fidelity_amount
+    }
+
+    pub fn get_fidelity_timelock(&self) -> u32 {
+        self.fidelity_timelock
+    }
+
+    pub fn get_connection_type(&self) -> ConnectionType {
+        self.connection_type
+    }
+
     /// Constructs a [MakerConfig] from a specified data directory. Or create default configs and load them.
     ///
     /// The maker(/taker).toml file should exist at the provided data-dir location.
@@ -239,5 +424,40 @@ mod tests {
         let config = MakerConfig::new(Some(&config_path)).unwrap();
         remove_temp_config(&config_path);
         assert_eq!(config, MakerConfig::default());
+    }
+
+    #[test]
+    fn test_builder_pattern() {
+        // Test building with default values
+        let config = MakerConfig::builder().build();
+        assert_eq!(config, MakerConfig::default());
+
+        // Test modifying values using the builder
+        let config = MakerConfig::builder()
+            .rpc_port(7000)
+            .network_port(7001)
+            .control_port(9052)
+            .socks_port(9053)
+            .min_swap_amount(20000)
+            .tor_auth_password("test_password")
+            .directory_server_address("test.onion:8080")
+            .fidelity_amount(100000)
+            .fidelity_timelock(15000)
+            .connection_type(ConnectionType::CLEARNET)
+            .build();
+
+        let mut expected = MakerConfig::default();
+        expected.rpc_port = 7000;
+        expected.network_port = 7001;
+        expected.control_port = 9052;
+        expected.socks_port = 9053;
+        expected.min_swap_amount = 20000;
+        expected.tor_auth_password = "test_password".to_owned();
+        expected.directory_server_address = "test.onion:8080".to_owned();
+        expected.fidelity_amount = 100000;
+        expected.fidelity_timelock = 15000;
+        expected.connection_type = ConnectionType::CLEARNET;
+
+        assert_eq!(config, expected);
     }
 }
