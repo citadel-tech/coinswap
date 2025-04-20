@@ -208,42 +208,52 @@ impl MakerConfig {
         MakerConfigBuilder::new()
     }
 
+    /// Returns the configured RPC port
     pub fn get_rpc_port(&self) -> u16 {
         self.rpc_port
     }
-
+    
+    /// Returns the minimum allowed amount for a coinswap
     pub fn get_min_swap_amount(&self) -> u64 {
         self.min_swap_amount
     }
-
+    
+    /// Returns the network listening port
     pub fn get_network_port(&self) -> u16 {
         self.network_port
     }
-
+    
+    /// Returns the Tor control port
     pub fn get_control_port(&self) -> u16 {
         self.control_port
     }
-
+    
+    /// Returns the SOCKS port for Tor traffic
     pub fn get_socks_port(&self) -> u16 {
         self.socks_port
     }
-
+    
+    /// Returns the authentication password for the Tor control port
     pub fn get_tor_auth_password(&self) -> &str {
         &self.tor_auth_password
     }
-
+    
+    /// Returns the address of the directory server
     pub fn get_directory_server_address(&self) -> &str {
         &self.directory_server_address
     }
-
+    
+    /// Returns the fidelity amount
     pub fn get_fidelity_amount(&self) -> u64 {
         self.fidelity_amount
     }
-
+    
+    /// Returns the timelock for the fidelity bond in block height
     pub fn get_fidelity_timelock(&self) -> u32 {
         self.fidelity_timelock
     }
-
+    
+    /// Returns the configured connection type
     pub fn get_connection_type(&self) -> ConnectionType {
         self.connection_type
     }
