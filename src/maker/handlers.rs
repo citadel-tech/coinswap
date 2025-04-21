@@ -6,7 +6,8 @@
 //! Manages wallet state, incoming and outgoing swap coins, and special behaviors defined for the Maker.
 //! The file includes functions to validate and sign contract transactions, verify proof of funding, and handle unexpected recovery scenarios.
 //! Implements the core functionality for a Maker in a Bitcoin coinswap protocol.
-
+use crate::taker::routines::{estimate_fee_rate,fetch_fee_from_mempool};
+const DEFAULT_FEE_RATE: u64 = 20; // fallback if both estimators fail
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use bitcoin::{
@@ -92,22 +93,41 @@ pub(crate) fn handle_message(
         }
         ExpectedMessage::NewlyConnectedTaker => match message {
 
-            TakerToMakerMessage::FeeNegotiationProposal(proposal) => {
-                // Call our helper to decide on the fee.
-                let maker_decision = decide_fee(&proposal);
-
-                // If the decision is Accept, store the final negotiated fee in our connection state.
-                if let FeeNegotiationResponse::Accept(final_fee) = maker_decision {
-                    connection_state.negotiated_feerate = Some(final_fee);
+            TakerToMakerMessage::ReqFeeNegotiation(proposal) => {
+                let proposed = proposal.proposed_feerate;
+                log::info!("Received fee proposal: {} sat/vByte from Taker", proposed);
+            
+                // 1) fetch our own estimate via mempool.space (no RPC)
+                let local_estimate = fetch_fee_from_mempool()
+                                    .unwrap_or(DEFAULT_FEE_RATE as f64);
+                log::info!("Maker's fee estimate (via mempool.space): {} sat/vByte", local_estimate);
+            
+                // 2) **decide** Accept / Counter / Reject
+                let decision = if proposed >= local_estimate as u64 {
+                    FeeNegotiationResponse::Accept(proposed)
+                } else if proposed >= ((local_estimate * 80.0 / 100.0) as u64) {
+                    FeeNegotiationResponse::Counter(local_estimate as u64)
+                } else {
+                    FeeNegotiationResponse::Reject(format!(
+                        "Proposed {} too low; required >= {}",
+                        proposed, local_estimate
+                    ))
+                };
+            
+                // 3) store fee if Accept or Counter
+                if let FeeNegotiationResponse::Accept(rate)
+                     | FeeNegotiationResponse::Counter(rate) = decision
+                {
+                    connection_state.negotiated_feerate = Some(rate);
                 }
-
-                // Prepare the response message to send back to the Taker.
-                let response = MakerToTakerMessage::FeeNegotiationResponse(maker_decision);
-
-                // Advance to the next expected state (for example, asking for contract signatures).
+            
+                // 4) send response and advance state
+                let resp_msg = MakerToTakerMessage::RespFeeNegotiation(decision);
                 connection_state.allowed_message = ExpectedMessage::ReqContractSigsForSender;
-                Some(response)
+                Some(resp_msg)
             },
+            
+
             TakerToMakerMessage::ReqGiveOffer(_) => {
                 let (tweakable_point, max_size) = {
                     let wallet_reader = maker.wallet.read()?;
@@ -405,6 +425,14 @@ impl Maker {
                 "Fatal Error! Total swap fee is more than the swap amount. Failing the swap.",
             ));
         };
+
+
+       // 1) pick up the fee we negotiated earlier (or fall back to the old default)+        
+    let fee_rate = connection_state
+        .negotiated_feerate
+        .unwrap_or(DEFAULT_TX_FEE_RATE as u64);  //DEFAULT_TX_FEE_RATE
+        log::info!("Using negotiated fee_rate = {} sat/vByte for funding TXs", fee_rate);
+
 
         // Create outgoing coinswap of the next hop
         let (my_funding_txes, outgoing_swapcoins, act_funding_txs_fees) = {
@@ -745,20 +773,4 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
     Ok(())
 }
 
-fn decide_fee(proposal: &FeeNegotiationProposal) -> FeeNegotiationResponse {
-    let min_acceptable = 5;   // Minimum acceptable fee in sat/vByte.
-    let max_acceptable = 200; // Maximum acceptable fee in sat/vByte.
 
-    if proposal.proposed_fee_sat_per_vbyte < min_acceptable {
-        FeeNegotiationResponse::Reject(format!(
-            "Minimum acceptable fee is {} sat/vByte",
-            min_acceptable
-        ))
-    } else if proposal.proposed_fee_sat_per_vbyte > max_acceptable {
-        // Counter with the maximum acceptable fee.
-        FeeNegotiationResponse::Counter(max_acceptable)
-    } else {
-        // Accept the proposed fee.
-        FeeNegotiationResponse::Accept(proposal.proposed_fee_sat_per_vbyte)
-    }
-}

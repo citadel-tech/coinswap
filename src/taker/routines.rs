@@ -5,6 +5,9 @@
 //! Notable types include [ContractTransaction], [ContractsInfo], [ThisMakerInfo], and [NextMakerInfo].
 //! It also handles downloading maker offers with retry mechanisms and implements the necessary message structures
 //! for communication between taker and maker.
+use bitcoincore_rpc::{Auth, Client as RpcClient, RpcApi};
+use bitcoincore_rpc::bitcoincore_rpc_json::EstimateMode;
+
 
 use serde::{Deserialize, Serialize};
 use socks::Socks5Stream;
@@ -233,9 +236,13 @@ pub(crate) struct ThisMakerInfo {
 }
 
 // Type for information related to the next peer // why not next Maker?
+/// Information about the next maker in the swap chain, containing their public keys
+/// for both multisig and hashlock transactions.
 #[derive(Clone)]
 pub struct NextMakerInfo {
+    /// Public keys used for multisig contracts with the next maker
     pub next_peer_multisig_pubkeys: Vec<PublicKey>,
+    /// Public keys used for hashlock contracts with the next maker
     pub next_peer_hashlock_pubkeys: Vec<PublicKey>,
 }
 
@@ -246,6 +253,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
     npi: NextMakerInfo,
     hashvalue: Hash160,
     id: String,
+    fee_rate: u64,
 ) -> Result<(ContractSigsAsRecvrAndSender, Vec<ScriptBuf>), TakerError> {
     // Send POF
     let next_coinswap_info = npi
@@ -264,7 +272,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         confirmed_funding_txes: tmi.funding_tx_infos.clone(),
         next_coinswap_info,
         refund_locktime: tmi.this_maker_refund_locktime,
-        contract_feerate: MINER_FEE,
+        contract_feerate: fee_rate,
         id,
     });
 
@@ -434,6 +442,7 @@ pub(crate) fn send_hash_preimage_and_get_private_keys(
 fn download_maker_offer_attempt_once(
     addr: &MakerAddress,
     config: &TakerConfig,
+    rpc: &bitcoincore_rpc::Client,              // <— added
     ongoing_swap_state: &mut OngoingSwapState,
 ) -> Result<Offer, TakerError> {
     let maker_addr = addr.to_string();
@@ -468,14 +477,20 @@ fn download_maker_offer_attempt_once(
     };
 
      // --- Begin Fee Negotiation ---
-    // Choose a proposed fee (for example, 20 sat/vByte)
-    let proposed_fee = 20;
-    log::info!("Proposing fee of {} sat/vByte", proposed_fee);
+    // // Choose a proposed fee (for example, 20 sat/vByte)
+    // let proposed_fee = 20;
+    // log::info!("Proposing fee of {} sat/vByte", proposed_fee);
+
+    // 1) Estimate dynamically
+    let est_fee = estimate_fee_rate(rpc, 6)
+    .map_err(|e| TakerError::General(format!("Fee estimation failed: {:?}", e)))?;
+    let proposed_fee = est_fee.ceil() as u64;
+    log::info!("Proposing dynamic fee of {} sat/vByte", proposed_fee);
 
     send_message(
         &mut socket,
-        &TakerToMakerMessage::FeeNegotiationProposal(FeeNegotiationProposal {
-            proposed_fee_sat_per_vbyte: proposed_fee,
+        &TakerToMakerMessage::ReqFeeNegotiation(FeeNegotiationProposal {
+            proposed_feerate: proposed_fee,
         }),
     )?;
 
@@ -483,7 +498,7 @@ fn download_maker_offer_attempt_once(
     let fee_resp_bytes = read_message(&mut socket)?;
     let fee_msg: MakerToTakerMessage = serde_cbor::from_slice(&fee_resp_bytes)?;
     match fee_msg {
-        MakerToTakerMessage::FeeNegotiationResponse(resp) => {
+        MakerToTakerMessage::RespFeeNegotiation(resp) => {
             match resp {
                 FeeNegotiationResponse::Accept(fee) => {
                     log::info!("Maker accepted fee of {} sat/vByte", fee);
@@ -523,9 +538,17 @@ pub(crate) fn download_maker_offer(
 ) -> Option<OfferAndAddress> {
     let mut ii = 0;
 
+
+    let rpc = RpcClient::new(
+        "http://127.0.0.1:18443",                          
+        Auth::UserPass("user".to_string(), "password".to_string()),   //todo: find a way to make it dynamic
+    ).expect("couldn’t init bitcoind RPC client");
+
+    let mut swap_state = OngoingSwapState::default();
+
     loop {
         ii += 1;
-        match download_maker_offer_attempt_once(&address, &config, &mut OngoingSwapState::default()) {
+        match download_maker_offer_attempt_once(&address, &config, &rpc,&mut swap_state ) {
             Ok(offer) => return Some(OfferAndAddress { offer, address }),
             Err(e) => {
                 if ii <= FIRST_CONNECT_ATTEMPTS {
@@ -547,6 +570,40 @@ pub(crate) fn download_maker_offer(
                 }
             }
         }
+    }
+}
+
+
+/// Estimates a fee rate (in sat/vByte) for confirmation within `target_blocks`.
+pub fn estimate_fee_rate(rpc: &RpcClient, target_blocks: u16) -> Result<f64, TakerError> {
+    let fee_result = rpc.estimate_smart_fee(target_blocks, Some(EstimateMode::Conservative))
+                       .map_err(|e| TakerError::General(format!("Fee estimate failed: {}", e)))?;
+    if let Some(per_kb_fee) = fee_result.fee_rate {
+        // `fee_rate` is in BTC/kB, convert to sat/vByte:
+        let btc_per_kb = per_kb_fee.to_btc(); // e.g., 0.00020000 BTC/kB
+        let sat_per_kb = btc_per_kb * 100_000_000.0; 
+        let sat_per_vb = sat_per_kb / 1000.0;
+        Ok(sat_per_vb)
+    } else {
+        Err(TakerError::General("Bitcoin Core returned no feerate".to_string()))
+    }
+}
+
+
+use reqwest::blocking::Client;
+
+/// Fetches the recommended fee rate from mempool.space API.
+/// Returns the fastest fee rate in sat/vByte as a floating point number.
+pub fn fetch_fee_from_mempool() -> Result<f64, TakerError> {
+    let url = "https://mempool.space/testnet4/api/v1/fees/recommended";
+    let resp = Client::new().get(url).send()
+        .map_err(|e| TakerError::General(e.to_string()))?
+        .json::<serde_json::Value>()
+        .map_err(|e| TakerError::General(format!("Invalid JSON: {}", e)))?;
+    if let Some(fee) = resp.get("fastestFee").and_then(|v| v.as_f64()) {
+        Ok(fee)
+    } else {
+        Err(TakerError::General("Fee field missing".into()))
     }
 }
 

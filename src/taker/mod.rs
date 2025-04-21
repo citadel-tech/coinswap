@@ -8,7 +8,7 @@ pub mod api;
 mod config;
 pub mod error;
 pub(crate) mod offers;
-mod routines;
+pub mod routines;
 
 pub use self::api::TakerBehavior;
 pub use api::{SwapParams, Taker};

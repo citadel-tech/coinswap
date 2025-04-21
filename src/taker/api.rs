@@ -1044,6 +1044,12 @@ impl Taker {
                 this_maker_refund_locktime: maker_refund_locktime,
             };
 
+
+        let fee_rate = self
+         .ongoing_swap_state
+         .negotiated_feerate
+        .unwrap_or(MINER_FEE);
+
             let (contract_sigs_as_recvr_sender, next_swap_contract_redeemscripts) =
                 send_proof_of_funding_and_init_next_hop(
                     &mut socket,
@@ -1051,6 +1057,7 @@ impl Taker {
                     next_maker_info,
                     self.get_preimage_hash(),
                     self.ongoing_swap_state.id.clone(),
+                    fee_rate,
                 )?;
             log::info!(
                 "<=== ReqContractSigsAsRecvrAndSender | {}",

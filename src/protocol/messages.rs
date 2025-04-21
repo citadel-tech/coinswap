@@ -185,10 +185,11 @@ pub(crate) struct PrivKeyHandover {
     pub(crate) multisig_privkeys: Vec<MultisigPrivkey>,
 }
 
+/// A message struct used for negotiating transaction fees between Taker and Maker.
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct FeeNegotiationProposal {
-    /// Proposed fee in sat/vByte
-    pub proposed_fee_sat_per_vbyte: u64,
+pub struct FeeNegotiationProposal {
+    /// The proposed fee rate in satoshis per virtual byte (sat/vB)
+    pub proposed_feerate: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -219,7 +220,7 @@ pub(crate) enum TakerToMakerMessage {
     RespPrivKeyHandover(PrivKeyHandover),
     WaitingFundingConfirmation(String),
     //fee rate negotiation proposal
-    FeeNegotiationProposal(FeeNegotiationProposal),
+    ReqFeeNegotiation(FeeNegotiationProposal), // Taker proposes a fee
 
 }
 
@@ -237,7 +238,7 @@ impl Display for TakerToMakerMessage {
             Self::RespHashPreimage(_) => write!(f, "RespHashPreimage"),
             Self::RespPrivKeyHandover(_) => write!(f, "RespPrivKeyHandover"),
             Self::WaitingFundingConfirmation(_) => write!(f, "WaitingFundingConfirmation"),
-            Self::FeeNegotiationProposal(_) => write!(f, "FeeNegotiationProposal"), 
+            Self::ReqFeeNegotiation(_) => write!(f, "FeeNegotiationProposal"), 
 
         }
     }
@@ -321,8 +322,7 @@ pub(crate) enum MakerToTakerMessage {
     /// Send the multisig private keys of the swap, declaring completion of the contract.
     RespPrivKeyHandover(PrivKeyHandover),
     //reponse to fee rate negotiation
-    FeeNegotiationResponse(FeeNegotiationResponse),
-
+    RespFeeNegotiation(FeeNegotiationResponse),
 }
 
 impl Display for MakerToTakerMessage {
@@ -338,7 +338,7 @@ impl Display for MakerToTakerMessage {
                 write!(f, "RespContractSigsForRecvr")
             }
             Self::RespPrivKeyHandover(_) => write!(f, "RespPrivKeyHandover"),
-            Self::FeeNegotiationResponse(_) => write!(f, "FeeNegotiationResponse"),
+            Self::RespFeeNegotiation(_) => write!(f, "FeeNegotiationResponse"),
         }
     }
 }
