@@ -234,22 +234,24 @@ impl Taker {
         };
 
         // If config file doesn't exist, default config will be loaded.
-        let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
+        let mut builder = TakerConfig::builder().from_file(Some(&data_dir.join("config.toml")))?;
 
         if let Some(connection_type) = connection_type {
-            config.connection_type = connection_type;
+            builder = builder.connection_type(connection_type);
         }
 
         if let Some(control_port) = control_port {
-            config.control_port = control_port;
+            builder = builder.control_port(control_port);
         }
 
         if let Some(tor_auth_password) = tor_auth_password {
-            config.tor_auth_password = tor_auth_password;
+            builder = builder.tor_auth_password(tor_auth_password);
         }
 
+        let config = builder.build();
+
         if matches!(connection_type, Some(ConnectionType::TOR)) {
-            check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
+            check_tor_status(config.get_control_port(), config.get_tor_auth_password())?;
         }
 
         config.write_to_file(&data_dir.join("config.toml"))?;
@@ -949,10 +951,10 @@ impl Taker {
             this_maker.address
         );
         let address = this_maker.address.to_string();
-        let mut socket = match self.config.connection_type {
+        let mut socket = match self.config.get_connection_type() {
             ConnectionType::CLEARNET => TcpStream::connect(address)?,
             ConnectionType::TOR => Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+                format!("127.0.0.1:{}", self.config.get_socks_port()).as_str(),
                 address.as_str(),
             )?
             .into_inner(),
@@ -1424,10 +1426,10 @@ impl Taker {
 
         let maker_addr_str = maker_address.to_string();
 
-        let mut socket = match self.config.connection_type {
+        let mut socket = match self.config.get_connection_type() {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
             ConnectionType::TOR => Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+                format!("127.0.0.1:{}", self.config.get_socks_port()).as_str(),
                 &*maker_addr_str,
             )?
             .into_inner(),
@@ -1512,10 +1514,10 @@ impl Taker {
         let mut ii = 0;
 
         let maker_addr_str = maker_address.to_string();
-        let mut socket = match self.config.connection_type {
+        let mut socket = match self.config.get_connection_type() {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
             ConnectionType::TOR => Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+                format!("127.0.0.1:{}", self.config.get_socks_port()).as_str(),
                 &*maker_addr_str,
             )?
             .into_inner(),
@@ -1689,10 +1691,10 @@ impl Taker {
         receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {
         let maker_addr_str = maker_address.to_string();
-        let mut socket = match self.config.connection_type {
+        let mut socket = match self.config.get_connection_type() {
             ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
             ConnectionType::TOR => Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+                format!("127.0.0.1:{}", self.config.get_socks_port()).as_str(),
                 &*maker_addr_str,
             )?
             .into_inner(),
@@ -2033,19 +2035,19 @@ impl Taker {
 
     /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
     pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        let dns_addr = match self.config.connection_type {
+        let dns_addr = match self.config.get_connection_type() {
             ConnectionType::CLEARNET => {
                 if cfg!(feature = "integration-test") {
                     format!("127.0.0.1:{}", 8080)
                 } else {
-                    self.config.directory_server_address.clone()
+                    self.config.get_directory_server_address().to_string()
                 }
             }
-            ConnectionType::TOR => self.config.directory_server_address.clone(),
+            ConnectionType::TOR => self.config.get_directory_server_address().to_string(),
         };
 
         #[cfg(not(feature = "integration-test"))]
-        let socks_port = Some(self.config.socks_port);
+        let socks_port = Some(self.config.get_socks_port());
 
         #[cfg(feature = "integration-test")]
         let socks_port = None;
@@ -2053,7 +2055,8 @@ impl Taker {
         log::info!("Fetching addresses from DNS: {}", dns_addr);
 
         let addresses_from_dns =
-            match fetch_addresses_from_dns(socks_port, dns_addr, self.config.connection_type) {
+            match fetch_addresses_from_dns(socks_port, dns_addr, self.config.get_connection_type())
+            {
                 Ok(dns_addrs) => dns_addrs,
                 Err(e) => {
                     log::error!("Could not connect to DNS Server: {:?}", e);
@@ -2112,10 +2115,10 @@ impl Taker {
     ) -> Result<(), TakerError> {
         // Notify the maker that we are waiting for funding confirmation
         let address = maker_addr.to_string();
-        let mut socket = match self.config.connection_type {
+        let mut socket = match self.config.get_connection_type() {
             ConnectionType::CLEARNET => TcpStream::connect(address)?,
             ConnectionType::TOR => Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+                format!("127.0.0.1:{}", self.config.get_socks_port()).as_str(),
                 address.as_str(),
             )?
             .into_inner(),

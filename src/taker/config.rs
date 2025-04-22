@@ -10,15 +10,100 @@ use std::{io, io::Write, path::Path};
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
     /// Control port
-    pub control_port: u16,
+    control_port: u16,
     /// Socks proxy port used to connect TOR
-    pub socks_port: u16,
+    socks_port: u16,
     /// Authentication password
-    pub tor_auth_password: String,
+    tor_auth_password: String,
     /// Directory server address (can be clearnet or onion)
-    pub directory_server_address: String,
+    directory_server_address: String,
     /// Connection type
-    pub connection_type: ConnectionType,
+    connection_type: ConnectionType,
+}
+
+#[derive(Default, Clone, PartialEq)]
+pub struct TakerConfigBuilder {
+    /// Control port
+    control_port: Option<u16>,
+    /// Socks proxy port used to connect TOR
+    socks_port: Option<u16>,
+    /// Authentication password
+    tor_auth_password: Option<String>,
+    /// Directory server address (can be clearnet or onion)
+    directory_server_address: Option<String>,
+    /// Connection type
+    connection_type: Option<ConnectionType>,
+    // TakerConfig
+    config: TakerConfig,
+}
+
+impl TakerConfigBuilder {
+    /// Create a new TakerConfigBuilder with default values
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the control port
+    pub fn control_port(mut self, control_port: u16) -> Self {
+        self.control_port = Some(control_port);
+        self
+    }
+
+    /// Set the socks port
+    pub fn socks_port(mut self, socks_port: u16) -> Self {
+        self.socks_port = Some(socks_port);
+        self
+    }
+
+    /// Set the Tor authentication password
+    pub fn tor_auth_password(mut self, tor_auth_password: impl Into<String>) -> Self {
+        self.tor_auth_password = Some(tor_auth_password.into());
+        self
+    }
+
+    /// Set the directory server address
+    pub fn directory_server_address(mut self, directory_server_address: impl Into<String>) -> Self {
+        self.directory_server_address = Some(directory_server_address.into());
+        self
+    }
+
+    /// Set the connection type
+    pub fn connection_type(mut self, connection_type: ConnectionType) -> Self {
+        self.connection_type = Some(connection_type);
+        self
+    }
+
+    /// Build the MakerConfig using the provided values or defaults
+    pub fn build(self) -> TakerConfig {
+        let default_config = TakerConfig::default();
+
+        TakerConfig {
+            control_port: self.control_port.unwrap_or(default_config.control_port),
+            socks_port: self.socks_port.unwrap_or(default_config.socks_port),
+            tor_auth_password: self
+                .tor_auth_password
+                .unwrap_or(default_config.tor_auth_password),
+            directory_server_address: self
+                .directory_server_address
+                .unwrap_or(default_config.directory_server_address),
+            connection_type: self
+                .connection_type
+                .unwrap_or(default_config.connection_type),
+        }
+    }
+
+    // Load configuration from file
+    pub fn from_file(mut self, config_path: Option<&Path>) -> io::Result<Self> {
+        let config = TakerConfig::new(config_path)?;
+
+        self.control_port = Some(config.control_port);
+        self.socks_port = Some(config.socks_port);
+        self.tor_auth_password = Some(config.tor_auth_password);
+        self.directory_server_address = Some(config.directory_server_address);
+        self.connection_type = Some(config.connection_type);
+
+        Ok(self)
+    }
 }
 
 impl Default for TakerConfig {
@@ -39,6 +124,36 @@ impl Default for TakerConfig {
 }
 
 impl TakerConfig {
+    /// Creates a new builder for MakerConfig
+    pub fn builder() -> TakerConfigBuilder {
+        TakerConfigBuilder::new()
+    }
+
+    /// Get the the control port
+    pub fn get_control_port(&self) -> u16 {
+        self.control_port
+    }
+
+    /// Gets the configured SOCKS port used by Tor.
+    pub fn get_socks_port(&self) -> u16 {
+        self.socks_port
+    }
+
+    /// Returns the authentication password used for the Tor control port.
+    pub fn get_tor_auth_password(&self) -> &str {
+        &self.tor_auth_password
+    }
+
+    /// Returns the address of the configured directory server.
+    pub fn get_directory_server_address(&self) -> &str {
+        &self.directory_server_address
+    }
+
+    /// Returns the connection type used by the Maker.
+    pub fn get_connection_type(&self) -> ConnectionType {
+        self.connection_type
+    }
+
     /// Constructs a [TakerConfig] from a specified data directory. Or create default configs and load them.
     ///
     /// The maker(/taker).toml file should exist at the provided data-dir location.
@@ -202,5 +317,30 @@ mod tests {
         let config = TakerConfig::new(Some(&config_path)).unwrap();
         remove_temp_config(&config_path);
         assert_eq!(config, TakerConfig::default());
+    }
+
+    #[test]
+    fn test_builder_pattern() {
+        // Test building with default values
+        let config = TakerConfig::builder().build();
+        assert_eq!(config, TakerConfig::default());
+
+        // Test modifying values using the builder
+        let config = TakerConfig::builder()
+            .control_port(9052)
+            .socks_port(9053)
+            .tor_auth_password("test_password")
+            .directory_server_address("test.onion:8080")
+            .connection_type(ConnectionType::CLEARNET)
+            .build();
+
+        let mut expected = TakerConfig::default();
+        expected.control_port = 9052;
+        expected.socks_port = 9053;
+        expected.tor_auth_password = "test_password".to_owned();
+        expected.directory_server_address = "test.onion:8080".to_owned();
+        expected.connection_type = ConnectionType::CLEARNET;
+
+        assert_eq!(config, expected);
     }
 }
