@@ -1,4 +1,4 @@
-# Working with `bitcoind` in regtest
+# Working with `bitcoind` in regtest mode
 
 In this tutorial, we will guide you through setting up a Bitcoin Core `bitcoind` node in `regtest` mode. We will cover basic operations like creating wallets, generating blocks, checking balances, and sending Bitcoin between two wallets.
 
