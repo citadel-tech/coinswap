@@ -80,8 +80,13 @@ blockfilterindex=1
 addnode=172.81.178.3:38333
 signetchallenge=0014c9e9f8875a25c3cc6d99ad3e5fd54254d00fed44
 ```
-
 > **NOTE**: Change `signet=1` to `testnet4=1` if you want to run the apps on testnet, or other networks.
+
+This will connect the node with our custom signet. The custom signet is designed specifically for coinswap testing, and has a block interval of 2 mins.
+The signet data can be accessed using the Tor-Browser only at the below links.
+
+[Custom Signet Explorer](http://4imwp7kgajusoslqa7lnjq7phpt3gocm55tlekg5fp5xqy4ipoy5f6ad.onion/)   
+[Custom Signet Faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/)
 
 ### 2. Start Bitcoin Core
 ```bash
