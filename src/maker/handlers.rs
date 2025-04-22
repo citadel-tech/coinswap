@@ -53,7 +53,7 @@ pub(crate) fn handle_message(
     if let TakerToMakerMessage::WaitingFundingConfirmation(id) = &message {
         log::info!(
             "[{}] Taker is waiting for funding confirmation. Reseting timer.",
-            maker.config.network_port
+            maker.config.get_network_port()
         );
         maker
             .ongoing_swap_state
@@ -107,7 +107,7 @@ pub(crate) fn handle_message(
                     required_confirms: REQUIRED_CONFIRMS,
                     minimum_locktime: MIN_CONTRACT_REACTION_TIME,
                     max_size,
-                    min_size: maker.config.min_swap_amount,
+                    min_size: maker.config.get_min_swap_amount(),
                     tweakable_point,
                     fidelity: fidelity.clone(),
                 })))
@@ -244,20 +244,22 @@ impl Maker {
 
         log::info!(
             "[{}] Total Funding Amount = {} | Funding Txids = {:?}",
-            self.config.network_port,
+            self.config.get_network_port(),
             Amount::from_sat(total_funding_amount),
             funding_txids
         );
 
         let max_size = self.wallet.read()?.store.offer_maxsize;
-        if total_funding_amount >= self.config.min_swap_amount && total_funding_amount <= max_size {
+        if total_funding_amount >= self.config.get_min_swap_amount()
+            && total_funding_amount <= max_size
+        {
             Ok(MakerToTakerMessage::RespContractSigsForSender(
                 ContractSigsForSender { sigs },
             ))
         } else {
             log::error!(
                 "Funding amount not within min/max limit, min {}, max {}",
-                self.config.min_swap_amount,
+                self.config.get_min_swap_amount(),
                 max_size
             );
             Err(MakerError::General("not enough funds"))
@@ -280,7 +282,7 @@ impl Maker {
         let hashvalue = self.verify_proof_of_funding(&message)?;
         log::info!(
             "[{}] Validated Proof of Funding of receiving swap. Adding Incoming Swaps.",
-            self.config.network_port
+            self.config.get_network_port()
         );
 
         // Import transactions and addresses into Bitcoin core's wallet.
@@ -412,7 +414,7 @@ impl Maker {
 
         log::info!(
             "[{}] Prepared outgoing funding txs: {:?}.",
-            self.config.network_port,
+            self.config.get_network_port(),
             my_funding_txes
                 .iter()
                 .map(|tx| tx.compute_txid())
@@ -421,7 +423,7 @@ impl Maker {
 
         log::info!(
             "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {} |",
-            self.config.network_port,
+            self.config.get_network_port(),
             Amount::from_sat(incoming_amount),
             Amount::from_sat(outgoing_amount),
             Amount::from_sat(act_coinswap_fees),
@@ -542,7 +544,7 @@ impl Maker {
         }
         log::info!(
             "[{}] Broadcasted funding txs: {:?}",
-            self.config.network_port,
+            self.config.get_network_port(),
             my_funding_txids
         );
 
@@ -608,7 +610,7 @@ impl Maker {
 
         log::info!(
             "[{}] received preimage for hashvalue={}",
-            self.config.network_port,
+            self.config.get_network_port(),
             hashvalue
         );
         let mut swapcoin_private_keys = Vec::<MultisigPrivkey>::new();

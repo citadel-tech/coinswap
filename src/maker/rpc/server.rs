@@ -97,16 +97,16 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
         }
         RpcMsgReq::GetDataDir => RpcMsgResp::GetDataDirResp(maker.get_data_dir().to_path_buf()),
         RpcMsgReq::GetTorAddress => {
-            if maker.config.connection_type == ConnectionType::CLEARNET {
+            if maker.config.get_connection_type() == ConnectionType::CLEARNET {
                 RpcMsgResp::GetTorAddressResp("Maker is not running on TOR".to_string())
             } else {
                 let hostname = get_tor_hostname(
                     maker.get_data_dir(),
-                    maker.config.control_port,
-                    maker.config.network_port,
-                    &maker.config.tor_auth_password,
+                    maker.config.get_control_port(),
+                    maker.config.get_network_port(),
+                    &maker.config.get_tor_auth_password(),
                 )?;
-                let address = format!("{}:{}", hostname, maker.config.network_port);
+                let address = format!("{}:{}", hostname, maker.config.get_network_port());
                 RpcMsgResp::GetTorAddressResp(address)
             }
         }
@@ -138,12 +138,12 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
 }
 
 pub(crate) fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
-    let rpc_port = maker.config.rpc_port;
+    let rpc_port = maker.config.get_rpc_port();
     let rpc_socket = format!("127.0.0.1:{}", rpc_port);
     let listener = Arc::new(TcpListener::bind(&rpc_socket)?);
     log::info!(
         "[{}] RPC socket binding successful at {}",
-        maker.config.network_port,
+        maker.config.get_network_port(),
         rpc_socket
     );
 
