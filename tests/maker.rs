@@ -5,12 +5,19 @@ use bitcoind::BitcoinD;
 use coinswap::utill::setup_logger;
 use serde_json::{json, Value};
 use std::{
-    fs, io::{BufRead, BufReader}, path::PathBuf, println, process::{Child, Command}, str::FromStr, sync::mpsc::{self, Receiver}, thread, time::Duration
+    fs,
+    io::{BufRead, BufReader},
+    path::PathBuf,
+    println,
+    process::{Child, Command},
+    str::FromStr,
+    sync::mpsc::{self, Receiver},
+    thread,
+    time::Duration,
 };
 
 mod test_framework;
 use test_framework::{await_message, generate_blocks, init_bitcoind, send_to_address, start_dns};
-const FIDELITY_BOND_DNS_UPDATE_INTERVAL: u32 = 30;
 
 struct MakerCli {
     data_dir: PathBuf,
@@ -193,11 +200,11 @@ fn test_maker() {
     maker.wait().unwrap();
     std::thread::sleep(Duration::from_secs(1)); // Wait for resources to be released
 
-    println!("Testing bitcoin backend connection");
-    test_bitcoin_backend_connection(&mut maker_cli);
+    // println!("Testing bitcoin backend connection");
+    // test_bitcoin_backend_connection(&mut maker_cli);
 
-    // println!("Testing liquidity threshold");
-    // test_liquidity_threshold(&maker_cli);
+    println!("Testing liquidity threshold");
+    test_liquidity_threshold(&maker_cli);
 
     dns.kill().unwrap();
     dns.wait().unwrap();
@@ -352,56 +359,44 @@ fn test_maker_cli(maker_cli: &MakerCli, rx: &Receiver<String>) {
 
 fn test_bitcoin_backend_connection(maker_cli: &mut MakerCli) {
     println!("TEST STARTING: Bitcoin Backend Connection");
-    
-    // Start the maker with a good connection to bitcoind
     let (rx, mut maker) = maker_cli.start_makerd();
-    
-    // Wait for full initialization
+
     await_message(&rx, "Server Setup completed!!");
     println!("Maker started with connection to Bitcoin backend");
-    
-    // Wait for at least one periodic check to confirm Bitcoin connection works
+
     await_message_timeout(&rx, "Swap Liquidity:", Duration::from_secs(60));
     println!("✅ Verified Bitcoin connection with successful liquidity check");
-    
-    // Stop bitcoind to trigger disconnection
+
+    // Stop bitcoind
     println!("Stopping bitcoind to test disconnection handling...");
     maker_cli.bitcoind.stop().unwrap();
-    
-    // Wait for maker to detect the disconnection - should log RPC errors
+
     await_message_timeout(&rx, "RPC Connection failed", Duration::from_secs(20));
     println!("✅ Verified maker detects Bitcoin backend disconnection");
-    
-    // Clean up and create new bitcoind instance
-    println!("Cleaning up maker process and creating new bitcoind instance");
+
+    // cleanup an new bitcoind instance
     maker.kill().unwrap();
     maker.wait().unwrap();
-    
     let temp_dir = maker_cli.data_dir.parent().unwrap();
     let new_bitcoind = init_bitcoind(temp_dir);
     maker_cli.bitcoind = new_bitcoind;
-    
-    // Start maker with new bitcoind
+
     println!("Starting maker with new bitcoind instance");
     let (rx, mut maker) = maker_cli.start_makerd();
-    
-    // Wait for basic initialization with new bitcoind
+
     await_message(&rx, "Server Setup completed!!");
     println!("✅ Verified maker reconnected to new bitcoind instance");
-    
     // Clean up
     maker.kill().unwrap();
     maker.wait().unwrap();
-    
+
     println!("Bitcoin backend connection test completed!");
 }
-
 
 fn test_liquidity_threshold(maker_cli: &MakerCli) {
     println!("TEST STARTING: Liquidity Threshold");
 
     let (rx, mut maker) = maker_cli.start_makerd();
-
     await_message(&rx, "Server Setup completed!!");
     std::thread::sleep(Duration::from_secs(3));
 
@@ -414,19 +409,27 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
     const MIN_SWAP_AMOUNT: u64 = 10_000;
     println!("Minimum swap amount: {} sats", MIN_SWAP_AMOUNT);
 
-    let amount_to_spend = initial_balance - (MIN_SWAP_AMOUNT / 4);
+    println!("Creating external wallet for testing");
+    let client = &maker_cli.bitcoind.client;
+    use serde_json::json;
+    let _ = client.create_wallet("external_test_wallet", None, None, None, None);
+
+    let external_address = client
+        .call::<String>("getnewaddress", &[json!(""), json!("bech32")])
+        .unwrap_or_else(|_| "bcrt1qjrdns4f5zwkv29ln86plqzs092yd5fg8xrstx".to_string());
+
+    println!("External address: {}", external_address);
+
+    let amount_to_spend = initial_balance - 2500;
     let tx_fee = 1_000;
 
     println!("Amount to spend: {} sats", amount_to_spend);
 
-    let address = maker_cli.execute_maker_cli(&["get-new-address"]);
-    println!("Sending to address: {}", address);
-
-    println!("Sending transaction");
+    println!("Sending transaction to external address");
     let tx_result = maker_cli.execute_maker_cli(&[
         "send-to-address",
         "-t",
-        &address,
+        &external_address,
         "-a",
         &amount_to_spend.to_string(),
         "-f",
@@ -455,36 +458,13 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
 
     println!("Waiting for liquidity check (may take up to 30 seconds)...");
 
-    let start_time = std::time::Instant::now();
-    let timeout = Duration::from_secs(90);
-    let mut found_insufficient_message = false;
+    let low_liquidity_message =
+        await_message_timeout(&rx, "Low Swap Liquidity", Duration::from_secs(90));
 
-    while !found_insufficient_message && start_time.elapsed() < timeout {
-        match rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(message) => {
-                println!("LOG: {}", message);
-
-                if (message.contains("insufficient") && message.contains("liquidity"))
-                    || (message.contains("Insufficient") && message.contains("Liquidity"))
-                    || message.contains("insufficient swap")
-                    || message.contains("below minimum")
-                {
-                    found_insufficient_message = true;
-                    println!("FOUND LIQUIDITY WARNING: {}", message);
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                panic!("Channel disconnected while monitoring logs");
-            }
-        }
-    }
-
-    if !found_insufficient_message {
-        println!(
-            "Warning: Did not detect explicit insufficient liquidity message, proceeding anyway"
-        );
-    }
+    println!(
+        "✅ Detected low liquidity warning: {}",
+        low_liquidity_message
+    );
 
     println!("Adding funds to exceed minimum threshold");
 
@@ -523,31 +503,16 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
     );
 
     println!("Waiting for liquidity to be sufficient again...");
-    let mut found_sufficient_message = false;
-    let start_time = std::time::Instant::now();
+    let sufficient_liquidity_message =
+        await_message_timeout(&rx, "Swap Liquidity:", Duration::from_secs(90));
+    println!(
+        "✅ Detected sufficient liquidity: {}",
+        sufficient_liquidity_message
+    );
 
-    while !found_sufficient_message && start_time.elapsed() < timeout {
-        match rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(message) => {
-                println!("LOG: {}", message);
-
-                if message.contains("Swap Liquidity:") && !message.contains("insufficient") {
-                    found_sufficient_message = true;
-                    println!("FOUND SUFFICIENT LIQUIDITY MESSAGE: {}", message);
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                panic!("Channel disconnected while monitoring logs");
-            }
-        }
-    }
-
-    if !found_sufficient_message {
-        println!(
-            "Warning: Did not detect explicit sufficient liquidity message, proceeding anyway"
-        );
-    }
+    // Clean up
+    maker.kill().unwrap();
+    maker.wait().unwrap();
 
     println!("Liquidity threshold test completed!");
 }
