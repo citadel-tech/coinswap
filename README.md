@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1>Coinswap</h1>
+<h1>Coinswap-yay</h1>
 
 <p>
     Functioning, minimal-viable binaries and libraries to perform a trustless, p2p <a href="https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964">Maxwell-Belcher Coinswap Protocol</a>.
