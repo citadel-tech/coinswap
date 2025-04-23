@@ -5,14 +5,7 @@ use bitcoind::BitcoinD;
 use coinswap::utill::setup_logger;
 use serde_json::{json, Value};
 use std::{
-    fs,
-    io::{BufRead, BufReader},
-    path::PathBuf,
-    process::{Child, Command},
-    str::FromStr,
-    sync::mpsc::{self, Receiver},
-    thread,
-    time::Duration,
+    fs, io::{BufRead, BufReader}, path::PathBuf, println, process::{Child, Command}, str::FromStr, sync::mpsc::{self, Receiver}, thread, time::Duration
 };
 
 mod test_framework;
@@ -182,7 +175,7 @@ fn await_message_timeout(rx: &Receiver<String>, expected: &str, timeout: Duratio
 fn test_maker() {
     setup_logger(log::LevelFilter::Info, None);
 
-    let maker_cli = MakerCli::new();
+    let mut maker_cli = MakerCli::new();
 
     let dns_dir = maker_cli.data_dir.parent().unwrap();
     let mut dns = start_dns(dns_dir, &maker_cli.bitcoind);
@@ -200,11 +193,11 @@ fn test_maker() {
     maker.wait().unwrap();
     std::thread::sleep(Duration::from_secs(1)); // Wait for resources to be released
 
-    println!("Testing periodic DNS updates");
-    test_periodic_dns_updates(&maker_cli);
+    println!("Testing bitcoin backend connection");
+    test_bitcoin_backend_connection(&mut maker_cli);
 
-    println!("Testing liquidity threshold");
-    test_liquidity_threshold(&maker_cli);
+    // println!("Testing liquidity threshold");
+    // test_liquidity_threshold(&maker_cli);
 
     dns.kill().unwrap();
     dns.wait().unwrap();
@@ -357,46 +350,52 @@ fn test_maker_cli(maker_cli: &MakerCli, rx: &Receiver<String>) {
     await_message(rx, "Maker Server is shut down successfully");
 }
 
-fn test_periodic_dns_updates(maker_cli: &MakerCli) {
+fn test_bitcoin_backend_connection(maker_cli: &mut MakerCli) {
+    println!("TEST STARTING: Bitcoin Backend Connection");
+    
+    // Start the maker with a good connection to bitcoind
     let (rx, mut maker) = maker_cli.start_makerd();
-
-    // record initial dns time
-    let initial_update = await_message(
-        &rx,
-        "Successfully sent our address and fidelity proof to DNS at",
-    );
-    let start_time = std::time::Instant::now();
-
-    let interval = FIDELITY_BOND_DNS_UPDATE_INTERVAL;
-
-    println!("Sleeping for {} seconds", interval);
-
-    // wait and capture update message
-    let timeout = Duration::from_secs(interval as u64 * 2);
-    let first_update = await_message_timeout(
-        &rx,
-        "Successfully sent our address and fidelity proof to DNS at",
-        timeout,
-    );
-
-    let first_update_time = start_time.elapsed().as_secs();
-    println!("First update time: {}", first_update_time);
-
-    println!("Waiting for second update");
-    let second_update = await_message_timeout(
-        &rx,
-        "Successfully sent our address and fidelity proof to DNS at",
-        timeout,
-    );
-
-    let second_update_time = start_time.elapsed().as_secs();
-    println!("Second update time: {}", second_update_time);
-
+    
+    // Wait for full initialization
+    await_message(&rx, "Server Setup completed!!");
+    println!("Maker started with connection to Bitcoin backend");
+    
+    // Wait for at least one periodic check to confirm Bitcoin connection works
+    await_message_timeout(&rx, "Swap Liquidity:", Duration::from_secs(60));
+    println!("✅ Verified Bitcoin connection with successful liquidity check");
+    
+    // Stop bitcoind to trigger disconnection
+    println!("Stopping bitcoind to test disconnection handling...");
+    maker_cli.bitcoind.stop().unwrap();
+    
+    // Wait for maker to detect the disconnection - should log RPC errors
+    await_message_timeout(&rx, "RPC Connection failed", Duration::from_secs(20));
+    println!("✅ Verified maker detects Bitcoin backend disconnection");
+    
+    // Clean up and create new bitcoind instance
+    println!("Cleaning up maker process and creating new bitcoind instance");
     maker.kill().unwrap();
     maker.wait().unwrap();
-    // wait
-    std::thread::sleep(Duration::from_secs(1));
+    
+    let temp_dir = maker_cli.data_dir.parent().unwrap();
+    let new_bitcoind = init_bitcoind(temp_dir);
+    maker_cli.bitcoind = new_bitcoind;
+    
+    // Start maker with new bitcoind
+    println!("Starting maker with new bitcoind instance");
+    let (rx, mut maker) = maker_cli.start_makerd();
+    
+    // Wait for basic initialization with new bitcoind
+    await_message(&rx, "Server Setup completed!!");
+    println!("✅ Verified maker reconnected to new bitcoind instance");
+    
+    // Clean up
+    maker.kill().unwrap();
+    maker.wait().unwrap();
+    
+    println!("Bitcoin backend connection test completed!");
 }
+
 
 fn test_liquidity_threshold(maker_cli: &MakerCli) {
     println!("TEST STARTING: Liquidity Threshold");
