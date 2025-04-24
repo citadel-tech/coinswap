@@ -24,8 +24,7 @@
 
 ### ⚠️ Info
 
-Coinswap v0.1.0 marketplace is now live on Testnet4.
-
+Coinswap v0.1.0 marketplace is now live on Custom Signet. Follow [The Demo Doc](./docs/demo.md) **TO JOIN THE MARKET**.
 
 ### ⚠️ Warning
 
@@ -65,7 +64,7 @@ The project also requires working `rust` and `cargo` installation to compile. Pr
 
 ### Bitcoind Setup
 
-The apps also require a fully synced, non-pruned `bitcoind` node with RPC access on Testnet4 with `-txindex` enabled. Follow the [guide here](./docs/bitcoind.md) for setup instructions.
+The apps also requires a fully synced, non-pruned `bitcoind` node with RPC access on [Custom Signet](./docs/demo.md#2-start-bitcoin-core) with `-txindex` enabled. Follow the [guide here](./docs/bitcoind.md) for setup instructions.
 
 ### Build and Run the Apps
 ```console
