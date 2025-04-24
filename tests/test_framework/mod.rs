@@ -540,6 +540,9 @@ impl TestFramework {
             .into_iter()
             .enumerate()
             .map(|(i, behavior)| {
+                let taker_dir = temp_dir.join(format!("taker{}", i + 1));
+                fs::create_dir_all(&taker_dir).unwrap();
+
                 Taker::init(
                     Some(temp_dir.join(format!("taker{}", i + 1))),
                     None,

@@ -104,7 +104,7 @@ impl fmt::Display for ConnectionType {
 /// Uses "/tmp" directory for integration tests
 fn get_home_dir() -> PathBuf {
     if cfg!(test) {
-        "/tmp".into()
+        env::temp_dir()
     } else {
         dirs::home_dir().expect("home directory expected")
     }
@@ -112,7 +112,11 @@ fn get_home_dir() -> PathBuf {
 
 /// Get the default data directory. `~/.coinswap`.
 fn get_data_dir() -> PathBuf {
-    get_home_dir().join(".coinswap")
+    if cfg!(test) {
+        get_home_dir().join("coinswap")
+    } else {
+        get_home_dir().join(".coinswap")
+    }
 }
 
 /// Get the Maker Directory
