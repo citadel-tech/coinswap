@@ -39,7 +39,7 @@ struct Cli {
     pub rpc: String,
 
     /// Bitcoin Core RPC authentication string. Ex: username:password
-    #[clap(name="USER:PASSWORD",short='a',long, value_parser = parse_proxy_auth, default_value = "demo:demo")]
+    #[clap(name="USER:PASSWORD",short='a',long, value_parser = parse_proxy_auth, default_value = "user:password")]
     pub auth: (String, String),
     #[clap(long, short = 't', default_value = "")]
     pub tor_auth: String,

@@ -40,7 +40,7 @@ struct Cli {
         short = 'a',
         long,
         value_parser = parse_proxy_auth,
-        default_value = "demo:demo",
+        default_value = "user:password",
     )]
     pub auth: (String, String),
     #[clap(long, short = 't', default_value = "")]
