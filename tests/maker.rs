@@ -1,20 +1,20 @@
 //! Integration test for Maker CLI functionality.
 #![cfg(feature = "integration-test")]
 use bitcoin::{Address, Amount};
-use bitcoind::BitcoinD;
+use bitcoind::{bitcoincore_rpc::RpcApi, BitcoinD};
 use coinswap::utill::setup_logger;
 use serde_json::{json, Value};
 use std::{
     fs,
     io::{BufRead, BufReader},
     path::PathBuf,
-    println,
     process::{Child, Command},
     str::FromStr,
     sync::mpsc::{self, Receiver},
     thread,
     time::Duration,
 };
+const TEST_DNS_UPDATE_INTERVAL: u32 = 30;
 
 mod test_framework;
 use test_framework::{await_message, generate_blocks, init_bitcoind, send_to_address, start_dns};
@@ -165,13 +165,10 @@ fn await_message_timeout(rx: &Receiver<String>, expected: &str, timeout: Duratio
     let start = std::time::Instant::now();
 
     while start.elapsed() < timeout {
-        match rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(message) => {
-                if message.contains(expected) {
-                    return message;
-                }
+        if let Ok(message) = rx.recv_timeout(Duration::from_millis(500)) {
+            if message.contains(expected) {
+                return message;
             }
-            Err(_) => {}
         }
     }
 
@@ -200,8 +197,8 @@ fn test_maker() {
     maker.wait().unwrap();
     std::thread::sleep(Duration::from_secs(1)); // Wait for resources to be released
 
-    // println!("Testing bitcoin backend connection");
-    // test_bitcoin_backend_connection(&mut maker_cli);
+    println!("Testing bitcoin backend connection");
+    test_bitcoin_backend_connection(&mut maker_cli);
 
     println!("Testing liquidity threshold");
     test_liquidity_threshold(&maker_cli);
@@ -218,15 +215,39 @@ fn test_bond_registration_before_confirmation(
     rx: Receiver<String>,
 ) -> (Receiver<String>, Child) {
     // TODO: Hardcoded bond timelock; will be fixed in PR #424.
+    println!("TEST STARTING: Bond Registration and DNS Updates");
     let bond_timelock = 950;
 
-    println!("Generating {bond_timelock} blocks to expire the fidelity bond");
+    println!("Waiting for initial DNS update");
+    await_message(
+        &rx,
+        "Successfully sent our address and fidelity proof to DNS",
+    );
+
+    println!("Waiting for periodic DNS update");
+    let timeout = Duration::from_secs(TEST_DNS_UPDATE_INTERVAL as u64 * 2);
+    await_message_timeout(
+        &rx,
+        "Successfully sent our address and fidelity proof to DNS",
+        timeout,
+    );
+    println!("✅ Verified periodic DNS updates occur as scheduled");
+
+    println!(
+        "Generating {} blocks to expire the fidelity bond",
+        bond_timelock
+    );
     generate_blocks(&maker_cli.bitcoind, bond_timelock);
 
+    await_message(&rx, "Fidelity Bond at index: 0 expired | Redeeming it");
+    println!("✅ Verified automatic detection of expired bond");
+
     await_message(&rx, "Fidelity redeem transaction broadcasted");
+    println!("✅ Verified redemption transaction was broadcasted");
 
     await_message(&rx, "No active Fidelity Bonds found. Creating one.");
     await_message(&rx, "seen in mempool, waiting for confirmation");
+    println!("✅ Verified new bond creation initiated");
 
     println!("Shutting down maker server while waiting for confirmation");
     maker.kill().unwrap();
@@ -240,6 +261,13 @@ fn test_bond_registration_before_confirmation(
 
     await_message(&rx, "Fidelity Bond found | Index: 1");
     await_message(&rx, "Highest bond at outpoint");
+    println!("✅ Verified new bond is recognized after restart");
+
+    await_message(
+        &rx,
+        "Successfully sent our address and fidelity proof to DNS",
+    );
+    println!("✅ Verified DNS update with new fidelity proof");
 
     (rx, maker)
 }
@@ -437,12 +465,8 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
     ]);
     println!("Transaction result: {}", tx_result);
 
-    println!("Generating block to confirm transaction");
     generate_blocks(&maker_cli.bitcoind, 1);
-
-    let sync_result = maker_cli.execute_maker_cli(&["sync-wallet"]);
-    println!("Sync result: {}", sync_result);
-
+    let _sync_result = maker_cli.execute_maker_cli(&["sync-wallet"]);
     std::thread::sleep(Duration::from_secs(2));
 
     println!("Getting updated balance");
@@ -481,18 +505,11 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
     );
     println!("Funding transaction ID: {}", txid);
 
-    println!("Generating block to confirm funding");
     generate_blocks(&maker_cli.bitcoind, 1);
-
-    println!("Syncing wallet");
     maker_cli.execute_maker_cli(&["sync-wallet"]);
-
-    println!("Waiting 2 seconds for balance update");
     std::thread::sleep(Duration::from_secs(2));
 
     let final_balances = maker_cli.execute_maker_cli(&["get-balances"]);
-    println!("Final balances: {}", final_balances);
-
     let final_balances_json: serde_json::Value = serde_json::from_str(&final_balances).unwrap();
     let final_balance = final_balances_json["regular"].as_u64().unwrap();
 
