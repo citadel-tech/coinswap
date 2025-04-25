@@ -224,12 +224,12 @@ impl Taker {
         let mut wallet = if wallet_path.exists() {
             // wallet already exists , load the wallet
             let wallet = Wallet::load(&wallet_path, &rpc_config)?;
-            log::info!("Wallet file at {:?} successfully loaded.", wallet_path);
+            log::info!("Wallet file at {wallet_path:?} successfully loaded.");
             wallet
         } else {
             // wallet doesn't exists at the given path , create a new one
             let wallet = Wallet::init(&wallet_path, &rpc_config)?;
-            log::info!("New Wallet created at : {:?}", wallet_path);
+            log::info!("New Wallet created at : {wallet_path:?}");
             wallet
         };
 
@@ -260,11 +260,11 @@ impl Taker {
             // If read fails, recreate a fresh offerbook.
             match OfferBook::read_from_disk(&offerbook_path) {
                 Ok(offerbook) => {
-                    log::info!("Succesfully loaded offerbook at : {:?}", offerbook_path);
+                    log::info!("Succesfully loaded offerbook at : {offerbook_path:?}");
                     offerbook
                 }
                 Err(e) => {
-                    log::error!("Offerbook data corrupted. Recreating. {:?}", e);
+                    log::error!("Offerbook data corrupted. Recreating. {e:?}");
                     let empty_book = OfferBook::default();
                     empty_book.write_to_disk(&offerbook_path)?;
                     empty_book
@@ -329,7 +329,7 @@ impl Taker {
                 available: available.to_sat(),
                 required: required.to_sat(),
             };
-            log::error!("Not enough balance to do swap : {:?}", err);
+            log::error!("Not enough balance to do swap : {err:?}");
             return Err(err.into());
         }
 
@@ -358,7 +358,7 @@ impl Taker {
 
         let unique_id = preimage[0..8].to_hex_string(Case::Lower);
 
-        log::info!("Initiating coinswap with id : {}", unique_id);
+        log::info!("Initiating coinswap with id : {unique_id}");
 
         self.ongoing_swap_state.active_preimage = preimage;
         self.ongoing_swap_state.swap_params = swap_params;
@@ -366,7 +366,7 @@ impl Taker {
 
         // Try first hop. Abort if error happens.
         if let Err(e) = self.init_first_hop() {
-            log::error!("Could not initiate first hop: {:?}", e);
+            log::error!("Could not initiate first hop: {e:?}");
             self.recover_from_swap()?;
             return Err(e);
         }
@@ -413,7 +413,7 @@ impl Taker {
                         (funding_outpoints, multisig_reedemscripts)
                     }
                     Err(e) => {
-                        log::error!("Could not initiate next hop. Error : {:?}", e);
+                        log::error!("Could not initiate next hop. Error : {e:?}");
                         log::warn!("Starting recovery from existing swap");
                         self.recover_from_swap()?;
                         return Ok(());
@@ -429,7 +429,7 @@ impl Taker {
             match self.watch_for_txs(&txids_to_watch) {
                 Ok(r) => self.ongoing_swap_state.funding_txs.push(r),
                 Err(e) => {
-                    log::error!("Error: {:?}", e);
+                    log::error!("Error: {e:?}");
                     log::warn!("Starting recovery from existing swap");
                     if let TakerError::FundingTxWaitTimeOut = e {
                         let bad_maker = &self.ongoing_swap_state.peer_infos[maker_index].peer;
@@ -444,12 +444,12 @@ impl Taker {
             if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
                 let incoming_swapcoins =
                     self.create_incoming_swapcoins(multisig_reedemscripts, funding_outpoints)?;
-                log::debug!("Incoming Swapcoins: {:?}", incoming_swapcoins);
+                log::debug!("Incoming Swapcoins: {incoming_swapcoins:?}");
                 self.ongoing_swap_state.incoming_swapcoins = incoming_swapcoins;
                 match self.request_sigs_for_incoming_swap() {
                     Ok(_) => (),
                     Err(e) => {
-                        log::error!("Incoming SwapCoin Generation failed : {:?}", e);
+                        log::error!("Incoming SwapCoin Generation failed : {e:?}");
                         log::warn!("Starting recovery from existing swap");
                         self.recover_from_swap()?;
                         return Ok(());
@@ -472,7 +472,7 @@ impl Taker {
         match self.settle_all_swaps() {
             Ok(_) => (),
             Err(e) => {
-                log::error!("Swap Settlement Failed : {:?}", e);
+                log::error!("Swap Settlement Failed : {e:?}");
                 log::warn!("Starting recovery from existing swap");
                 self.recover_from_swap()?;
                 return Ok(());
@@ -570,7 +570,7 @@ impl Taker {
 
             self.ongoing_swap_state.outgoing_swapcoins = outgoing_swapcoins;
 
-            log::info!("Total Funding Txs Fees: {}", funding_fee);
+            log::info!("Total Funding Txs Fees: {funding_fee}");
 
             break (maker, funding_txs);
         };
@@ -590,10 +590,10 @@ impl Taker {
                 // Convert vbytes to kilovirtual bytes (kvB)
                 let tx_kvb = (tx_vbytes as f32) / 1000.0;
 
-                log::info!("Transaction size: {} vB ({:.3} kvB)", tx_vbytes, tx_kvb);
+                log::info!("Transaction size: {tx_vbytes} vB ({tx_kvb:.3} kvB)");
 
                 let txid = self.wallet.send_tx(tx)?;
-                log::info!("Broadcasted Funding tx. txid: {}", txid);
+                log::info!("Broadcasted Funding tx. txid: {txid}");
                 assert_eq!(txid, tx.compute_txid());
                 Ok(txid)
             })
@@ -609,7 +609,7 @@ impl Taker {
                 self.ongoing_swap_state.funding_txs.push(stuffs);
             }
             Err(e) => {
-                log::error!("Error: {:?}", e);
+                log::error!("Error: {e:?}");
                 if let TakerError::ContractsBroadcasted(_) = e {
                     self.offerbook.add_bad_maker(&maker);
                 }
@@ -649,10 +649,7 @@ impl Taker {
             .map(|npi| npi.peer.address.clone())
             .collect::<HashSet<_>>();
 
-        log::info!(
-            "Waiting for funding transaction confirmation. Txids : {:?}",
-            funding_txids
-        );
+        log::info!("Waiting for funding transaction confirmation. Txids : {funding_txids:?}");
 
         // Wait for this much time for txs to appear in mempool.
         let mempool_wait_timeout = if cfg!(feature = "integration-test") {
@@ -676,8 +673,7 @@ impl Taker {
             let contracts_broadcasted = self.check_for_broadcasted_contract_txes();
             if !contracts_broadcasted.is_empty() {
                 log::error!(
-                    "Fatal! Contract txs broadcasted by makers. Txids : {:?}",
-                    contracts_broadcasted
+                    "Fatal! Contract txs broadcasted by makers. Txids : {contracts_broadcasted:?}"
                 );
                 return Err(TakerError::ContractsBroadcasted(contracts_broadcasted));
             }
@@ -692,12 +688,9 @@ impl Taker {
                     // Transaction haven't arrived in our mempool, keep looping.
                     Err(_e) => {
                         let elapsed = start_time.elapsed().as_secs();
-                        log::info!(
-                            "Waiting for funding tx to appear in mempool | {} secs",
-                            elapsed
-                        );
+                        log::info!("Waiting for funding tx to appear in mempool | {elapsed} secs");
                         if elapsed > mempool_wait_timeout {
-                            log::error!("Timed out waiting for funding tx to appear in mempool. | No tx seen in {} secs", elapsed);
+                            log::error!("Timed out waiting for funding tx to appear in mempool. | No tx seen in {elapsed} secs");
                             return Err(TakerError::FundingTxWaitTimeOut);
                         }
                         continue;
@@ -708,8 +701,7 @@ impl Taker {
                 if gettx.confirmations.is_none() {
                     let elapsed = start_time.elapsed().as_secs();
                     log::info!(
-                        "Funding tx Seen in Mempool. Waiting for confirmation for {} secs",
-                        elapsed,
+                        "Funding tx Seen in Mempool. Waiting for confirmation for {elapsed} secs",
                     );
 
                     // Send wait-notif to all makers
@@ -722,7 +714,7 @@ impl Taker {
                                 self.ongoing_swap_state.id.clone(),
                             ),
                         ) {
-                            log::error!("error sending wait-notif to maker {} | {:?}", addr, e);
+                            log::error!("error sending wait-notif to maker {addr} | {e:?}");
                         }
                     }
                 }
@@ -735,7 +727,7 @@ impl Taker {
                         deserialize::<Transaction>(&gettx.hex).map_err(WalletError::from)?,
                     );
                     txid_blockhash_map.insert(*txid, gettx.blockhash.expect("Blockhash expected"));
-                    log::info!("Tx {} | Confirmed at {}", txid, required_confirmations);
+                    log::info!("Tx {txid} | Confirmed at {required_confirmations}");
                 }
             }
             if txid_tx_map.len() == funding_txids.len() {
@@ -1029,7 +1021,7 @@ impl Taker {
                 .map(|fi| fi.funding_tx.compute_txid())
                 .collect::<Vec<_>>();
 
-            log::info!("Fundix Txids: {:?}", funding_txids);
+            log::info!("Fundix Txids: {funding_txids:?}");
 
             // Struct for information related to the next peer
             let next_maker_info = NextMakerInfo {
@@ -1155,7 +1147,7 @@ impl Taker {
             ) {
                 Ok(s) => s.sigs,
                 Err(e) => {
-                    log::error!("Could not get Receiver's signatures : {:?}", e);
+                    log::error!("Could not get Receiver's signatures : {e:?}");
                     log::warn!("Banning Maker : {}", previous_maker.peer.address);
                     self.offerbook.add_bad_maker(&previous_maker.peer);
                     return Err(e);
@@ -1438,7 +1430,7 @@ impl Taker {
 
         loop {
             ii += 1;
-            log::info!("===> ReqContractSigsForSender | {}", maker_addr_str);
+            log::info!("===> ReqContractSigsForSender | {maker_addr_str}");
             match req_sigs_for_sender_once(
                 &mut socket,
                 outgoing_swapcoins,
@@ -1448,7 +1440,7 @@ impl Taker {
             ) {
                 Ok(ret) => {
                     return {
-                        log::info!("<=== RespContractSigsForSender | {}", maker_addr_str);
+                        log::info!("<=== RespContractSigsForSender | {maker_addr_str}");
                         Ok(ret)
                     }
                 }
@@ -1526,11 +1518,11 @@ impl Taker {
 
         loop {
             ii += 1;
-            log::info!("===> ReqContractSigsForRecvr | {}", maker_addr_str);
+            log::info!("===> ReqContractSigsForRecvr | {maker_addr_str}");
             match req_sigs_for_recvr_once(&mut socket, incoming_swapcoins, receivers_contract_txes)
             {
                 Ok(ret) => {
-                    log::info!("<=== RespContractSigsForRecvr | {}", maker_addr_str);
+                    log::info!("<=== RespContractSigsForRecvr | {maker_addr_str}");
                     return Ok(ret);
                 }
                 Err(e) => {
@@ -1702,14 +1694,14 @@ impl Taker {
         socket.set_write_timeout(Some(Duration::from_secs(TCP_TIMEOUT_SECONDS)))?;
         handshake_maker(&mut socket)?;
 
-        log::info!("===> HashPreimage | {}", maker_address);
+        log::info!("===> HashPreimage | {maker_address}");
         let maker_private_key_handover = send_hash_preimage_and_get_private_keys(
             &mut socket,
             senders_multisig_redeemscripts,
             receivers_multisig_redeemscripts,
             &self.ongoing_swap_state.active_preimage,
         )?;
-        log::info!("<=== PrivateKeyHandover | {}", maker_address);
+        log::info!("<=== PrivateKeyHandover | {maker_address}");
 
         let privkeys_reply = if self.ongoing_swap_state.taker_position == TakerPosition::FirstPeer {
             self.ongoing_swap_state
@@ -1745,7 +1737,7 @@ impl Taker {
             *outgoing_privkeys = Some(maker_private_key_handover.multisig_privkeys);
             ret
         })?;
-        log::info!("===> PrivateKeyHandover | {}", maker_address);
+        log::info!("===> PrivateKeyHandover | {maker_address}");
         send_message(
             &mut socket,
             &TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {
@@ -2050,13 +2042,13 @@ impl Taker {
         #[cfg(feature = "integration-test")]
         let socks_port = None;
 
-        log::info!("Fetching addresses from DNS: {}", dns_addr);
+        log::info!("Fetching addresses from DNS: {dns_addr}");
 
         let addresses_from_dns =
             match fetch_addresses_from_dns(socks_port, dns_addr, self.config.connection_type) {
                 Ok(dns_addrs) => dns_addrs,
                 Err(e) => {
-                    log::error!("Could not connect to DNS Server: {:?}", e);
+                    log::error!("Could not connect to DNS Server: {e:?}");
                     return Err(e);
                 }
             };
@@ -2126,7 +2118,7 @@ impl Taker {
         socket.set_write_timeout(Some(reconnect_timeout))?;
 
         send_message(&mut socket, &msg)?;
-        log::info!("===> {} | {}", msg, maker_addr);
+        log::info!("===> {msg} | {maker_addr}");
 
         Ok(())
     }

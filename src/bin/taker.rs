@@ -191,7 +191,7 @@ fn main() -> Result<(), TakerError> {
         }
         Commands::GetNewAddress => {
             let address = taker.get_wallet_mut().get_next_external_address()?;
-            println!("{:?}", address);
+            println!("{address:?}");
         }
         Commands::SendToAddress {
             address,
@@ -217,7 +217,7 @@ fn main() -> Result<(), TakerError> {
 
             let txid = taker.get_wallet().send_tx(&tx).unwrap();
 
-            println!("{}", txid);
+            println!("{txid}");
 
             taker.get_wallet_mut().sync_no_fail();
         }
