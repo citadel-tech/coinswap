@@ -38,3 +38,5 @@ default = []
 # Only used for running the integration tests
 integration-test = ['dep:flate2','dep:tar','dep:minreq']
 
+[lints.clippy]
+uninlined_format_args = "allow"
