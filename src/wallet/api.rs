@@ -82,7 +82,7 @@ use rust_coinselect::types::SelectionError;
 
 impl From<SelectionError> for WalletError {
     fn from(err: SelectionError) -> Self {
-        WalletError::General(format!("Coin selection error: {}", err))
+        WalletError::General(format!("Coin selection error: {err}"))
     }
 }
 
@@ -218,7 +218,7 @@ impl Wallet {
         let master_key = {
             let mnemonic = Mnemonic::generate(12)?;
             let words = mnemonic.words().collect::<Vec<_>>();
-            log::info!("Backup the Wallet Mnemonics. \n {:?}", words);
+            log::info!("Backup the Wallet Mnemonics. \n {words:?}");
             let seed = mnemonic.to_entropy();
             Xpriv::new_master(network, &seed)?
         };
@@ -436,10 +436,7 @@ impl Wallet {
         contract: ScriptBuf,
     ) -> Result<(), WalletError> {
         if let Some(contract) = self.store.prevout_to_contract_map.insert(prevout, contract) {
-            log::warn!(
-                "Prevout to Contract map updated.\nExisting Contract: {}",
-                contract
-            );
+            log::warn!("Prevout to Contract map updated.\nExisting Contract: {contract}");
         }
         Ok(())
     }
@@ -624,7 +621,7 @@ impl Wallet {
                     .derive_priv(&secp, &DerivationPath::from_str(HARDENDED_DERIVATION)?)?;
                 if fingerprint == master_private_key.fingerprint(&secp).to_string() {
                     return Ok(Some(UTXOSpendInfo::SeedCoin {
-                        path: format!("m/{}/{}", addr_type, index),
+                        path: format!("m/{addr_type}/{index}"),
                         input_value: utxo.amount,
                     }));
                 }
@@ -828,8 +825,8 @@ impl Wallet {
             .map(|oc| oc.contract_tx.compute_txid())
             .collect::<Vec<_>>();
 
-        log::info!("Unfinished incoming txids: {:?}", inc_contract_txid);
-        log::info!("Unfinished outgoing txids: {:?}", out_contract_txid);
+        log::info!("Unfinished incoming txids: {inc_contract_txid:?}");
+        log::info!("Unfinished outgoing txids: {out_contract_txid:?}");
 
         (unfinished_incomins, unfinished_outgoings)
     }
@@ -940,7 +937,7 @@ impl Wallet {
         // Remove UTXOs that no longer exis in the received utxos list
         for outpoint in to_remove {
             self.store.utxo_cache.remove(&outpoint);
-            log::debug!("[UTXO Cache] Removed UTXO: {:?}", outpoint);
+            log::debug!("[UTXO Cache] Removed UTXO: {outpoint:?}");
         }
 
         // Process and add only new UTXOs
@@ -969,7 +966,7 @@ impl Wallet {
 
             // If we found valid spend info, store it in the cache
             if let Some(info) = spend_info {
-                log::debug!("[UTXO Cache] Added UTXO: {:?} -> {:?}", outpoint, info);
+                log::debug!("[UTXO Cache] Added UTXO: {outpoint:?} -> {info:?}");
                 new_entries.push((outpoint, (utxo, info)));
             }
         }
@@ -1170,10 +1167,10 @@ impl Wallet {
         // Calculate fee generally uses the units :- vbytes * sats/vbyte
         let cost_of_change = {
             let creation_cost = calculate_fee(change_weight.to_vbytes_ceil(), feerate as f32)
-                .map_err(|e| WalletError::General(format!("Fee calculation failed: {}", e)))?;
+                .map_err(|e| WalletError::General(format!("Fee calculation failed: {e}")))?;
 
             let future_spending_cost = calculate_fee(P2WPKH_INPUT_WEIGHT / 4, LONG_TERM_FEERATE) // divide by 4 to convert weight to vbytes
-                .map_err(|e| WalletError::General(format!("Fee calculation failed: {}", e)))?;
+                .map_err(|e| WalletError::General(format!("Fee calculation failed: {e}")))?;
 
             creation_cost + future_spending_cost
         };
@@ -1238,10 +1235,7 @@ impl Wallet {
             }
             Err(e) => {
                 // This is important for various tests and real life scenarios.
-                log::warn!(
-                    "Coin selection failed: {}, attempting with available funds",
-                    e
-                );
+                log::warn!("Coin selection failed: {e}, attempting with available funds");
 
                 // If error is insufficient funds, return all available UTXOs
                 if e.to_string().contains("The Inputs funds are insufficient") {
@@ -1259,10 +1253,7 @@ impl Wallet {
                     Ok(unspents)
                 } else {
                     // For other errors, return the original error
-                    Err(WalletError::General(format!(
-                        "Coin selection failed: {}",
-                        e
-                    )))
+                    Err(WalletError::General(format!("Coin selection failed: {e}")))
                 }
             }
         }
@@ -1293,10 +1284,7 @@ impl Wallet {
 
         let descriptor = self
             .rpc
-            .get_descriptor_info(&format!(
-                "wsh(sortedmulti(2,{},{}))",
-                my_pubkey, other_pubkey
-            ))?
+            .get_descriptor_info(&format!("wsh(sortedmulti(2,{my_pubkey},{other_pubkey}))"))?
             .descriptor;
         self.import_descriptors(&[descriptor.clone()], None)?;
 
@@ -1397,7 +1385,7 @@ impl Wallet {
         let spk = redeemscript_to_scriptpubkey(redeemscript)?;
         let descriptor = self
             .rpc
-            .get_descriptor_info(&format!("raw({:x})", spk))?
+            .get_descriptor_info(&format!("raw({spk:x})"))?
             .descriptor;
         self.import_descriptors(&[descriptor], Some(WATCH_ONLY_SWAPCOIN_LABEL.to_string()))
     }
@@ -1451,7 +1439,7 @@ impl Wallet {
                 .values()
                 .map(|sc| {
                     let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript)?;
-                    let descriptor_without_checksum = format!("raw({:x})", contract_spk);
+                    let descriptor_without_checksum = format!("raw({contract_spk:x})");
                     Ok(format!(
                         "{}#{}",
                         descriptor_without_checksum,
@@ -1466,7 +1454,7 @@ impl Wallet {
                 .values()
                 .map(|sc| {
                     let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript)?;
-                    let descriptor_without_checksum = format!("raw({:x})", contract_spk);
+                    let descriptor_without_checksum = format!("raw({contract_spk:x})");
                     Ok(format!(
                         "{}#{}",
                         descriptor_without_checksum,

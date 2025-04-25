@@ -143,7 +143,7 @@ fn send_rpc_req(mut stream: TcpStream, req: RpcMsgReq) -> Result<(), MakerError>
     if matches!(response, RpcMsgResp::Pong) {
         println!("success");
     } else {
-        println!("{}", response);
+        println!("{response}");
     }
 
     Ok(())

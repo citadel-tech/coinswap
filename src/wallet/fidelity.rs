@@ -208,11 +208,11 @@ impl Wallet {
                 if !expired {
                     match self.calculate_bond_value(bond) {
                         Ok(v) => {
-                            log::info!("Fidelity Bond found | Index: {} | Bond Value : {}", i, v);
+                            log::info!("Fidelity Bond found | Index: {i} | Bond Value : {v}");
                             Some((i, v))
                         }
                         Err(e) => {
-                            log::error!("Fidelity valuation failed for index {}:  {:?} ", i, e);
+                            log::error!("Fidelity valuation failed for index {i}:  {e:?} ");
                             None
                         }
                     }
@@ -374,19 +374,14 @@ impl Wallet {
 
             let get_tx_result = self.rpc.get_transaction(&txid, None)?;
             if let Some(ht) = get_tx_result.info.blockheight {
-                log::info!(
-                    "Fidelity Transaction {} confirmed at blockheight: {}",
-                    txid,
-                    ht
-                );
+                log::info!("Fidelity Transaction {txid} confirmed at blockheight: {ht}");
                 break ht;
             } else {
                 log::info!(
-                    "Fidelity Transaction {} seen in mempool, waiting for confirmation.",
-                    txid
+                    "Fidelity Transaction {txid} seen in mempool, waiting for confirmation."
                 );
                 let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60); // Caps at 10 minutes
-                log::info!("Next sync in {:?} secs", total_sleep);
+                log::info!("Next sync in {total_sleep:?} secs");
                 thread::sleep(Duration::from_secs(total_sleep));
             }
         };
@@ -432,7 +427,7 @@ impl Wallet {
             .collect::<Vec<_>>();
 
         expired_bond_indices.into_iter().try_for_each(|i| {
-            log::info!("Fidelity Bond at index: {:?} expired | Redeeming it.", i);
+            log::info!("Fidelity Bond at index: {i:?} expired | Redeeming it.");
             self.redeem_fidelity(i, DEFAULT_TX_FEE_RATE).map(|_| ())
         })
     }

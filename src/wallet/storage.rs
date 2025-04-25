@@ -95,7 +95,7 @@ impl WalletStore {
         let store = match serde_cbor::from_slice::<Self>(&reader) {
             Ok(store) => store,
             Err(e) => {
-                let err_string = format!("{:?}", e);
+                let err_string = format!("{e:?}");
                 if err_string.contains("code: TrailingData") {
                     log::info!("Wallet file has trailing data, trying to restore");
                     loop {
