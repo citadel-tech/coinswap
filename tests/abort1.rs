@@ -45,9 +45,9 @@ fn test_stop_taker_after_setup() {
         );
 
     warn!("Running Test: Taker Cheats on Everybody.");
-  
-    let taker = &mut takers[0];
+
     // Fund the Taker with 3 utxos of 0.05 btc each and do basic checks on the balance
+    let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
         taker,
         &test_framework.bitcoind,
