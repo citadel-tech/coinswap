@@ -11,6 +11,7 @@
 //! The test data also includes the backend bitcoind data-directory, which is useful for observing the blockchain states after a swap.
 //!
 //! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
+#![allow(clippy::uninlined_format_args)]
 
 use bitcoin::Amount;
 use std::{
