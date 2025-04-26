@@ -664,7 +664,12 @@ impl Maker {
             wallet_write.save_to_disk()?;
         }
         log::info!("Completed Wallet Sync.");
+
+        let transaction = self.wallet.write()?.sweep_incoming_swapcoins()?;
+        let txid = transaction.compute_txid();
+
         log::info!("Successfully Completed Coinswap");
+        log::info!("Swept incoming swapcoins, txid: {}", txid);
         Ok(())
     }
 }

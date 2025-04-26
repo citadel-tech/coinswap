@@ -24,7 +24,7 @@ use crate::{
     protocol::contract,
     utill::{
         compute_checksum, generate_keypair, get_hd_path_from_descriptor,
-        redeemscript_to_scriptpubkey,
+        redeemscript_to_scriptpubkey, DEFAULT_TX_FEE_RATE,
     },
 };
 
@@ -39,6 +39,7 @@ use super::{
     rpc::RPCConfig,
     storage::WalletStore,
     swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletSwapCoin},
+    Destination,
 };
 
 // these subroutines are coded so that as much as possible they keep all their
@@ -788,6 +789,47 @@ impl Wallet {
             .cloned()
             .collect();
         Ok(filtered_utxos)
+    }
+
+    /// Sweeps the incoming swap coins after a successful swap.
+    pub fn sweep_incoming_swapcoins(&mut self) -> Result<Transaction, WalletError> {
+        let next_internal_addr = self.get_next_internal_addresses(1)?.remove(0);
+        let destination = Destination::Sweep(next_internal_addr);
+        let coins_to_spend = self
+            .store
+            .incoming_swapcoins
+            .iter()
+            .filter(|(_, incoming_swap_coin)| incoming_swap_coin.other_privkey.is_some())
+            .map(|(_, incoming_swap_coin)| {
+                let entry = ListUnspentResultEntry {
+                    txid: incoming_swap_coin.contract_tx.compute_txid(),
+                    vout: 0,
+                    address: None,
+                    label: Some("incoming swapcoin".to_string()),
+                    redeem_script: Some(incoming_swap_coin.contract_redeemscript.clone()),
+                    witness_script: None,
+                    script_pub_key: incoming_swap_coin.contract_tx.output[0]
+                        .script_pubkey
+                        .clone(),
+                    amount: incoming_swap_coin.funding_amount,
+                    confirmations: 0,
+                    spendable: true,
+                    solvable: true,
+                    descriptor: None,
+                    safe: true,
+                };
+
+                let spend_info = UTXOSpendInfo::IncomingSwapCoin {
+                    multisig_redeemscript: incoming_swap_coin.contract_redeemscript.clone(),
+                };
+
+                (entry, spend_info)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(!coins_to_spend.is_empty());
+
+        Ok(self.spend_from_wallet(DEFAULT_TX_FEE_RATE, destination, &coins_to_spend)?)
     }
 
     /// A simplification of `find_incomplete_coinswaps` function

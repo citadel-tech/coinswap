@@ -482,7 +482,12 @@ impl Taker {
         log::info!("Initializing Sync and Save.");
         self.save_and_reset_swap_round()?;
         log::info!("Completed Sync and Save.");
+
+        let transaction = self.get_wallet_mut().sweep_incoming_swapcoins()?;
+        let txid = transaction.compute_txid();
+
         log::info!("Successfully Completed Coinswap.");
+        log::info!("Swept incoming swapcoins, txid: {}", txid);
         Ok(())
     }
 
