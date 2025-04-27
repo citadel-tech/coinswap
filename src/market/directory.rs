@@ -199,7 +199,7 @@ impl DirectoryServer {
         if let Some(conn_type) = connection_type {
             // update the config map
             let value = config_map.get_mut("connection_type").expect("must exist");
-            let conn_type_string = format!("{:?}", conn_type);
+            let conn_type_string = format!("{conn_type:?}");
             *value = conn_type_string;
 
             // Update the file on disk
@@ -208,7 +208,7 @@ impl DirectoryServer {
 
             for (i, (key, value)) in config_map.iter().enumerate() {
                 // Format each line, adding a newline for all except the last one
-                content.push_str(&format!("{} = {}", key, value));
+                content.push_str(&format!("{key} = {value}"));
                 if i < config_map.len() - 1 {
                     content.push('\n');
                 }
@@ -340,10 +340,7 @@ pub(crate) fn start_address_writer_thread(
             .map(|(outpoint, _)| *outpoint)
             .collect();
         for outpoint in &expired_outpoints {
-            log::info!(
-                "No update for 30 mins from maker with fidelity : {}",
-                outpoint
-            );
+            log::info!("No update for 30 mins from maker with fidelity : {outpoint}");
             directory_address_book.remove(outpoint);
             log::info!("Maker entry removed");
         }
@@ -370,7 +367,7 @@ pub fn start_directory_server(
 
     // Stop early if bitcoin core connection is wrong
     if let Err(e) = rpc_client.get_blockchain_info() {
-        log::error!("Cannot connect to bitcoin node {:?}", e);
+        log::error!("Cannot connect to bitcoin node {e:?}");
         return Err(e.into());
     } else {
         log::info!("Bitcoin core connection successful");
@@ -387,7 +384,7 @@ pub fn start_directory_server(
                 directory.network_port,
                 &directory.tor_auth_password,
             )?;
-            log::info!("DNS is listening at {}:{}", hostname, network_port);
+            log::info!("DNS is listening at {hostname}:{network_port}");
         }
     }
 
@@ -412,13 +409,13 @@ pub fn start_directory_server(
                 stream.set_read_timeout(Some(Duration::from_secs(60)))?;
                 stream.set_write_timeout(Some(Duration::from_secs(60)))?;
                 if let Err(e) = handle_client(&mut stream, &directory, &rpc_client) {
-                    log::error!("Error accepting incoming connection: {:?}", e);
+                    log::error!("Error accepting incoming connection: {e:?}");
                 }
             }
 
             // If no connection received, check for shutdown or save addresses to disk
             Err(e) => {
-                log::error!("Error accepting incoming connection: {:?}", e);
+                log::error!("Error accepting incoming connection: {e:?}");
             }
         }
 
@@ -429,10 +426,10 @@ pub fn start_directory_server(
 
     // Its okay to suppress the error here as we are shuting down anyway.
     if let Err(e) = rpc_thread.join() {
-        log::error!("Error closing RPC Thread: {:?}", e);
+        log::error!("Error closing RPC Thread: {e:?}");
     }
     if let Err(e) = address_writer_thread.join() {
-        log::error!("Error closing Address Writer Thread : {:?}", e);
+        log::error!("Error closing Address Writer Thread : {e:?}");
     }
 
     Ok(())
@@ -480,10 +477,7 @@ fn handle_client(
                             log::warn!("Maker posting request failed from {}", metadata.url);
                             send_message(
                                 stream,
-                                &DnsResponse::Nack(format!(
-                                    "Maker posting request failed: {:?}",
-                                    e
-                                )),
+                                &DnsResponse::Nack(format!("Maker posting request failed: {e:?}")),
                             )?;
                         }
                     }
@@ -496,7 +490,7 @@ fn handle_client(
                     );
                     send_message(
                         stream,
-                        &DnsResponse::Nack(format!("Fidelity verification failed {:?}", e)),
+                        &DnsResponse::Nack(format!("Fidelity verification failed {e:?}")),
                     )?;
                 }
             }
@@ -511,7 +505,7 @@ fn handle_client(
                 .filter(|(_, (_, timestamp))| timestamp.elapsed() <= Duration::from_secs(30 * 60))
                 .fold(String::new(), |acc, (_, addr)| acc + &addr.0 + "\n");
 
-            log::debug!("Sending Addresses: {}", response);
+            log::debug!("Sending Addresses: {response}");
             send_message(stream, &response)?;
         }
         #[cfg(feature = "integration-test")]
