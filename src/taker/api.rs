@@ -1,13 +1,10 @@
 //! The Taker API.
 //!
 //! This module describes the main [Taker] structure and all other associated data sets related to a coinswap round.
+//! This includes the main protocol workflow and all the subroutines that are called sequentially.
 //!
-//! [TakerConfig]: Set of configuration parameters defining [Taker]'s behavior.
-//! [SwapParams]: Set of parameters defining a specific Swap round.
-//! [OngoingSwapState]: Represents the State of an ongoing swap round. All swap related data are stored in this state.
+//! [Taker::do_coinswap] is the main routine running all other subroutines. Follow the white rabbit from here.
 //!
-//! [Taker::do_coinswap]: The routine running all other protocol subroutines.
-
 use std::{
     collections::{HashMap, HashSet},
     io::BufWriter,
@@ -921,7 +918,7 @@ impl Taker {
         }
     }
 
-    /// [Internal] Single attempt to send signatures and initiate next hop.
+    /// Single attempt to send signatures and initiate next hop.
     fn send_sigs_init_next_hop_once(
         &mut self,
         maker_refund_locktime: u16,
@@ -1671,7 +1668,7 @@ impl Taker {
         Ok(())
     }
 
-    /// [Internal] Setlle one swap. This is recursively called for all the makers.
+    /// Setlle one swap. This is recursively called for all the makers.
     fn settle_one_coinswap(
         &mut self,
         maker_address: &MakerAddress,

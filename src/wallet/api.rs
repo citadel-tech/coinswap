@@ -471,10 +471,9 @@ impl Wallet {
     }
 
     /// Checks if the addresses derived from the wallet descriptor is imported upto full index range.
-    /// Returns the list of descriptors not imported yet
-    /// Index range depend on [`WalletMode`].
-    /// Normal => 5000
-    /// Test => 6
+    /// Returns the list of descriptors not imported yet. Max index range is as below:
+    /// Procution => 5000
+    /// Integration Tests => 6
     pub(super) fn get_unimported_wallet_desc(&self) -> Result<Vec<String>, WalletError> {
         let mut unimported = Vec::new();
         for (_, descriptor) in self.get_wallet_descriptors()? {
