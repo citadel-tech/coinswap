@@ -5,8 +5,8 @@
 //! parsing mechanisms for transaction inputs and outputs.
 
 use bitcoin::{
-    absolute::LockTime, transaction::Version, Address, Amount, OutPoint, ScriptBuf, Sequence,
-    Transaction, TxIn, TxOut, Witness,
+    absolute::LockTime, script::PushBytesBuf, transaction::Version, Address, Amount, OutPoint,
+    ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RawTx, RpcApi};
 
@@ -20,7 +20,12 @@ pub enum Destination {
     /// Sweep
     Sweep(Address),
     /// Multi
-    Multi(Vec<(Address, Amount)>),
+    Multi {
+        /// List of outputs (address, amounts)
+        outputs: Vec<(Address, Amount)>,
+        /// OP_RETURN data, used to create a OP_RETURN TxOut
+        op_return_data: Option<Box<[u8]>>,
+    },
 }
 
 impl Wallet {
@@ -341,13 +346,30 @@ impl Wallet {
                 log::info!("Fee: {} sats", fee.to_sat());
                 tx.output[0].value = total_input_value - fee;
             }
-            Destination::Multi(addresses) => {
+            Destination::Multi {
+                outputs,
+                op_return_data,
+            } => {
                 let mut total_output_value = Amount::ZERO;
-                for (address, amount) in addresses {
+                for (address, amount) in outputs {
                     total_output_value += amount;
                     let txout = TxOut {
                         script_pubkey: address.script_pubkey(),
                         value: amount,
+                    };
+                    tx.output.push(txout);
+                }
+                if let Some(data) = op_return_data {
+                    let mut push_bytes = PushBytesBuf::new();
+                    push_bytes.extend_from_slice(&data).map_err(|_| {
+                        WalletError::General(
+                            "Failed to add OP_RETURN data to transaction output".to_owned(),
+                        )
+                    })?;
+                    let op_return_script = ScriptBuf::new_op_return(&push_bytes);
+                    let txout = TxOut {
+                        script_pubkey: op_return_script,
+                        value: Amount::ZERO,
                     };
                     tx.output.push(txout);
                 }

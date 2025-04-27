@@ -328,13 +328,21 @@ impl Wallet {
         &mut self,
         amount: Amount,
         locktime: LockTime,
+        tor_address: Option<&[u8]>,
         feerate: f64,
     ) -> Result<u32, WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
 
         let coins = self.coin_select(amount, feerate)?;
-
-        let destination = Destination::Multi(vec![(fidelity_addr, amount)]);
+        let outputs = vec![(fidelity_addr, amount)];
+        let destination = Destination::Multi {
+            outputs,
+            op_return_data: if cfg!(feature = "integration-test") {
+                None
+            } else {
+                tor_address.map(|addr| addr.to_vec().into_boxed_slice())
+            },
+        };
 
         let tx = self.spend_coins(&coins, destination, feerate)?;
 
