@@ -55,7 +55,7 @@ pub struct ContractInfo {
 // Maker to Taker
 struct Offer {
     tweakable_point: PublicKey,
-    public_nonces: Vec<PublicNonce>,
+    public_nonces: Vec<PublicNonce>,// should we send nonces in the offer?
     base_fee: u64,
     amount_relative_fee: f64,
     time_relative_fee: f64,
@@ -67,13 +67,14 @@ struct Offer {
 
 // Taker to Maker
 pub struct SwapDetails{
-
+    amount: Amount,
+    no_of_tx: u8,
 }
 
 // Maker to Taker
 pub enum AckResponse {
-    Ack,
-    Nack
+    AckAndNonces,
+    Nack,
 }
 
 // TakerToMakerMessage
