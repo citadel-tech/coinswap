@@ -23,7 +23,7 @@ fn handle_request(
 
     match rpc_request {
         RpcMsgReq::ListAddresses => {
-            log::info!("RPC request received: {:?}", rpc_request);
+            log::info!("RPC request received: {rpc_request:?}");
             let resp = RpcMsgResp::ListAddressesResp(
                 address
                     .read()?
@@ -42,27 +42,27 @@ pub fn start_rpc_server_thread(
     directory: Arc<DirectoryServer>,
 ) -> Result<(), DirectoryServerError> {
     let rpc_port = directory.rpc_port;
-    let rpc_socket = format!("127.0.0.1:{}", rpc_port);
+    let rpc_socket = format!("127.0.0.1:{rpc_port}");
     let listener = Arc::new(TcpListener::bind(&rpc_socket)?);
-    log::info!("RPC socket binding successful at {}", rpc_socket);
+    log::info!("RPC socket binding successful at {rpc_socket}");
 
     listener.set_nonblocking(true)?;
 
     while !directory.shutdown.load(Relaxed) {
         match listener.accept() {
             Ok((mut stream, addr)) => {
-                log::info!("Got RPC request from: {}", addr);
+                log::info!("Got RPC request from: {addr}");
                 stream.set_read_timeout(Some(Duration::from_secs(20)))?;
                 stream.set_write_timeout(Some(Duration::from_secs(20)))?;
                 if let Err(e) = handle_request(&mut stream, directory.addresses.clone()) {
-                    log::error!("Error handling RPC request: {:?}", e);
+                    log::error!("Error handling RPC request: {e:?}");
                 }
             }
             Err(e) => {
                 if e.kind() == ErrorKind::WouldBlock {
                     // do nothing
                 } else {
-                    log::error!("Error accepting RPC connection: {:?}", e);
+                    log::error!("Error accepting RPC connection: {e:?}");
                 }
             }
         }

@@ -145,7 +145,7 @@ impl OfferBook {
         let book = match serde_cbor::from_slice::<Self>(&reader) {
             Ok(book) => book,
             Err(e) => {
-                let err_string = format!("{:?}", e);
+                let err_string = format!("{e:?}");
                 // TODO: Investigate why files end up with trailing data.
                 if err_string.contains("code: TrailingData") {
                     // loop until all trailing bytes are removed.
@@ -178,7 +178,7 @@ pub(crate) fn fetch_offer_from_makers(
         let offers_writer = offers_writer.clone();
         let taker_config = config.clone();
         let thread = Builder::new()
-            .name(format!("maker_offer_fetch_thread_{}", addr))
+            .name(format!("maker_offer_fetch_thread_{addr}"))
             .spawn(move || -> Result<(), TakerError> {
                 let offer = download_maker_offer(addr, taker_config);
                 Ok(offers_writer.send(offer)?)
@@ -197,7 +197,7 @@ pub(crate) fn fetch_offer_from_makers(
         let join_result = thread.join();
 
         if let Err(e) = join_result {
-            log::error!("Error while joining thread: {:?}", e);
+            log::error!("Error while joining thread: {e:?}");
         }
     }
     Ok(result)
@@ -214,7 +214,7 @@ pub fn fetch_addresses_from_dns(
         let mut stream = match connection_type {
             ConnectionType::CLEARNET => match TcpStream::connect(dns_addr.as_str()) {
                 Err(e) => {
-                    log::error!("Error connecting to DNS: {:?}", e);
+                    log::error!("Error connecting to DNS: {e:?}");
                     thread::sleep(GLOBAL_PAUSE);
                     continue;
                 }
@@ -224,7 +224,7 @@ pub fn fetch_addresses_from_dns(
                 let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
                 match Socks5Stream::connect(socket_addrs, dns_addr.as_str()) {
                     Err(e) => {
-                        log::error!("Error connecting to DNS: {:?}", e);
+                        log::error!("Error connecting to DNS: {e:?}");
                         thread::sleep(GLOBAL_PAUSE);
                         continue;
                     }
@@ -238,7 +238,7 @@ pub fn fetch_addresses_from_dns(
         stream.set_nonblocking(false)?;
 
         if let Err(e) = send_message(&mut stream, &DnsRequest::Get) {
-            log::error!("Failed to send request. Retrying...{}", e);
+            log::error!("Failed to send request. Retrying...{e}");
             thread::sleep(GLOBAL_PAUSE);
             continue;
         }
@@ -247,7 +247,7 @@ pub fn fetch_addresses_from_dns(
         let response: String = match read_message(&mut stream) {
             Ok(resp) => serde_cbor::de::from_slice(&resp[..])?,
             Err(e) => {
-                log::error!("Error reading DNS response: {}. Retrying...", e);
+                log::error!("Error reading DNS response: {e}. Retrying...");
                 thread::sleep(GLOBAL_PAUSE);
                 continue;
             }
@@ -263,7 +263,7 @@ pub fn fetch_addresses_from_dns(
                 return Ok(addresses);
             }
             Err(e) => {
-                log::error!("Error decoding DNS response: {:?}. Retrying...", e);
+                log::error!("Error decoding DNS response: {e:?}. Retrying...");
                 thread::sleep(GLOBAL_PAUSE);
                 continue;
             }

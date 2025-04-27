@@ -45,7 +45,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> 
     let maker_port = maker.config.network_port;
     let (maker_address, dns_address) = match maker.config.connection_type {
         ConnectionType::CLEARNET => {
-            let maker_address = format!("127.0.0.1:{}", maker_port);
+            let maker_address = format!("127.0.0.1:{maker_port}");
             let dns_address = if cfg!(feature = "integration-test") {
                 format!("127.0.0.1:{}", 8080)
             } else {
@@ -104,7 +104,7 @@ fn manage_fidelity_bonds_and_update_dns(
 
     let network_port = maker.config.network_port;
 
-    log::info!("[{}] Connecting to DNS: {}", network_port, dns_addr);
+    log::info!("[{network_port}] Connecting to DNS: {dns_addr}");
 
     while !maker.shutdown.load(Relaxed) {
         let stream = match maker.config.connection_type {
@@ -122,16 +122,16 @@ fn manage_fidelity_bonds_and_update_dns(
                         match serde_cbor::from_slice::<DnsResponse>(&dns_msg_bytes) {
                             Ok(dns_msg) => match dns_msg {
                                 DnsResponse::Ack => {
-                                    log::info!("[{}] <=== {}", network_port, dns_msg);
-                                    log::info!( "[{}] Successfully sent our address and fidelity proof to DNS at {}",network_port, dns_addr);
+                                    log::info!("[{network_port}] <=== {dns_msg}");
+                                    log::info!( "[{network_port}] Successfully sent our address and fidelity proof to DNS at {dns_addr}");
                                     break;
                                 }
                                 DnsResponse::Nack(reason) => {
-                                    log::error!("<=== DNS Nack: {}", reason)
+                                    log::error!("<=== DNS Nack: {reason}")
                                 }
                             },
                             Err(e) => {
-                                log::warn!("CBOR deserialization failed: {} | Reattempting...", e)
+                                log::warn!("CBOR deserialization failed: {e} | Reattempting...")
                             }
                         }
                     }
@@ -152,15 +152,11 @@ fn manage_fidelity_bonds_and_update_dns(
                     }
                 },
                 Err(e) => log::warn!(
-                    "[{}] Failed to send request to DNS : {} | reattempting...",
-                    network_port,
-                    e
+                    "[{network_port}] Failed to send request to DNS : {e} | reattempting..."
                 ),
             },
             Err(e) => log::warn!(
-                "[{}] Failed to establish TCP connection with DNS : {} | reattempting...",
-                network_port,
-                e
+                "[{network_port}] Failed to establish TCP connection with DNS : {e} | reattempting..."
             ),
         }
 
@@ -262,7 +258,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
                         log::info!("Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", Amount::from_sat(amount).to_btc(), addr);
 
                         let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60);
-                        log::info!("Next sync in {:?} secs", total_sleep);
+                        log::info!("Next sync in {total_sleep:?} secs");
                         thread::sleep(Duration::from_secs(total_sleep));
                     } else {
                         log::error!(
@@ -313,20 +309,15 @@ fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
         let min_required = maker.config.min_swap_amount;
         if offer_max_size < min_required {
             log::warn!(
-                "Low Swap Liquidity | Min: {} sats | Available: {} sats. Add funds to {:?}",
-                min_required,
-                offer_max_size,
-                addr
+                "Low Swap Liquidity | Min: {min_required} sats | Available: {offer_max_size} sats. Add funds to {addr:?}"
             );
 
             sleep_duration = (sleep_duration + sleep_incremental).min(10 * 60); // Capped at 1 Block interval
-            log::info!("Next sync in {:?} secs", sleep_duration);
+            log::info!("Next sync in {sleep_duration:?} secs");
             thread::sleep(Duration::from_secs(sleep_duration));
         } else {
             log::info!(
-                "Swap Liquidity: {} sats | Min: {} sats | Listening for requests.",
-                offer_max_size,
-                min_required
+                "Swap Liquidity: {offer_max_size} sats | Min: {min_required} sats | Listening for requests."
             );
             break;
         }
@@ -397,7 +388,7 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
                 if let Some(message) = reply {
                     log::info!("[{}] ===> {} ", maker.config.network_port, message);
                     if let Err(e) = send_message(stream, &message) {
-                        log::error!("Closing due to IO error in sending message: {:?}", e);
+                        log::error!("Closing due to IO error in sending message: {e:?}");
                         continue;
                     }
                 } else {
@@ -488,12 +479,9 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         let idle_conn_check_thread = thread::Builder::new()
             .name("Idle Client Checker Thread".to_string())
             .spawn(move || {
-                log::info!(
-                    "[{}] Spawning Client connection status checker thread",
-                    network_port
-                );
+                log::info!("[{network_port}] Spawning Client connection status checker thread");
                 if let Err(e) = check_for_idle_states(maker_clone.clone()) {
-                    log::error!("Failed checking client's idle state {:?}", e);
+                    log::error!("Failed checking client's idle state {e:?}");
                     maker_clone.shutdown.store(true, Relaxed);
                 }
             })?;
@@ -507,10 +495,10 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         let contract_watcher_thread = thread::Builder::new()
             .name("Contract Watcher Thread".to_string())
             .spawn(move || {
-                log::info!("[{}] Spawning contract-watcher thread", network_port);
+                log::info!("[{network_port}] Spawning contract-watcher thread");
                 if let Err(e) = check_for_broadcasted_contracts(maker_clone.clone()) {
                     maker_clone.shutdown.store(true, Relaxed);
-                    log::error!("Failed checking broadcasted contracts {:?}", e);
+                    log::error!("Failed checking broadcasted contracts {e:?}");
                 }
             })?;
         maker.thread_pool.add_thread(contract_watcher_thread);
@@ -521,11 +509,11 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         let rpc_thread = thread::Builder::new()
             .name("RPC Thread".to_string())
             .spawn(move || {
-                log::info!("[{}] Spawning RPC server thread", network_port);
+                log::info!("[{network_port}] Spawning RPC server thread");
                 match start_rpc_server(maker_clone.clone()) {
                     Ok(_) => (),
                     Err(e) => {
-                        log::error!("Failed starting rpc server {:?}", e);
+                        log::error!("Failed starting rpc server {e:?}");
                         maker_clone.shutdown.store(true, Relaxed);
                     }
                 }
@@ -568,20 +556,16 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         }
         match listener.accept() {
             Ok((mut stream, _)) => {
-                log::info!("[{}] Received incoming connection", network_port);
+                log::info!("[{network_port}] Received incoming connection");
 
                 if let Err(e) = handle_client(&maker, &mut stream) {
-                    log::error!("[{}] Error Handling client request {:?}", network_port, e);
+                    log::error!("[{network_port}] Error Handling client request {e:?}");
                 }
             }
 
             Err(e) => {
                 if e.kind() != ErrorKind::WouldBlock {
-                    log::error!(
-                        "[{}] Error accepting incoming connection: {:?}",
-                        network_port,
-                        e
-                    );
+                    log::error!("[{network_port}] Error accepting incoming connection: {e:?}");
                 }
             }
         };
@@ -599,7 +583,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         sleep(HEART_BEAT_INTERVAL);
     }
 
-    log::info!("[{}] Maker is shutting down.", network_port);
+    log::info!("[{network_port}] Maker is shutting down.");
     maker.thread_pool.join_all_threads()?;
 
     log::info!("Shutdown wallet sync initiated.");
