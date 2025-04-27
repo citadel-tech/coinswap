@@ -239,7 +239,7 @@ pub struct NextMakerInfo {
     pub next_peer_hashlock_pubkeys: Vec<PublicKey>,
 }
 
-/// [Internal] Send a Proof funding to the maker and init next hop.
+/// Send a Proof funding to the maker and init next hop.
 pub(crate) fn send_proof_of_funding_and_init_next_hop(
     socket: &mut TcpStream,
     tmi: ThisMakerInfo,
