@@ -204,10 +204,11 @@ fn main() -> Result<(), TakerError> {
                 .get_wallet_mut()
                 .coin_select(amount, feerate.unwrap_or(DEFAULT_TX_FEE_RATE))?;
 
-            let destination = Destination::Multi(vec![(
-                Address::from_str(&address).unwrap().assume_checked(),
-                amount,
-            )]);
+            let outputs = vec![(Address::from_str(&address)?.assume_checked(), amount)];
+            let destination = Destination::Multi {
+                outputs,
+                op_return_data: None,
+            };
 
             let tx = taker.get_wallet_mut().spend_from_wallet(
                 feerate.unwrap_or(DEFAULT_TX_FEE_RATE),

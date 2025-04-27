@@ -173,8 +173,11 @@ impl Wallet {
                     .collect::<Vec<_>>();
 
                 // Create destination with output - currently, destination is an array with a single address, i.e only a single transaction.
-                let destination =
-                    Destination::Multi(vec![(address.clone(), Amount::from_sat(output_value))]);
+                let outputs = vec![(address.clone(), Amount::from_sat(output_value))];
+                let destination = Destination::Multi {
+                    outputs,
+                    op_return_data: None,
+                };
 
                 // Creates and Signs Transactions via the spend_coins API
                 let funding_tx =
