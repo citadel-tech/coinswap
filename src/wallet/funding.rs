@@ -229,7 +229,8 @@ impl Wallet {
             total_miner_fee,
         })
     }
-
+    
+    // UNUSED
     fn create_mostly_sweep_txes_with_one_tx_having_change(
         &self,
         coinswap_amount: Amount,
@@ -385,6 +386,7 @@ impl Wallet {
         })
     }
 
+    // UNUSED
     fn create_funding_txes_utxo_max_sends(
         &self,
         coinswap_amount: Amount,
@@ -471,6 +473,7 @@ impl Wallet {
         )
     }
 
+    // UNUSED
     fn create_funding_txes_use_biggest_utxos(
         &self,
         coinswap_amount: Amount,
