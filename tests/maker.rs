@@ -358,20 +358,30 @@ fn test_maker_cli(maker_cli: &MakerCli, rx: &Receiver<String>) {
         })
     );
 
-    // let fidelity_bonds_str = maker_cli.execute_maker_cli(&["show-fidelity"]);
-    // let raw: Value = serde_json::from_str(&fidelity_bonds_str).unwrap();
-    // let fidelity_bonds: Vec<Value> = serde_json::from_str(raw.as_str().unwrap()).unwrap();
-    // let expected_fields = ["index", "outpoint", "amount", "bond-value", "expires-in"];
-    // for fidelity_bond in fidelity_bonds {
-    //     for field in expected_fields {
-    //         assert!(
-    //             fidelity_bond.get(field).is_some(),
-    //             "expected field '{}' is not present",
-    //             field
-    //         )
-    //     }
-    // }
-
+    let fidelity_bonds_str = maker_cli.execute_maker_cli(&["show-fidelity"]);
+    println!("Raw fidelity bonds string: {}", fidelity_bonds_str);
+    let fidelity_bonds: Vec<Value> = serde_json::from_str(&fidelity_bonds_str).unwrap();
+    for fidelity_bond in fidelity_bonds {
+        // for live bonds
+        if fidelity_bond["status"] == "Live" {
+            for field in ["index", "outpoint", "amount", "bond_value", "status"] {
+                assert!(
+                    fidelity_bond.get(field).is_some(),
+                    "expected field '{}' is not present in live bond",
+                    field
+                )
+            }
+        } else {
+            // for redeemed bonds
+            for field in ["index", "outpoint", "amount", "status"] {
+                assert!(
+                    fidelity_bond.get(field).is_some(),
+                    "expected field '{}' is not present in redeemed bond",
+                    field
+                )
+            }
+        }
+    }
     // Verify the seed UTXO count; other balance types remain unaffected when sending funds to an address.
     let seed_utxo = maker_cli.execute_maker_cli(&["list-utxo"]);
     assert_eq!(seed_utxo.matches("ListUnspentResultEntry").count(), 3);
