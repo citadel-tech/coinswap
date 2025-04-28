@@ -188,7 +188,7 @@ impl Drop for Taker {
     fn drop(&mut self) {
         log::info!("Shutting down taker.");
         self.offerbook
-            .write_to_disk(&self.data_dir.join("offerbook.dat"))
+            .write_to_disk(&self.data_dir.join("offerbook.json"))
             .unwrap();
         log::info!("offerbook data saved to disk.");
         self.wallet.save_to_disk().unwrap();
@@ -266,7 +266,7 @@ impl Taker {
         config.write_to_file(&data_dir.join("config.toml"))?;
 
         // Load offerbook. If doesn't exists, creates fresh file.
-        let offerbook_path = data_dir.join("offerbook.dat");
+        let offerbook_path = data_dir.join("offerbook.json");
         let offerbook = if offerbook_path.exists() {
             // If read fails, recreate a fresh offerbook.
             match OfferBook::read_from_disk(&offerbook_path) {
@@ -2103,45 +2103,12 @@ impl Taker {
                 }
             };
 
-        // Define the cache file name. (Using a binary file for bincode.)
-        let cache_file = get_taker_dir().join("offerbook_cache.json");
-        let mut cached_offers: Vec<CachedOffer> = self
-            .load_offer_cache(&cache_file)
-            .unwrap_or_else(|_| vec![]);
-        let now = Utc::now();
-
-        // Partition cached offers into fresh (< 30 minutes old) and stale.
-        let fresh_offers: Vec<CachedOffer> = cached_offers
-            .iter()
-            .filter(|co| (now - co.timestamp).num_minutes() < 30)
-            .cloned()
+        // Filter out addresses that have fresh offers
+        let fresh_offers = self.offerbook.get_fresh_offers();
+        let addresses_to_fetch: Vec<_> = addresses_from_dns
+            .into_iter()
+            .filter(|addr| !fresh_offers.iter().any(|o| &o.address == addr))
             .collect();
-
-        // Determine which addresses need to be refreshed.
-        let mut addresses_to_fetch = Vec::new();
-        for addr in addresses_from_dns {
-            if !fresh_offers.iter().any(|co| co.address == addr) {
-                addresses_to_fetch.push(addr);
-            }
-        }
-
-        // Fetch new offers only for addresses that do not have a fresh cached offer.
-        let new_offers = fetch_offer_from_makers(addresses_to_fetch, &self.config)?;
-        for offer in new_offers {
-            if let Some(existing) = cached_offers
-                .iter_mut()
-                .find(|co| co.address == offer.address)
-            {
-                existing.offer = offer.clone();
-                existing.timestamp = now;
-            } else {
-                cached_offers.push(CachedOffer {
-                    address: offer.address.clone(),
-                    offer: offer.clone(),
-                    timestamp: now,
-                });
-            }
-        }
 
         // For now, ask offers from everyone,
         // Because we don not have any smart update mechanism, not asking again could cause problem.
@@ -2155,15 +2122,18 @@ impl Taker {
         // self.offerbook = OfferBook::default();
 
         // Rebuild the in-memory OfferBook using the updated cache.
+
+        let new_offers = fetch_offer_from_makers(addresses_to_fetch, &self.config)?;
+
         self.offerbook = OfferBook::default();
-        for cached_offer in &cached_offers {
+        for cached_offer in &new_offers {
             log::info!(
                 "Found offer from {}. Verifying Fidelity Proof",
                 cached_offer.address
             );
             log::debug!("{:?}", cached_offer.offer);
             if let Err(e) = self.wallet.verify_fidelity_proof(
-                &cached_offer.offer.offer.fidelity,
+                &cached_offer.offer.fidelity,
                 &cached_offer.address.to_string(),
             ) {
                 log::warn!(
@@ -2171,16 +2141,16 @@ impl Taker {
                      e,
                      cached_offer.address
                  );
-                self.offerbook.add_bad_maker(&cached_offer.offer);
+                self.offerbook.add_bad_maker(cached_offer);
             } else {
                 log::info!("Fidelity Bond verification success. Adding offer to our OfferBook");
-                self.offerbook.add_new_offer(&cached_offer.offer);
+                self.offerbook.add_new_offer(cached_offer);
             }
         }
 
         // Save the updated cache back to disk.
-        self.save_offer_cache(&cache_file, &cached_offers)
-            .map_err(TakerError::from)?;
+        self.offerbook
+            .write_to_disk(&self.data_dir.join("offerbook.json"))?;
 
         Ok(())
     }
