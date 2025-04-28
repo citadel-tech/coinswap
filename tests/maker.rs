@@ -1,5 +1,6 @@
 //! Integration test for Maker CLI functionality.
 #![cfg(feature = "integration-test")]
+#![allow(clippy::uninlined_format_args)]
 use bitcoin::{Address, Amount};
 use bitcoind::{bitcoincore_rpc::RpcApi, BitcoinD};
 use coinswap::utill::setup_logger;
