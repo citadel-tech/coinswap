@@ -1,5 +1,4 @@
 #![cfg(feature = "integration-test")]
-#![allow(clippy::uninlined_format_args)]
 use std::{io::Write, net::TcpStream, process::Command, thread, time::Duration};
 
 mod test_framework;
@@ -29,7 +28,7 @@ fn verify_addresses(addresses: &[(&str, u32)]) {
         .unwrap();
     let addresses_output = String::from_utf8(output.stdout).unwrap();
 
-    println!("{}", addresses_output);
+    println!("{addresses_output}");
 
     assert!(
         output.stderr.is_empty(),
@@ -42,16 +41,14 @@ fn verify_addresses(addresses: &[(&str, u32)]) {
         assert_eq!(
             addresses_output.match_indices(&address.to_string()).count(),
             1,
-            "Address {} not found or duplicate entries found",
-            address
+            "Address {address} not found or duplicate entries found",
         );
         assert_eq!(
             addresses_output
-                .match_indices(&format!("vout: {}", index))
+                .match_indices(&format!("vout: {index}"))
                 .count(),
             1,
-            "OP index {} not found",
-            address
+            "OP index {address} not found",
         );
     }
 }
