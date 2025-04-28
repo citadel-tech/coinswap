@@ -11,6 +11,8 @@
 //! The test data also includes the backend bitcoind data-directory, which is useful for observing the blockchain states after a swap.
 //!
 //! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
+#![allow(clippy::uninlined_format_args)]
+
 use bitcoin::Amount;
 use std::{
     env,
@@ -68,16 +70,13 @@ fn download_bitcoind_tarball(download_url: &str, retries: usize) -> Vec<u8> {
                 );
             }
             Err(err) => {
-                eprintln!(
-                    "Attempt {}: Failed to fetch URL {}: {:?}",
-                    attempt, download_url, err
-                );
+                eprintln!("Attempt {attempt}: Failed to fetch URL {download_url}: {err:?}");
             }
         }
 
         if attempt < retries {
             let delay = 1u64 << (attempt - 1);
-            eprintln!("Retrying in {} seconds (exponential backoff)...", delay);
+            eprintln!("Retrying in {delay} seconds (exponential backoff)...");
             std::thread::sleep(std::time::Duration::from_secs(delay));
         }
     }
@@ -115,14 +114,11 @@ fn unpack_tarball(tarball_bytes: &[u8], destination: &Path) {
 
 fn get_bitcoind_filename(os: &str, arch: &str) -> String {
     match (os, arch) {
-        ("macos", "aarch64") => format!("bitcoin-{}-arm64-apple-darwin.tar.gz", BITCOIN_VERSION),
-        ("macos", "x86_64") => format!("bitcoin-{}-x86_64-apple-darwin.tar.gz", BITCOIN_VERSION),
-        ("linux", "x86_64") => format!("bitcoin-{}-x86_64-linux-gnu.tar.gz", BITCOIN_VERSION),
-        ("linux", "aarch64") => format!("bitcoin-{}-aarch64-linux-gnu.tar.gz", BITCOIN_VERSION),
-        _ => format!(
-            "bitcoin-{}-x86_64-apple-darwin-unsigned.zip",
-            BITCOIN_VERSION
-        ),
+        ("macos", "aarch64") => format!("bitcoin-{BITCOIN_VERSION}-arm64-apple-darwin.tar.gz"),
+        ("macos", "x86_64") => format!("bitcoin-{BITCOIN_VERSION}-x86_64-apple-darwin.tar.gz"),
+        ("linux", "x86_64") => format!("bitcoin-{BITCOIN_VERSION}-x86_64-linux-gnu.tar.gz"),
+        ("linux", "aarch64") => format!("bitcoin-{BITCOIN_VERSION}-aarch64-linux-gnu.tar.gz"),
+        _ => format!("bitcoin-{BITCOIN_VERSION}-x86_64-apple-darwin-unsigned.zip"),
     }
 }
 
@@ -140,7 +136,7 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
     let bitcoin_bin_dir = current_dir.join("bin");
     let download_filename = get_bitcoind_filename(os, arch);
     let bitcoin_exe_home = bitcoin_bin_dir
-        .join(format!("bitcoin-{}", BITCOIN_VERSION))
+        .join(format!("bitcoin-{BITCOIN_VERSION}"))
         .join("bin");
 
     if !bitcoin_exe_home.exists() {
@@ -149,7 +145,7 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
             Err(_) => {
                 let download_endpoint = env::var("BITCOIND_DOWNLOAD_ENDPOINT")
                     .unwrap_or_else(|_| "http://172.81.178.3/bitcoin-binaries".to_owned());
-                let url = format!("{}/{}", download_endpoint, download_filename);
+                let url = format!("{download_endpoint}/{download_filename}");
                 download_bitcoind_tarball(&url, 5)
             }
         };
@@ -175,7 +171,7 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
 
     let exe_path = bitcoind::exe_path().unwrap();
 
-    log::info!("Executable path: {:?}", exe_path);
+    log::info!("Executable path: {exe_path:?}");
 
     let bitcoind = BitcoinD::with_conf(exe_path, &conf).unwrap();
 
@@ -258,7 +254,7 @@ pub(crate) fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> proc
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
         if let Some(line) = reader.lines().map_while(Result::ok).next() {
-            println!("{}", line);
+            println!("{line}");
             let _ = stderr_sender.send(line);
         }
     });
@@ -268,7 +264,7 @@ pub(crate) fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> proc
         let reader = BufReader::new(stdout);
 
         for line in reader.lines().map_while(Result::ok) {
-            println!("{}", line);
+            println!("{line}");
             if stdout_sender.send(line).is_err() {
                 break;
             }

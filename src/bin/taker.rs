@@ -16,11 +16,11 @@ use std::{path::PathBuf, str::FromStr};
 ///
 /// The app works as regular Bitcoin wallet with added capability to perform coinswaps. The app
 /// requires a running Bitcoin Core node with RPC access. It currently only runs on Testnet4.
-/// Suggested faucet for getting Testnet4 coins: https://mempool.space/testnet4/faucet
+/// Suggested faucet for getting Testnet4 coins: <https://mempool.space/testnet4/faucet>
 ///
-/// For more detailed usage information, please refer: https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker.md
+/// For more detailed usage information, please refer: <https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker.md>
 ///
-/// This is early beta, and there are known and unknown bugs. Please report issues at: https://github.com/citadel-tech/coinswap/issues
+/// This is early beta, and there are known and unknown bugs. Please report issues at: <https://github.com/citadel-tech/coinswap/issues>
 #[derive(Parser, Debug)]
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
@@ -191,7 +191,7 @@ fn main() -> Result<(), TakerError> {
         }
         Commands::GetNewAddress => {
             let address = taker.get_wallet_mut().get_next_external_address()?;
-            println!("{:?}", address);
+            println!("{address:?}");
         }
         Commands::SendToAddress {
             address,
@@ -217,7 +217,7 @@ fn main() -> Result<(), TakerError> {
 
             let txid = taker.get_wallet().send_tx(&tx).unwrap();
 
-            println!("{}", txid);
+            println!("{txid}");
 
             taker.get_wallet_mut().sync_no_fail();
         }

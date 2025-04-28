@@ -175,7 +175,7 @@ mod tests {
     fn create_temp_config(contents: &str, file_name: &str) -> PathBuf {
         let file_path = PathBuf::from(file_name);
         let mut file = File::create(&file_path).unwrap();
-        writeln!(file, "{}", contents).unwrap();
+        writeln!(file, "{contents}").unwrap();
         file_path
     }
 

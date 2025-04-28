@@ -1,4 +1,5 @@
 #![cfg(feature = "integration-test")]
+#![allow(clippy::uninlined_format_args)]
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},

@@ -1,4 +1,5 @@
 #![cfg(feature = "integration-test")]
+#![allow(clippy::uninlined_format_args)]
 use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::RpcApi;
 use coinswap::{

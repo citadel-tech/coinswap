@@ -9,16 +9,16 @@ use std::{path::PathBuf, sync::Arc};
 /// Coinswap Maker Server
 ///
 /// The server requires a Bitcoin Core RPC connection running in Testnet4. It requires some starting balance, around 50,000 sats for Fidelity + Swap Liquidity (suggested 50,000 sats).
-/// So topup with at least 0.001 BTC to start all the node processses. Suggested faucet: https://mempool.space/testnet4/faucet
+/// So topup with at least 0.001 BTC to start all the node processses. Suggested [faucet here]<https://mempool.space/testnet4/faucet>
 ///
 /// All server process will start after the fidelity bond transaction confirms. This may take some time. Approx: 10 mins.
 /// Once the bond confirms, the server starts listening for incoming swap requests. As it performs swaps for clients, it keeps earning fees.
 ///
 /// The server is operated with the maker-cli app, for all basic wallet related operations.
 ///
-/// For more detailed usage information, please refer: https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/makerd.md
+/// For more detailed usage information, please refer the [Maker Doc]<https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/makerd.md>
 ///
-/// This is early beta, and there are known and unknown bugs. Please report issues at: https://github.com/citadel-tech/coinswap/issues
+/// This is early beta, and there are known and unknown bugs. Please report issues in the [Project Issue Board]<https://github.com/citadel-tech/coinswap/issues>
 #[derive(Parser, Debug)]
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]

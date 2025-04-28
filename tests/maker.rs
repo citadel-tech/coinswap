@@ -72,7 +72,7 @@ impl MakerCli {
         thread::spawn(move || {
             let reader = BufReader::new(stderr);
             if let Some(line) = reader.lines().map_while(Result::ok).next() {
-                println!("{}", line);
+                println!("{line}");
                 stderr_sender.send(line).unwrap();
             }
         });
@@ -80,7 +80,7 @@ impl MakerCli {
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
-                println!("{}", line);
+                println!("{line}");
                 if stdout_sender.send(line).is_err() {
                     break;
                 }
@@ -194,10 +194,7 @@ fn test_bond_registration_before_confirmation(
     // TODO: Hardcoded bond timelock; will be fixed in PR #424.
     let bond_timelock = 950;
 
-    println!(
-        "Generating {} blocks to expire the fidelity bond",
-        bond_timelock
-    );
+    println!("Generating {bond_timelock} blocks to expire the fidelity bond");
     generate_blocks(&maker_cli.bitcoind, bond_timelock);
 
     await_message(&rx, "Fidelity redeem transaction broadcasted");

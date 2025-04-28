@@ -201,7 +201,7 @@ impl ThreadPool {
         let mut joined_count = 0;
         while let Some(thread) = threads.pop() {
             let thread_name = thread.thread().name().unwrap().to_string();
-            println!("joining thread: {}", thread_name);
+            println!("joining thread: {thread_name}");
 
             match thread.join() {
                 Ok(_) => {
@@ -219,7 +219,7 @@ impl ThreadPool {
             }
         }
 
-        log::info!("Successfully joined {} threads", joined_count,);
+        log::info!("Successfully joined {joined_count} threads",);
         Ok(())
     }
 }
@@ -288,12 +288,12 @@ impl Maker {
         let mut wallet = if wallet_path.exists() {
             // wallet already exists , load the wallet
             let wallet = Wallet::load(&wallet_path, &rpc_config)?;
-            log::info!("Wallet file at {:?} successfully loaded.", wallet_path);
+            log::info!("Wallet file at {wallet_path:?} successfully loaded.");
             wallet
         } else {
             // wallet doesn't exists at the given path , create a new one
             let wallet = Wallet::init(&wallet_path, &rpc_config)?;
-            log::info!("New Wallet created at : {:?}", wallet_path);
+            log::info!("New Wallet created at : {wallet_path:?}");
             wallet
         };
 
@@ -638,7 +638,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                             .spawn(move || {
                                 if let Err(e) = recover_from_swap(maker_clone, outgoings, incomings)
                                 {
-                                    log::error!("Failed to recover from swap due to: {:?}", e);
+                                    log::error!("Failed to recover from swap due to: {e:?}");
                                 }
                             })?;
                         maker.thread_pool.add_thread(handle);
@@ -685,10 +685,9 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
             Ok(tx) => tx,
             Err(e) => {
                 log::error!(
-                    "Error: {:?} \
+                    "Error: {e:?} \
                     This was not supposed to happen. \
-                    Kindly open an issue at https://github.com/citadel-tech/coinswap/issues.",
-                    e
+                    Kindly open an issue at https://github.com/citadel-tech/coinswap/issues."
                 );
                 maker
                     .wallet
@@ -708,10 +707,9 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
             Ok(tx) => tx,
             Err(e) => {
                 log::error!(
-                    "Error: {:?} \
+                    "Error: {e:?} \
                     This was not supposed to happen. \
-                    Kindly open an issue at https://github.com/citadel-tech/coinswap/issues.",
-                    e
+                    Kindly open an issue at https://github.com/citadel-tech/coinswap/issues."
                 );
                 maker
                     .wallet
@@ -729,7 +727,7 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
         .name("Swap recovery thread".to_string())
         .spawn(move || {
             if let Err(e) = recover_from_swap(maker_clone, outgoings, incomings) {
-                log::error!("Failed to recover from swap due to: {:?}", e);
+                log::error!("Failed to recover from swap due to: {e:?}");
             }
         })?;
     maker.thread_pool.add_thread(handle);
@@ -801,7 +799,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                         .name("Swap Recovery Thread".to_string())
                         .spawn(move || {
                             if let Err(e) = recover_from_swap(maker_clone, outgoings, incomings) {
-                                log::error!("Failed to recover from swap due to: {:?}", e);
+                                log::error!("Failed to recover from swap due to: {e:?}");
                             }
                         })?;
                     maker.thread_pool.add_thread(handle);
@@ -902,7 +900,7 @@ pub(crate) fn recover_from_swap(
                             tx.compute_txid(),
                             e
                         );
-                        if format!("{:?}", e).contains("bad-txns-inputs-missingorspent") {
+                        if format!("{e:?}").contains("bad-txns-inputs-missingorspent") {
                             // This means the funding utxo doesn't exist anymore. Just remove this coin.
                             maker
                                 .get_wallet()

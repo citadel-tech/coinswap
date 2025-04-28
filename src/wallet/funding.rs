@@ -58,7 +58,7 @@ impl Wallet {
         //     return ret;
         // }
 
-        log::info!("failed to create funding txes with any method {:?}", ret);
+        log::info!("failed to create funding txes with any method {ret:?}");
         ret
     }
 
