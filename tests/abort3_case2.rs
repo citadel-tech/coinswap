@@ -24,9 +24,9 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
     // ---- Setup ----
 
     // 6102 is naughty. And theres not enough makers.
-    const NAUGHTY: u16 = 6102;
+    let naughty = 6102;
     let makers_config_map = [
-        ((NAUGHTY, None), MakerBehavior::CloseAtContractSigsForRecvr),
+        ((naughty, None), MakerBehavior::CloseAtContractSigsForRecvr),
         ((16102, None), MakerBehavior::Normal),
     ];
 
@@ -177,7 +177,7 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
 
     // Maker gets banned for being naughty.
     assert_eq!(
-        format!("127.0.0.1:{NAUGHTY}"),
+        format!("127.0.0.1:{naughty}"),
         taker.get_bad_makers()[0].address.to_string()
     );
 
