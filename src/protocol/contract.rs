@@ -609,10 +609,10 @@ mod test {
             + "0120516721"
             + &pub_timelock.to_string()[..]
             + "00"
-            + &format!("{:x}", locktime_bytecode)
+            + &format!("{locktime_bytecode:x}")
             + "68b2757b88ac";
 
-        assert_eq!(&format!("{:x}", contract_script), &expected);
+        assert_eq!(&format!("{contract_script:x}"), &expected);
 
         // Check data extraction from script is also working
         assert_eq!(
@@ -639,7 +639,7 @@ mod test {
 
         // Check script generation works
         assert_eq!(
-            format!("{:x}", multisig),
+            format!("{multisig:x}"),
             "5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae"
         );
 

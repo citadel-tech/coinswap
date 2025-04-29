@@ -130,7 +130,7 @@ impl Wallet {
         // causing an unrecoverable error.
         // Temporary fix: Log the status and mark the bond as redeemed to prevent repeated failures.
         // A more robust solution is needed to ensure atomic updates.
-        log::info!("Fidelity redeem transaction broadcasted. txid: {}", txid);
+        log::info!("Fidelity redeem transaction broadcasted. txid: {txid}");
 
         // No need to wait for confirmation as that will delay the rpc call. Just send back the txid.
 

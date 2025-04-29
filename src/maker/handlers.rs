@@ -85,7 +85,7 @@ pub(crate) fn handle_message(
             } else {
                 return Err(MakerError::UnexpectedMessage {
                     expected: "TakerHello".to_string(),
-                    got: format!("{}", message),
+                    got: format!("{message}"),
                 });
             }
         }
@@ -130,7 +130,7 @@ pub(crate) fn handle_message(
                 Some(maker.handle_hash_preimage(message)?)
             }
             _ => {
-                log::info!("Newlyconnected taker stage message: {:?} ", message);
+                log::info!("Newlyconnected taker stage message: {message:?} ");
                 return Err(MakerError::General(
                     "Unexpected Newly Connected Taker message",
                 ));
@@ -143,7 +143,7 @@ pub(crate) fn handle_message(
             } else {
                 return Err(MakerError::UnexpectedMessage {
                     expected: "ReqContractSigsForSender".to_string(),
-                    got: format!("{}", message),
+                    got: format!("{message}"),
                 });
             }
         }
@@ -155,7 +155,7 @@ pub(crate) fn handle_message(
             } else {
                 return Err(MakerError::UnexpectedMessage {
                     expected: "Proof OF Funding".to_string(),
-                    got: format!("{}", message),
+                    got: format!("{message}"),
                 });
             }
         }
@@ -686,10 +686,9 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
                 Ok(tx) => tx,
                 Err(e) => {
                     log::error!(
-                        "Error: {:?} \
+                        "Error: {e:?} \
                         This was not supposed to happen. \
-                        Kindly open an issue at https://github.com/citadel-tech/coinswap/issues.",
-                        e
+                        Kindly open an issue at https://github.com/citadel-tech/coinswap/issues."
                     );
                     maker
                         .wallet
@@ -717,7 +716,7 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
             .name("Swap Recovery Thread".to_string())
             .spawn(move || {
                 if let Err(e) = recover_from_swap(maker_clone, outgoings, incomings) {
-                    log::error!("Failed to recover from swap due to: {:?}", e);
+                    log::error!("Failed to recover from swap due to: {e:?}");
                 }
             })?;
         maker.thread_pool.add_thread(handle);

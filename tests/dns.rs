@@ -1,4 +1,5 @@
 #![cfg(feature = "integration-test")]
+#![allow(clippy::uninlined_format_args)]
 use std::{io::Write, net::TcpStream, process::Command, thread, time::Duration};
 
 mod test_framework;

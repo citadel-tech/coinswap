@@ -19,7 +19,7 @@ use std::str::FromStr;
 fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), MakerError> {
     let msg_bytes = read_message(socket)?;
     let rpc_request: RpcMsgReq = serde_cbor::from_slice(&msg_bytes)?;
-    log::info!("RPC request received: {:?}", rpc_request);
+    log::info!("RPC request received: {rpc_request:?}");
 
     let resp = match rpc_request {
         RpcMsgReq::Ping => RpcMsgResp::Pong,
@@ -122,7 +122,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
         RpcMsgReq::SyncWallet => {
             log::info!("Initializing wallet sync");
             if let Err(e) = maker.get_wallet().write()?.sync() {
-                RpcMsgResp::ServerError(format!("{:?}", e))
+                RpcMsgResp::ServerError(format!("{e:?}"))
             } else {
                 log::info!("Completed wallet sync");
                 RpcMsgResp::Pong
@@ -131,7 +131,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
     };
 
     if let Err(e) = send_message(socket, &resp) {
-        log::error!("Error sending RPC response {:?}", e);
+        log::error!("Error sending RPC response {e:?}");
     }
 
     Ok(())
@@ -139,7 +139,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
 
 pub(crate) fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let rpc_port = maker.config.rpc_port;
-    let rpc_socket = format!("127.0.0.1:{}", rpc_port);
+    let rpc_socket = format!("127.0.0.1:{rpc_port}");
     let listener = Arc::new(TcpListener::bind(&rpc_socket)?);
     log::info!(
         "[{}] RPC socket binding successful at {}",
@@ -152,17 +152,17 @@ pub(crate) fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     while !maker.shutdown.load(Relaxed) {
         match listener.accept() {
             Ok((mut stream, addr)) => {
-                log::info!("Got RPC request from: {}", addr);
+                log::info!("Got RPC request from: {addr}");
                 stream.set_read_timeout(Some(Duration::from_secs(20)))?;
                 stream.set_write_timeout(Some(Duration::from_secs(20)))?;
                 // Do not cause hard error if a rpc request fails
                 if let Err(e) = handle_request(&maker, &mut stream) {
-                    log::error!("Error processing RPC Request: {:?}", e);
+                    log::error!("Error processing RPC Request: {e:?}");
                     // Send the error back to client.
                     if let Err(e) =
-                        send_message(&mut stream, &RpcMsgResp::ServerError(format!("{:?}", e)))
+                        send_message(&mut stream, &RpcMsgResp::ServerError(format!("{e:?}")))
                     {
-                        log::error!("Error sending RPC response {:?}", e);
+                        log::error!("Error sending RPC response {e:?}");
                     };
                 }
             }
@@ -171,7 +171,7 @@ pub(crate) fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 if e.kind() == ErrorKind::WouldBlock {
                     // do nothing
                 } else {
-                    log::error!("Error accepting RPC connection: {:?}", e);
+                    log::error!("Error accepting RPC connection: {e:?}");
                 }
             }
         }

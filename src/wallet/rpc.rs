@@ -70,10 +70,10 @@ impl Wallet {
         // Create or load the watch-only bitcoin core wallet
         let wallet_name = &self.store.file_name;
         if self.rpc.list_wallets()?.contains(wallet_name) {
-            log::debug!("wallet already loaded: {}", wallet_name);
+            log::debug!("wallet already loaded: {wallet_name}");
         } else if list_wallet_dir(&self.rpc)?.contains(wallet_name) {
             self.rpc.load_wallet(wallet_name)?;
-            log::debug!("wallet loaded: {}", wallet_name);
+            log::debug!("wallet loaded: {wallet_name}");
         } else {
             // pre-0.21 use legacy wallets
             if self.rpc.version()? < 210_000 {
@@ -92,7 +92,7 @@ impl Wallet {
                 let _: Value = self.rpc.call("createwallet", &args)?;
             }
 
-            log::debug!("wallet created: {}", wallet_name);
+            log::debug!("wallet created: {wallet_name}");
         }
 
         let descriptors_to_import = self.descriptors_to_import()?;
@@ -117,11 +117,7 @@ impl Wallet {
                 .unwrap_or(0)
                 .max(self.store.wallet_birthday.unwrap_or(0));
             let node_synced = self.rpc.get_block_count()?;
-            log::debug!(
-                "Re-scanning Blockchain from:{} to:{}",
-                last_synced_height,
-                node_synced
-            );
+            log::debug!("Re-scanning Blockchain from:{last_synced_height} to:{node_synced}");
             match self.rpc.rescan_blockchain(
                 Some(last_synced_height as usize),
                 Some(node_synced as usize),
@@ -132,7 +128,7 @@ impl Wallet {
                 }
 
                 Err(e) => {
-                    log::warn!("Sync Error, Retrying: {}", e);
+                    log::warn!("Sync Error, Retrying: {e}");
                     thread::sleep(HEART_BEAT_INTERVAL);
                     continue;
                 }
@@ -151,7 +147,7 @@ impl Wallet {
     // This is useful to handle transient RPC errors.
     pub fn sync_no_fail(&mut self) {
         while let Err(e) = self.sync() {
-            log::error!("Blockchain sync failed. Retrying. | {:?}", e);
+            log::error!("Blockchain sync failed. Retrying. | {e:?}");
         }
     }
 

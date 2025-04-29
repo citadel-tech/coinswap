@@ -37,4 +37,3 @@ default = []
 # The following feature set is in response to the issue described at https://github.com/rust-lang/rust/issues/45599
 # Only used for running the integration tests
 integration-test = ['dep:flate2','dep:tar','dep:minreq']
-

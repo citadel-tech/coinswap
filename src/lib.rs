@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
+#![allow(clippy::uninlined_format_args)]
 extern crate bitcoin;
 extern crate bitcoind;
 
