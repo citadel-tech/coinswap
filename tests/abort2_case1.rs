@@ -24,12 +24,12 @@ use test_framework::*;
 fn test_abort_case_2_move_on_with_other_makers() {
     // ---- Setup ----
 
-    // 6102 is naughty. But theres enough good ones.
-    const NAUGHTY: u16 = 16102;
+    // 16102 is naughty. But theres enough good ones.
+    let naughty = 16102;
     let makers_config_map = [
         ((6102, None), MakerBehavior::Normal),
         (
-            (NAUGHTY, None),
+            (naughty, None),
             MakerBehavior::CloseAtReqContractSigsForSender,
         ),
         ((26102, None), MakerBehavior::Normal),
@@ -185,7 +185,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
     // Maker might not get banned as Taker may not try 16102 for swap. If it does then check its 16102.
     if !taker.get_bad_makers().is_empty() {
         assert_eq!(
-            format!("127.0.0.1:{NAUGHTY}"),
+            format!("127.0.0.1:{naughty}"),
             taker.get_bad_makers()[0].address.to_string()
         );
     }
