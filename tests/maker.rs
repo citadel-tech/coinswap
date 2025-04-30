@@ -413,6 +413,7 @@ fn test_bitcoin_backend_connection(maker_cli: &mut MakerCli) {
     await_message_timeout(&rx, "RPC Connection failed", Duration::from_secs(20));
     println!("✅ Verified maker detects Bitcoin backend disconnection");
 
+    // TODO: Reconnect to bitcoind without restarting the maker server
     // cleanup an new bitcoind instance
     maker.kill().unwrap();
     maker.wait().unwrap();
