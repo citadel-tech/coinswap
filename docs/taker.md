@@ -157,7 +157,7 @@ This will fetch the list of available makers from the directory server. Now we c
 $ taker -r 127.0.0.1:38332 -a user:pass coinswap
 ```
 
-This will initiate a coinswap with the default parameters. This will take some time. You can check swap progress at the log file in data directory. In a new terminal do `tail -f <datadir>/debug.log`.
+This will initiate a coinswap with the default parameters. This will take some time. You can check swap progress at the log file in the data directory. In a new terminal do `tail -f <datadir>/debug.log`.
 
 ### Recovering Failed Swaps
 

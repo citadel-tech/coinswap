@@ -1,6 +1,6 @@
-//! Taker configuration. Controlling various behavior.
+//! Taker configuration. Controlling various behaviors.
 //!
-//!  Represents the configuration options for the Taker module, controlling behaviors
+//! Represents the configuration options for the Taker module, controlling behaviors
 //! such as refund locktime, connection attempts, sleep delays, and timeouts.
 
 use crate::utill::{get_taker_dir, parse_field, parse_toml, ConnectionType};
@@ -42,8 +42,8 @@ impl TakerConfig {
     /// Constructs a [TakerConfig] from a specified data directory. Or create default configs and load them.
     ///
     /// The maker(/taker).toml file should exist at the provided data-dir location.
-    /// Or else, a new default-config will be loaded and created at given data-dir location.
-    /// If no data-dir is provided, a default config will be created at default data-dir location.
+    /// Or else, a new default-config will be loaded and created at the given data-dir location.
+    /// If no data-dir is provided, a default config will be created at the default data-dir location.
     ///
     /// For reference of default config checkout `./taker.toml` in repo folder.
     ///
