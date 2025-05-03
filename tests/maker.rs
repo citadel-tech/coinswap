@@ -1,6 +1,5 @@
 //! Integration test for Maker CLI functionality.
 #![cfg(feature = "integration-test")]
-#![allow(clippy::uninlined_format_args)]
 use bitcoin::{Address, Amount};
 use bitcoind::{bitcoincore_rpc::RpcApi, BitcoinD};
 use coinswap::utill::setup_logger;
@@ -234,10 +233,7 @@ fn test_bond_registration_before_confirmation(
     );
     println!("✅ Verified periodic DNS updates occur as scheduled");
 
-    println!(
-        "Generating {} blocks to expire the fidelity bond",
-        bond_timelock
-    );
+    println!("Generating {bond_timelock} blocks to expire the fidelity bond");
     generate_blocks(&maker_cli.bitcoind, bond_timelock);
 
     await_message(&rx, "Fidelity Bond at index: 0 expired | Redeeming it");
@@ -360,7 +356,7 @@ fn test_maker_cli(maker_cli: &MakerCli, rx: &Receiver<String>) {
     );
 
     let fidelity_bonds_str = maker_cli.execute_maker_cli(&["show-fidelity"]);
-    println!("Raw fidelity bonds string: {}", fidelity_bonds_str);
+    println!("Raw fidelity bonds string: {fidelity_bonds_str}");
     let fidelity_bonds: Vec<Value> = serde_json::from_str(&fidelity_bonds_str).unwrap();
     for fidelity_bond in fidelity_bonds {
         // for live bonds
@@ -444,10 +440,10 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
     let balance = maker_cli.execute_maker_cli(&["get-balances"]);
     let balance_json: serde_json::Value = serde_json::from_str(&balance).unwrap();
     let initial_balance = balance_json["regular"].as_u64().unwrap();
-    println!("Initial balance: {} sats", initial_balance);
+    println!("Initial balance: {initial_balance} sats");
 
     const MIN_SWAP_AMOUNT: u64 = 10_000;
-    println!("Minimum swap amount: {} sats", MIN_SWAP_AMOUNT);
+    println!("Minimum swap amount: {MIN_SWAP_AMOUNT} sats");
 
     println!("Creating external wallet for testing");
     let client = &maker_cli.bitcoind.client;
@@ -458,12 +454,12 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
         .call::<String>("getnewaddress", &[json!(""), json!("bech32")])
         .unwrap_or_else(|_| "bcrt1qjrdns4f5zwkv29ln86plqzs092yd5fg8xrstx".to_string());
 
-    println!("External address: {}", external_address);
+    println!("External address: {external_address}");
 
     let amount_to_spend = initial_balance - 2500;
     let tx_fee = 1_000;
 
-    println!("Amount to spend: {} sats", amount_to_spend);
+    println!("Amount to spend: {amount_to_spend} sats");
 
     println!("Sending transaction to external address");
     let tx_result = maker_cli.execute_maker_cli(&[
@@ -475,7 +471,7 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
         "-f",
         &tx_fee.to_string(),
     ]);
-    println!("Transaction result: {}", tx_result);
+    println!("Transaction result: {tx_result}");
 
     generate_blocks(&maker_cli.bitcoind, 1);
     let _sync_result = maker_cli.execute_maker_cli(&["sync-wallet"]);
@@ -486,7 +482,7 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
     let new_balances_json: serde_json::Value = serde_json::from_str(&new_balances).unwrap();
     let new_balance = new_balances_json["regular"].as_u64().unwrap();
 
-    println!("New balance: {} sats", new_balance);
+    println!("New balance: {new_balance} sats");
     assert!(
         new_balance < MIN_SWAP_AMOUNT,
         "Balance should be below minimum"
@@ -497,25 +493,22 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
     let low_liquidity_message =
         await_message_timeout(&rx, "Low Swap Liquidity", Duration::from_secs(90));
 
-    println!(
-        "✅ Detected low liquidity warning: {}",
-        low_liquidity_message
-    );
+    println!("✅ Detected low liquidity warning: {low_liquidity_message}");
 
     println!("Adding funds to exceed minimum threshold");
 
     let new_address = maker_cli.execute_maker_cli(&["get-new-address"]);
-    println!("New funding address: {}", new_address);
+    println!("New funding address: {new_address}");
 
     let funding_amount = MIN_SWAP_AMOUNT * 2;
-    println!("Sending {} sats to {}", funding_amount, new_address);
+    println!("Sending {funding_amount} sats to {new_address}");
 
     let txid = send_to_address(
         &maker_cli.bitcoind,
         &Address::from_str(&new_address).unwrap().assume_checked(),
         Amount::from_sat(funding_amount),
     );
-    println!("Funding transaction ID: {}", txid);
+    println!("Funding transaction ID: {txid}");
 
     generate_blocks(&maker_cli.bitcoind, 1);
     maker_cli.execute_maker_cli(&["sync-wallet"]);
@@ -525,7 +518,7 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
     let final_balances_json: serde_json::Value = serde_json::from_str(&final_balances).unwrap();
     let final_balance = final_balances_json["regular"].as_u64().unwrap();
 
-    println!("Final balance: {} sats", final_balance);
+    println!("Final balance: {final_balance} sats");
     assert!(
         final_balance >= MIN_SWAP_AMOUNT,
         "Balance should be above minimum"
@@ -534,10 +527,7 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
     println!("Waiting for liquidity to be sufficient again...");
     let sufficient_liquidity_message =
         await_message_timeout(&rx, "Swap Liquidity:", Duration::from_secs(90));
-    println!(
-        "✅ Detected sufficient liquidity: {}",
-        sufficient_liquidity_message
-    );
+    println!("✅ Detected sufficient liquidity: {sufficient_liquidity_message}");
 
     // Clean up
     maker.kill().unwrap();
