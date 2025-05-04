@@ -1292,6 +1292,7 @@ impl Taker {
                     (
                         (
                             (
+                                
                                 (multisig_redeemscript, &maker_funded_multisig_pubkey),
                                 &maker_funded_multisig_privkey,
                             ),
