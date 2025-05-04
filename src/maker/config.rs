@@ -15,9 +15,9 @@ use super::api::MIN_SWAP_AMOUNT;
 /// Maker Configuration, controlling various maker behavior.
 ///
 /// This struct defines all configurable parameters for the Maker module, including:
-/// - Network ports for different services
+/// - All the networking ports
 /// - Swap amount limits
-/// - Security settings
+/// - Market settings, like DNS and Fidelity Bonds
 /// - Connection preferences
 #[derive(Debug, Clone, PartialEq)]
 pub struct MakerConfig {
@@ -33,13 +33,17 @@ pub struct MakerConfig {
     pub socks_port: u16,
     /// Authentication password for Tor control interface
     pub tor_auth_password: String,
-    /// Directory server address (can be clearnet or onion) for maker discovery
-    pub directory_server_address: String,
+    /// DNS address (can be clearnet or onion) for maker discovery
+    pub dns_address: String,
     /// Fidelity Bond amount in satoshis
     pub fidelity_amount: u64,
     /// Fidelity Bond timelock in block heights
     pub fidelity_timelock: u32,
     /// Connection type (TOR or CLEARNET)
+    /// 
+    /// # Deprecated
+    /// This field will be removed in a future version as the application will be Tor-only.
+    /// Clearnet support is being phased out for security reasons.
     pub connection_type: ConnectionType,
 }
 
@@ -52,7 +56,7 @@ impl Default for MakerConfig {
             control_port: 9051,
             socks_port: 9050,
             tor_auth_password: "".to_string(),
-            directory_server_address:
+            dns_address:
                 "kizqnaslcb2r3mbk2vm77bdff3madcvddntmaaz2htmkyuw7sgh4ddqd.onion:8080".to_string(),
             #[cfg(feature = "integration-test")]
             fidelity_amount: 5_000_000, // 0.05 BTC for tests
@@ -118,9 +122,9 @@ impl MakerConfig {
                 config_map.get("tor_auth_password"),
                 default_config.tor_auth_password,
             ),
-            directory_server_address: parse_field(
-                config_map.get("directory_server_address"),
-                default_config.directory_server_address,
+            dns_address: parse_field(
+                config_map.get("dns_address"),
+                default_config.dns_address,
             ),
             fidelity_amount: parse_field(
                 config_map.get("fidelity_amount"),
@@ -162,8 +166,8 @@ fidelity_amount = {}
 fidelity_timelock = {}
 # Connection type (TOR or CLEARNET)
 connection_type = {:?}
-# Directory server address (can be clearnet or onion)
-directory_server_address = {}
+# DNS address (can be clearnet or onion)
+dns_address = {}
 ",
             self.network_port,
             self.rpc_port,
@@ -174,7 +178,7 @@ directory_server_address = {}
             self.fidelity_amount,
             self.fidelity_timelock,
             self.connection_type,
-            self.directory_server_address,
+            self.dns_address,
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;

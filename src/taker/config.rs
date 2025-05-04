@@ -8,10 +8,7 @@ use std::{io, io::Write, path::Path};
 
 /// Taker configuration with network and security settings.
 ///
-/// This struct defines all configurable parameters for the Taker module, including:
-/// - Network ports for different services
-/// - Security settings
-/// - Connection preferences
+/// This struct defines all configurable parameters for the Taker app, including all network ports and marketplace settings
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
     /// Control port for Tor control interface (default: 9051)
@@ -20,9 +17,13 @@ pub struct TakerConfig {
     pub socks_port: u16,
     /// Authentication password for Tor control interface
     pub tor_auth_password: String,
-    /// Directory server address (can be clearnet or onion) for maker discovery
-    pub directory_server_address: String,
+    /// DNS address (can be clearnet or onion) for maker discovery
+    pub dns_address: String,
     /// Connection type (TOR or CLEARNET)
+    /// 
+    /// # Deprecated
+    /// This field will be removed in a future version as the application will be Tor-only.
+    /// Clearnet support is being phased out for security reasons.
     pub connection_type: ConnectionType,
 }
 
@@ -32,7 +33,7 @@ impl Default for TakerConfig {
             control_port: 9051,
             socks_port: 9050,
             tor_auth_password: "".to_string(),
-            directory_server_address:
+            dns_address:
                 "kizqnaslcb2r3mbk2vm77bdff3madcvddntmaaz2htmkyuw7sgh4ddqd.onion:8080".to_string(),
             connection_type: if cfg!(feature = "integration-test") {
                 ConnectionType::CLEARNET
@@ -83,9 +84,9 @@ impl TakerConfig {
                 config_map.get("tor_auth_password"),
                 default_config.tor_auth_password,
             ),
-            directory_server_address: parse_field(
-                config_map.get("directory_server_address"),
-                default_config.directory_server_address,
+            dns_address: parse_field(
+                config_map.get("dns_address"),
+                default_config.dns_address,
             ),
             connection_type: parse_field(
                 config_map.get("connection_type"),
@@ -107,14 +108,13 @@ control_port = {}
 socks_port = {}
 # Authentication password for Tor control interface
 tor_auth_password = {}
-# Directory server address (can be clearnet or onion)
-directory_server_address = {}
-# Connection type (TOR or CLEARNET)
+# DNS address (can be clearnet or onion)
+dns_address = {}
 connection_type = {:?}",
             self.control_port,
             self.socks_port,
             self.tor_auth_password,
-            self.directory_server_address,
+            self.dns_address,
             self.connection_type
         );
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
