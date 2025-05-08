@@ -28,17 +28,23 @@ fidelity_amount = 50000
 fidelity_timelock = 13104
 connection_type = TOR
 directory_server_address = ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080
+base_fee = 100,
+amount_relative_fee_pct = 0.1,
+time_relative_fee_pct = 0.005,
 ```
 - `network_port`: TCP port where the Maker listens for incoming Coinswap protocol messages.
 - `rpc_port`: The port through which `makerd` listens for RPC commands from `maker-cli`.
 - `socks_port`: The Tor Socks Port.  Check the [tor doc](tor.md) for more details.
 - `control_port`: The Tor Control Port. Check the [tor doc](tor.md) for more details.
 - `tor_auth_password`: Optional password for Tor control authentication; empty by default.
-- `min_swap_amount`: Minimum swap amount in satoshis.
-- `fidelity_amount`: Amount in satoshis locked as a fidelity bond to deter Sybil attacks.
+- `min_swap_amount`: Minimum swap amount (in satoshis).
+- `fidelity_amount`: Amount (in satoshis) locked as a fidelity bond to deter Sybil attacks.
 - `fidelity_timelock`: Lock duration in block heights for the fidelity bond.
 - `connection_type`: Specifies the network mode; set to "TOR" in production for privacy, or "CLEARNET" during testing.
 - `directory_server_address`: The Tor address of the DNS Server. This value is set to a fixed default for now.
+- `base_fee`: A fixed fee charged by the Maker for providing its services (in satoshis).
+- `amount_relative_fee_pct`: A percentage fee based on the swap amount.
+- `time_relative_fee_pct`: A percentage fee based on the refund locktime (duration the Maker must wait for a refund).
 
 
 
