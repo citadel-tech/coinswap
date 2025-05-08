@@ -460,6 +460,79 @@ pub fn verify_swap_results(
         });
 }
 
+/// Verifies the results of a concurrent coinswap for the taker and makers after performing a swap.
+#[allow(dead_code)]
+pub fn verify_concurrent_swap_results(
+    taker: &Taker,
+    makers: &[Arc<Maker>],
+    org_taker_spend_balance: Amount,
+    org_maker_spend_balances: Vec<Amount>,
+) {
+    // Check Taker balances
+    {
+        let wallet = taker.get_wallet();
+        let all_utxos = wallet.get_all_utxo().unwrap();
+        let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+        assert_eq!(balances.regular, Amount::from_btc(0.14494).unwrap());
+        assert_eq!(balances.swap, Amount::from_btc(0.00430822).unwrap());
+
+        assert_eq!(balances.contract, Amount::ZERO);
+        assert_eq!(balances.fidelity, Amount::ZERO);
+
+        // Check balance difference
+        let balance_diff = org_taker_spend_balance
+            .checked_sub(balances.spendable)
+            .unwrap();
+
+        assert_eq!(
+            balance_diff,
+            Amount::from_sat(75178) // Successful coinswap
+        )
+    }
+
+    // Check Maker balances
+    makers
+        .iter()
+        .zip(org_maker_spend_balances.iter())
+        .for_each(|(maker, org_spend_balance)| {
+            let wallet = maker.get_wallet().read().unwrap();
+            let all_utxos = wallet.get_all_utxo().unwrap();
+            let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+
+            assert!(
+                balances.regular == Amount::from_btc(0.14780589).unwrap() // First maker on successful coinswap
+                    || balances.regular == Amount::from_btc(0.14766250).unwrap(), // Second maker on successful coinswap
+                "Maker seed balance mismatch"
+            );
+
+            assert!(
+                balances.swap == Amount::from_btc(0.0025).unwrap() // First maker
+                    || balances.swap == Amount::from_btc(0.00229750).unwrap(), // Second maker
+                "Maker swapcoin balance mismatch"
+            );
+
+            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
+            // Live contract balance can be non-zero, if a maker shuts down in middle of recovery.
+            assert!(
+                balances.contract == Amount::ZERO
+                    || balances.contract == Amount::from_btc(0.00226750).unwrap() // For the first maker in hop
+                    || balances.contract == Amount::from_btc(0.00212411).unwrap() // For the second maker in hop
+            );
+
+            // Check spendable balance difference.
+            let balance_diff = match org_spend_balance.checked_sub(balances.spendable) {
+                None => balances.spendable.checked_sub(*org_spend_balance).unwrap(), // Successful swap as Makers balance increase by Coinswap fee.
+                Some(diff) => diff, // No spending or unsuccessful swap
+            };
+
+            assert!(
+                balance_diff == Amount::from_sat(17250) // First maker fee
+                    || balance_diff == Amount::from_sat(11339), // Second maker fee
+                "Maker spendable balance change mismatch"
+            );
+        });
+}
+
 /// The Test Framework.
 ///
 /// Handles initializing, operating and cleaning up of all backend processes. Bitcoind, Taker and Makers.
