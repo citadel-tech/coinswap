@@ -78,6 +78,7 @@ fn create_taproot_script(
     println!("Hashlock control block: {:?}", hashlock_control_block.as_slice());
     let timelock_control_block = taproot_spendinfo.control_block(&(timelock_script, LeafVersion::TapScript));
     println!("Timelock control block: {:?}", timelock_control_block.as_slice());
+    println!("TWEAK: {:?}", taproot_spendinfo.tap_tweak());
     ScriptBuf::new_p2tr(&secp, taproot_spendinfo.internal_key(), taproot_spendinfo.merkle_root())
 }
 
@@ -144,13 +145,12 @@ mod tests{
     use bitcoin::key::{Parity, TapTweak};
     use bitcoin::sighash::Prevouts;
     use bitcoin::taproot::{ControlBlock, TaprootMerkleBranch};
-    use bitcoin::{locktime, Address, TapNodeHash, TapSighashType};
+    use bitcoin::{ Address, TapNodeHash, TapSighashType};
     use bitcoind::bitcoincore_rpc::RawTx;
     use bitcoind::bitcoincore_rpc::{Auth::UserPass, Client, RpcApi,};
-    use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::AddressType;
     use std::str::FromStr;
     use super::*;
-    use bitcoin::{bech32::{self, hrp, Bech32m}, ecdsa::Signature, hashes::sha256d::Hash as Sha256d, transaction, Txid};
+    use bitcoin::{bech32::{self, hrp, Bech32m}, hashes::sha256d::Hash as Sha256d, Txid};
 
     // #[test]
     fn test_create_hashlock_script() {
@@ -235,10 +235,11 @@ mod tests{
     fn end_to_end_test() {
         let secp = Secp256k1::new();
         // let internal_key = Keypair::new(&secp, &mut rand::thread_rng());
-        let internal_key_slice = [120, 19, 235, 46, 81, 164, 156, 83, 91, 100, 122, 65, 216, 217, 120, 84, 52, 218, 149, 113, 10, 70, 52, 200, 211, 201, 145, 202, 199, 129, 8, 220];
-        let internal_key = Keypair::from_seckey_slice(&secp, &internal_key_slice).unwrap();
-        println!("Internal key: {:?}", internal_key.secret_key());
-        let (pubkey, _) = internal_key.x_only_public_key();
+        // let internal_key_slice = [120, 19, 235, 46, 81, 164, 156, 83, 91, 100, 122, 65, 216, 217, 120, 84, 52, 218, 149, 113, 10, 70, 52, 200, 211, 201, 145, 202, 199, 129, 8, 220];
+        // let internal_key = Keypair::from_seckey_slice(&secp, &internal_key_slice).unwrap();
+        // println!("Internal key: {:?}", internal_key.secret_key());
+        // let (pubkey, _) = internal_key.x_only_public_key();
+        let pubkey = XOnlyPublicKey::from_str("5a9500bd192f501730e8e22213d888162d8dce79e09e0fc35344af404bdd687e").unwrap();
         let a_keypair_slice = [57, 36, 177, 212, 31, 75, 221, 50, 13, 55, 102, 155, 21, 64, 146, 106, 101, 189, 1, 167, 80, 10, 246, 136, 96, 80, 57, 67, 63, 194, 67, 241];
         let a_keypair = Keypair::from_seckey_slice(&secp, &a_keypair_slice).unwrap();
         println!("A keypair: {:?}", a_keypair.secret_key());
@@ -259,7 +260,7 @@ mod tests{
         println!("Taproot script ASM {:?}", taproot_script.to_asm_string());
         let transaction = create_unsigned_contract_tx(
             OutPoint {
-                txid: Txid::from_raw_hash(Sha256d::from_str("b2ed68f77f5a2ce9daa5b3569f4050293112187a53b4c7b604420440f77d9b2e").unwrap()),
+                txid: Txid::from_raw_hash(Sha256d::from_str("9998153cb43f47fc089a80727f679a3a29f826af54043b70bce9d5a750b41fd7").unwrap()),
                 vout: 1,
             },
             Amount::from_sat(10000000),
@@ -283,14 +284,14 @@ mod tests{
     fn sweep_transaction() {
         let secp = Secp256k1::new();
         let outpoint = OutPoint {
-            txid: Txid::from_str("7d3dcad78b89904d524880f12b456a92c7ce7b649ec162971a2fa80f1f9a9fd0").unwrap(),
+            txid: Txid::from_str("919a593671740052109d09f62f1da82f000c2a5e94ebd33d166f1467d0712eea").unwrap(),
             vout: 0
         };
         let internal_key_slice = [120, 19, 235, 46, 81, 164, 156, 83, 91, 100, 122, 65, 216, 217, 120, 84, 52, 218, 149, 113, 10, 70, 52, 200, 211, 201, 145, 202, 199, 129, 8, 220];
         let internal_key = Keypair::from_seckey_slice(&secp, &internal_key_slice).unwrap();
         let x_only_internal_key = internal_key.x_only_public_key().0;
-        let merkle_root = TapNodeHash::from_str("b113d5c2abc6184c19df6e5993a775a37f2d62a29ef7145cf594f799818a0c20").unwrap();
-        // sweep_via_internal_key(outpoint, internal_key, Some(merkle_root));
+        let merkle_root = TapNodeHash::from_str("4b150b931cf081ed1a53e01d7f11fd5ed9a1f952241a47495f939dd72759f56e").unwrap();
+        sweep_via_internal_key(outpoint, internal_key, Some(merkle_root));
 
         let hash_preimage = [0u8; 32];
         let hashlock_key_slice = [196, 70, 74, 243, 36, 44, 31, 223, 8, 77, 47, 179, 229, 217, 187, 66, 144, 87, 50, 11, 184, 136, 255, 92, 97, 154, 183, 102, 27, 126, 54, 140];
@@ -312,7 +313,7 @@ mod tests{
             internal_key: x_only_internal_key,
             merkle_branch: TaprootMerkleBranch::decode(Vec::<u8>::from_hex("da44244f79ba55530f671b2c695d0476b3b8260cb2cc5e04e0fc92a52a34eed8").unwrap().as_slice()).unwrap(),
         };
-        sweep_via_timelock(outpoint, timelock, timelock_keypair, timelock_controlblock);
+        // sweep_via_timelock(outpoint, timelock, timelock_keypair, timelock_controlblock);
     }
 
     fn sweep_via_internal_key(outpoint: OutPoint, internal_keypair: Keypair, merkle_root: Option<TapNodeHash>) {
@@ -325,7 +326,7 @@ mod tests{
             sequence: Sequence::ZERO,
             witness: Witness::default(),
         };
-        let prevout = client.get_tx_out(&Txid::from_str("2a6302a7e7a01d6e7b27b7a9874287ab996af5fb30cf609f1e9c944d6341d2d5").unwrap(), 0, None).unwrap().unwrap();
+        let prevout = client.get_tx_out(&Txid::from_str("919a593671740052109d09f62f1da82f000c2a5e94ebd33d166f1467d0712eea").unwrap(), 0, None).unwrap().unwrap();
         let prev_txout = TxOut {
             script_pubkey: ScriptBuf::from_bytes(prevout.script_pub_key.hex),
             value: Amount::from_sat(9999000),
@@ -350,9 +351,12 @@ mod tests{
         let tweaked = internal_keypair.tap_tweak(&secp, merkle_root);
         let sighash = sighash.expect("Failed to compute sighash");
         let msg = Message::from(sighash);
-        let signature = secp.sign_schnorr(&msg, &tweaked.to_inner());
+        println!("Sighash: {:?}", msg);
+        // let signature = secp.sign_schnorr(&msg, &tweaked.to_inner());
 
-        let signature = bitcoin::taproot::Signature { signature, sighash_type};
+        // let signature = bitcoin::taproot::Signature { signature, sighash_type};
+        let signature = [146, 123, 43, 11, 8, 25, 106, 52, 146, 170, 93, 164, 241, 65, 172, 150, 242, 122, 30, 219, 154, 177, 9, 40, 105, 228, 213, 77, 219, 43, 139, 35, 176, 185, 230, 70, 213, 228, 160, 12, 144, 149, 191, 113, 210, 77, 137, 251, 2, 250, 109, 0, 69, 244, 156, 135, 122, 231, 227, 208, 78, 237, 142, 191];
+        let signature = bitcoin::taproot::Signature::from_slice(&signature).unwrap();
         *sighasher.witness_mut(0).unwrap() = Witness::p2tr_key_spend(&signature);
 
         let tx = sighasher.into_transaction();
