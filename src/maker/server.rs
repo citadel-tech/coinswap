@@ -236,11 +236,12 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
             // sync the wallet
             maker.get_wallet().write()?.sync_no_fail();
 
-            let fidelity_result =
-                maker
-                    .get_wallet()
-                    .write()?
-                    .create_fidelity(amount, locktime, DEFAULT_TX_FEE_RATE);
+            let fidelity_result = maker.get_wallet().write()?.create_fidelity(
+                amount,
+                locktime,
+                Some(maker_address.as_bytes()),
+                DEFAULT_TX_FEE_RATE,
+            );
 
             match fidelity_result {
                 // Wait for sufficient fund to create fidelity bond.

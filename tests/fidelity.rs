@@ -132,6 +132,7 @@ fn test_fidelity() {
                 Amount::from_sat(8000000),
                 LockTime::from_height((bitcoind.client.get_block_count().unwrap() as u32) + 950)
                     .unwrap(),
+                None,
                 DEFAULT_TX_FEE_RATE,
             )
             .unwrap();
