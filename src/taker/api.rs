@@ -38,6 +38,7 @@ use super::{
 };
 use crate::{
     protocol::{
+        contract::calculate_coinswap_fee,
         error::ProtocolError,
         messages::{
             ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
@@ -116,6 +117,8 @@ enum TakerPosition {
 struct OngoingSwapState {
     /// SwapParams used in current swap round.
     pub(crate) swap_params: SwapParams,
+    /// List of all the suitable makers for the current swap round.
+    pub(crate) suitable_makers: Vec<OfferAndAddress>,
     /// SwapCoins going out from the Taker.
     pub(crate) outgoing_swapcoins: Vec<OutgoingSwapCoin>,
     /// SwapCoins between Makers.
@@ -315,6 +318,7 @@ impl Taker {
     ///
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub(crate) fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
+        self.ongoing_swap_state.swap_params = swap_params;
         // Check if we have enough balance.
         let available = self.wallet.get_balances()?.spendable;
 
@@ -333,15 +337,22 @@ impl Taker {
         log::info!("Syncing Offerbook");
         self.sync_offerbook()?;
 
-        // Error early if hop_count > available good makers.
-        if swap_params.maker_count > self.offerbook.all_good_makers().len() {
+        // Error early if there aren't enough suitable makers for the given amount
+        let suitable_makers = self.find_suitable_makers();
+        if swap_params.maker_count > suitable_makers.len() {
             log::error!(
-                "Not enough makers in the offerbook. Required {}, avaialable {}",
+                "Not enough suitable makers for the requested amount. Required {}, available {}",
                 swap_params.maker_count,
-                self.offerbook.all_good_makers().len()
+                suitable_makers.len()
             );
             return Err(TakerError::NotEnoughMakersInOfferBook);
         }
+
+        log::info!(
+            "Found {} suitable makers for this swap round",
+            suitable_makers.len()
+        );
+        self.ongoing_swap_state.suitable_makers = suitable_makers;
 
         // Error early if less than 2 makers.
         if swap_params.maker_count < 2 {
@@ -1754,21 +1765,19 @@ impl Taker {
         }
 
         // Ensure that we don't select a maker we are already swaping with.
-        Ok(self
-            .offerbook
-            .all_good_makers()
+        self.ongoing_swap_state
+            .suitable_makers
             .iter()
             .find(|oa| {
-                send_amount >= Amount::from_sat(oa.offer.min_size)
-                    && send_amount <= Amount::from_sat(oa.offer.max_size)
-                    && !self
-                        .ongoing_swap_state
-                        .peer_infos
-                        .iter()
-                        .map(|pi| &pi.peer)
-                        .any(|noa| noa == **oa)
+                !self
+                    .ongoing_swap_state
+                    .peer_infos
+                    .iter()
+                    .map(|pi| &pi.peer)
+                    .any(|noa| noa == *oa)
+                    && !self.offerbook.bad_makers.contains(oa)
             })
-            .ok_or(TakerError::NotEnoughMakersInOfferBook)?)
+            .ok_or(TakerError::NotEnoughMakersInOfferBook)
     }
 
     /// Get the [Preimage] of the ongoing swap. If no swap is in progress will return a `[0u8; 32]`.
@@ -2154,5 +2163,32 @@ impl Taker {
         };
 
         Ok(serde_json::to_string_pretty(&offer)?)
+    }
+
+    /// Gets all good makers that can handle a specific amount.
+    /// Filters makers based on their min_size and max_size limits.
+    pub fn find_suitable_makers(&self) -> Vec<OfferAndAddress> {
+        let swap_amount = self.ongoing_swap_state.swap_params.send_amount;
+        let max_refund_locktime =
+            REFUND_LOCKTIME * (self.ongoing_swap_state.swap_params.maker_count + 1) as u16;
+        self.offerbook
+            .all_good_makers()
+            .into_iter()
+            .filter(|oa| {
+                let maker_fee = calculate_coinswap_fee(
+                    swap_amount.to_sat(),
+                    max_refund_locktime,
+                    oa.offer.base_fee,
+                    oa.offer.amount_relative_fee_pct,
+                    oa.offer.time_relative_fee_pct,
+                );
+                let min_size_with_fee = bitcoin::Amount::from_sat(
+                    oa.offer.min_size + maker_fee + 500, /* Estimated mining fee */
+                );
+                swap_amount >= min_size_with_fee
+                    && swap_amount <= bitcoin::Amount::from_sat(oa.offer.max_size)
+            })
+            .cloned()
+            .collect()
     }
 }
