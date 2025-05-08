@@ -55,7 +55,7 @@ pub struct ContractInfo {
 // Maker to Taker
 struct Offer {
     tweakable_point: PublicKey,
-    public_nonces: Vec<PublicNonce>,// should we send nonces in the offer?
+    public_nonces: Vec<PublicNonce>,// should we send nonces in the offer? No.
     base_fee: u64,
     amount_relative_fee: f64,
     time_relative_fee: f64,
