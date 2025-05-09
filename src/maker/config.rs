@@ -27,11 +27,11 @@ pub struct MakerConfig {
     pub min_swap_amount: u64,
     /// Network port for client connections
     pub network_port: u16,
-    /// Control port for Tor control interface
+    /// Control port for Tor interface
     pub control_port: u16,
     /// Socks port for Tor proxy
     pub socks_port: u16,
-    /// Authentication password for Tor control interface
+    /// Authentication password for Tor interface
     pub tor_auth_password: String,
     /// DNS address (can be clearnet or onion) for maker discovery
     pub dns_address: String,
@@ -152,9 +152,9 @@ network_port = {}
 rpc_port = {}
 # Socks port for Tor proxy
 socks_port = {}
-# Control port for Tor control interface
+# Control port for Tor  interface
 control_port = {}
-# Authentication password for Tor control interface
+# Authentication password for Tor interface
 tor_auth_password = {}
 # Minimum amount in satoshis that can be swapped
 min_swap_amount = {}

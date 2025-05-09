@@ -11,11 +11,11 @@ use std::{io, io::Write, path::Path};
 /// This struct defines all configurable parameters for the Taker app, including all network ports and marketplace settings
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
-    /// Control port for Tor control interface (default: 9051)
+    /// Control port for Tor interface (default: 9051)
     pub control_port: u16,
     /// Socks port for Tor proxy (default: 9050)
     pub socks_port: u16,
-    /// Authentication password for Tor control interface
+    /// Authentication password for Tor interface
     pub tor_auth_password: String,
     /// DNS address (can be clearnet or onion) for maker discovery
     pub dns_address: String,
