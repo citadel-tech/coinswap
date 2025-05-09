@@ -12,7 +12,7 @@ use crate::utill::{get_maker_dir, parse_field, ConnectionType};
 
 use super::api::MIN_SWAP_AMOUNT;
 
-/// Maker Configuration, controlling various maker behavior.
+/// Maker Configuration
 ///
 /// This struct defines all configurable parameters for the Maker module, including:
 /// - All the networking ports
@@ -141,8 +141,6 @@ impl MakerConfig {
         })
     }
 
-    /// Writes the current configuration to a TOML file at the specified path.
-    ///
     /// This function serializes the MakerConfig into a TOML format and writes it to disk.
     /// It creates the parent directory if it doesn't exist.
     pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {

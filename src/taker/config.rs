@@ -6,7 +6,7 @@
 use crate::utill::{get_taker_dir, parse_field, parse_toml, ConnectionType};
 use std::{io, io::Write, path::Path};
 
-/// Taker configuration with network and security settings.
+/// Taker configuration
 ///
 /// This struct defines all configurable parameters for the Taker app, including all network ports and marketplace settings
 #[derive(Debug, Clone, PartialEq)]
@@ -95,8 +95,6 @@ impl TakerConfig {
         })
     }
 
-    /// Writes the current configuration to a TOML file at the specified path.
-    ///
     /// This method serializes the TakerConfig into a TOML format and writes it to disk.
     /// It creates the parent directory if it doesn't exist.
     pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
