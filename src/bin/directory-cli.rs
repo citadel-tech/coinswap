@@ -38,7 +38,7 @@ fn send_rpc_req(mut stream: TcpStream, req: RpcMsgReq) -> Result<(), DirectorySe
     let resp_bytes = read_message(&mut stream)?;
     let resp: RpcMsgResp = serde_cbor::from_slice(&resp_bytes).map_err(NetError::Cbor)?;
 
-    println!("{:#?}", resp);
+    println!("{resp:#?}");
     Ok(())
 }
 

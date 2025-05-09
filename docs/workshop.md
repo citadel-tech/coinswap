@@ -16,7 +16,7 @@ At any point during a swap, if any party misbehaves, the other parties can recov
 
 The protocol also includes a marketplace with dynamic offer data attached to a **Fidelity Bond** and a Tor address. The Fidelity Bond is a time-locked Bitcoin UTXO that service providers must display in the marketplace to be accepted for swaps. If a provider misbehaves, clients in the marketplace can punish them by refusing to swap with the same Fidelity Bond in the future. Fidelity Bonds thus serve as an identity mechanism, providing **provable costliness** to create Sybil resistance in the decentralized marketplace.
 
-The protocol is in its early stages and has several open questions and potential vulnerabilities. At this summit, we will explore some of these challenges, discuss open design questions, and provide a hands-on demonstration of the entire swap process.
+The protocol is in its early stages and has several open questions and potential vulnerabilities. However, it is a promising approach to decentralized atomic swaps, and we are excited to see where it goes.
 
 For more details, please refer to the project [README](../../README.md) and check out the [App Demos](../app_demos/). 
 
@@ -39,10 +39,10 @@ A more detailed [protocol specification](https://github.com/citadel-tech/Coinswa
 
 To actively engage in the session, please prepare with the following:
 
-- **Readup on Coinswap**: start with the project [README](../../README.md) and follow from there. 
+- **Read up on Coinswap**: start with the project [README](../../README.md). 
 - **Set up your environment**: Follow the [demo documentation](./demo.md) to set up your system. You will need:
   - A running `bitcoind` node on your local machine, synced on Testnet4.
-  - At least 501,000 sats (500,000 sats for the Fidelity Bond + 1000 sats for fidelity tx fee + 10,000 sats as minimum swap liquidity) of balance in your wallet if you are running maker.
+  - At least 511,000 sats (500,000 sats for the Fidelity Bond + 1000 sats for fidelity tx fee + 10,000 sats as minimum swap liquidity) of balance in your wallet if you are running maker.
   - Instructions for setting up `bitcoind`, connecting the apps, and running the entire Coinswap process are provided in the demo documentation.
 
 ---

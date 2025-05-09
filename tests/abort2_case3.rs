@@ -24,8 +24,9 @@ fn maker_drops_after_sending_senders_sigs() {
     // ---- Setup ----
 
     // 6102 is naughty. And theres not enough makers.
+    let naughty = 6102;
     let makers_config_map = [
-        ((6102, None), MakerBehavior::CloseAtProofOfFunding),
+        ((naughty, None), MakerBehavior::CloseAtProofOfFunding),
         ((16102, None), MakerBehavior::Normal),
     ];
 
@@ -40,7 +41,7 @@ fn maker_drops_after_sending_senders_sigs() {
         );
 
     warn!(
-        "Running Test: Maker 6102 Closes after sending sender's signature. This is really bad. Recovery is the only option."
+        "Running Test: Maker {naughty} Closes after sending sender's signature. This is really bad. Recovery is the only option."
     );
 
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
@@ -194,7 +195,7 @@ fn maker_drops_after_sending_senders_sigs() {
 
     // Maker6102 gets banned for being naughty.
     assert_eq!(
-        format!("127.0.0.1:{}", 6102),
+        format!("127.0.0.1:{naughty}"),
         taker.get_bad_makers()[0].address.to_string()
     );
 
