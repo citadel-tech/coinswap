@@ -470,6 +470,21 @@ pub struct TestFramework {
     shutdown: AtomicBool,
 }
 
+fn ensure_directory_permissions(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !dir.exists() {
+        fs::create_dir_all(dir)?;
+    }
+
+    let metadata = fs::metadata(dir)?;
+    let mut perms = metadata.permissions();
+    perms.set_mode(0o755); // rwxr-xr-x
+    fs::set_permissions(dir, perms)?;
+
+    Ok(())
+}
+
 impl TestFramework {
     /// Initialize a test-framework environment from given configuration data.
     /// This object holds the reference to backend bitcoind process and RPC.
@@ -496,6 +511,7 @@ impl TestFramework {
     ) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
+        ensure_directory_permissions(&temp_dir).unwrap();
         setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
         // Remove if previously existing
         if temp_dir.exists() {
@@ -535,6 +551,9 @@ impl TestFramework {
             .into_iter()
             .enumerate()
             .map(|(i, behavior)| {
+                let taker_dir = temp_dir.join(format!("taker{}", i + 1));
+                fs::create_dir_all(&taker_dir).unwrap();
+
                 Taker::init(
                     Some(temp_dir.join(format!("taker{}", i + 1))),
                     None,
@@ -587,6 +606,10 @@ impl TestFramework {
             // tf_clone.generate_blocks(10);
             generate_blocks(&tf_clone.bitcoind, 10);
         });
+
+        for taker in &takers {
+            let _ = taker.delete_offer_cache();
+        }
 
         (
             test_framework,

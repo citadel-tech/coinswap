@@ -480,7 +480,7 @@ pub(crate) fn download_maker_offer(
     loop {
         ii += 1;
         match download_maker_offer_attempt_once(&address, &config) {
-            Ok(offer) => return Some(OfferAndAddress { offer, address }),
+            Ok(offer) => return Some(OfferAndAddress::new(offer, address)),
             Err(e) => {
                 if ii <= FIRST_CONNECT_ATTEMPTS {
                     log::warn!(

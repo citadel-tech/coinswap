@@ -8,7 +8,6 @@
 use std::{
     convert::TryFrom,
     fmt,
-    fs::read,
     io::BufWriter,
     net::TcpStream,
     path::Path,
@@ -16,6 +15,7 @@ use std::{
     thread::{self, Builder},
 };
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use socks::Socks5Stream;
@@ -34,6 +34,21 @@ pub struct OfferAndAddress {
     pub(crate) offer: Offer,
     /// All maker addresses
     pub address: MakerAddress,
+    pub timestamp: DateTime<Utc>,
+}
+
+impl OfferAndAddress {
+    pub fn new(offer: Offer, address: MakerAddress) -> Self {
+        Self {
+            offer,
+            address,
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn is_fresh(&self) -> bool {
+        (Utc::now() - self.timestamp).num_minutes() < 30
+    }
 }
 
 const _REGTEST_MAKER_ADDRESSES_PORT: &[&str] = &["6102", "16102", "26102", "36102", "46102"];
@@ -107,13 +122,26 @@ impl OfferBook {
     }
 
     /// Adds a new offer to the offer book.
-    pub(crate) fn add_new_offer(&mut self, offer: &OfferAndAddress) -> bool {
-        if !self.all_makers.contains(offer) {
-            self.all_makers.push(offer.clone());
+    pub fn add_new_offer(&mut self, offer: &OfferAndAddress) -> bool {
+        let timestamped = OfferAndAddress {
+            offer: offer.offer.clone(),
+            address: offer.address.clone(),
+            timestamp: Utc::now(),
+        };
+        if !self.all_makers.iter().any(|to| to.offer == offer.offer) {
+            self.all_makers.push(timestamped);
             true
         } else {
             false
         }
+    }
+
+    pub fn get_fresh_offers(&self) -> Vec<&OfferAndAddress> {
+        let now = Utc::now();
+        self.all_makers
+            .iter()
+            .filter(|to| (now - to.timestamp).num_minutes() < 30)
+            .collect()
     }
 
     /// Adds a bad maker to the offer book.
@@ -135,14 +163,14 @@ impl OfferBook {
     pub fn write_to_disk(&self, path: &Path) -> Result<(), TakerError> {
         let wallet_file = std::fs::OpenOptions::new().write(true).open(path)?;
         let writer = BufWriter::new(wallet_file);
-        Ok(serde_cbor::to_writer(writer, &self)?)
+        Ok(serde_json::to_writer_pretty(writer, &self)?)
     }
 
     /// Reads from a path (errors if path doesn't exist).
     pub fn read_from_disk(path: &Path) -> Result<Self, TakerError> {
         //let wallet_file = File::open(path)?;
-        let mut reader = read(path)?;
-        let book = match serde_cbor::from_slice::<Self>(&reader) {
+        let mut reader = std::fs::read_to_string(path)?;
+        let book = match serde_json::from_str(&reader) {
             Ok(book) => book,
             Err(e) => {
                 let err_string = format!("{e:?}");
@@ -151,7 +179,7 @@ impl OfferBook {
                     // loop until all trailing bytes are removed.
                     loop {
                         reader.pop();
-                        match serde_cbor::from_slice::<Self>(&reader) {
+                        match serde_json::from_slice::<Self>(reader.as_bytes()) {
                             Ok(book) => break book,
                             Err(_) => continue,
                         }
@@ -162,6 +190,18 @@ impl OfferBook {
             }
         };
         Ok(book)
+    }
+
+    pub fn update_offer(&mut self, offer: OfferAndAddress) {
+        if let Some(existing) = self
+            .all_makers
+            .iter_mut()
+            .find(|o| o.address == offer.address)
+        {
+            *existing = offer;
+        } else {
+            self.all_makers.push(offer);
+        }
     }
 }
 
