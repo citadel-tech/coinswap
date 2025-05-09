@@ -393,6 +393,8 @@ impl Wallet {
 
         self.lock_unspendable_utxos()?;
 
+        // we can remove this line and use `fee_rate`, right?
+        // and then we can also remove MINER_FEE constant.
         let fee = Amount::from_sat(MINER_FEE);
 
         let remaining = coinswap_amount;
