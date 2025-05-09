@@ -51,6 +51,8 @@ pub struct MakerConfig {
     pub base_fee: u64,
     /// A percentage fee based on the swap amount.
     pub amount_relative_fee_pct: f64,
+    /// Fee rate (sats/vb)
+    pub mining_fee_rate: f64,
 }
 
 impl Default for MakerConfig {
@@ -81,6 +83,7 @@ impl Default for MakerConfig {
             mining_fee_rate: 2.0,
             base_fee,
             amount_relative_fee_pct,
+            mining_fee_rate: 2.0,
         }
     }
 }
@@ -153,6 +156,10 @@ impl MakerConfig {
                 config_map.get("amount_relative_fee_pct"),
                 default_config.amount_relative_fee_pct,
             ),
+            mining_fee_rate: parse_field(
+                config_map.get("mining_fee_rate"),
+                default_config.mining_fee_rate,
+            ),
         })
     }
 
@@ -186,6 +193,7 @@ dns_address = {}
 base_fee = {}
 # A percentage fee based on the swap amount
 amount_relative_fee_pct = {}
+mining_fee_rate = {},
 ",
             self.network_port,
             self.rpc_port,
@@ -200,6 +208,7 @@ amount_relative_fee_pct = {}
             self.dns_address,
             self.base_fee,
             self.amount_relative_fee_pct,
+            self.mining_fee_rate,
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
