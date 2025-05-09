@@ -1,4 +1,7 @@
 //! Maker Configuration. Controlling various behaviors.
+//!
+//! This module defines the configuration options for the Maker module, controlling various aspects
+//! of the maker's behavior including network settings, swap parameters, and security settings.
 
 use crate::utill::parse_toml;
 use std::{io, path::Path};
@@ -9,28 +12,38 @@ use crate::utill::{get_maker_dir, parse_field, ConnectionType};
 
 use super::api::MIN_SWAP_AMOUNT;
 
-/// Maker Configuration, controlling various maker behavior.
+/// Maker Configuration
+///
+/// This struct defines all configurable parameters for the Maker module, including:
+/// - All the networking ports
+/// - Swap amount limits
+/// - Market settings, like DNS and Fidelity Bonds
+/// - Connection preferences
 #[derive(Debug, Clone, PartialEq)]
 pub struct MakerConfig {
-    /// RPC listening port
+    /// RPC listening port for maker-cli operations
     pub rpc_port: u16,
-    /// Minimum Coinswap amount
+    /// Minimum amount in satoshis that can be swapped
     pub min_swap_amount: u64,
-    /// target listening port
+    /// Network port for client connections
     pub network_port: u16,
-    /// control port
+    /// Control port for Tor interface
     pub control_port: u16,
-    /// Socks port
+    /// Socks port for Tor proxy
     pub socks_port: u16,
-    /// Authentication password
+    /// Authentication password for Tor interface
     pub tor_auth_password: String,
-    /// Directory server address (can be clearnet or onion)
-    pub directory_server_address: String,
-    /// Fidelity Bond amount
+    /// DNS address (can be clearnet or onion) for maker discovery
+    pub dns_address: String,
+    /// Fidelity Bond amount in satoshis
     pub fidelity_amount: u64,
-    /// Fidelity Bond timelock in Block heights.
+    /// Fidelity Bond timelock in block heights
     pub fidelity_timelock: u32,
-    /// Connection type
+    /// Connection type (TOR or CLEARNET)
+    /// 
+    /// # Deprecated
+    /// This field will be removed in a future version as the application will be Tor-only.
+    /// Clearnet support is being phased out for security reasons.
     pub connection_type: ConnectionType,
 }
 
@@ -43,7 +56,7 @@ impl Default for MakerConfig {
             control_port: 9051,
             socks_port: 9050,
             tor_auth_password: "".to_string(),
-            directory_server_address:
+            dns_address:
                 "kizqnaslcb2r3mbk2vm77bdff3madcvddntmaaz2htmkyuw7sgh4ddqd.onion:8080".to_string(),
             #[cfg(feature = "integration-test")]
             fidelity_amount: 5_000_000, // 0.05 BTC for tests
@@ -109,9 +122,9 @@ impl MakerConfig {
                 config_map.get("tor_auth_password"),
                 default_config.tor_auth_password,
             ),
-            directory_server_address: parse_field(
-                config_map.get("directory_server_address"),
-                default_config.directory_server_address,
+            dns_address: parse_field(
+                config_map.get("dns_address"),
+                default_config.dns_address,
             ),
             fidelity_amount: parse_field(
                 config_map.get("fidelity_amount"),
@@ -128,19 +141,31 @@ impl MakerConfig {
         })
     }
 
-    // Method to serialize the MakerConfig into a TOML string and write it to a file
+    /// This function serializes the MakerConfig into a TOML format and writes it to disk.
+    /// It creates the parent directory if it doesn't exist.
     pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
-            "network_port = {}
+            "# Maker Configuration File
+# Network port for client connections
+network_port = {}
+# RPC port for maker-cli operations
 rpc_port = {}
+# Socks port for Tor proxy
 socks_port = {}
+# Control port for Tor  interface
 control_port = {}
+# Authentication password for Tor interface
 tor_auth_password = {}
+# Minimum amount in satoshis that can be swapped
 min_swap_amount = {}
+# Fidelity Bond amount in satoshis
 fidelity_amount = {}
+# Fidelity Bond timelock in block heights
 fidelity_timelock = {}
+# Connection type (TOR or CLEARNET)
 connection_type = {:?}
-directory_server_address = {}
+# DNS address (can be clearnet or onion)
+dns_address = {}
 ",
             self.network_port,
             self.rpc_port,
@@ -151,13 +176,12 @@ directory_server_address = {}
             self.fidelity_amount,
             self.fidelity_timelock,
             self.connection_type,
-            self.directory_server_address,
+            self.dns_address,
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;
         file.write_all(toml_data.as_bytes())?;
-        // TODO: Why we do require Flush?
         file.flush()?;
         Ok(())
     }
