@@ -32,6 +32,8 @@ pub struct MakerConfig {
     pub fidelity_timelock: u32,
     /// Connection type
     pub connection_type: ConnectionType,
+    /// Fee rate (sats/vb)
+    pub mining_fee_rate: f64,
 }
 
 impl Default for MakerConfig {
@@ -58,6 +60,7 @@ impl Default for MakerConfig {
             } else {
                 ConnectionType::TOR
             },
+            mining_fee_rate: 2.0,
         }
     }
 }
@@ -125,6 +128,10 @@ impl MakerConfig {
                 config_map.get("connection_type"),
                 default_config.connection_type,
             ),
+            mining_fee_rate: parse_field(
+                config_map.get("mining_fee_rate"),
+                default_config.mining_fee_rate,
+            ),
         })
     }
 
@@ -141,6 +148,7 @@ fidelity_amount = {}
 fidelity_timelock = {}
 connection_type = {:?}
 directory_server_address = {}
+mining_fee_rate = {},
 ",
             self.network_port,
             self.rpc_port,
@@ -152,6 +160,7 @@ directory_server_address = {}
             self.fidelity_timelock,
             self.connection_type,
             self.directory_server_address,
+            self.mining_fee_rate,
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;

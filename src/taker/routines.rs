@@ -26,7 +26,6 @@ use crate::{
         },
         Hash160,
     },
-    taker::api::MINER_FEE,
     utill::{read_message, send_message, ConnectionType},
     wallet::WalletError,
 };
@@ -246,6 +245,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
     npi: NextMakerInfo,
     hashvalue: Hash160,
     id: String,
+    mining_fee_rate: f64,
 ) -> Result<(ContractSigsAsRecvrAndSender, Vec<ScriptBuf>), TakerError> {
     // Send POF
     let next_coinswap_info = npi
@@ -264,7 +264,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         confirmed_funding_txes: tmi.funding_tx_infos.clone(),
         next_coinswap_info,
         refund_locktime: tmi.this_maker_refund_locktime,
-        contract_feerate: MINER_FEE,
+        contract_feerate: mining_fee_rate as u64,
         id,
     });
 
@@ -331,7 +331,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         tmi.this_maker.offer.time_relative_fee_pct,
     );
 
-    let miner_fees_paid_by_taker = (tmi.funding_tx_infos.len() as u64) * MINER_FEE;
+    let miner_fees_paid_by_taker = (tmi.funding_tx_infos.len() as u64) * mining_fee_rate as u64;
     let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
 
     if Amount::from_sat(calculated_next_amount) != next_amount {
@@ -343,11 +343,10 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
     }
 
     log::info!(
-        "Maker Received = {} | Maker is Forwarding = {} |  Coinswap Fees = {}  | Miner Fees paid by us = {} ",
+        "Maker Received = {} | Maker is Forwarding = {} |  Coinswap Fees = {}",
         Amount::from_sat(this_amount),
         next_amount,
         Amount::from_sat(coinswap_fees),
-        miner_fees_paid_by_taker,
     );
 
     for ((receivers_contract_tx, contract_tx), contract_redeemscript) in
