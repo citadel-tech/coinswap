@@ -64,7 +64,7 @@ The project also requires working `rust` and `cargo` installation to compile. Pr
 
 ### Bitcoind Setup
 
-The apps also requires a fully synced, non-prunded `bitcoind` node with RPC access on [Custom Signet](./docs/demo.md#2-start-bitcoin-core) with `-txindex` enabled. Follow the [guide here](./docs/bitcoind.md) for setup instructions.
+The apps also require a fully synced, non-prunded `bitcoind` node with RPC access on [Custom Signet](./docs/demo.md#2-start-bitcoin-core) with `-txindex` enabled. Follow the [guide here](./docs/bitcoind.md) for setup instructions.
 ### Build and Run the Apps
 ```console
 git clone https://github.com/citadel-tech/coinswap.git
@@ -98,7 +98,7 @@ The apps can be used to run both the swap maker server and the taker client. The
 
   `makerd`: The backend server daemon. This requires continuous uptime and connection to live bitcoin core RPC. App demo [here](./docs/makerd.md)
   
-  `maker-cli`: The RPC controler of the server deamon. This can be used to manage the server, access internal wallet, see swap statistics, etc. App demo [here](./docs/maker-cli.md)
+  `maker-cli`: The RPC controller of the server daemon. This can be used to manage the server, access internal wallet, see swap statistics, etc. App demo [here](./docs/maker-cli.md)
   
   `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App demo [here](./docs/taker.md)
 
