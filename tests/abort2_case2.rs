@@ -123,7 +123,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
         info!("Coinswap failed because the first maker rejected for signature");
     }
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));

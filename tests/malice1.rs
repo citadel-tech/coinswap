@@ -15,8 +15,8 @@ use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// Malice 1: Taker Broadcasts contract transactions prematurely.
 ///
-/// The Makers identify the situation and gets their money back via contract txs. This is
-/// a potential DOS on Makers. But Taker would loose money too for doing this.
+/// The Makers identify the situation and get their money back via contract txs. This is
+/// a potential DOS on Makers. But Taker would lose money too for doing this.
 #[test]
 fn malice1_taker_broadcast_contract_prematurely() {
     // ---- Setup ----
@@ -106,7 +106,7 @@ fn malice1_taker_broadcast_contract_prematurely() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));

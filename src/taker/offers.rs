@@ -79,7 +79,7 @@ impl TryFrom<&mut TcpStream> for MakerAddress {
 }
 
 /// An ephemeral Offerbook tracking good and bad makers. Currently, Offerbook is initiated
-/// at start of every swap. So good and bad maker list will ot be persisted.
+/// at the start of every swap. So good and bad maker list will not be persisted.
 // TODO: Persist the offerbook in disk.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct OfferBook {
@@ -92,7 +92,7 @@ impl OfferBook {
     // - unique key.
     // - clear good-bad separations.
     // - ranking system.
-    // - various categories of livelynesss, to smartly distribute try counts.
+    // - various categories of livelinesss, to smartly distribute try counts.
 
     /// Gets all "not-bad" offers.
     pub fn all_good_makers(&self) -> Vec<&OfferAndAddress> {
@@ -101,7 +101,7 @@ impl OfferBook {
             .filter(|offer| !self.bad_makers.contains(offer))
             .collect()
     }
-    ///Gets all offers.
+    /// Gets all offers.
     pub fn all_makers(&self) -> Vec<&OfferAndAddress> {
         self.all_makers.iter().collect()
     }
