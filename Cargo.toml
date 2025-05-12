@@ -28,7 +28,7 @@ bitcoind = "0.36"
 log4rs = "1.3.0"
 flate2 = {version = "1.0.35", optional = true}
 tar = {version = "0.4.43", optional = true}
-minreq = { version = "2.12.0", features = ["https"] , optional = true}
+minreq = { version = "2.12.0", features = ["https"] }
 rust-coinselect = "0.1.2"
 
 #Empty default feature set, (helpful to generalise in github actions)
@@ -36,4 +36,4 @@ rust-coinselect = "0.1.2"
 default = []
 # The following feature set is in response to the issue described at https://github.com/rust-lang/rust/issues/45599
 # Only used for running the integration tests
-integration-test = ['dep:flate2','dep:tar','dep:minreq']
+integration-test = ['dep:flate2','dep:tar']
