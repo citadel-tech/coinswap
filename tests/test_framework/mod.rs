@@ -5,8 +5,8 @@
 //! Spawns one Taker and multiple Makers, with/without special behavior, connect them to bitcoind regtest node,
 //! and initializes the database.
 //!
-//! The tests data are stored in the `tests/temp-files` directory, which is auto-removed after each successful test.
-//! Do not invoke [TestFramework::stop] function at the end of the test, to persis this data for debugging.
+//! The tests' data are stored in the `tests/temp-files` directory, which is auto-removed after each successful test.
+//! Do not invoke [TestFramework::stop] function at the end of the test, to persist this data for debugging.
 //!
 //! The test data also includes the backend bitcoind data-directory, which is useful for observing the blockchain states after a swap.
 //!
@@ -210,7 +210,7 @@ pub(crate) fn send_to_address(
         .unwrap()
 }
 
-// Waits until the mpsc::Receiver<String> recieves the expected message.
+// Waits until the mpsc::Receiver<String> receives the expected message.
 pub(crate) fn await_message(rx: &Receiver<String>, expected_message: &str) {
     loop {
         let log_message = rx.recv().expect("Failure from Sender side");
@@ -481,7 +481,7 @@ impl TestFramework {
     ///
     /// Returns ([TestFramework], [Taker], [`Vec<Maker>`]).
     /// Maker's config will follow the pattern given the input HashMap.
-    /// If no bitcoind conf is provide a default value will be used.
+    /// If no bitcoind conf is provided, a default value will be used.
     #[allow(clippy::type_complexity)]
     pub fn init(
         makers_config_map: Vec<((u16, Option<u16>), MakerBehavior)>,
