@@ -1,4 +1,5 @@
 /target
+coinswap_derive/target
 *.swp
 /docs/fidelity_bonds.md
 Cargo.lock
