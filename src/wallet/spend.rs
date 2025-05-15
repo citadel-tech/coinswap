@@ -68,7 +68,7 @@ impl Wallet {
     }
 
     /// Redeem a Fidelity Bond.
-    /// This functions creates a spending transaction from the fidelity bond, signs and broadcasts it.
+    /// This function creates a spending transaction from the fidelity bond, signs and broadcasts it.
     /// Returns the txid of the spending tx, and mark the bond as spent.
     pub fn redeem_fidelity(&mut self, idx: u32, feerate: f64) -> Result<(), WalletError> {
         let (bond, redeemed) = self
@@ -130,7 +130,7 @@ impl Wallet {
         // causing an unrecoverable error.
         // Temporary fix: Log the status and mark the bond as redeemed to prevent repeated failures.
         // A more robust solution is needed to ensure atomic updates.
-        log::info!("Fidelity redeem transaction broadcasted. txid: {}", txid);
+        log::info!("Fidelity redeem transaction broadcasted. txid: {txid}");
 
         // No need to wait for confirmation as that will delay the rpc call. Just send back the txid.
 
@@ -271,7 +271,7 @@ impl Wallet {
                 } => {
                     let outgoing_swap_coin = self
                         .find_outgoing_swapcoin(swapcoin_multisig_redeemscript)
-                        .expect("Cannot find Outgoin Swap Coin");
+                        .expect("Cannot find Outgoing Swap Coin");
                     tx.input.push(TxIn {
                         previous_output: OutPoint {
                             txid: outgoing_swap_coin.contract_tx.compute_txid(),

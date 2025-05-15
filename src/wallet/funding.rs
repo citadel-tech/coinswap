@@ -58,7 +58,7 @@ impl Wallet {
         //     return ret;
         // }
 
-        log::info!("failed to create funding txes with any method {:?}", ret);
+        log::info!("failed to create funding txes with any method {ret:?}");
         ret
     }
 
@@ -447,7 +447,7 @@ impl Wallet {
         let total_tx_inputs_len = selected_utxo.len();
         if total_tx_inputs_len < destinations.len() {
             return Err(WalletError::General(
-                "not enough UTXOs found, cant use this method".to_string(),
+                "Not enough UTXOs found, can't use this method".to_string(),
             ));
         }
 

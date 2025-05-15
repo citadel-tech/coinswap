@@ -24,8 +24,7 @@
 
 ### ⚠️ Info
 
-Coinswap v0.1.0 marketplace is now live on Testnet4.
-
+Coinswap v0.1.0 marketplace is now live on Custom Signet. Follow [The Demo Doc](./docs/demo.md) **TO JOIN THE MARKET**.
 
 ### ⚠️ Warning
 
@@ -59,14 +58,13 @@ sudo apt install build-essential automake libtool
 
 ### **Tor Installation**  
 
-Tor is required to run CoinSwap. If you don't have Tor pre-installed, please follow the instructions in the [Tor guide](./docs/app%20demos/tor.md).
+Tor is required to run CoinSwap. If you don't have Tor pre-installed, please follow the instructions in the [Tor guide](./docs/tor.md).
 
-The project also requires working `rust` and `cargo` installation to compile. Precompile binaries will be available soon. Cargo can be installed from [here](https://www.rust-lang.org/learn/get-started).
+The project also requires working `rust` and `cargo` installation to compile. Precompiled binaries will be available soon. Cargo can be installed from [here](https://www.rust-lang.org/learn/get-started).
 
 ### Bitcoind Setup
 
-The apps also requires a fully synced, non-prunded `bitcoind` node with RPC access on Testnet4 with `-txindex` enabled. Follow the [guide here](./docs/app%20demos/bitcoind.md) for setup instructions.
-
+The apps also require a fully synced, non-prunded `bitcoind` node with RPC access on [Custom Signet](./docs/demo.md#2-start-bitcoin-core) with `-txindex` enabled. Follow the [guide here](./docs/bitcoind.md) for setup instructions.
 ### Build and Run the Apps
 ```console
 git clone https://github.com/citadel-tech/coinswap.git
@@ -79,7 +77,7 @@ After compilation you will get the binaries in the `./target/release` folder.
 Install the necessary binaries in your system:
 ```console
 sudo install ./target/release/taker /usr/local/bin/
-sudo install ./target/release/maker /usr/local/bin/  
+sudo install ./target/release/makerd /usr/local/bin/  
 sudo install ./target/release/maker-cli /usr/local/bin/  
 ```
 
@@ -91,18 +89,18 @@ taker --help
 ```
 If all is setup, then try out the `taker` app to fetch current market offers.
 ```console
-taker fetch-offers`
+taker fetch-offers
 ```
 If you find any problem setting up and running the apps, feel free to open an Issue.
 
 ### Apps overview
 The apps can be used to run both the swap maker server and the taker client. The maker server is suitable to run inside a full node, or *always online* system. Although shutting down the server, and using it intermittently will also work. 
 
-  `makerd`: The backend server daemon. This requires continuous uptime and connection to live bitcoin core RPC. App demo [here](./docs/app%20demos/makerd.md)
+  `makerd`: The backend server daemon. This requires continuous uptime and connection to live bitcoin core RPC. App demo [here](./docs/makerd.md)
   
-  `maker-cli`: The RPC controler of the server deamon. This can be used to manage the server, access internal wallet, see swap statistics, etc. App demo [here](./docs/app%20demos/maker-cli.md)
+  `maker-cli`: The RPC controller of the server daemon. This can be used to manage the server, access internal wallet, see swap statistics, etc. App demo [here](./docs/maker-cli.md)
   
-  `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App demo [here](./docs/app%20demos/taker.md)
+  `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App demo [here](./docs/taker.md)
 
 ### ❗ Important
 
@@ -111,7 +109,7 @@ Once the `makerd` server setup is complete, always stop the server with `maker-c
 # [Dev Mode] Checkout the tests
 
 Extensive functional testing to simulate various edge cases of the protocol, is covered. The [functional tests](./tests/) spawns 
-a toy marketplace in Bitcoin regetst and plays out various protocol situation. Functional test logs are a good way to look at simulations of various
+a toy marketplace in Bitcoin regtest and plays out various protocol situations. Functional test logs are a good way to look at simulations of various
 edge cases in the protocol, and how the taker and makers recover from failed swaps. 
 
 Each test in the [tests](./tests/) folder covers a different edge-case situation and demonstrates how the taker and makers recover
@@ -157,4 +155,4 @@ The dev community lurks [here](https://discord.gg/Wz42hVmrrK).
 
 Dev discussions predominantly happen via FOSS best practices, and by using Github as the major community forum.
 
-The Issues, PRs and Discussions are where all the hard lifting happening.
+The Issues, PRs and Discussions are where all the hard lifting is happening.

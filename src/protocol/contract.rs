@@ -34,12 +34,12 @@ use super::{
 // to have the same size, and taker will pay all the maker's miner fees based on that
 // taker will choose what fee rate they will use, and how many funding transactions they want
 // the makers to create
-// this doesnt take into account the different sizes of single-sig, 2of2 multisig or htlc contracts
+// this doesn't take into account the different sizes of single-sig, 2of2 multisig or htlc contracts
 // but all those complications will go away when we move to ecdsa2p and scriptless scripts
-// so theres no point adding complications for something that we'll hopefully get rid of soon
+// so there's no point adding complications for something that we'll hopefully get rid of soon
 // this size here is for a tx with 2 p2wpkh outputs, 3 singlesig inputs and 1 2of2 multisig input
 // if the maker can get stuff confirmed cheaper than this then they can keep that money
-// if the maker ends up paying more then thats their problem
+// if the maker ends up paying more then that's their problem
 // we could avoid this guessing by adding one more round trip to the protocol where the maker
 // calculates exactly how big the transactions will be and then taker knows exactly the miner fee
 // to pay for
@@ -153,13 +153,13 @@ pub(crate) fn check_reedemscript_is_multisig(redeemscript: &Script) -> Result<()
     let template_ms_rs =
         create_multisig_redeemscript(&pubkey_placeholder, &pubkey_placeholder).into_bytes();
     if ms_rs_bytes.len() != template_ms_rs.len() {
-        return Err(ProtocolError::General("wrong multisig_redeemscript length"));
+        return Err(ProtocolError::General("Wrong multisig_redeemscript length"));
     }
     ms_rs_bytes.splice(2..35, PUB_PLACEHOLDER.iter().cloned());
     ms_rs_bytes.splice(36..69, PUB_PLACEHOLDER.iter().cloned());
     if ms_rs_bytes != template_ms_rs {
         Err(ProtocolError::General(
-            "redeemscript not matching multisig template",
+            "Redeemscript not matching multisig template",
         ))
     } else {
         Ok(())
@@ -176,7 +176,7 @@ pub(crate) fn check_multisig_has_pubkey(
     let my_pubkey = calculate_pubkey_from_nonce(tweakable_point, nonce)?;
     if pubkey1 != my_pubkey && pubkey2 != my_pubkey {
         Err(ProtocolError::General(
-            "wrong pubkeys in multisig_redeemscript",
+            "Wrong pubkeys in multisig_redeemscript",
         ))
     } else {
         Ok(())
@@ -193,7 +193,7 @@ pub(crate) fn check_hashlock_has_pubkey(
     let derived_hashlock_pubkey = calculate_pubkey_from_nonce(tweakable_point, nonce)?;
     if contract_hashlock_pubkey != derived_hashlock_pubkey {
         Err(ProtocolError::General(
-            "contract hashlock pubkey doesnt match with key derived from nonce",
+            "Contract hashlock pubkey doesn't match with key derived from nonce",
         ))
     } else {
         Ok(())
@@ -283,7 +283,7 @@ pub(crate) fn read_hashvalue_from_contract(
     redeemscript: &Script,
 ) -> Result<Hash160, ProtocolError> {
     if redeemscript.to_bytes().len() < MIN_HASHV_LEN {
-        return Err(ProtocolError::General("Contract reedemscript too short!"));
+        return Err(ProtocolError::General("Contract redeemscript too short!"));
     }
     let mut instrs = redeemscript.instructions().skip(2);
     // Unwrap Safety: length is checked
@@ -309,7 +309,7 @@ pub(crate) fn check_hashvalues_are_equal(
 
     if !hashvalues.iter().all(|value| value == &hashvalues[0]) {
         return Err(ProtocolError::General(
-            "contract reedemscript doesn't have equal hashvalues",
+            "Contract redeemscript doesn't have equal hashvalues",
         ));
     }
 
@@ -321,7 +321,7 @@ pub(crate) fn read_contract_locktime(redeemscript: &Script) -> Result<u16, Proto
     match redeemscript
         .instructions()
         .nth(12)
-        .expect("Insctructions expected")?
+        .expect("Instructions expected")?
     {
         Instruction::PushBytes(locktime_bytes) => match locktime_bytes.len() {
             1 => Ok(locktime_bytes[0] as u16),
@@ -330,21 +330,21 @@ pub(crate) fn read_contract_locktime(redeemscript: &Script) -> Result<u16, Proto
                     .as_bytes()
                     .split_at(std::mem::size_of::<u16>());
                 Ok(u16::from_le_bytes(int_bytes.try_into().map_err(|_| {
-                    ProtocolError::General("Can't read locktime value from contract reedemscript")
+                    ProtocolError::General("Can't read locktime value from contract redeemscript")
                 })?))
             }
             _ => Err(ProtocolError::General(
-                "Can't read locktime value from contract reedemscript",
+                "Can't read locktime value from contract redeemscript",
             )),
         },
         Instruction::Op(opcode) => {
             if let opcodes::Class::PushNum(n) = opcode.classify(opcodes::ClassifyContext::Legacy) {
                 Ok(n.try_into().map_err(|_| {
-                    ProtocolError::General("Can't read locktime value from contract reedemscript")
+                    ProtocolError::General("Can't read locktime value from contract redeemscript")
                 })?)
             } else {
                 Err(ProtocolError::General(
-                    "Can't read locktime value from contract reedemscript",
+                    "Can't read locktime value from contract redeemscript",
                 ))
             }
         }
@@ -356,7 +356,7 @@ pub(crate) fn read_hashlock_pubkey_from_contract(
     redeemscript: &Script,
 ) -> Result<PublicKey, ProtocolError> {
     if redeemscript.to_bytes().len() < 61 {
-        return Err(ProtocolError::General("contract reedemscript too short"));
+        return Err(ProtocolError::General("Contract redeemscript too short"));
     }
     Ok(PublicKey::from_slice(&redeemscript.to_bytes()[27..60])?)
 }
@@ -366,7 +366,7 @@ pub(crate) fn read_timelock_pubkey_from_contract(
     redeemscript: &Script,
 ) -> Result<PublicKey, ProtocolError> {
     if redeemscript.to_bytes().len() < 99 {
-        return Err(ProtocolError::General("contract reedemscript too short"));
+        return Err(ProtocolError::General("Contract redeemscript too short"));
     }
     Ok(PublicKey::from_slice(&redeemscript.to_bytes()[65..98])?)
 }
@@ -415,8 +415,8 @@ pub(crate) fn create_receivers_contract_tx(
     contract_redeemscript: &ScriptBuf,
     fee_rate: Amount,
 ) -> Result<Transaction, ProtocolError> {
-    //exactly the same thing as senders contract for now, until collateral
-    //inputs are implemented
+    // exactly the same thing as senders contract for now, until collateral
+    // inputs are implemented
     create_senders_contract_tx(input, input_value, contract_redeemscript, fee_rate)
 }
 
@@ -430,7 +430,7 @@ pub(crate) fn is_contract_out_valid(
     minimum_locktime: &u16,
 ) -> Result<(), ProtocolError> {
     if minimum_locktime > locktime {
-        return Err(ProtocolError::General("locktime too short"));
+        return Err(ProtocolError::General("Locktime too short"));
     }
 
     let redeemscript_from_request =
@@ -438,7 +438,7 @@ pub(crate) fn is_contract_out_valid(
     let contract_spk_from_request = redeemscript_to_scriptpubkey(&redeemscript_from_request)?;
     if contract_output.script_pubkey != contract_spk_from_request {
         return Err(ProtocolError::General(
-            "given transaction does not pay to requested contract",
+            "Given transaction does not pay to requested contract",
         ));
     }
     Ok(())
@@ -452,20 +452,20 @@ pub(crate) fn validate_contract_tx(
 ) -> Result<(), ProtocolError> {
     if receivers_contract_tx.input.len() != 1 || receivers_contract_tx.output.len() != 1 {
         return Err(ProtocolError::General(
-            "invalid number of inputs or outputs",
+            "Invalid number of inputs or outputs",
         ));
     }
 
     if let Some(op) = funding_outpoint {
         if receivers_contract_tx.input[0].previous_output != *op {
-            return Err(ProtocolError::General("not spending the funding outpoint"));
+            return Err(ProtocolError::General("Not spending the funding outpoint"));
         }
     }
 
     if receivers_contract_tx.output[0].script_pubkey
         != redeemscript_to_scriptpubkey(contract_redeemscript)?
     {
-        return Err(ProtocolError::General("doesnt pay to requested contract"));
+        return Err(ProtocolError::General("Doesn't pay to requested contract"));
     }
     Ok(())
 }
@@ -609,10 +609,10 @@ mod test {
             + "0120516721"
             + &pub_timelock.to_string()[..]
             + "00"
-            + &format!("{:x}", locktime_bytecode)
+            + &format!("{locktime_bytecode:x}")
             + "68b2757b88ac";
 
-        assert_eq!(&format!("{:x}", contract_script), &expected);
+        assert_eq!(&format!("{contract_script:x}"), &expected);
 
         // Check data extraction from script is also working
         assert_eq!(
@@ -639,7 +639,7 @@ mod test {
 
         // Check script generation works
         assert_eq!(
-            format!("{:x}", multisig),
+            format!("{multisig:x}"),
             "5221032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af21039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef52ae"
         );
 
@@ -757,7 +757,7 @@ mod test {
         )
         .is_ok());
 
-        // Validate if the contract transaction is spending correctl utxo
+        // Validate if the contract transaction is spending correct utxo
         assert!(validate_contract_tx(&contract_tx, Some(&spending_utxo), &contract_script).is_ok());
 
         // Error Cases---------------------------------------------
@@ -774,7 +774,7 @@ mod test {
         )
         .unwrap_err()
         {
-            assert_eq!(message, "not spending the funding outpoint");
+            assert_eq!(message, "Not spending the funding outpoint");
         } else {
             panic!();
         }
@@ -795,7 +795,7 @@ mod test {
             validate_contract_tx(&contract_tx_err1, Some(&spending_utxo), &contract_script)
                 .unwrap_err()
         {
-            assert_eq!(message, "invalid number of inputs or outputs");
+            assert_eq!(message, "Invalid number of inputs or outputs");
         } else {
             panic!();
         }
@@ -817,7 +817,7 @@ mod test {
             validate_contract_tx(&contract_tx_err2, Some(&spending_utxo), &contract_script)
                 .unwrap_err()
         {
-            assert_eq!(message, "doesnt pay to requested contract");
+            assert_eq!(message, "Doesn't pay to requested contract");
         } else {
             panic!();
         }
@@ -939,7 +939,7 @@ mod test {
             ProtocolError::General(mess) => mess,
             _ => "Not in path",
         };
-        assert_eq!(val, "wrong pubkeys in multisig_redeemscript");
+        assert_eq!(val, "Wrong pubkeys in multisig_redeemscript");
     }
 
     #[test]
@@ -976,7 +976,7 @@ mod test {
 
         assert_eq!(
             error_description,
-            "contract hashlock pubkey doesnt match with key derived from nonce"
+            "Contract hashlock pubkey doesn't match with key derived from nonce"
         );
     }
 
@@ -1017,7 +1017,7 @@ mod test {
             _ => "Not the correct Path",
         };
 
-        assert_eq!(error_message, "contract reedemscript too short");
+        assert_eq!(error_message, "Contract redeemscript too short");
     }
 
     #[test]
@@ -1057,7 +1057,7 @@ mod test {
             _ => "Not the correct Path",
         };
 
-        assert_eq!(error_message, "contract reedemscript too short");
+        assert_eq!(error_message, "Contract redeemscript too short");
     }
     #[test]
     fn test_check_reedemscript_is_multisig() {
@@ -1078,11 +1078,11 @@ mod test {
             check_reedemscript_is_multisig(Script::from_bytes(&invalid_length_script)).unwrap_err();
         let error_message_invalid_length = match result_invalid_length {
             ProtocolError::General(msg) => msg,
-            _ => "Not correct path",
+            _ => "Incorrect path",
         };
         assert_eq!(
             error_message_invalid_length,
-            "wrong multisig_redeemscript length"
+            "Wrong multisig_redeemscript length"
         );
         invalid_length_script.push(232);
         let result_invalid_template =
@@ -1090,11 +1090,11 @@ mod test {
 
         let error_message_invalid_template = match result_invalid_template {
             ProtocolError::General(msg) => msg,
-            _ => "Not correct path",
+            _ => "Incorrect path",
         };
         assert_eq!(
             error_message_invalid_template,
-            "redeemscript not matching multisig template"
+            "Redeemscript not matching multisig template"
         );
     }
 
@@ -1332,11 +1332,11 @@ mod test {
 
         let error_message_invalid_length = match hash_value_from_fn {
             ProtocolError::General(msg) => msg,
-            _ => "Not correct path",
+            _ => "Incorrect path",
         };
         assert_eq!(
             error_message_invalid_length,
-            "contract reedemscript doesn't have equal hashvalues"
+            "Contract redeemscript doesn't have equal hashvalues"
         );
     }
 }

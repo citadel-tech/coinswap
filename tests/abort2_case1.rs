@@ -24,11 +24,12 @@ use test_framework::*;
 fn test_abort_case_2_move_on_with_other_makers() {
     // ---- Setup ----
 
-    // 6102 is naughty. But theres enough good ones.
+    // 16102 is naughty. But theres enough good ones.
+    let naughty = 16102;
     let makers_config_map = [
         ((6102, None), MakerBehavior::Normal),
         (
-            (16102, None),
+            (naughty, None),
             MakerBehavior::CloseAtReqContractSigsForSender,
         ),
         ((26102, None), MakerBehavior::Normal),
@@ -111,7 +112,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -184,7 +185,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
     // Maker might not get banned as Taker may not try 16102 for swap. If it does then check its 16102.
     if !taker.get_bad_makers().is_empty() {
         assert_eq!(
-            format!("127.0.0.1:{}", 16102),
+            format!("127.0.0.1:{naughty}"),
             taker.get_bad_makers()[0].address.to_string()
         );
     }

@@ -8,11 +8,11 @@ use coinswap::{
 
 /// A simple command line app to operate the makerd server.
 ///
-/// The app works as a RPC client for makerd, useful to access the server, retrieve information, and manage server operations.
+/// The app works as an RPC client for makerd, useful to access the server, retrieve information, and manage server operations.
 ///
-/// For more detailed usage information, please refer: https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/maker-cli.md
+/// For more detailed usage information, please refer: <https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/maker-cli.md>
 ///
-/// This is early beta, and there are known and unknown bugs. Please report issues at: https://github.com/citadel-tech/coinswap/issues
+/// This is early beta, and there are known and unknown bugs. Please report issues at: <https://github.com/citadel-tech/coinswap/issues>
 #[derive(Parser, Debug)]
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
@@ -40,13 +40,13 @@ enum Commands {
     /// Get total wallet balances of different categories.
     /// regular: All single signature regular wallet coins (seed balance).
     /// swap: All 2of2 multisig coins received in swaps.
-    /// contract: All live contract transaction balance locked in timelocks. If you see value in this field, you have unfinished or malfinished swaps. You can claim them back with recover command.
+    /// contract: All live contract transaction balance locked in timelocks. If you see value in this field, you have unfinished or malfinished swaps. You can claim them back with the recover command.
     /// fidelity: All coins locked in fidelity bonds.
     /// spendable: Spendable amount in wallet (regular + swap balance).
     GetBalances,
     /// Gets a new bitcoin receiving address
     GetNewAddress,
-    /// Send Bitcoin to an external address and returns the txid.
+    /// Send Bitcoin to an external address and return the txid.
     SendToAddress {
         /// Recipient's address.
         #[clap(long, short = 't')]
@@ -64,9 +64,9 @@ enum Commands {
     ShowDataDir,
     /// Shutdown the makerd server
     Stop,
-    /// Show all the fidelity bonds, current and previous, with an (index, {bond_proof, is_spent}) tupple.
+    /// Show all the fidelity bonds, current and previous, with an (index, {bond_proof, is_spent}) tuple.
     ShowFidelity,
-    /// Sync the maker wallet with current blockchain state.
+    /// Sync the maker wallet with the current blockchain state.
     SyncWallet,
 }
 
@@ -143,7 +143,7 @@ fn send_rpc_req(mut stream: TcpStream, req: RpcMsgReq) -> Result<(), MakerError>
     if matches!(response, RpcMsgResp::Pong) {
         println!("success");
     } else {
-        println!("{}", response);
+        println!("{response}");
     }
 
     Ok(())
