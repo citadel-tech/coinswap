@@ -179,7 +179,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
 
     if let Some(i) = highest_index {
         let wallet_read = maker.get_wallet().read()?;
-        let (bond, _) = wallet_read.store.fidelity_bond.get(&i).unwrap();
+        let bond = wallet_read.store.fidelity_bond.get(&i).unwrap();
 
         let current_height = wallet_read
             .rpc
