@@ -16,7 +16,7 @@ sudo apt update
 sudo apt install tor -y
 ```
 
-### MacOs
+### MacOS
 ```bash
 brew install tor
 ```
@@ -29,7 +29,7 @@ brew install tor
 ```bash
 sudo nano /etc/tor/torrc
 ```
-### MacOs
+### MacOS
 ```bash
 nano /opt/homebrew/etc/tor/torrc
 ```

@@ -18,7 +18,7 @@ use test_framework::*;
 /// ABORT 3: Maker Drops After Setup
 /// Case 1: CloseAtContractSigsForRecvrAndSender
 ///
-/// Maker closes connection after receiving a `RespContractSigsForRecvrAndSender` and doesn't broadcasts it's funding txs.
+/// Maker closes the connection after receiving a `RespContractSigsForRecvrAndSender` and doesn't broadcast its funding txs.
 /// Taker wait until a timeout (10ses for test, 5mins for prod) and starts recovery after that.
 // This is problematic. Needs more detailed thought.
 #[test]
@@ -26,9 +26,10 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
     // ---- Setup ----
 
     // 6102 is naughty. And theres not enough makers.
+    let naughty = 6102;
     let makers_config_map = [
         (
-            (6102, None),
+            (naughty, None),
             MakerBehavior::CloseAtContractSigsForRecvrAndSender,
         ),
         ((16102, None), MakerBehavior::Normal),
@@ -114,7 +115,7 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -197,7 +198,7 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
 
     // Maker6102 gets banned for being naughty.
     assert_eq!(
-        format!("127.0.0.1:{}", 6102),
+        format!("127.0.0.1:{naughty}"),
         taker.get_bad_makers()[0].address.to_string()
     );
 

@@ -55,7 +55,7 @@ pub struct Wallet {
     pub(crate) store: WalletStore,
 }
 
-/// Speicfy the keychain derivation path from [`HARDENDED_DERIVATION`]
+/// Specify the keychain derivation path from [`HARDENDED_DERIVATION`]
 /// Each kind represents an unhardened index value. Starting with External = 0.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub(crate) enum KeychainKind {
@@ -82,7 +82,7 @@ use rust_coinselect::types::SelectionError;
 
 impl From<SelectionError> for WalletError {
     fn from(err: SelectionError) -> Self {
-        WalletError::General(format!("Coin selection error: {}", err))
+        WalletError::General(format!("Coin selection error: {err}"))
     }
 }
 
@@ -149,7 +149,7 @@ pub enum UTXOSpendInfo {
         swapcoin_multisig_redeemscript: ScriptBuf,
         input_value: Amount,
     },
-    /// HahsLockContract
+    /// HashLockContract
     HashlockContract {
         swapcoin_multisig_redeemscript: ScriptBuf,
         input_value: Amount,
@@ -195,9 +195,9 @@ impl Display for UTXOSpendInfo {
 pub struct Balances {
     /// All single signature regular wallet coins (seed balance).
     pub regular: Amount,
-    ///  All 2of2 multisig coins received in swaps.
+    /// All 2of2 multisig coins received in swaps.
     pub swap: Amount,
-    ///  All live contract transaction balance locked in timelocks.
+    /// All live contract transaction balance locked in timelocks.
     pub contract: Amount,
     /// All coins locked in fidelity bonds.
     pub fidelity: Amount,
@@ -218,7 +218,7 @@ impl Wallet {
         let master_key = {
             let mnemonic = Mnemonic::generate(12)?;
             let words = mnemonic.words().collect::<Vec<_>>();
-            log::info!("Backup the Wallet Mnemonics. \n {:?}", words);
+            log::info!("Backup the Wallet Mnemonics. \n {words:?}");
             let seed = mnemonic.to_entropy();
             Xpriv::new_master(network, &seed)?
         };
@@ -241,13 +241,13 @@ impl Wallet {
         })
     }
 
-    /// Load wallet data from file and connects to a core RPC.
+    /// Load wallet data from file and connect to a core RPC.
     /// The core rpc wallet name, and wallet_id field in the file should match.
     pub(crate) fn load(path: &Path, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
         let store = WalletStore::read_from_disk(path)?;
         if rpc_config.wallet_name != store.file_name {
             return Err(WalletError::General(format!(
-                "Wallet name of database file and core missmatch, expected {}, found {}",
+                "Wallet name of database file and core mismatch, expected {}, found {}",
                 rpc_config.wallet_name, store.file_name
             )));
         }
@@ -360,7 +360,7 @@ impl Wallet {
     }
 
     /// Calculates the total balances of different categories in the wallet.
-    /// Includes regular, swap, contract, fidelitly and spendable (regular + swap) utxos.
+    /// Includes regular, swap, contract, fidelity, and spendable (regular + swap) utxos.
     /// Optionally takes in a list of UTXOs to reduce rpc call. If None is provided, the full list is fetched from core rpc.
     pub fn get_balances(&self) -> Result<Balances, WalletError> {
         let regular = self
@@ -436,10 +436,7 @@ impl Wallet {
         contract: ScriptBuf,
     ) -> Result<(), WalletError> {
         if let Some(contract) = self.store.prevout_to_contract_map.insert(prevout, contract) {
-            log::warn!(
-                "Prevout to Contract map updated.\nExisting Contract: {}",
-                contract
-            );
+            log::warn!("Prevout to Contract map updated.\nExisting Contract: {contract}");
         }
         Ok(())
     }
@@ -474,10 +471,9 @@ impl Wallet {
     }
 
     /// Checks if the addresses derived from the wallet descriptor is imported upto full index range.
-    /// Returns the list of descriptors not imported yet
-    /// Index range depend on [`WalletMode`].
-    /// Normal => 5000
-    /// Test => 6
+    /// Returns the list of descriptors not imported yet. Max index range is as below:
+    /// Procution => 5000
+    /// Integration Tests => 6
     pub(super) fn get_unimported_wallet_desc(&self) -> Result<Vec<String>, WalletError> {
         let mut unimported = Vec::new();
         for (_, descriptor) in self.get_wallet_descriptors()? {
@@ -624,7 +620,7 @@ impl Wallet {
                     .derive_priv(&secp, &DerivationPath::from_str(HARDENDED_DERIVATION)?)?;
                 if fingerprint == master_private_key.fingerprint(&secp).to_string() {
                     return Ok(Some(UTXOSpendInfo::SeedCoin {
-                        path: format!("m/{}/{}", addr_type, index),
+                        path: format!("m/{addr_type}/{index}"),
                         input_value: utxo.amount,
                     }));
                 }
@@ -828,15 +824,15 @@ impl Wallet {
             .map(|oc| oc.contract_tx.compute_txid())
             .collect::<Vec<_>>();
 
-        log::info!("Unfinished incoming txids: {:?}", inc_contract_txid);
-        log::info!("Unfinished outgoing txids: {:?}", out_contract_txid);
+        log::info!("Unfinished incoming txids: {inc_contract_txid:?}");
+        log::info!("Unfinished outgoing txids: {out_contract_txid:?}");
 
         (unfinished_incomins, unfinished_outgoings)
     }
 
     /// Finds the next unused index in the HD keychain.
     ///
-    /// It will only return an unused address; i.e, an address that doesn't have a transaction associated with it.
+    /// It will only return an unused address; i.e., an address that doesn't have a transaction associated with it.
     pub(super) fn find_hd_next_index(&self, keychain: KeychainKind) -> Result<u32, WalletError> {
         let mut max_index: i32 = -1;
 
@@ -937,10 +933,10 @@ impl Wallet {
             }
         }
 
-        // Remove UTXOs that no longer exis in the received utxos list
+        // Remove UTXOs that no longer exist in the received utxos list
         for outpoint in to_remove {
             self.store.utxo_cache.remove(&outpoint);
-            log::debug!("[UTXO Cache] Removed UTXO: {:?}", outpoint);
+            log::debug!("[UTXO Cache] Removed UTXO: {outpoint:?}");
         }
 
         // Process and add only new UTXOs
@@ -955,7 +951,7 @@ impl Wallet {
                 continue;
             }
 
-            // Process UTXOs to pair each with its spend info using the wallet's private methods.
+            // Process UTXOs to pair each with it's spend info using the wallet's private methods.
             let spend_info = self
                 .check_if_fidelity(&utxo)
                 .or_else(|| {
@@ -969,7 +965,7 @@ impl Wallet {
 
             // If we found valid spend info, store it in the cache
             if let Some(info) = spend_info {
-                log::debug!("[UTXO Cache] Added UTXO: {:?} -> {:?}", outpoint, info);
+                log::debug!("[UTXO Cache] Added UTXO: {outpoint:?} -> {info:?}");
                 new_entries.push((outpoint, (utxo, info)));
             }
         }
@@ -1045,7 +1041,7 @@ impl Wallet {
                     input_value,
                 } => self
                     .find_incoming_swapcoin(&swapcoin_multisig_redeemscript)
-                    .expect("Incmoing swapcoin expected")
+                    .expect("Incoming swapcoin expected")
                     .sign_hashlocked_transaction_input(ix, &tx_clone, input, input_value)?,
                 UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
                     let privkey = self.get_fidelity_keypair(index)?.secret_key();
@@ -1097,7 +1093,7 @@ impl Wallet {
         amount: Amount,
         feerate: f64,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        // TODO : Create a user input variable with the boarder merge split refactor
+        // TODO : Create a user input variable with the broader merge split refactor
         let num_outputs = 1; // Number of outputs
 
         // Get spendable UTXOs (regular coins and incoming swap coins)
@@ -1170,10 +1166,10 @@ impl Wallet {
         // Calculate fee generally uses the units :- vbytes * sats/vbyte
         let cost_of_change = {
             let creation_cost = calculate_fee(change_weight.to_vbytes_ceil(), feerate as f32)
-                .map_err(|e| WalletError::General(format!("Fee calculation failed: {}", e)))?;
+                .map_err(|e| WalletError::General(format!("Fee calculation failed: {e}")))?;
 
             let future_spending_cost = calculate_fee(P2WPKH_INPUT_WEIGHT / 4, LONG_TERM_FEERATE) // divide by 4 to convert weight to vbytes
-                .map_err(|e| WalletError::General(format!("Fee calculation failed: {}", e)))?;
+                .map_err(|e| WalletError::General(format!("Fee calculation failed: {e}")))?;
 
             creation_cost + future_spending_cost
         };
@@ -1238,10 +1234,7 @@ impl Wallet {
             }
             Err(e) => {
                 // This is important for various tests and real life scenarios.
-                log::warn!(
-                    "Coin selection failed: {}, attempting with available funds",
-                    e
-                );
+                log::warn!("Coin selection failed: {e}, attempting with available funds");
 
                 // If error is insufficient funds, return all available UTXOs
                 if e.to_string().contains("The Inputs funds are insufficient") {
@@ -1259,10 +1252,7 @@ impl Wallet {
                     Ok(unspents)
                 } else {
                     // For other errors, return the original error
-                    Err(WalletError::General(format!(
-                        "Coin selection failed: {}",
-                        e
-                    )))
+                    Err(WalletError::General(format!("Coin selection failed: {e}")))
                 }
             }
         }
@@ -1293,18 +1283,15 @@ impl Wallet {
 
         let descriptor = self
             .rpc
-            .get_descriptor_info(&format!(
-                "wsh(sortedmulti(2,{},{}))",
-                my_pubkey, other_pubkey
-            ))?
+            .get_descriptor_info(&format!("wsh(sortedmulti(2,{my_pubkey},{other_pubkey}))"))?
             .descriptor;
         self.import_descriptors(&[descriptor.clone()], None)?;
 
-        //redeemscript and descriptor show up in `getaddressinfo` only after
+        // redeemscript and descriptor show up in `getaddressinfo` only after
         // the address gets outputs on it-
         Ok((
             //TODO should completely avoid derive_addresses
-            //because its slower and provides no benefit over using rust-bitcoin
+            //because it's slower and provides no benefit over using rust-bitcoin
             self.rpc.derive_addresses(&descriptor[..], None)?[0]
                 .clone()
                 .assume_checked(),
@@ -1334,7 +1321,7 @@ impl Wallet {
             self.create_funding_txes(total_coinswap_amount, &coinswap_addresses, fee_rate)?;
         //for sweeping there would be another function, probably
         //probably have an enum called something like SendAmount which can be
-        // an integer but also can be Sweep
+        //an integer but also can be Sweep
 
         //TODO: implement the idea where a maker will send its own privkey back to the
         //taker in this situation, so if a taker gets their own funding txes mined
@@ -1397,7 +1384,7 @@ impl Wallet {
         let spk = redeemscript_to_scriptpubkey(redeemscript)?;
         let descriptor = self
             .rpc
-            .get_descriptor_info(&format!("raw({:x})", spk))?
+            .get_descriptor_info(&format!("raw({spk:x})"))?
             .descriptor;
         self.import_descriptors(&[descriptor], Some(WATCH_ONLY_SWAPCOIN_LABEL.to_string()))
     }
@@ -1451,7 +1438,7 @@ impl Wallet {
                 .values()
                 .map(|sc| {
                     let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript)?;
-                    let descriptor_without_checksum = format!("raw({:x})", contract_spk);
+                    let descriptor_without_checksum = format!("raw({contract_spk:x})");
                     Ok(format!(
                         "{}#{}",
                         descriptor_without_checksum,
@@ -1466,7 +1453,7 @@ impl Wallet {
                 .values()
                 .map(|sc| {
                     let contract_spk = redeemscript_to_scriptpubkey(&sc.contract_redeemscript)?;
-                    let descriptor_without_checksum = format!("raw({:x})", contract_spk);
+                    let descriptor_without_checksum = format!("raw({contract_spk:x})");
                     Ok(format!(
                         "{}#{}",
                         descriptor_without_checksum,
@@ -1493,7 +1480,7 @@ impl Wallet {
         Ok(descriptors_to_import)
     }
 
-    /// Uses internal RPC client to braodcast a transaction
+    /// Uses internal RPC client to broadcast a transaction
     pub fn send_tx(&self, tx: &Transaction) -> Result<Txid, WalletError> {
         Ok(self.rpc.send_raw_transaction(tx)?)
     }

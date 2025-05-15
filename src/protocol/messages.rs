@@ -128,7 +128,7 @@ pub(crate) struct FundingTxInfo {
     pub(crate) hashlock_nonce: SecretKey,
 }
 
-/// PublickKey information for the next hop of Coinswap.
+/// PublicKey information for the next hop of Coinswap.
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct NextHopInfo {
     pub(crate) next_multisig_pubkey: PublicKey,
@@ -364,7 +364,7 @@ pub enum DnsRequest {
     Get,
     /// Dummy data used for integration tests.
     #[cfg(feature = "integration-test")]
-    /// Send a dummy, request, only used in integration tests
+    /// Send a dummy request, only used in integration tests
     Dummy {
         /// A dummy URL for testing.
         url: String,

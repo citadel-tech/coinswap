@@ -16,16 +16,17 @@ use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 /// ABORT 3: Maker Drops After Setup
 /// Case 2: CloseAtContractSigsForRecvr
 ///
-/// Maker closes connection after sending a `ContractSigsForRecvr`. Funding txs are already broadcasted.
-/// The Maker will loose contract txs fees in that case, so it's not a malice.
+/// Maker closes the connection after sending a `ContractSigsForRecvr`. Funding txs are already broadcasted.
+/// The Maker will lose contract txs fees in that case, so it's not malice.
 /// Taker waits for the response until timeout. Aborts if the Maker doesn't show up.
 #[test]
 fn abort3_case2_close_at_contract_sigs_for_recvr() {
     // ---- Setup ----
 
     // 6102 is naughty. And theres not enough makers.
+    let naughty = 6102;
     let makers_config_map = [
-        ((6102, None), MakerBehavior::CloseAtContractSigsForRecvr),
+        ((naughty, None), MakerBehavior::CloseAtContractSigsForRecvr),
         ((16102, None), MakerBehavior::Normal),
     ];
 
@@ -109,7 +110,7 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -176,7 +177,7 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
 
     // Maker gets banned for being naughty.
     assert_eq!(
-        format!("127.0.0.1:{}", 6102),
+        format!("127.0.0.1:{naughty}"),
         taker.get_bad_makers()[0].address.to_string()
     );
 

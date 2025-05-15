@@ -24,18 +24,22 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     // ---- Setup ----
 
     // 6102 is naughty. And theres not enough makers.
+    let naughty = 6102;
     let makers_config_map = [
-        ((6102, None), MakerBehavior::CloseAtReqContractSigsForSender),
+        (
+            (naughty, None),
+            MakerBehavior::CloseAtReqContractSigsForSender,
+        ),
         ((16102, None), MakerBehavior::Normal),
     ];
 
     let taker_behavior = vec![TakerBehavior::Normal];
 
     warn!(
-        "Running test: Maker 6102 Closes before sending sender's sigs. Taker recovers. Or Swap cancels"
+        "Running test: Maker {naughty} Closes before sending sender's sigs. Taker recovers. Or Swap cancels"
     );
     warn!(
-        "Running test: Maker 6102 Closes before sending sender's sigs. Taker recovers. Or Swap cancels"
+        "Running test: Maker {naughty} Closes before sending sender's sigs. Taker recovers. Or Swap cancels"
     );
 
     // Initiate test framework, Makers.
@@ -115,11 +119,11 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     };
 
     if let Err(e) = taker.do_coinswap(swap_params) {
-        assert_eq!(format!("{:?}", e), "NotEnoughMakersInOfferBook".to_string());
+        assert_eq!(format!("{e:?}"), "NotEnoughMakersInOfferBook".to_string());
         info!("Coinswap failed because the first maker rejected for signature");
     }
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -188,7 +192,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
 
     // Maker gets banned for being naughty.
     assert_eq!(
-        format!("127.0.0.1:{}", 6102),
+        format!("127.0.0.1:{naughty}"),
         taker.get_bad_makers()[0].address.to_string()
     );
 

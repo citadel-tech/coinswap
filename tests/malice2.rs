@@ -13,10 +13,10 @@ use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// Malice 2: Maker Broadcasts contract transactions prematurely.
 ///
-/// The Taker and other Makers identify the situation and gets their money back via contract txs. This is
-/// a potential DOS on other Makers. But the attacker Maker would loose money too in the process.
+/// The Taker and other Makers identify the situation and get their money back via contract txs. This is
+/// a potential DOS on other Makers. But the attacker Maker would lose money too in the process.
 ///
-/// This case is hard to "blame". As the contract transactions is available to both the Makers, its not identifiable
+/// This case is hard to "blame". As the contract transactions are available to both the Makers, it's not identifiable
 /// which Maker is the culprit. Taker does not ban in this case.
 #[test]
 fn malice2_maker_broadcast_contract_prematurely() {
@@ -105,7 +105,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));

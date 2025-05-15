@@ -12,7 +12,7 @@ use std::{path::PathBuf, sync::Arc};
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
-    /// Optional DNS data directory. Default value : "~/.coinswap/dns"
+    /// Optional DNS data directory. Default value: "~/.coinswap/dns"
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
     /// Sets the full node address for rpc connection.

@@ -28,6 +28,9 @@ pub struct MakerConfig {
     /// Network port for client connections
     pub network_port: u16,
     /// Control port for Tor interface
+    /// Target listening port
+    pub network_port: u16,
+    /// Control port
     pub control_port: u16,
     /// Socks port for Tor proxy
     pub socks_port: u16,
@@ -76,16 +79,16 @@ impl Default for MakerConfig {
 }
 
 impl MakerConfig {
-    /// Constructs a [MakerConfig] from a specified data directory. Or create default configs and load them.
+    /// Constructs a [MakerConfig] from a specified data directory. Or creates default configs and load them.
     ///
     /// The maker(/taker).toml file should exist at the provided data-dir location.
-    /// Or else, a new default-config will be loaded and created at given data-dir location.
-    /// If no data-dir is provided, a default config will be created at default data-dir location.
+    /// Or else, a new default-config will be loaded and created at the given data-dir location.
+    /// If no data-dir is provided, a default config will be created at the default data-dir location.
     ///
     /// For reference of default config checkout `./maker.toml` in repo folder.
     ///
     /// Default data-dir for linux: `~/.coinswap/maker`
-    /// Default config locations:`~/.coinswap/maker/config.toml`.
+    /// Default config locations: `~/.coinswap/maker/config.toml`.
     pub(crate) fn new(config_path: Option<&Path>) -> io::Result<Self> {
         let default_config_path = get_maker_dir().join("config.toml");
 
@@ -199,7 +202,7 @@ mod tests {
     fn create_temp_config(contents: &str, file_name: &str) -> PathBuf {
         let file_path = PathBuf::from(file_name);
         let mut file = File::create(&file_path).unwrap();
-        writeln!(file, "{}", contents).unwrap();
+        writeln!(file, "{contents}").unwrap();
         file_path
     }
 
