@@ -300,6 +300,8 @@ pub(crate) enum MakerToTakerMessage {
     ReqContractSigsAsRecvrAndSender(ContractSigsAsRecvrAndSender),
     /// Send Contract Sigs **for** the Receiver side of the hop. The Maker sending this message is the Sender of the hop.
     RespContractSigsForRecvr(ContractSigsForRecvr),
+    ///Send Ack message to taker,after receiving hashpreimage
+    AckPreimageRecieved,
     /// Send the multisig private keys of the swap, declaring completion of the contract.
     RespPrivKeyHandover(PrivKeyHandover),
 }
@@ -315,6 +317,9 @@ impl Display for MakerToTakerMessage {
             }
             Self::RespContractSigsForRecvr(_) => {
                 write!(f, "RespContractSigsForRecvr")
+            }
+            Self::AckPreimageRecieved => {
+                write!(f, "AckPreimageReceived")
             }
             Self::RespPrivKeyHandover(_) => write!(f, "RespPrivKeyHandover"),
         }
