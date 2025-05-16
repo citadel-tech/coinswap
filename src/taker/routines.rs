@@ -391,12 +391,12 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
 }
 
 /// Send hash preimage via the writer and read the response.
-pub(crate) fn send_hash_preimage_and_get_private_keys(
+pub(crate) fn send_hash_preimage(
     socket: &mut TcpStream,
     senders_multisig_redeemscripts: &[ScriptBuf],
     receivers_multisig_redeemscripts: &[ScriptBuf],
     preimage: &Preimage,
-) -> Result<PrivKeyHandover, TakerError> {
+) -> Result<(), TakerError> {
     let hash_preimage_msg = TakerToMakerMessage::RespHashPreimage(HashPreimage {
         senders_multisig_redeemscripts: senders_multisig_redeemscripts.to_vec(),
         receivers_multisig_redeemscripts: receivers_multisig_redeemscripts.to_vec(),
@@ -405,6 +405,22 @@ pub(crate) fn send_hash_preimage_and_get_private_keys(
 
     send_message(socket, &hash_preimage_msg)?;
 
+    let msg_bytes = read_message(socket)?;
+    let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+    let ack_preimage_received: Result<(), TakerError> = match msg {
+        MakerToTakerMessage::AckPreimageRecieved => Ok(()),
+        any => Err((ProtocolError::WrongMessage {
+            expected: "AckPreimageReceived".to_string(),
+            received: format!("{any}"),
+        })
+        .into()),
+    };
+    ack_preimage_received
+}
+pub(crate) fn get_maker_privatekeys(
+    socket: &mut TcpStream,
+    receivers_multisig_redeemscripts: &[ScriptBuf],
+) -> Result<PrivKeyHandover, TakerError> {
     let msg_bytes = read_message(socket)?;
     let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
     let privkey_handover = match msg {

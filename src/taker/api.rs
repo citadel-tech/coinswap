@@ -1703,13 +1703,13 @@ impl Taker {
         handshake_maker(&mut socket)?;
 
         log::info!("===> HashPreimage | {maker_address}");
-        let maker_private_key_handover = send_hash_preimage_and_get_private_keys(
+        let _maker_ack_preimage_received = send_hash_preimage(
             &mut socket,
             senders_multisig_redeemscripts,
             receivers_multisig_redeemscripts,
             &self.ongoing_swap_state.active_preimage,
-        )?;
-        log::info!("<=== PrivateKeyHandover | {maker_address}");
+        );
+        log::info!("<=== AckPreImageReceived | {maker_address}");
 
         let privkeys_reply = if self.ongoing_swap_state.taker_position == TakerPosition::FirstPeer {
             self.ongoing_swap_state
@@ -1729,6 +1729,16 @@ impl Taker {
             *outgoing_privkeys = None;
             reply
         };
+        log::info!("===> PrivateKeyHandover | {maker_address}");
+        send_message(
+            &mut socket,
+            &TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {
+                multisig_privkeys: privkeys_reply,
+            }),
+        )?;
+
+        let maker_private_key_handover =
+            get_maker_privatekeys(&mut socket, receivers_multisig_redeemscripts)?;
         (if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
             check_and_apply_maker_private_keys(
                 &mut self.ongoing_swap_state.incoming_swapcoins,
@@ -1745,13 +1755,7 @@ impl Taker {
             *outgoing_privkeys = Some(maker_private_key_handover.multisig_privkeys);
             ret
         })?;
-        log::info!("===> PrivateKeyHandover | {maker_address}");
-        send_message(
-            &mut socket,
-            &TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {
-                multisig_privkeys: privkeys_reply,
-            }),
-        )?;
+
         Ok(())
     }
 
