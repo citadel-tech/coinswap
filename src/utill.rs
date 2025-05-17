@@ -104,7 +104,7 @@ impl fmt::Display for ConnectionType {
 /// Uses "/tmp" directory for integration tests
 fn get_home_dir() -> PathBuf {
     if cfg!(test) {
-        "/tmp".into()
+        env::temp_dir()
     } else {
         dirs::home_dir().expect("home directory expected")
     }

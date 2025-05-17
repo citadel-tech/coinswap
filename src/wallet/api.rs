@@ -1285,7 +1285,7 @@ impl Wallet {
             .rpc
             .get_descriptor_info(&format!("wsh(sortedmulti(2,{my_pubkey},{other_pubkey}))"))?
             .descriptor;
-        self.import_descriptors(&[descriptor.clone()], None)?;
+        self.import_descriptors(std::slice::from_ref(&descriptor), None)?;
 
         // redeemscript and descriptor show up in `getaddressinfo` only after
         // the address gets outputs on it-
