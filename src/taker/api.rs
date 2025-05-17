@@ -2065,7 +2065,7 @@ impl Taker {
             .get_fresh_addrs()
             .iter()
             .map(|oa| &oa.address)
-            .collect::<Vec<_>>();
+            .collect::<HashSet<_>>();
 
         // Fetch only those addresses which are new, or last updated more than 30 mins ago
         let addrs_to_fetch = addresses_from_dns
@@ -2076,7 +2076,7 @@ impl Taker {
 
         let new_offers = fetch_offer_from_makers(addrs_to_fetch, &self.config)?;
 
-        for new_offer in &new_offers {
+        for new_offer in new_offers {
             log::info!(
                 "Found offer from {}. Verifying Fidelity Proof",
                 new_offer.address
@@ -2090,10 +2090,10 @@ impl Taker {
                     e,
                     new_offer.address
                 );
-                self.offerbook.add_bad_maker(new_offer);
+                self.offerbook.add_bad_maker(&new_offer);
             } else {
                 log::info!("Fidelity Bond verification success. Adding offer to our OfferBook");
-                self.offerbook.add_new_offer(new_offer);
+                self.offerbook.add_new_offer(&new_offer);
             }
         }
 
