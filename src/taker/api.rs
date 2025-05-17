@@ -503,7 +503,7 @@ impl Taker {
                     self.ongoing_swap_state.swap_params.tx_count,
                 )?;
             let (funding_txs, mut outgoing_swapcoins, funding_fee) =
-                self.wallet.initalize_coinswap(
+                self.wallet.initialize_coinswap(
                     self.ongoing_swap_state.swap_params.send_amount,
                     &multisig_pubkeys,
                     &hashlock_pubkeys,
@@ -756,7 +756,7 @@ impl Taker {
         }
     }
 
-    /// Create [FundingTxInfo] for the "next_maker". Next maker is the last stored [NextPeerInfo] in the swp state.
+    /// Create [FundingTxInfo] for the "next_maker". Next maker is the last stored [NextPeerInfo] in the swap state.
     /// All other data from the swap state's last entries are collected and a [FundingTxInfo] protocol message data is generated.
     fn funding_info_for_next_maker(&self) -> Vec<FundingTxInfo> {
         // Get the reedemscripts.
