@@ -1,0 +1,15 @@
+[package]
+name = "coinswap-derive"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dev-dependencies]
+trybuild = { version = "1.0.104", features = ["diff"] }
+
+[dependencies]
+proc-macro2 = "1.0.95"
+quote = "1.0.40"
+syn = "2.0.101"
