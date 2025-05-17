@@ -1,54 +1,40 @@
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
-use quote::quote;
+use quote::{quote, ToTokens};
 use syn::{
-    parse_macro_input, AngleBracketedGenericArguments, Data, DeriveInput, Fields, GenericArgument,
-    Path, PathArguments, PathSegment, Type, TypePath,
+    parse_macro_input, AngleBracketedGenericArguments, Data, DeriveInput, GenericArgument,
+    PathArguments, PathSegment, Type, TypePath,
 };
 
-/// checks if type is optional
-// if type is optional return `Some(type)` else return `None`
-#[rustfmt::skip]
-fn ty_optional(ty: &Type) -> Option<&Ident> {
-    if let Type::Path(TypePath { path: Path { segments, .. }, ..}) = ty {
-        for PathSegment {ident, arguments} in segments {
-            if ident != "Option" { return None; }
-            if let PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. } ) = arguments {
+/// Checks if type is optional and then returns the type.
+fn ty_optional(ty: &Type) -> Option<proc_macro2::TokenStream> {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        for PathSegment { ident, arguments } in &path.segments {
+            if ident != "Option" {
+                continue;
+            }
+            if let PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }) =
+                arguments
+            {
                 for arg in args {
-                    if let GenericArgument::Type(Type::Path(TypePath { path: Path { segments, .. }, .. })) = arg {
-                        // TODO: build the entire path (e.x.,std::string::String)?
-                        return Some(&segments[segments.len() - 1].ident);
+                    if let GenericArgument::Type(Type::Path(TypePath { path, .. })) = arg {
+                        let segments = &path.segments;
+                        // build the entire path to type
+                        let mut path = proc_macro2::TokenStream::new();
+                        path.extend(segments.iter().enumerate().map(|(i, segment)| {
+                            let ident = &segment.ident;
+                            if i == segments.len() - 1 {
+                                return quote! { #ident };
+                            }
+                            quote! { #ident:: }
+                        }));
+                        return path.into();
                     }
                 }
             }
         }
-    }
+    };
     None
-}
-
-fn create_methods(fields: &Fields) -> Vec<proc_macro2::TokenStream> {
-    fields
-        .into_iter()
-        .map(|f| {
-            let ident = &f.ident;
-            let ty = &f.ty;
-            if let Some(ident_ty) = ty_optional(ty) {
-                return quote! {
-                    pub(crate) fn #ident(&mut self, #ident: #ident_ty) -> &mut Self {
-                        // TODO: can we do better?
-                        self.#ident = Some(Some(#ident));
-                        self
-                    }
-                };
-            }
-            quote! {
-                pub(crate) fn #ident(&mut self, #ident: #ty) -> &mut Self {
-                    self.#ident = Some(#ident);
-                    self
-                }
-            }
-        })
-        .collect()
 }
 
 /// Derive macro generating boilerplate code involved in implementing the builder pattern.
@@ -66,11 +52,23 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let builder_ident = Ident::new(&format!("{}Builder", ident), ident.span());
 
-    let builder_methods = create_methods(fields);
+    let builder_methods = fields.into_iter().map(|f| {
+        let ident = &f.ident;
+        let ty = ty_optional(&f.ty).unwrap_or(f.ty.to_token_stream());
+        quote! {
+            pub(crate) fn #ident(&mut self, #ident: #ty) -> &mut Self {
+                self.#ident = std::option::Option::Some(#ident);
+                self
+            }
+        }
+    });
 
     let builder_fields = fields.into_iter().map(|f| {
         let ident = &f.ident;
         let ty = &f.ty;
+        if ty_optional(ty).is_some() {
+            return quote! { #ident: #ty };
+        }
         quote! { #ident: std::option::Option<#ty> }
     });
 
@@ -78,16 +76,14 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let fields = fields.into_iter().map(|f| {
         let ident = &f.ident;
         let error = format!("{} is not set.", ident.clone().unwrap().to_string());
-        let ty = &f.ty;
-        if ty_optional(ty).is_some() {
-            quote! { #ident: self.#ident.clone().and_then(|value| value) }
-        } else {
-            quote! { #ident: self.#ident.clone().expect(#error) }
+        if ty_optional(&f.ty).is_some() {
+            return quote! { #ident: self.#ident.clone() };
         }
+        quote! { #ident: self.#ident.clone().expect(#error) }
     });
 
     quote! {
-        // TODO: derive all macros that are derived on the original struct dynamically?
+        // TODO: derive all macros that are derived on the original struct dynamically
         #[derive(Default)]
         pub struct #builder_ident {
             #(#builder_fields, )*
