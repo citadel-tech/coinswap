@@ -16,7 +16,7 @@ use bitcoin::secp256k1::{
     Message
 };
 use bitcoin::blockdata::transaction::{TxIn, TxOut, Transaction, OutPoint};
-use bitcoin::taproot::{self, LeafVersion, TapLeaf, TaprootBuilder, TapLeafHash};
+use bitcoin::taproot::{self, LeafVersion, TapLeaf, TapLeafHash, TaprootBuilder, TaprootSpendInfo};
 
 // create_hashlock_script
 fn create_hashlock_script(hash: &[u8; 32], pubkey: &XOnlyPublicKey) -> ScriptBuf {
@@ -66,20 +66,20 @@ fn create_taproot_script(
     hashlock_script: ScriptBuf,
     timelock_script: ScriptBuf,
     internal_pubkey: XOnlyPublicKey,
-) -> ScriptBuf {
+) -> (ScriptBuf, TaprootSpendInfo) {
     let secp = Secp256k1::new();
     let taproot_spendinfo = TaprootBuilder::new()
             .add_leaf(1, hashlock_script.clone()).unwrap()
             .add_leaf(1, timelock_script.clone()).unwrap()
             .finalize(&secp, internal_pubkey)
             .expect("taproot info finalized");
-    println!("Taproot spend info: {:?}", taproot_spendinfo);
+    // println!("Taproot spend info: {:?}", taproot_spendinfo);
     let hashlock_control_block = taproot_spendinfo.control_block(&(hashlock_script, LeafVersion::TapScript));
-    println!("Hashlock control block: {:?}", hashlock_control_block.as_slice());
+    // println!("Hashlock control block: {:?}", hashlock_control_block.as_slice());
     let timelock_control_block = taproot_spendinfo.control_block(&(timelock_script, LeafVersion::TapScript));
-    println!("Timelock control block: {:?}", timelock_control_block.as_slice());
+    // println!("Timelock control block: {:?}", timelock_control_block.as_slice());
     println!("TWEAK: {:?}", taproot_spendinfo.tap_tweak());
-    ScriptBuf::new_p2tr(&secp, taproot_spendinfo.internal_key(), taproot_spendinfo.merkle_root())
+    (ScriptBuf::new_p2tr(&secp, taproot_spendinfo.internal_key(), taproot_spendinfo.merkle_root()), taproot_spendinfo)
 }
 
 fn generate_partial_pubkey() {
@@ -143,72 +143,31 @@ mod tests{
 
     use bitcoin::hex::FromHex;
     use bitcoin::key::{Parity, TapTweak};
+    use bitcoin::secp256k1::Scalar;
     use bitcoin::sighash::Prevouts;
-    use bitcoin::taproot::{ControlBlock, TaprootMerkleBranch};
+    use bitcoin::taproot::{ControlBlock, TaprootMerkleBranch, TaprootSpendInfo};
     use bitcoin::{ Address, TapNodeHash, TapSighashType};
+    use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
     use bitcoind::bitcoincore_rpc::RawTx;
     use bitcoind::bitcoincore_rpc::{Auth::UserPass, Client, RpcApi,};
+    use secp256k1::musig::{AggregatedNonce, AggregatedSignature, PublicNonce, SecretNonce};
+    use std::convert::TryInto;
     use std::str::FromStr;
+    use crate::protocol::musig_interface::{aggregate_partial_signatures_i, generate_new_nonce_pair_i, generate_partial_signature_i, get_aggregated_nonce_i, get_aggregated_pubkey_i};
+
     use super::*;
     use bitcoin::{bech32::{self, hrp, Bech32m}, hashes::sha256d::Hash as Sha256d, Txid};
 
-    // #[test]
-    fn test_create_hashlock_script() {
-        let hash = [0u8; 32];
-        let secp = bitcoin::secp256k1::Secp256k1::new();
-        let keypair = Keypair::new(&secp, &mut rand::thread_rng());
-        let (pubkey, _) = keypair.x_only_public_key();
-        println!("Pubkey: {:?}", pubkey);
-        let script = create_hashlock_script(&hash, &pubkey);
-        println!("Hashlock script: {:?}", script);
+    fn mine_blocks(num: u64, address: &Address) {
+        let client = Client::new("127.0.0.1:21443/wallet/test_wallet", UserPass("user".to_string(), "pass".to_string())).unwrap();
+        client.generate_to_address(num, address).unwrap();
     }
 
     // #[test]
-    fn test_create_timelock_script() {
-        let locktime: LockTime = LockTime::from_height(1000u32).unwrap();
-        let secp = bitcoin::secp256k1::Secp256k1::new();
-        let keypair = Keypair::new(&secp, &mut rand::thread_rng());
-        let (pubkey, _) = keypair.x_only_public_key();
-        println!("Pubkey: {:?}", pubkey);
-        let script = create_timelock_script(locktime, &pubkey);
-        println!("Timelock script: {:?}", script);
-    }
-
-    // #[test]
-    fn test_create_taproot_script() {
-        let secp = bitcoin::secp256k1::Secp256k1::new();
-        let keypair = Keypair::new(&secp, &mut rand::thread_rng());
-        let (pubkey, _) = keypair.x_only_public_key();
-        let hashlock_script = create_hashlock_script(&[0u8; 32], &pubkey);
-        println!("Hashlock script: {:?}", hashlock_script);
-        let timelock_script = create_timelock_script(LockTime::from_height(300).unwrap(), &pubkey);
-        println!("Timelock script: {:?}", timelock_script);
-        println!("aggregated_pubkey: {:?}", pubkey);
-        let taproot_script = create_taproot_script(hashlock_script, timelock_script, pubkey);
-        println!("Taproot script ASM {:?}", taproot_script.to_asm_string());
-        println!("Taproot script hex {:?}", taproot_script.to_hex_string());
-        println!("Taproot script bech32 {:?}", bech32::encode::<Bech32m>(hrp::BCRT, taproot_script.as_bytes()));
-    }
-
-    // #[test]
-    fn test_create_taproot_transaction() {
-        let input = OutPoint {
-            txid: Txid::from_raw_hash(Sha256d::from_str("b175d4cf487d40021300788eecf3588b0d3462d0cac656f8ae961da6f497c2ed").unwrap()),
-            vout: 0,
-        };
-        let input_value = Amount::from_sat(100000);
-        let fee = Amount::from_sat(100);
-        let script_pubkey = ScriptBuf::from_hex("51209d5d1eab7c785543561d1236d888f4ce4eb858c8ccea669bdba14e9244bf46c3").unwrap();
-        let tx = create_unsigned_contract_tx(input, input_value, script_pubkey.clone(), fee).unwrap();
-        println!("Script pubkey: {:?}", script_pubkey);
-        println!("Transaction: {:?}", tx);
-    }
-
-    // #[test]
-    fn create_and_fund_address() {
+    fn create_and_fund_address() -> (Address, ListUnspentResultEntry) {
         // Create a new address using bitcoin core rpc
         let client = Client::new("127.0.0.1:21443/wallet/test_wallet", UserPass("user".to_string(), "pass".to_string())).unwrap();
-        let blockchian_info = client.get_blockchain_info().unwrap();
+        // let blockchian_info = client.get_blockchain_info().unwrap();
         // println!("Blockchain info: {:?}", blockchian_info);
         let wallets = client.list_wallets().unwrap();
         // println!("Wallets: {:?}", wallets);
@@ -216,124 +175,78 @@ mod tests{
         if !wallets.contains(&wallet_name.to_string()) {
             client.create_wallet(wallet_name, None, None, None, None).unwrap();
         }
-        client.load_wallet(wallet_name);
-        // let address = client.get_new_address(None, None).unwrap();
-        let address = Address::from_str("bcrt1qp2h29s8r0fk3cweeklrutd362j82szshwhacrw").unwrap();
-        // println!("New address: {:?}", address);
+        // client.load_wallet(wallet_name).unwrap();
+        let address = client.get_new_address(None, None).unwrap();
         let checked_address = address.require_network(bitcoin::Network::Regtest).unwrap();
-        // let address_info = client.get_address_info(&checked_address).unwrap();
-        // println!("Address info: {:?}", address_info);
+        mine_blocks(101, &checked_address);
         let balance = client.get_balances().unwrap();
         println!("Balance: {:?}", balance);
         let utxos = client.list_unspent(None, None, Some(&[&checked_address]), None, None).unwrap();
-        println!("UTXOs: {:?}", utxos);
+        // println!("UTXOs: {:?}", utxos);
+        (checked_address, utxos.get(0).unwrap().clone())
     }
 
     use bitcoin::hashes::Hash;
     use bitcoin::hashes::sha256 as Sha256;
     // #[test]
-    fn end_to_end_test() {
-        let secp = Secp256k1::new();
-        // let internal_key = Keypair::new(&secp, &mut rand::thread_rng());
-        // let internal_key_slice = [120, 19, 235, 46, 81, 164, 156, 83, 91, 100, 122, 65, 216, 217, 120, 84, 52, 218, 149, 113, 10, 70, 52, 200, 211, 201, 145, 202, 199, 129, 8, 220];
-        // let internal_key = Keypair::from_seckey_slice(&secp, &internal_key_slice).unwrap();
-        // println!("Internal key: {:?}", internal_key.secret_key());
-        // let (pubkey, _) = internal_key.x_only_public_key();
-        let pubkey = XOnlyPublicKey::from_str("5a9500bd192f501730e8e22213d888162d8dce79e09e0fc35344af404bdd687e").unwrap();
-        let a_keypair_slice = [57, 36, 177, 212, 31, 75, 221, 50, 13, 55, 102, 155, 21, 64, 146, 106, 101, 189, 1, 167, 80, 10, 246, 136, 96, 80, 57, 67, 63, 194, 67, 241];
-        let a_keypair = Keypair::from_seckey_slice(&secp, &a_keypair_slice).unwrap();
-        println!("A keypair: {:?}", a_keypair.secret_key());
-        let (a_pubkey, _) = a_keypair.x_only_public_key();
-        let b_keypair_slice = [196, 70, 74, 243, 36, 44, 31, 223, 8, 77, 47, 179, 229, 217, 187, 66, 144, 87, 50, 11, 184, 136, 255, 92, 97, 154, 183, 102, 27, 126, 54, 140];
-        let b_keypair = Keypair::from_seckey_slice(&secp, &b_keypair_slice).unwrap();
-        println!("B keypair: {:?}", b_keypair.secret_key());
-        let (b_pubkey, _) = b_keypair.x_only_public_key();
-        let hash_preimage = [0u8; 32];
-        println!("Hash preimage: {:?}", hash_preimage);
+    fn create_and_broadcast_contract(
+        spending_utxo: ListUnspentResultEntry,
+        internal_key: XOnlyPublicKey,
+        hashlock_pubkey: XOnlyPublicKey,
+        timelock_pubkey: XOnlyPublicKey,
+        hash_preimage: [u8; 32],
+        locktime: LockTime
+    ) -> (Txid, TaprootSpendInfo, ScriptBuf, ScriptBuf) {
+        println!("Hash Preimage: {:?}", hash_preimage);
         let hash =  Sha256::Hash::hash(&hash_preimage);
         println!("Hash: {:?}", hash);
-        let hashlock_script = create_hashlock_script(&hash.as_byte_array(), &b_pubkey);
+        let hashlock_script = create_hashlock_script(&hash.as_byte_array(), &hashlock_pubkey);
         println!("Hashlock script: {:?}", hashlock_script);
-        let timelock_script = create_timelock_script(LockTime::from_height(1000).unwrap(), &a_pubkey);
+        let timelock_script = create_timelock_script(locktime, &timelock_pubkey);
         println!("Timelock script: {:?}", timelock_script);
-        let taproot_script = create_taproot_script(hashlock_script, timelock_script, pubkey);
+        let (taproot_script, taproot_spendinfo) = create_taproot_script(hashlock_script.clone(), timelock_script.clone(), internal_key);
         println!("Taproot script ASM {:?}", taproot_script.to_asm_string());
+        let spending_txid = spending_utxo.txid;
+        let spending_vout = spending_utxo.vout;
+        let spending_value = spending_utxo.amount;
         let transaction = create_unsigned_contract_tx(
             OutPoint {
-                txid: Txid::from_raw_hash(Sha256d::from_str("9998153cb43f47fc089a80727f679a3a29f826af54043b70bce9d5a750b41fd7").unwrap()),
-                vout: 1,
+                txid: spending_txid,
+                vout: spending_vout,
             },
-            Amount::from_sat(10000000),
+            spending_value,
             taproot_script.clone(),
             Amount::from_sat(1000)
         ).unwrap();
-        sign_seed_transaction(&transaction);
-        println!("Transaction: {:?}", transaction);
+        (sign_seed_transaction(&transaction), taproot_spendinfo, hashlock_script, timelock_script)
     }
 
-    fn sign_seed_transaction(tx: &Transaction) {
+    fn sign_seed_transaction(tx: &Transaction) -> Txid {
         let client = Client::new("127.0.0.1:21443/wallet/test_wallet", UserPass("user".to_string(), "pass".to_string())).unwrap();
         let signed_tx = client.sign_raw_transaction_with_wallet(tx, None, None).unwrap();
         println!("Signed transaction: {:?}", signed_tx);
-        let txid = client.send_raw_transaction(&signed_tx.hex).unwrap();
-        println!("Transaction ID: {:?}", txid);
-        client.generate_to_address(1, &Address::from_str("bcrt1qdcm6dj28v9jm9f2ykqkkntwe5khjtvdf8ldu6d").unwrap().require_network(bitcoin::Network::Regtest).unwrap());
+        client.send_raw_transaction(&signed_tx.hex).unwrap()
     }
 
-    #[test]
-    fn sweep_transaction() {
-        let secp = Secp256k1::new();
-        let outpoint = OutPoint {
-            txid: Txid::from_str("919a593671740052109d09f62f1da82f000c2a5e94ebd33d166f1467d0712eea").unwrap(),
-            vout: 0
-        };
-        let internal_key_slice = [120, 19, 235, 46, 81, 164, 156, 83, 91, 100, 122, 65, 216, 217, 120, 84, 52, 218, 149, 113, 10, 70, 52, 200, 211, 201, 145, 202, 199, 129, 8, 220];
-        let internal_key = Keypair::from_seckey_slice(&secp, &internal_key_slice).unwrap();
-        let x_only_internal_key = internal_key.x_only_public_key().0;
-        let merkle_root = TapNodeHash::from_str("4b150b931cf081ed1a53e01d7f11fd5ed9a1f952241a47495f939dd72759f56e").unwrap();
-        sweep_via_internal_key(outpoint, internal_key, Some(merkle_root));
-
-        let hash_preimage = [0u8; 32];
-        let hashlock_key_slice = [196, 70, 74, 243, 36, 44, 31, 223, 8, 77, 47, 179, 229, 217, 187, 66, 144, 87, 50, 11, 184, 136, 255, 92, 97, 154, 183, 102, 27, 126, 54, 140];
-        let hashlock_keypair = Keypair::from_seckey_slice(&secp, &hashlock_key_slice).unwrap();
-        let hashlock_controlblock = ControlBlock { 
-            leaf_version: LeafVersion::TapScript,
-            output_key_parity: Parity::Odd,
-            internal_key: x_only_internal_key,
-            merkle_branch: TaprootMerkleBranch::decode(Vec::<u8>::from_hex("b6339ae2ac74053ee75ad9eae15d6829d68b31efea128cc8a0dd978a20ca0a60").unwrap().as_slice()).unwrap(),
-        };
-        // sweep_via_hashlock(outpoint, hash_preimage, hashlock_keypair, hashlock_controlblock);
-
-        let timelock = LockTime::from_height(1000).unwrap();
-        let timelock_key_slice = [57, 36, 177, 212, 31, 75, 221, 50, 13, 55, 102, 155, 21, 64, 146, 106, 101, 189, 1, 167, 80, 10, 246, 136, 96, 80, 57, 67, 63, 194, 67, 241];
-        let timelock_keypair = Keypair::from_seckey_slice(&secp, &timelock_key_slice).unwrap();
-        let timelock_controlblock = ControlBlock { 
-            leaf_version: LeafVersion::TapScript,
-            output_key_parity: Parity::Odd,
-            internal_key: x_only_internal_key,
-            merkle_branch: TaprootMerkleBranch::decode(Vec::<u8>::from_hex("da44244f79ba55530f671b2c695d0476b3b8260cb2cc5e04e0fc92a52a34eed8").unwrap().as_slice()).unwrap(),
-        };
-        // sweep_via_timelock(outpoint, timelock, timelock_keypair, timelock_controlblock);
-    }
-
-    fn sweep_via_internal_key(outpoint: OutPoint, internal_keypair: Keypair, merkle_root: Option<TapNodeHash>) {
+    fn sweep_via_internal_key(outpoint: OutPoint, keypair1: Keypair, keypair2: Keypair, tap_tweak: Scalar, output_address: Address) {
         let secp = Secp256k1::new();
         let client = Client::new("127.0.0.1:21443/wallet/test_wallet", UserPass("user".to_string(), "pass".to_string())).unwrap();
-        let output_address = Address::from_str("bcrt1qdcm6dj28v9jm9f2ykqkkntwe5khjtvdf8ldu6d").unwrap().require_network(bitcoin::Network::Regtest).unwrap();
+        let input_txid = &outpoint.txid;
         let txin = TxIn {
             previous_output: outpoint,
             script_sig: ScriptBuf::new(),
             sequence: Sequence::ZERO,
             witness: Witness::default(),
         };
-        let prevout = client.get_tx_out(&Txid::from_str("919a593671740052109d09f62f1da82f000c2a5e94ebd33d166f1467d0712eea").unwrap(), 0, None).unwrap().unwrap();
+        let prevout = client.get_tx_out(input_txid, 0, None).unwrap().unwrap();
+        let prevout_value = prevout.value;
         let prev_txout = TxOut {
             script_pubkey: ScriptBuf::from_bytes(prevout.script_pub_key.hex),
-            value: Amount::from_sat(9999000),
+            value: prevout_value,
         };
         let output = TxOut {
             script_pubkey: output_address.script_pubkey(),
-            value: Amount::from_sat(9998000),
+            value: prevout_value - Amount::from_sat(1000),
         };
         let mut unsigned_transaction = Transaction {
             input: vec![txin],
@@ -347,16 +260,24 @@ mod tests{
         let prevouts = Prevouts::All(&prevouts);
 
         let mut sighasher = SighashCache::new(&mut unsigned_transaction);
-        let sighash = sighasher.taproot_key_spend_signature_hash(0, &prevouts, sighash_type);
-        let tweaked = internal_keypair.tap_tweak(&secp, merkle_root);
-        let sighash = sighash.expect("Failed to compute sighash");
+        let sighash = sighasher.taproot_key_spend_signature_hash(0, &prevouts, sighash_type).expect("Failed to compute sighash");
         let msg = Message::from(sighash);
         println!("Sighash: {:?}", msg);
-        // let signature = secp.sign_schnorr(&msg, &tweaked.to_inner());
 
+        let pubkey1 = keypair1.public_key();
+        let pubkey2 = keypair2.public_key();
+        // let signature = secp.sign_schnorr(&msg, &tweaked.to_inner());
+        let nonce_pair_1: (SecretNonce, PublicNonce) = generate_new_nonce_pair_i(tap_tweak, pubkey1, pubkey2, pubkey1, msg);
+        let nonce_pair_2: (SecretNonce, PublicNonce) = generate_new_nonce_pair_i(tap_tweak, pubkey1, pubkey2, pubkey2, msg);
+        let agg_nonce: AggregatedNonce = get_aggregated_nonce_i(&vec![&nonce_pair_1.1, &nonce_pair_2.1]);
+
+        let partial_signature_1 = generate_partial_signature_i(msg, &agg_nonce, nonce_pair_1.0, keypair1, tap_tweak, pubkey1, pubkey2);
+        let partial_signature_2 = generate_partial_signature_i(msg, &agg_nonce, nonce_pair_2.0, keypair2, tap_tweak, pubkey1, pubkey2);
+
+        let aggregated_signature: AggregatedSignature = aggregate_partial_signatures_i(msg, agg_nonce, tap_tweak, vec![&partial_signature_1,&partial_signature_2], pubkey1, pubkey2);
         // let signature = bitcoin::taproot::Signature { signature, sighash_type};
-        let signature = [146, 123, 43, 11, 8, 25, 106, 52, 146, 170, 93, 164, 241, 65, 172, 150, 242, 122, 30, 219, 154, 177, 9, 40, 105, 228, 213, 77, 219, 43, 139, 35, 176, 185, 230, 70, 213, 228, 160, 12, 144, 149, 191, 113, 210, 77, 137, 251, 2, 250, 109, 0, 69, 244, 156, 135, 122, 231, 227, 208, 78, 237, 142, 191];
-        let signature = bitcoin::taproot::Signature::from_slice(&signature).unwrap();
+        // let signature = [146, 123, 43, 11, 8, 25, 106, 52, 146, 170, 93, 164, 241, 65, 172, 150, 242, 122, 30, 219, 154, 177, 9, 40, 105, 228, 213, 77, 219, 43, 139, 35, 176, 185, 230, 70, 213, 228, 160, 12, 144, 149, 191, 113, 210, 77, 137, 251, 2, 250, 109, 0, 69, 244, 156, 135, 122, 231, 227, 208, 78, 237, 142, 191];
+        let signature = bitcoin::taproot::Signature::from_slice(aggregated_signature.assume_valid().as_byte_array()).unwrap();
         *sighasher.witness_mut(0).unwrap() = Witness::p2tr_key_spend(&signature);
 
         let tx = sighasher.into_transaction();
@@ -369,20 +290,22 @@ mod tests{
         let secp = Secp256k1::new();
         let client = Client::new("127.0.0.1:21443/wallet/test_wallet", UserPass("user".to_string(), "pass".to_string())).unwrap();
         let output_address = Address::from_str("bcrt1qdcm6dj28v9jm9f2ykqkkntwe5khjtvdf8ldu6d").unwrap().require_network(bitcoin::Network::Regtest).unwrap();
+        let prevout_txid = outpoint.txid;
         let txin = TxIn {
             previous_output: outpoint,
             script_sig: ScriptBuf::new(),
             sequence: Sequence::ZERO,
             witness: Witness::default(),
         };
-        let prevout = client.get_tx_out(&Txid::from_str("4e46e549e4ba752851f2f425b24c4be2266db620d4217cf6ca548c6820c893ba").unwrap(), 0, None).unwrap().unwrap();
+        let prevout = client.get_tx_out(&prevout_txid, 0, None).unwrap().unwrap();
+        let prevout_value = prevout.value;
         let prev_txout = TxOut {
             script_pubkey: ScriptBuf::from_bytes(prevout.script_pub_key.hex),
-            value: Amount::from_sat(9999000),
+            value: prevout_value,
         };
         let output = TxOut {
             script_pubkey: output_address.script_pubkey(),
-            value: Amount::from_sat(9998000),
+            value: prevout_value - Amount::from_sat(1000),
         };
         let mut unsigned_transaction = Transaction {
             input: vec![txin],
@@ -428,14 +351,16 @@ mod tests{
             sequence: Sequence::ZERO,
             witness: Witness::default(),
         };
-        let prevout = client.get_tx_out(&Txid::from_str("7d3dcad78b89904d524880f12b456a92c7ce7b649ec162971a2fa80f1f9a9fd0").unwrap(), 0, None).unwrap().unwrap();
+        let prevout_txid = outpoint.txid;
+        let prevout = client.get_tx_out(&prevout_txid, 0, None).unwrap().unwrap();
+        let prevout_value = prevout.value;
         let prev_txout = TxOut {
             script_pubkey: ScriptBuf::from_bytes(prevout.script_pub_key.hex),
-            value: Amount::from_sat(9999000),
+            value: prevout_value,
         };
         let output = TxOut {
             script_pubkey: output_address.script_pubkey(),
-            value: Amount::from_sat(9998000),
+            value: prevout_value - Amount::from_sat(1000),
         };
         let mut unsigned_transaction = Transaction {
             input: vec![txin],
@@ -472,4 +397,124 @@ mod tests{
         let txid = client.send_raw_transaction(tx.raw_hex());
         println!("Transaction ID: {:?}", txid);
     }
+
+    // #[test]
+    fn end_to_end_internal_key() {
+        let secp = Secp256k1::new();
+
+        let seckey1_bytes = [53, 126, 153, 168, 20, 2, 57, 61, 57, 192, 65, 188, 170, 70, 195, 245, 0, 137, 135, 59, 128, 104, 181, 90, 187, 118, 160, 138, 217, 172, 220, 56];
+        let seckey2_bytes = [87, 32, 109, 105, 102, 136, 254, 135, 248, 148, 13, 5, 127, 89, 5, 64, 49, 245, 51, 224, 211, 94, 101, 150, 225, 7, 68, 134, 79, 188, 167, 235];
+        let keypair_1 = Keypair::from_seckey_slice(&secp, &seckey1_bytes).unwrap();
+        let keypair_2 = Keypair::from_seckey_slice(&secp, &seckey2_bytes).unwrap();
+        let pubkey1 = keypair_1.public_key();
+        let pubkey2 = keypair_2.public_key();
+        let internal_key = get_aggregated_pubkey_i(pubkey1, pubkey2);
+
+        let timelock_keypair_slice = [57, 36, 177, 212, 31, 75, 221, 50, 13, 55, 102, 155, 21, 64, 146, 106, 101, 189, 1, 167, 80, 10, 246, 136, 96, 80, 57, 67, 63, 194, 67, 241];
+        let timelock_keypair = Keypair::from_seckey_slice(&secp, &timelock_keypair_slice).unwrap();
+        let (timelock_pubkey, _) = timelock_keypair.x_only_public_key();
+
+        let hashlock_keypair_slice = [196, 70, 74, 243, 36, 44, 31, 223, 8, 77, 47, 179, 229, 217, 187, 66, 144, 87, 50, 11, 184, 136, 255, 92, 97, 154, 183, 102, 27, 126, 54, 140];
+        let hashlock_keypair = Keypair::from_seckey_slice(&secp, &hashlock_keypair_slice).unwrap();
+        let (hashlock_pubkey, _) = hashlock_keypair.x_only_public_key();
+
+        let hash_preimage = [0u8; 32];
+        let locktime = LockTime::from_height(1000).unwrap();
+
+        let (address, spending_utxo) = create_and_fund_address();
+        let (contract_txid, taproot_spendinfo, hashlock_script, timelock_script) = create_and_broadcast_contract(spending_utxo, internal_key, hashlock_pubkey, timelock_pubkey, hash_preimage, locktime);
+        mine_blocks(1, &address);
+        println!("Contract created and mined successfully");
+
+        let contract_outpoint = OutPoint {
+            txid: contract_txid,
+            vout: 0,
+        };
+
+        sweep_via_internal_key(contract_outpoint,keypair_1, keypair_2, taproot_spendinfo.tap_tweak().to_scalar(), address);
+        println!("Contract successfully spent via musig internal key");
+    }
+
+    // #[test]
+    fn end_to_end_hashlock() {
+        let secp = Secp256k1::new();
+
+        let seckey1_bytes = [53, 126, 153, 168, 20, 2, 57, 61, 57, 192, 65, 188, 170, 70, 195, 245, 0, 137, 135, 59, 128, 104, 181, 90, 187, 118, 160, 138, 217, 172, 220, 56];
+        let seckey2_bytes = [87, 32, 109, 105, 102, 136, 254, 135, 248, 148, 13, 5, 127, 89, 5, 64, 49, 245, 51, 224, 211, 94, 101, 150, 225, 7, 68, 134, 79, 188, 167, 235];
+        let keypair_1 = Keypair::from_seckey_slice(&secp, &seckey1_bytes).unwrap();
+        let keypair_2 = Keypair::from_seckey_slice(&secp, &seckey2_bytes).unwrap();
+        let pubkey1 = keypair_1.public_key();
+        let pubkey2 = keypair_2.public_key();
+        let internal_key = get_aggregated_pubkey_i(pubkey1, pubkey2);
+
+        let timelock_keypair_slice = [57, 36, 177, 212, 31, 75, 221, 50, 13, 55, 102, 155, 21, 64, 146, 106, 101, 189, 1, 167, 80, 10, 246, 136, 96, 80, 57, 67, 63, 194, 67, 241];
+        let timelock_keypair = Keypair::from_seckey_slice(&secp, &timelock_keypair_slice).unwrap();
+        let (timelock_pubkey, _) = timelock_keypair.x_only_public_key();
+
+        let hashlock_keypair_slice = [196, 70, 74, 243, 36, 44, 31, 223, 8, 77, 47, 179, 229, 217, 187, 66, 144, 87, 50, 11, 184, 136, 255, 92, 97, 154, 183, 102, 27, 126, 54, 140];
+        let hashlock_keypair = Keypair::from_seckey_slice(&secp, &hashlock_keypair_slice).unwrap();
+        let (hashlock_pubkey, _) = hashlock_keypair.x_only_public_key();
+
+        let hash_preimage = [0u8; 32];
+        let locktime = LockTime::from_height(1000).unwrap();
+
+        let (address, spending_utxo) = create_and_fund_address();
+        let (contract_txid, taproot_spendinfo, hashlock_script, timelock_script) = create_and_broadcast_contract(spending_utxo, internal_key, hashlock_pubkey, timelock_pubkey, hash_preimage, locktime);
+        mine_blocks(1, &address);
+        println!("Contract created and mined successfully");
+        
+        let contract_outpoint = OutPoint {
+            txid: contract_txid,
+            vout: 0,
+        };
+
+        sweep_via_hashlock(contract_outpoint, hash_preimage, hashlock_keypair, taproot_spendinfo.control_block(&(hashlock_script, LeafVersion::TapScript)).unwrap()); 
+        println!("Contract successfully spent via hashlock");
+    }
+
+    // #[test]
+    fn end_to_end_timelock() {
+        let secp = Secp256k1::new();
+
+        let seckey1_bytes = [53, 126, 153, 168, 20, 2, 57, 61, 57, 192, 65, 188, 170, 70, 195, 245, 0, 137, 135, 59, 128, 104, 181, 90, 187, 118, 160, 138, 217, 172, 220, 56];
+        let seckey2_bytes = [87, 32, 109, 105, 102, 136, 254, 135, 248, 148, 13, 5, 127, 89, 5, 64, 49, 245, 51, 224, 211, 94, 101, 150, 225, 7, 68, 134, 79, 188, 167, 235];
+        let keypair_1 = Keypair::from_seckey_slice(&secp, &seckey1_bytes).unwrap();
+        let keypair_2 = Keypair::from_seckey_slice(&secp, &seckey2_bytes).unwrap();
+        let pubkey1 = keypair_1.public_key();
+        let pubkey2 = keypair_2.public_key();
+        let internal_key = get_aggregated_pubkey_i(pubkey1, pubkey2);
+
+        let timelock_keypair_slice = [57, 36, 177, 212, 31, 75, 221, 50, 13, 55, 102, 155, 21, 64, 146, 106, 101, 189, 1, 167, 80, 10, 246, 136, 96, 80, 57, 67, 63, 194, 67, 241];
+        let timelock_keypair = Keypair::from_seckey_slice(&secp, &timelock_keypair_slice).unwrap();
+        let (timelock_pubkey, _) = timelock_keypair.x_only_public_key();
+
+        let hashlock_keypair_slice = [196, 70, 74, 243, 36, 44, 31, 223, 8, 77, 47, 179, 229, 217, 187, 66, 144, 87, 50, 11, 184, 136, 255, 92, 97, 154, 183, 102, 27, 126, 54, 140];
+        let hashlock_keypair = Keypair::from_seckey_slice(&secp, &hashlock_keypair_slice).unwrap();
+        let (hashlock_pubkey, _) = hashlock_keypair.x_only_public_key();
+
+        let hash_preimage = [0u8; 32];
+        let locktime = LockTime::from_height(1000).unwrap();
+
+        let (address, spending_utxo) = create_and_fund_address();
+        let (contract_txid, taproot_spendinfo, hashlock_script, timelock_script) = create_and_broadcast_contract(spending_utxo, internal_key, hashlock_pubkey, timelock_pubkey, hash_preimage, locktime);
+        mine_blocks(1, &address);
+        println!("Contract created and mined successfully");
+
+        let contract_outpoint = OutPoint {
+            txid: contract_txid,
+            vout: 0,
+        };
+
+        mine_blocks(1000, &address);
+        sweep_via_timelock(contract_outpoint, locktime, timelock_keypair, taproot_spendinfo.control_block(&(timelock_script, LeafVersion::TapScript)).unwrap());
+        println!("Contract successfully spent via hashlock");
+    }
+
+    #[test]
+    fn end_to_end() {
+        end_to_end_internal_key();
+        end_to_end_hashlock();
+        end_to_end_timelock();
+    }
+    
 }
