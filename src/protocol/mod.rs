@@ -7,6 +7,7 @@ pub mod error2;
 pub mod messages;
 // pub mod messages2;
 pub mod musig2;
+pub mod musig_interface;
 
 pub(crate) use contract::Hash160;
 
