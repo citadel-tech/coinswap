@@ -277,6 +277,20 @@ impl Wallet {
             store,
         })
     }
+    pub(crate) fn get_wallet(path: &Path, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
+        let wallet = if path.exists() {
+            // wallet already exists , load the wallet
+            let wallet = Wallet::load(&path, &rpc_config)?;
+            log::info!("Wallet file at {path:?} successfully loaded.");
+            wallet
+        } else {
+            // wallet doesn't exists at the given path , create a new one
+            let wallet = Wallet::init(&path, &rpc_config)?;
+            log::info!("New Wallet created at : {path:?}");
+            wallet
+        };
+        Ok(wallet)
+    }
 
     /// Update external index and saves to disk.
     pub(crate) fn update_external_index(
