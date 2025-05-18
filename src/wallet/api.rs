@@ -210,6 +210,8 @@ impl Wallet {
     ///
     /// The path should include the full path for a wallet file.
     /// If the wallet file doesn't exist it will create a new wallet file.
+    /// TODO: Routine for encryption here!
+    /// Then ask password for the user
     pub fn init(path: &Path, rpc_config: &RPCConfig) -> Result<Self, WalletError> {
         let rpc = Client::try_from(rpc_config)?;
         let network = rpc.get_blockchain_info()?.chain;
@@ -232,6 +234,7 @@ impl Wallet {
             .to_string();
 
         let wallet_birthday = rpc.get_block_count()?;
+        ///!IMPORTANT: store contain the data of the wallet
         let store = WalletStore::init(file_name, path, network, master_key, Some(wallet_birthday))?;
 
         Ok(Self {
@@ -243,6 +246,8 @@ impl Wallet {
 
     /// Load wallet data from file and connects to a core RPC.
     /// The core rpc wallet name, and wallet_id field in the file should match.
+    ///
+    ///!IMPORTANT: Logic of wallet creation / load is in taker and maker api. -> Prompt the user with password. Handle error with wrong password
     pub(crate) fn load(path: &Path, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
         let store = WalletStore::read_from_disk(path)?;
         if rpc_config.wallet_name != store.file_name {
@@ -302,6 +307,8 @@ impl Wallet {
     }
 
     /// Update the existing file. Error if path does not exist.
+    /// !IMPORTANT: If empty password given, threat it as unencrypted, like ssh keys. We need to store the password in the memory.
+    /// I have to write the barebone encryption and decryption code + unit test (first milestone), then we figure out if encrypting store or wallet
     pub(crate) fn save_to_disk(&self) -> Result<(), WalletError> {
         self.store.write_to_disk(&self.wallet_file_path)
     }

@@ -223,6 +223,7 @@ impl Taker {
 
         let mut wallet = Wallet::get_wallet(&wallet_path, &rpc_config)?;
 
+        ///!IMPORTANT: Logic of wallet creation / load is in taker and maker api.
         // If config file doesn't exist, default config will be loaded.
         let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
