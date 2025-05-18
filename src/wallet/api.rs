@@ -7,6 +7,11 @@ use std::{convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr};
 
 use std::collections::HashMap;
 
+use aes_gcm::{
+    aead::{AeadCore, OsRng},
+    Aes256Gcm,
+};
+
 use bip39::Mnemonic;
 use bitcoin::{
     bip32::{ChildNumber, DerivationPath, Xpriv, Xpub},
@@ -17,7 +22,9 @@ use bitcoin::{
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, VarInt, Weight,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
+use pbkdf2::pbkdf2_hmac_array;
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::path::Path;
 
 use crate::{
@@ -47,12 +54,26 @@ use super::{
 
 const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
 
+const ENCRYPTION_SALT: &[u8; 8] = b"coinswap";
+//const ENCRYPTION_ITERATIONS: u32 = 600_000;
+const ENCRYPTION_ITERATIONS: u32 = 1;
+
+#[derive(Debug, Clone)]
+pub struct KeyMaterial {
+    /// The derived encryption key (not the original passphrase)
+    pub key: [u8; 32],
+    /// Nonce used for encryption
+    pub nonce: Option<Vec<u8>>, // use Vec<u8> since [u8] is unsized
+}
+
 /// Represents a Bitcoin wallet with associated functionality and data.
 #[derive(Debug)]
 pub struct Wallet {
     pub(crate) rpc: Client,
     wallet_file_path: PathBuf,
     pub(crate) store: WalletStore,
+    // I do this to avoid saving the passphrase, only the derived key
+    store_enc_material: Option<KeyMaterial>,
 }
 
 /// Speicfy the keychain derivation path from [`HARDENDED_DERIVATION`]
@@ -212,7 +233,11 @@ impl Wallet {
     /// If the wallet file doesn't exist it will create a new wallet file.
     /// TODO: Routine for encryption here!
     /// Then ask password for the user
-    pub fn init(path: &Path, rpc_config: &RPCConfig) -> Result<Self, WalletError> {
+    pub fn init(
+        path: &Path,
+        rpc_config: &RPCConfig,
+        store_enc_material: Option<KeyMaterial>,
+    ) -> Result<Self, WalletError> {
         let rpc = Client::try_from(rpc_config)?;
         let network = rpc.get_blockchain_info()?.chain;
 
@@ -241,6 +266,7 @@ impl Wallet {
             rpc,
             wallet_file_path: path.to_path_buf(),
             store,
+            store_enc_material,
         })
     }
 
@@ -248,8 +274,12 @@ impl Wallet {
     /// The core rpc wallet name, and wallet_id field in the file should match.
     ///
     ///!IMPORTANT: Logic of wallet creation / load is in taker and maker api. -> Prompt the user with password. Handle error with wrong password
-    pub(crate) fn load(path: &Path, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
-        let store = WalletStore::read_from_disk(path)?;
+    pub(crate) fn load(
+        path: &Path,
+        rpc_config: &RPCConfig,
+        store_enc_material: &mut Option<KeyMaterial>,
+    ) -> Result<Wallet, WalletError> {
+        let store = WalletStore::read_from_disk(path, store_enc_material)?;
         if rpc_config.wallet_name != store.file_name {
             return Err(WalletError::General(format!(
                 "Wallet name of database file and core missmatch, expected {}, found {}",
@@ -260,6 +290,7 @@ impl Wallet {
         let network = rpc.get_blockchain_info()?.chain;
 
         // Check if the backend node is running on correct network. Or else hard error.
+
         if store.network != network {
             log::error!(
                 "Wallet file is created for {}, backend Bitcoin Core is running on {}",
@@ -280,20 +311,55 @@ impl Wallet {
             rpc,
             wallet_file_path: path.to_path_buf(),
             store,
+            store_enc_material: store_enc_material.clone(),
         })
     }
     pub(crate) fn get_wallet(path: &Path, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
+        let passphrase = rpassword::prompt_password(
+            "Enter wallet encryption passphrase (empty for no encryption): ",
+        )?;
+
+        //If user entered empty password we have None, otherwise the generated key
+        let mut key = if passphrase.is_empty() {
+            None
+        } else {
+            let derived_key = pbkdf2_hmac_array::<Sha256, 32>(
+                passphrase.as_bytes(),
+                ENCRYPTION_SALT,
+                ENCRYPTION_ITERATIONS,
+            );
+
+            let nonce = if path.exists() {
+                //Todo, if exist load nonce
+                None
+            } else {
+                // Only generate a nonce if we're creating the wallet
+                let generated_nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+                Some(generated_nonce.as_slice().to_vec())
+            };
+
+            Some(KeyMaterial {
+                key: derived_key,
+                nonce,
+            })
+        };
+
         let wallet = if path.exists() {
             // wallet already exists , load the wallet
-            let wallet = Wallet::load(&path, &rpc_config)?;
+            // I need the nonce back.. to read
+            let wallet = Wallet::load(&path, &rpc_config, &mut key)?;
             log::info!("Wallet file at {path:?} successfully loaded.");
             wallet
         } else {
             // wallet doesn't exists at the given path , create a new one
-            let wallet = Wallet::init(&path, &rpc_config)?;
+
+            //We create a nonce for the wallet also
+            let wallet = Wallet::init(&path, &rpc_config, key)?;
+
             log::info!("New Wallet created at : {path:?}");
             wallet
         };
+
         Ok(wallet)
     }
 
@@ -310,7 +376,8 @@ impl Wallet {
     /// !IMPORTANT: If empty password given, threat it as unencrypted, like ssh keys. We need to store the password in the memory.
     /// I have to write the barebone encryption and decryption code + unit test (first milestone), then we figure out if encrypting store or wallet
     pub(crate) fn save_to_disk(&self) -> Result<(), WalletError> {
-        self.store.write_to_disk(&self.wallet_file_path)
+        self.store
+            .write_to_disk(&self.wallet_file_path, &self.store_enc_material)
     }
 
     /// Finds an incoming swap coin with the specified multisig redeem script.

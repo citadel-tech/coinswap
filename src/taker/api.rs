@@ -222,6 +222,8 @@ impl Taker {
         rpc_config.wallet_name = wallet_file_name;
 
         let mut wallet = Wallet::get_wallet(&wallet_path, &rpc_config)?;
+        wallet.save_to_disk();
+        println! {"Wallet"}
 
         ///!IMPORTANT: Logic of wallet creation / load is in taker and maker api.
         // If config file doesn't exist, default config will be loaded.
