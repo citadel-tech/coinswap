@@ -2036,10 +2036,10 @@ impl Taker {
                 if cfg!(feature = "integration-test") {
                     format!("127.0.0.1:{}", 8080)
                 } else {
-                    self.config.directory_server_address.clone()
+                    self.config.dns_address.clone()
                 }
             }
-            ConnectionType::TOR => self.config.directory_server_address.clone(),
+            ConnectionType::TOR => self.config.dns_address.clone(),
         };
 
         #[cfg(not(feature = "integration-test"))]
