@@ -49,7 +49,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> 
             let dns_address = if cfg!(feature = "integration-test") {
                 format!("127.0.0.1:{}", 8080)
             } else {
-                maker.config.directory_server_address.clone()
+                maker.config.dns_address.clone()
             };
 
             (maker_address, dns_address)
@@ -63,7 +63,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> 
             )?;
             let maker_address = format!("{}:{}", maker_hostname, maker.config.network_port);
 
-            let dns_address = maker.config.directory_server_address.clone();
+            let dns_address = maker.config.dns_address.clone();
             (maker_address, dns_address)
         }
     };
