@@ -366,10 +366,6 @@ impl Maker {
             TIME_RELATIVE_FEE_PCT,
         );
 
-        // NOTE: The `contract_feerate` currently represents the hardcoded `MINER_FEE` of a transaction, not the fee rate.
-        // This will remain unchanged to avoid modifying the structure of the [ProofOfFunding] message.
-        // Once issue https://github.com/citadel-tech/coinswap/issues/309 is resolved,
-        //`contract_feerate` will represent the actual fee rate instead of the `MINER_FEE`.
         let calc_funding_tx_fees =
             message.contract_feerate * (message.next_coinswap_info.len() as u64);
 
@@ -420,13 +416,12 @@ impl Maker {
         );
 
         log::info!(
-            "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {} |",
+            "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {}",
             self.config.network_port,
             Amount::from_sat(incoming_amount),
             Amount::from_sat(outgoing_amount),
             Amount::from_sat(act_coinswap_fees),
             message.refund_locktime,
-            act_funding_txs_fees
         );
 
         connection_state.pending_funding_txes = my_funding_txes;
