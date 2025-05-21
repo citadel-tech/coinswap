@@ -103,7 +103,6 @@ fn calculate_fidelity_value(
     let locktime_yr = (locktime as f64) / sec_in_a_year;
     let currenttime_yr = (current_time as f64) / sec_in_a_year;
 
-    // TODO: This calculation can be simplified
     let exp_rt_m1 = f64::exp_m1(interest_rate * lock_period_yr);
     let exp_rtl_m1 = f64::exp_m1(interest_rate * f64::max(0.0, currenttime_yr - locktime_yr));
 

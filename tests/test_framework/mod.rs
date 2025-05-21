@@ -182,8 +182,6 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
 }
 
 /// Generate Blocks in regtest node.
-// TODO: Rethink this approach considering the resource unavailability of RPC and wallet rescanning.
-//       Block generation in regtest halts everything, causing a major disruption in rescanning.
 pub(crate) fn generate_blocks(bitcoind: &BitcoinD, n: u64) {
     let mining_address = bitcoind
         .client
@@ -309,10 +307,11 @@ pub fn fund_and_verify_taker(
 
     // Check if utxo list looks good.
     // TODO: Assert other interesting things from the utxo list.
+    // Assert utxo.len()
+    // assert utxos.value = utxo_value for each utxos.
 
     let balances = wallet.get_balances().unwrap();
 
-    // TODO: Think about this: utxo_count*utxo_amt.
     assert_eq!(balances.regular, Amount::from_btc(0.15).unwrap());
     assert_eq!(balances.fidelity, Amount::ZERO);
     assert_eq!(balances.swap, Amount::ZERO);
@@ -356,7 +355,6 @@ pub fn fund_and_verify_maker(
 
         let balances = wallet.get_balances().unwrap();
 
-        // TODO: Think about this: utxo_count*utxo_amt.
         assert_eq!(balances.regular, Amount::from_btc(0.20).unwrap());
         assert_eq!(balances.fidelity, Amount::ZERO);
         assert_eq!(balances.swap, Amount::ZERO);
@@ -451,8 +449,8 @@ pub fn verify_swap_results(
                     || balance_diff == Amount::from_sat(21858) // Second maker fee
                     || balance_diff == Amount::ZERO // No spending
                     || balance_diff == Amount::from_sat(6768) // Recovery via timelock
-                    || balance_diff == Amount::from_sat(466500) // TODO: Investigate this value
-                    || balance_diff == Amount::from_sat(441642) // TODO: Investigate this value
+                    || balance_diff == Amount::from_sat(466500) // TODO: Investigate where the data is coming from
+                    || balance_diff == Amount::from_sat(441642) // TODO: Investigate where the data is coming from
                     || balance_diff == Amount::from_sat(408142) // Multi-taker first maker
                     || balance_diff == Amount::from_sat(444642), // Multi-taker second maker
                 "Maker spendable balance change mismatch"

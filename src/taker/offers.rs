@@ -78,7 +78,6 @@ impl TryFrom<&mut TcpStream> for MakerAddress {
 
 /// An ephemeral Offerbook tracking good and bad makers. Currently, Offerbook is initiated
 /// at the start of every swap. So good and bad maker list will not be persisted.
-// TODO: Persist the offerbook in disk.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct OfferBook {
     pub(super) all_makers: Vec<OfferAndAddress>,
@@ -86,12 +85,6 @@ pub struct OfferBook {
 }
 
 impl OfferBook {
-    // TODO: design a better offerbook:
-    // - unique key.
-    // - clear good-bad separations.
-    // - ranking system.
-    // - various categories of livelinesss, to smartly distribute try counts.
-
     /// Gets all "not-bad" offers.
     pub fn all_good_makers(&self) -> Vec<&OfferAndAddress> {
         self.all_makers
@@ -160,6 +153,7 @@ impl OfferBook {
             Err(e) => {
                 let err_string = format!("{e:?}");
                 // TODO: Investigate why files end up with trailing data.
+                // Check if this still happens for json file.
                 if err_string.contains("code: TrailingData") {
                     // loop until all trailing bytes are removed.
                     loop {

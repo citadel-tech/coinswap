@@ -119,6 +119,8 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         .for_each(|thread| thread.join().unwrap());
 
     //TODO: Start the faulty maker again, and validate its recovery.
+    // Start the bad maker again.
+    // Assert logs to check that it has recovered from its own swap.
 
     info!("All coinswaps processed successfully. Transaction complete.");
 
