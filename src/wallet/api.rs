@@ -870,7 +870,7 @@ impl Wallet {
         )?[0]
             .clone();
         self.update_external_index(self.store.external_index + 1)?;
-        Ok(receive_address.assume_checked()) // TODO: should we check the network or just assume_checked?
+        Ok(receive_address.assume_checked())
     }
 
     /// Gets the next internal addresses from the HD keychain.
@@ -1175,7 +1175,6 @@ impl Wallet {
         };
 
         // Assuming target is a p2wpkh.
-        // TODO: Add provision for other targets
         let target_weight = Weight::from_vb_unwrap(
             (Amount::SIZE + VarInt::from(P2WPKH_SPK_SIZE).size() + P2WPKH_SPK_SIZE) as u64,
         );
@@ -1290,8 +1289,6 @@ impl Wallet {
         // redeemscript and descriptor show up in `getaddressinfo` only after
         // the address gets outputs on it-
         Ok((
-            //TODO should completely avoid derive_addresses
-            //because it's slower and provides no benefit over using rust-bitcoin
             self.rpc.derive_addresses(&descriptor[..], None)?[0]
                 .clone()
                 .assume_checked(),
@@ -1319,14 +1316,6 @@ impl Wallet {
 
         let create_funding_txes_result =
             self.create_funding_txes(total_coinswap_amount, &coinswap_addresses, fee_rate)?;
-        //for sweeping there would be another function, probably
-        //probably have an enum called something like SendAmount which can be
-        //an integer but also can be Sweep
-
-        //TODO: implement the idea where a maker will send its own privkey back to the
-        //taker in this situation, so if a taker gets their own funding txes mined
-        //but it turns out the maker cant fulfil the coinswap, then the taker gets both
-        //privkeys, so it can try again without wasting any time and only a bit of miner fees
 
         let mut outgoing_swapcoins = Vec::<OutgoingSwapCoin>::new();
         for (

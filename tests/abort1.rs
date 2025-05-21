@@ -142,7 +142,6 @@ fn test_stop_taker_after_setup() {
     ///////////////
 
     //Run Recovery script
-    // TODO: do something about this?
     warn!("Starting Taker recovery process");
     taker.recover_from_swap().unwrap();
 
