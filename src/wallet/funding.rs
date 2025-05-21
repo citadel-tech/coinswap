@@ -43,8 +43,6 @@ impl Wallet {
             return ret;
         }
 
-        // TODO: Unlock this code when we are sure that the routines actually works.
-
         // let ret = self.create_funding_txes_utxo_max_sends(coinswap_amount, destinations, fee_rate);
         // if ret.is_ok() {
         //     log::info!(target: "wallet", "created funding txes with fully-spending utxos");
@@ -511,7 +509,6 @@ impl Wallet {
             .map(|(l, _)| l.amount.to_sat())
             .any(|utxo_value| utxo_value > coinswap_amount.to_sat())
         {
-            // TODO: Handle this case
             Err(WalletError::General(
                 "Some stupid error that will never occur".to_string(),
             ))

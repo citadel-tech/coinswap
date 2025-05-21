@@ -97,6 +97,10 @@ impl WalletStore {
             Err(e) => {
                 let err_string = format!("{e:?}");
                 if err_string.contains("code: TrailingData") {
+                    // TODO: Investigate why files end up with trailing data.
+                    // add a log for the length of trailing data.
+                    // run the apps many times and see what the average length if for this data is.
+                    // Log the trailing data.
                     log::info!("Wallet file has trailing data, trying to restore");
                     loop {
                         // pop the last byte and try again.

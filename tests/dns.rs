@@ -36,7 +36,6 @@ fn verify_addresses(addresses: &[(&str, u32)]) {
         String::from_utf8(output.stderr).unwrap()
     );
 
-    // TODO add more through script checking
     for (address, index) in addresses {
         assert_eq!(
             addresses_output.match_indices(&address.to_string()).count(),

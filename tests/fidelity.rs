@@ -66,6 +66,7 @@ fn test_fidelity() {
     thread::sleep(Duration::from_secs(6));
 
     // TODO: Assert that fund request for fidelity is printed in the log.
+    // Add the logging functions and assert the log string.
 
     // Provide the maker with more funds.
     send_to_address(bitcoind, &maker_addrs, Amount::ONE_BTC);

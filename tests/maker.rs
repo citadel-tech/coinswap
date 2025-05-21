@@ -214,7 +214,6 @@ fn test_bond_registration_before_confirmation(
     mut maker: Child,
     rx: Receiver<String>,
 ) -> (Receiver<String>, Child) {
-    // TODO: Hardcoded bond timelock; will be fixed in PR #424.
     println!("TEST STARTING: Bond Registration and DNS Updates");
     let bond_timelock = 950;
 
@@ -410,10 +409,13 @@ fn test_bitcoin_backend_connection(maker_cli: &mut MakerCli) {
     println!("✅ Verified maker detects Bitcoin backend disconnection");
 
     // TODO: Reconnect to bitcoind without restarting the maker server
-    // cleanup an new bitcoind instance
+    // cleanup an new bitcoind instance `/tmp/coinswap/.bitcoin`.
+    // init bitcoin with that data dir.
+    // Don't kill the maker.
     maker.kill().unwrap();
     maker.wait().unwrap();
     let temp_dir = maker_cli.data_dir.parent().unwrap();
+    // Find the previous bitcoin datadir.
     let new_bitcoind = init_bitcoind(temp_dir);
     maker_cli.bitcoind = new_bitcoind;
 

@@ -1212,8 +1212,6 @@ impl Taker {
                 },
             )
             .collect::<Result<Vec<WatchOnlySwapCoin>, _>>()?;
-        //TODO error handle here the case where next_swapcoin.contract_tx script pubkey
-        // is not equal to p2wsh(next_swap_contract_redeemscripts)
         for swapcoin in &next_swapcoins {
             self.wallet
                 .import_watchonly_redeemscript(&swapcoin.get_multisig_redeemscript())?;
@@ -1851,8 +1849,6 @@ impl Taker {
             )
             .collect::<Vec<_>>();
 
-        // TODO: Find out which txid was boradcasted first
-        // This requires -txindex to be enabled in the node.
         let seen_txids = contract_txids
             .iter()
             .filter(|txid| self.wallet.rpc.get_raw_transaction_info(txid, None).is_ok())
@@ -2011,8 +2007,7 @@ impl Taker {
             );
             if timelock_boardcasted.len() == outgoing_infos.len() {
                 log::info!("All outgoing contracts redeemed. Cleared ongoing swap state");
-                // TODO: Reevaluate this.
-                self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
+                self.clear_ongoing_swaps();
                 break;
             }
 
