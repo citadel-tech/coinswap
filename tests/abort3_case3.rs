@@ -130,10 +130,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     let recovery_thread = thread::spawn(move || {
         info!("Starting faulty maker recovery thread...");
         if let Err(e) = start_maker_server(faulty_maker_clone) {
-            warn!(
-                "Maker server ended with error (expected during recovery): {:?}",
-                e
-            );
+            warn!("Maker server ended with error (expected during recovery): {e:?}");
         }
     });
 
