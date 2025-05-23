@@ -118,9 +118,70 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    //TODO: Start the faulty maker again, and validate its recovery.
-    // Start the bad maker again.
-    // Assert logs to check that it has recovered from its own swap.
+    info!("Starting faulty maker recovery validation...");
+
+    // Find the faulty maker
+    let faulty_maker = &makers[0];
+
+    // Reset shutdown flag and start the faulty maker again
+    faulty_maker.shutdown.store(false, Relaxed);
+
+    let faulty_maker_clone = faulty_maker.clone();
+    let recovery_thread = thread::spawn(move || {
+        info!("Starting faulty maker recovery thread...");
+        if let Err(e) = start_maker_server(faulty_maker_clone) {
+            warn!(
+                "Maker server ended with error (expected during recovery): {:?}",
+                e
+            );
+        }
+    });
+
+    thread::sleep(Duration::from_secs(5));
+
+    // The recovery process should complete automatically during startup
+    let mut recovery_completed = false;
+    for i in 0..6 {
+        if faulty_maker.is_setup_complete.load(Relaxed) {
+            recovery_completed = true;
+            info!("✅ Maker setup completed - recovery process finished");
+            break;
+        }
+        thread::sleep(Duration::from_secs(3));
+        info!("Waiting for recovery completion... attempt {}/6", i + 1);
+    }
+
+    assert!(
+        recovery_completed,
+        "Faulty maker should complete recovery and setup"
+    );
+
+    // Validate recovery by checking final wallet state
+    {
+        let wallet = faulty_maker.wallet.read().unwrap();
+        let balances = wallet.get_balances().unwrap();
+
+        assert_eq!(
+            balances.contract,
+            Amount::ZERO,
+            "All contract UTXOs should be recovered"
+        );
+        assert!(
+            balances.regular > Amount::ZERO,
+            "Should have recovered regular funds"
+        );
+
+        info!(
+            "✅ Recovery validation successful - contract: {}, regular: {}",
+            balances.contract, balances.regular
+        );
+    }
+
+    // Cleanup
+    faulty_maker.shutdown.store(true, Relaxed);
+    let _ = recovery_thread.join();
+
+    info!("Faulty maker recovery validation completed successfully");
 
     info!("All coinswaps processed successfully. Transaction complete.");
 
