@@ -199,10 +199,10 @@ mod tests {
         .unwrap();
 
         original_wallet_store
-            .write_to_disk(&file_path, None)
+            .write_to_disk(&file_path, &None)
             .unwrap();
 
-        let read_wallet = WalletStore::read_from_disk(&file_path).unwrap();
+        let read_wallet = WalletStore::read_from_disk(&file_path, &mut None).unwrap();
         assert_eq!(original_wallet_store, read_wallet);
     }
 }
