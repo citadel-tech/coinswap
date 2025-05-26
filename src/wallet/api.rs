@@ -319,6 +319,9 @@ impl Wallet {
             "Enter wallet encryption passphrase (empty for no encryption): ",
         )?;
 
+        #[cfg(feature = "integration-test")]
+        let passphrase = "integration-test";
+
         //If user entered empty password we have None, otherwise the generated key
         let mut key = if passphrase.is_empty() {
             None
