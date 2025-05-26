@@ -293,7 +293,7 @@ pub fn fund_and_verify_taker(
 
     // Get initial state before funding
     let wallet = taker.get_wallet_mut();
-    let _ = wallet.sync();
+    wallet.sync_no_fail();
     let initial_utxos = wallet.get_all_utxo().unwrap();
     let initial_utxo_count = initial_utxos.len();
     let initial_external_index = *wallet.get_external_index();
@@ -313,7 +313,7 @@ pub fn fund_and_verify_taker(
     assert_eq!(
         wallet.get_external_index(),
         &(initial_external_index + utxo_count),
-        "Expected external address index {}, but found {}",
+        "Expected external address index at {}, but found at {}",
         initial_external_index + utxo_count,
         wallet.get_external_index()
     );
@@ -336,7 +336,7 @@ pub fn fund_and_verify_taker(
     for (i, utxo) in utxos.iter().skip(initial_utxo_count).enumerate() {
         assert_eq!(
             utxo.amount, utxo_value,
-            "New UTXO {} has amount {} but expected {}",
+            "New UTXO at index {} has amount {} but expected {}",
             i, utxo.amount, utxo_value
         );
     }
@@ -360,12 +360,12 @@ pub fn fund_and_verify_taker(
     // Assert spendable balance equals regular balance, since no fidelity/swap/contract
     assert_eq!(
         balances.spendable, balances.regular,
-        "Spendable balance {} should equal regular balance {}",
+        "Spendable and Regular balance missmatch | Spendable balance {} | Regular balance {}",
         balances.spendable, balances.regular
     );
 
     log::info!(
-        "Taker funding verification complete: {} UTXOs of {} each, total spendable: {}",
+        "Taker funding verification complete | Found {} new UTXOs of value {} each | Total Spendable Balance: {}",
         utxo_count,
         utxo_value,
         balances.spendable
@@ -503,8 +503,8 @@ pub fn verify_swap_results(
                     || balance_diff == Amount::from_sat(21858) // Second maker fee
                     || balance_diff == Amount::ZERO // No spending
                     || balance_diff == Amount::from_sat(6768) // Recovery via timelock
-                    || balance_diff == Amount::from_sat(466500) // Taker abort after setup - first maker recovery cost
-                    || balance_diff == Amount::from_sat(441642) // Taker abort after setup - second maker recovery cost
+                    || balance_diff == Amount::from_sat(466500) // Taker abort after setup - first maker recovery cost (abort1 test case)
+                    || balance_diff == Amount::from_sat(441642) // Taker abort after setup - second maker recovery cost (abort1 test case)
                     || balance_diff == Amount::from_sat(408142) // Multi-taker first maker
                     || balance_diff == Amount::from_sat(444642), // Multi-taker second maker
                 "Maker spendable balance change mismatch"
