@@ -315,7 +315,7 @@ impl Wallet {
         })
     }
     pub(crate) fn get_wallet(path: &Path, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
-        let passphrase = if cfg!(feature = "integration-test") {
+        let passphrase = if cfg!(feature = "integration-test") || cfg!(test) {
             "integration-test".to_string()
         } else {
             rpassword::prompt_password(
