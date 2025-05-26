@@ -221,6 +221,7 @@ impl Taker {
         let mut rpc_config = rpc_config.unwrap_or_default();
         rpc_config.wallet_name = wallet_file_name;
 
+        /// !IMPORTANT call get_wallet as load_or_init_wallet
         let mut wallet = Wallet::get_wallet(&wallet_path, &rpc_config)?;
         wallet.save_to_disk();
         println! {"Wallet"}
