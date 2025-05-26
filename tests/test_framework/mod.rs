@@ -291,9 +291,16 @@ pub fn fund_and_verify_taker(
 ) -> Amount {
     log::info!("💰 Funding Takers...");
 
+    // Get initial state before funding
+    let wallet = taker.get_wallet_mut();
+    let _ = wallet.sync();
+    let initial_utxos = wallet.get_all_utxo().unwrap();
+    let initial_utxo_count = initial_utxos.len();
+    let initial_external_index = *wallet.get_external_index();
+
     // Fund the Taker with 3 utxos of 0.05 btc each.
     for _ in 0..utxo_count {
-        let taker_address = taker.get_wallet_mut().get_next_external_address().unwrap();
+        let taker_address = wallet.get_next_external_address().unwrap();
         send_to_address(bitcoind, &taker_address, utxo_value);
     }
 
@@ -302,13 +309,12 @@ pub fn fund_and_verify_taker(
 
     //------Basic Checks-----
 
-    let wallet = taker.get_wallet_mut();
     // Assert external address index reached to 3.
     assert_eq!(
         wallet.get_external_index(),
-        &utxo_count,
+        &(initial_external_index + utxo_count),
         "Expected external address index {}, but found {}",
-        utxo_count,
+        initial_external_index + utxo_count,
         wallet.get_external_index()
     );
 
@@ -320,17 +326,17 @@ pub fn fund_and_verify_taker(
     // Assert UTXO count
     assert_eq!(
         utxos.len(),
-        utxo_count as usize,
+        initial_utxo_count + utxo_count as usize,
         "Expected {} UTXOs, but found {}",
-        utxo_count,
+        initial_utxo_count + utxo_count as usize,
         utxos.len()
     );
 
     // Assert each UTXO value
-    for (i, utxo) in utxos.iter().enumerate() {
+    for (i, utxo) in utxos.iter().skip(initial_utxo_count).enumerate() {
         assert_eq!(
             utxo.amount, utxo_value,
-            "UTXO {} has amount {} but expected {}",
+            "New UTXO {} has amount {} but expected {}",
             i, utxo.amount, utxo_value
         );
     }
