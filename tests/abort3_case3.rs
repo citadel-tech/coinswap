@@ -39,7 +39,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
             ConnectionType::CLEARNET,
         );
 
-    warn!("Running Test: Maker closes conneciton at hash preimage handling");
+    warn!("🧪 Running Test: Maker closes connection at hash preimage handling");
 
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
     let taker = &mut takers[0];
@@ -60,7 +60,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     );
 
     //  Start the Maker Server threads
-    info!("Initiating Maker...");
+    info!("🚀 Initiating Maker...");
 
     let maker_threads = makers
         .iter()
@@ -77,7 +77,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                info!("Waiting for maker setup completion");
+                info!("⏳ Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -98,7 +98,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         .collect::<Vec<_>>();
 
     // Initiate Coinswap
-    info!("Initiating coinswap protocol");
+    info!("🔄 Initiating coinswap protocol");
 
     // Swap params for coinswap.
     let swap_params = SwapParams {
@@ -118,19 +118,39 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    info!("Starting faulty maker recovery validation...");
+    info!("🔧 Coinswap completed. Starting faulty maker recovery validation...");
 
-    // Find the faulty maker
+    // Log contract balances for both makers
+    info!("🔍 Checking contract balances for all makers:");
+    for (i, maker) in makers.iter().enumerate() {
+        let mut wallet = maker.wallet.write().unwrap();
+        wallet.sync().unwrap();
+        let balances = wallet.get_balances().unwrap();
+        info!("📊 Maker[{}] contract balance: {}", i, balances.contract);
+    }
+
+    // Find the faulty maker 
     let faulty_maker = &makers[0];
+
+    // Check initial contract balance
+    let initial_contract_balance = {
+        let wallet = faulty_maker.wallet.read().unwrap();
+        wallet.get_balances().unwrap().contract
+    };
+
+    info!(
+        "📊 Initial contract balance: {} (may be zero due to non-deterministic behavior)",
+        initial_contract_balance
+    );
 
     // Reset shutdown flag and start the faulty maker again
     faulty_maker.shutdown.store(false, Relaxed);
 
     let faulty_maker_clone = faulty_maker.clone();
     let recovery_thread = thread::spawn(move || {
-        info!("Starting faulty maker recovery thread...");
+        info!("🔄 Starting faulty maker recovery thread...");
         if let Err(e) = start_maker_server(faulty_maker_clone) {
-            warn!("Maker server ended with error (expected during recovery): {e:?}");
+            warn!("⚠️ Maker server ended with error (expected during recovery if contract balance is zero): {e:?}");
         }
     });
 
@@ -145,7 +165,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
             break;
         }
         thread::sleep(Duration::from_secs(3));
-        info!("Waiting for recovery completion... attempt {}/6", i + 1);
+        info!("⏳ Waiting for recovery completion... attempt {}/6", i + 1);
     }
 
     assert!(
@@ -154,7 +174,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     );
 
     // Validate recovery by checking final wallet state
-    {
+    let final_contract_balance = {
         let wallet = faulty_maker.wallet.read().unwrap();
         let balances = wallet.get_balances().unwrap();
 
@@ -172,15 +192,24 @@ fn abort3_case3_close_at_hash_preimage_handover() {
             "✅ Recovery validation successful - contract: {}, regular: {}",
             balances.contract, balances.regular
         );
+        
+        balances.contract
+    };
+
+    // Provide informative messages based on what happened
+    if initial_contract_balance > Amount::ZERO && final_contract_balance == Amount::ZERO {
+        info!("✅ RECOVERY VALIDATED: Contract balance went from {} to zero - recovery completed!", initial_contract_balance);
+    } else if initial_contract_balance == Amount::ZERO {
+        info!("ℹ️ SCENARIO TESTED: No contract UTXOs to recover (non-deterministic behavior) - test completed");
     }
 
     // Cleanup
     faulty_maker.shutdown.store(true, Relaxed);
     let _ = recovery_thread.join();
 
-    info!("Faulty maker recovery validation completed successfully");
+    info!("🎉 Recovery test completed successfully!");
 
-    info!("All coinswaps processed successfully. Transaction complete.");
+    info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
     // Shutdown Directory Server
     directory_server_instance.shutdown.store(true, Relaxed);
@@ -237,7 +266,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         org_maker_spend_balances,
     );
 
-    info!("All checks successful. Terminating integration test case");
+    info!("✅ All checks successful. Terminating integration test case");
 
     test_framework.stop();
     block_generation_handle.join().unwrap();
