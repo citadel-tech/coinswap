@@ -129,7 +129,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         info!("📊 Maker[{}] contract balance: {}", i, balances.contract);
     }
 
-    // Find the faulty maker 
+    // Find the faulty maker
     let faulty_maker = &makers[0];
 
     // Check initial contract balance
@@ -139,9 +139,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     };
 
     info!(
-        "📊 Initial contract balance: {} (may be zero due to non-deterministic behavior)",
-        initial_contract_balance
-    );
+        "📊 Initial contract balance: {initial_contract_balance} (may be zero due to non-deterministic behavior)", );
 
     // Reset shutdown flag and start the faulty maker again
     faulty_maker.shutdown.store(false, Relaxed);
@@ -192,13 +190,15 @@ fn abort3_case3_close_at_hash_preimage_handover() {
             "✅ Recovery validation successful - contract: {}, regular: {}",
             balances.contract, balances.regular
         );
-        
+
         balances.contract
     };
 
     // Provide informative messages based on what happened
     if initial_contract_balance > Amount::ZERO && final_contract_balance == Amount::ZERO {
-        info!("✅ RECOVERY VALIDATED: Contract balance went from {} to zero - recovery completed!", initial_contract_balance);
+        info!(
+            "✅ RECOVERY VALIDATED: Contract balance went from {initial_contract_balance} to zero - recovery completed!", 
+        );
     } else if initial_contract_balance == Amount::ZERO {
         info!("ℹ️ SCENARIO TESTED: No contract UTXOs to recover (non-deterministic behavior) - test completed");
     }
