@@ -318,7 +318,7 @@ pub fn fund_and_verify_taker(
         wallet.get_external_index()
     );
 
-    let _ = wallet.sync();
+    wallet.sync_no_fail();
 
     // Check if utxo list looks good.
     let utxos = wallet.get_all_utxo().unwrap();
