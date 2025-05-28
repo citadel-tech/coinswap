@@ -161,7 +161,7 @@ fn malice1_taker_broadcast_contract_prematurely() {
         org_taker_spend_balance,
         org_maker_spend_balances,
     );
-    
+
     info!("🎉 All checks successful. Terminating integration test case");
 
     test_framework.stop();
