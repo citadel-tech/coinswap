@@ -126,8 +126,11 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
     let mut conf = bitcoind::Conf::default();
     conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
     conf.staticdir = Some(datadir.join(".bitcoin"));
-    log::info!("bitcoind datadir: {:?}", conf.staticdir.as_ref().unwrap());
-    log::info!("bitcoind configuration: {:?}", conf.args);
+    log::info!(
+        "🔗 bitcoind datadir: {:?}",
+        conf.staticdir.as_ref().unwrap()
+    );
+    log::info!("🔧 bitcoind configuration: {:?}", conf.args);
 
     let os = env::consts::OS;
     let arch = env::consts::ARCH;
@@ -170,13 +173,13 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
 
     let exe_path = bitcoind::exe_path().unwrap();
 
-    log::info!("Executable path: {exe_path:?}");
+    log::info!("📁 Executable path: {exe_path:?}");
 
     let bitcoind = BitcoinD::with_conf(exe_path, &conf).unwrap();
 
     // Generate initial 101 blocks
     generate_blocks(&bitcoind, 101);
-    log::info!("bitcoind initiated!!");
+    log::info!("🚀 bitcoind initiated!!");
 
     bitcoind
 }
@@ -274,7 +277,7 @@ pub(crate) fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> proc
     }
 
     await_message(&stdout_recv, "RPC socket binding successful");
-    log::info!("DNS Server Started");
+    log::info!("🌐 DNS Server Started");
 
     directoryd_process
 }
@@ -286,7 +289,7 @@ pub fn fund_and_verify_taker(
     utxo_count: u32,
     utxo_value: Amount,
 ) -> Amount {
-    log::info!("Funding Takers...");
+    log::info!("💰 Funding Takers...");
 
     // Fund the Taker with 3 utxos of 0.05 btc each.
     for _ in 0..utxo_count {
@@ -329,7 +332,7 @@ pub fn fund_and_verify_maker(
 ) {
     // Fund the Maker with 4 utxos of 0.05 btc each.
 
-    log::info!("Funding Makers...");
+    log::info!("💰 Funding Makers...");
 
     makers.iter().for_each(|&maker| {
         // let wallet = maker..write().unwrap();
@@ -499,7 +502,7 @@ impl TestFramework {
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
         }
-        log::info!("temporary directory : {}", temp_dir.display());
+        log::info!("📁 temporary directory : {}", temp_dir.display());
 
         let bitcoind = init_bitcoind(&temp_dir);
 
@@ -510,7 +513,7 @@ impl TestFramework {
             shutdown,
         });
 
-        log::info!("Initiating Directory Server .....");
+        log::info!("🌐 Initiating Directory Server .....");
 
         // Translate a RpcConfig from the test framework.
         // a modification of this will be used for taker and makers rpc connections.
@@ -573,13 +576,13 @@ impl TestFramework {
             .collect::<Vec<_>>();
 
         // start the block generation thread
-        log::info!("spawning block generation thread");
+        log::info!("⛏️ spawning block generation thread");
         let tf_clone = test_framework.clone();
         let generate_blocks_handle = thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(3));
 
             if tf_clone.shutdown.load(Relaxed) {
-                log::info!("ending block generation thread");
+                log::info!("🔚 ending block generation thread");
                 return;
             }
             // tf_clone.generate_blocks(10);
@@ -597,7 +600,7 @@ impl TestFramework {
 
     /// Stop bitcoind and clean up all test data.
     pub fn stop(&self) {
-        log::info!("Stopping Test Framework");
+        log::info!("🛑 Stopping Test Framework");
         // stop all framework threads.
         self.shutdown.store(true, Relaxed);
         // stop bitcoind
