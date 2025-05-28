@@ -186,11 +186,8 @@ fn test_fidelity() {
 
         if current_height < required_height {
             log::info!(
-                "⏳ Waiting for bond maturity. Current height: {}, required height: {}",
-                current_height,
-                required_height
+                "⏳ Waiting for bond maturity. Current height: {current_height}, required height: {required_height}",
             );
-
             thread::sleep(Duration::from_secs(10));
         } else {
             let mut wallet_write = maker.get_wallet().write().unwrap();
