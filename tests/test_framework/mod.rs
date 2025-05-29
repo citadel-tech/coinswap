@@ -365,7 +365,7 @@ pub fn fund_and_verify_taker(
     );
 
     log::info!(
-        "Taker funding verification complete | Found {} new UTXOs of value {} each | Total Spendable Balance: {}",
+        "✅ Taker funding verification complete | Found {} new UTXOs of value {} each | Total Spendable Balance: {}",
         utxo_count,
         utxo_value,
         balances.spendable
@@ -414,6 +414,8 @@ pub fn fund_and_verify_maker(
         assert_eq!(balances.swap, Amount::ZERO);
         assert_eq!(balances.contract, Amount::ZERO);
     });
+
+    log::info!("✅ Maker funding verification complete");
 }
 
 /// Verifies the results of a coinswap for the taker and makers after performing a swap.
@@ -510,6 +512,8 @@ pub fn verify_swap_results(
                 "Maker spendable balance change mismatch"
             );
         });
+
+    log::info!("✅ Swap results verification complete");
 }
 
 /// The Test Framework.
@@ -639,6 +643,8 @@ impl TestFramework {
             // tf_clone.generate_blocks(10);
             generate_blocks(&tf_clone.bitcoind, 10);
         });
+
+        log::info!("✅ Test Framework initialization complete");
 
         (
             test_framework,
