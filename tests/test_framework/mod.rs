@@ -291,9 +291,16 @@ pub fn fund_and_verify_taker(
 ) -> Amount {
     log::info!("💰 Funding Takers...");
 
+    // Get initial state before funding
+    let wallet = taker.get_wallet_mut();
+    wallet.sync_no_fail();
+    let initial_utxos = wallet.get_all_utxo().unwrap();
+    let initial_utxo_count = initial_utxos.len();
+    let initial_external_index = *wallet.get_external_index();
+
     // Fund the Taker with 3 utxos of 0.05 btc each.
     for _ in 0..utxo_count {
-        let taker_address = taker.get_wallet_mut().get_next_external_address().unwrap();
+        let taker_address = wallet.get_next_external_address().unwrap();
         send_to_address(bitcoind, &taker_address, utxo_value);
     }
 
@@ -302,23 +309,67 @@ pub fn fund_and_verify_taker(
 
     //------Basic Checks-----
 
-    let wallet = taker.get_wallet_mut();
     // Assert external address index reached to 3.
-    assert_eq!(wallet.get_external_index(), &utxo_count);
+    assert_eq!(
+        wallet.get_external_index(),
+        &(initial_external_index + utxo_count),
+        "Expected external address index at {}, but found at {}",
+        initial_external_index + utxo_count,
+        wallet.get_external_index()
+    );
 
-    let _ = wallet.sync();
+    wallet.sync_no_fail();
 
     // Check if utxo list looks good.
-    // TODO: Assert other interesting things from the utxo list.
-    // Assert utxo.len()
-    // assert utxos.value = utxo_value for each utxos.
+    let utxos = wallet.get_all_utxo().unwrap();
+
+    // Assert UTXO count
+    assert_eq!(
+        utxos.len(),
+        initial_utxo_count + utxo_count as usize,
+        "Expected {} UTXOs, but found {}",
+        initial_utxo_count + utxo_count as usize,
+        utxos.len()
+    );
+
+    // Assert each UTXO value
+    for (i, utxo) in utxos.iter().skip(initial_utxo_count).enumerate() {
+        assert_eq!(
+            utxo.amount, utxo_value,
+            "New UTXO at index {} has amount {} but expected {}",
+            i, utxo.amount, utxo_value
+        );
+    }
+
+    // Calculate expected total balance, previously was 0.05*3 = 0.15 btc
+    let expected_total = utxo_value * u64::from(utxo_count);
 
     let balances = wallet.get_balances().unwrap();
 
-    assert_eq!(balances.regular, Amount::from_btc(0.15).unwrap());
+    // Assert total balance matches expected
+    assert_eq!(
+        balances.regular, expected_total,
+        "Expected regular balance {} but got {}",
+        expected_total, balances.regular
+    );
+
     assert_eq!(balances.fidelity, Amount::ZERO);
     assert_eq!(balances.swap, Amount::ZERO);
     assert_eq!(balances.contract, Amount::ZERO);
+
+    // Assert spendable balance equals regular balance, since no fidelity/swap/contract
+    assert_eq!(
+        balances.spendable, balances.regular,
+        "Spendable and Regular balance missmatch | Spendable balance {} | Regular balance {}",
+        balances.spendable, balances.regular
+    );
+
+    log::info!(
+        "✅ Taker funding verification complete | Found {} new UTXOs of value {} each | Total Spendable Balance: {}",
+        utxo_count,
+        utxo_value,
+        balances.spendable
+    );
 
     balances.spendable
 }
@@ -363,6 +414,8 @@ pub fn fund_and_verify_maker(
         assert_eq!(balances.swap, Amount::ZERO);
         assert_eq!(balances.contract, Amount::ZERO);
     });
+
+    log::info!("✅ Maker funding verification complete");
 }
 
 /// Verifies the results of a coinswap for the taker and makers after performing a swap.
@@ -452,13 +505,15 @@ pub fn verify_swap_results(
                     || balance_diff == Amount::from_sat(21858) // Second maker fee
                     || balance_diff == Amount::ZERO // No spending
                     || balance_diff == Amount::from_sat(6768) // Recovery via timelock
-                    || balance_diff == Amount::from_sat(466500) // TODO: Investigate where the data is coming from
-                    || balance_diff == Amount::from_sat(441642) // TODO: Investigate where the data is coming from
+                    || balance_diff == Amount::from_sat(466500) // Taker abort after setup - first maker recovery cost (abort1 test case)
+                    || balance_diff == Amount::from_sat(441642) // Taker abort after setup - second maker recovery cost (abort1 test case)
                     || balance_diff == Amount::from_sat(408142) // Multi-taker first maker
                     || balance_diff == Amount::from_sat(444642), // Multi-taker second maker
                 "Maker spendable balance change mismatch"
             );
         });
+
+    log::info!("✅ Swap results verification complete");
 }
 
 /// The Test Framework.
@@ -588,6 +643,8 @@ impl TestFramework {
             // tf_clone.generate_blocks(10);
             generate_blocks(&tf_clone.bitcoind, 10);
         });
+
+        log::info!("✅ Test Framework initialization complete");
 
         (
             test_framework,
