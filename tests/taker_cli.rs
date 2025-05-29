@@ -6,6 +6,9 @@ use serde_json::Value;
 use std::{fs, path::PathBuf, process::Command, str::FromStr};
 mod test_framework;
 use test_framework::{generate_blocks, init_bitcoind, send_to_address};
+
+use log::info;
+
 /// The taker-cli command struct
 struct TakerCli {
     data_dir: PathBuf,
@@ -78,9 +81,14 @@ impl TakerCli {
 
 #[test]
 fn test_taker_cli() {
+    info!("🧪 Running Test: Taker CLI functionality and wallet operations");
+
     let taker_cli = TakerCli::new();
+    info!("🚀 TakerCli initialized successfully");
 
     let bitcoind = &taker_cli.bitcoind;
+
+    info!("💰 Funding taker with 3 UTXOs of 1 BTC each");
     // Fund the taker with 3 utxos of 1 BTC each.
     for _ in 0..3 {
         let taker_address = taker_cli.execute(&["get-new-address"]);
@@ -94,6 +102,7 @@ fn test_taker_cli() {
     // confirm balance
     generate_blocks(bitcoind, 10);
 
+    info!("📊 Verifying initial balance - expecting 3 BTC");
     // Assert that total_balance & seed_balance must be 3 BTC
     let balances = taker_cli.execute(&["get-balances"]);
     let balances = serde_json::from_str::<Value>(&balances).unwrap();
@@ -103,12 +112,15 @@ fn test_taker_cli() {
     assert_eq!("0", balances["contract"].to_string());
     assert_eq!("300000000", balances["spendable"].to_string());
 
+    info!("🔍 Checking UTXO count - expecting 3 UTXOs");
     // Assert that total no of seed-utxos are 3.
     let all_utxos = taker_cli.execute(&["list-utxo"]);
 
     let no_of_seed_utxos = all_utxos.matches("addr").count();
     assert_eq!(3, no_of_seed_utxos);
+    info!("✅ Initial setup verification successful");
 
+    info!("💸 Testing internal transfer - 100,000 sats with 1,000 sats fee");
     // Send 100,000 sats to a new address within the wallet, with a fee of 1,000 sats.
 
     // get new external address
@@ -126,6 +138,7 @@ fn test_taker_cli() {
 
     generate_blocks(bitcoind, 10);
 
+    info!("📊 Verifying balance after transfer - expecting only fee deduction");
     // Assert the total_amount & seed_amount must be initial (balance -fee)
     let balances = taker_cli.execute(&["get-balances"]);
     let balances = serde_json::from_str::<Value>(&balances).unwrap();
@@ -136,14 +149,19 @@ fn test_taker_cli() {
     assert_eq!("0", balances["contract"].to_string());
     assert_eq!("299999000", balances["spendable"].to_string());
 
-    // Assert that no of seed utxos are 2
+    info!("🔍 Checking final UTXO count - expecting 4 UTXOs");
+    // Assert that no of seed utxos are 4
     let all_utxos = taker_cli.execute(&["list-utxo"]);
 
     let no_of_seed_utxos = all_utxos.matches("addr").count();
     assert_eq!(4, no_of_seed_utxos);
+    info!("✅ Transfer verification successful");
 
+    info!("🔧 Shutting down bitcoind");
     bitcoind.client.stop().unwrap();
 
-    // Wait for some time for successfull shutdown of bitcoind.
+    // Wait for some time for successful shutdown of bitcoind.
     std::thread::sleep(std::time::Duration::from_secs(3));
+
+    info!("🎉 Taker CLI test completed successfully!");
 }
