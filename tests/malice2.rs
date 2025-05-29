@@ -9,6 +9,7 @@ use std::sync::Arc;
 mod test_framework;
 use test_framework::*;
 
+use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// Malice 2: Maker Broadcasts contract transactions prematurely.
@@ -37,6 +38,9 @@ fn malice2_maker_broadcast_contract_prematurely() {
             ConnectionType::CLEARNET,
         );
 
+    warn!("🧪 Running Test: Malice 2 - Maker broadcasts contract transactions prematurely");
+
+    info!("💰 Funding taker and makers");
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
     let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
@@ -56,7 +60,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
     );
 
     //  Start the Maker Server threads
-    log::info!("Initiating Maker...");
+    info!("🚀 Initiating Maker servers");
 
     let maker_threads = makers
         .iter()
@@ -73,7 +77,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                log::info!("Waiting for maker setup completion");
+                info!("⏳ Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -94,7 +98,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
         .collect::<Vec<_>>();
 
     // Initiate Coinswap
-    log::info!("Initiating coinswap protocol");
+    info!("🔄 Initiating coinswap protocol");
 
     // Swap params for coinswap.
     let swap_params = SwapParams {
@@ -114,7 +118,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    log::info!("All coinswaps processed successfully. Transaction complete.");
+    info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
     // Shutdown Directory Server
     directory_server_instance.shutdown.store(true, Relaxed);
@@ -180,6 +184,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
     // | **Maker16102** | 3,000                              | 768                 | 3,000              | 6,768                      |
     // | **Maker6102**  | 3,000                              | 768                 | 3,000              | 6,768                      |
 
+    info!("📊 Verifying malicious scenario recovery results");
     // After Swap checks:
     verify_swap_results(
         taker,
@@ -188,7 +193,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
         org_maker_spend_balances,
     );
 
-    log::info!("All checks successful. Terminating integration test case");
+    info!("🎉 All checks successful. Terminating integration test case");
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

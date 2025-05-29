@@ -4,6 +4,7 @@ use std::{io::Write, net::TcpStream, process::Command, thread, time::Duration};
 mod test_framework;
 
 use coinswap::protocol::DnsRequest;
+use log::info;
 use test_framework::{init_bitcoind, start_dns};
 
 fn send_addresses(addresses: &[(&str, u32)]) {
@@ -36,7 +37,6 @@ fn verify_addresses(addresses: &[(&str, u32)]) {
         String::from_utf8(output.stderr).unwrap()
     );
 
-    // TODO add more through script checking
     for (address, index) in addresses {
         assert_eq!(
             addresses_output.match_indices(&address.to_string()).count(),
@@ -55,6 +55,8 @@ fn verify_addresses(addresses: &[(&str, u32)]) {
 
 #[test]
 fn test_dns() {
+    info!("🧪 Running Test: DNS server address registration and management");
+
     // Setup directory
     let temp_dir = std::env::temp_dir().join("coinswap");
     // Remove if previously existing
@@ -67,8 +69,10 @@ fn test_dns() {
 
     let data_dir = temp_dir.join("dns");
 
+    info!("🚀 Starting DNS server");
     let mut process = start_dns(&data_dir, &bitcoind);
 
+    info!("📤 Sending initial addresses to DNS server");
     // The indexes denotes vout of an `OutPoint(deadbeefcafebabefeedc0ffee123456789abcdeffedcba9876543210ffeeddcc:vout)``
     // So using the same index for different address, will replace the address.
     let initial_addresses = vec![
@@ -78,14 +82,18 @@ fn test_dns() {
     ];
     send_addresses(&initial_addresses);
     thread::sleep(Duration::from_secs(10));
+
+    info!("🔍 Verifying initial address registration");
     verify_addresses(&initial_addresses);
 
+    info!("🔄 Testing address replacement and new registration");
     // Replace address 8082 to 8083 registered for Bond index 2.
     // Add a new entry with a new bond index
     let additional_addresses = vec![("127.0.0.1:8083", 2), ("127.0.0.1:8084", 3)];
     send_addresses(&additional_addresses);
     thread::sleep(Duration::from_secs(10));
 
+    info!("📊 Verifying updated address list");
     let all_addresses = vec![
         ("127.0.0.1:8080", 0),
         ("127.0.0.1:8081", 1),
@@ -94,7 +102,10 @@ fn test_dns() {
     ];
     verify_addresses(&all_addresses);
 
+    info!("🔧 Testing DNS server shutdown");
     // Persistence check
     process.kill().expect("Failed to kill directoryd process");
     process.wait().unwrap();
+
+    info!("🎉 DNS test completed successfully");
 }
