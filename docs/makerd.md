@@ -43,7 +43,6 @@ amount_relative_fee_pct = 0.1,
 - `directory_server_address`: The Tor address of the DNS Server. This value is set to a fixed default for now.
 - `base_fee`: A fixed fee charged by the Maker for providing its services (in satoshis).
 - `amount_relative_fee_pct`: A percentage fee based on the swap amount.
-- `time_relative_fee_pct`: A percentage fee based on the refund locktime (duration the Maker must wait for a refund).
 
 
 

@@ -175,6 +175,10 @@ fidelity_timelock = {}
 connection_type = {:?}
 # DNS Tor address. Change this to connect to a different DNS server 
 dns_address = {}
+# A fixed base fee charged by the Maker for providing its services (in satoshis)
+base_fee = {}
+# A percentage fee based on the swap amount
+amount_relative_fee_pct = {}
 ",
             self.network_port,
             self.rpc_port,
@@ -186,6 +190,8 @@ dns_address = {}
             self.fidelity_timelock,
             self.connection_type,
             self.dns_address,
+            self.base_fee,
+            self.amount_relative_fee_pct,
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
