@@ -16,9 +16,9 @@ use std::{
 use test_framework::*;
 
 /// Abort 1: TAKER Drops After Full Setup.
-/// This test demonstrates the situation where the Taker drops connection after broadcasting all the
-/// funding transactions. The Makers identifies this and waits for a timeout (5mins in prod, 30 secs in test)
-/// for the Taker to come back. If the Taker doesn't come back within timeout, the Makers broadcasts the contract
+/// This test demonstrates the situation where the Taker drops the connection after broadcasting all the
+/// funding transactions. The Makers identify this and wait for a timeout (5mins in prod, 30 secs in test)
+/// for the Taker to come back. If the Taker doesn't come back within timeout, the Makers broadcast the contract
 /// transactions and reclaims their funds via timelock.
 ///
 /// The Taker after coming live again will see unfinished coinswaps in his wallet. He can reclaim his funds via
@@ -33,20 +33,24 @@ fn test_stop_taker_after_setup() {
         ((16102, None), MakerBehavior::Normal),
     ];
 
+    let taker_behavior = vec![TakerBehavior::DropConnectionAfterFullSetup];
+
     // Initiate test framework, Makers.
     // Taker has a special behavior DropConnectionAfterFullSetup.
-    let (test_framework, mut taker, makers, directory_server_instance, block_generation_handle) =
+    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            TakerBehavior::DropConnectionAfterFullSetup,
+            taker_behavior,
             ConnectionType::CLEARNET,
         );
 
-    warn!("Running Test: Taker Cheats on Everybody.");
+    warn!("🧪 Running Test: Taker cheats on everybody");
+    let taker = &mut takers[0];
 
+    info!("💰 Funding taker and makers");
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
     let org_taker_spend_balance = fund_and_verify_taker(
-        &mut taker,
+        taker,
         &test_framework.bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
@@ -62,7 +66,7 @@ fn test_stop_taker_after_setup() {
     );
 
     //  Start the Maker Server threads
-    log::info!("Initiating Maker...");
+    info!("🚀 Initiating Maker servers");
 
     let maker_threads = makers
         .iter()
@@ -79,7 +83,7 @@ fn test_stop_taker_after_setup() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                log::info!("Waiting for maker setup completion");
+                info!("⏳ Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -100,7 +104,7 @@ fn test_stop_taker_after_setup() {
         .collect::<Vec<_>>();
 
     // Initiate Coinswap
-    log::info!("Initiating coinswap protocol");
+    info!("🔄 Initiating coinswap protocol");
 
     // Swap params for coinswap.
     let swap_params = SwapParams {
@@ -110,17 +114,17 @@ fn test_stop_taker_after_setup() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     maker_threads
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    log::info!("All coinswaps processed successfully. Transaction complete.");
+    info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
     // Shutdown Directory Server
     directory_server_instance.shutdown.store(true, Relaxed);
@@ -139,8 +143,7 @@ fn test_stop_taker_after_setup() {
     ///////////////
 
     //Run Recovery script
-    // TODO: do something about this?
-    warn!("Starting Taker recovery process");
+    warn!("🔧 Starting Taker recovery process");
     taker.recover_from_swap().unwrap();
 
     // ## Fee Tracking and Workflow:
@@ -171,13 +174,16 @@ fn test_stop_taker_after_setup() {
     // | Maker6102        | 3,000                              | 768                 | 3,000             | 6,768                      |
     // +------------------+------------------------------------+---------------------+--------------------+----------------------------+
     //
+
+    info!("📊 Verifying swap results after taker recovery");
     verify_swap_results(
-        &taker,
+        taker,
         &makers,
         org_taker_spend_balance,
         org_maker_spend_balances,
     );
-    info!("All checks successful. Terminating integration test case");
+
+    info!("🎉 All checks successful. Terminating integration test case");
 
     test_framework.stop();
 

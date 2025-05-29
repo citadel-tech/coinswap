@@ -8,7 +8,6 @@
 use std::{
     convert::TryFrom,
     fmt,
-    fs::read,
     io::BufWriter,
     net::TcpStream,
     path::Path,
@@ -16,6 +15,7 @@ use std::{
     thread::{self, Builder},
 };
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use socks::Socks5Stream;
@@ -32,11 +32,9 @@ use super::{config::TakerConfig, error::TakerError, routines::download_maker_off
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OfferAndAddress {
     pub(crate) offer: Offer,
-    /// All maker addresses
     pub address: MakerAddress,
+    pub timestamp: DateTime<Utc>,
 }
-
-const _REGTEST_MAKER_ADDRESSES_PORT: &[&str] = &["6102", "16102", "26102", "36102", "46102"];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct OnionAddress {
@@ -79,8 +77,7 @@ impl TryFrom<&mut TcpStream> for MakerAddress {
 }
 
 /// An ephemeral Offerbook tracking good and bad makers. Currently, Offerbook is initiated
-/// at start of every swap. So good and bad maker list will ot be persisted.
-// TODO: Persist the offerbook in disk.
+/// at the start of every swap. So good and bad maker list will not be persisted.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct OfferBook {
     pub(super) all_makers: Vec<OfferAndAddress>,
@@ -88,12 +85,6 @@ pub struct OfferBook {
 }
 
 impl OfferBook {
-    // TODO: design a better offerbook:
-    // - unique key.
-    // - clear good-bad separations.
-    // - ranking system.
-    // - various categories of livelynesss, to smartly distribute try counts.
-
     /// Gets all "not-bad" offers.
     pub fn all_good_makers(&self) -> Vec<&OfferAndAddress> {
         self.all_makers
@@ -101,19 +92,34 @@ impl OfferBook {
             .filter(|offer| !self.bad_makers.contains(offer))
             .collect()
     }
-    ///Gets all offers.
+    /// Gets all offers.
     pub fn all_makers(&self) -> Vec<&OfferAndAddress> {
         self.all_makers.iter().collect()
     }
 
     /// Adds a new offer to the offer book.
-    pub(crate) fn add_new_offer(&mut self, offer: &OfferAndAddress) -> bool {
-        if !self.all_makers.contains(offer) {
-            self.all_makers.push(offer.clone());
+    pub fn add_new_offer(&mut self, offer: &OfferAndAddress) -> bool {
+        let timestamped = OfferAndAddress {
+            offer: offer.offer.clone(),
+            address: offer.address.clone(),
+            timestamp: Utc::now(),
+        };
+        if !self.all_makers.iter().any(|to| to.offer == offer.offer) {
+            self.all_makers.push(timestamped);
             true
         } else {
             false
         }
+    }
+
+    /// Gets the list of addresses which were last update less than 30 minutes ago.
+    /// We exclude these addresses from the next round of downloading offers.
+    pub fn get_fresh_addrs(&self) -> Vec<&OfferAndAddress> {
+        let now = Utc::now();
+        self.all_makers
+            .iter()
+            .filter(|to| (now - to.timestamp).num_minutes() < 30)
+            .collect()
     }
 
     /// Adds a bad maker to the offer book.
@@ -133,25 +139,26 @@ impl OfferBook {
 
     /// Load existing file, updates it, writes it back (errors if path doesn't exist).
     pub fn write_to_disk(&self, path: &Path) -> Result<(), TakerError> {
-        let wallet_file = std::fs::OpenOptions::new().write(true).open(path)?;
-        let writer = BufWriter::new(wallet_file);
-        Ok(serde_cbor::to_writer(writer, &self)?)
+        let offerdata_file = std::fs::OpenOptions::new().write(true).open(path)?;
+        let writer = BufWriter::new(offerdata_file);
+        Ok(serde_json::to_writer_pretty(writer, &self)?)
     }
 
     /// Reads from a path (errors if path doesn't exist).
     pub fn read_from_disk(path: &Path) -> Result<Self, TakerError> {
         //let wallet_file = File::open(path)?;
-        let mut reader = read(path)?;
-        let book = match serde_cbor::from_slice::<Self>(&reader) {
+        let mut reader = std::fs::read_to_string(path)?;
+        let book = match serde_json::from_str(&reader) {
             Ok(book) => book,
             Err(e) => {
-                let err_string = format!("{:?}", e);
+                let err_string = format!("{e:?}");
+                // TODO: Investigate why files end up with trailing data.
+                // Check if this still happens for json file.
                 if err_string.contains("code: TrailingData") {
-                    log::info!("Offerbook has trailing data, trying to restore");
+                    // loop until all trailing bytes are removed.
                     loop {
-                        // pop the last byte and try again.
                         reader.pop();
-                        match serde_cbor::from_slice::<Self>(&reader) {
+                        match serde_json::from_slice::<Self>(reader.as_bytes()) {
                             Ok(book) => break book,
                             Err(_) => continue,
                         }
@@ -178,7 +185,7 @@ pub(crate) fn fetch_offer_from_makers(
         let offers_writer = offers_writer.clone();
         let taker_config = config.clone();
         let thread = Builder::new()
-            .name(format!("maker_offer_fetch_thread_{}", addr))
+            .name(format!("maker_offer_fetch_thread_{addr}"))
             .spawn(move || -> Result<(), TakerError> {
                 let offer = download_maker_offer(addr, taker_config);
                 Ok(offers_writer.send(offer)?)
@@ -197,7 +204,7 @@ pub(crate) fn fetch_offer_from_makers(
         let join_result = thread.join();
 
         if let Err(e) = join_result {
-            log::error!("Error while joining thread: {:?}", e);
+            log::error!("Error while joining thread: {e:?}");
         }
     }
     Ok(result)
@@ -214,7 +221,7 @@ pub fn fetch_addresses_from_dns(
         let mut stream = match connection_type {
             ConnectionType::CLEARNET => match TcpStream::connect(dns_addr.as_str()) {
                 Err(e) => {
-                    log::error!("Error connecting to DNS: {:?}", e);
+                    log::error!("Error connecting to DNS: {e:?}");
                     thread::sleep(GLOBAL_PAUSE);
                     continue;
                 }
@@ -224,7 +231,7 @@ pub fn fetch_addresses_from_dns(
                 let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
                 match Socks5Stream::connect(socket_addrs, dns_addr.as_str()) {
                     Err(e) => {
-                        log::error!("Error connecting to DNS: {:?}", e);
+                        log::error!("Error connecting to DNS: {e:?}");
                         thread::sleep(GLOBAL_PAUSE);
                         continue;
                     }
@@ -238,7 +245,7 @@ pub fn fetch_addresses_from_dns(
         stream.set_nonblocking(false)?;
 
         if let Err(e) = send_message(&mut stream, &DnsRequest::Get) {
-            log::error!("Failed to send request. Retrying...{}", e);
+            log::error!("Failed to send request. Retrying...{e}");
             thread::sleep(GLOBAL_PAUSE);
             continue;
         }
@@ -247,7 +254,7 @@ pub fn fetch_addresses_from_dns(
         let response: String = match read_message(&mut stream) {
             Ok(resp) => serde_cbor::de::from_slice(&resp[..])?,
             Err(e) => {
-                log::error!("Error reading DNS response: {}. Retrying...", e);
+                log::error!("Error reading DNS response: {e}. Retrying...");
                 thread::sleep(GLOBAL_PAUSE);
                 continue;
             }
@@ -263,7 +270,7 @@ pub fn fetch_addresses_from_dns(
                 return Ok(addresses);
             }
             Err(e) => {
-                log::error!("Error decoding DNS response: {:?}. Retrying...", e);
+                log::error!("Error decoding DNS response: {e:?}. Retrying...");
                 thread::sleep(GLOBAL_PAUSE);
                 continue;
             }

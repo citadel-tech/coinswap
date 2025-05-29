@@ -1,7 +1,7 @@
 //! A simple directory-server
 //!
 //! Handles market-related logic where Makers post their offers. Also provides functions to synchronize
-//! maker addresses from directory servers, post maker addresses to directory servers,
+//! maker addresses from directory servers, post maker addresses to directory servers.
 
 use bitcoin::{transaction::ParseOutPointError, OutPoint};
 use bitcoind::bitcoincore_rpc::{self, Client, RpcApi};
@@ -161,11 +161,11 @@ impl Default for DirectoryServer {
 }
 
 impl DirectoryServer {
-    /// Constructs a [DirectoryServer] from a specified data directory. Or create default configs and load them.
+    /// Constructs a [DirectoryServer] from a specified data directory. Or creates default configs and load them.
     ///
     /// The directory.toml file should exist at the provided data-dir location.
-    /// Or else, a new default-config will be loaded and created at given data-dir location.
-    /// If no data-dir is provided, a default config will be created at default data-dir location.
+    /// Or else, a new default-config will be loaded and created at the given data-dir location.
+    /// If no data-dir is provided, a default config will be created at the default data-dir location.
     ///
     /// For reference of default config checkout `./directory.toml` in repo folder.
     ///
@@ -197,9 +197,9 @@ impl DirectoryServer {
 
         // Update the connection type in config if given.
         if let Some(conn_type) = connection_type {
-            // update the config map
+            // Update the config map
             let value = config_map.get_mut("connection_type").expect("must exist");
-            let conn_type_string = format!("{:?}", conn_type);
+            let conn_type_string = format!("{conn_type:?}");
             *value = conn_type_string;
 
             // Update the file on disk
@@ -208,7 +208,7 @@ impl DirectoryServer {
 
             for (i, (key, value)) in config_map.iter().enumerate() {
                 // Format each line, adding a newline for all except the last one
-                content.push_str(&format!("{} = {}", key, value));
+                content.push_str(&format!("{key} = {value}"));
                 if i < config_map.len() - 1 {
                     content.push('\n');
                 }
@@ -256,7 +256,7 @@ impl DirectoryServer {
                 .iter()
                 .find_map(|(k, v)| if v.0 == metadata.0 { Some(*k) } else { None })
         {
-            // Update the fielity for the existing address
+            // Update the fidelity for the existing address
             if existing_key != metadata.1 {
                 log::info!(
                     "Fidelity update detected for address: {} | Old fidelity {} | New fidelity {}",
@@ -340,10 +340,7 @@ pub(crate) fn start_address_writer_thread(
             .map(|(outpoint, _)| *outpoint)
             .collect();
         for outpoint in &expired_outpoints {
-            log::info!(
-                "No update for 30 mins from maker with fidelity : {}",
-                outpoint
-            );
+            log::info!("No update for 30 mins from maker with fidelity : {outpoint}");
             directory_address_book.remove(outpoint);
             log::info!("Maker entry removed");
         }
@@ -370,7 +367,7 @@ pub fn start_directory_server(
 
     // Stop early if bitcoin core connection is wrong
     if let Err(e) = rpc_client.get_blockchain_info() {
-        log::error!("Cannot connect to bitcoin node {:?}", e);
+        log::error!("Cannot connect to bitcoin node {e:?}");
         return Err(e.into());
     } else {
         log::info!("Bitcoin core connection successful");
@@ -382,12 +379,12 @@ pub fn start_directory_server(
             let network_port = directory.network_port;
             log::info!("tor is ready!!");
             let hostname = get_tor_hostname(
-                directory.data_dir.clone(),
+                &directory.data_dir,
                 directory.control_port,
                 directory.network_port,
                 &directory.tor_auth_password,
             )?;
-            log::info!("DNS is listening at {}:{}", hostname, network_port);
+            log::info!("DNS is listening at {hostname}:{network_port}");
         }
     }
 
@@ -412,13 +409,13 @@ pub fn start_directory_server(
                 stream.set_read_timeout(Some(Duration::from_secs(60)))?;
                 stream.set_write_timeout(Some(Duration::from_secs(60)))?;
                 if let Err(e) = handle_client(&mut stream, &directory, &rpc_client) {
-                    log::error!("Error accepting incoming connection: {:?}", e);
+                    log::error!("Error accepting incoming connection: {e:?}");
                 }
             }
 
             // If no connection received, check for shutdown or save addresses to disk
             Err(e) => {
-                log::error!("Error accepting incoming connection: {:?}", e);
+                log::error!("Error accepting incoming connection: {e:?}");
             }
         }
 
@@ -427,12 +424,12 @@ pub fn start_directory_server(
 
     log::info!("Shutdown signal received. Stopping directory server.");
 
-    // Its okay to suppress the error here as we are shuting down anyway.
+    // It's okay to suppress the error here as we are shutting down anyway.
     if let Err(e) = rpc_thread.join() {
-        log::error!("Error closing RPC Thread: {:?}", e);
+        log::error!("Error closing RPC Thread: {e:?}");
     }
     if let Err(e) = address_writer_thread.join() {
-        log::error!("Error closing Address Writer Thread : {:?}", e);
+        log::error!("Error closing Address Writer Thread : {e:?}");
     }
 
     Ok(())
@@ -448,10 +445,13 @@ fn handle_client(
     let dns_request: DnsRequest = serde_cbor::de::from_reader(&buf[..])?;
     match dns_request {
         DnsRequest::Post { metadata } => {
-            log::info!("Received POST | From {}", &metadata.url);
-
-            let txid = metadata.proof.bond.outpoint.txid;
-            let transaction = rpc.get_raw_transaction(&txid, None)?;
+            let fidelity_op = metadata.proof.bond.outpoint;
+            log::info!(
+                "Received POST | Maker {} | Outpoint {}",
+                &metadata.url,
+                fidelity_op
+            );
+            let transaction = rpc.get_raw_transaction(&fidelity_op.txid, None)?;
             let current_height = rpc.get_block_count()?;
 
             match verify_fidelity_checks(
@@ -477,10 +477,7 @@ fn handle_client(
                             log::warn!("Maker posting request failed from {}", metadata.url);
                             send_message(
                                 stream,
-                                &DnsResponse::Nack(format!(
-                                    "Maker posting request failed: {:?}",
-                                    e
-                                )),
+                                &DnsResponse::Nack(format!("Maker posting request failed: {e:?}")),
                             )?;
                         }
                     }
@@ -493,7 +490,7 @@ fn handle_client(
                     );
                     send_message(
                         stream,
-                        &DnsResponse::Nack(format!("Fidelity verification failed {:?}", e)),
+                        &DnsResponse::Nack(format!("Fidelity verification failed {e:?}")),
                     )?;
                 }
             }
@@ -508,7 +505,7 @@ fn handle_client(
                 .filter(|(_, (_, timestamp))| timestamp.elapsed() <= Duration::from_secs(30 * 60))
                 .fold(String::new(), |acc, (_, addr)| acc + &addr.0 + "\n");
 
-            log::debug!("Sending Addresses: {}", response);
+            log::debug!("Sending Addresses: {response}");
             send_message(stream, &response)?;
         }
         #[cfg(feature = "integration-test")]
@@ -518,7 +515,7 @@ fn handle_client(
             log::info!("Got new maker address: {}", &url);
 
             // Create a constant txid for tests
-            // Its okay to unwrap as this is test-only
+            // It's okay to unwrap as this is test-only
             let txid = bitcoin::Txid::from_str(
                 "c3a04e4bdf3c8684c5cf5c8b2f3c43009670bc194ac6c856b3ec9d3a7a6e2602",
             )

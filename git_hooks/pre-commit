@@ -7,16 +7,28 @@ cargo fmt --all -- --check
 
 # Check Clippy lints
 echo "Checking code quality with Clippy..."
-if ! cargo clippy --all-targets -- -D warnings; then
+if ! cargo clippy --all-targets --all-features -- -D warnings; then
     echo "Clippy issues detected."
     echo "Please fix the Clippy issues before committing."
     exit 1 
 fi
-
+# Check if cargo-hack is installed
+if ! command -v cargo-hack >/dev/null 2>&1; then
+    echo "cargo-hack is not installed. Installing..."
+    cargo install cargo-hack
+fi
 # Check for feature combinations
 echo "Checking feature combinations with cargo-hack..."
 if ! cargo hack --feature-powerset check; then
     echo "Feature combination issues detected"
+    echo "Please fix the issues before committing."
+    exit 1
+fi
+
+# Check for documentations
+echo "Checking doc nits..."
+if ! RUSTDOCFLAGS="-D warnings" cargo +nightly doc --all-features --document-private-items --no-deps; then
+    echo "Documentation issues detected"
     echo "Please fix the issues before committing."
     exit 1
 fi

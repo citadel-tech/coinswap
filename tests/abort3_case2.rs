@@ -16,33 +16,37 @@ use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 /// ABORT 3: Maker Drops After Setup
 /// Case 2: CloseAtContractSigsForRecvr
 ///
-/// Maker closes connection after sending a `ContractSigsForRecvr`. Funding txs are already broadcasted.
-/// The Maker will loose contract txs fees in that case, so it's not a malice.
+/// Maker closes the connection after sending a `ContractSigsForRecvr`. Funding txs are already broadcasted.
+/// The Maker will lose contract txs fees in that case, so it's not malice.
 /// Taker waits for the response until timeout. Aborts if the Maker doesn't show up.
 #[test]
 fn abort3_case2_close_at_contract_sigs_for_recvr() {
     // ---- Setup ----
 
     // 6102 is naughty. And theres not enough makers.
+    let naughty = 6102;
     let makers_config_map = [
-        ((6102, None), MakerBehavior::CloseAtContractSigsForRecvr),
+        ((naughty, None), MakerBehavior::CloseAtContractSigsForRecvr),
         ((16102, None), MakerBehavior::Normal),
     ];
 
+    let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut taker, makers, directory_server_instance, block_generation_handle) =
+    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            TakerBehavior::Normal,
+            taker_behavior,
             ConnectionType::CLEARNET,
         );
 
-    warn!("Running Test: Maker closes connection after sending a ContractSigsForRecvr");
+    warn!("🧪 Running Test: Maker closes connection after sending a ContractSigsForRecvr");
 
+    info!("💰 Funding taker and makers");
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
+    let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
-        &mut taker,
+        taker,
         &test_framework.bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
@@ -58,7 +62,7 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
     );
 
     //  Start the Maker Server threads
-    info!("Initiating Maker...");
+    info!("🚀 Initiating Maker servers");
 
     let maker_threads = makers
         .iter()
@@ -75,7 +79,7 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                info!("Waiting for maker setup completion");
+                info!("⏳ Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -96,7 +100,7 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
         .collect::<Vec<_>>();
 
     // Initiate Coinswap
-    info!("Initiating coinswap protocol");
+    info!("🔄 Initiating coinswap protocol");
 
     // Swap params for coinswap.
     let swap_params = SwapParams {
@@ -106,7 +110,7 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -115,7 +119,7 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    info!("All coinswaps processed successfully. Transaction complete.");
+    info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
     // Shutdown Directory Server
     directory_server_instance.shutdown.store(true, Relaxed);
@@ -171,21 +175,23 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
     //
     // The Fee balance would look like `standard_swap` IT for this case.
 
+    info!("🚫 Verifying naughty maker gets banned");
     // Maker gets banned for being naughty.
     assert_eq!(
-        format!("127.0.0.1:{}", 6102),
+        format!("127.0.0.1:{naughty}"),
         taker.get_bad_makers()[0].address.to_string()
     );
 
+    info!("📊 Verifying swap results after connection close");
     // After Swap checks:
     verify_swap_results(
-        &taker,
+        taker,
         &makers,
         org_taker_spend_balance,
         org_maker_spend_balances,
     );
 
-    info!("All checks successful. Terminating integration test case");
+    info!("🎉 All checks successful. Terminating integration test case");
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

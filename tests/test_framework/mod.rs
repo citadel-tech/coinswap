@@ -5,12 +5,13 @@
 //! Spawns one Taker and multiple Makers, with/without special behavior, connect them to bitcoind regtest node,
 //! and initializes the database.
 //!
-//! The tests data are stored in the `tests/temp-files` directory, which is auto-removed after each successful test.
-//! Do not invoke [TestFramework::stop] function at the end of the test, to persis this data for debugging.
+//! The tests' data are stored in the `tests/temp-files` directory, which is auto-removed after each successful test.
+//! Do not invoke [TestFramework::stop] function at the end of the test, to persist this data for debugging.
 //!
 //! The test data also includes the backend bitcoind data-directory, which is useful for observing the blockchain states after a swap.
 //!
 //! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
+
 use bitcoin::Amount;
 use std::{
     env,
@@ -68,16 +69,13 @@ fn download_bitcoind_tarball(download_url: &str, retries: usize) -> Vec<u8> {
                 );
             }
             Err(err) => {
-                eprintln!(
-                    "Attempt {}: Failed to fetch URL {}: {:?}",
-                    attempt, download_url, err
-                );
+                eprintln!("Attempt {attempt}: Failed to fetch URL {download_url}: {err:?}");
             }
         }
 
         if attempt < retries {
             let delay = 1u64 << (attempt - 1);
-            eprintln!("Retrying in {} seconds (exponential backoff)...", delay);
+            eprintln!("Retrying in {delay} seconds (exponential backoff)...");
             std::thread::sleep(std::time::Duration::from_secs(delay));
         }
     }
@@ -115,14 +113,11 @@ fn unpack_tarball(tarball_bytes: &[u8], destination: &Path) {
 
 fn get_bitcoind_filename(os: &str, arch: &str) -> String {
     match (os, arch) {
-        ("macos", "aarch64") => format!("bitcoin-{}-arm64-apple-darwin.tar.gz", BITCOIN_VERSION),
-        ("macos", "x86_64") => format!("bitcoin-{}-x86_64-apple-darwin.tar.gz", BITCOIN_VERSION),
-        ("linux", "x86_64") => format!("bitcoin-{}-x86_64-linux-gnu.tar.gz", BITCOIN_VERSION),
-        ("linux", "aarch64") => format!("bitcoin-{}-aarch64-linux-gnu.tar.gz", BITCOIN_VERSION),
-        _ => format!(
-            "bitcoin-{}-x86_64-apple-darwin-unsigned.zip",
-            BITCOIN_VERSION
-        ),
+        ("macos", "aarch64") => format!("bitcoin-{BITCOIN_VERSION}-arm64-apple-darwin.tar.gz"),
+        ("macos", "x86_64") => format!("bitcoin-{BITCOIN_VERSION}-x86_64-apple-darwin.tar.gz"),
+        ("linux", "x86_64") => format!("bitcoin-{BITCOIN_VERSION}-x86_64-linux-gnu.tar.gz"),
+        ("linux", "aarch64") => format!("bitcoin-{BITCOIN_VERSION}-aarch64-linux-gnu.tar.gz"),
+        _ => format!("bitcoin-{BITCOIN_VERSION}-x86_64-apple-darwin-unsigned.zip"),
     }
 }
 
@@ -131,8 +126,11 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
     let mut conf = bitcoind::Conf::default();
     conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
     conf.staticdir = Some(datadir.join(".bitcoin"));
-    log::info!("bitcoind datadir: {:?}", conf.staticdir.as_ref().unwrap());
-    log::info!("bitcoind configuration: {:?}", conf.args);
+    log::info!(
+        "🔗 bitcoind datadir: {:?}",
+        conf.staticdir.as_ref().unwrap()
+    );
+    log::info!("🔧 bitcoind configuration: {:?}", conf.args);
 
     let os = env::consts::OS;
     let arch = env::consts::ARCH;
@@ -140,7 +138,7 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
     let bitcoin_bin_dir = current_dir.join("bin");
     let download_filename = get_bitcoind_filename(os, arch);
     let bitcoin_exe_home = bitcoin_bin_dir
-        .join(format!("bitcoin-{}", BITCOIN_VERSION))
+        .join(format!("bitcoin-{BITCOIN_VERSION}"))
         .join("bin");
 
     if !bitcoin_exe_home.exists() {
@@ -149,7 +147,7 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
             Err(_) => {
                 let download_endpoint = env::var("BITCOIND_DOWNLOAD_ENDPOINT")
                     .unwrap_or_else(|_| "http://172.81.178.3/bitcoin-binaries".to_owned());
-                let url = format!("{}/{}", download_endpoint, download_filename);
+                let url = format!("{download_endpoint}/{download_filename}");
                 download_bitcoind_tarball(&url, 5)
             }
         };
@@ -175,13 +173,13 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
 
     let exe_path = bitcoind::exe_path().unwrap();
 
-    log::info!("Executable path: {:?}", exe_path);
+    log::info!("📁 Executable path: {exe_path:?}");
 
     let bitcoind = BitcoinD::with_conf(exe_path, &conf).unwrap();
 
     // Generate initial 101 blocks
     generate_blocks(&bitcoind, 101);
-    log::info!("bitcoind initiated!!");
+    log::info!("🚀 bitcoind initiated!!");
 
     bitcoind
 }
@@ -213,7 +211,7 @@ pub(crate) fn send_to_address(
         .unwrap()
 }
 
-// Waits until the mpsc::Receiver<String> recieves the expected message.
+// Waits until the mpsc::Receiver<String> receives the expected message.
 pub(crate) fn await_message(rx: &Receiver<String>, expected_message: &str) {
     loop {
         let log_message = rx.recv().expect("Failure from Sender side");
@@ -256,7 +254,7 @@ pub(crate) fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> proc
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
         if let Some(line) = reader.lines().map_while(Result::ok).next() {
-            println!("{}", line);
+            println!("{line}");
             let _ = stderr_sender.send(line);
         }
     });
@@ -266,7 +264,7 @@ pub(crate) fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> proc
         let reader = BufReader::new(stdout);
 
         for line in reader.lines().map_while(Result::ok) {
-            println!("{}", line);
+            println!("{line}");
             if stdout_sender.send(line).is_err() {
                 break;
             }
@@ -279,7 +277,7 @@ pub(crate) fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> proc
     }
 
     await_message(&stdout_recv, "RPC socket binding successful");
-    log::info!("DNS Server Started");
+    log::info!("🌐 DNS Server Started");
 
     directoryd_process
 }
@@ -291,7 +289,7 @@ pub fn fund_and_verify_taker(
     utxo_count: u32,
     utxo_value: Amount,
 ) -> Amount {
-    log::info!("Funding Takers...");
+    log::info!("💰 Funding Takers...");
 
     // Fund the Taker with 3 utxos of 0.05 btc each.
     for _ in 0..utxo_count {
@@ -312,10 +310,11 @@ pub fn fund_and_verify_taker(
 
     // Check if utxo list looks good.
     // TODO: Assert other interesting things from the utxo list.
+    // Assert utxo.len()
+    // assert utxos.value = utxo_value for each utxos.
 
     let balances = wallet.get_balances().unwrap();
 
-    // TODO: Think about this: utxo_count*utxo_amt.
     assert_eq!(balances.regular, Amount::from_btc(0.15).unwrap());
     assert_eq!(balances.fidelity, Amount::ZERO);
     assert_eq!(balances.swap, Amount::ZERO);
@@ -333,7 +332,7 @@ pub fn fund_and_verify_maker(
 ) {
     // Fund the Maker with 4 utxos of 0.05 btc each.
 
-    log::info!("Funding Makers...");
+    log::info!("💰 Funding Makers...");
 
     makers.iter().for_each(|&maker| {
         // let wallet = maker..write().unwrap();
@@ -359,7 +358,6 @@ pub fn fund_and_verify_maker(
 
         let balances = wallet.get_balances().unwrap();
 
-        // TODO: Think about this: utxo_count*utxo_amt.
         assert_eq!(balances.regular, Amount::from_btc(0.20).unwrap());
         assert_eq!(balances.fidelity, Amount::ZERO);
         assert_eq!(balances.swap, Amount::ZERO);
@@ -404,6 +402,7 @@ pub fn verify_swap_results(
         assert!(
             balance_diff == Amount::from_sat(64358) // Successful coinswap
                 || balance_diff == Amount::from_sat(6768) // Recovery via timelock
+                || balance_diff == Amount::from_sat(503000) // Spent swapcoin
                 || balance_diff == Amount::ZERO, // No spending
             "Taker spendable balance change mismatch"
         );
@@ -421,7 +420,8 @@ pub fn verify_swap_results(
                 balances.regular == Amount::from_btc(0.14557358).unwrap() // First maker on successful coinswap
                     || balances.regular == Amount::from_btc(0.14532500).unwrap() // Second maker on successful coinswap
                     || balances.regular == Amount::from_btc(0.14999).unwrap() // No spending
-                    || balances.regular == Amount::from_btc(0.14992232).unwrap(), // Recovery via timelock
+                    || balances.regular == Amount::from_btc(0.14992232).unwrap() // Recovery via timelock
+                    || balances.regular == Amount::from_btc(0.14090858).unwrap(), // Mutli-taker case
                 "Maker seed balance mismatch"
             );
 
@@ -452,8 +452,10 @@ pub fn verify_swap_results(
                     || balance_diff == Amount::from_sat(21858) // Second maker fee
                     || balance_diff == Amount::ZERO // No spending
                     || balance_diff == Amount::from_sat(6768) // Recovery via timelock
-                    || balance_diff == Amount::from_sat(466500) // TODO: Investigate this value
-                    || balance_diff == Amount::from_sat(441642), // TODO: Investigate this value
+                    || balance_diff == Amount::from_sat(466500) // TODO: Investigate where the data is coming from
+                    || balance_diff == Amount::from_sat(441642) // TODO: Investigate where the data is coming from
+                    || balance_diff == Amount::from_sat(408142) // Multi-taker first maker
+                    || balance_diff == Amount::from_sat(444642), // Multi-taker second maker
                 "Maker spendable balance change mismatch"
             );
         });
@@ -480,15 +482,15 @@ impl TestFramework {
     ///
     /// Returns ([TestFramework], [Taker], [`Vec<Maker>`]).
     /// Maker's config will follow the pattern given the input HashMap.
-    /// If no bitcoind conf is provide a default value will be used.
+    /// If no bitcoind conf is provided, a default value will be used.
     #[allow(clippy::type_complexity)]
     pub fn init(
         makers_config_map: Vec<((u16, Option<u16>), MakerBehavior)>,
-        taker_behavior: TakerBehavior,
+        taker_behavior: Vec<TakerBehavior>,
         connection_type: ConnectionType,
     ) -> (
         Arc<Self>,
-        Taker,
+        Vec<Taker>,
         Vec<Arc<Maker>>,
         Arc<DirectoryServer>,
         JoinHandle<()>,
@@ -500,7 +502,7 @@ impl TestFramework {
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
         }
-        log::info!("temporary directory : {}", temp_dir.display());
+        log::info!("📁 temporary directory : {}", temp_dir.display());
 
         let bitcoind = init_bitcoind(&temp_dir);
 
@@ -511,7 +513,7 @@ impl TestFramework {
             shutdown,
         });
 
-        log::info!("Initiating Directory Server .....");
+        log::info!("🌐 Initiating Directory Server .....");
 
         // Translate a RpcConfig from the test framework.
         // a modification of this will be used for taker and makers rpc connections.
@@ -530,20 +532,25 @@ impl TestFramework {
 
         // Create the Taker.
         let taker_rpc_config = rpc_config.clone();
-        let taker = Taker::init(
-            Some(temp_dir.join("taker")),
-            None,
-            Some(taker_rpc_config),
-            taker_behavior,
-            None,
-            None,
-            Some(connection_type),
-        )
-        .unwrap();
-
+        let takers = taker_behavior
+            .into_iter()
+            .enumerate()
+            .map(|(i, behavior)| {
+                Taker::init(
+                    Some(temp_dir.join(format!("taker{}", i + 1))),
+                    None,
+                    Some(taker_rpc_config.clone()),
+                    behavior,
+                    None,
+                    None,
+                    Some(connection_type),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
         let mut base_rpc_port = 3500; // Random port for RPC connection in tests. (Not used)
-                                      // Create the Makers as per given configuration map.
-        let makers = makers_config_map
+
+        let makers = makers_config_map // Create the Makers as per given configuration map.
             .into_iter()
             .map(|(port, behavior)| {
                 base_rpc_port += 1;
@@ -569,13 +576,13 @@ impl TestFramework {
             .collect::<Vec<_>>();
 
         // start the block generation thread
-        log::info!("spawning block generation thread");
+        log::info!("⛏️ spawning block generation thread");
         let tf_clone = test_framework.clone();
         let generate_blocks_handle = thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(3));
 
             if tf_clone.shutdown.load(Relaxed) {
-                log::info!("ending block generation thread");
+                log::info!("🔚 ending block generation thread");
                 return;
             }
             // tf_clone.generate_blocks(10);
@@ -584,7 +591,7 @@ impl TestFramework {
 
         (
             test_framework,
-            taker,
+            takers,
             makers,
             directory_server_instance,
             generate_blocks_handle,
@@ -593,7 +600,7 @@ impl TestFramework {
 
     /// Stop bitcoind and clean up all test data.
     pub fn stop(&self) {
-        log::info!("Stopping Test Framework");
+        log::info!("🛑 Stopping Test Framework");
         // stop all framework threads.
         self.shutdown.store(true, Relaxed);
         // stop bitcoind

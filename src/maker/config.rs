@@ -1,4 +1,7 @@
-//! Maker Configuration. Controlling various behaviors.
+//! Maker Configuration. Controlling various Maker behaviors.
+//!
+//! This module defines the configuration options for the Maker server, controlling various aspects
+//! of the maker's behavior including network settings, swap parameters, and security settings.
 
 use crate::utill::parse_toml;
 use std::{io, path::Path};
@@ -9,28 +12,38 @@ use crate::utill::{get_maker_dir, parse_field, ConnectionType};
 
 use super::api::MIN_SWAP_AMOUNT;
 
-/// Maker Configuration, controlling various maker behavior.
+/// Maker Configuration
+///
+/// This struct defines all configurable parameters for the Maker module, including:
+/// - All the networking ports
+/// - Swap amount limits
+/// - Market settings, like DNS and Fidelity Bonds
+/// - Connection preferences
 #[derive(Debug, Clone, PartialEq)]
 pub struct MakerConfig {
-    /// RPC listening port
+    /// RPC listening port for maker-cli operations
     pub rpc_port: u16,
-    /// Minimum Coinswap amount
-    pub min_swap_amount: u64,
-    /// target listening port
+    /// Network port for client connections
     pub network_port: u16,
-    /// control port
+    /// Control port for Tor interface
     pub control_port: u16,
-    /// Socks port
+    /// Socks port for Tor proxy
     pub socks_port: u16,
-    /// Authentication password
+    /// Authentication password for Tor interface
     pub tor_auth_password: String,
-    /// Directory server address (can be clearnet or onion)
-    pub directory_server_address: String,
-    /// Fidelity Bond amount
+    /// DNS Tor address. Change this to connect to a different DNS server
+    pub dns_address: String,
+    /// Minimum amount in satoshis that can be swapped
+    pub min_swap_amount: u64,
+    /// Fidelity Bond amount in satoshis
     pub fidelity_amount: u64,
-    /// Fidelity Bond timelock in Block heights.
+    /// Fidelity Bond relative timelock in number of blocks
     pub fidelity_timelock: u32,
-    /// Connection type
+    /// Connection type (TOR or CLEARNET)
+    ///
+    /// # Deprecated
+    /// This field will be removed in a future version as the application will be Tor-only.
+    /// Clearnet support is being phased out for security reasons.
     pub connection_type: ConnectionType,
     /// A fixed base fee charged by the Maker for providing its services
     pub base_fee: u64,
@@ -67,19 +80,18 @@ impl Default for MakerConfig {
             amount_relative_fee_pct,
         }
     }
-}
 
 impl MakerConfig {
-    /// Constructs a [MakerConfig] from a specified data directory. Or create default configs and load them.
+    /// Constructs a [MakerConfig] from a specified data directory. Or creates default configs and load them.
     ///
     /// The maker(/taker).toml file should exist at the provided data-dir location.
-    /// Or else, a new default-config will be loaded and created at given data-dir location.
-    /// If no data-dir is provided, a default config will be created at default data-dir location.
+    /// Or else, a new default-config will be loaded and created at the given data-dir location.
+    /// If no data-dir is provided, a default config will be created at the default data-dir location.
     ///
     /// For reference of default config checkout `./maker.toml` in repo folder.
     ///
     /// Default data-dir for linux: `~/.coinswap/maker`
-    /// Default config locations:`~/.coinswap/maker/config.toml`.
+    /// Default config locations: `~/.coinswap/maker/config.toml`.
     pub(crate) fn new(config_path: Option<&Path>) -> io::Result<Self> {
         let default_config_path = get_maker_dir().join("config.toml");
 
@@ -116,10 +128,7 @@ impl MakerConfig {
                 config_map.get("tor_auth_password"),
                 default_config.tor_auth_password,
             ),
-            directory_server_address: parse_field(
-                config_map.get("directory_server_address"),
-                default_config.directory_server_address,
-            ),
+            dns_address: parse_field(config_map.get("dns_address"), default_config.dns_address),
             fidelity_amount: parse_field(
                 config_map.get("fidelity_amount"),
                 default_config.fidelity_amount,
@@ -140,19 +149,31 @@ impl MakerConfig {
         })
     }
 
-    // Method to serialize the MakerConfig into a TOML string and write it to a file
+    /// This function serializes the MakerConfig into a TOML format and writes it to disk.
+    /// It creates the parent directory if it doesn't exist.
     pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
-            "network_port = {}
+            "# Maker Configuration File
+# Network port for client connections
+network_port = {}
+# RPC port for maker-cli operations
 rpc_port = {}
+# Socks port for Tor proxy
 socks_port = {}
+# Control port for Tor  interface
 control_port = {}
+# Authentication password for Tor interface
 tor_auth_password = {}
+# Minimum amount in satoshis that can be swapped
 min_swap_amount = {}
+# Fidelity Bond amount in satoshis
 fidelity_amount = {}
+# Fidelity Bond relative timelock in number of blocks 
 fidelity_timelock = {}
+# Connection type (TOR or CLEARNET)
 connection_type = {:?}
-directory_server_address = {}
+# DNS Tor address. Change this to connect to a different DNS server 
+dns_address = {}
 ",
             self.network_port,
             self.rpc_port,
@@ -163,13 +184,12 @@ directory_server_address = {}
             self.fidelity_amount,
             self.fidelity_timelock,
             self.connection_type,
-            self.directory_server_address,
+            self.dns_address,
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;
         file.write_all(toml_data.as_bytes())?;
-        // TODO: Why we do require Flush?
         file.flush()?;
         Ok(())
     }
@@ -187,7 +207,7 @@ mod tests {
     fn create_temp_config(contents: &str, file_name: &str) -> PathBuf {
         let file_path = PathBuf::from(file_name);
         let mut file = File::create(&file_path).unwrap();
-        writeln!(file, "{}", contents).unwrap();
+        writeln!(file, "{contents}").unwrap();
         file_path
     }
 

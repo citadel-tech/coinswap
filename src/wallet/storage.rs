@@ -36,8 +36,8 @@ pub(crate) struct WalletStore {
     pub(super) outgoing_swapcoins: HashMap<ScriptBuf, OutgoingSwapCoin>,
     /// Map of prevout to contract redeemscript.
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
-    /// Map for all the fidelity bond information. (index, (Bond, script_pubkey, is_spent)).
-    pub(crate) fidelity_bond: HashMap<u32, (FidelityBond, ScriptBuf, bool)>,
+    /// Map for all the fidelity bond information. (index, (Bond, redeemed)).
+    pub(crate) fidelity_bond: HashMap<u32, (FidelityBond, bool)>,
     pub(super) last_synced_height: Option<u64>,
 
     pub(super) wallet_birthday: Option<u64>,
@@ -95,8 +95,12 @@ impl WalletStore {
         let store = match serde_cbor::from_slice::<Self>(&reader) {
             Ok(store) => store,
             Err(e) => {
-                let err_string = format!("{:?}", e);
+                let err_string = format!("{e:?}");
                 if err_string.contains("code: TrailingData") {
+                    // TODO: Investigate why files end up with trailing data.
+                    // add a log for the length of trailing data.
+                    // run the apps many times and see what the average length if for this data is.
+                    // Log the trailing data.
                     log::info!("Wallet file has trailing data, trying to restore");
                     loop {
                         // pop the last byte and try again.

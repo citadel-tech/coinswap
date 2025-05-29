@@ -16,8 +16,8 @@ use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 /// ABORT 3: Maker Drops After Setup
 /// Case 3: CloseAtHashPreimage
 ///
-/// Maker closes connection at hash preimage handling. Funding txs are already broadcasted.
-/// The Maker will loose contract txs fees in that case, so it's not a malice.
+/// Maker closes the connection at hash preimage handling. Funding txs are already broadcasted.
+/// The Maker will lose contract txs fees in that case, so it's not malice.
 /// Taker waits for the response until timeout. Aborts if the Maker doesn't show up.
 #[test]
 fn abort3_case3_close_at_hash_preimage_handover() {
@@ -29,20 +29,23 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         ((16102, None), MakerBehavior::Normal),
     ];
 
+    let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut taker, makers, directory_server_instance, block_generation_handle) =
+    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            TakerBehavior::Normal,
+            taker_behavior,
             ConnectionType::CLEARNET,
         );
 
-    warn!("Running Test: Maker closes conneciton at hash preimage handling");
+    warn!("🧪 Running Test: Maker closes connection at hash preimage handling");
 
+    info!("💰 Funding taker and makers");
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
+    let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
-        &mut taker,
+        taker,
         &test_framework.bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
@@ -58,7 +61,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     );
 
     //  Start the Maker Server threads
-    info!("Initiating Maker...");
+    info!("🚀 Initiating Maker servers");
 
     let maker_threads = makers
         .iter()
@@ -75,7 +78,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                info!("Waiting for maker setup completion");
+                info!("⏳ Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -96,7 +99,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         .collect::<Vec<_>>();
 
     // Initiate Coinswap
-    info!("Initiating coinswap protocol");
+    info!("🔄 Initiating coinswap protocol");
 
     // Swap params for coinswap.
     let swap_params = SwapParams {
@@ -106,7 +109,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -116,8 +119,10 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         .for_each(|thread| thread.join().unwrap());
 
     //TODO: Start the faulty maker again, and validate its recovery.
+    // Start the bad maker again.
+    // Assert logs to check that it has recovered from its own swap.
 
-    info!("All coinswaps processed successfully. Transaction complete.");
+    info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
     // Shutdown Directory Server
     directory_server_instance.shutdown.store(true, Relaxed);
@@ -166,15 +171,16 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     // Same as Case 1.
     //-----------------------------------------------------------------------------------------------------------------------------------------------
 
+    info!("📊 Verifying swap results after connection close");
     // After Swap checks:
     verify_swap_results(
-        &taker,
+        taker,
         &makers,
         org_taker_spend_balance,
         org_maker_spend_balances,
     );
 
-    info!("All checks successful. Terminating integration test case");
+    info!("🎉 All checks successful. Terminating integration test case");
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

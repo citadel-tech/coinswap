@@ -6,6 +6,7 @@
 //! It also handles downloading maker offers with retry mechanisms and implements the necessary message structures
 //! for communication between taker and maker.
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use socks::Socks5Stream;
 use std::{net::TcpStream, thread::sleep, time::Duration};
@@ -62,7 +63,7 @@ pub(crate) struct ContractsInfo {
 /// Make a handshake with a maker.
 /// Ensures that the Maker is alive and responding.
 ///
-// In future, handshake can be used to find protocol compatibility across multiple versions.
+// In the future, handshake can be used to find protocol compatibility across multiple versions.
 pub(crate) fn handshake_maker(socket: &mut TcpStream) -> Result<(), TakerError> {
     send_message(
         socket,
@@ -92,7 +93,7 @@ pub(crate) fn handshake_maker(socket: &mut TcpStream) -> Result<(), TakerError> 
         }
         any => Err((ProtocolError::WrongMessage {
             expected: "MakerHello".to_string(),
-            received: format!("{}", any),
+            received: format!("{any}"),
         })
         .into()),
     }
@@ -151,7 +152,7 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
         any => {
             return Err((ProtocolError::WrongMessage {
                 expected: "RespContractSigsForSender".to_string(),
-                received: format!("{}", any),
+                received: format!("{any}"),
             })
             .into());
         }
@@ -206,7 +207,7 @@ pub(crate) fn req_sigs_for_recvr_once<S: SwapCoin>(
         any => {
             return Err((ProtocolError::WrongMessage {
                 expected: "ContractSigsForRecvr".to_string(),
-                received: format!("{}", any),
+                received: format!("{any}"),
             })
             .into());
         }
@@ -239,7 +240,7 @@ pub struct NextMakerInfo {
     pub next_peer_hashlock_pubkeys: Vec<PublicKey>,
 }
 
-/// [Internal] Send a Proof funding to the maker and init next hop.
+/// Send a Proof funding to the maker and init next hop.
 pub(crate) fn send_proof_of_funding_and_init_next_hop(
     socket: &mut TcpStream,
     tmi: ThisMakerInfo,
@@ -294,7 +295,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         any => {
             return Err((ProtocolError::WrongMessage {
                 expected: "ContractSigsAsRecvrAndSender".to_string(),
-                received: format!("{}", any),
+                received: format!("{any}"),
             })
             .into());
         }
@@ -422,7 +423,7 @@ pub(crate) fn send_hash_preimage_and_get_private_keys(
         any => {
             return Err((ProtocolError::WrongMessage {
                 expected: "PrivkeyHandover".to_string(),
-                received: format!("{}", any),
+                received: format!("{any}"),
             })
             .into());
         }
@@ -436,7 +437,7 @@ fn download_maker_offer_attempt_once(
     config: &TakerConfig,
 ) -> Result<Offer, TakerError> {
     let maker_addr = addr.to_string();
-    log::info!("Attempting to download Offer from {}", maker_addr);
+    log::info!("Downloading offer from {maker_addr}");
     let mut socket = match config.connection_type {
         ConnectionType::CLEARNET => TcpStream::connect(&maker_addr)?,
         ConnectionType::TOR => Socks5Stream::connect(
@@ -460,13 +461,13 @@ fn download_maker_offer_attempt_once(
         msg => {
             return Err(ProtocolError::WrongMessage {
                 expected: "RespOffer".to_string(),
-                received: format!("{}", msg),
+                received: format!("{msg}"),
             }
             .into());
         }
     };
 
-    log::info!("Got offer from : {} ", maker_addr);
+    log::info!("Downloaded offer from : {maker_addr} ");
 
     Ok(*offer)
 }
@@ -480,22 +481,23 @@ pub(crate) fn download_maker_offer(
     loop {
         ii += 1;
         match download_maker_offer_attempt_once(&address, &config) {
-            Ok(offer) => return Some(OfferAndAddress { offer, address }),
+            Ok(offer) => {
+                return Some(OfferAndAddress {
+                    offer,
+                    address,
+                    timestamp: Utc::now(),
+                })
+            }
             Err(e) => {
                 if ii <= FIRST_CONNECT_ATTEMPTS {
                     log::warn!(
-                        "Failed to request offer from maker {}, with error: {:?} reattempting {} of {}",
-                        address,
-                        e,
-                        ii,
-                        FIRST_CONNECT_ATTEMPTS
+                        "Failed to request offer from maker {address}, with error: {e:?} reattempting {ii} of {FIRST_CONNECT_ATTEMPTS}"
                     );
                     sleep(Duration::from_secs(FIRST_CONNECT_SLEEP_DELAY_SEC));
                     continue;
                 } else {
                     log::error!(
-                        "Connection attempt exceeded for request offer from maker {}",
-                        address
+                        "Connection attempt exceeded for request offer from maker {address}"
                     );
                     return None;
                 }

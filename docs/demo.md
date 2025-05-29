@@ -18,7 +18,7 @@ This guide will help you prepare your system for participating in the Coinswap L
 
 2. **Bitcoin Core**
    ```bash
-   # Download Bitcoin Core 28.1
+   # Download Bitcoin Core 28.1(Or whatever is the newest version at this point)
    wget https://bitcoincore.org/bin/bitcoin-core-28.1/bitcoin-28.1-x86_64-linux-gnu.tar.gz
    
    # Download and verify signatures
@@ -46,6 +46,19 @@ This guide will help you prepare your system for participating in the Coinswap L
    sudo apt install build-essential automake libtool
    ```
 
+4. **Setup Tor**
+   
+   Coinswap requires Tor exclusively for all communication. You will need to have Tor running locally to run the apps.
+   For Tor setup instructions follow the [Tor Doc](tor.md). 
+   
+   Use the below sample `torrc` config for quick setup.
+   
+   ```shell
+   ControlPort 9051
+   CookieAuthentication 0
+   SOCKSPort 9050
+   ```
+
 ## Bitcoin Core Setup
 
 ### 1. Create Configuration File
@@ -55,17 +68,25 @@ mkdir -p ~/.bitcoin
 
 Add to `~/.bitcoin/bitcoin.conf`:
 ```bash
-testnet4=1 #Required
+signet=1
+
+[signet]
 server=1
-txindex=1 #Required
+txindex=1
 rpcuser=user
 rpcpassword=password
-blockfilterindex=1 #This makes wallet sync faster
+fallbackfee=0.00001000
+blockfilterindex=1
+addnode=172.81.178.3:38333
+signetchallenge=0014c9e9f8875a25c3cc6d99ad3e5fd54254d00fed44
 ```
+> **NOTE**: Change `signet=1` to `testnet4=1` if you want to run the apps on testnet, or other networks.
 
-> **NOTE**: Change `testnet4=1` to `regtest=1` if you want to run the apps on local regtest node.
+This will connect the node with our custom signet. The custom signet is designed specifically for coinswap testing, and has a block interval of 2 mins.
+The signet data can be accessed using the Tor-Browser only at the below links.
 
-> **Important**: We will use testnet4 for the live demo to ensure network compatibility with other participants and the directory server.
+[Custom Signet Explorer](http://4imwp7kgajusoslqa7lnjq7phpt3gocm55tlekg5fp5xqy4ipoy5f6ad.onion/)   
+[Custom Signet Faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/)
 
 ### 2. Start Bitcoin Core
 ```bash
@@ -88,7 +109,7 @@ cargo build --release
 
 After compilation you will get the binaries in the `./target/release` folder. 
 
-Install the necessary binaries in your system:
+Install the necessary binaries on your system:
 ```bash
 sudo install ./target/release/taker /usr/local/bin/
 sudo install ./target/release/makerd /usr/local/bin/  
@@ -111,9 +132,9 @@ makerd
 
 This will spawn the maker server and you will start seeing the logs. The server is operated with the `maker-cli` app. Follow the log, and it will show you the next instructions.
 
-To successfully set up the swap server, it needs to have a fidelity bond and enough balance (minimum 20,000 sats) to start providing swap services.
+To successfully set up the swap server, it needs to have a fidelity bond and enough balance (minimum 50,000 sats+ + 1,000 sats for tx fee) to start providing swap services.
 
-In the log you will see the server is asking for some BTC at a given address. Fund that address with the given minimum amount or more. We recommend using the [mempool.space Testnet4 faucet](https://mempool.space/testnet4/faucet), but you can use any other faucet of your choice.
+In the log you will see the server is asking for some BTC at a given address. Fund that address with the given minimum amount or more. Use [this faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/)(open in Tor browser) to get some signet coins.
 
 Once the funds are sent, the server will automatically create a fidelity bond transaction, wait for its confirmation, and when confirmed, send its offers and details to the DNS server and start listening for incoming swap requests.
 
@@ -142,7 +163,7 @@ From a new terminal, go to the project root directory and perform basic client o
 taker get-new-address
 ```
 
-Use a testnet4 faucet to send some funds at the above address. Then check the client wallet balance with
+Use [this faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/)(open in Tor browser) to send some funds at the above address. Then check the client wallet balance with
 ```bash
 taker get-balances
 ```
@@ -167,7 +188,7 @@ If all goes well, you will see the coinswap process starting in the logs.
 ### Bitcoin Core Issues
 - Verify bitcoind is running: `bitcoin-cli getblockchaininfo`
 - Check rpcuser/rpcpassword attempted by the apps are matching with the bitcoin.conf file values
-- Ensure correct network (testnet4)
+- Ensure correct network (signet)
 
 ### Maker Server Issues
 - Check debug.log for errors

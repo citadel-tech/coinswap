@@ -11,18 +11,18 @@ use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};
 /// A simple command line app to operate as coinswap client.
 ///
-/// The app works as regular Bitcoin wallet with added capability to perform coinswaps. The app
+/// The app works as a regular Bitcoin wallet with the added capability to perform coinswaps. The app
 /// requires a running Bitcoin Core node with RPC access. It currently only runs on Testnet4.
-/// Suggested faucet for getting Testnet4 coins: https://mempool.space/testnet4/faucet
+/// Suggested faucet for getting Testnet4 coins: <https://mempool.space/testnet4/faucet>
 ///
-/// For more detailed usage information, please refer: https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker.md
+/// For more detailed usage information, please refer: <https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker.md>
 ///
-/// This is early beta, and there are known and unknown bugs. Please report issues at: https://github.com/citadel-tech/coinswap/issues
+/// This is early beta, and there are known and unknown bugs. Please report issues at: <https://github.com/citadel-tech/coinswap/issues>
 #[derive(Parser, Debug)]
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
-    /// Optional data directory. Default value : "~/.coinswap/taker"
+    /// Optional data directory. Default value: "~/.coinswap/taker"
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
 
@@ -59,7 +59,7 @@ enum Commands {
     // TODO: Design a better structure to display different utxos and balance groups.
     /// Lists all utxos we know about along with their spend info. This is useful for debugging
     ListUtxo,
-    /// List all signle signature wallet Utxos. These are all non-swap regular wallet utxos.
+    /// Lists all single signature wallet Utxos. These are all non-swap regular wallet utxos.
     ListUtxoRegular,
     /// Lists all utxos received in incoming swaps
     ListUtxoSwap,
@@ -68,7 +68,7 @@ enum Commands {
     /// Get total wallet balances of different categories.
     /// regular: All single signature regular wallet coins (seed balance).
     /// swap: All 2of2 multisig coins received in swaps.
-    /// contract: All live contract transaction balance locked in timelocks. If you see value in this field, you have unfinished or malfinished swaps. You can claim them back with recover command.
+    /// contract: All live contract transaction balance locked in timelocks. If you see value in this field, you have unfinished or malfinished swaps. You can claim them back with the recover command.
     /// spendable: Spendable amount in wallet (regular + swap balance).
     GetBalances,
     /// Returns a new address
@@ -98,8 +98,8 @@ enum Commands {
         /// Sets the swap amount in sats.
         #[clap(long, short = 'a', default_value = "20000")]
         amount: u64,
-        // /// Sets how many new swap utxos to get. The swap amount will be randomly distrubted across the new utxos.
-        // /// Increasing this number also increases total swap fee.
+        // /// Sets how many new swap utxos to get. The swap amount will be randomly distributed across the new utxos.
+        // /// Increasing this number also increases the total swap fee.
         // #[clap(long, short = 'u', default_value = "1")]
         // utxos: u32,
     },
@@ -115,7 +115,7 @@ fn main() -> Result<(), TakerError> {
             args.command,
             Commands::Recover | Commands::FetchOffers | Commands::Coinswap { .. }
         ),
-        args.data_directory.clone(), //default path handled inside the function.
+        args.data_directory.clone(), // default path handled inside the function.
     );
 
     let rpc_config = RPCConfig {
@@ -188,7 +188,7 @@ fn main() -> Result<(), TakerError> {
         }
         Commands::GetNewAddress => {
             let address = taker.get_wallet_mut().get_next_external_address()?;
-            println!("{:?}", address);
+            println!("{address:?}");
         }
         Commands::SendToAddress {
             address,
@@ -197,7 +197,9 @@ fn main() -> Result<(), TakerError> {
         } => {
             let amount = Amount::from_sat(amount);
 
-            let coins_to_spend = taker.get_wallet().coin_select(amount)?;
+            let coins_to_spend = taker
+                .get_wallet_mut()
+                .coin_select(amount, feerate.unwrap_or(DEFAULT_TX_FEE_RATE))?;
 
             let destination = Destination::Multi(vec![(
                 Address::from_str(&address).unwrap().assume_checked(),
@@ -212,7 +214,7 @@ fn main() -> Result<(), TakerError> {
 
             let txid = taker.get_wallet().send_tx(&tx).unwrap();
 
-            println!("{}", txid);
+            println!("{txid}");
 
             taker.get_wallet_mut().sync_no_fail();
         }
@@ -227,9 +229,15 @@ fn main() -> Result<(), TakerError> {
                     .cloned()
                     .collect::<Vec<_>>()
             };
-            all_offers
-                .iter()
-                .for_each(|offer| println!("{}", taker.display_offer(offer)));
+            if all_offers.is_empty() {
+                println!("NO LIVE OFFERS FOUND!! You should run a maker!!");
+                return Ok(());
+            } else {
+                all_offers.iter().try_for_each(|offer| {
+                    println!("{}", taker.display_offer(offer)?);
+                    Ok::<_, TakerError>(())
+                })?;
+            }
         }
         Commands::Coinswap { makers, amount } => {
             let swap_params = SwapParams {

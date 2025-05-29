@@ -104,7 +104,7 @@ impl fmt::Display for ConnectionType {
 /// Uses "/tmp" directory for integration tests
 fn get_home_dir() -> PathBuf {
     if cfg!(test) {
-        "/tmp".into()
+        env::temp_dir()
     } else {
         dirs::home_dir().expect("home directory expected")
     }
@@ -340,7 +340,7 @@ pub(crate) fn get_hd_path_from_descriptor(descriptor: &str) -> Option<(&str, u32
         &descriptor[open + 1..close]
     } else {
         // Debug log, because if it doesn't have path, its not an error.
-        log::error!("Descriptor doesn't have path = {}", descriptor);
+        log::error!("Descriptor doesn't have path = {descriptor}");
         return None;
     };
 
@@ -620,17 +620,14 @@ impl From<serde_cbor::Error> for TorError {
 
 pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), TorError> {
     use std::io::BufRead;
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", control_port))?;
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{control_port}"))?;
     let mut reader = BufReader::new(stream.try_clone()?);
-    let auth_command = format!("AUTHENTICATE \"{}\"\r\n", password);
+    let auth_command = format!("AUTHENTICATE \"{password}\"\r\n");
     stream.write_all(auth_command.as_bytes())?;
     let mut response = String::new();
     reader.read_line(&mut response)?;
     if !response.starts_with("250") {
-        log::error!(
-            "Tor authentication failed: {}, please provide correct password",
-            response
-        );
+        log::error!("Tor authentication failed: {response}, please provide correct password");
         return Err(TorError::General("Tor authentication failed".to_string()));
     }
     stream.write_all(b"GETINFO status/bootstrap-phase\r\n")?;
@@ -640,7 +637,7 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
     if response.contains("PROGRESS=100") {
         log::info!("Tor is fully started and operational!");
     } else {
-        log::warn!("Tor is still starting, try again later: {}", response);
+        log::warn!("Tor is still starting, try again later: {response}");
     }
     Ok(())
 }
@@ -653,26 +650,22 @@ pub(crate) fn get_emphemeral_address(
     service_id_data: Option<&str>,
 ) -> Result<(String, String), TorError> {
     use std::io::BufRead;
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", control_port))?;
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{control_port}"))?;
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut response = String::new();
     let mut service_id = String::new();
     let mut private_key = String::new();
-    let auth_command = format!("AUTHENTICATE \"{}\"\r\n", password);
+    let auth_command = format!("AUTHENTICATE \"{password}\"\r\n");
     stream.write_all(auth_command.as_bytes())?;
     if let Some(service_id) = service_id_data {
-        let remove_command = format!("DEL_ONION {}\r\n", service_id);
+        let remove_command = format!("DEL_ONION {service_id}\r\n");
         stream.write_all(remove_command.as_bytes())?;
     }
-    let mut add_onion_command = format!(
-        "ADD_ONION NEW:BEST Flags=Detach Port={},127.0.0.1:{}\r\n",
-        target_port, target_port
-    );
+    let mut add_onion_command =
+        format!("ADD_ONION NEW:BEST Flags=Detach Port={target_port},127.0.0.1:{target_port}\r\n");
     if let Some(pk) = private_key_data {
-        add_onion_command = format!(
-            "ADD_ONION {} Flags=Detach Port={},127.0.0.1:{}\r\n",
-            pk, target_port, target_port
-        );
+        add_onion_command =
+            format!("ADD_ONION {pk} Flags=Detach Port={target_port},127.0.0.1:{target_port}\r\n");
         private_key = pk.to_string();
     }
     stream.write_all(add_onion_command.as_bytes())?;
@@ -701,16 +694,16 @@ pub(crate) fn get_emphemeral_address(
             "Failed to retrieve ephemeral onion service details".to_string(),
         ));
     }
-    Ok((format!("{}.onion", service_id), private_key))
+    Ok((format!("{service_id}.onion"), private_key))
 }
 
 pub(crate) fn get_tor_hostname(
-    datadir: PathBuf,
+    data_dir: &Path,
     control_port: u16,
     target_port: u16,
     password: &str,
 ) -> Result<String, TorError> {
-    let tor_config_path = datadir.join("tor/hostname");
+    let tor_config_path = data_dir.join("tor/hostname");
 
     if tor_config_path.exists() {
         if let Ok(tor_metadata) = fs::read(&tor_config_path) {
@@ -730,10 +723,7 @@ pub(crate) fn get_tor_hostname(
             assert_eq!(hostname, hostname_data);
             assert_eq!(private_key, private_key_data);
 
-            log::info!(
-                "Generated existing Tor Hidden Service Hostname: {}",
-                hostname
-            );
+            log::info!("Generated existing Tor Hidden Service Hostname: {hostname}");
 
             return Ok(hostname);
         }
@@ -751,7 +741,7 @@ pub(crate) fn get_tor_hostname(
         serde_cbor::ser::to_vec(&[private_key, hostname.clone()])?,
     )?;
 
-    log::info!("Generated new Tor Hidden Service Hostname: {}", hostname);
+    log::info!("Generated new Tor Hidden Service Hostname: {hostname}");
 
     Ok(hostname)
 }

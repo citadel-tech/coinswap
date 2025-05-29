@@ -24,7 +24,7 @@ pub enum RpcMsgReq {
     ContractUtxo,
     /// Request to fetch UTXOs in the fidelity pool.
     FidelityUtxo,
-    /// Request to retreive the total wallet balances of different categories.
+    /// Request to retrieve the total wallet balances of different categories.
     Balances,
     /// Request for generating a new wallet address.
     NewAddress,
@@ -59,7 +59,7 @@ pub enum RpcMsgResp {
     Pong,
     /// Response containing all spendable UTXOs
     UtxoResp {
-        /// List of spndable UTXOs in the wallet.
+        /// List of spendable UTXOs in the wallet.
         utxos: Vec<ListUnspentResultEntry>,
     },
     /// Response containing UTXOs in the swap pool.
@@ -101,7 +101,7 @@ impl Display for RpcMsgResp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Pong => write!(f, "Pong"),
-            Self::NewAddressResp(addr) => write!(f, "{}", addr),
+            Self::NewAddressResp(addr) => write!(f, "{addr}"),
             Self::TotalBalanceResp(balances) => {
                 write!(
                     f,
@@ -116,17 +116,17 @@ impl Display for RpcMsgResp {
                     .unwrap()
                 )
             }
-            Self::UtxoResp { utxos } => write!(f, "{:#?}", utxos),
-            Self::SwapUtxoResp { utxos } => write!(f, "{:#?}", utxos),
-            Self::FidelityUtxoResp { utxos } => write!(f, "{:#?}", utxos),
-            Self::ContractUtxoResp { utxos } => write!(f, "{:#?}", utxos),
-            Self::SendToAddressResp(tx_hex) => write!(f, "{}", tx_hex),
-            Self::GetTorAddressResp(addr) => write!(f, "{}", addr),
+            Self::UtxoResp { utxos } => write!(f, "{utxos:#?}"),
+            Self::SwapUtxoResp { utxos } => write!(f, "{utxos:#?}"),
+            Self::FidelityUtxoResp { utxos } => write!(f, "{utxos:#?}"),
+            Self::ContractUtxoResp { utxos } => write!(f, "{utxos:#?}"),
+            Self::SendToAddressResp(tx_hex) => write!(f, "{tx_hex}"),
+            Self::GetTorAddressResp(addr) => write!(f, "{addr}"),
             Self::GetDataDirResp(path) => write!(f, "{}", path.display()),
             Self::Shutdown => write!(f, "Shutdown Initiated"),
-            Self::FidelitySpend(txid) => write!(f, "{}", txid),
-            Self::ServerError(e) => write!(f, "{}", e),
-            Self::ListBonds(v) => write!(f, "{}", v),
+            Self::FidelitySpend(txid) => write!(f, "{txid}"),
+            Self::ServerError(e) => write!(f, "{e}"),
+            Self::ListBonds(v) => write!(f, "{v}"),
         }
     }
 }
