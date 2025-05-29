@@ -5,7 +5,11 @@ use std::collections::HashMap;
 use bitcoind::bitcoincore_rpc::{json::EstimateMode, RpcApi};
 use serde::Deserialize;
 
+use crate::error::FeeEstimatorError;
 use crate::wallet::Wallet;
+
+const MEMPOOL_FEES_API_URL: &str = "https://mempool.space/api/v1/fees/recommended";
+const ESPLORA_FEES_API_URL: &str = "https://blockstream.info/api/fee-estimates";
 
 /// Block Target for Fee Estimation
 #[derive(Debug, Eq, PartialEq, Hash)]
@@ -30,17 +34,17 @@ impl FeeEstimator {
     }
 
     /// Get fee rate for next block (highest priority)
-    pub fn get_fastest_fee_rate(&self) -> Result<f64, FeeEstimatorError> {
+    pub fn get_high_priority_rate(&self) -> Result<f64, FeeEstimatorError> {
         self.get_fee_rate(BlockTarget::Fastest)
     }
 
     /// Get fee rate for ~6 blocks (standard priority)
-    pub fn get_standard_fee_rate(&self) -> Result<f64, FeeEstimatorError> {
+    pub fn get_mid_priority_rate(&self) -> Result<f64, FeeEstimatorError> {
         self.get_fee_rate(BlockTarget::Standard)
     }
 
     /// Get fee rate for ~24 blocks (economy priority)
-    pub fn get_economy_fee_rate(&self) -> Result<f64, FeeEstimatorError> {
+    pub fn get_low_priority_rate(&self) -> Result<f64, FeeEstimatorError> {
         self.get_fee_rate(BlockTarget::Economy)
     }
 
@@ -61,20 +65,44 @@ impl FeeEstimator {
         if self.wallet.is_some() {
             if let Ok(fees) = self.estimate_smart_fee() {
                 for (target, fee) in fees {
-                    combined_fees.get_mut(&target).unwrap().push(fee);
+                    log::debug!("Bitcoin Core Fee Estimates {target:?}: {fee} sat/vB");
+                    combined_fees
+                        .get_mut(&target)
+                        .ok_or_else(|| {
+                            FeeEstimatorError::MissingData(format!(
+                                "Fee not available for target: {target:?}"
+                            ))
+                        })?
+                        .push(fee);
                 }
             }
         }
 
         if let Ok(fees) = Self::fetch_mempool_fees() {
             for (target, fee) in fees {
-                combined_fees.get_mut(&target).unwrap().push(fee);
+                log::debug!("Mempool Space Fee Estimates {target:?}: {fee} sat/vB");
+                combined_fees
+                    .get_mut(&target)
+                    .ok_or_else(|| {
+                        FeeEstimatorError::MissingData(format!(
+                            "Fee not available for target: {target:?}"
+                        ))
+                    })?
+                    .push(fee);
             }
         }
 
         if let Ok(fees) = Self::fetch_esplora_fees() {
             for (target, fee) in fees {
-                combined_fees.get_mut(&target).unwrap().push(fee);
+                log::debug!("Esplora Fee Estimates {target:?}: {fee} sat/vB");
+                combined_fees
+                    .get_mut(&target)
+                    .ok_or_else(|| {
+                        FeeEstimatorError::MissingData(format!(
+                            "Fee not available for target: {target:?}"
+                        ))
+                    })?
+                    .push(fee);
             }
         }
 
@@ -84,6 +112,7 @@ impl FeeEstimator {
         for (target, fees) in combined_fees {
             if !fees.is_empty() {
                 let avg = fees.iter().sum::<f64>() / fees.len() as f64;
+                log::info!("Fee Estimates {target:?}: {avg} sat/vB");
                 final_fees.insert(target, avg);
             }
         }
@@ -96,7 +125,7 @@ impl FeeEstimator {
     }
 
     fn fetch_mempool_fees() -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
-        let response = minreq::get("https://mempool.space/api/v1/fees/recommended")
+        let response = minreq::get(MEMPOOL_FEES_API_URL)
             .send()?
             .json::<MempoolFeeResponse>()?;
 
@@ -141,7 +170,7 @@ impl FeeEstimator {
     }
 
     fn fetch_esplora_fees() -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
-        let response = minreq::get("https://blockstream.info/api/fee-estimates")
+        let response = minreq::get(ESPLORA_FEES_API_URL)
             .send()?
             .json::<EsploraFeeResponse>()?
             .fees;
@@ -149,7 +178,7 @@ impl FeeEstimator {
         let mut fees = HashMap::new();
 
         let fee_1 = response
-            .get(&1)
+            .get("1")
             .ok_or_else(|| {
                 FeeEstimatorError::MissingData(
                     "No fee estimation for 1 block in Esplora response".to_string(),
@@ -158,7 +187,7 @@ impl FeeEstimator {
             .to_owned();
 
         let fee_6 = response
-            .get(&6)
+            .get("6")
             .ok_or_else(|| {
                 FeeEstimatorError::MissingData(
                     "No fee estimation for 6 blocks in Esplora response".to_string(),
@@ -167,7 +196,7 @@ impl FeeEstimator {
             .to_owned();
 
         let fee_24 = response
-            .get(&24)
+            .get("24")
             .ok_or_else(|| {
                 FeeEstimatorError::MissingData(
                     "No fee estimation for 24 blocks in Esplora response".to_string(),
@@ -196,32 +225,5 @@ struct MempoolFeeResponse {
 #[derive(Debug, Deserialize)]
 struct EsploraFeeResponse {
     #[serde(flatten)]
-    fees: HashMap<i32, f64>,
-}
-
-/// Represents various errors that can occur while doing Fee Estimation
-#[derive(Debug)]
-pub enum FeeEstimatorError {
-    /// Error from Bitcoin Core RPC
-    BitcoinRpc(bitcoind::bitcoincore_rpc::Error),
-    /// Error while receiving or parsing an HTTP Response
-    HttpError(minreq::Error),
-    /// Missing expected data in API response
-    MissingData(String),
-    /// No wallet configured for Bitcoin Core estimates
-    NoWallet,
-    /// No sources available or all sources failed
-    NoFeeSources,
-}
-
-impl From<bitcoind::bitcoincore_rpc::Error> for FeeEstimatorError {
-    fn from(err: bitcoind::bitcoincore_rpc::Error) -> Self {
-        FeeEstimatorError::BitcoinRpc(err)
-    }
-}
-
-impl From<minreq::Error> for FeeEstimatorError {
-    fn from(err: minreq::Error) -> Self {
-        FeeEstimatorError::HttpError(err)
-    }
+    fees: HashMap<String, f64>,
 }
