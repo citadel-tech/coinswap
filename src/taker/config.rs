@@ -25,8 +25,6 @@ pub struct TakerConfig {
     /// This field will be removed in a future version as the application will be Tor-only.
     /// Clearnet support is being phased out for security reasons.
     pub connection_type: ConnectionType,
-    /// Confirmation count required for funding txs.
-    pub required_confirms: u32,
 }
 
 impl Default for TakerConfig {
@@ -42,7 +40,6 @@ impl Default for TakerConfig {
             } else {
                 ConnectionType::TOR
             },
-            required_confirms: 1,
         }
     }
 }
@@ -91,10 +88,6 @@ impl TakerConfig {
             connection_type: parse_field(
                 config_map.get("connection_type"),
                 default_config.connection_type,
-            ),
-            required_confirms: parse_field(
-                config_map.get("required_confirms"),
-                default_config.required_confirms,
             ),
         })
     }

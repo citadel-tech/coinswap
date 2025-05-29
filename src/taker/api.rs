@@ -639,7 +639,7 @@ impl Taker {
         // Find next maker's details
         let required_confirmations =
             if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
-                self.config.required_confirms
+                REQUIRED_CONFIRMS
             } else {
                 self.ongoing_swap_state
                     .peer_infos

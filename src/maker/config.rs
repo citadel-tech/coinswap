@@ -221,7 +221,6 @@ mod tests {
         let contents = r#"
             network_port = 6102
             rpc_port = 6103
-            required_confirms = 1
             min_swap_amount = 10000
             socks_port = 9050
         "#;
