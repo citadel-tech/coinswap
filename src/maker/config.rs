@@ -36,12 +36,17 @@ pub struct MakerConfig {
     pub base_fee: u64,
     /// A percentage fee based on the swap amount.
     pub amount_relative_fee_pct: f64,
-    /// A percentage fee based on the refund locktime (duration the Maker must wait for a refund).
-    pub time_relative_fee_pct: f64,
 }
 
 impl Default for MakerConfig {
     fn default() -> Self {
+        let (fidelity_amount, fidelity_timelock, base_fee, amount_relative_fee_pct) =
+            if cfg!(feature = "integration-test") {
+                (5_000_000, 26_000, 1000, 2.50) // Test values
+            } else {
+                (50_000, 13104, 100, 0.1) // Production values
+            };
+
         Self {
             rpc_port: 6103,
             min_swap_amount: MIN_SWAP_AMOUNT,
@@ -51,31 +56,15 @@ impl Default for MakerConfig {
             tor_auth_password: "".to_string(),
             directory_server_address:
                 "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080".to_string(),
-            #[cfg(feature = "integration-test")]
-            fidelity_amount: 5_000_000, // 0.05 BTC for tests
-            #[cfg(feature = "integration-test")]
-            fidelity_timelock: 26_000, // Approx 6 months of blocks for test
-            #[cfg(not(feature = "integration-test"))]
-            fidelity_amount: 50_000, // 50K sats for production
-            #[cfg(not(feature = "integration-test"))]
-            fidelity_timelock: 13104, // Approx 3 months of blocks in production
+            fidelity_amount,
+            fidelity_timelock,
             connection_type: if cfg!(feature = "integration-test") {
                 ConnectionType::CLEARNET
             } else {
                 ConnectionType::TOR
             },
-            #[cfg(feature = "integration-test")]
-            base_fee: 1000,
-            #[cfg(feature = "integration-test")]
-            amount_relative_fee_pct: 2.50,
-            #[cfg(feature = "integration-test")]
-            time_relative_fee_pct: 0.10,
-            #[cfg(not(feature = "integration-test"))]
-            base_fee: 100,
-            #[cfg(not(feature = "integration-test"))]
-            amount_relative_fee_pct: 0.1,
-            #[cfg(not(feature = "integration-test"))]
-            time_relative_fee_pct: 0.005,
+            base_fee,
+            amount_relative_fee_pct,
         }
     }
 }
@@ -147,10 +136,6 @@ impl MakerConfig {
             amount_relative_fee_pct: parse_field(
                 config_map.get("amount_relative_fee_pct"),
                 default_config.amount_relative_fee_pct,
-            ),
-            time_relative_fee_pct: parse_field(
-                config_map.get("time_relative_fee_pct"),
-                default_config.time_relative_fee_pct,
             ),
         })
     }

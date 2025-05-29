@@ -100,7 +100,10 @@ pub const MIN_SWAP_AMOUNT: u64 = 10_000;
 pub(crate) const FIDELITY_BOND_DNS_UPDATE_INTERVAL: u32 = 30;
 #[cfg(not(feature = "integration-test"))]
 pub(crate) const FIDELITY_BOND_DNS_UPDATE_INTERVAL: u32 = 600; // 1 Block Interval
-
+#[cfg(feature = "integration-test")]
+pub const TIME_RELATIVE_FEE_PCT: f64 = 0.10;
+#[cfg(not(feature = "integration-test"))]
+pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
 /// Interval to check if there is enough liquidity for swaps.
 /// If the available balance is below the minimum, maker server won't listen for any swap requests until funds are added.
 #[cfg(feature = "integration-test")]

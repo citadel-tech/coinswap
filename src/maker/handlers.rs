@@ -18,7 +18,7 @@ use bitcoin::{
 use super::{
     api::{
         recover_from_swap, ConnectionState, ExpectedMessage, Maker, MakerBehavior,
-        MIN_CONTRACT_REACTION_TIME,
+        MIN_CONTRACT_REACTION_TIME, TIME_RELATIVE_FEE_PCT,
     },
     error::MakerError,
 };
@@ -103,7 +103,7 @@ pub(crate) fn handle_message(
                 Some(MakerToTakerMessage::RespOffer(Box::new(Offer {
                     base_fee: maker.config.base_fee,
                     amount_relative_fee_pct: maker.config.amount_relative_fee_pct,
-                    time_relative_fee_pct: maker.config.time_relative_fee_pct,
+                    time_relative_fee_pct: TIME_RELATIVE_FEE_PCT,
                     required_confirms: REQUIRED_CONFIRMS,
                     minimum_locktime: MIN_CONTRACT_REACTION_TIME,
                     max_size,
@@ -363,7 +363,7 @@ impl Maker {
             message.refund_locktime,
             self.config.base_fee,
             self.config.amount_relative_fee_pct,
-            self.config.time_relative_fee_pct,
+            TIME_RELATIVE_FEE_PCT,
         );
 
         // NOTE: The `contract_feerate` currently represents the hardcoded `MINER_FEE` of a transaction, not the fee rate.

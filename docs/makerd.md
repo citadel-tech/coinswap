@@ -30,7 +30,6 @@ connection_type = TOR
 directory_server_address = ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080
 base_fee = 100,
 amount_relative_fee_pct = 0.1,
-time_relative_fee_pct = 0.005,
 ```
 - `network_port`: TCP port where the Maker listens for incoming Coinswap protocol messages.
 - `rpc_port`: The port through which `makerd` listens for RPC commands from `maker-cli`.
