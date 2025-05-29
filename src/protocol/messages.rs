@@ -168,7 +168,6 @@ pub(crate) struct ContractSigsForRecvrAndSender {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct HashPreimage {
     pub(crate) senders_multisig_redeemscripts: Vec<ScriptBuf>,
-    pub(crate) receivers_multisig_redeemscripts: Vec<ScriptBuf>,
     pub(crate) preimage: [u8; 32],
 }
 
@@ -183,6 +182,7 @@ pub(crate) struct MultisigPrivkey {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PrivKeyHandover {
     pub(crate) multisig_privkeys: Vec<MultisigPrivkey>,
+    pub(crate) receivers_multisig_redeemscripts: Option<Vec<ScriptBuf>>,
 }
 
 /// All messages sent from Taker to Maker.

@@ -1704,7 +1704,6 @@ impl Taker {
         let _maker_ack_preimage_received = send_hash_preimage(
             &mut socket,
             senders_multisig_redeemscripts,
-            receivers_multisig_redeemscripts,
             &self.ongoing_swap_state.active_preimage,
         );
         log::info!("<=== AckPreImageReceived | {maker_address}");
@@ -1732,6 +1731,7 @@ impl Taker {
             &mut socket,
             &TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {
                 multisig_privkeys: privkeys_reply,
+                receivers_multisig_redeemscripts: Some(receivers_multisig_redeemscripts.to_vec()),
             }),
         )?;
 
@@ -1753,6 +1753,7 @@ impl Taker {
             *outgoing_privkeys = Some(maker_private_key_handover.multisig_privkeys);
             ret
         })?;
+        log::info!("Successfully Completed Coinswap");
 
         Ok(())
     }

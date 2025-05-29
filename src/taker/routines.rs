@@ -395,12 +395,10 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
 pub(crate) fn send_hash_preimage(
     socket: &mut TcpStream,
     senders_multisig_redeemscripts: &[ScriptBuf],
-    receivers_multisig_redeemscripts: &[ScriptBuf],
     preimage: &Preimage,
 ) -> Result<(), TakerError> {
     let hash_preimage_msg = TakerToMakerMessage::RespHashPreimage(HashPreimage {
         senders_multisig_redeemscripts: senders_multisig_redeemscripts.to_vec(),
-        receivers_multisig_redeemscripts: receivers_multisig_redeemscripts.to_vec(),
         preimage: *preimage,
     });
 
