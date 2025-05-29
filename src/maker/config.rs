@@ -67,8 +67,8 @@ impl Default for MakerConfig {
             control_port: 9051,
             socks_port: 9050,
             tor_auth_password: "".to_string(),
-            directory_server_address:
-                "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080".to_string(),
+            dns_address: "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080"
+                .to_string(),
             fidelity_amount,
             fidelity_timelock,
             connection_type: if cfg!(feature = "integration-test") {
@@ -80,6 +80,7 @@ impl Default for MakerConfig {
             amount_relative_fee_pct,
         }
     }
+}
 
 impl MakerConfig {
     /// Constructs a [MakerConfig] from a specified data directory. Or creates default configs and load them.

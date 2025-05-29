@@ -1680,7 +1680,7 @@ impl Taker {
         &mut self,
         maker_address: &MakerAddress,
         index: usize,
-        outgoing_privkeys: &mut Vec<MultisigPrivkey>, // Previously typed as &mut Option<Vec<MultisigPrivkey>>.
+        outgoing_privkeys: &mut Vec<MultisigPrivkey>,
         senders_multisig_redeemscripts: &[ScriptBuf],
         receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {
