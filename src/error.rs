@@ -65,6 +65,8 @@ pub enum FeeEstimatorError {
     NoWallet,
     /// No sources available or all sources failed
     NoFeeSources,
+    /// A scoped thread panicked
+    ThreadError,
 }
 
 impl From<bitcoind::bitcoincore_rpc::Error> for FeeEstimatorError {

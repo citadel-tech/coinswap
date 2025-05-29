@@ -5,8 +5,7 @@ use std::collections::HashMap;
 use bitcoind::bitcoincore_rpc::{json::EstimateMode, RpcApi};
 use serde::Deserialize;
 
-use crate::error::FeeEstimatorError;
-use crate::wallet::Wallet;
+use crate::{error::FeeEstimatorError, wallet::Wallet};
 
 const MEMPOOL_FEES_API_URL: &str = "https://mempool.space/api/v1/fees/recommended";
 const ESPLORA_FEES_API_URL: &str = "https://blockstream.info/api/fee-estimates";
@@ -62,47 +61,36 @@ impl FeeEstimator {
         combined_fees.insert(BlockTarget::Standard, Vec::new());
         combined_fees.insert(BlockTarget::Economy, Vec::new());
 
-        if self.wallet.is_some() {
-            if let Ok(fees) = self.estimate_smart_fee() {
+        let results = std::thread::scope(|s| {
+            let mut handles = Vec::new();
+
+            if self.wallet.is_some() {
+                let handle = s.spawn(|| self.estimate_smart_fee());
+                handles.push(("Bitcoin Core", handle));
+            }
+
+            let mempool_handle = s.spawn(Self::fetch_mempool_fees);
+            handles.push(("Mempool Space", mempool_handle));
+
+            let esplora_handle = s.spawn(Self::fetch_esplora_fees);
+            handles.push(("Esplora", esplora_handle));
+
+            let mut results = Vec::new();
+            for (source, handle) in handles {
+                results.push((source, handle.join()));
+            }
+            results
+        });
+
+        for (source, result) in results {
+            let fees = result.map_err(|_| FeeEstimatorError::ThreadError)?;
+            if let Ok(fees) = fees {
                 for (target, fee) in fees {
-                    log::debug!("Bitcoin Core Fee Estimates {target:?}: {fee} sat/vB");
-                    combined_fees
-                        .get_mut(&target)
-                        .ok_or_else(|| {
-                            FeeEstimatorError::MissingData(format!(
-                                "Fee not available for target: {target:?}"
-                            ))
-                        })?
-                        .push(fee);
+                    log::debug!("{source} Fee Estimates {target:?}: {fee} sat/vB",);
+                    if let Some(target_fees) = combined_fees.get_mut(&target) {
+                        target_fees.push(fee);
+                    }
                 }
-            }
-        }
-
-        if let Ok(fees) = Self::fetch_mempool_fees() {
-            for (target, fee) in fees {
-                log::debug!("Mempool Space Fee Estimates {target:?}: {fee} sat/vB");
-                combined_fees
-                    .get_mut(&target)
-                    .ok_or_else(|| {
-                        FeeEstimatorError::MissingData(format!(
-                            "Fee not available for target: {target:?}"
-                        ))
-                    })?
-                    .push(fee);
-            }
-        }
-
-        if let Ok(fees) = Self::fetch_esplora_fees() {
-            for (target, fee) in fees {
-                log::debug!("Esplora Fee Estimates {target:?}: {fee} sat/vB");
-                combined_fees
-                    .get_mut(&target)
-                    .ok_or_else(|| {
-                        FeeEstimatorError::MissingData(format!(
-                            "Fee not available for target: {target:?}"
-                        ))
-                    })?
-                    .push(fee);
             }
         }
 
