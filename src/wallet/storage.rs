@@ -100,7 +100,7 @@ impl WalletStore {
         let wallet_file = fs::OpenOptions::new().write(true).open(path)?;
         let writer = BufWriter::new(wallet_file);
 
-        let packed_store = serde_cbor::ser::to_vec_packed(&self)?;
+        let packed_store = serde_cbor::ser::to_vec(&self)?;
         match store_enc_material {
             Some(material) => {
                 let material_nonce = material.nonce.as_ref().unwrap(); // borrow the Vec<u8>
