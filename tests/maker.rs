@@ -214,11 +214,11 @@ fn test_maker() {
     }));
     // Always clean up maker and dns regardless of panic or success
     if let Some(mut maker) = maker_opt.take() {
-        maker.kill();
-        maker.wait();
+        let _ = maker.kill();
+        let _ = maker.wait();
     }
-    dns.kill();
-    dns.wait();
+    let _ = dns.kill();
+    let _ = dns.wait();
 
     if let Err(err) = result {
         panic!("Test panicked or failed: {:?}", err);
