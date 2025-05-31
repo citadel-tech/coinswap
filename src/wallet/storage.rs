@@ -121,54 +121,61 @@ impl WalletStore {
         }
     }
 
-    /// Reads from a path (errors if path doesn't exist).
-    pub(crate) fn read_from_disk(
-        path: &Path,
-        store_enc_material: &mut Option<KeyMaterial>,
-    ) -> Result<Self, WalletError> {
-        //let wallet_file = File::open(path)?;
-        let mut reader = read(path)?;
-        let mut store_tmp;
-        match store_enc_material {
-            Some(material) => {
-                let encrypted_wallet =
-                    serde_cbor::from_slice::<EncryptedWalletStore>(&reader).unwrap();
-
-                // Clone it so we keep a copy for both uses
-                let nonce_vec = encrypted_wallet.nonce.clone();
-                material.nonce = Some(nonce_vec.clone());
-
-                let key = Key::<Aes256Gcm>::from_slice(&material.key);
-                let cipher = Aes256Gcm::new(&key);
-
-                let nonce = aes_gcm::Nonce::from_slice(&nonce_vec);
-                let packed_wallet_store = cipher
-                    .decrypt(nonce, encrypted_wallet.encrypted_wallet_store.as_ref())
-                    .expect("Error decrypting the wallet, wrong passphrase?");
-                store_tmp = serde_cbor::from_slice(&packed_wallet_store);
-            }
-            None => store_tmp = serde_cbor::from_slice::<Self>(&reader),
-        }
-
-        let store = match store_tmp {
-            Ok(store) => store,
+    fn from_slice_trim_trailing<T>(mut reader: Vec<u8>) -> Result<T, WalletError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        match serde_cbor::from_slice::<T>(&reader) {
+            Ok(store) => Ok(store),
             Err(e) => {
-                let err_string = format!("{e:?}");
+                let err_string = format!("{:?}", e);
                 if err_string.contains("code: TrailingData") {
                     log::info!("Wallet file has trailing data, trying to restore");
                     loop {
                         // pop the last byte and try again.
                         reader.pop();
-                        match serde_cbor::from_slice::<Self>(&reader) {
-                            Ok(store) => break store,
+                        match serde_cbor::from_slice::<T>(&reader) {
+                            Ok(store) => break Ok(store),
                             Err(_) => continue,
                         }
                     }
                 } else {
-                    return Err(e.into());
+                    Err(e.into())
                 }
             }
+        }
+    }
+
+    /// Reads from a path (errors if path doesn't exist).
+    pub(crate) fn read_from_disk(
+        path: &Path,
+        store_enc_material: &mut Option<KeyMaterial>,
+    ) -> Result<Self, WalletError> {
+        let reader = read(path)?;
+
+        let store = match store_enc_material {
+            Some(material) => {
+                log::info!("Reading encrypted wallet");
+
+                let encrypted_wallet: EncryptedWalletStore =
+                    Self::from_slice_trim_trailing(reader.clone())?;
+
+                let nonce_vec = encrypted_wallet.nonce.clone();
+                material.nonce = Some(nonce_vec.clone());
+
+                let key = Key::<Aes256Gcm>::from_slice(&material.key);
+                let cipher = Aes256Gcm::new(&key);
+                let nonce = aes_gcm::Nonce::from_slice(&nonce_vec);
+
+                let packed_wallet_store = cipher
+                    .decrypt(nonce, encrypted_wallet.encrypted_wallet_store.as_ref())
+                    .expect("Error decrypting wallet, wrong passphrase?");
+
+                Self::from_slice_trim_trailing(packed_wallet_store)?
+            }
+            None => Self::from_slice_trim_trailing(reader)?,
         };
+
         Ok(store)
     }
 }
