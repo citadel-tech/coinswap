@@ -204,9 +204,7 @@ pub(crate) fn handle_message(
         }
         ExpectedMessage::PrivateKeyHandover => {
             if let TakerToMakerMessage::RespPrivKeyHandover(message) = message {
-                // Nothing to send. Successfully completed swap
-                maker.handle_private_key_handover(message)?;
-                None
+                Some(maker.handle_private_key_handover(message)?)
             } else {
                 return Err(MakerError::General("Expected privatekey handover"));
             }
@@ -614,7 +612,7 @@ impl Maker {
         Ok(MakerToTakerMessage::AckPreimageRecieved)
     }
 
-    /// Handles [PrivKeyHandover] message and returns [MakerToTakerMessage::RespPrivKeyHandover] updates all the coinswap wallet states and stores it to disk.
+    /// Handles [PrivKeyHandover] message and returns [MakerToTakerMessage::RespPrivKeyHandover] ,and updates all the coinswap wallet states and stores it to disk.
     /// This is the last step of completing a coinswap round.
     pub(crate) fn handle_private_key_handover(
         &self,
@@ -629,10 +627,8 @@ impl Maker {
                 .apply_privkey(swapcoin_private_key.key)?;
         }
 
-        //need to add verification of taker's private key
-
+        //prepare private keys,send them and mark the outgoing swapcoins as "done".
         let mut swapcoin_private_keys = Vec::<MultisigPrivkey>::new();
-        // Send our privkey and mark the outgoing swapcoin as "done".
         for multisig_redeemscript in &message.receivers_multisig_redeemscripts.unwrap() {
             let mut wallet_write = self.wallet.write()?;
             let outgoing_swapcoin = wallet_write
@@ -644,24 +640,27 @@ impl Maker {
                 key: outgoing_swapcoin.my_privkey,
             });
         }
-
-        self.wallet.write()?.save_to_disk()?;
-        // Reset the connection state so watchtowers are not triggered.
-        let mut conn_state = self.ongoing_swap_state.lock()?;
-        *conn_state = HashMap::default();
-
-        log::info!("initializing Wallet Sync.");
-        {
-            let mut wallet_write = self.wallet.write()?;
-            wallet_write.sync()?;
-            wallet_write.save_to_disk()?;
-        }
-        log::info!("Completed Wallet Sync.");
-        log::info!("Successfully Completed Coinswap");
-        Ok(MakerToTakerMessage::RespPrivKeyHandover(PrivKeyHandover {
+        let send_maker_keys = MakerToTakerMessage::RespPrivKeyHandover(PrivKeyHandover {
             multisig_privkeys: swapcoin_private_keys,
             receivers_multisig_redeemscripts: None,
-        }))
+        });
+
+        {
+            self.wallet.write()?.save_to_disk()?;
+            // Reset the connection state so watchtowers are not triggered.
+            let mut conn_state = self.ongoing_swap_state.lock()?;
+            *conn_state = HashMap::default();
+
+            log::info!("initializing Wallet Sync.");
+            {
+                let mut wallet_write = self.wallet.write()?;
+                wallet_write.sync()?;
+                wallet_write.save_to_disk()?;
+            }
+            log::info!("Completed Wallet Sync.");
+            log::info!("Successfully Completed Coinswap");
+        }
+        Ok(send_maker_keys)
     }
 }
 

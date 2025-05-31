@@ -1737,6 +1737,7 @@ impl Taker {
 
         let maker_private_key_handover =
             get_maker_privatekeys(&mut socket, receivers_multisig_redeemscripts)?;
+        log::info!("<=== PrivateKeyHandover | {maker_address}");
         (if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
             check_and_apply_maker_private_keys(
                 &mut self.ongoing_swap_state.incoming_swapcoins,
