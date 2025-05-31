@@ -168,7 +168,6 @@ pub(crate) struct ContractSigsForRecvrAndSender {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct HashPreimage {
     pub(crate) senders_multisig_redeemscripts: Vec<ScriptBuf>,
-    pub(crate) receivers_multisig_redeemscripts: Vec<ScriptBuf>,
     pub(crate) preimage: [u8; 32],
 }
 
@@ -183,6 +182,7 @@ pub(crate) struct MultisigPrivkey {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PrivKeyHandover {
     pub(crate) multisig_privkeys: Vec<MultisigPrivkey>,
+    pub(crate) receivers_multisig_redeemscripts: Option<Vec<ScriptBuf>>,
 }
 
 /// All messages sent from Taker to Maker.
@@ -300,6 +300,8 @@ pub(crate) enum MakerToTakerMessage {
     ReqContractSigsAsRecvrAndSender(ContractSigsAsRecvrAndSender),
     /// Send Contract Sigs **for** the Receiver side of the hop. The Maker sending this message is the Sender of the hop.
     RespContractSigsForRecvr(ContractSigsForRecvr),
+    ///Send Ack message to taker,after receiving hashpreimage
+    AckPreimageRecieved,
     /// Send the multisig private keys of the swap, declaring completion of the contract.
     RespPrivKeyHandover(PrivKeyHandover),
 }
@@ -315,6 +317,9 @@ impl Display for MakerToTakerMessage {
             }
             Self::RespContractSigsForRecvr(_) => {
                 write!(f, "RespContractSigsForRecvr")
+            }
+            Self::AckPreimageRecieved => {
+                write!(f, "AckPreimageReceived")
             }
             Self::RespPrivKeyHandover(_) => write!(f, "RespPrivKeyHandover"),
         }
