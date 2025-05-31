@@ -317,8 +317,7 @@ impl Wallet {
         path: &Path,
         rpc_config: &RPCConfig,
     ) -> Result<Wallet, WalletError> {
-        //Call the passphrase variable password
-        let passphrase = if cfg!(feature = "integration-test") || cfg!(test) {
+        let wallet_enc_password = if cfg!(feature = "integration-test") || cfg!(test) {
             "integration-test".to_string()
         } else {
             utill::prompt_password(
@@ -327,11 +326,11 @@ impl Wallet {
         };
 
         //If user entered empty password we have None, otherwise the generated key
-        let mut key = if passphrase.is_empty() {
+        let mut key = if wallet_enc_password.is_empty() {
             None
         } else {
             let derived_key = pbkdf2_hmac_array::<Sha256, 32>(
-                passphrase.as_bytes(),
+                wallet_enc_password.as_bytes(),
                 ENCRYPTION_SALT,
                 ENCRYPTION_ITERATIONS,
             );
