@@ -56,8 +56,7 @@ use super::{
 const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
 
 const ENCRYPTION_SALT: &[u8; 8] = b"coinswap";
-//const ENCRYPTION_ITERATIONS: u32 = 600_000;
-const ENCRYPTION_ITERATIONS: u32 = 1;
+const ENCRYPTION_ITERATIONS: u32 = 600_000;
 
 #[derive(Debug, Clone)]
 pub struct KeyMaterial {
