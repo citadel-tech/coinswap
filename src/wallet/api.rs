@@ -357,7 +357,6 @@ impl Wallet {
 
         let wallet = if path.exists() {
             // wallet already exists , load the wallet
-            // I need the nonce back.. to read
             let wallet = Wallet::load(&path, &rpc_config, &key)?;
             log::info!("Wallet file at {path:?} successfully loaded.");
             wallet

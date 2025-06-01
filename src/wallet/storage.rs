@@ -103,7 +103,7 @@ impl WalletStore {
         let packed_store = serde_cbor::ser::to_vec(&self)?;
         match store_enc_material {
             Some(material) => {
-                let material_nonce = material.nonce.as_ref().unwrap(); // borrow the Vec<u8>
+                let material_nonce = material.nonce.as_ref().unwrap();
                 let nonce = aes_gcm::Nonce::from_slice(material_nonce);
                 let key = Key::<Aes256Gcm>::from_slice(&material.key);
 
