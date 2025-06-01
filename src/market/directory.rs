@@ -1,7 +1,7 @@
 //! A simple directory-server
 //!
 //! Handles market-related logic where Makers post their offers. Also provides functions to synchronize
-//! maker addresses from directory servers, post maker addresses to directory servers,
+//! maker addresses from directory servers, post maker addresses to directory servers.
 
 use bitcoin::{transaction::ParseOutPointError, OutPoint};
 use bitcoind::bitcoincore_rpc::{self, Client, RpcApi};
@@ -161,11 +161,11 @@ impl Default for DirectoryServer {
 }
 
 impl DirectoryServer {
-    /// Constructs a [DirectoryServer] from a specified data directory. Or create default configs and load them.
+    /// Constructs a [DirectoryServer] from a specified data directory. Or creates default configs and load them.
     ///
     /// The directory.toml file should exist at the provided data-dir location.
-    /// Or else, a new default-config will be loaded and created at given data-dir location.
-    /// If no data-dir is provided, a default config will be created at default data-dir location.
+    /// Or else, a new default-config will be loaded and created at the given data-dir location.
+    /// If no data-dir is provided, a default config will be created at the default data-dir location.
     ///
     /// For reference of default config checkout `./directory.toml` in repo folder.
     ///
@@ -197,7 +197,7 @@ impl DirectoryServer {
 
         // Update the connection type in config if given.
         if let Some(conn_type) = connection_type {
-            // update the config map
+            // Update the config map
             let value = config_map.get_mut("connection_type").expect("must exist");
             let conn_type_string = format!("{conn_type:?}");
             *value = conn_type_string;
@@ -256,7 +256,7 @@ impl DirectoryServer {
                 .iter()
                 .find_map(|(k, v)| if v.0 == metadata.0 { Some(*k) } else { None })
         {
-            // Update the fielity for the existing address
+            // Update the fidelity for the existing address
             if existing_key != metadata.1 {
                 log::info!(
                     "Fidelity update detected for address: {} | Old fidelity {} | New fidelity {}",
@@ -424,7 +424,7 @@ pub fn start_directory_server(
 
     log::info!("Shutdown signal received. Stopping directory server.");
 
-    // Its okay to suppress the error here as we are shuting down anyway.
+    // It's okay to suppress the error here as we are shutting down anyway.
     if let Err(e) = rpc_thread.join() {
         log::error!("Error closing RPC Thread: {e:?}");
     }
@@ -515,7 +515,7 @@ fn handle_client(
             log::info!("Got new maker address: {}", &url);
 
             // Create a constant txid for tests
-            // Its okay to unwrap as this is test-only
+            // It's okay to unwrap as this is test-only
             let txid = bitcoin::Txid::from_str(
                 "c3a04e4bdf3c8684c5cf5c8b2f3c43009670bc194ac6c856b3ec9d3a7a6e2602",
             )

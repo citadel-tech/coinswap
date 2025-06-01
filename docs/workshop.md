@@ -18,7 +18,7 @@ The protocol also includes a marketplace with dynamic offer data attached to a *
 
 The protocol is in its early stages and has several open questions and potential vulnerabilities. However, it is a promising approach to decentralized atomic swaps, and we are excited to see where it goes.
 
-For more details, please refer to the project [README](../../README.md) and check out the [App Demos](../app_demos/). 
+For more details, please refer to the project [README](../README.md) and check out the [App Demos](./). 
 
 A more detailed [protocol specification](https://github.com/citadel-tech/Coinswap-Protocol-Specification) is also available.
 
@@ -55,7 +55,7 @@ We will begin with a basic introduction to Coinswap and lay the foundation for t
 ---
 
 ### **Demo**
-In this segment, we will set up a complete swap marketplace with multiple makers and takers on our systems. Participants will role-play as takers and makers, performing a multi-hop swap with each other. We will monitor the live system logs on our laptops to observe the progress of the swap in real time.
+In this segment, we will set up a complete swap marketplace with multiple makers and takers on our systems. Participants will role-play as takers and makers, performing a multi-hop swap with each other. We will monitor the live system logs on our laptops to observe the progress of the swap in real-time.
 
 If time permits, we will conduct another swap round with a malicious maker who drops out during the swap. This will demonstrate the recovery process and highlight any potential traces left on the blockchain.
 

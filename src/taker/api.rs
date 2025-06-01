@@ -92,8 +92,6 @@ pub struct SwapParams {
     /// How many splits
     pub tx_count: u32,
     // TODO: Following two should be moved to TakerConfig as global configuration.
-    /// Confirmation count required for funding txs.
-    pub required_confirms: u32,
 }
 
 // Defines the Taker's position in the current ongoing swap.
@@ -109,10 +107,10 @@ enum TakerPosition {
 }
 
 /// The Swap State defining a current ongoing swap. This structure is managed by the Taker while
-/// performing a swap. Various data are appended into the lists and are oly read from the last entry as the
+/// performing a swap. Various data are appended into the lists and are only read from the last entry as the
 /// swap progresses. This ensures the swap state is always consistent.
 ///
-/// This states can be used to recover from a failed swap round.
+/// These states can be used to recover from a failed swap round.
 #[derive(Default)]
 struct OngoingSwapState {
     /// SwapParams used in current swap round.
@@ -177,7 +175,7 @@ impl Drop for Taker {
     fn drop(&mut self) {
         log::info!("Shutting down taker.");
         self.offerbook
-            .write_to_disk(&self.data_dir.join("offerbook.dat"))
+            .write_to_disk(&self.data_dir.join("offerbook.json"))
             .unwrap();
         log::info!("offerbook data saved to disk.");
         self.wallet.save_to_disk().unwrap();
@@ -188,9 +186,9 @@ impl Drop for Taker {
 impl Taker {
     // ######## MAIN PUBLIC INTERFACE ############
 
-    ///  Initializes a Maker structure.
+    ///  Initializes a Taker structure.
     ///
-    /// This function sets up a Maker instance with configurable parameters.
+    /// This function sets up a Taker instance with configurable parameters.
     /// It handles the initialization of data directories, wallet files, and RPC configurations.
     ///
     /// ### Parameters:
@@ -244,8 +242,8 @@ impl Taker {
 
         config.write_to_file(&data_dir.join("config.toml"))?;
 
-        // Load offerbook. If doesn't exists, creates fresh file.
-        let offerbook_path = data_dir.join("offerbook.dat");
+        // Load offerbook. If it doesn't exist, creates fresh file.
+        let offerbook_path = data_dir.join("offerbook.json");
         let offerbook = if offerbook_path.exists() {
             // If read fails, recreate a fresh offerbook.
             match OfferBook::read_from_disk(&offerbook_path) {
@@ -261,7 +259,7 @@ impl Taker {
                 }
             }
         } else {
-            // Crewate a new offer book
+            // Create a new offer book
             let empty_book = OfferBook::default();
             let file = std::fs::File::create(&offerbook_path)?;
             let writer = BufWriter::new(file);
@@ -631,7 +629,7 @@ impl Taker {
         // Find next maker's details
         let required_confirmations =
             if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
-                self.ongoing_swap_state.swap_params.required_confirms
+                REQUIRED_CONFIRMS
             } else {
                 self.ongoing_swap_state
                     .peer_infos
@@ -764,7 +762,7 @@ impl Taker {
     /// Create [FundingTxInfo] for the "next_maker". Next maker is the last stored [NextPeerInfo] in the swp state.
     /// All other data from the swap state's last entries are collected and a [FundingTxInfo] protocol message data is generated.
     fn funding_info_for_next_maker(&self) -> Vec<FundingTxInfo> {
-        // Get the reedemscripts.
+        // Get the redeemscripts.
         let (this_maker_multisig_redeemscripts, this_maker_contract_redeemscripts) =
             if self.ongoing_swap_state.taker_position == TakerPosition::FirstPeer {
                 (
@@ -1202,8 +1200,6 @@ impl Taker {
                 },
             )
             .collect::<Result<Vec<WatchOnlySwapCoin>, _>>()?;
-        //TODO error handle here the case where next_swapcoin.contract_tx script pubkey
-        // is not equal to p2wsh(next_swap_contract_redeemscripts)
         for swapcoin in &next_swapcoins {
             self.wallet
                 .import_watchonly_redeemscript(&swapcoin.get_multisig_redeemscript())?;
@@ -1558,7 +1554,7 @@ impl Taker {
     /// Pass around the Maker's multisig privatekeys. Saves all the data in wallet file. This marks
     /// the ends of swap round.
     fn settle_all_swaps(&mut self) -> Result<(), TakerError> {
-        let mut outgoing_privkeys: Option<Vec<MultisigPrivkey>> = None;
+        let mut outgoing_privkeys: Vec<MultisigPrivkey> = Vec::new();
 
         // Because the last peer info is the Taker, we take upto (0..n-1), where n = peer_info.len()
         let maker_addresses = self.ongoing_swap_state.peer_infos
@@ -1674,7 +1670,7 @@ impl Taker {
         &mut self,
         maker_address: &MakerAddress,
         index: usize,
-        outgoing_privkeys: &mut Option<Vec<MultisigPrivkey>>, // TODO: Instead of Option, just take a vector, where empty vector denotes the `None` equivalent.
+        outgoing_privkeys: &mut Vec<MultisigPrivkey>,
         senders_multisig_redeemscripts: &[ScriptBuf],
         receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {
@@ -1711,12 +1707,9 @@ impl Taker {
                 })
                 .collect::<Vec<MultisigPrivkey>>()
         } else {
-            assert!(outgoing_privkeys.is_some());
-            let reply = outgoing_privkeys
-                .as_ref()
-                .expect("outgoing privkey expected")
-                .to_vec();
-            *outgoing_privkeys = None;
+            assert!(!outgoing_privkeys.is_empty());
+            let reply = outgoing_privkeys.clone();
+            *outgoing_privkeys = Vec::new();
             reply
         };
         (if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
@@ -1732,7 +1725,7 @@ impl Taker {
                     .expect("watchonly coins expected"),
                 &maker_private_key_handover.multisig_privkeys,
             );
-            *outgoing_privkeys = Some(maker_private_key_handover.multisig_privkeys);
+            *outgoing_privkeys = maker_private_key_handover.multisig_privkeys;
             ret
         })?;
         log::info!("===> PrivateKeyHandover | {maker_address}");
@@ -1841,8 +1834,6 @@ impl Taker {
             )
             .collect::<Vec<_>>();
 
-        // TODO: Find out which txid was boradcasted first
-        // This requires -txindex to be enabled in the node.
         let seen_txids = contract_txids
             .iter()
             .filter(|txid| self.wallet.rpc.get_raw_transaction_info(txid, None).is_ok())
@@ -2000,9 +1991,8 @@ impl Taker {
                 timelock_boardcasted.len()
             );
             if timelock_boardcasted.len() == outgoing_infos.len() {
-                log::info!("All outgoing contracts reedemed. Cleared ongoing swap state");
-                // TODO: Reevaluate this.
-                self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
+                log::info!("All outgoing contracts redeemed. Cleared ongoing swap state");
+                self.clear_ongoing_swaps();
                 break;
             }
 
@@ -2026,10 +2016,10 @@ impl Taker {
                 if cfg!(feature = "integration-test") {
                     format!("127.0.0.1:{}", 8080)
                 } else {
-                    self.config.directory_server_address.clone()
+                    self.config.dns_address.clone()
                 }
             }
-            ConnectionType::TOR => self.config.directory_server_address.clone(),
+            ConnectionType::TOR => self.config.dns_address.clone(),
         };
 
         #[cfg(not(feature = "integration-test"))]
@@ -2049,39 +2039,48 @@ impl Taker {
                 }
             };
 
-        // For now, ask offers from everyone,
-        // Because we don not have any smart update mechanism, not asking again could cause problem.
-        // if a maker changes their offer without changing tor address, the taker will not ask them again for updated offer.
-        // TODO: Add smarter update mechanism, where DNS would keep a flag for every update of maker offers and taker
-        // will selectively redownload the offer from those makers only.
-        // Further TODO: The Offer book needs to be restructured to store a unqiue value per fidelity bond. Similar to DNS.
-        let offers = fetch_offer_from_makers(addresses_from_dns, &self.config)?;
+        // Find out addresses that was last updated 30 mins ago.
+        let fresh_addrs = self
+            .offerbook
+            .get_fresh_addrs()
+            .iter()
+            .map(|oa| &oa.address)
+            .collect::<HashSet<_>>();
 
-        // TODO: Use better logic to update offerbook than to just rewrite everything.
-        self.offerbook = OfferBook::default();
+        // Fetch only those addresses which are new, or last updated more than 30 mins ago
+        let addrs_to_fetch = addresses_from_dns
+            .iter()
+            .filter(|dns_addr| !fresh_addrs.contains(dns_addr))
+            .cloned()
+            .collect::<Vec<_>>();
 
-        for offer in offers {
+        let new_offers = fetch_offer_from_makers(addrs_to_fetch, &self.config)?;
+
+        for new_offer in new_offers {
             log::info!(
-                "Verifying Fidelity Bond | Maker: {} | Outpoint: {}",
-                offer.address,
-                offer.offer.fidelity.bond.outpoint
+                "Found offer from {}. Verifying Fidelity Proof",
+                new_offer.address
             );
-
             if let Err(e) = self
                 .wallet
-                .verify_fidelity_proof(&offer.offer.fidelity, &offer.address.to_string())
+                .verify_fidelity_proof(&new_offer.offer.fidelity, &new_offer.address.to_string())
             {
                 log::warn!(
-                    "Fidelity Proof Verification failed with error: {:?}. Adding this to bad maker list : {}",
+                    "Fidelity Proof Verification failed with error: {:?}. Adding this to bad maker list: {}",
                     e,
-                    offer.address
+                    new_offer.address
                 );
-                self.offerbook.add_bad_maker(&offer);
+                self.offerbook.add_bad_maker(&new_offer);
             } else {
-                log::info!("Fideity Bond verified. Adding offer from {}", offer.address);
-                self.offerbook.add_new_offer(&offer);
+                log::info!("Fidelity Bond verification success. Adding offer to our OfferBook");
+                self.offerbook.add_new_offer(&new_offer);
             }
         }
+
+        // Save the updated cache back to disk.
+        self.offerbook
+            .write_to_disk(&self.data_dir.join("offerbook.json"))?;
+
         Ok(())
     }
 
