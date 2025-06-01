@@ -276,9 +276,10 @@ impl Wallet {
     pub(crate) fn load(
         path: &Path,
         rpc_config: &RPCConfig,
-        store_enc_material: &mut Option<KeyMaterial>,
+        store_enc_material: &Option<KeyMaterial>,
     ) -> Result<Wallet, WalletError> {
-        let store = WalletStore::read_from_disk(path, store_enc_material)?;
+        let (store, nonce) = WalletStore::read_from_disk(path, store_enc_material)?;
+
         if rpc_config.wallet_name != store.file_name {
             return Err(WalletError::General(format!(
                 "Wallet name of database file and core missmatch, expected {}, found {}",
@@ -306,11 +307,19 @@ impl Wallet {
             store.outgoing_swapcoins.len()
         );
 
+        let updated_enc_material = match (store_enc_material, nonce) {
+            (Some(material), Some(nonce)) => Some(KeyMaterial {
+                key: material.key.clone(),
+                nonce: Some(nonce),
+            }),
+            _ => None,
+        };
+
         Ok(Self {
             rpc,
             wallet_file_path: path.to_path_buf(),
             store,
-            store_enc_material: store_enc_material.clone(),
+            store_enc_material: updated_enc_material,
         })
     }
     pub(crate) fn load_or_init_wallet(

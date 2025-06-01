@@ -149,11 +149,11 @@ impl WalletStore {
     /// Reads from a path (errors if path doesn't exist).
     pub(crate) fn read_from_disk(
         path: &Path,
-        store_enc_material: &mut Option<KeyMaterial>,
-    ) -> Result<Self, WalletError> {
+        store_enc_material: &Option<KeyMaterial>,
+    ) -> Result<(Self, Option<Vec<u8>>), WalletError> {
         let reader = read(path)?;
 
-        let store = match store_enc_material {
+        match store_enc_material {
             Some(material) => {
                 log::info!("Reading encrypted wallet");
 
@@ -161,7 +161,6 @@ impl WalletStore {
                     Self::from_slice_trim_trailing(reader.clone())?;
 
                 let nonce_vec = encrypted_wallet.nonce.clone();
-                material.nonce = Some(nonce_vec.clone());
 
                 let key = Key::<Aes256Gcm>::from_slice(&material.key);
                 let cipher = Aes256Gcm::new(&key);
@@ -171,12 +170,13 @@ impl WalletStore {
                     .decrypt(nonce, encrypted_wallet.encrypted_wallet_store.as_ref())
                     .expect("Error decrypting wallet, wrong passphrase?");
 
-                Self::from_slice_trim_trailing(packed_wallet_store)?
+                Ok((
+                    Self::from_slice_trim_trailing(packed_wallet_store)?,
+                    Some(nonce_vec.clone()),
+                ))
             }
-            None => Self::from_slice_trim_trailing(reader)?,
-        };
-
-        Ok(store)
+            None => Ok((Self::from_slice_trim_trailing(reader)?, None)),
+        }
     }
 }
 
@@ -209,7 +209,7 @@ mod tests {
             .write_to_disk(&file_path, &None)
             .unwrap();
 
-        let read_wallet = WalletStore::read_from_disk(&file_path, &mut None).unwrap();
+        let (read_wallet, _nonce) = WalletStore::read_from_disk(&file_path, &None).unwrap();
         assert_eq!(original_wallet_store, read_wallet);
     }
 }
