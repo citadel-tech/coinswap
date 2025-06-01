@@ -19,6 +19,8 @@ const TEST_DNS_UPDATE_INTERVAL: u32 = 30;
 mod test_framework;
 use test_framework::{await_message, generate_blocks, init_bitcoind, send_to_address, start_dns};
 
+use log::info;
+
 struct MakerCli {
     data_dir: PathBuf,
     bitcoind: BitcoinD,
