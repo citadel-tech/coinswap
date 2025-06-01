@@ -605,7 +605,6 @@ impl TestFramework {
             .collect::<Vec<_>>();
         let mut base_rpc_port = 3500; // Random port for RPC connection in tests. (Not used)
 
-        //Figure out how the maker is asking for the standard input, and find a way to fix the encryption password entering, to make the tests work
         let makers = makers_config_map // Create the Makers as per given configuration map.
             .into_iter()
             .map(|(port, behavior)| {

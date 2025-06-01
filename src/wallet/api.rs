@@ -231,8 +231,6 @@ impl Wallet {
     ///
     /// The path should include the full path for a wallet file.
     /// If the wallet file doesn't exist it will create a new wallet file.
-    /// TODO: Routine for encryption here!
-    /// Then ask password for the user
     pub fn init(
         path: &Path,
         rpc_config: &RPCConfig,
@@ -271,7 +269,6 @@ impl Wallet {
 
     /// Load wallet data from file and connect to a core RPC.
     /// The core rpc wallet name, and wallet_id field in the file should match.
-    ///
     pub(crate) fn load(
         path: &Path,
         rpc_config: &RPCConfig,
@@ -334,7 +331,7 @@ impl Wallet {
         };
 
         //If user entered empty password we have None, otherwise the generated key
-        let mut key = if wallet_enc_password.is_empty() {
+        let key = if wallet_enc_password.is_empty() {
             None
         } else {
             let derived_key = pbkdf2_hmac_array::<Sha256, 32>(
@@ -344,7 +341,7 @@ impl Wallet {
             );
 
             let nonce = if path.exists() {
-                //Todo, if exist load nonce
+                //Will be filled after loading, by the Wallet::load method
                 None
             } else {
                 // Only generate a nonce if we're creating the wallet
@@ -361,13 +358,11 @@ impl Wallet {
         let wallet = if path.exists() {
             // wallet already exists , load the wallet
             // I need the nonce back.. to read
-            let wallet = Wallet::load(&path, &rpc_config, &mut key)?;
+            let wallet = Wallet::load(&path, &rpc_config, &key)?;
             log::info!("Wallet file at {path:?} successfully loaded.");
             wallet
         } else {
             // wallet doesn't exists at the given path , create a new one
-
-            //We create a nonce for the wallet also
             let wallet = Wallet::init(&path, &rpc_config, key)?;
 
             log::info!("New Wallet created at : {path:?}");
