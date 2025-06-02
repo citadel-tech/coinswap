@@ -243,7 +243,8 @@ impl Wallet {
                 } else {
                     let m = sum_change / y;
                     let d = sum_change % y;
-                    change_chunks.extend(std::iter::repeat_n(y, m as usize));                    if d > 0 {
+                    change_chunks.extend(std::iter::repeat_n(y, m as usize));
+                    if d > 0 {
                         change_chunks.push(d);
                     }
                 }
