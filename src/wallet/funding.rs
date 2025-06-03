@@ -243,13 +243,9 @@ impl Wallet {
                 } else {
                     let m = sum_change / y;
                     let d = sum_change % y;
-                    if m > 5 {
-                        change_chunks.extend(std::iter::repeat_n(y, 4));
-                        change_chunks.push(sum_change - 4 * y);
-                    }
-                    if m == 5 {
-                        change_chunks.extend(std::iter::repeat_n(y, 4));
-                        change_chunks.push((sum_change - 4 * y) + d);
+                    if m > MAX_CHUNKS {
+                        change_chunks.extend(std::iter::repeat_n(y, (MAX_CHUNKS - 1) as usize));
+                        change_chunks.push(sum_change - (MAX_CHUNKS - 1) * y);
                     } else {
                         change_chunks.extend(std::iter::repeat_n(y, m as usize));
                         if d > 0 {
