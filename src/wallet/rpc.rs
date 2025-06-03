@@ -80,7 +80,7 @@ impl Wallet {
                 self.rpc
                     .create_wallet(wallet_name, Some(true), None, None, None)?;
             } else {
-                // TODO: We cannot use the api directly right now.
+                // TODO: We cannot use the api directly right now. [remove todo and just keep the comment]
                 // https://github.com/rust-bitcoin/rust-bitcoincore-rpc/issues/225 is still open,
                 // We can update to api call after moving to new corepc crate.
                 let args = [

@@ -1093,7 +1093,7 @@ impl Wallet {
         amount: Amount,
         feerate: f64,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        // TODO : Create a user input variable with the broader merge split refactor
+        // TODO : Create a user input for the number of outputs
         let num_outputs = 1; // Number of outputs
 
         // Get spendable UTXOs (regular coins and incoming swap coins)
