@@ -72,8 +72,17 @@ fn test_fidelity() {
 
     thread::sleep(Duration::from_secs(6));
 
-    // TODO: Assert that fund request for fidelity is printed in the log.
-    // Add the logging functions and assert the log string.
+    // Assert that fund request for fidelity is printed in the log
+    let debug_log_path = "/tmp/coinswap/taker/debug.log";
+    if let Ok(log_contents) = std::fs::read_to_string(debug_log_path) {
+        assert!(
+            log_contents.contains("Send at least 0.01001000 BTC to"),
+            "Funding request message not found in debug.log"
+        );
+        log::info!("✅ Funding request message detected in logs");
+    } else {
+        panic!("Could not read debug.log file at {}", debug_log_path);
+    }
 
     log::info!("💰 Adding sufficient funds for fidelity bond creation");
     // Provide the maker with more funds.
@@ -96,6 +105,17 @@ fn test_fidelity() {
     maker.shutdown.store(true, Relaxed);
 
     let _ = maker_thread.join().unwrap();
+
+    // Assert that successful fidelity bond creation is logged
+    if let Ok(log_contents) = std::fs::read_to_string(debug_log_path) {
+        assert!(
+            log_contents.contains("Successfully created fidelity bond"),
+            "Successful bond creation message not found in debug.log"
+        );
+        log::info!("✅ Successful bond creation confirmed in logs");
+    } else {
+        panic!("Could not read debug.log file at {}", debug_log_path);
+    }
 
     log::info!("🔗 Verifying first fidelity bond creation");
     // Verify that the fidelity bond is created correctly.
@@ -155,9 +175,12 @@ fn test_fidelity() {
         let highest_bond_index = wallet_read.get_highest_fidelity_index().unwrap().unwrap();
         assert_eq!(highest_bond_index, index);
 
-        // TODO: Figure out why this sporadically fails.
-        //let bond_value = wallet_read.calculate_bond_value(index).unwrap();
-        // assert_eq!(bond_value, Amount::from_sat(1474));
+        // Get the second bond and calculate its value
+        let (second_bond, _) = wallet_read.get_fidelity_bonds().get(&index).unwrap();
+        let second_bond_value = wallet_read.calculate_bond_value(second_bond).unwrap();
+
+        // Assert exact value now that it's consistent
+        assert_eq!(second_bond_value, Amount::from_sat(20831));
 
         let (bond, redeemed) = wallet_read.get_fidelity_bonds().get(&index).unwrap();
         assert_eq!(bond.amount, Amount::from_sat(8000000));

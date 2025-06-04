@@ -552,11 +552,11 @@ impl TestFramework {
     ) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
-        setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
         // Remove if previously existing
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
         }
+        setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
         log::info!("📁 temporary directory : {}", temp_dir.display());
 
         let bitcoind = init_bitcoind(&temp_dir);
