@@ -7,6 +7,11 @@ use std::{convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr};
 
 use std::collections::HashMap;
 
+use aes_gcm::{
+    aead::{AeadCore, OsRng},
+    Aes256Gcm,
+};
+
 use bip39::Mnemonic;
 use bitcoin::{
     bip32::{ChildNumber, DerivationPath, Xpriv, Xpub},
@@ -17,9 +22,12 @@ use bitcoin::{
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, VarInt, Weight,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
+use pbkdf2::pbkdf2_hmac_array;
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::path::Path;
 
+use crate::utill;
 use crate::{
     protocol::contract,
     utill::{
@@ -47,12 +55,25 @@ use super::{
 
 const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
 
+const ENCRYPTION_SALT: &[u8; 8] = b"coinswap";
+const ENCRYPTION_ITERATIONS: u32 = 600_000;
+
+#[derive(Debug, Clone)]
+pub struct KeyMaterial {
+    /// The derived encryption key (not the original passphrase)
+    pub key: [u8; 32],
+    /// Nonce used for encryption
+    pub nonce: Option<Vec<u8>>, // use Vec<u8> since [u8] is unsized
+}
+
 /// Represents a Bitcoin wallet with associated functionality and data.
 #[derive(Debug)]
 pub struct Wallet {
     pub(crate) rpc: Client,
     wallet_file_path: PathBuf,
     pub(crate) store: WalletStore,
+    // I do this to avoid saving the passphrase, only the derived key
+    store_enc_material: Option<KeyMaterial>,
 }
 
 /// Specify the keychain derivation path from [`HARDENDED_DERIVATION`]
@@ -210,7 +231,11 @@ impl Wallet {
     ///
     /// The path should include the full path for a wallet file.
     /// If the wallet file doesn't exist it will create a new wallet file.
-    pub fn init(path: &Path, rpc_config: &RPCConfig) -> Result<Self, WalletError> {
+    pub fn init(
+        path: &Path,
+        rpc_config: &RPCConfig,
+        store_enc_material: Option<KeyMaterial>,
+    ) -> Result<Self, WalletError> {
         let rpc = Client::try_from(rpc_config)?;
         let network = rpc.get_blockchain_info()?.chain;
 
@@ -238,13 +263,19 @@ impl Wallet {
             rpc,
             wallet_file_path: path.to_path_buf(),
             store,
+            store_enc_material,
         })
     }
 
     /// Load wallet data from file and connect to a core RPC.
     /// The core rpc wallet name, and wallet_id field in the file should match.
-    pub(crate) fn load(path: &Path, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
-        let store = WalletStore::read_from_disk(path)?;
+    pub(crate) fn load(
+        path: &Path,
+        rpc_config: &RPCConfig,
+        store_enc_material: &Option<KeyMaterial>,
+    ) -> Result<Wallet, WalletError> {
+        let (store, nonce) = WalletStore::read_from_disk(path, store_enc_material)?;
+
         if rpc_config.wallet_name != store.file_name {
             return Err(WalletError::General(format!(
                 "Wallet name of database file and core mismatch, expected {}, found {}",
@@ -255,6 +286,7 @@ impl Wallet {
         let network = rpc.get_blockchain_info()?.chain;
 
         // Check if the backend node is running on correct network. Or else hard error.
+
         if store.network != network {
             log::error!(
                 "Wallet file is created for {}, backend Bitcoin Core is running on {}",
@@ -271,11 +303,72 @@ impl Wallet {
             store.outgoing_swapcoins.len()
         );
 
+        let updated_enc_material = match (store_enc_material, nonce) {
+            (Some(material), Some(nonce)) => Some(KeyMaterial {
+                key: material.key.clone(),
+                nonce: Some(nonce),
+            }),
+            _ => None,
+        };
+
         Ok(Self {
             rpc,
             wallet_file_path: path.to_path_buf(),
             store,
+            store_enc_material: updated_enc_material,
         })
+    }
+    pub(crate) fn load_or_init_wallet(
+        path: &Path,
+        rpc_config: &RPCConfig,
+    ) -> Result<Wallet, WalletError> {
+        let wallet_enc_password = if cfg!(feature = "integration-test") || cfg!(test) {
+            "integration-test".to_string()
+        } else {
+            utill::prompt_password(
+                "Enter wallet encryption passphrase (empty for no encryption): ",
+            )?
+        };
+
+        //If user entered empty password we have None, otherwise the generated key
+        let key = if wallet_enc_password.is_empty() {
+            None
+        } else {
+            let derived_key = pbkdf2_hmac_array::<Sha256, 32>(
+                wallet_enc_password.as_bytes(),
+                ENCRYPTION_SALT,
+                ENCRYPTION_ITERATIONS,
+            );
+
+            let nonce = if path.exists() {
+                //Will be filled after loading, by the Wallet::load method
+                None
+            } else {
+                // Only generate a nonce if we're creating the wallet
+                let generated_nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+                Some(generated_nonce.as_slice().to_vec())
+            };
+
+            Some(KeyMaterial {
+                key: derived_key,
+                nonce,
+            })
+        };
+
+        let wallet = if path.exists() {
+            // wallet already exists , load the wallet
+            let wallet = Wallet::load(&path, &rpc_config, &key)?;
+            log::info!("Wallet file at {path:?} successfully loaded.");
+            wallet
+        } else {
+            // wallet doesn't exists at the given path , create a new one
+            let wallet = Wallet::init(&path, &rpc_config, key)?;
+
+            log::info!("New Wallet created at : {path:?}");
+            wallet
+        };
+
+        Ok(wallet)
     }
 
     /// Update external index and saves to disk.
@@ -289,7 +382,8 @@ impl Wallet {
 
     /// Update the existing file. Error if path does not exist.
     pub(crate) fn save_to_disk(&self) -> Result<(), WalletError> {
-        self.store.write_to_disk(&self.wallet_file_path)
+        self.store
+            .write_to_disk(&self.wallet_file_path, &self.store_enc_material)
     }
 
     /// Finds an incoming swap coin with the specified multisig redeem script.

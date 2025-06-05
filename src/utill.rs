@@ -24,12 +24,14 @@ use std::{
     sync::Once,
 };
 
+use std::os::unix::io::AsRawFd;
 use std::{
     collections::HashMap,
     io::{self, Write},
     sync::OnceLock,
     time::Duration,
 };
+
 static LOGGER: OnceLock<()> = OnceLock::new();
 
 use crate::{
@@ -649,6 +651,64 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
         log::warn!("Tor is still starting, try again later: {response}");
     }
     Ok(())
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct Termios {
+    c_iflag: u32,
+    c_oflag: u32,
+    c_cflag: u32,
+    c_lflag: u32,
+    c_line: u8,
+    c_cc: [u8; 32],
+    c_ispeed: u32,
+    c_ospeed: u32,
+}
+
+// Constants (from <termios.h>)
+const ECHO: u32 = 0x00000008;
+const TCSANOW: i32 = 0;
+
+extern "C" {
+    fn tcgetattr(fd: i32, termios_p: *mut Termios) -> i32;
+    fn tcsetattr(fd: i32, optional_actions: i32, termios_p: *const Termios) -> i32;
+}
+
+/// Prompts the user for a password using the given prompt string.
+pub fn prompt_password(message: &'static str) -> std::io::Result<String> {
+    let stdin = io::stdin();
+    let fd = stdin.as_raw_fd();
+
+    print!("{}", message);
+    io::stdout().flush()?; // Ensure the prompt is printed
+
+    unsafe {
+        let mut termios = std::mem::zeroed::<Termios>();
+
+        if tcgetattr(fd, &mut termios) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let original = termios;
+
+        // Disable ECHO
+        termios.c_lflag &= !ECHO;
+
+        if tcsetattr(fd, TCSANOW, &termios) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        // Read password
+        let mut password = String::new();
+        stdin.read_line(&mut password)?;
+
+        // Restore terminal
+        tcsetattr(fd, TCSANOW, &original);
+
+        println!(); // move to next line after input
+        Ok(password.trim_end().to_string())
+    }
 }
 
 pub(crate) fn get_emphemeral_address(

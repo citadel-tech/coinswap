@@ -187,28 +187,46 @@ fn test_maker() {
     let dns_dir = maker_cli.data_dir.parent().unwrap();
     let mut dns = start_dns(dns_dir, &maker_cli.bitcoind);
 
-    info!("🚀 Starting and configuring makerd");
-    let (rx, maker) = maker_cli.start_and_configure_makerd();
+    let mut maker_opt: Option<Child> = None;
+    // Run main test logic in a closure to catch panics or errors
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        info!("🚀 Starting and configuring makerd");
+        let (rx, maker) = maker_cli.start_and_configure_makerd();
+        maker_opt = Some(maker);
 
-    println!("🔗 testing for fidelity bond being registered even in mempool");
+        println!("🔗 testing for fidelity bond being registered even in mempool");
 
-    let (rx, mut maker) = test_bond_registration_before_confirmation(&maker_cli, maker, rx);
+        let (rx, maker) =
+            test_bond_registration_before_confirmation(&maker_cli, maker_opt.take().unwrap(), rx);
+        maker_opt = Some(maker);
 
-    println!("💻 Testing maker cli");
-    test_maker_cli(&maker_cli, &rx);
+        println!("💻 Testing maker cli");
+        test_maker_cli(&maker_cli, &rx);
 
-    maker.kill().unwrap();
-    maker.wait().unwrap();
-    std::thread::sleep(Duration::from_secs(1)); // Wait for resources to be released
+        // Inside the closure, kill and wait, then clear option
+        if let Some(mut maker) = maker_opt.take() {
+            maker.kill().unwrap();
+            maker.wait().unwrap();
+        }
+        std::thread::sleep(Duration::from_secs(1)); // Wait for resources to be released
 
-    println!("🔌 Testing bitcoin backend connection");
-    test_bitcoin_backend_connection(&mut maker_cli);
+        println!("🔌 Testing bitcoin backend connection");
+        test_bitcoin_backend_connection(&mut maker_cli);
 
-    println!("💧 Testing liquidity threshold");
-    test_liquidity_threshold(&maker_cli);
+        println!("💧 Testing liquidity threshold");
+        test_liquidity_threshold(&maker_cli);
+    }));
+    // Always clean up maker and dns regardless of panic or success
+    if let Some(mut maker) = maker_opt.take() {
+        let _ = maker.kill();
+        let _ = maker.wait();
+    }
+    let _ = dns.kill();
+    let _ = dns.wait();
 
-    dns.kill().unwrap();
-    dns.wait().unwrap();
+    if let Err(err) = result {
+        panic!("Test panicked or failed: {:?}", err);
+    }
 
     info!("🎉 All maker tests completed successfully");
 }
