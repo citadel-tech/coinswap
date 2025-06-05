@@ -655,6 +655,24 @@ impl TestFramework {
         )
     }
 
+    /// Assert that a log message exists in the debug.log file
+    pub fn assert_log(&self, expected_message: &str, log_path: &str) {
+        match std::fs::read_to_string(log_path) {
+            Ok(log_contents) => {
+                assert!(
+                    log_contents.contains(expected_message),
+                    "Expected log message '{}' not found in log file: {}",
+                    expected_message,
+                    log_path
+                );
+                log::info!("✅ Found expected log message: '{expected_message}'");
+            }
+            Err(e) => {
+                panic!("Could not read log file at {}: {}", log_path, e);
+            }
+        }
+    }
+
     /// Stop bitcoind and clean up all test data.
     pub fn stop(&self) {
         log::info!("🛑 Stopping Test Framework");
