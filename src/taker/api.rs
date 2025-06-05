@@ -70,8 +70,6 @@ pub(crate) const RECONNECT_SHORT_SLEEP_DELAY: u64 = 1;
 pub(crate) const RECONNECT_LONG_SLEEP_DELAY: u64 = 5;
 pub(crate) const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 30;
 pub(crate) const TCP_TIMEOUT_SECONDS: u64 = 300;
-// TODO: Maker should decide this miner fee [remove]
-// This fee is used for both funding and contract txs. [remove]
 #[cfg(feature = "integration-test")]
 pub(crate) const MINER_FEE: u64 = 1000;
 
@@ -91,7 +89,6 @@ pub struct SwapParams {
     pub maker_count: usize,
     /// How many splits
     pub tx_count: u32,
-    // TODO: Following two should be moved to TakerConfig as global configuration. [remove]
 }
 
 // Defines the Taker's position in the current ongoing swap.
@@ -320,8 +317,6 @@ impl Taker {
         // Check if we have enough balance.
         let available = self.wallet.get_balances()?.spendable;
 
-        // TODO: Make more exact estimate of swap cost and ensure balance.
-        // For now ensure at least swap_amount + 1000 sats is available. [remove]
         let required = swap_params.send_amount + Amount::from_sat(1000);
         if available < required {
             let err = WalletError::InsufficientFund {
@@ -675,7 +670,6 @@ impl Taker {
 
         loop {
             // Abort if any of the contract transaction is broadcasted
-            // TODO: Find the culprit Maker, and ban it's fidelity bond. [remove]
             let contracts_broadcasted = self.check_for_broadcasted_contract_txes();
             if !contracts_broadcasted.is_empty() {
                 log::error!(
@@ -726,7 +720,6 @@ impl Taker {
                 }
 
                 // handle confirmations
-                //TODO handle confirm<0 [removed]
                 if gettx.confirmations >= Some(required_confirmations) {
                     txid_tx_map.insert(
                         *txid,
