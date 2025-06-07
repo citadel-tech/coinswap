@@ -270,7 +270,7 @@ impl Taker {
             let empty_book = OfferBook::default();
             let file = std::fs::File::create(&offerbook_path)?;
             let writer = BufWriter::new(file);
-            serde_cbor::to_writer(writer, &empty_book)?;
+            serde_json::to_writer_pretty(writer, &empty_book)?;
             empty_book
         };
 

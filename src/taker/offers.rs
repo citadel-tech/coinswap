@@ -146,29 +146,8 @@ impl OfferBook {
 
     /// Reads from a path (errors if path doesn't exist).
     pub fn read_from_disk(path: &Path) -> Result<Self, TakerError> {
-        //let wallet_file = File::open(path)?;
-        let mut reader = std::fs::read_to_string(path)?;
-        let book = match serde_json::from_str(&reader) {
-            Ok(book) => book,
-            Err(e) => {
-                let err_string = format!("{e:?}");
-                // TODO: Investigate why files end up with trailing data.
-                // Check if this still happens for json file.
-                if err_string.contains("code: TrailingData") {
-                    // loop until all trailing bytes are removed.
-                    loop {
-                        reader.pop();
-                        match serde_json::from_slice::<Self>(reader.as_bytes()) {
-                            Ok(book) => break book,
-                            Err(_) => continue,
-                        }
-                    }
-                } else {
-                    return Err(e.into());
-                }
-            }
-        };
-        Ok(book)
+        let content = std::fs::read_to_string(path)?;
+        Ok(serde_json::from_str(&content)?)
     }
 }
 
