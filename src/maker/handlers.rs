@@ -375,7 +375,6 @@ impl Maker {
 
         // Check for overflow. If this happens, hard error.
         // This can happen if the fee_rate for funding tx is very high and incoming_amount is very low.
-        // TODO: Ensure at Taker protocol that this never happens.
         let outgoing_amount = if let Some(a) =
             incoming_amount.checked_sub(calc_coinswap_fees + calc_funding_tx_fees)
         {
