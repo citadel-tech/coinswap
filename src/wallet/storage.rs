@@ -18,7 +18,7 @@ use std::{
 };
 
 use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
-use crate::wallet::UTXOSpendInfo;
+use crate::{utill, wallet::UTXOSpendInfo};
 use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -121,35 +121,6 @@ impl WalletStore {
         }
     }
 
-    fn from_slice_trim_trailing<T>(mut reader: Vec<u8>) -> Result<T, WalletError>
-    where
-        T: serde::de::DeserializeOwned,
-    {
-        match serde_cbor::from_slice::<T>(&reader) {
-            Ok(store) => Ok(store),
-            Err(e) => {
-                let err_string = format!("{:?}", e);
-                if err_string.contains("code: TrailingData") {
-                    // TODO: Investigate why files end up with trailing data.
-                    // add a log for the length of trailing data.
-                    // run the apps many times and see what the average length if for this data is.
-                    // Log the trailing data.
-                    log::info!("Wallet file has trailing data, trying to restore");
-                    loop {
-                        // pop the last byte and try again.
-                        reader.pop();
-                        match serde_cbor::from_slice::<T>(&reader) {
-                            Ok(store) => break Ok(store),
-                            Err(_) => continue,
-                        }
-                    }
-                } else {
-                    Err(e.into())
-                }
-            }
-        }
-    }
-
     /// Reads from a path (errors if path doesn't exist).
     pub(crate) fn read_from_disk(
         path: &Path,
@@ -161,8 +132,10 @@ impl WalletStore {
             Some(material) => {
                 log::info!("Reading encrypted wallet");
 
-                let encrypted_wallet: EncryptedWalletStore =
-                    Self::from_slice_trim_trailing(reader.clone())?;
+                let encrypted_wallet: EncryptedWalletStore = utill::from_slice_trim_trailing::<
+                    EncryptedWalletStore,
+                    WalletError,
+                >(reader.clone())?;
 
                 let nonce_vec = encrypted_wallet.nonce.clone();
 
@@ -175,11 +148,14 @@ impl WalletStore {
                     .expect("Error decrypting wallet, wrong passphrase?");
 
                 Ok((
-                    Self::from_slice_trim_trailing(packed_wallet_store)?,
+                    utill::from_slice_trim_trailing::<Self, WalletError>(packed_wallet_store)?,
                     Some(nonce_vec.clone()),
                 ))
             }
-            None => Ok((Self::from_slice_trim_trailing(reader)?, None)),
+            None => Ok((
+                utill::from_slice_trim_trailing::<Self, WalletError>(reader)?,
+                None,
+            )),
         }
     }
 }

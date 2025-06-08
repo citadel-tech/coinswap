@@ -16,19 +16,14 @@ use log4rs::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     env, fmt, fs,
-    io::{BufReader, BufWriter, ErrorKind, Read},
+    io::{self, BufReader, BufWriter, ErrorKind, Read, Write},
     net::TcpStream,
+    os::unix::io::AsRawFd,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Once,
-};
-
-use std::{
-    collections::HashMap,
-    io::{self, Write},
-    os::unix::io::AsRawFd,
-    sync::OnceLock,
+    sync::{Once, OnceLock},
     time::Duration,
 };
 
@@ -804,6 +799,37 @@ pub(crate) fn get_tor_hostname(
     log::info!("Generated new Tor Hidden Service Hostname: {hostname}");
 
     Ok(hostname)
+}
+
+/// Deserialize from file
+pub fn from_slice_trim_trailing<T, E>(mut reader: Vec<u8>) -> Result<T, E>
+where
+    T: serde::de::DeserializeOwned,
+    E: From<serde_cbor::Error> + std::fmt::Debug,
+{
+    match serde_cbor::from_slice::<T>(&reader) {
+        Ok(store) => Ok(store),
+        Err(e) => {
+            let err_string = format!("{:?}", e);
+            if err_string.contains("code: TrailingData") {
+                // TODO: Investigate why files end up with trailing data.
+                // add a log for the length of trailing data.
+                // run the apps many times and see what the average length if for this data is.
+                // Log the trailing data.
+                log::info!("Wallet file has trailing data, trying to restore");
+                loop {
+                    // pop the last byte and try again.
+                    reader.pop();
+                    match serde_cbor::from_slice::<T>(&reader) {
+                        Ok(store) => break Ok(store),
+                        Err(_) => continue,
+                    }
+                }
+            } else {
+                Err(e.into())
+            }
+        }
+    }
 }
 
 #[cfg(test)]
