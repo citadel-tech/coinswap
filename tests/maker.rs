@@ -186,12 +186,15 @@ fn test_maker() {
 
     let dns_dir = maker_cli.data_dir.parent().unwrap();
     let mut dns = start_dns(dns_dir, &maker_cli.bitcoind);
-
+    // Holder for the maker process so it can be killed/cleaned later
     let mut maker_opt: Option<Child> = None;
+
     // Run main test logic in a closure to catch panics or errors
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         info!("🚀 Starting and configuring makerd");
         let (rx, maker) = maker_cli.start_and_configure_makerd();
+
+        // Store maker process for cleanup outside this closure
         maker_opt = Some(maker);
 
         println!("🔗 testing for fidelity bond being registered even in mempool");
@@ -216,7 +219,7 @@ fn test_maker() {
         println!("💧 Testing liquidity threshold");
         test_liquidity_threshold(&maker_cli);
     }));
-    // Always clean up maker and dns regardless of panic or success
+    // Always clean up maker and dns regardless of test outcome
     if let Some(mut maker) = maker_opt.take() {
         let _ = maker.kill();
         let _ = maker.wait();
@@ -224,6 +227,7 @@ fn test_maker() {
     let _ = dns.kill();
     let _ = dns.wait();
 
+    // Panic if test logic failed or panicked
     if let Err(err) = result {
         panic!("Test panicked or failed: {:?}", err);
     }

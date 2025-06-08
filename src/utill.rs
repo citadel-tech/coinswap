@@ -638,7 +638,8 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
     }
     Ok(())
 }
-
+// Representation of the C `struct termios` from <termios.h>
+// Used for manipulating terminal I/O settings
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct Termios {
@@ -653,15 +654,20 @@ struct Termios {
 }
 
 // Constants (from <termios.h>)
+// Terminal flag to enable/disable input echo
 const ECHO: u32 = 0x00000008;
+// Action to apply terminal attributes immediately
 const TCSANOW: i32 = 0;
 
+// Foreign Function Interface (FFI) declarations
+// Bindings to C library functions from <termios.h>
 extern "C" {
     fn tcgetattr(fd: i32, termios_p: *mut Termios) -> i32;
     fn tcsetattr(fd: i32, optional_actions: i32, termios_p: *const Termios) -> i32;
 }
 
 /// Prompts the user for a password using the given prompt string.
+/// Temporarily disables echo so input is hidden (like sudo password prompt).
 pub fn prompt_password(message: &'static str) -> std::io::Result<String> {
     let stdin = io::stdin();
     let fd = stdin.as_raw_fd();
@@ -669,6 +675,8 @@ pub fn prompt_password(message: &'static str) -> std::io::Result<String> {
     print!("{}", message);
     io::stdout().flush()?; // Ensure the prompt is printed
 
+    // Unsafe is required for FFI calls and raw pointer usage.
+    // Also needed for zeroing a struct with potentially unsafe fields.
     unsafe {
         let mut termios = std::mem::zeroed::<Termios>();
 

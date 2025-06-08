@@ -55,15 +55,21 @@ use super::{
 
 const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
 
+/// Salt used for key derivation from a user-provided passphrase.
 const ENCRYPTION_SALT: &[u8; 8] = b"coinswap";
+/// Number of PBKDF2 iterations to strengthen passphrase-derived keys.
 const ENCRYPTION_ITERATIONS: u32 = 600_000;
 
+/// Holds derived cryptographic key material used for encrypting and decrypting wallet data.
 #[derive(Debug, Clone)]
 pub struct KeyMaterial {
-    /// The derived encryption key (not the original passphrase)
+    /// A 256-bit key derived from the user’s passphrase via PBKDF2.
+    /// This key is used with AES-GCM for encryption/decryption.
     pub key: [u8; 32],
-    /// Nonce used for encryption
-    pub nonce: Option<Vec<u8>>, // use Vec<u8> since [u8] is unsized
+    /// Nonce used for AES-GCM encryption, generated when a new wallet is created.
+    /// When loading an existing wallet, this is initially `None`.
+    /// It is populated after reading the stored nonce from disk.
+    pub nonce: Option<Vec<u8>>,
 }
 
 /// Represents a Bitcoin wallet with associated functionality and data.
@@ -72,7 +78,9 @@ pub struct Wallet {
     pub(crate) rpc: Client,
     wallet_file_path: PathBuf,
     pub(crate) store: WalletStore,
-    // I do this to avoid saving the passphrase, only the derived key
+    /// Optional encryption material derived from the user’s passphrase.
+    /// If present, wallet data will be encrypted/decrypted using AES-GCM.
+    /// The original passphrase is never stored—only the derived key is kept in memory.
     store_enc_material: Option<KeyMaterial>,
 }
 
@@ -269,6 +277,7 @@ impl Wallet {
 
     /// Load wallet data from file and connect to a core RPC.
     /// The core rpc wallet name, and wallet_id field in the file should match.
+    /// If encryption material is provided, decrypt the wallet store using it.
     pub(crate) fn load(
         path: &Path,
         rpc_config: &RPCConfig,
@@ -303,6 +312,9 @@ impl Wallet {
             store.outgoing_swapcoins.len()
         );
 
+        // The input `store_enc_material` has a key but no nonce before reading from disk.
+        // After reading, combine the key with the stored nonce to create a complete KeyMaterial
+        // used for subsequent encryption/decryption operations.
         let updated_enc_material = match (store_enc_material, nonce) {
             (Some(material), Some(nonce)) => Some(KeyMaterial {
                 key: material.key.clone(),
@@ -318,10 +330,17 @@ impl Wallet {
             store_enc_material: updated_enc_material,
         })
     }
+
+    /// Loads an existing wallet from the given path or initializes a new one if none exists.
+    ///
+    /// Prompts the user for an encryption passphrase (unless running tests),
+    /// derives encryption key material if a passphrase is provided,
+    /// and either loads or creates the wallet accordingly.
     pub(crate) fn load_or_init_wallet(
         path: &Path,
         rpc_config: &RPCConfig,
     ) -> Result<Wallet, WalletError> {
+        // For tests or integration tests, use a fixed password. Otherwise prompt user.
         let wallet_enc_password = if cfg!(feature = "integration-test") || cfg!(test) {
             "integration-test".to_string()
         } else {
@@ -330,21 +349,22 @@ impl Wallet {
             )?
         };
 
-        //If user entered empty password we have None, otherwise the generated key
+        // If user entered empty password, no encryption key material is created.
         let key = if wallet_enc_password.is_empty() {
             None
         } else {
+            // Derive a 256-bit encryption key from the passphrase using PBKDF2.
             let derived_key = pbkdf2_hmac_array::<Sha256, 32>(
                 wallet_enc_password.as_bytes(),
                 ENCRYPTION_SALT,
                 ENCRYPTION_ITERATIONS,
             );
-
+            // Generate a nonce only if creating a new wallet, else defer nonce reading.
             let nonce = if path.exists() {
                 //Will be filled after loading, by the Wallet::load method
                 None
             } else {
-                // Only generate a nonce if we're creating the wallet
+                // Generate a fresh nonce for encrypting a new wallet.
                 let generated_nonce = Aes256Gcm::generate_nonce(&mut OsRng);
                 Some(generated_nonce.as_slice().to_vec())
             };
@@ -356,12 +376,12 @@ impl Wallet {
         };
 
         let wallet = if path.exists() {
-            // wallet already exists , load the wallet
+            // wallet already exists, load the wallet
             let wallet = Wallet::load(&path, &rpc_config, &key)?;
             log::info!("Wallet file at {path:?} successfully loaded.");
             wallet
         } else {
-            // wallet doesn't exists at the given path , create a new one
+            // wallet doesn't exists at the given path, create a new one
             let wallet = Wallet::init(&path, &rpc_config, key)?;
 
             log::info!("New Wallet created at : {path:?}");
