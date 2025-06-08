@@ -24,10 +24,10 @@ use std::{
     sync::Once,
 };
 
-use std::os::unix::io::AsRawFd;
 use std::{
     collections::HashMap,
     io::{self, Write},
+    os::unix::io::AsRawFd,
     sync::OnceLock,
     time::Duration,
 };

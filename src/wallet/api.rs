@@ -27,9 +27,9 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::path::Path;
 
-use crate::utill;
 use crate::{
     protocol::contract,
+    utill,
     utill::{
         compute_checksum, generate_keypair, get_hd_path_from_descriptor,
         redeemscript_to_scriptpubkey,
