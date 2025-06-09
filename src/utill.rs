@@ -16,20 +16,17 @@ use log4rs::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     env, fmt, fs,
-    io::{BufReader, BufWriter, ErrorKind, Read},
+    io::{self, BufReader, BufWriter, ErrorKind, Read, Write},
     net::TcpStream,
+    os::unix::io::AsRawFd,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Once,
-};
-
-use std::{
-    collections::HashMap,
-    io::{self, Write},
-    sync::OnceLock,
+    sync::{Once, OnceLock},
     time::Duration,
 };
+
 static LOGGER: OnceLock<()> = OnceLock::new();
 
 use crate::{
@@ -650,6 +647,72 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
     }
     Ok(())
 }
+// Representation of the C `struct termios` from <termios.h>
+// Used for manipulating terminal I/O settings
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct Termios {
+    c_iflag: u32,
+    c_oflag: u32,
+    c_cflag: u32,
+    c_lflag: u32,
+    c_line: u8,
+    c_cc: [u8; 32],
+    c_ispeed: u32,
+    c_ospeed: u32,
+}
+
+// Constants (from <termios.h>)
+// Terminal flag to enable/disable input echo
+const ECHO: u32 = 0x00000008;
+// Action to apply terminal attributes immediately
+const TCSANOW: i32 = 0;
+
+// Foreign Function Interface (FFI) declarations
+// Bindings to C library functions from <termios.h>
+extern "C" {
+    fn tcgetattr(fd: i32, termios_p: *mut Termios) -> i32;
+    fn tcsetattr(fd: i32, optional_actions: i32, termios_p: *const Termios) -> i32;
+}
+
+/// Prompts the user for a password using the given prompt string.
+/// Temporarily disables echo so input is hidden (like sudo password prompt).
+pub fn prompt_password(message: &'static str) -> std::io::Result<String> {
+    let stdin = io::stdin();
+    let fd = stdin.as_raw_fd();
+
+    print!("{message}");
+    io::stdout().flush()?; // Ensure the prompt is printed
+
+    // Unsafe is required for FFI calls and raw pointer usage.
+    // Also needed for zeroing a struct with potentially unsafe fields.
+    unsafe {
+        let mut termios = std::mem::zeroed::<Termios>();
+
+        if tcgetattr(fd, &mut termios) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let original = termios;
+
+        // Disable ECHO
+        termios.c_lflag &= !ECHO;
+
+        if tcsetattr(fd, TCSANOW, &termios) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        // Read password
+        let mut password = String::new();
+        stdin.read_line(&mut password)?;
+
+        // Restore terminal
+        tcsetattr(fd, TCSANOW, &original);
+
+        println!(); // move to next line after input
+        Ok(password.trim_end().to_string())
+    }
+}
 
 pub(crate) fn get_emphemeral_address(
     control_port: u16,
@@ -753,6 +816,37 @@ pub(crate) fn get_tor_hostname(
     log::info!("Generated new Tor Hidden Service Hostname: {hostname}");
 
     Ok(hostname)
+}
+
+/// Deserialize from file
+pub fn from_slice_trim_trailing<T, E>(mut reader: Vec<u8>) -> Result<T, E>
+where
+    T: serde::de::DeserializeOwned,
+    E: From<serde_cbor::Error> + std::fmt::Debug,
+{
+    match serde_cbor::from_slice::<T>(&reader) {
+        Ok(store) => Ok(store),
+        Err(e) => {
+            let err_string = format!("{e:?}");
+            if err_string.contains("code: TrailingData") {
+                // TODO: Investigate why files end up with trailing data.
+                // add a log for the length of trailing data.
+                // run the apps many times and see what the average length if for this data is.
+                // Log the trailing data.
+                log::info!("Wallet file has trailing data, trying to restore");
+                loop {
+                    // pop the last byte and try again.
+                    reader.pop();
+                    match serde_cbor::from_slice::<T>(&reader) {
+                        Ok(store) => break Ok(store),
+                        Err(_) => continue,
+                    }
+                }
+            } else {
+                Err(e.into())
+            }
+        }
+    }
 }
 
 #[cfg(test)]
