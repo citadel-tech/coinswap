@@ -58,7 +58,11 @@ const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
 /// Salt used for key derivation from a user-provided passphrase.
 const ENCRYPTION_SALT: &[u8; 8] = b"coinswap";
 /// Number of PBKDF2 iterations to strengthen passphrase-derived keys.
-const ENCRYPTION_ITERATIONS: u32 = 600_000;
+const ENCRYPTION_ITERATIONS: u32 = if cfg!(feature = "integration-test") || cfg!(test) {
+    1
+} else {
+    600_000
+};
 
 /// Holds derived cryptographic key material used for encrypting and decrypting wallet data.
 #[derive(Debug, Clone)]
