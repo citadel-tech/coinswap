@@ -681,7 +681,7 @@ pub fn prompt_password(message: &'static str) -> std::io::Result<String> {
     let stdin = io::stdin();
     let fd = stdin.as_raw_fd();
 
-    print!("{}", message);
+    print!("{message}");
     io::stdout().flush()?; // Ensure the prompt is printed
 
     // Unsafe is required for FFI calls and raw pointer usage.
@@ -827,7 +827,7 @@ where
     match serde_cbor::from_slice::<T>(&reader) {
         Ok(store) => Ok(store),
         Err(e) => {
-            let err_string = format!("{:?}", e);
+            let err_string = format!("{e:?}");
             if err_string.contains("code: TrailingData") {
                 // TODO: Investigate why files end up with trailing data.
                 // add a log for the length of trailing data.
