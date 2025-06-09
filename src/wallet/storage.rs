@@ -122,10 +122,10 @@ impl WalletStore {
                 let key = Key::<Aes256Gcm>::from_slice(&material.key);
 
                 // Create AES-GCM cipher instance.
-                let cipher = Aes256Gcm::new(&key);
+                let cipher = Aes256Gcm::new(key);
 
                 // Encrypt the serialized wallet bytes.
-                let ciphertext = cipher.encrypt(&nonce, packed_store.as_ref()).unwrap();
+                let ciphertext = cipher.encrypt(nonce, packed_store.as_ref()).unwrap();
 
                 // Package encrypted data with nonce for storage.
                 let encrypted = EncryptedWalletStore {
@@ -167,7 +167,7 @@ impl WalletStore {
 
                 // Reconstruct AES-GCM cipher from the provided key and stored nonce.
                 let key = Key::<Aes256Gcm>::from_slice(&material.key);
-                let cipher = Aes256Gcm::new(&key);
+                let cipher = Aes256Gcm::new(key);
                 let nonce = aes_gcm::Nonce::from_slice(&nonce_vec);
 
                 // Decrypt the inner WalletStore CBOR bytes.

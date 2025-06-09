@@ -317,7 +317,7 @@ impl Wallet {
         // used for subsequent encryption/decryption operations.
         let updated_enc_material = match (store_enc_material, nonce) {
             (Some(material), Some(nonce)) => Some(KeyMaterial {
-                key: material.key.clone(),
+                key: material.key,
                 nonce: Some(nonce),
             }),
             _ => None,
@@ -377,12 +377,12 @@ impl Wallet {
 
         let wallet = if path.exists() {
             // wallet already exists, load the wallet
-            let wallet = Wallet::load(&path, &rpc_config, &key)?;
+            let wallet = Wallet::load(path, rpc_config, &key)?;
             log::info!("Wallet file at {path:?} successfully loaded.");
             wallet
         } else {
             // wallet doesn't exists at the given path, create a new one
-            let wallet = Wallet::init(&path, &rpc_config, key)?;
+            let wallet = Wallet::init(path, rpc_config, key)?;
 
             log::info!("New Wallet created at : {path:?}");
             wallet
