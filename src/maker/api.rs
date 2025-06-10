@@ -8,7 +8,7 @@
 
 use crate::{
     protocol::{
-        contract::check_hashvalues_are_equal,
+        contract::{self, check_hashvalues_are_equal},
         messages::{FidelityProof, ReqContractSigsForSender},
         Hash160,
     },
@@ -577,16 +577,25 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                                 next_internal_address,
                                 MIN_FEE_RATE,
                             )?;
+                            let contract_hashlock = ic_sc.get_timelock()?;
+                            let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
+                                ic_sc,
+                                next_internal_address,
+                                DEFAULT_TX_FEE_RATE,
+                            )?;
+
                             // Sometimes we might not have other's contract signatures.
                             // This means the protocol has been stopped abruptly.
                             // This needs more careful consideration as this should not happen
                             // after funding transactions have been broadcasted for outgoing contracts.
                             // For incomings, its less lethal as that's mostly the other party's burden.
+                            let hashpreimage: Option<[u8; 32]>;
                             if let Ok(tx) = og_sc.get_fully_signed_contract_tx() {
                                 outgoings.push((
                                     (og_sc.get_multisig_redeemscript(), tx),
                                     (contract_timelock, time_lock_spend),
                                 ));
+                                hashpreimage = og_sc.hash_preimage;
                             } else {
                                 log::warn!(
                                     "[{}] Outgoing contract signature not known. Not Broadcasting",
@@ -594,7 +603,10 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                                 );
                             }
                             if let Ok(tx) = ic_sc.get_fully_signed_contract_tx() {
-                                incomings.push((ic_sc.get_multisig_redeemscript(), tx));
+                                incomings.push((
+                                    (ic_sc.get_multisig_redeemscript(), tx),
+                                    (contract_hashlock, hash_lock_spend),
+                                ));
                             } else {
                                 log::warn!(
                                     "[{}] Incoming contract signature not known. Not Broadcasting",
@@ -680,6 +692,13 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
     }
 
     for ic_sc in inc.iter() {
+        let contract_hashlock = ic_sc.get_timelock()?;
+        let next_internal_address = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
+        let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
+            ic_sc,
+            next_internal_address,
+            DEFAULT_TX_FEE_RATE,
+        )?;
         let tx = match ic_sc.get_fully_signed_contract_tx() {
             Ok(tx) => tx,
             Err(e) => {
@@ -695,7 +714,10 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
                 continue;
             }
         };
-        incomings.push((ic_sc.get_multisig_redeemscript(), tx));
+        incomings.push((
+            (ic_sc.get_multisig_redeemscript(), tx),
+            (contract_hashlock, hash_lock_spend),
+        ));
     }
 
     // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
@@ -758,12 +780,22 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                             next_internal_address,
                             MIN_FEE_RATE,
                         )?;
+
+                        let contract_hashlock = ic_sc.get_timelock()?;
+                        let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
+                            ic_sc,
+                            next_internal_address,
+                            DEFAULT_TX_FEE_RATE,
+                        )?;
                         outgoings.push((
                             (og_sc.get_multisig_redeemscript(), contract),
                             (contract_timelock, time_lock_spend),
                         ));
                         let incoming_contract = ic_sc.get_fully_signed_contract_tx()?;
-                        incomings.push((ic_sc.get_multisig_redeemscript(), incoming_contract));
+                        incomings.push((
+                            (ic_sc.get_multisig_redeemscript(), incoming_contract),
+                            (contract_hashlock, hash_lock_spend),
+                        ));
                     }
                     bad_ip.push(ip.clone());
                     // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
@@ -805,34 +837,43 @@ pub(crate) fn recover_from_swap(
     // Tuple of ((Multisig_reedemscript, Contract Tx), (Timelock, Timelock Tx))
     outgoings: Vec<((ScriptBuf, Transaction), (u16, Transaction))>,
     // Tuple of (Multisig Reedemscript, Contract Tx)
-    incomings: Vec<(ScriptBuf, Transaction)>,
+    incomings: Vec<((ScriptBuf, Transaction), (u16, Transaction))>,
 ) -> Result<(), MakerError> {
     // Broadcast all the incoming contracts and remove them from the wallet.
-    for (incoming_reedemscript, tx) in incomings {
-        if maker
+    for ((incoming_reedemscript, tx), _) in incomings.iter() {
+        let check_tx_result = maker
             .wallet
             .read()?
             .rpc
-            .get_raw_transaction_info(&tx.compute_txid(), None)
-            .is_ok()
-        {
-            log::info!(
-                "[{}] Incoming Contract Already Broadcasted",
-                maker.config.network_port
-            );
-        } else if let Err(e) = maker.wallet.read()?.send_tx(&tx) {
-            log::info!(
-                "Can't send incoming contract: {} | {:?}",
-                tx.compute_txid(),
-                e
-            );
-        } else {
-            log::info!(
-                "[{}] Broadcasted Incoming Contract : {}",
-                maker.config.network_port,
-                tx.compute_txid()
-            );
-        }
+            .get_raw_transaction_info(&tx.compute_txid(), None);
+
+        match check_tx_result {
+            Ok(_) => {
+                log::info!(
+                    "[{}] Incoming Contract Already Broadcasted",
+                    maker.config.network_port
+                );
+            }
+            Err(_) => {
+                let send_tx_result = maker.wallet.read()?.send_tx(tx);
+                match send_tx_result {
+                    Ok(_) => {
+                        log::info!(
+                            "[{}] Broadcasted Incoming Contract : {}",
+                            maker.config.network_port,
+                            tx.compute_txid()
+                        );
+                    }
+                    Err(e) => {
+                        log::info!(
+                            "Can't send incoming contract: {} | {:?}",
+                            tx.compute_txid(),
+                            e
+                        );
+                    }
+                }
+            }
+        };
 
         let removed_incoming = maker
             .wallet
