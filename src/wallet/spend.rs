@@ -176,7 +176,6 @@ impl Wallet {
         Err(WalletError::General("Contract Does not exist".to_string()))
     }
 
-    #[allow(unused)]
     pub(crate) fn create_hashlock_spend(
         &self,
         ic_sc: &IncomingSwapCoin,
