@@ -416,34 +416,84 @@ fn test_bitcoin_backend_connection(maker_cli: &mut MakerCli) {
     await_message_timeout(&rx, "Swap Liquidity:", Duration::from_secs(60));
     println!("✅ Verified Bitcoin connection with successful liquidity check");
 
-    // Stop bitcoind
+    // Capture original bitcoind configuration
+    let original_datadir = maker_cli.bitcoind.workdir();
+    let original_rpc_port = maker_cli.bitcoind.params.rpc_socket.port();
+    let original_cookie_content = fs::read_to_string(&maker_cli.bitcoind.params.cookie_file)
+        .expect("Failed to read original cookie file");
+
+    // Stop bitcoind but keep maker running
     println!("🔌 Stopping bitcoind to test disconnection handling...");
     maker_cli.bitcoind.stop().unwrap();
 
     await_message_timeout(&rx, "RPC Connection failed", Duration::from_secs(20));
     println!("✅ Verified maker detects Bitcoin backend disconnection");
 
-    // TODO: Reconnect to bitcoind without restarting the maker server
-    // cleanup an new bitcoind instance `/tmp/coinswap/.bitcoin`.
-    // init bitcoin with that data dir.
-    // Don't kill the maker.
+    // Restart bitcoind with same datadir, port, and auth from original cookie
+    println!("🔄 Restarting bitcoind with same configuration...");
+
+    let exe_path = std::env::var("BITCOIND_EXE").unwrap_or_else(|_| {
+        "/home/keraliss/projects/coinswap/bin/bitcoin-28.1/bin/bitcoind".to_string()
+    });
+
+    let cookie_parts: Vec<&str> = original_cookie_content.split(':').collect();
+    let rpc_user = cookie_parts[0];
+    let rpc_password = if cookie_parts.len() > 1 {
+        cookie_parts[1]
+    } else {
+        "defaultpass"
+    };
+
+    let mut bitcoind_process = Command::new(&exe_path)
+        .args([
+            &format!("-datadir={}", original_datadir.display()),
+            &format!("-rpcport={original_rpc_port}"),
+            &format!("-rpcuser={rpc_user}"),
+            &format!("-rpcpassword={rpc_password}"),
+            "-regtest",
+            "-fallbackfee=0.0001",
+            "-txindex=1",
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("Failed to start bitcoind");
+
+    // Wait for bitcoind to start and verify connection
+    std::thread::sleep(Duration::from_secs(5));
+
+    use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
+    let rpc_url = format!("http://127.0.0.1:{original_rpc_port}");
+    let client = Client::new(
+        &rpc_url,
+        Auth::UserPass(rpc_user.to_string(), rpc_password.to_string()),
+    )
+    .expect("Failed to create RPC client");
+    client
+        .get_blockchain_info()
+        .expect("Failed to connect to restarted bitcoind");
+
+    // Wait for maker to reconnect automatically
+    println!("⏳ Waiting for maker to reconnect to bitcoind...");
+    await_message_timeout(&rx, "Swap Liquidity:", Duration::from_secs(60));
+    println!("✅ Verified maker automatically reconnected to bitcoind");
+
+    // Test maker functionality after reconnection
+    let ping_result = maker_cli.execute_maker_cli(&["send-ping"]);
+    await_message(&rx, "RPC request received: Ping");
+    assert_eq!(ping_result, "success");
+    println!("✅ Verified maker functionality after reconnection");
+
+    // Clean up and restart bitcoind normally for subsequent tests
     maker.kill().unwrap();
     maker.wait().unwrap();
+    bitcoind_process.kill().unwrap();
+    bitcoind_process.wait().unwrap();
+
     let temp_dir = maker_cli.data_dir.parent().unwrap();
-    // Find the previous bitcoin datadir.
-    let new_bitcoind = init_bitcoind(temp_dir);
-    maker_cli.bitcoind = new_bitcoind;
+    maker_cli.bitcoind = init_bitcoind(temp_dir);
 
-    println!("🔌 Starting maker with new bitcoind instance");
-    let (rx, mut maker) = maker_cli.start_makerd();
-
-    await_message(&rx, "Server Setup completed!!");
-    println!("✅ Verified maker reconnected to new bitcoind instance");
-    // Clean up
-    maker.kill().unwrap();
-    maker.wait().unwrap();
-
-    println!("🎉 Bitcoin backend connection test completed!");
+    println!("🎉 Bitcoin backend connection and reconnection test completed!");
 }
 
 fn test_liquidity_threshold(maker_cli: &MakerCli) {
