@@ -70,8 +70,6 @@ pub(crate) const RECONNECT_SHORT_SLEEP_DELAY: u64 = 1;
 pub(crate) const RECONNECT_LONG_SLEEP_DELAY: u64 = 5;
 pub(crate) const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 30;
 pub(crate) const TCP_TIMEOUT_SECONDS: u64 = 300;
-// TODO: Maker should decide this miner fee
-// This fee is used for both funding and contract txs.
 #[cfg(feature = "integration-test")]
 pub(crate) const MINER_FEE: u64 = 1000;
 
@@ -91,9 +89,6 @@ pub struct SwapParams {
     pub maker_count: usize,
     /// How many splits
     pub tx_count: u32,
-    // TODO: Following two should be moved to TakerConfig as global configuration.
-    /// Confirmation count required for funding txs.
-    pub required_confirms: u32,
 }
 
 // Defines the Taker's position in the current ongoing swap.
@@ -275,7 +270,7 @@ impl Taker {
             let empty_book = OfferBook::default();
             let file = std::fs::File::create(&offerbook_path)?;
             let writer = BufWriter::new(file);
-            serde_cbor::to_writer(writer, &empty_book)?;
+            serde_json::to_writer_pretty(writer, &empty_book)?;
             empty_book
         };
 
@@ -322,8 +317,6 @@ impl Taker {
         // Check if we have enough balance.
         let available = self.wallet.get_balances()?.spendable;
 
-        // TODO: Make more exact estimate of swap cost and ensure balance.
-        // For now ensure at least swap_amount + 1000 sats is available.
         let required = swap_params.send_amount + Amount::from_sat(1000);
         if available < required {
             let err = WalletError::InsufficientFund {
@@ -641,7 +634,7 @@ impl Taker {
         // Find next maker's details
         let required_confirmations =
             if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
-                self.ongoing_swap_state.swap_params.required_confirms
+                REQUIRED_CONFIRMS
             } else {
                 self.ongoing_swap_state
                     .peer_infos
@@ -677,7 +670,6 @@ impl Taker {
 
         loop {
             // Abort if any of the contract transaction is broadcasted
-            // TODO: Find the culprit Maker, and ban it's fidelity bond.
             let contracts_broadcasted = self.check_for_broadcasted_contract_txes();
             if !contracts_broadcasted.is_empty() {
                 log::error!(
@@ -728,7 +720,6 @@ impl Taker {
                 }
 
                 // handle confirmations
-                //TODO handle confirm<0
                 if gettx.confirmations >= Some(required_confirmations) {
                     txid_tx_map.insert(
                         *txid,
@@ -1566,7 +1557,7 @@ impl Taker {
     /// Pass around the Maker's multisig privatekeys. Saves all the data in wallet file. This marks
     /// the ends of swap round.
     fn settle_all_swaps(&mut self) -> Result<(), TakerError> {
-        let mut outgoing_privkeys: Option<Vec<MultisigPrivkey>> = None;
+        let mut outgoing_privkeys: Vec<MultisigPrivkey> = Vec::new();
 
         // Because the last peer info is the Taker, we take upto (0..n-1), where n = peer_info.len()
         let maker_addresses = self.ongoing_swap_state.peer_infos
@@ -1682,7 +1673,7 @@ impl Taker {
         &mut self,
         maker_address: &MakerAddress,
         index: usize,
-        outgoing_privkeys: &mut Option<Vec<MultisigPrivkey>>, // TODO: Instead of Option, just take a vector, where empty vector denotes the `None` equivalent.
+        outgoing_privkeys: &mut Vec<MultisigPrivkey>,
         senders_multisig_redeemscripts: &[ScriptBuf],
         receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {
@@ -1719,12 +1710,9 @@ impl Taker {
                 })
                 .collect::<Vec<MultisigPrivkey>>()
         } else {
-            assert!(outgoing_privkeys.is_some());
-            let reply = outgoing_privkeys
-                .as_ref()
-                .expect("outgoing privkey expected")
-                .to_vec();
-            *outgoing_privkeys = None;
+            assert!(!outgoing_privkeys.is_empty());
+            let reply = outgoing_privkeys.clone();
+            *outgoing_privkeys = Vec::new();
             reply
         };
         (if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
@@ -1740,7 +1728,7 @@ impl Taker {
                     .expect("watchonly coins expected"),
                 &maker_private_key_handover.multisig_privkeys,
             );
-            *outgoing_privkeys = Some(maker_private_key_handover.multisig_privkeys);
+            *outgoing_privkeys = maker_private_key_handover.multisig_privkeys;
             ret
         })?;
         log::info!("===> PrivateKeyHandover | {maker_address}");

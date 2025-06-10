@@ -45,10 +45,21 @@ pub struct MakerConfig {
     /// This field will be removed in a future version as the application will be Tor-only.
     /// Clearnet support is being phased out for security reasons.
     pub connection_type: ConnectionType,
+    /// A fixed base fee charged by the Maker for providing its services
+    pub base_fee: u64,
+    /// A percentage fee based on the swap amount.
+    pub amount_relative_fee_pct: f64,
 }
 
 impl Default for MakerConfig {
     fn default() -> Self {
+        let (fidelity_amount, fidelity_timelock, base_fee, amount_relative_fee_pct) =
+            if cfg!(feature = "integration-test") {
+                (5_000_000, 26_000, 1000, 2.50) // Test values
+            } else {
+                (50_000, 13104, 100, 0.1) // Production values
+            };
+
         Self {
             rpc_port: 6103,
             min_swap_amount: MIN_SWAP_AMOUNT,
@@ -56,21 +67,17 @@ impl Default for MakerConfig {
             control_port: 9051,
             socks_port: 9050,
             tor_auth_password: "".to_string(),
-            dns_address: "kizqnaslcb2r3mbk2vm77bdff3madcvddntmaaz2htmkyuw7sgh4ddqd.onion:8080"
+            dns_address: "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080"
                 .to_string(),
-            #[cfg(feature = "integration-test")]
-            fidelity_amount: 5_000_000, // 0.05 BTC for tests
-            #[cfg(feature = "integration-test")]
-            fidelity_timelock: 26_000, // Approx 6 months of blocks for test
-            #[cfg(not(feature = "integration-test"))]
-            fidelity_amount: 50_000, // 50K sats for production
-            #[cfg(not(feature = "integration-test"))]
-            fidelity_timelock: 13104, // Approx 3 months of blocks in production
+            fidelity_amount,
+            fidelity_timelock,
             connection_type: if cfg!(feature = "integration-test") {
                 ConnectionType::CLEARNET
             } else {
                 ConnectionType::TOR
             },
+            base_fee,
+            amount_relative_fee_pct,
         }
     }
 }
@@ -135,6 +142,11 @@ impl MakerConfig {
                 config_map.get("connection_type"),
                 default_config.connection_type,
             ),
+            base_fee: parse_field(config_map.get("base_fee"), default_config.base_fee),
+            amount_relative_fee_pct: parse_field(
+                config_map.get("amount_relative_fee_pct"),
+                default_config.amount_relative_fee_pct,
+            ),
         })
     }
 
@@ -163,6 +175,10 @@ fidelity_timelock = {}
 connection_type = {:?}
 # DNS Tor address. Change this to connect to a different DNS server 
 dns_address = {}
+# A fixed base fee charged by the Maker for providing its services (in satoshis)
+base_fee = {}
+# A percentage fee based on the swap amount
+amount_relative_fee_pct = {}
 ",
             self.network_port,
             self.rpc_port,
@@ -174,6 +190,8 @@ dns_address = {}
             self.fidelity_timelock,
             self.connection_type,
             self.dns_address,
+            self.base_fee,
+            self.amount_relative_fee_pct,
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
@@ -209,7 +227,6 @@ mod tests {
         let contents = r#"
             network_port = 6102
             rpc_port = 6103
-            required_confirms = 1
             min_swap_amount = 10000
             socks_port = 9050
         "#;

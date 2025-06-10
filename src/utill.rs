@@ -164,7 +164,10 @@ pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<
         };
 
         let config = config.build(root_logger).unwrap();
-        log4rs::init_config(config).unwrap();
+        match log4rs::init_config(config) {
+            Ok(_) => log::info!("✅ Logger initialized successfully"),
+            Err(e) => log::error!("❌ Failed to initialize logger: {e}"),
+        }
     });
 }
 
@@ -192,7 +195,10 @@ pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
             .build(Root::builder().appender("stdout").build(filter))
             .unwrap();
 
-        log4rs::init_config(config).unwrap();
+        match log4rs::init_config(config) {
+            Ok(_) => log::info!("✅ Logger initialized successfully"),
+            Err(e) => log::error!("❌ Failed to initialize logger: {e}"),
+        }
     });
 }
 
@@ -220,7 +226,10 @@ pub fn setup_directory_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
             .build(Root::builder().appender("stdout").build(filter))
             .unwrap();
 
-        log4rs::init_config(config).unwrap();
+        match log4rs::init_config(config) {
+            Ok(_) => log::info!("✅ Logger initialized successfully"),
+            Err(e) => log::error!("❌ Failed to initialize logger: {e}"),
+        }
     });
 }
 

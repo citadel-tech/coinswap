@@ -90,20 +90,15 @@ impl WalletStore {
 
     /// Reads from a path (errors if path doesn't exist).
     pub(crate) fn read_from_disk(path: &Path) -> Result<Self, WalletError> {
-        //let wallet_file = File::open(path)?;
         let mut reader = read(path)?;
         let store = match serde_cbor::from_slice::<Self>(&reader) {
             Ok(store) => store,
             Err(e) => {
                 let err_string = format!("{e:?}");
                 if err_string.contains("code: TrailingData") {
-                    // TODO: Investigate why files end up with trailing data.
-                    // add a log for the length of trailing data.
-                    // run the apps many times and see what the average length if for this data is.
-                    // Log the trailing data.
+                    // Defensive error handling - monitor logs to confirm wallet files stay clean.
                     log::info!("Wallet file has trailing data, trying to restore");
                     loop {
-                        // pop the last byte and try again.
                         reader.pop();
                         match serde_cbor::from_slice::<Self>(&reader) {
                             Ok(store) => break store,
