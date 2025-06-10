@@ -432,9 +432,7 @@ fn test_bitcoin_backend_connection(maker_cli: &mut MakerCli) {
     // Restart bitcoind with same datadir, port, and auth from original cookie
     println!("🔄 Restarting bitcoind with same configuration...");
 
-    let exe_path = std::env::var("BITCOIND_EXE").unwrap_or_else(|_| {
-        "/home/keraliss/projects/coinswap/bin/bitcoin-28.1/bin/bitcoind".to_string()
-    });
+    let exe_path = bitcoind::exe_path().expect("Failed to get bitcoind executable path");
 
     let cookie_parts: Vec<&str> = original_cookie_content.split(':').collect();
     let rpc_user = cookie_parts[0];
@@ -475,13 +473,20 @@ fn test_bitcoin_backend_connection(maker_cli: &mut MakerCli) {
 
     // Wait for maker to reconnect automatically
     println!("⏳ Waiting for maker to reconnect to bitcoind...");
-    await_message_timeout(&rx, "Swap Liquidity:", Duration::from_secs(60));
-    println!("✅ Verified maker automatically reconnected to bitcoind");
+    await_message_timeout(
+        &rx,
+        "Bitcoin Core RPC connection is live",
+        Duration::from_secs(30),
+    );
 
     // Test maker functionality after reconnection
-    let ping_result = maker_cli.execute_maker_cli(&["send-ping"]);
-    await_message(&rx, "RPC request received: Ping");
-    assert_eq!(ping_result, "success");
+    let new_address = maker_cli.execute_maker_cli(&["get-new-address"]);
+    await_message(&rx, "RPC request received: NewAddress");
+    assert!(
+        Address::from_str(&new_address).is_ok(),
+        "Should return valid Bitcoin address"
+    );
+
     println!("✅ Verified maker functionality after reconnection");
 
     // Clean up and restart bitcoind normally for subsequent tests
