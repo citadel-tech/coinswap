@@ -12,7 +12,7 @@ use aes_gcm::{
     Aes256Gcm,
 };
 
-use crate::wallet::Destination;
+use crate::{utill::ContractMetadata, wallet::Destination};
 
 use bip39::Mnemonic;
 use bitcoin::{
@@ -158,15 +158,16 @@ impl UTXOSpendInfo {
         const P2PWPKH_WITNESS_SIZE: usize = 107;
         const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 222;
         const FIDELITY_BOND_WITNESS_SIZE: usize = 115;
-        const CONTRACT_TX_WITNESS_SIZE: usize = 179;
+        const TIME_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 179;
+        const HASH_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 211;
+
         match *self {
             Self::SeedCoin { .. } | Self::SweptCoin { .. } => P2PWPKH_WITNESS_SIZE,
             Self::IncomingSwapCoin { .. } | Self::OutgoingSwapCoin { .. } => {
                 P2WSH_MULTISIG_2OF2_WITNESS_SIZE
             }
-            Self::TimelockContract { .. } | Self::HashlockContract { .. } => {
-                CONTRACT_TX_WITNESS_SIZE
-            }
+            Self::TimelockContract { .. } => TIME_LOCK_CONTRACT_TX_WITNESS_SIZE,
+            Self::HashlockContract { .. } => HASH_LOCK_CONTRACT_TX_WITNESS_SIZE,
             Self::FidelityBondCoin { .. } => FIDELITY_BOND_WITNESS_SIZE,
         }
     }
@@ -1764,5 +1765,148 @@ impl Wallet {
         };
 
         Ok(ht)
+    }
+
+    ///Broadcasts all incoming contracts
+    pub(crate) fn broadcast_incoming_contracts(
+        &mut self,
+        incomings: Vec<IncomingSwapCoin>,
+    ) -> Result<ContractMetadata, WalletError> {
+        let mut incoming_infos = Vec::with_capacity(incomings.len());
+
+        for incoming in incomings {
+            let contract_tx = incoming.get_fully_signed_contract_tx()?;
+            let txid = contract_tx.compute_txid();
+            if self.rpc.get_raw_transaction_info(&txid, None).is_ok() {
+                log::info!("Incoming Contract already broadacsted. Txid : {txid}");
+            } else {
+                self.send_tx(&contract_tx)?;
+                log::info!("Broadcasting Incoming Contract. Removing from wallet. Txid : {txid}");
+            }
+            let reedem_script = incoming.get_multisig_redeemscript();
+            let next_internal = &self.get_next_internal_addresses(1)?[0];
+            self.sync()?;
+
+            let hashlock_spend =
+                self.create_hashlock_spend(&incoming, next_internal, MIN_FEE_RATE)?;
+            incoming_infos.push(((reedem_script, contract_tx), (0, hashlock_spend)));
+        }
+        self.sync_and_save()?;
+        log::info!("Wallet file synced and saved.");
+
+        Ok(incoming_infos)
+    }
+
+    ///Broadcasts all outgoing contracts
+    pub(crate) fn broadcast_outgoing_contracts(
+        &mut self,
+        outgoings: Vec<OutgoingSwapCoin>,
+    ) -> Result<ContractMetadata, WalletError> {
+        let mut outgoing_infos = Vec::with_capacity(outgoings.len());
+
+        for outgoing in outgoings {
+            let contract_tx = outgoing.get_fully_signed_contract_tx()?;
+            let txid = contract_tx.compute_txid();
+            if self.rpc.get_raw_transaction_info(&txid, None).is_ok() {
+                log::info!("Outgoing Contract already broadcasted | Txid: {txid}");
+            } else {
+                self.send_tx(&contract_tx)?;
+                log::info!("Broadcasted Outgoing Contract | txid : {txid}");
+            }
+            let reedem_script = outgoing.get_multisig_redeemscript();
+            let timelock = outgoing.get_timelock()?;
+            let next_internal = &self.get_next_internal_addresses(1)?[0];
+            self.sync()?;
+
+            let timelock_spend =
+                self.create_timelock_spend(&outgoing, next_internal, MIN_FEE_RATE)?;
+            outgoing_infos.push(((reedem_script, contract_tx), (timelock, timelock_spend)));
+        }
+        self.sync_and_save()?;
+        log::info!("Wallet file synced and saved.");
+
+        Ok(outgoing_infos)
+    }
+
+    //Spend from hashlock contract
+    pub(crate) fn spend_from_hashlock_contract(
+        &mut self,
+        incoming_infos: &ContractMetadata,
+    ) -> Result<Vec<Transaction>, WalletError> {
+        let mut broadcasted = Vec::new();
+
+        for ((ic_rs, contract), (_, hashlock_tx)) in incoming_infos.iter() {
+            //We have already broadcasted this tx,so skip
+            if broadcasted.contains(hashlock_tx) {
+                continue;
+            }
+            let txid = contract.compute_txid();
+
+            let Ok(info) = self.rpc.get_raw_transaction_info(&txid, None) else {
+                continue;
+            };
+            log::info!(
+                "Contract Tx : {}, reached confirmation : {:?}",
+                txid,
+                info.confirmations,
+            );
+            log::info!("Hashlock Contract Tx is confirmed : {txid}");
+            log::info!("Broadcasting hashlocked tx: {}", hashlock_tx.compute_txid());
+            self.send_tx(hashlock_tx)?;
+            broadcasted.push(hashlock_tx.to_owned());
+
+            let removed = self
+                .remove_incoming_swapcoin(ic_rs)?
+                .expect("incoming swapcoin expected");
+            log::info!(
+                "Removed Incoming Swapcoin from Wallet, Contract Txid: {}",
+                removed.contract_tx.compute_txid()
+            );
+            log::info!("Initializing Wallet sync and save");
+            self.sync_and_save()?;
+            log::info!("Completed wallet sync and save");
+        }
+        Ok(broadcasted)
+    }
+
+    //Spend from the timelock contract
+    pub(crate) fn spend_from_timelock_contract(
+        &mut self,
+        outgoing_infos: &ContractMetadata,
+    ) -> Result<Vec<Transaction>, WalletError> {
+        let mut broadcasted = Vec::new();
+        for ((redeem_script, contract), (timelock, timelocked_tx)) in outgoing_infos.iter() {
+            if broadcasted.contains(timelocked_tx) {
+                continue;
+            }
+            let txid = contract.compute_txid();
+            let Ok(info) = self.rpc.get_raw_transaction_info(&txid, None) else {
+                continue;
+            };
+            let confirmations = match info.confirmations {
+                Some(c) if c > (*timelock as u32) => c,
+                _ => continue,
+            };
+            log::info!(
+                "Contract Tx {txid} reached {confirmations} confirmations, required: {timelock}"
+            );
+            log::info!(
+                "Timelock matured. Broadcasting timelocked tx: {}",
+                timelocked_tx.compute_txid()
+            );
+            self.send_tx(timelocked_tx)?;
+            broadcasted.push(timelocked_tx.to_owned());
+            let removed = self
+                .remove_outgoing_swapcoin(redeem_script)?
+                .expect("Outgoing swapcoin expected");
+            log::info!(
+                "Removed Outgoing Swapcoin. Contract Txid: {}",
+                removed.contract_tx.compute_txid()
+            );
+            log::info!("Syncing and saving wallet...");
+            self.sync_and_save()?;
+            log::info!("Wallet sync and save complete.");
+        }
+        Ok(broadcasted)
     }
 }

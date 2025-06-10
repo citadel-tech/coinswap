@@ -236,7 +236,7 @@ pub(crate) fn create_contract_redeemscript(
     OP_IF                    |
         pub_hashlock         | <sig> <size> <pub>
         32                   | <sig> <size> <pub> 32
-        1                    | <sig> <size> <pub> 32 1
+        0                   | <sig> <size> <pub> 32 0
     OP_ELSE                  |
         pub_timelock         | <sig> <size> <pub>
         0                    | <sig> <size> <pub> 0
@@ -264,7 +264,7 @@ pub(crate) fn create_contract_redeemscript(
         .push_opcode(opcodes::all::OP_IF)
             .push_key(pub_hashlock)
             .push_int(32)
-            .push_int(1)
+            .push_int(0)
         .push_opcode(opcodes::all::OP_ELSE)
             .push_key(pub_timelock)
             .push_int(0)
@@ -606,7 +606,7 @@ mod test {
             + &hashvalue.to_string()
             + "876321"
             + &pub_hashlock.to_string()[..]
-            + "0120516721"
+            + "0120006721"
             + &pub_timelock.to_string()[..]
             + "00"
             + &format!("{locktime_bytecode:x}")
@@ -711,7 +711,7 @@ mod test {
         let contract_script = ScriptBuf::from(
             Vec::from_hex(
                 "827ca91414cdf8fe0b7b2db2bd976f27fb6f3cd5f9228633876321038cc778b555c3fe2b01d1b550a07\
-            d26e38c026c4c4e1dee2a41f0431283230ee0012051672102b6b9ab72d42fb625a24598a792fa5346aa\
+            d26e38c026c4c4e1dee2a41f0431283230ee0012000672102b6b9ab72d42fb625a24598a792fa5346aa\
             64d728b446f7560f4ce1c29378b22c00012868b2757b88ac"
             ).unwrap()
         );
@@ -730,8 +730,8 @@ mod test {
         // Check creation matches expectation
         let expected_tx_hex = String::from(
             "020000000156944c5d3f98413ef45cf54545538103cc9f298e057\
-            5820ad3591376e2e0f65d2a0000000000000000010474000000000000220020046134873fba03e9b2c961\
-            1f814d323e0772ced538f04c242b7a833018d58f3500000000",
+            5820ad3591376e2e0f65d2a00000000000000000104740000000000002200200ed322603ee06987031788\
+            2801ce84362bf3eff64df77389f6d14375c121706f00000000",
         );
         let expected_tx: Transaction =
             deserialize(&Vec::from_hex(&expected_tx_hex).unwrap()).unwrap();
@@ -859,7 +859,7 @@ mod test {
 
         let contract_script = ScriptBuf::from(
             Vec::from_hex(
-                "827ca914cdccf6695323f22d061a58c398deba38bba47148876321032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af0120516721039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef000812dabb690fe0fd3768b2757b88ac"
+                "827ca914cdccf6695323f22d061a58c398deba38bba47148876321032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af0120006721039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef000812dabb690fe0fd3768b2757b88ac"
             ).unwrap()
         );
 
