@@ -71,13 +71,13 @@ impl Wallet {
     /// This function creates a spending transaction from the fidelity bond, signs and broadcasts it.
     /// Returns the txid of the spending tx, and mark the bond as spent.
     pub fn redeem_fidelity(&mut self, idx: u32, feerate: f64) -> Result<(), WalletError> {
-        let (bond, redeemed) = self
+        let bond = self
             .store
             .fidelity_bond
             .get(&idx)
             .ok_or(FidelityError::BondDoesNotExist)?;
 
-        if *redeemed {
+        if bond.is_spent {
             log::info!("Fidelity bond already spent.");
             return Ok(());
         }
@@ -104,12 +104,12 @@ impl Wallet {
                 // As a temporary fix, we mark the bond as redeemed and exit gracefully.
                 log::info!("Fidelity bond already spent.");
 
-                let (_, redeemed) = self
+                let bond = self
                     .store
                     .fidelity_bond
                     .get_mut(&idx)
                     .ok_or(FidelityError::BondDoesNotExist)?;
-                *redeemed = true;
+                bond.is_spent = true;
 
                 return Ok(());
             }
@@ -123,27 +123,19 @@ impl Wallet {
         )?;
         let txid = self.send_tx(&tx)?;
 
-        // TODO: Potential data inconsistency issue
-        // If the server crashes after broadcasting the redemption transaction but before updating
-        // the `redeemed` flag, the bond will appear unspent on restart. The system will then
-        // attempt to create a new redemption transaction, but the UTXO will already be spent,
-        // causing an unrecoverable error.
-        // Temporary fix: Log the status and mark the bond as redeemed to prevent repeated failures.
-        // A more robust solution is needed to ensure atomic updates.
-        // Note: Will be fixed with #472
         log::info!("Fidelity redeem transaction broadcasted. txid: {txid}");
 
         // No need to wait for confirmation as that will delay the rpc call. Just send back the txid.
 
         // mark is_spent
         {
-            let (_, redeemed) = self
+            let bond = self
                 .store
                 .fidelity_bond
                 .get_mut(&idx)
                 .ok_or(FidelityError::BondDoesNotExist)?;
 
-            *redeemed = true;
+            bond.is_spent = true;
         }
 
         Ok(())
@@ -247,13 +239,12 @@ impl Wallet {
                     total_input_value += utxo_data.amount;
                 }
                 UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
-                    let (bond, redeemed) = self
+                    let bond = self
                         .store
                         .fidelity_bond
                         .get(index)
                         .ok_or(FidelityError::BondDoesNotExist)?;
-
-                    if *redeemed {
+                    if bond.is_spent {
                         return Err(FidelityError::BondAlreadyRedeemed.into());
                     }
 
