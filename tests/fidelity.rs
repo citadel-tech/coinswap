@@ -126,10 +126,8 @@ fn test_fidelity() {
             .get_fidelity_bonds()
             .get(&highest_bond_index)
             .unwrap();
-        let redeemed = bond.redeem_tx.is_some();
         assert_eq!(bond.amount, Amount::from_sat(5000000));
-        assert!(!redeemed);
-
+        assert!(!bond.is_spent());
         // Log the bond details for debugging
         log::info!(
             "📊 First bond created - Amount: {}, Value: {}, Maturity Height: {}",
@@ -169,9 +167,8 @@ fn test_fidelity() {
         // assert_eq!(bond_value, Amount::from_sat(1474));
 
         let bond = wallet_read.get_fidelity_bonds().get(&index).unwrap();
-        let redeemed = bond.redeem_tx.is_some();
         assert_eq!(bond.amount, Amount::from_sat(8000000));
-        assert!(!redeemed);
+        (assert!(!bond.is_spent()));
 
         bond.lock_time.to_consensus_u32()
     };

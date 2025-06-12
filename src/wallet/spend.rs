@@ -5,8 +5,8 @@
 //! parsing mechanisms for transaction inputs and outputs.
 
 use bitcoin::{
-    absolute::LockTime, hashes::Hash, transaction::Version, Address, Amount, OutPoint, ScriptBuf,
-    Sequence, Transaction, TxIn, TxOut, Txid, Witness,
+    absolute::LockTime, transaction::Version, Address, Amount, OutPoint, ScriptBuf, Sequence,
+    Transaction, TxIn, TxOut, Witness,
 };
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RawTx, RpcApi};
 
@@ -76,8 +76,8 @@ impl Wallet {
             .fidelity_bond
             .get(&idx)
             .ok_or(FidelityError::BondDoesNotExist)?;
-        let redeemed = bond.redeem_tx.is_some();
-        if redeemed {
+
+        if bond.is_spent {
             log::info!("Fidelity bond already spent.");
             return Ok(());
         }
@@ -109,8 +109,7 @@ impl Wallet {
                     .fidelity_bond
                     .get_mut(&idx)
                     .ok_or(FidelityError::BondDoesNotExist)?;
-                let dummy_txid = Txid::from_slice(&[0u8; 32]).unwrap();
-                bond.redeem_tx = Some(dummy_txid);
+                bond.is_spent = true;
 
                 return Ok(());
             }
@@ -124,14 +123,6 @@ impl Wallet {
         )?;
         let txid = self.send_tx(&tx)?;
 
-        // TODO: Potential data inconsistency issue
-        // If the server crashes after broadcasting the redemption transaction but before updating
-        // the `redeemed` flag, the bond will appear unspent on restart. The system will then
-        // attempt to create a new redemption transaction, but the UTXO will already be spent,
-        // causing an unrecoverable error.
-        // Temporary fix: Log the status and mark the bond as redeemed to prevent repeated failures.
-        // A more robust solution is needed to ensure atomic updates.
-        // Note: Will be fixed with #472
         log::info!("Fidelity redeem transaction broadcasted. txid: {txid}");
 
         // No need to wait for confirmation as that will delay the rpc call. Just send back the txid.
@@ -144,7 +135,7 @@ impl Wallet {
                 .get_mut(&idx)
                 .ok_or(FidelityError::BondDoesNotExist)?;
 
-            bond.redeem_tx = Some(txid);
+            bond.is_spent = true;
         }
 
         Ok(())
@@ -253,8 +244,7 @@ impl Wallet {
                         .fidelity_bond
                         .get(index)
                         .ok_or(FidelityError::BondDoesNotExist)?;
-                    let redeemed = bond.redeem_tx.is_some();
-                    if redeemed {
+                    if bond.is_spent {
                         return Err(FidelityError::BondAlreadyRedeemed.into());
                     }
 
