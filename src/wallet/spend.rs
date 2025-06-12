@@ -21,8 +21,8 @@ pub enum Destination {
     Sweep(Address),
     /// Multi
     Multi(Vec<(Address, Amount)>),
-    // // Send Dynamic Amounts to Multiple Addresses - Regular Swap
-    // MultiDynamic(Amount, Vec<Address>),
+    /// Send Dynamic Random Amounts to Multiple Addresses
+    MultiDynamic(Amount, Vec<Address>),
 }
 
 impl Wallet {
@@ -404,6 +404,81 @@ impl Wallet {
                         remaining_wchange.to_sat(),
                         fee_wchange.to_sat()
                     );
+                }
+            }
+
+            Destination::MultiDynamic(coinswap_amount, addresses) => {
+                let mut total_output_value = Amount::ZERO;
+                let (selected_inputs, target_chunks, change_chunks) =
+                    self.create_dynamic_splits(Amount::to_sat(coinswap_amount), feerate);
+                for (i, target_chunk) in target_chunks.iter().enumerate() {
+                    let target_chunk = Amount::from_sat(*target_chunk);
+                    total_output_value += target_chunk;
+                    let txout = TxOut {
+                        script_pubkey: addresses[i].script_pubkey(),
+                        value: target_chunk,
+                    };
+                    tx.output.push(txout);
+                }
+
+                let internal_spks = self.get_next_internal_addresses(change_chunks.len() as u32)?;
+                let minimal_nondust = internal_spks[0].script_pubkey().minimal_non_dust();
+
+                let mut tx_wchange = tx.clone();
+                for (i, change_chunk) in change_chunks.iter().enumerate() {
+                    let change_chunk = Amount::from_sat(*change_chunk);
+                    tx_wchange.output.push(TxOut {
+                        value: Amount::ZERO, // Adjusted later
+                        script_pubkey: internal_spks[i].script_pubkey(),
+                    });
+                }
+
+                let base_wchange = tx_wchange.base_size();
+                let vsize_wchange = (base_wchange * 4 + total_witness_size).div_ceil(4);
+
+                let fee_wchange = Amount::from_sat((feerate * vsize_wchange as f64).ceil() as u64);
+
+                #[cfg(feature = "integration-test")]
+                let fee_wchange = Amount::from_sat(1000);
+
+                let remaining_wchange =
+                    if let Some(diff) = total_input_value.checked_sub(total_output_value) {
+                        if let Some(diff) = diff.checked_sub(fee_wchange) {
+                            diff
+                        } else {
+                            return Err(WalletError::InsufficientFund {
+                                available: total_input_value.to_sat(),
+                                required: (total_output_value + fee_wchange).to_sat(),
+                            });
+                        }
+                    } else {
+                        return Err(WalletError::InsufficientFund {
+                            available: total_input_value.to_sat(),
+                            required: (total_output_value + fee_wchange).to_sat(),
+                        });
+                    };
+
+                for (i, change_chunk) in change_chunks.iter().enumerate() {
+                    let change_chunk = Amount::from_sat(*change_chunk);
+                    if change_chunk > internal_spks[i].script_pubkey().minimal_non_dust() {
+                        log::info!(
+                            "Adding change output indexed {} with {} sats (fee: {} sats)",
+                            i,
+                            change_chunk.to_sat(),
+                            fee_wchange.to_sat()
+                        );
+                        tx.output.push(TxOut {
+                            script_pubkey: internal_spks[i].script_pubkey(),
+                            value: change_chunk,
+                        });
+                    } else {
+                        log::info!(
+                            "Remaining change {} sats indexed {} is below dust threshold. Skipping change output. (fee: {} sats)",
+                            i,
+                            change_chunk.to_sat(),
+                            fee_wchange.to_sat()
+                        );
+                    }
                 }
             }
         }

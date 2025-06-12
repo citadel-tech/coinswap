@@ -1329,9 +1329,9 @@ impl Wallet {
         max_splits: usize,
     ) -> (Vec<u64>, Vec<u64>) {
         let mut resulting_splits = (
-            2, // no. of target chunks                                                           // n_target
-            2, // no. of change chunks
-            target / 2, // avg target chunk
+            2,                 // no. of target chunks
+            2,                 // no. of change chunks
+            target / 2,        // avg target chunk
             target_change / 2, // avg change chunk
             (target).abs_diff(target_change) as f64 / (target).max(target_change) as f64, // relative_diff
             vec![target],        // target_chunks
@@ -1380,7 +1380,7 @@ impl Wallet {
 
     /// Creates optimal transaction output splits for improved privacy
     pub fn create_dynamic_splits(
-        &mut self,
+        &self,
         target: u64,
         fee_rate: f64,
     ) -> (
