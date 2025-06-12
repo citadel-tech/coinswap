@@ -1322,7 +1322,7 @@ impl Wallet {
     }
 
     /// Finds optimal split counts and amounts
-    fn ct_harmonization_split(
+    fn ct_harmony_split(
         &self,
         target: u64,
         target_change: u64,
@@ -1458,7 +1458,7 @@ impl Wallet {
                     self.vary_amounts(target_change + delta_c + delta_cc, 2),
                 );
             } else {
-                let (target_chunks, change_chunks) = self.ct_harmonization_split(
+                let (target_chunks, change_chunks) = self.ct_harmony_split(
                     target,
                     target_change + Amount::to_sat(delta_input_sum),
                     MAX_SPLITS,
@@ -1474,7 +1474,7 @@ impl Wallet {
         // === Case C: Change too large (>110% of target) ===
         if target_change > target_ub {
             let (target_chunks, change_chunks) =
-                self.ct_harmonization_split(target, target_change, MAX_SPLITS);
+                self.ct_harmony_split(target, target_change, MAX_SPLITS);
             return (selected_inputs, target_chunks, change_chunks);
         }
 

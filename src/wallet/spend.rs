@@ -436,6 +436,9 @@ impl Wallet {
                 let base_wchange = tx_wchange.base_size();
                 let vsize_wchange = (base_wchange * 4 + total_witness_size).div_ceil(4);
 
+                // Potential ISSUE :- Coinselection considers only a single change which can lead to insufficient change(future spend) fee
+                // We can create a dummy 5 change, 5 target txn, and mitigate this issue in create_dynamic_splits function itself.
+                // But, is there a smarter way to do this?
                 let fee_wchange = Amount::from_sat((feerate * vsize_wchange as f64).ceil() as u64);
 
                 #[cfg(feature = "integration-test")]
