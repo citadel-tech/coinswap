@@ -409,8 +409,11 @@ impl Wallet {
 
             Destination::MultiDynamic(coinswap_amount, addresses) => {
                 let mut total_output_value = Amount::ZERO;
-                let (selected_inputs, target_chunks, change_chunks) =
-                    self.create_dynamic_splits(Amount::to_sat(coinswap_amount), feerate);
+                let (selected_inputs, target_chunks, change_chunks) = self.create_dynamic_splits(
+                    coins.clone(),
+                    Amount::to_sat(coinswap_amount),
+                    feerate,
+                );
                 for (i, target_chunk) in target_chunks.iter().enumerate() {
                     let target_chunk = Amount::from_sat(*target_chunk);
                     total_output_value += target_chunk;

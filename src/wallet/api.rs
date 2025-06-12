@@ -1381,6 +1381,7 @@ impl Wallet {
     /// Creates optimal transaction output splits for improved privacy
     pub fn create_dynamic_splits(
         &self,
+        inital_selected_inputs: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
         target: u64,
         fee_rate: f64,
     ) -> (
@@ -1391,13 +1392,7 @@ impl Wallet {
         const MAX_SPLITS: usize = 5;
 
         // 1. Select initial UTXOs
-        let selected_inputs = match self.coin_select(Amount::from_sat(target), fee_rate) {
-            Ok(inputs) => inputs,
-            Err(e) => {
-                log::error!("Error during coin selection: {e:?}");
-                return (vec![], vec![], vec![]);
-            }
-        };
+        let selected_inputs = inital_selected_inputs;
 
         let total_selected = selected_inputs.iter().collect::<Vec<_>>().iter().fold(
             Amount::ZERO,
@@ -1429,6 +1424,8 @@ impl Wallet {
         }
 
         // === Case B: Change too small (<90% of target) ===
+        // Potential FEE OPTIMIZATION IMPROVEMENT :- We can have an aditional subcase here to check for half of target,
+        // and create 2 targets and 1 change instead of 2 targets and 2 changes thus saving on the fee.
         if target_change < target_lb {
             let delta_c = target - target_change;
             let delta_inputs = match self.coin_select(Amount::from_sat(delta_c), fee_rate) {
