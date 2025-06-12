@@ -21,6 +21,8 @@ pub enum Destination {
     Sweep(Address),
     /// Multi
     Multi(Vec<(Address, Amount)>),
+    // // Send Dynamic Amounts to Multiple Addresses - Regular Swap
+    // MultiDynamic(Amount, Vec<Address>),
 }
 
 impl Wallet {

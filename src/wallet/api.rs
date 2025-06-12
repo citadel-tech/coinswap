@@ -7,7 +7,10 @@ use std::{convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr};
 
 use std::collections::HashMap;
 
-use bip39::Mnemonic;
+use bip39::{
+    rand::{thread_rng, Rng},
+    Mnemonic,
+};
 use bitcoin::{
     bip32::{ChildNumber, DerivationPath, Xpriv, Xpub},
     hashes::hash160::Hash as Hash160,
@@ -1255,6 +1258,228 @@ impl Wallet {
                 }
             }
         }
+    }
+
+    // Adds multiplicative variation for randomness while maintaining approximate ratio structure
+    // reference :- (ε, δ)-indistinguishable Mixing for Cryptocurrencies
+    // https://eprint.iacr.org/2021/1197.pdf
+    // Returns [total] with warning if num_chunks > 5
+    fn vary_amounts(&self, total: u64, num_chunks: usize) -> Vec<u64> {
+        let mut rng = thread_rng();
+
+        match num_chunks {
+            0 => vec![],
+            1 => vec![total],
+            2..=5 => {
+                // Base ratios (your original structure)
+                let ratios = match num_chunks {
+                    2 => vec![1.05, 0.95],
+                    3 => vec![1.0, 1.05, 0.95],
+                    4 => vec![1.1, 0.9, 1.05, 0.95],
+                    5 => vec![1.0, 1.1, 0.9, 1.05, 0.95],
+                    _ => unreachable!(), // This line is safe because of the match guard
+                };
+
+                // Apply randomness (±5% of each ratio)
+                let randomized: Vec<f64> = ratios
+                    .iter()
+                    .map(|&r| r * rng.gen_range(0.95..1.05))
+                    .collect();
+
+                // Normalize to maintain total
+                let sum: f64 = randomized.iter().sum();
+                let normalized: Vec<u64> = randomized
+                    .iter()
+                    .map(|&r| ((total as f64 * r / sum).round() as u64))
+                    .collect();
+
+                // Fix rounding errors
+                let mut sum_check: i64 = normalized.iter().sum::<u64>() as i64;
+                let mut adjusted = normalized.clone();
+
+                while sum_check != total as i64 {
+                    let idx = rng.gen_range(0..adjusted.len());
+                    let delta = if sum_check < total as i64 { 1 } else { -1 };
+                    adjusted[idx] = (adjusted[idx] as i64 + delta) as u64;
+                    sum_check += delta;
+                }
+
+                // Random output ordering
+                for i in 0..adjusted.len() {
+                    let swap_with = rng.gen_range(0..adjusted.len());
+                    adjusted.swap(i, swap_with);
+                }
+
+                adjusted
+            }
+            _ => {
+                log::warn!(
+                    "vary_amounts: num_chunks={num_chunks} exceeds maximum of 5, returning single chunk",
+                );
+                vec![total]
+            }
+        }
+    }
+
+    /// Finds optimal split counts and amounts
+    fn ct_harmonization_split(
+        &self,
+        target: u64,
+        target_change: u64,
+        max_splits: usize,
+    ) -> (Vec<u64>, Vec<u64>) {
+        let mut resulting_splits = (
+            2, // no. of target chunks                                                           // n_target
+            2, // no. of change chunks
+            target / 2, // avg target chunk
+            target_change / 2, // avg change chunk
+            (target).abs_diff(target_change) as f64 / (target).max(target_change) as f64, // relative_diff
+            vec![target],        // target_chunks
+            vec![target_change], // change_chunks
+        );
+
+        // Test all possible split combinations
+        'outer: for n_t in 2..=max_splits {
+            for n_s in 2..=max_splits {
+                let avg_t = target / n_t as u64;
+                let avg_s = target_change / n_s as u64;
+                let diff = avg_t.abs_diff(avg_s);
+                let max_avg = avg_t.max(avg_s) as f64;
+                let relative_diff = diff as f64 / max_avg;
+
+                // Update best if we find a better split
+                if relative_diff < resulting_splits.4 {
+                    resulting_splits = (
+                        n_t,
+                        n_s,
+                        avg_t,
+                        avg_s,
+                        relative_diff,
+                        vec![avg_t; n_t],
+                        vec![avg_s; n_s],
+                    );
+                }
+
+                // Early exit if we meet privacy threshold
+                if relative_diff <= 0.15 {
+                    break 'outer;
+                }
+            }
+        }
+
+        // 15% threshold, because beyond it, might as well use a single output
+        if resulting_splits.4 <= 0.15 {
+            // Apply variability patterns
+            let varied_targets = self.vary_amounts(target, resulting_splits.0);
+            let varied_changes = self.vary_amounts(target_change, resulting_splits.1);
+            (varied_targets, varied_changes)
+        } else {
+            (vec![target], vec![target_change])
+        }
+    }
+
+    /// Creates optimal transaction output splits for improved privacy
+    pub fn create_dynamic_splits(
+        &mut self,
+        target: u64,
+        fee_rate: f64,
+    ) -> (
+        Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
+        Vec<u64>,
+        Vec<u64>,
+    ) {
+        const MAX_SPLITS: usize = 5;
+
+        // 1. Select initial UTXOs
+        let selected_inputs = match self.coin_select(Amount::from_sat(target), fee_rate) {
+            Ok(inputs) => inputs,
+            Err(e) => {
+                log::error!("Error during coin selection: {e:?}");
+                return (vec![], vec![], vec![]);
+            }
+        };
+
+        let total_selected = selected_inputs.iter().collect::<Vec<_>>().iter().fold(
+            Amount::ZERO,
+            |acc, (unspent, _)| {
+                acc.checked_add(unspent.amount)
+                    .expect("Amount sum overflowed")
+            },
+        );
+
+        // Verify sufficient funds
+        if Amount::to_sat(total_selected) < target {
+            panic!(
+                "Insufficient funds: Needed {} sats, only have {}",
+                target, total_selected
+            );
+        }
+
+        let target_change = Amount::to_sat(total_selected) - target;
+        let target_lb = (target as f64 * 0.9) as u64;
+        let target_ub = (target as f64 * 1.1) as u64;
+
+        // === Case A: Change is within 10% of target (ideal) ===
+        if (target_lb..=target_ub).contains(&target_change) {
+            return (
+                selected_inputs,
+                self.vary_amounts(target, 2),
+                self.vary_amounts(target_change, 2),
+            );
+        }
+
+        // === Case B: Change too small (<90% of target) ===
+        if target_change < target_lb {
+            let delta_c = target - target_change;
+            let delta_inputs = match self.coin_select(Amount::from_sat(delta_c), fee_rate) {
+                Ok(inputs) => inputs,
+                Err(e) => {
+                    log::error!("Error during coin selection: {e:?}");
+                    return (vec![], vec![], vec![]);
+                }
+            };
+
+            // let delta_input_sum: u64 = delta_inputs.iter().sum();
+            let delta_input_sum = delta_inputs.iter().fold(Amount::ZERO, |acc, (unspent, _)| {
+                acc.checked_add(unspent.amount)
+                    .expect("Amount sum overflowed")
+            });
+
+            let delta_cc = Amount::to_sat(delta_input_sum).saturating_sub(delta_c);
+
+            // If delta_cc is too massive, it will leave a trail output behind. Here, you try with differential
+            if delta_cc > 0
+                && (target_lb..=target_ub)
+                    .contains(&(target_change + Amount::to_sat(delta_input_sum)))
+            {
+                return (
+                    [&selected_inputs[..], &delta_inputs[..]].concat(),
+                    self.vary_amounts(target, 2),
+                    self.vary_amounts(target_change + delta_c + delta_cc, 2),
+                );
+            } else {
+                let (target_chunks, change_chunks) = self.ct_harmonization_split(
+                    target,
+                    target_change + Amount::to_sat(delta_input_sum),
+                    MAX_SPLITS,
+                );
+                return (
+                    [&selected_inputs[..], &delta_inputs[..]].concat(),
+                    target_chunks,
+                    change_chunks,
+                );
+            }
+        }
+
+        // === Case C: Change too large (>110% of target) ===
+        if target_change > target_ub {
+            let (target_chunks, change_chunks) =
+                self.ct_harmonization_split(target, target_change, MAX_SPLITS);
+            return (selected_inputs, target_chunks, change_chunks);
+        }
+
+        // Fallback to simple transaction if no good split found
+        (selected_inputs, vec![target], vec![target_change])
     }
 
     pub(crate) fn get_utxo(
