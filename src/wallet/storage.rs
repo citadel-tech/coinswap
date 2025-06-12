@@ -36,7 +36,7 @@ pub(crate) struct WalletStore {
     pub(super) outgoing_swapcoins: HashMap<ScriptBuf, OutgoingSwapCoin>,
     /// Map of prevout to contract redeemscript.
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
-    /// Map for all the fidelity bond information. (index, (Bond, redeemed)).
+    /// Map for all the fidelity bond information.
     pub(crate) fidelity_bond: HashMap<u32, FidelityBond>,
     pub(super) last_synced_height: Option<u64>,
 
