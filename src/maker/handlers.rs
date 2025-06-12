@@ -204,9 +204,7 @@ pub(crate) fn handle_message(
         }
         ExpectedMessage::PrivateKeyHandover => {
             if let TakerToMakerMessage::RespPrivKeyHandover(message) = message {
-                // Nothing to send. Successfully completed swap
-                maker.handle_private_key_handover(message)?;
-                None
+                Some(maker.handle_private_key_handover(message)?)
             } else {
                 return Err(MakerError::General("Expected privatekey handover"));
             }
@@ -583,7 +581,7 @@ impl Maker {
         ))
     }
 
-    /// Handles a [HashPreimage] message and returns a [MakerToTakerMessage::RespPrivKeyHandover]
+    /// Handles a [HashPreimage] message and returns a [MakerToTakerMessage::AckPreimageRecieved]
     pub(crate) fn handle_hash_preimage(
         &self,
         message: HashPreimage,
@@ -610,39 +608,15 @@ impl Maker {
             self.config.network_port,
             hashvalue
         );
-        let mut swapcoin_private_keys = Vec::<MultisigPrivkey>::new();
-
-        // Send our privkey and mark the outgoing swapcoin as "done".
-        for multisig_redeemscript in &message.receivers_multisig_redeemscripts {
-            let mut wallet_write = self.wallet.write()?;
-            let outgoing_swapcoin = wallet_write
-                .find_outgoing_swapcoin_mut(multisig_redeemscript)
-                .expect("outgoing swapcoin expected");
-            if read_hashvalue_from_contract(&outgoing_swapcoin.contract_redeemscript)? != hashvalue
-            {
-                return Err(MakerError::General("Incorrect hash preimage"));
-            } else {
-                outgoing_swapcoin.hash_preimage.replace(message.preimage);
-            }
-
-            swapcoin_private_keys.push(MultisigPrivkey {
-                multisig_redeemscript: multisig_redeemscript.clone(),
-                key: outgoing_swapcoin.my_privkey,
-            });
-        }
-
-        self.wallet.write()?.save_to_disk()?;
-        Ok(MakerToTakerMessage::RespPrivKeyHandover(PrivKeyHandover {
-            multisig_privkeys: swapcoin_private_keys,
-        }))
+        Ok(MakerToTakerMessage::AckPreimageRecieved)
     }
 
-    /// Handles [PrivKeyHandover] message and updates all the coinswap wallet states and stores it to disk.
+    /// Handles [PrivKeyHandover] message and returns [MakerToTakerMessage::RespPrivKeyHandover] ,and updates all the coinswap wallet states and stores it to disk.
     /// This is the last step of completing a coinswap round.
     pub(crate) fn handle_private_key_handover(
         &self,
         message: PrivKeyHandover,
-    ) -> Result<(), MakerError> {
+    ) -> Result<MakerToTakerMessage, MakerError> {
         // Mark the incoming swapcoins as "done", by adding their's privkey
         for swapcoin_private_key in &message.multisig_privkeys {
             self.wallet
@@ -652,19 +626,40 @@ impl Maker {
                 .apply_privkey(swapcoin_private_key.key)?;
         }
 
-        // Reset the connection state so watchtowers are not triggered.
-        let mut conn_state = self.ongoing_swap_state.lock()?;
-        *conn_state = HashMap::default();
-
-        log::info!("initializing Wallet Sync.");
-        {
+        //prepare private keys,send them and mark the outgoing swapcoins as "done".
+        let mut swapcoin_private_keys = Vec::<MultisigPrivkey>::new();
+        for multisig_redeemscript in &message.receivers_multisig_redeemscripts.unwrap() {
             let mut wallet_write = self.wallet.write()?;
-            wallet_write.sync()?;
-            wallet_write.save_to_disk()?;
+            let outgoing_swapcoin = wallet_write
+                .find_outgoing_swapcoin_mut(multisig_redeemscript)
+                .expect("outgoing swapcoin expected");
+
+            swapcoin_private_keys.push(MultisigPrivkey {
+                multisig_redeemscript: multisig_redeemscript.clone(),
+                key: outgoing_swapcoin.my_privkey,
+            });
         }
-        log::info!("Completed Wallet Sync.");
-        log::info!("Successfully Completed Coinswap");
-        Ok(())
+        let send_maker_keys = MakerToTakerMessage::RespPrivKeyHandover(PrivKeyHandover {
+            multisig_privkeys: swapcoin_private_keys,
+            receivers_multisig_redeemscripts: None,
+        });
+
+        {
+            self.wallet.write()?.save_to_disk()?;
+            // Reset the connection state so watchtowers are not triggered.
+            let mut conn_state = self.ongoing_swap_state.lock()?;
+            *conn_state = HashMap::default();
+
+            log::info!("initializing Wallet Sync.");
+            {
+                let mut wallet_write = self.wallet.write()?;
+                wallet_write.sync()?;
+                wallet_write.save_to_disk()?;
+            }
+            log::info!("Completed Wallet Sync.");
+            log::info!("Successfully Completed Coinswap");
+        }
+        Ok(send_maker_keys)
     }
 }
 
