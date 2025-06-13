@@ -1093,7 +1093,6 @@ impl Wallet {
         amount: Amount,
         feerate: f64,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        // TODO : Create a user input for the number of outputs
         let num_outputs = 1; // Number of outputs
 
         // Get spendable UTXOs (regular coins and incoming swap coins)
@@ -1192,15 +1191,43 @@ impl Wallet {
             / unspents.len() as u64;
 
         // Convert UTXOs to OutputGroups
-        // TODO: Group UTXOs by address into single OutputGroups to mitigate privacy leaks from address reuse
-        // TODO: Consider more sophisticated grouping policies in the future
-        let output_groups: Vec<OutputGroup> = unspents
-            .iter()
-            .map(|(utxo, spend_info)| OutputGroup {
-                value: utxo.amount.to_sat(),
-                weight: 36 + spend_info.estimate_witness_size() as u64,
-                input_count: 1,
-                creation_sequence: None,
+        // Note: Consider more sophisticated grouping policies in the future
+        // Group UTXOs by address
+        let mut address_to_utxos: HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
+            HashMap::new();
+
+        for (utxo, spend_info) in &unspents {
+            let address_str = utxo
+                .address
+                .as_ref()
+                .map(|addr| addr.clone().assume_checked().to_string())
+                .unwrap_or_else(|| format!("script_{}", utxo.script_pub_key));
+
+            address_to_utxos
+                .entry(address_str)
+                .or_default()
+                .push((utxo.clone(), spend_info.clone()));
+        }
+
+        // Create OutputGroups from address groups
+        let output_groups: Vec<OutputGroup> = address_to_utxos
+            .into_values()
+            .map(|utxos_in_group| {
+                let total_value: u64 = utxos_in_group
+                    .iter()
+                    .map(|(utxo, _)| utxo.amount.to_sat())
+                    .sum();
+                let total_weight: u64 = utxos_in_group
+                    .iter()
+                    .map(|(_, spend_info)| 36 + spend_info.estimate_witness_size() as u64)
+                    .sum();
+
+                OutputGroup {
+                    value: total_value,
+                    weight: total_weight,
+                    input_count: utxos_in_group.len(),
+                    creation_sequence: None,
+                }
             })
             .collect();
 
