@@ -1093,7 +1093,6 @@ impl Wallet {
         amount: Amount,
         feerate: f64,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        // TODO : Create a user input for the number of outputs
         let num_outputs = 1; // Number of outputs
 
         // Get spendable UTXOs (regular coins and incoming swap coins)
@@ -1192,15 +1191,46 @@ impl Wallet {
             / unspents.len() as u64;
 
         // Convert UTXOs to OutputGroups
-        // TODO: Group UTXOs by address into single OutputGroups to mitigate privacy leaks from address reuse
-        // TODO: Consider more sophisticated grouping policies in the future
-        let output_groups: Vec<OutputGroup> = unspents
+        // Note: Consider more sophisticated grouping policies in the future
+        // Group UTXOs by address
+        let mut address_to_utxos: HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
+            HashMap::new();
+
+        for (utxo, spend_info) in &unspents {
+            let address_str = utxo
+                .address
+                .as_ref()
+                .map(|addr| addr.clone().assume_checked().to_string())
+                .unwrap_or_else(|| format!("script_{}", utxo.script_pub_key));
+
+            address_to_utxos
+                .entry(address_str)
+                .or_default()
+                .push((utxo.clone(), spend_info.clone()));
+        }
+
+        // Create OutputGroups from address groups and preserve the grouped UTXOs
+        let grouped_utxos: Vec<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
+            address_to_utxos.into_values().collect();
+
+        let output_groups: Vec<OutputGroup> = grouped_utxos
             .iter()
-            .map(|(utxo, spend_info)| OutputGroup {
-                value: utxo.amount.to_sat(),
-                weight: 36 + spend_info.estimate_witness_size() as u64,
-                input_count: 1,
-                creation_sequence: None,
+            .map(|utxos_in_group| {
+                let total_value: u64 = utxos_in_group
+                    .iter()
+                    .map(|(utxo, _)| utxo.amount.to_sat())
+                    .sum();
+                let total_weight: u64 = utxos_in_group
+                    .iter()
+                    .map(|(_, spend_info)| 36 + spend_info.estimate_witness_size() as u64)
+                    .sum();
+
+                OutputGroup {
+                    value: total_value,
+                    weight: total_weight,
+                    input_count: utxos_in_group.len(),
+                    creation_sequence: None,
+                }
             })
             .collect();
 
@@ -1223,10 +1253,11 @@ impl Wallet {
 
         match select_coin(&output_groups, &coin_selection_option) {
             Ok(selection) => {
+                // Convert selected group indices back to individual UTXOs
                 let selected_utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)> = selection
                     .selected_inputs
                     .iter()
-                    .map(|&index| unspents[index].clone())
+                    .flat_map(|&group_index| grouped_utxos[group_index].clone())
                     .collect();
                 log::info!("Coinselection concluded with {:?}", selection.waste);
                 Ok(selected_utxos)
@@ -1237,7 +1268,10 @@ impl Wallet {
 
                 // If error is insufficient funds, return all available UTXOs
                 if e.to_string().contains("The Inputs funds are insufficient") {
-                    let total_available = unspents
+                    let all_utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)> =
+                        grouped_utxos.into_iter().flatten().collect();
+
+                    let total_available = all_utxos
                         .iter()
                         .map(|(utxo, _)| utxo.amount.to_sat())
                         .sum::<u64>();
@@ -1248,7 +1282,7 @@ impl Wallet {
                         amount.to_sat()
                     );
 
-                    Ok(unspents)
+                    Ok(all_utxos)
                 } else {
                     // For other errors, return the original error
                     Err(WalletError::General(format!("Coin selection failed: {e}")))
