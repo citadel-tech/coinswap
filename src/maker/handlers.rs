@@ -26,7 +26,7 @@ use super::{
 use crate::{
     protocol::{
         contract::{
-            self, calculate_coinswap_fee, create_receivers_contract_tx, find_funding_output_index,
+            calculate_coinswap_fee, create_receivers_contract_tx, find_funding_output_index,
             read_hashvalue_from_contract, read_pubkeys_from_multisig_redeemscript,
         },
         error::ProtocolError,
@@ -718,7 +718,6 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
                 MIN_FEE_RATE,
             )?;
 
-            let contract_hashlock = ic_sc.get_timelock()?;
             let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
                 ic_sc,
                 next_internal_address,
@@ -731,7 +730,7 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
             let incoming_contract = ic_sc.get_fully_signed_contract_tx()?;
             incomings.push((
                 (ic_sc.get_multisig_redeemscript(), incoming_contract),
-                (contract_hashlock, hash_lock_spend),
+                hash_lock_spend,
             ));
         }
         // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
