@@ -53,7 +53,8 @@ impl Wallet {
             // filter all contract and fidelity utxos.
             if let UTXOSpendInfo::FidelityBondCoin { .. }
             | UTXOSpendInfo::HashlockContract { .. }
-            | UTXOSpendInfo::TimelockContract { .. } = coin.1
+            | UTXOSpendInfo::TimelockContract { .. }
+            | UTXOSpendInfo::SweptIncomingSwapCoin { .. } = coin.1
             {
                 log::warn!("Skipping Fidelity Bond or Contract UTXO.");
                 continue;
@@ -226,7 +227,7 @@ impl Wallet {
         let mut total_witness_size = 0;
         for (utxo_data, spend_info) in coins {
             match spend_info {
-                UTXOSpendInfo::SeedCoin { .. } => {
+                UTXOSpendInfo::SeedCoin { .. } | UTXOSpendInfo::SweptIncomingSwapCoin { .. } => {
                     tx.input.push(TxIn {
                         previous_output: OutPoint::new(utxo_data.txid, utxo_data.vout),
                         sequence: Sequence::ZERO,

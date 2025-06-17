@@ -1804,6 +1804,16 @@ impl Taker {
                 .hash_preimage = Some(self.ongoing_swap_state.active_preimage);
         }
 
+        log::info!("Sweeping completed incoming swap coins...");
+        let swept_txids = self.wallet.sweep_incoming_swapcoins(DEFAULT_TX_FEE_RATE)?;
+        if !swept_txids.is_empty() {
+            log::info!(
+                "Successfully swept {} incoming swap coins: {:?}",
+                swept_txids.len(),
+                swept_txids
+            );
+        }
+
         self.wallet.sync_no_fail();
 
         self.wallet.save_to_disk()?;
