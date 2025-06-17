@@ -1329,18 +1329,18 @@ impl Wallet {
         max_splits: usize,
     ) -> (Vec<u64>, Vec<u64>) {
         let mut resulting_splits = (
-            2,                 // no. of target chunks
-            2,                 // no. of change chunks
-            target / 2,        // avg target chunk
-            target_change / 2, // avg change chunk
+            1,             // no. of target chunks
+            1,             // no. of change chunks
+            target,        // avg target chunk
+            target_change, // avg change chunk
             (target).abs_diff(target_change) as f64 / (target).max(target_change) as f64, // relative_diff
             vec![target],        // target_chunks
             vec![target_change], // change_chunks
         );
 
         // Test all possible split combinations
-        'outer: for n_t in 2..=max_splits {
-            for n_s in 2..=max_splits {
+        'outer: for n_t in 1..=max_splits {
+            for n_s in 1..=max_splits {
                 let avg_t = target / n_t as u64;
                 let avg_s = target_change / n_s as u64;
                 let diff = avg_t.abs_diff(avg_s);
