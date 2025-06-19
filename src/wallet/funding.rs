@@ -37,9 +37,13 @@ impl Wallet {
         destinations: &[Address],
         fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
-        let ret = self.create_funding_txes_random_amounts(coinswap_amount, destinations, fee_rate);
+        let ret = self.create_funding_txes_regular_swaps(
+            coinswap_amount,
+            destinations.to_vec(),
+            fee_rate,
+        );
         if ret.is_ok() {
-            log::info!(target: "wallet", "created funding txes with random amounts");
+            log::info!(target: "wallet", "created funding txes regular swaps");
             return ret;
         }
 
@@ -192,10 +196,10 @@ impl Wallet {
             );
 
             // Record this transaction in our results.
-            let payment_pos = 0; // assuming the payment output position is 0
+            let payment_pos = funding_tx.output.len() - 1; // assuming the payment output position is 0
 
             funding_txes.push(funding_tx);
-            payment_output_positions.push(payment_pos);
+            payment_output_positions.push(payment_pos as u32);
             total_miner_fee += fee_rate.to_sat();
 
             Ok(CreateFundingTxesResult {

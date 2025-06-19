@@ -464,14 +464,16 @@ impl Wallet {
                         });
                     };
 
+                let individual_fee_wchange = fee_wchange / change_chunks.len() as u64;
+
                 for (i, change_chunk) in change_chunks.iter().enumerate() {
                     let change_chunk = Amount::from_sat(*change_chunk);
                     if change_chunk > internal_spks[i].script_pubkey().minimal_non_dust() {
                         log::info!(
                             "Adding change output indexed {} with {} sats (fee: {} sats)",
                             i,
-                            change_chunk.to_sat(),
-                            fee_wchange.to_sat()
+                            change_chunk.to_sat() - (Amount::to_sat(individual_fee_wchange)),
+                            individual_fee_wchange.to_sat()
                         );
                         tx.output.push(TxOut {
                             script_pubkey: internal_spks[i].script_pubkey(),
