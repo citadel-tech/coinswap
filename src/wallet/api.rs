@@ -555,7 +555,7 @@ impl Wallet {
 
     /// Checks if a UTXO belongs to fidelity bonds, and then returns corresponding UTXOSpendInfo
     fn check_if_fidelity(&self, utxo: &ListUnspentResultEntry) -> Option<UTXOSpendInfo> {
-        self.store.fidelity_bond.iter().find_map(|(i, (bond, _))| {
+        self.store.fidelity_bond.iter().find_map(|(i, bond)| {
             if bond.script_pub_key() == utxo.script_pub_key && bond.amount == utxo.amount {
                 Some(UTXOSpendInfo::FidelityBondCoin {
                     index: *i,
@@ -1456,7 +1456,7 @@ impl Wallet {
             self.store
                 .fidelity_bond
                 .values()
-                .map(|(bond, _)| {
+                .map(|bond| {
                     let descriptor_without_checksum = format!("raw({:x})", bond.script_pub_key());
                     Ok(format!(
                         "{}#{}",
