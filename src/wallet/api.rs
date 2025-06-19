@@ -1097,7 +1097,10 @@ impl Wallet {
         feerate: f64,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
         // TODO : Create a user input variable with the broader merge split refactor
-        let num_outputs = 1; // Number of outputs
+        let num_outputs = 5; // Number of outputs
+
+        // FLow of Lock Step 2. Lock all unspendable UTXOs
+        // self.lock_unspendable_utxos()?;
 
         // Get spendable UTXOs (regular coins and incoming swap coins)
         let mut unspents = self.list_descriptor_utxo_spend_info()?;
@@ -1182,7 +1185,7 @@ impl Wallet {
             (Amount::SIZE + VarInt::from(P2WPKH_SPK_SIZE).size() + P2WPKH_SPK_SIZE) as u64,
         );
         let avg_output_weight =
-            (change_weight.to_wu() + (target_weight.to_wu() * num_outputs)) / (1 + num_outputs);
+            ((change_weight.to_wu() + target_weight.to_wu()) * num_outputs) / (2 * num_outputs);
         let avg_input_weight = unspents
             .iter()
             .map(|(_, spend_info)| {
@@ -1232,6 +1235,15 @@ impl Wallet {
                     .map(|&index| unspents[index].clone())
                     .collect();
                 log::info!("Coinselection concluded with {:?}", selection.waste);
+
+                let outpoints: Vec<OutPoint> = selected_utxos
+                    .iter()
+                    .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                    .collect();
+
+                // Flow of Lock Step 3. Lock the selected UTXOs immediately after selection
+                self.rpc.lock_unspent(&outpoints)?;
+
                 Ok(selected_utxos)
             }
             Err(e) => {
@@ -1250,6 +1262,14 @@ impl Wallet {
                         total_available,
                         amount.to_sat()
                     );
+
+                    let outpoints: Vec<OutPoint> = unspents
+                        .iter()
+                        .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                        .collect();
+
+                    // Flow of Lock Step 3. Lock the selected UTXOs immediately after selection
+                    self.rpc.lock_unspent(&outpoints)?;
 
                     Ok(unspents)
                 } else {
@@ -1402,15 +1422,25 @@ impl Wallet {
             },
         );
 
-        // Verify sufficient funds
-        if Amount::to_sat(total_selected) < target {
-            panic!(
-                "Insufficient funds: Needed {} sats, only have {}",
-                target, total_selected
-            );
-        }
+        // IMP: No need of this, already covered by coinselection. Keeping it for future debugging
+        // if Amount::to_sat(total_selected) < target {
+        //     panic!(
+        //         "Insufficient funds: Needed {} sats, only have {}",
+        //         target, total_selected
+        //     );
+        // }
 
-        let target_change = Amount::to_sat(total_selected) - target;
+        let target_change = Amount::to_sat(total_selected).saturating_sub(target);
+        // IMP : This is anyway implicitly checked in the coin selection, but this is imortant to ensure we return total selected and not the entire target
+        // It's possible to do below in the 3 cases but it would just be more useless code.
+        if target_change == 0 {
+            return (
+                selected_inputs,
+                vec![Amount::to_sat(total_selected)],
+                vec![0],
+            );
+        };
+
         let target_lb = (target as f64 * 0.9) as u64;
         let target_ub = (target as f64 * 1.1) as u64;
 
@@ -1452,7 +1482,7 @@ impl Wallet {
                 return (
                     [&selected_inputs[..], &delta_inputs[..]].concat(),
                     self.vary_amounts(target, 2),
-                    self.vary_amounts(target_change + delta_c + delta_cc, 2),
+                    self.vary_amounts(target_change + delta_input_sum.to_sat(), 2),
                 );
             } else {
                 let (target_chunks, change_chunks) = self.ct_harmony_split(
@@ -1476,7 +1506,11 @@ impl Wallet {
         }
 
         // Fallback to simple transaction if no good split found
-        (selected_inputs, vec![target], vec![target_change])
+        (
+            selected_inputs,
+            vec![total_selected.to_sat() - target_change],
+            vec![target_change],
+        )
     }
 
     pub(crate) fn get_utxo(
