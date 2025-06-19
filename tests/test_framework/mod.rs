@@ -552,11 +552,11 @@ impl TestFramework {
     ) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
-        setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
         // Remove if previously existing
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
         }
+        setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
         log::info!("📁 temporary directory : {}", temp_dir.display());
 
         let bitcoind = init_bitcoind(&temp_dir);
@@ -653,6 +653,24 @@ impl TestFramework {
             directory_server_instance,
             generate_blocks_handle,
         )
+    }
+
+    /// Assert that a log message exists in the debug.log file
+    pub fn assert_log(&self, expected_message: &str, log_path: &str) {
+        match std::fs::read_to_string(log_path) {
+            Ok(log_contents) => {
+                assert!(
+                    log_contents.contains(expected_message),
+                    "Expected log message '{}' not found in log file: {}",
+                    expected_message,
+                    log_path
+                );
+                log::info!("✅ Found expected log message: '{expected_message}'");
+            }
+            Err(e) => {
+                panic!("Could not read log file at {}: {}", log_path, e);
+            }
+        }
     }
 
     /// Stop bitcoind and clean up all test data.

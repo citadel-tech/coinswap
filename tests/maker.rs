@@ -186,29 +186,52 @@ fn test_maker() {
 
     let dns_dir = maker_cli.data_dir.parent().unwrap();
     let mut dns = start_dns(dns_dir, &maker_cli.bitcoind);
-
     info!("🚀 Starting and configuring makerd");
-    let (rx, maker) = maker_cli.start_and_configure_makerd();
+    // Holder for the maker process so it can be killed/cleaned later
+    let mut maker_opt: Option<Child> = None;
 
-    println!("🔗 testing for fidelity bond being registered even in mempool");
+    // Run main test logic in a closure to catch panics or errors
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        info!("🚀 Starting and configuring makerd");
+        let (rx, maker) = maker_cli.start_and_configure_makerd();
 
-    let (rx, mut maker) = test_bond_registration_before_confirmation(&maker_cli, maker, rx);
+        // Store maker process for cleanup outside this closure
+        maker_opt = Some(maker);
 
-    println!("💻 Testing maker cli");
-    test_maker_cli(&maker_cli, &rx);
+        println!("🔗 testing for fidelity bond being registered even in mempool");
 
-    maker.kill().unwrap();
-    maker.wait().unwrap();
-    std::thread::sleep(Duration::from_secs(1)); // Wait for resources to be released
+        let (rx, maker) =
+            test_bond_registration_before_confirmation(&maker_cli, maker_opt.take().unwrap(), rx);
+        maker_opt = Some(maker);
 
-    println!("🔌 Testing bitcoin backend connection");
-    test_bitcoin_backend_connection(&mut maker_cli);
+        println!("💻 Testing maker cli");
+        test_maker_cli(&maker_cli, &rx);
 
-    println!("💧 Testing liquidity threshold");
-    test_liquidity_threshold(&maker_cli);
+        // Inside the closure, kill and wait, then clear option
+        if let Some(mut maker) = maker_opt.take() {
+            maker.kill().unwrap();
+            maker.wait().unwrap();
+        }
+        std::thread::sleep(Duration::from_secs(1)); // Wait for resources to be released
 
-    dns.kill().unwrap();
-    dns.wait().unwrap();
+        println!("🔌 Testing bitcoin backend connection");
+        test_bitcoin_backend_connection(&mut maker_cli);
+
+        println!("💧 Testing liquidity threshold");
+        test_liquidity_threshold(&maker_cli);
+    }));
+    // Always clean up maker and dns regardless of test outcome
+    if let Some(mut maker) = maker_opt.take() {
+        let _ = maker.kill();
+        let _ = maker.wait();
+    }
+    let _ = dns.kill();
+    let _ = dns.wait();
+
+    // Panic if test logic failed or panicked
+    if let Err(err) = result {
+        panic!("Test panicked or failed: {:?}", err);
+    }
 
     info!("🎉 All maker tests completed successfully");
 }
@@ -416,34 +439,89 @@ fn test_bitcoin_backend_connection(maker_cli: &mut MakerCli) {
     await_message_timeout(&rx, "Swap Liquidity:", Duration::from_secs(60));
     println!("✅ Verified Bitcoin connection with successful liquidity check");
 
-    // Stop bitcoind
+    // Capture original bitcoind configuration
+    let original_datadir = maker_cli.bitcoind.workdir();
+    let original_rpc_port = maker_cli.bitcoind.params.rpc_socket.port();
+    let original_cookie_content = fs::read_to_string(&maker_cli.bitcoind.params.cookie_file)
+        .expect("Failed to read original cookie file");
+
+    // Stop bitcoind but keep maker running
     println!("🔌 Stopping bitcoind to test disconnection handling...");
     maker_cli.bitcoind.stop().unwrap();
 
     await_message_timeout(&rx, "RPC Connection failed", Duration::from_secs(20));
     println!("✅ Verified maker detects Bitcoin backend disconnection");
 
-    // TODO: Reconnect to bitcoind without restarting the maker server
-    // cleanup an new bitcoind instance `/tmp/coinswap/.bitcoin`.
-    // init bitcoin with that data dir.
-    // Don't kill the maker.
+    // Restart bitcoind with same datadir, port, and auth from original cookie
+    println!("🔄 Restarting bitcoind with same configuration...");
+
+    let exe_path = bitcoind::exe_path().expect("Failed to get bitcoind executable path");
+
+    let cookie_parts: Vec<&str> = original_cookie_content.split(':').collect();
+    let rpc_user = cookie_parts[0];
+    let rpc_password = if cookie_parts.len() > 1 {
+        cookie_parts[1]
+    } else {
+        "defaultpass"
+    };
+
+    let mut bitcoind_process = Command::new(&exe_path)
+        .args([
+            &format!("-datadir={}", original_datadir.display()),
+            &format!("-rpcport={original_rpc_port}"),
+            &format!("-rpcuser={rpc_user}"),
+            &format!("-rpcpassword={rpc_password}"),
+            "-regtest",
+            "-fallbackfee=0.0001",
+            "-txindex=1",
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("Failed to start bitcoind");
+
+    // Wait for bitcoind to start and verify connection
+    std::thread::sleep(Duration::from_secs(5));
+
+    use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
+    let rpc_url = format!("http://127.0.0.1:{original_rpc_port}");
+    let client = Client::new(
+        &rpc_url,
+        Auth::UserPass(rpc_user.to_string(), rpc_password.to_string()),
+    )
+    .expect("Failed to create RPC client");
+    client
+        .get_blockchain_info()
+        .expect("Failed to connect to restarted bitcoind");
+
+    // Wait for maker to reconnect automatically
+    println!("⏳ Waiting for maker to reconnect to bitcoind...");
+    await_message_timeout(
+        &rx,
+        "Bitcoin Core RPC connection is live",
+        Duration::from_secs(30),
+    );
+
+    // Test maker functionality after reconnection
+    let new_address = maker_cli.execute_maker_cli(&["get-new-address"]);
+    await_message(&rx, "RPC request received: NewAddress");
+    assert!(
+        Address::from_str(&new_address).is_ok(),
+        "Should return valid Bitcoin address"
+    );
+
+    println!("✅ Verified maker functionality after reconnection");
+
+    // Clean up and restart bitcoind normally for subsequent tests
     maker.kill().unwrap();
     maker.wait().unwrap();
+    bitcoind_process.kill().unwrap();
+    bitcoind_process.wait().unwrap();
+
     let temp_dir = maker_cli.data_dir.parent().unwrap();
-    // Find the previous bitcoin datadir.
-    let new_bitcoind = init_bitcoind(temp_dir);
-    maker_cli.bitcoind = new_bitcoind;
+    maker_cli.bitcoind = init_bitcoind(temp_dir);
 
-    println!("🔌 Starting maker with new bitcoind instance");
-    let (rx, mut maker) = maker_cli.start_makerd();
-
-    await_message(&rx, "Server Setup completed!!");
-    println!("✅ Verified maker reconnected to new bitcoind instance");
-    // Clean up
-    maker.kill().unwrap();
-    maker.wait().unwrap();
-
-    println!("🎉 Bitcoin backend connection test completed!");
+    println!("🎉 Bitcoin backend connection and reconnection test completed!");
 }
 
 fn test_liquidity_threshold(maker_cli: &MakerCli) {

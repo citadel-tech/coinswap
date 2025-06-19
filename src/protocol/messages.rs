@@ -140,7 +140,6 @@ pub(crate) struct NextHopInfo {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ProofOfFunding {
     pub(crate) confirmed_funding_txes: Vec<FundingTxInfo>,
-    // TODO: Directly use Vec of Pubkeys.
     pub(crate) next_coinswap_info: Vec<NextHopInfo>,
     pub(crate) refund_locktime: u16,
     pub(crate) contract_feerate: u64,

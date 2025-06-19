@@ -125,9 +125,14 @@ pub struct FidelityBond {
     pub(crate) conf_height: Option<u32>,
     // Cert expiry denoted in multiple of difficulty adjustment period (2016 blocks)
     pub(crate) cert_expiry: Option<u32>,
+    /// Whether this bond is spent or not.
+    pub(crate) is_spent: bool,
 }
 
 impl FidelityBond {
+    pub fn is_spent(&self) -> bool {
+        self.is_spent
+    }
     /// get the reedemscript for this bond
     pub(crate) fn redeem_script(&self) -> ScriptBuf {
         fidelity_redeemscript(&self.lock_time, &self.pubkey)
@@ -164,7 +169,7 @@ impl FidelityBond {
 // Wallet APIs related to fidelity bonds.
 impl Wallet {
     /// Get a reference to the fidelity bond store
-    pub fn get_fidelity_bonds(&self) -> &HashMap<u32, (FidelityBond, bool)> {
+    pub fn get_fidelity_bonds(&self) -> &HashMap<u32, FidelityBond> {
         &self.store.fidelity_bond
     }
 
@@ -174,15 +179,15 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
-            .map(|(index, (bond, redeemed))| {
+            .map(|(index, bond)| {
                 let mut bond_info = serde_json::json!({
                         "index": index,
                         "outpoint": bond.outpoint.to_string(),
                         "amount": bond.amount.to_sat(),
-                        "status": if *redeemed {"Redeemed"} else {"Live"}
+                        "status": if bond.is_spent {"Redeemed"} else {"Live"}
                 });
 
-                if !*redeemed {
+                if !bond.is_spent {
                     let bond_value = self
                         .calculate_bond_value(bond)
                         .expect("Bond value calculation must not fail for valid bonds.");
@@ -202,8 +207,8 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
-            .filter_map(|(i, (bond, expired))| {
-                if !expired {
+            .filter_map(|(i, bond)| {
+                if !bond.is_spent {
                     match self.calculate_bond_value(bond) {
                         Ok(v) => {
                             log::info!("Fidelity Bond found | Index: {i} | Bond Value : {v}");
@@ -239,7 +244,7 @@ impl Wallet {
 
     /// Derives the fidelity redeemscript from bond values at a given index.
     pub(crate) fn get_fidelity_reedemscript(&self, index: u32) -> Result<ScriptBuf, WalletError> {
-        let (bond, _) = self
+        let bond = self
             .store
             .fidelity_bond
             .get(&index)
@@ -350,8 +355,9 @@ impl Wallet {
                 // `Conf_height` & `cert_expiry` are considered None as they can't be known before the confirmation.
                 conf_height: None,
                 cert_expiry: None,
+                is_spent: false,
             };
-            self.store.fidelity_bond.insert(index, (bond, false));
+            self.store.fidelity_bond.insert(index, bond);
             self.save_to_disk()?;
         }
 
@@ -393,7 +399,7 @@ impl Wallet {
         conf_height: u32,
     ) -> Result<(), WalletError> {
         let cert_expiry = FidelityBond::get_fidelity_expiry(conf_height);
-        let (bond, _) = self
+        let bond = self
             .store
             .fidelity_bond
             .get_mut(&index)
@@ -415,8 +421,8 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
-            .filter_map(|(&i, (bond, redeemed))| {
-                if !redeemed && curr_height > bond.lock_time.to_consensus_u32() {
+            .filter_map(|(&i, bond)| {
+                if !bond.is_spent && curr_height > bond.lock_time.to_consensus_u32() {
                     Some(i)
                 } else {
                     None
@@ -437,13 +443,12 @@ impl Wallet {
         maker_addr: &str,
     ) -> Result<FidelityProof, WalletError> {
         // Generate a fidelity bond proof from the fidelity data.
-        let (bond, redeemed) = self
+        let bond = self
             .store
             .fidelity_bond
             .get(&index)
             .ok_or(FidelityError::BondDoesNotExist)?;
-
-        if *redeemed {
+        if bond.is_spent {
             return Err(FidelityError::BondAlreadyRedeemed.into());
         }
 

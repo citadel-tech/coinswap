@@ -274,17 +274,7 @@ impl Maker {
 
         rpc_config.wallet_name = wallet_file_name;
 
-        let mut wallet = if wallet_path.exists() {
-            // wallet already exists, load the wallet
-            let wallet = Wallet::load(&wallet_path, &rpc_config)?;
-            log::info!("Wallet file at {wallet_path:?} successfully loaded.");
-            wallet
-        } else {
-            // wallet doesn't exist at the given path, create a new one
-            let wallet = Wallet::init(&wallet_path, &rpc_config)?;
-            log::info!("New Wallet created at : {wallet_path:?}");
-            wallet
-        };
+        let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config)?;
 
         // If the config file doesn't exist, the default config will be loaded.
         let mut config = MakerConfig::new(Some(&data_dir.join("config.toml")))?;
@@ -358,7 +348,7 @@ impl Maker {
                 .store
                 .fidelity_bond
                 .iter()
-                .filter_map(|(i, (bond, _))| {
+                .filter_map(|(i, bond)| {
                     if bond.conf_height.is_none() && bond.cert_expiry.is_none() {
                         let conf_height = wallet_read
                             .wait_for_fidelity_tx_confirmation(bond.outpoint.txid)

@@ -70,8 +70,6 @@ pub(crate) const RECONNECT_SHORT_SLEEP_DELAY: u64 = 1;
 pub(crate) const RECONNECT_LONG_SLEEP_DELAY: u64 = 5;
 pub(crate) const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 30;
 pub(crate) const TCP_TIMEOUT_SECONDS: u64 = 300;
-// TODO: Maker should decide this miner fee
-// This fee is used for both funding and contract txs.
 #[cfg(feature = "integration-test")]
 pub(crate) const MINER_FEE: u64 = 1000;
 
@@ -91,7 +89,6 @@ pub struct SwapParams {
     pub maker_count: usize,
     /// How many splits
     pub tx_count: u32,
-    // TODO: Following two should be moved to TakerConfig as global configuration.
 }
 
 // Defines the Taker's position in the current ongoing swap.
@@ -219,17 +216,7 @@ impl Taker {
         let mut rpc_config = rpc_config.unwrap_or_default();
         rpc_config.wallet_name = wallet_file_name;
 
-        let mut wallet = if wallet_path.exists() {
-            // wallet already exists , load the wallet
-            let wallet = Wallet::load(&wallet_path, &rpc_config)?;
-            log::info!("Wallet file at {wallet_path:?} successfully loaded.");
-            wallet
-        } else {
-            // wallet doesn't exists at the given path , create a new one
-            let wallet = Wallet::init(&wallet_path, &rpc_config)?;
-            log::info!("New Wallet created at : {wallet_path:?}");
-            wallet
-        };
+        let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config)?;
 
         // If config file doesn't exist, default config will be loaded.
         let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
@@ -273,7 +260,7 @@ impl Taker {
             let empty_book = OfferBook::default();
             let file = std::fs::File::create(&offerbook_path)?;
             let writer = BufWriter::new(file);
-            serde_cbor::to_writer(writer, &empty_book)?;
+            serde_json::to_writer_pretty(writer, &empty_book)?;
             empty_book
         };
 
@@ -320,8 +307,6 @@ impl Taker {
         // Check if we have enough balance.
         let available = self.wallet.get_balances()?.spendable;
 
-        // TODO: Make more exact estimate of swap cost and ensure balance.
-        // For now ensure at least swap_amount + 1000 sats is available.
         let required = swap_params.send_amount + Amount::from_sat(1000);
         if available < required {
             let err = WalletError::InsufficientFund {
@@ -675,7 +660,6 @@ impl Taker {
 
         loop {
             // Abort if any of the contract transaction is broadcasted
-            // TODO: Find the culprit Maker, and ban it's fidelity bond.
             let contracts_broadcasted = self.check_for_broadcasted_contract_txes();
             if !contracts_broadcasted.is_empty() {
                 log::error!(
@@ -726,7 +710,6 @@ impl Taker {
                 }
 
                 // handle confirmations
-                //TODO handle confirm<0
                 if gettx.confirmations >= Some(required_confirmations) {
                     txid_tx_map.insert(
                         *txid,
