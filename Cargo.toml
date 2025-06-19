@@ -31,6 +31,9 @@ flate2 = {version = "1.0.35", optional = true}
 tar = {version = "0.4.43", optional = true}
 minreq = { version = "2.12.0", features = ["https"] }
 rust-coinselect = "0.1.2"
+pbkdf2 = { version = "0.12", features = ["simple"] }
+aes-gcm = "0.10.3"
+sha2 = "0.10.9"
 
 #Empty default feature set, (helpful to generalise in github actions)
 [features]
