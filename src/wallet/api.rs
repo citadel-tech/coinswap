@@ -1193,8 +1193,8 @@ impl Wallet {
         // Convert UTXOs to OutputGroups
         // Note: Consider more sophisticated grouping policies in the future
         // Group UTXOs by address
-        let mut address_to_utxos: HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
-            HashMap::new();
+        let mut address_groups: Vec<(String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>)> =
+            Vec::new();
 
         for (utxo, spend_info) in &unspents {
             let address_str = utxo
@@ -1203,16 +1203,23 @@ impl Wallet {
                 .map(|addr| addr.clone().assume_checked().to_string())
                 .unwrap_or_else(|| format!("script_{}", utxo.script_pub_key));
 
-            address_to_utxos
-                .entry(address_str)
-                .or_default()
-                .push((utxo.clone(), spend_info.clone()));
+            match address_groups
+                .iter_mut()
+                .find(|(addr, _)| addr == &address_str)
+            {
+                Some(group) => group.1.push((utxo.clone(), spend_info.clone())),
+                None => {
+                    address_groups.push((address_str, vec![(utxo.clone(), spend_info.clone())]))
+                }
+            }
         }
 
-        // Create OutputGroups from address groups and preserve the grouped UTXOs
-        let grouped_utxos: Vec<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
-            address_to_utxos.into_values().collect();
+        // Cleaner sorting using sort_by_key
+        address_groups.sort_by_key(|(addr, _)| addr.clone());
 
+        // Extract UTXO groups
+        let grouped_utxos: Vec<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
+            address_groups.into_iter().map(|(_, utxos)| utxos).collect();
         let output_groups: Vec<OutputGroup> = grouped_utxos
             .iter()
             .map(|utxos_in_group| {
