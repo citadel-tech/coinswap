@@ -405,8 +405,27 @@ impl Wallet {
                     Amount::to_sat(coinswap_amount),
                     feerate,
                 );
+
+                total_input_value = selected_inputs
+                    .iter()
+                    .map(|(utxo, _)| utxo.amount)
+                    .sum::<Amount>();
+
+                // This ensures we have our inputs unlocked or else it can give subtraction error
+                let outpoints: Vec<_> = selected_inputs
+                    .iter()
+                    .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                    .collect();
+
+                self.rpc.unlock_unspent(&outpoints)?;
+
                 for (i, target_chunk) in target_chunks.iter().enumerate() {
                     let target_chunk = Amount::from_sat(*target_chunk);
+                    log::info!(
+                        "Adding target output indexed {} with {} sats",
+                        i,
+                        target_chunk.to_sat(),
+                    );
                     total_output_value += target_chunk;
                     let txout = TxOut {
                         script_pubkey: addresses[i].script_pubkey(),
@@ -438,6 +457,11 @@ impl Wallet {
                 #[cfg(feature = "integration-test")]
                 let fee_wchange = Amount::from_sat(1000);
 
+                log::info!(
+                    "Total input value: {} sats, total output value: {} sats",
+                    total_input_value.to_sat(),
+                    total_output_value.to_sat(),
+                );
                 let remaining_wchange =
                     if let Some(diff) = total_input_value.checked_sub(total_output_value) {
                         if let Some(diff) = diff.checked_sub(fee_wchange) {
@@ -458,12 +482,13 @@ impl Wallet {
                 let individual_fee_wchange = fee_wchange / change_chunks.len() as u64;
 
                 for (i, change_chunk) in change_chunks.iter().enumerate() {
-                    let change_chunk = Amount::from_sat(*change_chunk);
-                    if change_chunk > internal_spks[i].script_pubkey().minimal_non_dust() {
+                    let change_chunk = Amount::from_sat(*change_chunk) - individual_fee_wchange;
+                    // let change_chunk = Amount::from_sat(*change_chunk);
+                    if remaining_wchange > internal_spks[i].script_pubkey().minimal_non_dust() {
                         log::info!(
                             "Adding change output indexed {} with {} sats (fee: {} sats)",
                             i,
-                            change_chunk.to_sat() - (Amount::to_sat(individual_fee_wchange)),
+                            change_chunk.to_sat(),
                             individual_fee_wchange.to_sat()
                         );
                         tx.output.push(TxOut {

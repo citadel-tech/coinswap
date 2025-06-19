@@ -22,16 +22,16 @@ use super::Wallet;
 use super::error::WalletError;
 
 #[derive(Debug)]
-pub(crate) struct CreateFundingTxesResult {
-    pub(crate) funding_txes: Vec<Transaction>,
-    pub(crate) payment_output_positions: Vec<u32>,
-    pub(crate) total_miner_fee: u64,
+pub struct CreateFundingTxesResult {
+    pub funding_txes: Vec<Transaction>,
+    pub payment_output_positions: Vec<u32>,
+    pub total_miner_fee: u64,
 }
 
 impl Wallet {
     // Attempts to create the funding transactions.
     /// Returns Ok(None) if there was no error but the wallet was unable to create funding txes
-    pub(crate) fn create_funding_txes(
+    pub fn create_funding_txes(
         &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
@@ -125,7 +125,7 @@ impl Wallet {
         Ok(output_values)
     }
 
-    fn create_funding_txes_regular_swaps(
+    pub fn create_funding_txes_regular_swaps(
         &mut self,
         normie_flag: bool,
         coinswap_amount: Amount,
@@ -152,8 +152,8 @@ impl Wallet {
                 .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
                 .collect();
 
-            // Flow of Lock Step 2. Lock the selected UTXOs immediately after selection
-            self.rpc.lock_unspent(&outpoints)?;
+            // // Flow of Lock Step 2. Lock the selected UTXOs immediately after selection
+            // self.rpc.lock_unspent(&outpoints)?;
             // Flow of Lock Step 3. Store the locked UTXOs for later unlocking in case of error
             locked_utxos.extend(outpoints);
 
@@ -225,8 +225,8 @@ impl Wallet {
         result
     }
 
-    // This function creates funding transactions with random amounts
-    // The total `coinswap_amount` is randomly distributed among number of destinations.
+    // // This function creates funding transactions with random amounts
+    // // The total `coinswap_amount` is randomly distributed among number of destinations.
     // fn create_funding_txes_random_amounts(
     //     &mut self,
     //     coinswap_amount: Amount,
@@ -256,8 +256,8 @@ impl Wallet {
     //                 .iter()
     //                 .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
     //                 .collect();
-    //             // Flow of Lock Step 3. Lock the selected UTXOs immediately after selection
-    //             self.rpc.lock_unspent(&outpoints)?;
+    //             // // Flow of Lock Step 3. Lock the selected UTXOs immediately after selection
+    //             // self.rpc.lock_unspent(&outpoints)?;
     //             // Flow of Lock Step 4. Store the locked UTXOs for later unlocking in case of error
     //             locked_utxos.extend(outpoints);
 

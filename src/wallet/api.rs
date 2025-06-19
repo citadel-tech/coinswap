@@ -7,13 +7,13 @@ use std::{convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr};
 
 use std::collections::HashMap;
 
-use bip39::{
-    rand::{thread_rng, Rng},
-    Mnemonic,
-};
 use aes_gcm::{
     aead::{AeadCore, OsRng},
     Aes256Gcm,
+};
+use bip39::{
+    rand::{thread_rng, Rng},
+    Mnemonic,
 };
 
 use bitcoin::{
