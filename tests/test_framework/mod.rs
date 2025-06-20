@@ -493,7 +493,7 @@ pub fn verify_swap_results(
                 "Maker swapcoin balance mismatch"
             );
 
-            assert_eq!(check_boundness(0.05, balances.fidelity.to_btc(), 5.0), true);
+            assert!(check_boundness(0.05, balances.fidelity.to_btc(), 5.0));
 
             // Live contract balance can be non-zero, if a maker shuts down in middle of recovery.
             assert!(

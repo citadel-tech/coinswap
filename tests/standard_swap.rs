@@ -168,7 +168,7 @@ fn test_standard_coinswap() {
         .spend_from_wallet(DEFAULT_TX_FEE_RATE, Destination::Sweep(addr), &swap_coins)
         .unwrap();
 
-    // This is not deterministic right now.
+    // This is not deterministic right now due to how regular swaps and coinselection works.
     // assert_eq!(
     //     tx.input.len(),
     //     1,
@@ -182,11 +182,8 @@ fn test_standard_coinswap() {
     let balances = taker_wallet_mut.get_balances().unwrap();
 
     assert_eq!(balances.swap, Amount::ZERO);
-    assert_eq!(
-        check_boundness(0.1493, balances.regular.to_btc(), 1.0),
-        true,
-        "Taker's regular balance is not as expected after spending swap coins"
-    );
+    assert!(check_boundness(0.1493, balances.regular.to_btc(), 1.0));
+    // "Taker's regular balance is not as expected after spending swap coins"
 
     info!("🎉 All checks successful. Terminating integration test case");
 
