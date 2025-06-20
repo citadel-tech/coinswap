@@ -466,7 +466,8 @@ pub fn verify_swap_results(
         .iter()
         .zip(org_maker_spend_balances.iter())
         .for_each(|(maker, org_spend_balance)| {
-            let wallet = maker.get_wallet().read().unwrap();
+            let mut wallet = maker.get_wallet().write().unwrap();
+            wallet.sync_no_fail();
             let balances = wallet.get_balances().unwrap();
 
             assert!(
@@ -474,7 +475,8 @@ pub fn verify_swap_results(
                     || balances.regular == Amount::from_btc(0.14532500).unwrap() // Second maker on successful coinswap
                     || balances.regular == Amount::from_btc(0.14999).unwrap() // No spending
                     || balances.regular == Amount::from_btc(0.14992232).unwrap() // Recovery via timelock
-                    || balances.regular == Amount::from_btc(0.14090858).unwrap(), // Mutli-taker case
+                    || balances.regular == Amount::from_btc(0.14554358).unwrap() // Multi-taker with address grouping
+                    || balances.regular == Amount::from_btc(0.14590858).unwrap(), // Multi-taker with address grouping
                 "Maker seed balance mismatch"
             );
 

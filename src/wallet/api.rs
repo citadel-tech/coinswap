@@ -1214,8 +1214,8 @@ impl Wallet {
             }
         }
 
-        // Cleaner sorting using sort_by_key
-        address_groups.sort_by_key(|(addr, _)| addr.clone());
+        // Sort by UTXO properties (amount + txid) instead of address for true determinism
+        address_groups.sort_by_key(|(_, utxos)| (utxos[0].0.amount.to_sat(), utxos[0].0.txid));
 
         // Extract UTXO groups
         let grouped_utxos: Vec<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
@@ -1289,7 +1289,7 @@ impl Wallet {
                         amount.to_sat()
                     );
 
-                    Ok(all_utxos)
+                    Ok(unspents)
                 } else {
                     // For other errors, return the original error
                     Err(WalletError::General(format!("Coin selection failed: {e}")))
