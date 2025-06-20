@@ -4,7 +4,6 @@ use std::{env, vec};
 
 // use super::*;
 use bitcoin::{Amount, OutPoint};
-use bitcoind::bitcoincore_rpc::RpcApi;
 // use std::sync::Arc;
 use coinswap::{
     // maker::{start_maker_server, MakerBehavior},
@@ -118,18 +117,6 @@ fn test_create_dynamic_splits() {
                 target
             );
 
-            // // Filter UTXOs that match our current set
-            // let mut selected_utxos: Vec<_> = coins_to_spend
-            //     .iter()
-            //     .filter(|(utxo, _)| individual_utxo_set.contains(&utxo.amount.to_sat()))
-            //     .cloned()
-            //     .collect();
-
-            // if selected_utxos.is_empty() {
-            //     println!("No matching UTXOs found for this set");
-            //     continue;
-            // }
-
             let selected_utxos = match taker
                 .get_wallet_mut()
                 .coin_select(Amount::from_sat(*target), DEFAULT_TX_FEE_RATE)
@@ -140,21 +127,6 @@ fn test_create_dynamic_splits() {
                     continue;
                 }
             };
-
-            // // Prepare outpoints for locking
-            // let outpoints: Vec<_> = selected_utxos
-            //     .iter()
-            //     .map(|(utxo, _)| OutPoint {
-            //         txid: utxo.txid,
-            //         vout: utxo.vout,
-            //     })
-            //     .collect();
-
-            // // Lock UTXOs to prevent conflicts
-            // if let Err(e) = bitcoind.client.lock_unspent(&outpoints) {
-            //     println!("Failed to lock UTXOs: {:?}", e);
-            //     continue;
-            // }
 
             // Try to create dynamic splits
             let (selected_inputs, target_splits, change_splits) = taker
@@ -180,7 +152,13 @@ fn test_create_dynamic_splits() {
             println!("Change Splits: {change_splits:?}");
 
             // Unlock UTXOs after use
-            let _ = bitcoind.client.unlock_unspent(&outpoints);
+
+            // THese doesn't actually unlock UTXOs in the test framework.
+            // bitcoind.client.unlock_unspent_all();
+            // bitcoind.client.unlock_unspent(&outpoints);
+
+            // This does??? Even though it uses the same method as above
+            taker.get_wallet_mut().lock_unspendable_utxos();
         }
     }
 
