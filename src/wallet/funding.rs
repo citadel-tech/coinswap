@@ -38,7 +38,7 @@ impl Wallet {
         fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let ret = self.create_funding_txes_regular_swaps(
-            true, // Set to true for now, will be changed later
+            false, // Set to true for now, will be changed later
             coinswap_amount,
             destinations.to_vec(),
             fee_rate,
@@ -187,11 +187,11 @@ impl Wallet {
             };
 
             // Creates and Signs Transactions via the spend_coins API
-            let funding_tx: Transaction =
+            let funding_tx =
                 self.spend_coins(coins_to_spend, destination, fee_rate.to_sat() as f64)?;
 
             // Record this transaction in our results.
-            let payment_pos = funding_tx.output.len() - 1; // assuming the payment output position is 0
+            let payment_pos = 0; // assuming the payment output position is 0
 
             funding_txes.push(funding_tx);
             payment_output_positions.push(payment_pos as u32);
@@ -269,7 +269,7 @@ impl Wallet {
 
     //             // Creates and Signs Transactions via the spend_coins API
     //             let funding_tx =
-    //                 self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
+    //                 self.spend_coins(coins_to_spend, destination, fee_rate.to_sat() as f64)?;
 
     //             // The actual fee is the difference between the sum of output amounts from the total input amount
     //             let actual_fee = total_input_amount

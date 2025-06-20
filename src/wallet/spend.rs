@@ -406,6 +406,14 @@ impl Wallet {
                     feerate,
                 );
 
+                // This ensures we have our inputs unlocked or else it can give subtraction error
+                let outpoints: Vec<_> = selected_inputs
+                    .iter()
+                    .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                    .collect();
+
+                self.rpc.unlock_unspent(&outpoints)?;
+
                 // Debug
                 let coins_outpoints: Vec<_> = coins
                     .iter()
@@ -417,6 +425,7 @@ impl Wallet {
                     .filter(|(utxo, _)| {
                         !coins_outpoints.contains(&OutPoint::new(utxo.txid, utxo.vout))
                     })
+                    .cloned()
                     .collect();
 
                 if !not_in_coins.is_empty() {
@@ -427,25 +436,28 @@ impl Wallet {
                             .map(|(utxo, _)| utxo.amount.to_sat())
                             .collect::<Vec<_>>()
                     );
+
+                    total_input_value += not_in_coins
+                        .iter()
+                        .map(|(utxo, _)| utxo.amount)
+                        .sum::<Amount>();
+                    total_witness_size += not_in_coins
+                        .iter()
+                        .map(|(_, spend_info)| spend_info.estimate_witness_size())
+                        .sum::<usize>();
+
+                    coins.extend(not_in_coins.clone());
+
+                    for (utxo, _) in not_in_coins {
+                        tx.input.push(TxIn {
+                            previous_output: OutPoint::new(utxo.txid, utxo.vout),
+                            sequence: Sequence::ZERO,
+                            witness: Witness::new(),
+                            script_sig: ScriptBuf::new(),
+                        });
+                    }
                 }
                 // Debug
-
-                coins = selected_inputs;
-
-                total_input_value = coins.iter().map(|(utxo, _)| utxo.amount).sum::<Amount>();
-
-                // This ensures we have our inputs unlocked or else it can give subtraction error
-                let outpoints: Vec<_> = coins
-                    .iter()
-                    .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
-                    .collect();
-
-                self.rpc.unlock_unspent(&outpoints)?;
-
-                total_witness_size = coins
-                    .iter()
-                    .map(|(_, spend_info)| spend_info.estimate_witness_size())
-                    .sum::<usize>();
 
                 for (i, target_chunk) in target_chunks.iter().enumerate() {
                     let target_chunk = Amount::from_sat(*target_chunk);
@@ -539,12 +551,31 @@ impl Wallet {
         self.sign_transaction(&mut tx, coins.iter().map(|(_, usi)| usi.clone()))?;
         let calc_vsize = (tx.base_size() * 4 + total_witness_size).div_ceil(4);
         let signed_tx_vsize = tx.vsize();
+
+        // debug
+        let coins_outpoints: Vec<_> = coins
+            .iter()
+            .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+            .collect();
+
+        let in_txn: Vec<_> = coins
+            .iter()
+            .filter(|(utxo, _)| {
+                tx.input.iter().any(|txin| {
+                    txin.previous_output.txid == utxo.txid && txin.previous_output.vout == utxo.vout
+                })
+            })
+            .collect();
+
         log::info!(
             "Signing transaction: total_input_value = {} sats, actual total_witness_size = {} bytes, actual base size = {} bytes",
-            coins.iter().map(|(utxo, _)| utxo.amount.to_sat()).sum::<u64>(),
-            total_witness_size,
+            in_txn
+                .iter()
+                .map(|(utxo, _)| utxo.amount.to_sat()).sum::<u64>(),
+            tx.input.iter().map(|txin| (txin.total_size() - txin.base_size())).sum::<usize>(),
             tx.base_size(),
         );
+        // debug
 
         // As signature size can vary between 71-73 bytes we have a tolerance
         let tolerance_per_input = 2; // Allow a 2-byte difference per input
