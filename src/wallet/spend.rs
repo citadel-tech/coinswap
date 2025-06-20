@@ -64,7 +64,7 @@ impl Wallet {
             }
         }
 
-        let tx = self.spend_coins(&coins, destination, feerate)?;
+        let tx = self.spend_coins(coins, destination, feerate)?;
 
         Ok(tx)
     }
@@ -119,7 +119,7 @@ impl Wallet {
         .clone();
 
         let tx = self.spend_coins(
-            &vec![(utxo, expired_fidelity_spend_info)],
+            vec![(utxo, expired_fidelity_spend_info)],
             destination,
             feerate,
         )?;
@@ -162,7 +162,7 @@ impl Wallet {
                 {
                     let destination = Destination::Sweep(destination_address.clone());
                     let coins = vec![(utxo, spend_info)];
-                    let tx = self.spend_coins(&coins, destination, feerate)?;
+                    let tx = self.spend_coins(coins, destination, feerate)?;
                     return Ok(tx);
                 }
             }
@@ -190,7 +190,7 @@ impl Wallet {
                     let destination = Destination::Sweep(destination_address.clone());
                     let coin = (utxo, spend_info);
                     let coins = vec![coin];
-                    let tx = self.spend_coins(&coins, destination, feerate)?;
+                    let tx = self.spend_coins(coins, destination, feerate)?;
                     return Ok(tx);
                 }
             }
@@ -201,7 +201,7 @@ impl Wallet {
     #[allow(unused)]
     pub fn spend_coins(
         &self,
-        coins: &Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
+        mut coins: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
         destination: Destination,
         feerate: f64,
     ) -> Result<Transaction, WalletError> {
@@ -218,7 +218,7 @@ impl Wallet {
 
         let mut total_input_value = Amount::ZERO;
         let mut total_witness_size = 0;
-        for (utxo_data, spend_info) in coins {
+        for (utxo_data, spend_info) in &coins {
             match spend_info {
                 UTXOSpendInfo::SeedCoin { .. } => {
                     tx.input.push(TxIn {
@@ -237,7 +237,7 @@ impl Wallet {
                         witness: Witness::new(),
                         script_sig: ScriptBuf::new(),
                     });
-                    total_witness_size += spend_info.estimate_witness_size();
+                    total_witness_size += spend_info.clone().estimate_witness_size();
                     total_input_value += utxo_data.amount;
                 }
                 UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
@@ -256,11 +256,11 @@ impl Wallet {
                         script_sig: ScriptBuf::new(),
                         witness: Witness::new(),
                     });
-                    total_witness_size += spend_info.estimate_witness_size();
+                    total_witness_size += spend_info.clone().estimate_witness_size();
                     total_input_value += *input_value;
                 }
                 UTXOSpendInfo::TimelockContract {
-                    swapcoin_multisig_redeemscript,
+                    ref swapcoin_multisig_redeemscript,
                     input_value,
                 } => {
                     let outgoing_swap_coin = self
@@ -275,11 +275,11 @@ impl Wallet {
                         witness: Witness::new(),
                         script_sig: ScriptBuf::new(),
                     });
-                    total_witness_size += spend_info.estimate_witness_size();
+                    total_witness_size += spend_info.clone().estimate_witness_size();
                     total_input_value += *input_value;
                 }
                 UTXOSpendInfo::HashlockContract {
-                    swapcoin_multisig_redeemscript,
+                    ref swapcoin_multisig_redeemscript,
                     input_value,
                 } => {
                     let incoming_swap_coin = self
@@ -406,18 +406,46 @@ impl Wallet {
                     feerate,
                 );
 
-                total_input_value = selected_inputs
+                // Debug
+                let coins_outpoints: Vec<_> = coins
                     .iter()
-                    .map(|(utxo, _)| utxo.amount)
-                    .sum::<Amount>();
+                    .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                    .collect();
+
+                let not_in_coins: Vec<_> = selected_inputs
+                    .iter()
+                    .filter(|(utxo, _)| {
+                        !coins_outpoints.contains(&OutPoint::new(utxo.txid, utxo.vout))
+                    })
+                    .collect();
+
+                if !not_in_coins.is_empty() {
+                    log::info!(
+                        "Coinselection happened a second time, selected inputs : {:?}",
+                        not_in_coins
+                            .iter()
+                            .map(|(utxo, _)| utxo.amount.to_sat())
+                            .collect::<Vec<_>>()
+                    );
+                }
+                // Debug
+
+                coins = selected_inputs;
+
+                total_input_value = coins.iter().map(|(utxo, _)| utxo.amount).sum::<Amount>();
 
                 // This ensures we have our inputs unlocked or else it can give subtraction error
-                let outpoints: Vec<_> = selected_inputs
+                let outpoints: Vec<_> = coins
                     .iter()
                     .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
                     .collect();
 
                 self.rpc.unlock_unspent(&outpoints)?;
+
+                total_witness_size = coins
+                    .iter()
+                    .map(|(_, spend_info)| spend_info.estimate_witness_size())
+                    .sum::<usize>();
 
                 for (i, target_chunk) in target_chunks.iter().enumerate() {
                     let target_chunk = Amount::from_sat(*target_chunk);
@@ -458,9 +486,10 @@ impl Wallet {
                 let fee_wchange = Amount::from_sat(1000);
 
                 log::info!(
-                    "Total input value: {} sats, total output value: {} sats",
+                    "Unsigned transaction: total input value: {} sats, calculated total_witness_size = {} bytes, calculated base size = {} bytes",
                     total_input_value.to_sat(),
-                    total_output_value.to_sat(),
+                    total_witness_size,
+                    base_wchange,
                 );
                 let remaining_wchange =
                     if let Some(diff) = total_input_value.checked_sub(total_output_value) {
@@ -507,9 +536,16 @@ impl Wallet {
             }
         }
 
-        self.sign_transaction(&mut tx, &mut coins.iter().map(|(_, usi)| usi.clone()))?;
+        self.sign_transaction(&mut tx, coins.iter().map(|(_, usi)| usi.clone()))?;
         let calc_vsize = (tx.base_size() * 4 + total_witness_size).div_ceil(4);
         let signed_tx_vsize = tx.vsize();
+        log::info!(
+            "Signing transaction: total_input_value = {} sats, actual total_witness_size = {} bytes, actual base size = {} bytes",
+            coins.iter().map(|(utxo, _)| utxo.amount.to_sat()).sum::<u64>(),
+            total_witness_size,
+            tx.base_size(),
+        );
+        self.sign_transaction(&mut tx, &mut coins.iter().map(|(_, usi)| usi.clone()))?;
 
         // As signature size can vary between 71-73 bytes we have a tolerance
         let tolerance_per_input = 2; // Allow a 2-byte difference per input
@@ -521,6 +557,25 @@ impl Wallet {
             calc_vsize,
             signed_tx_vsize,
             total_tolerance
+        );
+
+        // The actual fee is the difference between the sum of output amounts from the total input amount
+        let actual_fee = total_input_value
+            - (tx.output.iter().fold(Amount::ZERO, |a, txo| {
+                a.checked_add(txo.value)
+                    .expect("output amount summation overflowed")
+            }));
+
+        let tx_size = tx.weight().to_vbytes_ceil();
+        // Note : The feerates are sats/vbyte
+        let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
+
+        log::info!(
+            "Created Funding tx, txid: {} | Size: {} vB | Fee: {} sats | Feerate: {:.2} sat/vB",
+            tx.compute_txid(),
+            tx_size,
+            actual_fee.to_sat(),
+            actual_feerate
         );
 
         log::debug!("Signed Transaction : {:?}", tx.raw_hex());
