@@ -93,7 +93,7 @@ fn test_standard_coinswap() {
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
-        tx_count: 1,
+        tx_count: 3,
     };
     taker.do_coinswap(swap_params).unwrap();
 
@@ -168,12 +168,11 @@ fn test_standard_coinswap() {
         .spend_from_wallet(DEFAULT_TX_FEE_RATE, Destination::Sweep(addr), &swap_coins)
         .unwrap();
 
-    // This is not deterministic right now due to how regular swaps and coinselection works.
-    // assert_eq!(
-    //     tx.input.len(),
-    //     1,
-    //     "Not all swap coin utxos got included in the spend transaction"
-    // );
+    assert_eq!(
+        tx.input.len(),
+        3,
+        "Not all swap coin utxos got included in the spend transaction"
+    );
 
     bitcoind.client.send_raw_transaction(&tx).unwrap();
     generate_blocks(bitcoind, 1);
@@ -182,8 +181,7 @@ fn test_standard_coinswap() {
     let balances = taker_wallet_mut.get_balances().unwrap();
 
     assert_eq!(balances.swap, Amount::ZERO);
-    assert!(check_boundness(0.1493, balances.regular.to_btc(), 1.0));
-    // "Taker's regular balance is not as expected after spending swap coins"
+    assert_eq!(balances.regular, Amount::from_btc(0.14934642).unwrap());
 
     info!("🎉 All checks successful. Terminating integration test case");
 

@@ -334,6 +334,7 @@ pub fn fund_and_verify_taker(
 
     // // Assert each UTXO value
     // for (i, utxo) in utxos.iter().skip(initial_utxo_count).enumerate() {
+    //     println!("UTXO at index {}: {:?}", i, utxo);
     //     assert_eq!(
     //         utxo.amount, utxo_value,
     //         "New UTXO at index {} has amount {} but expected {}",
@@ -341,7 +342,7 @@ pub fn fund_and_verify_taker(
     //     );
     // }
 
-    // Calculate expected total balance, previously was 0.05*3 = 0.15 btc
+    // // Calculate expected total balance, previously was 0.05*3 = 0.15 btc
     // let expected_total = utxo_value * u64::from(utxo_count);
 
     let balances = wallet.get_balances().unwrap();
@@ -418,12 +419,6 @@ pub fn fund_and_verify_maker(
     log::info!("✅ Maker funding verification complete");
 }
 
-pub fn check_boundness(number: f64, to_check: f64, percentage: f64) -> bool {
-    let lower_bound = number * (1.0 - (percentage / 100.0));
-    let upper_bound = number * (1.0 + (percentage / 100.0));
-    to_check >= lower_bound && to_check <= upper_bound
-}
-
 /// Verifies the results of a coinswap for the taker and makers after performing a swap.
 #[allow(dead_code)]
 pub fn verify_swap_results(
@@ -438,16 +433,14 @@ pub fn verify_swap_results(
         let balances = wallet.get_balances().unwrap();
 
         assert!(
-            // balances.regular == Amount::from_btc(0.14497).unwrap() // Successful coinswap
-            check_boundness(0.1449, balances.regular.to_btc(), 5.0) // Successful coinswap : Allow +-5% range because of splitting
+            balances.regular == Amount::from_btc(0.14497).unwrap() // Successful coinswap
                 || balances.regular == Amount::from_btc(0.14993232).unwrap() // Recovery via timelock
                 || balances.regular == Amount::from_btc(0.15).unwrap(), // No spending
             "Taker seed balance mismatch"
         );
 
         assert!(
-            // balances.swap == Amount::from_btc(0.00438642).unwrap() // Successful coinswap
-            check_boundness(0.00442, balances.swap.to_btc(), 5.0) // Successful coinswap : Allow +-5% range because of splitting
+            balances.swap == Amount::from_btc(0.00438642).unwrap() // Successful coinswap
                 || balances.swap == Amount::ZERO, // Unsuccessful coinswap
             "Taker swapcoin balance mismatch"
         );
@@ -461,9 +454,9 @@ pub fn verify_swap_results(
             .unwrap();
 
         assert!(
-            check_boundness(0.00064358, balance_diff.to_btc(), 15.0) // Successful coinswap, allow +-5%
-            || balance_diff == Amount::from_sat(6768) // Recovery via timelock
-            || check_boundness(0.005, balance_diff.to_btc(), 5.0) // Spent swapcoin, allow +-5%
+            balance_diff == Amount::from_sat(64358) // Successful coinswap
+                || balance_diff == Amount::from_sat(6768) // Recovery via timelock
+                || balance_diff == Amount::from_sat(503000) // Spent swapcoin
                 || balance_diff == Amount::ZERO, // No spending
             "Taker spendable balance change mismatch"
         );
@@ -478,22 +471,22 @@ pub fn verify_swap_results(
             let balances = wallet.get_balances().unwrap();
 
             assert!(
-                check_boundness(0.14557358, balances.regular.to_btc(), 5.0) // First maker on successful coinswap
-                    || check_boundness(0.14532500, balances.regular.to_btc(), 5.0) // Second maker on successful coinswap
+                balances.regular == Amount::from_btc(0.14557358).unwrap() // First maker on successful coinswap
+                    || balances.regular == Amount::from_btc(0.14532500).unwrap() // Second maker on successful coinswap
                     || balances.regular == Amount::from_btc(0.14999).unwrap() // No spending
                     || balances.regular == Amount::from_btc(0.14992232).unwrap() // Recovery via timelock
-                    || check_boundness(0.14090858, balances.regular.to_btc(), 5.0), // Multi-taker case
+                    || balances.regular == Amount::from_btc(0.14090858).unwrap(), // Mutli-taker case
                 "Maker seed balance mismatch"
             );
 
             assert!(
-                check_boundness(0.005, balances.swap.to_btc(), 5.0) // First maker
-                    || check_boundness(0.00463500, balances.swap.to_btc(), 5.0) // Second maker
+                balances.swap == Amount::from_btc(0.005).unwrap() // First maker
+                    || balances.swap == Amount::from_btc(0.00463500).unwrap() // Second maker
                     || balances.swap == Amount::ZERO, // No swap or funding tx missing
                 "Maker swapcoin balance mismatch"
             );
 
-            assert!(check_boundness(0.05, balances.fidelity.to_btc(), 5.0));
+            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
 
             // Live contract balance can be non-zero, if a maker shuts down in middle of recovery.
             assert!(
@@ -509,14 +502,14 @@ pub fn verify_swap_results(
             };
 
             assert!(
-                check_boundness(33500.0, balance_diff.to_sat() as f64, 5.0) // First maker fee
-                    || check_boundness(21858.0, balance_diff.to_sat() as f64, 5.0) // Second maker fee
+                balance_diff == Amount::from_sat(33500) // First maker fee
+                    || balance_diff == Amount::from_sat(21858) // Second maker fee
                     || balance_diff == Amount::ZERO // No spending
                     || balance_diff == Amount::from_sat(6768) // Recovery via timelock
-                    || check_boundness(466500.0, balance_diff.to_sat() as f64, 5.0) // Taker abort after setup - first maker recovery cost (abort1 test case)
-                    || check_boundness(441642.0, balance_diff.to_sat() as f64, 5.0) // Taker abort after setup - second maker recovery cost (abort1 test case)
-                    || check_boundness(408142.0, balance_diff.to_sat() as f64, 5.0) // Multi-taker first maker
-                    || check_boundness(444642.0, balance_diff.to_sat() as f64, 5.0), // Multi-taker second maker
+                    || balance_diff == Amount::from_sat(466500) // Taker abort after setup - first maker recovery cost (abort1 test case)
+                    || balance_diff == Amount::from_sat(441642) // Taker abort after setup - second maker recovery cost (abort1 test case)
+                    || balance_diff == Amount::from_sat(408142) // Multi-taker first maker
+                    || balance_diff == Amount::from_sat(444642), // Multi-taker second maker
                 "Maker spendable balance change mismatch"
             );
         });
@@ -560,11 +553,11 @@ impl TestFramework {
     ) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
+        setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
         // Remove if previously existing
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
         }
-        setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
         log::info!("📁 temporary directory : {}", temp_dir.display());
 
         let bitcoind = init_bitcoind(&temp_dir);
@@ -661,24 +654,6 @@ impl TestFramework {
             directory_server_instance,
             generate_blocks_handle,
         )
-    }
-
-    /// Assert that a log message exists in the debug.log file
-    pub fn assert_log(&self, expected_message: &str, log_path: &str) {
-        match std::fs::read_to_string(log_path) {
-            Ok(log_contents) => {
-                assert!(
-                    log_contents.contains(expected_message),
-                    "Expected log message '{}' not found in log file: {}",
-                    expected_message,
-                    log_path
-                );
-                log::info!("✅ Found expected log message: '{expected_message}'");
-            }
-            Err(e) => {
-                panic!("Could not read log file at {}: {}", log_path, e);
-            }
-        }
     }
 
     /// Stop bitcoind and clean up all test data.
