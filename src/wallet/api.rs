@@ -1595,7 +1595,7 @@ impl Wallet {
 
             let delta_cc = Amount::to_sat(delta_input_sum).saturating_sub(delta_c);
 
-            // If delta_cc is too massive, it will leave a trail output behind. Here, you try with differential
+            // Else If delta_cc is too massive, it will leave a trail output behind. Here, you try with differential
             if delta_cc > 0
                 && (target_lb..=target_ub)
                     .contains(&(target_change + Amount::to_sat(delta_input_sum)))

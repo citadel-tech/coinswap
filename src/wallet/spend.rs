@@ -414,7 +414,6 @@ impl Wallet {
 
                 self.rpc.unlock_unspent(&outpoints)?;
 
-                // Debug
                 let coins_outpoints: Vec<_> = coins
                     .iter()
                     .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
@@ -429,14 +428,6 @@ impl Wallet {
                     .collect();
 
                 if !not_in_coins.is_empty() {
-                    log::info!(
-                        "Coinselection happened a second time, selected inputs : {:?}",
-                        not_in_coins
-                            .iter()
-                            .map(|(utxo, _)| utxo.amount.to_sat())
-                            .collect::<Vec<_>>()
-                    );
-
                     total_input_value += not_in_coins
                         .iter()
                         .map(|(utxo, _)| utxo.amount)
@@ -457,15 +448,9 @@ impl Wallet {
                         });
                     }
                 }
-                // Debug
 
                 for (i, target_chunk) in target_chunks.iter().enumerate() {
                     let target_chunk = Amount::from_sat(*target_chunk);
-                    log::info!(
-                        "Adding target output indexed {} with {} sats",
-                        i,
-                        target_chunk.to_sat(),
-                    );
                     total_output_value += target_chunk;
                     let txout = TxOut {
                         script_pubkey: addresses[i].script_pubkey(),
@@ -497,50 +482,23 @@ impl Wallet {
                 #[cfg(feature = "integration-test")]
                 let fee_wchange = Amount::from_sat(1000);
 
-                log::info!(
-                    "Unsigned transaction: total input value: {} sats, calculated total_witness_size = {} bytes, calculated base size = {} bytes",
-                    total_input_value.to_sat(),
-                    total_witness_size,
-                    base_wchange,
-                );
-                let remaining_wchange =
-                    if let Some(diff) = total_input_value.checked_sub(total_output_value) {
-                        if let Some(diff) = diff.checked_sub(fee_wchange) {
-                            diff
-                        } else {
-                            return Err(WalletError::InsufficientFund {
-                                available: total_input_value.to_sat(),
-                                required: (total_output_value + fee_wchange).to_sat(),
-                            });
-                        }
-                    } else {
-                        return Err(WalletError::InsufficientFund {
-                            available: total_input_value.to_sat(),
-                            required: (total_output_value + fee_wchange).to_sat(),
-                        });
-                    };
-
                 let individual_fee_wchange = fee_wchange / change_chunks.len() as u64;
 
                 for (i, change_chunk) in change_chunks.iter().enumerate() {
-                    let change_chunk = Amount::from_sat(*change_chunk) - individual_fee_wchange;
-                    // let change_chunk = Amount::from_sat(*change_chunk);
-                    if remaining_wchange > internal_spks[i].script_pubkey().minimal_non_dust() {
-                        log::info!(
-                            "Adding change output indexed {} with {} sats (fee: {} sats)",
-                            i,
-                            change_chunk.to_sat(),
-                            individual_fee_wchange.to_sat()
-                        );
+                    // Distributing the change fee across the individual changes.
+                    let change = Amount::from_sat(
+                        change_chunk.saturating_sub(individual_fee_wchange.to_sat()),
+                    );
+                    if change > internal_spks[i].script_pubkey().minimal_non_dust() {
                         tx.output.push(TxOut {
                             script_pubkey: internal_spks[i].script_pubkey(),
-                            value: change_chunk,
+                            value: change,
                         });
                     } else {
                         log::info!(
                             "Remaining change {} sats indexed {} is below dust threshold. Skipping change output. (fee: {} sats)",
                             i,
-                            change_chunk.to_sat(),
+                            change.to_sat(),
                             fee_wchange.to_sat()
                         );
                     }
@@ -551,31 +509,6 @@ impl Wallet {
         self.sign_transaction(&mut tx, coins.iter().map(|(_, usi)| usi.clone()))?;
         let calc_vsize = (tx.base_size() * 4 + total_witness_size).div_ceil(4);
         let signed_tx_vsize = tx.vsize();
-
-        // debug
-        let coins_outpoints: Vec<_> = coins
-            .iter()
-            .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
-            .collect();
-
-        let in_txn: Vec<_> = coins
-            .iter()
-            .filter(|(utxo, _)| {
-                tx.input.iter().any(|txin| {
-                    txin.previous_output.txid == utxo.txid && txin.previous_output.vout == utxo.vout
-                })
-            })
-            .collect();
-
-        log::info!(
-            "Signing transaction: total_input_value = {} sats, actual total_witness_size = {} bytes, actual base size = {} bytes",
-            in_txn
-                .iter()
-                .map(|(utxo, _)| utxo.amount.to_sat()).sum::<u64>(),
-            tx.input.iter().map(|txin| (txin.total_size() - txin.base_size())).sum::<usize>(),
-            tx.base_size(),
-        );
-        // debug
 
         // As signature size can vary between 71-73 bytes we have a tolerance
         let tolerance_per_input = 2; // Allow a 2-byte difference per input

@@ -132,10 +132,7 @@ impl Wallet {
         destinations: Vec<Address>,
         fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
-        // // Flow of Lock Step 1. Unlock all unspent UTXOs
-        // self.rpc.unlock_unspent_all()?;
-
-        // FLow of Lock Step 1.Unlock all unspent UTXOs && Lock all unspendable UTXOs
+        // Unlock all unspent UTXOs && Lock all unspendable UTXOs
         self.lock_unspendable_utxos()?;
 
         let mut funding_txes = Vec::<Transaction>::new();
@@ -152,24 +149,8 @@ impl Wallet {
                 .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
                 .collect();
 
-            // // Flow of Lock Step 2. Lock the selected UTXOs immediately after selection
-            // self.rpc.lock_unspent(&outpoints)?;
-            // Flow of Lock Step 3. Store the locked UTXOs for later unlocking in case of error
+            // Store the locked UTXOs for later unlocking in case of error
             locked_utxos.extend(outpoints);
-
-            let total_input_amount =
-                selected_utxo
-                    .iter()
-                    .fold(Amount::ZERO, |acc, (unspent, _)| {
-                        acc.checked_add(unspent.amount)
-                            .expect("Amount sum overflowed")
-                    });
-
-            log::info!(
-                "Initially selected {} UTXOs for funding txes, initial input amount: {}",
-                selected_utxo.len(),
-                total_input_amount.to_sat()
-            );
 
             // Here, prepare coins for spend_coins API, since this API would require owned data to avoid lifetime issues
             let coins_to_spend = selected_utxo
@@ -178,9 +159,7 @@ impl Wallet {
                 .collect::<Vec<_>>();
 
             // Create destination with output
-            // Default behaviour : create a multi-destination transaction
             let destination = if normie_flag {
-                // If normie flag is set, we create a single destination transaction
                 Destination::Multi(vec![(destinations[0].clone(), coinswap_amount)])
             } else {
                 Destination::MultiDynamic(coinswap_amount, destinations)
@@ -204,7 +183,7 @@ impl Wallet {
             })
         })();
 
-        // FLow of Lock Step 5. We unlock the UTXOs on error i.e a rollback mechanism, OR keep locked on success
+        // We unlock the UTXOs on error i.e a rollback mechanism, OR keep locked on success
         if result.is_err() {
             self.rpc.unlock_unspent(&locked_utxos)?;
         }
