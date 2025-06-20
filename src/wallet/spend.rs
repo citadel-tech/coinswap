@@ -545,7 +545,6 @@ impl Wallet {
             total_witness_size,
             tx.base_size(),
         );
-        self.sign_transaction(&mut tx, &mut coins.iter().map(|(_, usi)| usi.clone()))?;
 
         // As signature size can vary between 71-73 bytes we have a tolerance
         let tolerance_per_input = 2; // Allow a 2-byte difference per input
