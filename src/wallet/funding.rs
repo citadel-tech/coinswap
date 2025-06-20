@@ -165,6 +165,12 @@ impl Wallet {
                             .expect("Amount sum overflowed")
                     });
 
+            log::info!(
+                "Initially selected {} UTXOs for funding txes, initial input amount: {}",
+                selected_utxo.len(),
+                total_input_amount.to_sat()
+            );
+
             // Here, prepare coins for spend_coins API, since this API would require owned data to avoid lifetime issues
             let coins_to_spend = selected_utxo
                 .iter()
@@ -181,27 +187,8 @@ impl Wallet {
             };
 
             // Creates and Signs Transactions via the spend_coins API
-            let funding_tx =
-                self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
-
-            // The actual fee is the difference between the sum of output amounts from the total input amount
-            let actual_fee = total_input_amount
-                - (funding_tx.output.iter().fold(Amount::ZERO, |a, txo| {
-                    a.checked_add(txo.value)
-                        .expect("output amount summation overflowed")
-                }));
-
-            let tx_size = funding_tx.weight().to_vbytes_ceil();
-            // Note : The feerates are sats/vbyte
-            let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
-
-            log::info!(
-                "Created Funding tx, txid: {} | Size: {} vB | Fee: {} sats | Feerate: {:.2} sat/vB",
-                funding_tx.compute_txid(),
-                tx_size,
-                actual_fee.to_sat(),
-                actual_feerate
-            );
+            let funding_tx: Transaction =
+                self.spend_coins(coins_to_spend, destination, fee_rate.to_sat() as f64)?;
 
             // Record this transaction in our results.
             let payment_pos = funding_tx.output.len() - 1; // assuming the payment output position is 0

@@ -1223,9 +1223,6 @@ impl Wallet {
         // TODO : Create a user input variable with the broader merge split refactor
         let num_outputs = 5; // Number of outputs
 
-        // FLow of Lock Step 2. Lock all unspendable UTXOs
-        // self.lock_unspendable_utxos()?;
-
         // Get spendable UTXOs (regular coins and incoming swap coins)
         let mut unspents = self.list_descriptor_utxo_spend_info()?;
         unspents.extend(self.list_incoming_swap_coin_utxo_spend_info()?);

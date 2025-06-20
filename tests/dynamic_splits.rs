@@ -134,7 +134,7 @@ fn test_create_dynamic_splits() {
                 .create_dynamic_splits(selected_utxos.clone(), *target, DEFAULT_TX_FEE_RATE);
 
             // Prepare outpoints for locking
-            let outpoints: Vec<_> = selected_inputs
+            let _outpoints: Vec<_> = selected_inputs
                 .iter()
                 .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
                 .collect();
@@ -153,12 +153,12 @@ fn test_create_dynamic_splits() {
 
             // Unlock UTXOs after use
 
-            // THese doesn't actually unlock UTXOs in the test framework.
+            // These doesn't actually unlock UTXOs in the test framework.
             // bitcoind.client.unlock_unspent_all();
             // bitcoind.client.unlock_unspent(&outpoints);
 
-            // This does??? Even though it uses the same method as above
-            taker.get_wallet_mut().lock_unspendable_utxos();
+            // This does. Even though it uses the same method as above
+            let _ = taker.get_wallet_mut().lock_unspendable_utxos();
         }
     }
 
