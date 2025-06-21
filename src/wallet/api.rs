@@ -112,6 +112,13 @@ struct LockedUtxo {
     vout: u32,
 }
 
+struct FeeOptimizationResult {
+    input: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
+    target_chunks: Vec<u64>,
+    change_chunks: Vec<u64>,
+    score: f64,
+}
+
 impl KeychainKind {
     fn index_num(&self) -> u32 {
         match self {
@@ -1318,16 +1325,21 @@ impl Wallet {
             .sum::<u64>()
             / unspents.len() as u64;
 
+        // Sort unspents in descending order by value, this makes our arbitrary index for creation sequence deterministic(for FIFO)
+        let mut unspents = unspents.iter().collect::<Vec<_>>();
+        unspents.sort_by(|a, b| b.0.amount.to_sat().cmp(&a.0.amount.to_sat()));
+
         // Convert UTXOs to OutputGroups
         // TODO: Group UTXOs by address into single OutputGroups to mitigate privacy leaks from address reuse
         // TODO: Consider more sophisticated grouping policies in the future
         let output_groups: Vec<OutputGroup> = unspents
             .iter()
-            .map(|(utxo, spend_info)| OutputGroup {
+            .enumerate()
+            .map(|(i, (utxo, spend_info))| OutputGroup {
                 value: utxo.amount.to_sat(),
                 weight: 36 + spend_info.estimate_witness_size() as u64,
                 input_count: 1,
-                creation_sequence: None,
+                creation_sequence: Some(i as u32),
             })
             .collect();
 
@@ -1392,13 +1404,32 @@ impl Wallet {
                     // Flow of Lock Step 3. Lock the selected UTXOs immediately after selection
                     self.rpc.lock_unspent(&outpoints)?;
 
-                    Ok(unspents)
+                    Ok(unspents.into_iter().cloned().collect())
                 } else {
                     // For other errors, return the original error
                     Err(WalletError::General(format!("Coin selection failed: {e}")))
                 }
             }
         }
+    }
+
+    /// Performs simple fee optimization based on the number of selected inputs and target chunks, change chunks
+    fn simple_fee_optimization(
+        &self,
+        selected_inputs: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
+        target_chunks: Vec<u64>,
+        change_chunks: Vec<u64>,
+    ) -> f64 {
+        const INPUT_W: f64 = 2.0;
+        const OUTPUT_TARGET_W: f64 = 1.0;
+        const OUTPUT_CHANGE_W: f64 = 0.75;
+        if target_chunks.len() == 1 && change_chunks.len() == 1 {
+            // Single output, no fee optimization needed
+            return f64::MAX;
+        }
+        selected_inputs.len() as f64 * INPUT_W
+            + target_chunks.len() as f64 * OUTPUT_TARGET_W
+            + change_chunks.len() as f64 * OUTPUT_CHANGE_W
     }
 
     // Adds multiplicative variation for randomness while maintaining approximate ratio structure
@@ -1606,15 +1637,54 @@ impl Wallet {
                     self.vary_amounts(target_change + delta_input_sum.to_sat(), 2),
                 );
             } else {
-                let (target_chunks, change_chunks) = self.ct_harmony_split(
+                let (target_chunks1, change_chunks1) =
+                    self.ct_harmony_split(target, target_change, MAX_SPLITS);
+
+                let (target_chunks2, change_chunks2) = self.ct_harmony_split(
                     target,
                     target_change + Amount::to_sat(delta_input_sum),
                     MAX_SPLITS,
                 );
+
+                let results = [
+                    FeeOptimizationResult {
+                        input: selected_inputs.clone(),
+                        target_chunks: target_chunks1.clone(),
+                        change_chunks: change_chunks1.clone(),
+                        score: self.simple_fee_optimization(
+                            selected_inputs.clone(),
+                            target_chunks1,
+                            change_chunks1,
+                        ),
+                    },
+                    FeeOptimizationResult {
+                        input: [&selected_inputs[..], &delta_inputs[..]].concat(),
+                        target_chunks: target_chunks2.clone(),
+                        change_chunks: change_chunks2.clone(),
+                        score: self.simple_fee_optimization(
+                            [&selected_inputs[..], &delta_inputs[..]].concat(),
+                            target_chunks2,
+                            change_chunks2,
+                        ),
+                    },
+                ];
+
+                log::info!(
+                    "\nFee optimization results: {:?}\ntarget_chunks: {:?}\nchange_chunks: {:?}",
+                    results.iter().map(|r| r.score).collect::<Vec<_>>(),
+                    results.iter().map(|r| &r.target_chunks).collect::<Vec<_>>(),
+                    results.iter().map(|r| &r.change_chunks).collect::<Vec<_>>()
+                );
+
+                let optimal_case = results
+                    .iter()
+                    .min_by(|a, b| a.score.partial_cmp(&b.score).unwrap())
+                    .expect("At least one result should exist");
+
                 return (
-                    [&selected_inputs[..], &delta_inputs[..]].concat(),
-                    target_chunks,
-                    change_chunks,
+                    optimal_case.input.clone(),
+                    optimal_case.target_chunks.clone(),
+                    optimal_case.change_chunks.clone(),
                 );
             }
         }

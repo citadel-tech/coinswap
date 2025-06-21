@@ -11,19 +11,29 @@ use test_framework::*;
 
 #[test]
 fn test_create_funding_txn_with_varied_distributions() {
-    let utxo_sets: Vec<Vec<u64>> = vec![vec![
-        //  1_500_000, 2_000_000, 3_000_000, 2_500_000, 4_000_000, 500_000, 6_000_000,
-        70_000, 800_000, 900_000, 100_000, 1_000_000,
-    ]];
+    let utxo_sets: Vec<Vec<u64>> = vec![
+        // CASE A : Threshold -> 2 Targets, 2 Changes
+        vec![109_831, 3_919],
+        // CASE B : Threshold -> 2 Targets, 2 Changes
+        vec![109_831, 91_379, 712_971, 432_441],
+        // CASE C : Threshold -> 2 Targets, 2 Changes
+        vec![1_946_436],
+        vec![70_000, 800_000, 900_000, 100_000],
+        vec![46_824, 53_245, 65_658, 35_892],
+    ];
 
     let targets = vec![
-        // 50_000_000, 100_000_000,         // Very large amounts (50 BTC, 100 BTC)
+        54_082,  // CASE A : Threshold -> 2 Targets, 2 Changes
+        102_980, // CASE B : Threshold -> 2 Targets, 2 Changes
+        708_742, // CASE C : Threshold -> 2 Targets, 2 Changes
         10_000, 100_000, 1_000_000, // Gradual scaling targets
         7_777_777, 8_888_888, // Odd, lopsided amounts
-        123_456, 654_321, // Non-round numbers
-        // 25_000_000, 75_000_000,          // Large, uneven splits
+        123_456,   // Non-round numbers
+        25_000_000, 75_000_000, // Large, uneven splits
         500, 1_500, 2_500, // Small, uneven splits
         9_999_999, 999_999, // Near-round numbers
+        654_321, // Previous edge case for second last wallet
+        90_000,  // Edge case for last wallet
     ];
     //let coinswap_amount = Amount::from_sat(1_000_000); // Example: 0.01 BTC
     let fee_rate = Amount::from_sat(DEFAULT_TX_FEE_RATE as u64);
