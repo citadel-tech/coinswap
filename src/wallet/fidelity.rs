@@ -339,7 +339,7 @@ impl Wallet {
 
         let destination = Destination::Multi(vec![(fidelity_addr, amount)]);
 
-        let tx = self.spend_coins(&coins, destination, feerate)?;
+        let tx = self.spend_coins(coins, destination, feerate)?;
 
         let txid = self.send_tx(&tx)?;
 
