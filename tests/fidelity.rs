@@ -86,6 +86,7 @@ fn test_fidelity() {
     {
         let mut wallet = maker.get_wallet().write().unwrap();
         wallet.sync().unwrap();
+        thread::sleep(Duration::from_millis(100));
         let balances = wallet.get_balances().unwrap();
         log::info!(
             "📊 Updated wallet balance: {} sats",
