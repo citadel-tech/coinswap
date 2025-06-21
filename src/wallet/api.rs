@@ -1214,12 +1214,9 @@ impl Wallet {
             }
         }
 
-        // Sort by UTXO properties (amount + txid) instead of address for true determinism
-        address_groups.sort_by_key(|(_, utxos)| (utxos[0].0.amount.to_sat(), utxos[0].0.txid));
-
-        // Extract UTXO groups
         let grouped_utxos: Vec<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
             address_groups.into_iter().map(|(_, utxos)| utxos).collect();
+
         let output_groups: Vec<OutputGroup> = grouped_utxos
             .iter()
             .map(|utxos_in_group| {
@@ -1260,11 +1257,10 @@ impl Wallet {
 
         match select_coin(&output_groups, &coin_selection_option) {
             Ok(selection) => {
-                // Convert selected group indices back to individual UTXOs
                 let selected_utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)> = selection
                     .selected_inputs
                     .iter()
-                    .flat_map(|&group_index| grouped_utxos[group_index].clone())
+                    .map(|&index| unspents[index].clone())
                     .collect();
                 log::info!("Coinselection concluded with {:?}", selection.waste);
                 Ok(selected_utxos)

@@ -475,8 +475,7 @@ pub fn verify_swap_results(
                     || balances.regular == Amount::from_btc(0.14532500).unwrap() // Second maker on successful coinswap
                     || balances.regular == Amount::from_btc(0.14999).unwrap() // No spending
                     || balances.regular == Amount::from_btc(0.14992232).unwrap() // Recovery via timelock
-                    || balances.regular == Amount::from_btc(0.14554358).unwrap() // Multi-taker with address grouping
-                    || balances.regular == Amount::from_btc(0.14590858).unwrap(), // Multi-taker with address grouping
+                    || balances.regular == Amount::from_btc(0.14090858).unwrap(), // Mutli-taker case
                 "Maker seed balance mismatch"
             );
 
