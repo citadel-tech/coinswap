@@ -142,7 +142,7 @@ pub(crate) struct ProofOfFunding {
     pub(crate) confirmed_funding_txes: Vec<FundingTxInfo>,
     pub(crate) next_coinswap_info: Vec<NextHopInfo>,
     pub(crate) refund_locktime: u16,
-    pub(crate) contract_feerate: u64,
+    pub(crate) contract_feerate: f64,
     pub(crate) id: String,
 }
 

@@ -390,7 +390,7 @@ pub(crate) fn create_senders_contract_tx(
     input: OutPoint,
     input_value: Amount,
     contract_redeemscript: &ScriptBuf,
-    fee_rate: Amount,
+    fee_rate: f64,
 ) -> Result<Transaction, ProtocolError> {
     Ok(Transaction {
         input: vec![TxIn {
@@ -401,7 +401,7 @@ pub(crate) fn create_senders_contract_tx(
         }],
         output: vec![TxOut {
             script_pubkey: redeemscript_to_scriptpubkey(contract_redeemscript)?,
-            value: input_value - fee_rate,
+            value: input_value - Amount::from_sat(fee_rate as u64),
         }],
         lock_time: LockTime::ZERO,
         version: Version::TWO,
@@ -413,7 +413,7 @@ pub(crate) fn create_receivers_contract_tx(
     input: OutPoint,
     input_value: Amount,
     contract_redeemscript: &ScriptBuf,
-    fee_rate: Amount,
+    fee_rate: f64,
 ) -> Result<Transaction, ProtocolError> {
     // exactly the same thing as senders contract for now, until collateral
     // inputs are implemented
@@ -727,7 +727,7 @@ mod test {
             spending_utxo,
             Amount::from_sat(30000),
             &contract_script,
-            Amount::from_sat(1000),
+            1000f64,
         )
         .unwrap();
 
@@ -871,7 +871,7 @@ mod test {
             funding_outpoint,
             funding_tx.output[0].value,
             &contract_script,
-            Amount::from_sat(1000),
+            1000f64,
         )
         .unwrap();
 
@@ -1294,7 +1294,7 @@ mod test {
                 next_multisig_pubkey: pub_2,
             }],
             refund_locktime: u16::default(),
-            contract_feerate: u64::default(),
+            contract_feerate: f64::default(),
             id: "random".to_string(),
         };
 
@@ -1324,7 +1324,7 @@ mod test {
                 next_multisig_pubkey: pub_2,
             }],
             refund_locktime: u16::default(),
-            contract_feerate: u64::default(),
+            contract_feerate: f64::default(),
             id: "random".to_string(),
         };
 

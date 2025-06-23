@@ -45,6 +45,8 @@ pub struct MakerConfig {
     /// This field will be removed in a future version as the application will be Tor-only.
     /// Clearnet support is being phased out for security reasons.
     pub connection_type: ConnectionType,
+    /// Fee rate (sats/vb)
+    pub mining_fee_rate: f64,
     /// A fixed base fee charged by the Maker for providing its services
     pub base_fee: u64,
     /// A percentage fee based on the swap amount.
@@ -76,6 +78,7 @@ impl Default for MakerConfig {
             } else {
                 ConnectionType::TOR
             },
+            mining_fee_rate: 2.0,
             base_fee,
             amount_relative_fee_pct,
         }
@@ -147,6 +150,10 @@ impl MakerConfig {
                 config_map.get("amount_relative_fee_pct"),
                 default_config.amount_relative_fee_pct,
             ),
+            mining_fee_rate: parse_field(
+                config_map.get("mining_fee_rate"),
+                default_config.mining_fee_rate,
+            ),
         })
     }
 
@@ -173,6 +180,8 @@ fidelity_amount = {}
 fidelity_timelock = {}
 # Connection type (TOR or CLEARNET)
 connection_type = {:?}
+# Mining fee rate (sats/vb)
+mining_fee_rate = {}
 # DNS Tor address. Change this to connect to a different DNS server 
 dns_address = {}
 # A fixed base fee charged by the Maker for providing its services (in satoshis)
@@ -189,6 +198,7 @@ amount_relative_fee_pct = {}
             self.fidelity_amount,
             self.fidelity_timelock,
             self.connection_type,
+            self.mining_fee_rate,
             self.dns_address,
             self.base_fee,
             self.amount_relative_fee_pct,

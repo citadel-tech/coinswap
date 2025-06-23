@@ -25,6 +25,8 @@ pub struct TakerConfig {
     /// This field will be removed in a future version as the application will be Tor-only.
     /// Clearnet support is being phased out for security reasons.
     pub connection_type: ConnectionType,
+    /// Fee rate (sats/vb)
+    pub mining_fee_rate: f64,
 }
 
 impl Default for TakerConfig {
@@ -40,6 +42,7 @@ impl Default for TakerConfig {
             } else {
                 ConnectionType::TOR
             },
+            mining_fee_rate: 2.0,
         }
     }
 }
@@ -89,6 +92,10 @@ impl TakerConfig {
                 config_map.get("connection_type"),
                 default_config.connection_type,
             ),
+            mining_fee_rate: parse_field(
+                config_map.get("mining_fee_rate"),
+                default_config.mining_fee_rate,
+            ),
         })
     }
 
@@ -105,12 +112,15 @@ socks_port = {}
 tor_auth_password = {}
 # DNS address (can be clearnet or onion)
 dns_address = {}
-connection_type = {:?}",
+connection_type = {:?}
+mining_fee_rate = {},
+",
             self.control_port,
             self.socks_port,
             self.tor_auth_password,
             self.dns_address,
-            self.connection_type
+            self.connection_type,
+            self.mining_fee_rate,
         );
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;

@@ -507,7 +507,7 @@ impl Taker {
                     &hashlock_pubkeys,
                     self.get_preimage_hash(),
                     swap_locktime,
-                    Amount::from_sat(MINER_FEE),
+                    self.config.mining_fee_rate,
                 )?;
 
             let contract_reedemscripts = outgoing_swapcoins
@@ -1032,6 +1032,7 @@ impl Taker {
                     next_maker_info,
                     self.get_preimage_hash(),
                     self.ongoing_swap_state.id.clone(),
+                    self.config.mining_fee_rate,
                 )?;
             log::info!(
                 "<=== ReqContractSigsAsRecvrAndSender | {}",
@@ -1253,7 +1254,7 @@ impl Taker {
                         previous_funding_output,
                         maker_funding_tx_value,
                         next_contract_redeemscript,
-                        Amount::from_sat(MINER_FEE),
+                        self.config.mining_fee_rate,
                     )
                 },
             )
