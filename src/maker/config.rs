@@ -51,8 +51,6 @@ pub struct MakerConfig {
     pub base_fee: u64,
     /// A percentage fee based on the swap amount.
     pub amount_relative_fee_pct: f64,
-    /// Fee rate (sats/vb)
-    pub mining_fee_rate: f64,
 }
 
 impl Default for MakerConfig {
@@ -83,7 +81,6 @@ impl Default for MakerConfig {
             mining_fee_rate: 2.0,
             base_fee,
             amount_relative_fee_pct,
-            mining_fee_rate: 2.0,
         }
     }
 }
@@ -148,9 +145,6 @@ impl MakerConfig {
                 config_map.get("connection_type"),
                 default_config.connection_type,
             ),
-            mining_fee_rate: parse_field(
-                config_map.get("mining_fee_rate"),
-                default_config.mining_fee_rate,
             base_fee: parse_field(config_map.get("base_fee"), default_config.base_fee),
             amount_relative_fee_pct: parse_field(
                 config_map.get("amount_relative_fee_pct"),
@@ -186,7 +180,8 @@ fidelity_amount = {}
 fidelity_timelock = {}
 # Connection type (TOR or CLEARNET)
 connection_type = {:?}
-mining_fee_rate = {},
+# Mining fee rate (sats/vb)
+mining_fee_rate = {}
 # DNS Tor address. Change this to connect to a different DNS server 
 dns_address = {}
 # A fixed base fee charged by the Maker for providing its services (in satoshis)
