@@ -128,51 +128,6 @@ impl From<SelectionError> for WalletError {
 
 const WATCH_ONLY_SWAPCOIN_LABEL: &str = "watchonly_swapcoin_label";
 
-/// Enum representing different types of addresses to display.
-#[derive(Clone, PartialEq, Debug)]
-pub(crate) enum DisplayAddressType {
-    /// Display all types of addresses.
-    All,
-    /// Display information related to the master key.
-    MasterKey,
-    /// Display addresses derived from the seed.
-    Seed,
-    /// Display information related to incoming swap transactions.
-    IncomingSwap,
-    /// Display information related to outgoing swap transactions.
-    OutgoingSwap,
-    /// Display information related to swap transactions (both incoming and outgoing).
-    Swap,
-    /// Display information related to incoming contract transactions.
-    IncomingContract,
-    /// Display information related to outgoing contract transactions.
-    OutgoingContract,
-    /// Display information related to contract transactions (both incoming and outgoing).
-    Contract,
-    /// Display information related to fidelity bonds.
-    FidelityBond,
-}
-
-impl FromStr for DisplayAddressType {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "all" => DisplayAddressType::All,
-            "masterkey" => DisplayAddressType::MasterKey,
-            "seed" => DisplayAddressType::Seed,
-            "incomingswap" => DisplayAddressType::IncomingSwap,
-            "outgoingswap" => DisplayAddressType::OutgoingSwap,
-            "swap" => DisplayAddressType::Swap,
-            "incomingcontract" => DisplayAddressType::IncomingContract,
-            "outgoingcontract" => DisplayAddressType::OutgoingContract,
-            "contract" => DisplayAddressType::Contract,
-            "fidelitybond" => DisplayAddressType::FidelityBond,
-            _ => Err("unknown type")?,
-        })
-    }
-}
-
 /// Enum representing additional data needed to spend a UTXO, in addition to `ListUnspentResultEntry`.
 // data needed to find information  in addition to ListUnspentResultEntry
 // about a UTXO required to spend it
@@ -1338,10 +1293,12 @@ impl Wallet {
             }
         }
 
-        let grouped_utxos: Vec<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
-            address_groups.into_iter().map(|(_, utxos)| utxos).collect();
+        let grouped_utxos = address_groups
+            .into_iter()
+            .map(|(_, utxos)| utxos)
+            .collect::<Vec<_>>();
 
-        let output_groups: Vec<OutputGroup> = grouped_utxos
+        let output_groups = grouped_utxos
             .iter()
             .map(|utxos_in_group| {
                 let total_value: u64 = utxos_in_group
@@ -1360,7 +1317,7 @@ impl Wallet {
                     creation_sequence: None,
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         // Create coin selection options
         let coin_selection_option = CoinSelectionOpt {
