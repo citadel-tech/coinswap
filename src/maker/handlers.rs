@@ -305,7 +305,7 @@ impl Maker {
                 },
                 funding_output.value,
                 &funding_info.contract_redeemscript,
-                Amount::from_sat(message.contract_feerate),
+                message.contract_feerate,
             )?;
 
             let (tweakable_privkey, _) = self.wallet.read()?.get_tweakable_keypair()?;
@@ -366,8 +366,13 @@ impl Maker {
             TIME_RELATIVE_FEE_PCT,
         );
 
-        let calc_funding_tx_fees =
-            message.contract_feerate * (message.next_coinswap_info.len() as u64);
+        let tx_size = message
+            .confirmed_funding_txes
+            .iter()
+            .map(|funding_info| funding_info.funding_tx.weight().to_vbytes_ceil())
+            .sum::<u64>();
+
+        let calc_funding_tx_fees = (message.contract_feerate * tx_size as f64) as u64;
 
         // Check for overflow. If this happens, hard error.
         // This can happen if the fee_rate for funding tx is very high and incoming_amount is very low.
@@ -397,7 +402,7 @@ impl Maker {
                     .collect::<Vec<PublicKey>>(),
                 hashvalue,
                 message.refund_locktime,
-                Amount::from_sat(message.contract_feerate),
+                message.contract_feerate,
             )?
         };
 
@@ -415,12 +420,13 @@ impl Maker {
         );
 
         log::info!(
-            "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {}",
+            "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {}",
             self.config.network_port,
             Amount::from_sat(incoming_amount),
             Amount::from_sat(outgoing_amount),
             Amount::from_sat(act_coinswap_fees),
             message.refund_locktime,
+            act_funding_txs_fees,
         );
 
         connection_state.pending_funding_txes = my_funding_txes;

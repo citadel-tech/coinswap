@@ -265,7 +265,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         confirmed_funding_txes: tmi.funding_tx_infos.clone(),
         next_coinswap_info,
         refund_locktime: tmi.this_maker_refund_locktime,
-        contract_feerate: mining_fee_rate as u64,
+        contract_feerate: mining_fee_rate,
         id,
     });
 
@@ -332,8 +332,14 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         tmi.this_maker.offer.time_relative_fee_pct,
     );
 
-    let miner_fees_paid_by_taker = (tmi.funding_tx_infos.len() as u64) * mining_fee_rate as u64;
-    let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
+    let tx_size = tmi
+        .funding_tx_infos
+        .iter()
+        .map(|funding_info| funding_info.funding_tx.weight().to_vbytes_ceil())
+        .sum::<u64>();
+
+    let miner_fees_paid_by_taker = (tx_size as f64) * mining_fee_rate;
+    let calculated_next_amount = this_amount - coinswap_fees - (miner_fees_paid_by_taker as u64);
 
     if Amount::from_sat(calculated_next_amount) != next_amount {
         return Err((ProtocolError::IncorrectFundingAmount {

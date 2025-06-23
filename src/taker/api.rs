@@ -507,7 +507,7 @@ impl Taker {
                     &hashlock_pubkeys,
                     self.get_preimage_hash(),
                     swap_locktime,
-                    Amount::from_sat(self.config.mining_fee_rate as u64),
+                    self.config.mining_fee_rate,
                 )?;
 
             let contract_reedemscripts = outgoing_swapcoins
@@ -1254,7 +1254,7 @@ impl Taker {
                         previous_funding_output,
                         maker_funding_tx_value,
                         next_contract_redeemscript,
-                        Amount::from_sat(self.config.mining_fee_rate as u64),
+                        self.config.mining_fee_rate,
                     )
                 },
             )

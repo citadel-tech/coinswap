@@ -35,7 +35,7 @@ impl Wallet {
         &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: Amount,
+        fee_rate: f64,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let ret = self.create_funding_txes_random_amounts(coinswap_amount, destinations, fee_rate);
         if ret.is_ok() {
@@ -126,7 +126,7 @@ impl Wallet {
         &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: Amount,
+        fee_rate: f64,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
@@ -145,7 +145,7 @@ impl Wallet {
         let result = (|| {
             for (address, &output_value) in destinations.iter().zip(output_values.iter()) {
                 let remaining = Amount::from_sat(output_value);
-                let selected_utxo = self.coin_select(remaining, fee_rate.to_btc())?;
+                let selected_utxo = self.coin_select(remaining, fee_rate)?;
 
                 let outpoints: Vec<OutPoint> = selected_utxo
                     .iter()
@@ -175,8 +175,7 @@ impl Wallet {
                     Destination::Multi(vec![(address.clone(), Amount::from_sat(output_value))]);
 
                 // Creates and Signs Transactions via the spend_coins API
-                let funding_tx =
-                    self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
+                let funding_tx = self.spend_coins(&coins_to_spend, destination, fee_rate)?;
 
                 // The actual fee is the difference between the sum of output amounts from the total input amount
                 let actual_fee = total_input_amount
@@ -202,7 +201,7 @@ impl Wallet {
 
                 funding_txes.push(funding_tx);
                 payment_output_positions.push(payment_pos);
-                total_miner_fee += fee_rate.to_sat();
+                total_miner_fee += (fee_rate * (tx_size as f64)) as u64;
             }
             Ok(CreateFundingTxesResult {
                 funding_txes,
