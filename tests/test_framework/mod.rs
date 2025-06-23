@@ -466,7 +466,8 @@ pub fn verify_swap_results(
         .iter()
         .zip(org_maker_spend_balances.iter())
         .for_each(|(maker, org_spend_balance)| {
-            let wallet = maker.get_wallet().read().unwrap();
+            let mut wallet = maker.get_wallet().write().unwrap();
+            wallet.sync_no_fail();
             let balances = wallet.get_balances().unwrap();
 
             assert!(
