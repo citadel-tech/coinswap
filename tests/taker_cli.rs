@@ -133,7 +133,7 @@ fn test_taker_cli() {
         "-a",
         "100000",
         "-f",
-        "1000",
+        "2",
     ]);
 
     generate_blocks(bitcoind, 10);

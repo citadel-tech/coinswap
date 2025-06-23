@@ -128,51 +128,6 @@ impl From<SelectionError> for WalletError {
 
 const WATCH_ONLY_SWAPCOIN_LABEL: &str = "watchonly_swapcoin_label";
 
-/// Enum representing different types of addresses to display.
-#[derive(Clone, PartialEq, Debug)]
-pub(crate) enum DisplayAddressType {
-    /// Display all types of addresses.
-    All,
-    /// Display information related to the master key.
-    MasterKey,
-    /// Display addresses derived from the seed.
-    Seed,
-    /// Display information related to incoming swap transactions.
-    IncomingSwap,
-    /// Display information related to outgoing swap transactions.
-    OutgoingSwap,
-    /// Display information related to swap transactions (both incoming and outgoing).
-    Swap,
-    /// Display information related to incoming contract transactions.
-    IncomingContract,
-    /// Display information related to outgoing contract transactions.
-    OutgoingContract,
-    /// Display information related to contract transactions (both incoming and outgoing).
-    Contract,
-    /// Display information related to fidelity bonds.
-    FidelityBond,
-}
-
-impl FromStr for DisplayAddressType {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "all" => DisplayAddressType::All,
-            "masterkey" => DisplayAddressType::MasterKey,
-            "seed" => DisplayAddressType::Seed,
-            "incomingswap" => DisplayAddressType::IncomingSwap,
-            "outgoingswap" => DisplayAddressType::OutgoingSwap,
-            "swap" => DisplayAddressType::Swap,
-            "incomingcontract" => DisplayAddressType::IncomingContract,
-            "outgoingcontract" => DisplayAddressType::OutgoingContract,
-            "contract" => DisplayAddressType::Contract,
-            "fidelitybond" => DisplayAddressType::FidelityBond,
-            _ => Err("unknown type")?,
-        })
-    }
-}
-
 /// Enum representing additional data needed to spend a UTXO, in addition to `ListUnspentResultEntry`.
 // data needed to find information  in addition to ListUnspentResultEntry
 // about a UTXO required to spend it
@@ -1217,12 +1172,6 @@ impl Wallet {
         amount: Amount,
         feerate: f64,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        let num_outputs = 1; // Number of outputs
-
-        // Get spendable UTXOs (regular coins and incoming swap coins)
-        let mut unspents = self.list_descriptor_utxo_spend_info()?;
-        unspents.extend(self.list_incoming_swap_coin_utxo_spend_info()?);
-
         // P2PWKH Breaks down as:
         // Non-witness data (multiplied by 4):
         // - Previous txid (32 bytes) * 4     = 128 WU
@@ -1249,8 +1198,12 @@ impl Wallet {
         // Total: 22 bytes
         const P2WPKH_SPK_SIZE: usize = 22;
 
+        // Get spendable UTXOs (regular coins and incoming swap coins)
+        let mut unspents = self.list_descriptor_utxo_spend_info()?;
+        unspents.extend(self.list_incoming_swap_coin_utxo_spend_info()?);
+
         // Filter out locked UTXOs
-        let locked_utxos: Vec<OutPoint> = self.list_lock_unspent()?;
+        let locked_utxos = self.list_lock_unspent()?;
         let unspents = unspents
             .into_iter()
             .filter(|(utxo, _)| {
@@ -1276,8 +1229,10 @@ impl Wallet {
             "Fidelity, Outgoing Swapcoins, Hashlock and Timelock coins are not included in coin selection"
         );
 
+        // TOOD: Move all the static calculations at the top  of the function.
         // Prepare CoinSelectionOpt: Calculate required weights and costs, additional metrics
         const LONG_TERM_FEERATE: f32 = 10.0;
+        // TODO: Turn it into a contsant value.
         let change_weight = Weight::from_vb_unwrap(
             (Amount::SIZE // 8 bytes for amount
                     + VarInt::from(P2WPKH_SPK_SIZE).size() // VarInt size for script_pubkey
@@ -1298,11 +1253,11 @@ impl Wallet {
         };
 
         // Assuming target is a p2wpkh.
+        // TODO: Turn it into a constant value.
         let target_weight = Weight::from_vb_unwrap(
             (Amount::SIZE + VarInt::from(P2WPKH_SPK_SIZE).size() + P2WPKH_SPK_SIZE) as u64,
         );
-        let avg_output_weight =
-            (change_weight.to_wu() + (target_weight.to_wu() * num_outputs)) / (1 + num_outputs);
+        let avg_output_weight = (change_weight.to_wu() + (target_weight.to_wu())) / 2;
         let avg_input_weight = unspents
             .iter()
             .map(|(_, spend_info)| {
@@ -1314,9 +1269,9 @@ impl Wallet {
             .sum::<u64>()
             / unspents.len() as u64;
 
-        // Convert UTXOs to OutputGroups
         // Note: Consider more sophisticated grouping policies in the future
         // Group UTXOs by address
+        // TODO: Change this to HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>
         let mut address_groups: Vec<(String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>)> =
             Vec::new();
 
@@ -1338,10 +1293,12 @@ impl Wallet {
             }
         }
 
-        let grouped_utxos: Vec<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
-            address_groups.into_iter().map(|(_, utxos)| utxos).collect();
+        let grouped_utxos = address_groups
+            .into_iter()
+            .map(|(_, utxos)| utxos)
+            .collect::<Vec<_>>();
 
-        let output_groups: Vec<OutputGroup> = grouped_utxos
+        let output_groups = grouped_utxos
             .iter()
             .map(|utxos_in_group| {
                 let total_value: u64 = utxos_in_group
@@ -1360,7 +1317,7 @@ impl Wallet {
                     creation_sequence: None,
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         // Create coin selection options
         let coin_selection_option = CoinSelectionOpt {
@@ -1369,7 +1326,7 @@ impl Wallet {
             long_term_feerate: Some(LONG_TERM_FEERATE),
             min_absolute_fee: 500,
             base_weight: calculate_base_weight_btc(
-                (target_weight.to_wu() * num_outputs) + change_weight.to_wu(),
+                target_weight.to_wu() + change_weight.to_wu(), // TODO: Currently we are assuming one target and one change. This is not true for the new split utxo algo. Change this accordingly.
             ),
             change_weight: change_weight.to_wu(),
             change_cost: cost_of_change,
@@ -1381,40 +1338,22 @@ impl Wallet {
 
         match select_coin(&output_groups, &coin_selection_option) {
             Ok(selection) => {
-                let selected_utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)> = selection
+                let selected_utxos = selection
                     .selected_inputs
                     .iter()
-                    .map(|&index| unspents[index].clone())
-                    .collect();
+                    .flat_map(|&group_index| grouped_utxos[group_index].clone())
+                    .collect::<Vec<_>>();
                 log::info!("Coinselection concluded with {:?}", selection.waste);
                 Ok(selected_utxos)
             }
-            Err(e) => {
-                // This is important for various tests and real life scenarios.
-                log::warn!("Coin selection failed: {e}, attempting with available funds");
-
-                // If error is insufficient funds, return all available UTXOs
-                if e.to_string().contains("The Inputs funds are insufficient") {
-                    let all_utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)> =
-                        grouped_utxos.into_iter().flatten().collect();
-
-                    let total_available = all_utxos
-                        .iter()
-                        .map(|(utxo, _)| utxo.amount.to_sat())
-                        .sum::<u64>();
-
-                    log::info!(
-                        "Returning all available UTXOs totaling {} sats instead of requested {} sats",
-                        total_available,
-                        amount.to_sat()
-                    );
-
-                    Ok(unspents)
-                } else {
-                    // For other errors, return the original error
-                    Err(WalletError::General(format!("Coin selection failed: {e}")))
-                }
+            Err(e) if e.to_string().contains("The Inputs funds are insufficient") => {
+                let available = unspents.iter().map(|(u, _)| u.amount.to_sat()).sum();
+                Err(WalletError::InsufficientFund {
+                    available,
+                    required: amount.to_sat(),
+                })
             }
+            Err(e) => Err(WalletError::General(format!("Coin selection failed: {e}"))),
         }
     }
 
