@@ -80,7 +80,9 @@ impl Wallet {
                 self.rpc
                     .create_wallet(wallet_name, Some(true), None, None, None)?;
             } else {
-                // TODO: move back to api call when https://github.com/rust-bitcoin/rust-bitcoincore-rpc/issues/225 is closed
+                // We cannot use the api directly right now.
+                // https://github.com/rust-bitcoin/rust-bitcoincore-rpc/issues/225 is still open,
+                // We can update to api call after moving to new corepc crate.
                 let args = [
                     Value::String(wallet_name.clone()),
                     Value::Bool(true),  // Disable Private Keys

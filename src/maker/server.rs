@@ -1,8 +1,8 @@
 //! The Coinswap Maker Server.
 //!
 //! This module includes all server side code for the coinswap maker.
-//! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend and RPC Client Request.
-//! The server listens at two port 6102 for P2P, and 6103 for RPC Client request.
+//! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend, and RPC Client Request.
+//! The server listens at two ports: 6102 for P2P, and 6103 for RPC Client requests.
 
 use crate::protocol::messages::FidelityProof;
 use bitcoin::{absolute::LockTime, Amount};
@@ -39,7 +39,7 @@ use crate::{
 use crate::maker::error::MakerError;
 
 /// Fetches the Maker and DNS address, and sends maker address to the DNS server.
-/// Depending upon ConnectionType and test/prod environment, different maker address and DNS addresses are returned.
+/// Depending upon ConnectionType and test/prod environment, different maker address and DNS address are returned.
 /// Return the Maker address and the DNS address.
 fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> {
     let maker_port = maker.config.network_port;
@@ -49,7 +49,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> 
             let dns_address = if cfg!(feature = "integration-test") {
                 format!("127.0.0.1:{}", 8080)
             } else {
-                maker.config.directory_server_address.clone()
+                maker.config.dns_address.clone()
             };
 
             (maker_address, dns_address)
@@ -63,7 +63,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> 
             )?;
             let maker_address = format!("{}:{}", maker_hostname, maker.config.network_port);
 
-            let dns_address = maker.config.directory_server_address.clone();
+            let dns_address = maker.config.dns_address.clone();
             (maker_address, dns_address)
         }
     };
@@ -179,7 +179,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
 
     if let Some(i) = highest_index {
         let wallet_read = maker.get_wallet().read()?;
-        let (bond, _) = wallet_read.store.fidelity_bond.get(&i).unwrap();
+        let bond = wallet_read.store.fidelity_bond.get(&i).unwrap();
 
         let current_height = wallet_read
             .rpc
@@ -243,7 +243,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
                     .create_fidelity(amount, locktime, DEFAULT_TX_FEE_RATE);
 
             match fidelity_result {
-                // Wait for sufficient fund to create fidelity bond.
+                // Wait for sufficient funds to create fidelity bond.
                 // Hard error if fidelity still can't be created.
                 Err(e) => {
                     if let WalletError::InsufficientFund {
@@ -473,8 +473,8 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     if !maker.shutdown.load(Relaxed) {
         // 1. Idle Client connection checker thread.
-        // This threads check idelness of peer in live swaps.
-        // And takes recovery measure if the peer seems to have disappeared in middlle of a swap.
+        // This threads check idleness of peer in live swaps.
+        // And takes recovery measures if the peer seems to have disappeared in middle of a swap.
         let maker_clone = maker.clone();
         let idle_conn_check_thread = thread::Builder::new()
             .name("Idle Client Checker Thread".to_string())
@@ -488,8 +488,8 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         maker.thread_pool.add_thread(idle_conn_check_thread);
 
         // 2. Watchtower thread.
-        // This thread checks for broadcasted contract transactions, which usually means violation of the protocol.
-        // When contract transaction detected in mempool it will attempt recovery.
+        // This thread checks for broadcasted contract transactions, which usually means a violation of the protocol.
+        // When a contract transaction is detected in mempool it will attempt recovery.
         // This can get triggered even when contracts of adjacent hops are published. Implying the whole swap route is disrupted.
         let maker_clone = maker.clone();
         let contract_watcher_thread = thread::Builder::new()
@@ -591,6 +591,6 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Shutdown wallet syncing completed.");
     maker.get_wallet().read()?.save_to_disk()?;
     log::info!("Wallet file saved to disk.");
-    log::info!("Maker Server is shut down successfully");
+    log::info!("Maker Server is shut down successfully.");
     Ok(())
 }

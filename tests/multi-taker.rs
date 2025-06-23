@@ -45,8 +45,9 @@ fn mutli_taker_single_maker_swap() {
             ConnectionType::CLEARNET,
         );
 
-    warn!("Running Test: Multiple Takers with Different Behaviors");
+    warn!("🧪 Running Test: Multiple Takers with Different Behaviors");
 
+    info!("💰 Funding multiple takers with UTXOs");
     // Fund the Takers with 3 utxos of 0.05 btc each and do basic checks on the balance
     let org_taker_spend_balances = takers
         .iter_mut()
@@ -70,7 +71,7 @@ fn mutli_taker_single_maker_swap() {
     );
 
     // Start the Maker Server threads
-    log::info!("Initiating Maker...");
+    info!("🚀 Initiating Maker servers");
     let maker_threads = makers
         .iter()
         .map(|maker| {
@@ -86,7 +87,7 @@ fn mutli_taker_single_maker_swap() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                log::info!("Waiting for maker setup completion");
+                info!("⏳ Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -107,7 +108,7 @@ fn mutli_taker_single_maker_swap() {
         .collect::<Vec<_>>();
 
     // Initiate Coinswap for both Takers concurrently
-    log::info!("Initiating coinswap protocol for multiple takers");
+    info!("🔄 Initiating coinswap protocol for multiple takers");
 
     // Spawn threads for each taker to initiate coinswap concurrently
     thread::scope(|s| {
@@ -116,7 +117,6 @@ fn mutli_taker_single_maker_swap() {
                 send_amount: Amount::from_sat(500000),
                 maker_count: 2,
                 tx_count: 3,
-                required_confirms: 1,
             };
             s.spawn(move || {
                 taker.do_coinswap(swap_params).unwrap();
@@ -134,16 +134,17 @@ fn mutli_taker_single_maker_swap() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    log::info!("All coinswaps processed. Transactions complete.");
+    info!("🎯 All coinswaps processed. Transactions complete.");
 
     // Shutdown Directory Server
     directory_server_instance.shutdown.store(true, Relaxed);
     thread::sleep(Duration::from_secs(10));
 
     // For Taker2 (DropConnectionAfterFullSetup), run recovery
-    warn!("Starting Taker recovery process");
+    warn!("🔧 Starting Taker recovery process");
     takers[1].recover_from_swap().unwrap();
 
+    info!("📊 Verifying final state for all participants");
     // Verify final state for all participants
     for (i, taker) in takers.iter().enumerate() {
         verify_swap_results(
@@ -154,7 +155,7 @@ fn mutli_taker_single_maker_swap() {
         );
     }
 
-    info!("All checks successful. Terminating integration test case");
+    info!("🎉 All checks successful. Terminating integration test case");
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

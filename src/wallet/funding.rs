@@ -43,8 +43,6 @@ impl Wallet {
             return ret;
         }
 
-        // TODO: Unlock this code when we are sure that the routines actually works.
-
         // let ret = self.create_funding_txes_utxo_max_sends(coinswap_amount, destinations, fee_rate);
         // if ret.is_ok() {
         //     log::info!(target: "wallet", "created funding txes with fully-spending utxos");
@@ -449,7 +447,7 @@ impl Wallet {
         let total_tx_inputs_len = selected_utxo.len();
         if total_tx_inputs_len < destinations.len() {
             return Err(WalletError::General(
-                "not enough UTXOs found, cant use this method".to_string(),
+                "Not enough UTXOs found, can't use this method".to_string(),
             ));
         }
 
@@ -513,7 +511,6 @@ impl Wallet {
             .map(|(l, _)| l.amount.to_sat())
             .any(|utxo_value| utxo_value > coinswap_amount.to_sat())
         {
-            // TODO: Handle this case
             Err(WalletError::General(
                 "Some stupid error that will never occur".to_string(),
             ))

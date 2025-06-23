@@ -128,7 +128,7 @@ pub(crate) struct FundingTxInfo {
     pub(crate) hashlock_nonce: SecretKey,
 }
 
-/// PublickKey information for the next hop of Coinswap.
+/// PublicKey information for the next hop of Coinswap.
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct NextHopInfo {
     pub(crate) next_multisig_pubkey: PublicKey,
@@ -140,7 +140,6 @@ pub(crate) struct NextHopInfo {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ProofOfFunding {
     pub(crate) confirmed_funding_txes: Vec<FundingTxInfo>,
-    // TODO: Directly use Vec of Pubkeys.
     pub(crate) next_coinswap_info: Vec<NextHopInfo>,
     pub(crate) refund_locktime: u16,
     pub(crate) contract_feerate: u64,
@@ -364,7 +363,7 @@ pub enum DnsRequest {
     Get,
     /// Dummy data used for integration tests.
     #[cfg(feature = "integration-test")]
-    /// Send a dummy, request, only used in integration tests
+    /// Send a dummy request, only used in integration tests
     Dummy {
         /// A dummy URL for testing.
         url: String,

@@ -35,9 +35,10 @@ fn test_standard_coinswap() {
     let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(makers_config_map.into(), taker_behavior, connection_type);
 
-    warn!("Running Test: Standard Coinswap Procedure");
+    warn!("🧪 Running Test: Standard Coinswap Procedure");
     let bitcoind = &test_framework.bitcoind;
 
+    info!("💰 Funding taker and makers");
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
     let taker = &mut takers[0];
     let org_taker_spend_balance =
@@ -48,7 +49,7 @@ fn test_standard_coinswap() {
     fund_and_verify_maker(makers_ref, bitcoind, 4, Amount::from_btc(0.05).unwrap());
 
     //  Start the Maker Server threads
-    log::info!("Initiating Maker...");
+    info!("🚀 Initiating Maker servers");
 
     let maker_threads = makers
         .iter()
@@ -65,7 +66,7 @@ fn test_standard_coinswap() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                log::info!("Waiting for maker setup completion");
+                info!("⏳ Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -86,18 +87,17 @@ fn test_standard_coinswap() {
         .collect::<Vec<_>>();
 
     // Initiate Coinswap
-    log::info!("Initiating coinswap protocol");
+    info!("🔄 Initiating coinswap protocol");
 
     // Swap params for coinswap.
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
         tx_count: 3,
-        required_confirms: 1,
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -106,7 +106,7 @@ fn test_standard_coinswap() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    log::info!("All coinswaps processed successfully. Transaction complete.");
+    info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
     // Shutdown Directory Server
     directory_server_instance.shutdown.store(true, Relaxed);
@@ -142,6 +142,8 @@ fn test_standard_coinswap() {
         let mut wallet = maker.get_wallet().write().unwrap();
         wallet.sync().unwrap();
     }
+
+    info!("📊 Verifying swap results");
     //  After Swap Asserts
     verify_swap_results(
         taker,
@@ -150,10 +152,10 @@ fn test_standard_coinswap() {
         org_maker_spend_balances,
     );
 
-    info!("Balance check successful.");
+    info!("✅ Balance check successful");
 
     // Check spending from swapcoins.
-    info!("Checking Spend from Swapcoin");
+    info!("💸 Checking spend from swapcoins");
 
     let taker_wallet_mut = taker.get_wallet_mut();
     let swap_coins = taker_wallet_mut
@@ -181,7 +183,7 @@ fn test_standard_coinswap() {
     assert_eq!(balances.swap, Amount::ZERO);
     assert_eq!(balances.regular, Amount::from_btc(0.14934642).unwrap());
 
-    info!("All checks successful. Terminating integration test case");
+    info!("🎉 All checks successful. Terminating integration test case");
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

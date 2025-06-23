@@ -5,8 +5,8 @@
 //! Spawns one Taker and multiple Makers, with/without special behavior, connect them to bitcoind regtest node,
 //! and initializes the database.
 //!
-//! The tests data are stored in the `tests/temp-files` directory, which is auto-removed after each successful test.
-//! Do not invoke [TestFramework::stop] function at the end of the test, to persis this data for debugging.
+//! The tests' data are stored in the `tests/temp-files` directory, which is auto-removed after each successful test.
+//! Do not invoke [TestFramework::stop] function at the end of the test, to persist this data for debugging.
 //!
 //! The test data also includes the backend bitcoind data-directory, which is useful for observing the blockchain states after a swap.
 //!
@@ -126,8 +126,11 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
     let mut conf = bitcoind::Conf::default();
     conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
     conf.staticdir = Some(datadir.join(".bitcoin"));
-    log::info!("bitcoind datadir: {:?}", conf.staticdir.as_ref().unwrap());
-    log::info!("bitcoind configuration: {:?}", conf.args);
+    log::info!(
+        "🔗 bitcoind datadir: {:?}",
+        conf.staticdir.as_ref().unwrap()
+    );
+    log::info!("🔧 bitcoind configuration: {:?}", conf.args);
 
     let os = env::consts::OS;
     let arch = env::consts::ARCH;
@@ -170,20 +173,18 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
 
     let exe_path = bitcoind::exe_path().unwrap();
 
-    log::info!("Executable path: {exe_path:?}");
+    log::info!("📁 Executable path: {exe_path:?}");
 
     let bitcoind = BitcoinD::with_conf(exe_path, &conf).unwrap();
 
     // Generate initial 101 blocks
     generate_blocks(&bitcoind, 101);
-    log::info!("bitcoind initiated!!");
+    log::info!("🚀 bitcoind initiated!!");
 
     bitcoind
 }
 
 /// Generate Blocks in regtest node.
-// TODO: Rethink this approach considering the resource unavailability of RPC and wallet rescanning.
-//       Block generation in regtest halts everything, causing a major disruption in rescanning.
 pub(crate) fn generate_blocks(bitcoind: &BitcoinD, n: u64) {
     let mining_address = bitcoind
         .client
@@ -210,7 +211,7 @@ pub(crate) fn send_to_address(
         .unwrap()
 }
 
-// Waits until the mpsc::Receiver<String> recieves the expected message.
+// Waits until the mpsc::Receiver<String> receives the expected message.
 pub(crate) fn await_message(rx: &Receiver<String>, expected_message: &str) {
     loop {
         let log_message = rx.recv().expect("Failure from Sender side");
@@ -276,7 +277,7 @@ pub(crate) fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> proc
     }
 
     await_message(&stdout_recv, "RPC socket binding successful");
-    log::info!("DNS Server Started");
+    log::info!("🌐 DNS Server Started");
 
     directoryd_process
 }
@@ -288,11 +289,18 @@ pub fn fund_and_verify_taker(
     utxo_count: u32,
     utxo_value: Amount,
 ) -> Amount {
-    log::info!("Funding Takers...");
+    log::info!("💰 Funding Takers...");
+
+    // Get initial state before funding
+    let wallet = taker.get_wallet_mut();
+    wallet.sync_no_fail();
+    let initial_utxos = wallet.get_all_utxo().unwrap();
+    let initial_utxo_count = initial_utxos.len();
+    let initial_external_index = *wallet.get_external_index();
 
     // Fund the Taker with 3 utxos of 0.05 btc each.
     for _ in 0..utxo_count {
-        let taker_address = taker.get_wallet_mut().get_next_external_address().unwrap();
+        let taker_address = wallet.get_next_external_address().unwrap();
         send_to_address(bitcoind, &taker_address, utxo_value);
     }
 
@@ -301,22 +309,67 @@ pub fn fund_and_verify_taker(
 
     //------Basic Checks-----
 
-    let wallet = taker.get_wallet_mut();
     // Assert external address index reached to 3.
-    assert_eq!(wallet.get_external_index(), &utxo_count);
+    assert_eq!(
+        wallet.get_external_index(),
+        &(initial_external_index + utxo_count),
+        "Expected external address index at {}, but found at {}",
+        initial_external_index + utxo_count,
+        wallet.get_external_index()
+    );
 
-    let _ = wallet.sync();
+    wallet.sync_no_fail();
 
     // Check if utxo list looks good.
-    // TODO: Assert other interesting things from the utxo list.
+    let utxos = wallet.get_all_utxo().unwrap();
+
+    // Assert UTXO count
+    assert_eq!(
+        utxos.len(),
+        initial_utxo_count + utxo_count as usize,
+        "Expected {} UTXOs, but found {}",
+        initial_utxo_count + utxo_count as usize,
+        utxos.len()
+    );
+
+    // Assert each UTXO value
+    for (i, utxo) in utxos.iter().skip(initial_utxo_count).enumerate() {
+        assert_eq!(
+            utxo.amount, utxo_value,
+            "New UTXO at index {} has amount {} but expected {}",
+            i, utxo.amount, utxo_value
+        );
+    }
+
+    // Calculate expected total balance, previously was 0.05*3 = 0.15 btc
+    let expected_total = utxo_value * u64::from(utxo_count);
 
     let balances = wallet.get_balances().unwrap();
 
-    // TODO: Think about this: utxo_count*utxo_amt.
-    assert_eq!(balances.regular, Amount::from_btc(0.15).unwrap());
+    // Assert total balance matches expected
+    assert_eq!(
+        balances.regular, expected_total,
+        "Expected regular balance {} but got {}",
+        expected_total, balances.regular
+    );
+
     assert_eq!(balances.fidelity, Amount::ZERO);
     assert_eq!(balances.swap, Amount::ZERO);
     assert_eq!(balances.contract, Amount::ZERO);
+
+    // Assert spendable balance equals regular balance, since no fidelity/swap/contract
+    assert_eq!(
+        balances.spendable, balances.regular,
+        "Spendable and Regular balance missmatch | Spendable balance {} | Regular balance {}",
+        balances.spendable, balances.regular
+    );
+
+    log::info!(
+        "✅ Taker funding verification complete | Found {} new UTXOs of value {} each | Total Spendable Balance: {}",
+        utxo_count,
+        utxo_value,
+        balances.spendable
+    );
 
     balances.spendable
 }
@@ -330,7 +383,7 @@ pub fn fund_and_verify_maker(
 ) {
     // Fund the Maker with 4 utxos of 0.05 btc each.
 
-    log::info!("Funding Makers...");
+    log::info!("💰 Funding Makers...");
 
     makers.iter().for_each(|&maker| {
         // let wallet = maker..write().unwrap();
@@ -356,12 +409,13 @@ pub fn fund_and_verify_maker(
 
         let balances = wallet.get_balances().unwrap();
 
-        // TODO: Think about this: utxo_count*utxo_amt.
         assert_eq!(balances.regular, Amount::from_btc(0.20).unwrap());
         assert_eq!(balances.fidelity, Amount::ZERO);
         assert_eq!(balances.swap, Amount::ZERO);
         assert_eq!(balances.contract, Amount::ZERO);
     });
+
+    log::info!("✅ Maker funding verification complete");
 }
 
 /// Verifies the results of a coinswap for the taker and makers after performing a swap.
@@ -451,13 +505,15 @@ pub fn verify_swap_results(
                     || balance_diff == Amount::from_sat(21858) // Second maker fee
                     || balance_diff == Amount::ZERO // No spending
                     || balance_diff == Amount::from_sat(6768) // Recovery via timelock
-                    || balance_diff == Amount::from_sat(466500) // TODO: Investigate this value
-                    || balance_diff == Amount::from_sat(441642) // TODO: Investigate this value
+                    || balance_diff == Amount::from_sat(466500) // Taker abort after setup - first maker recovery cost (abort1 test case)
+                    || balance_diff == Amount::from_sat(441642) // Taker abort after setup - second maker recovery cost (abort1 test case)
                     || balance_diff == Amount::from_sat(408142) // Multi-taker first maker
                     || balance_diff == Amount::from_sat(444642), // Multi-taker second maker
                 "Maker spendable balance change mismatch"
             );
         });
+
+    log::info!("✅ Swap results verification complete");
 }
 
 /// The Test Framework.
@@ -481,7 +537,7 @@ impl TestFramework {
     ///
     /// Returns ([TestFramework], [Taker], [`Vec<Maker>`]).
     /// Maker's config will follow the pattern given the input HashMap.
-    /// If no bitcoind conf is provide a default value will be used.
+    /// If no bitcoind conf is provided, a default value will be used.
     #[allow(clippy::type_complexity)]
     pub fn init(
         makers_config_map: Vec<((u16, Option<u16>), MakerBehavior)>,
@@ -496,12 +552,12 @@ impl TestFramework {
     ) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
-        setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
         // Remove if previously existing
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
         }
-        log::info!("temporary directory : {}", temp_dir.display());
+        setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
+        log::info!("📁 temporary directory : {}", temp_dir.display());
 
         let bitcoind = init_bitcoind(&temp_dir);
 
@@ -512,7 +568,7 @@ impl TestFramework {
             shutdown,
         });
 
-        log::info!("Initiating Directory Server .....");
+        log::info!("🌐 Initiating Directory Server .....");
 
         // Translate a RpcConfig from the test framework.
         // a modification of this will be used for taker and makers rpc connections.
@@ -575,18 +631,20 @@ impl TestFramework {
             .collect::<Vec<_>>();
 
         // start the block generation thread
-        log::info!("spawning block generation thread");
+        log::info!("⛏️ spawning block generation thread");
         let tf_clone = test_framework.clone();
         let generate_blocks_handle = thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(3));
 
             if tf_clone.shutdown.load(Relaxed) {
-                log::info!("ending block generation thread");
+                log::info!("🔚 ending block generation thread");
                 return;
             }
             // tf_clone.generate_blocks(10);
             generate_blocks(&tf_clone.bitcoind, 10);
         });
+
+        log::info!("✅ Test Framework initialization complete");
 
         (
             test_framework,
@@ -597,9 +655,27 @@ impl TestFramework {
         )
     }
 
+    /// Assert that a log message exists in the debug.log file
+    pub fn assert_log(&self, expected_message: &str, log_path: &str) {
+        match std::fs::read_to_string(log_path) {
+            Ok(log_contents) => {
+                assert!(
+                    log_contents.contains(expected_message),
+                    "Expected log message '{}' not found in log file: {}",
+                    expected_message,
+                    log_path
+                );
+                log::info!("✅ Found expected log message: '{expected_message}'");
+            }
+            Err(e) => {
+                panic!("Could not read log file at {}: {}", log_path, e);
+            }
+        }
+    }
+
     /// Stop bitcoind and clean up all test data.
     pub fn stop(&self) {
-        log::info!("Stopping Test Framework");
+        log::info!("🛑 Stopping Test Framework");
         // stop all framework threads.
         self.shutdown.store(true, Relaxed);
         // stop bitcoind

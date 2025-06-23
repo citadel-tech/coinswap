@@ -6,6 +6,7 @@
 //! It also handles downloading maker offers with retry mechanisms and implements the necessary message structures
 //! for communication between taker and maker.
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use socks::Socks5Stream;
 use std::{net::TcpStream, thread::sleep, time::Duration};
@@ -61,7 +62,7 @@ pub(crate) struct ContractsInfo {
 /// Make a handshake with a maker.
 /// Ensures that the Maker is alive and responding.
 ///
-// In future, handshake can be used to find protocol compatibility across multiple versions.
+// In the future, handshake can be used to find protocol compatibility across multiple versions.
 pub(crate) fn handshake_maker(socket: &mut TcpStream) -> Result<(), TakerError> {
     send_message(
         socket,
@@ -479,7 +480,13 @@ pub(crate) fn download_maker_offer(
     loop {
         ii += 1;
         match download_maker_offer_attempt_once(&address, &config) {
-            Ok(offer) => return Some(OfferAndAddress { offer, address }),
+            Ok(offer) => {
+                return Some(OfferAndAddress {
+                    offer,
+                    address,
+                    timestamp: Utc::now(),
+                })
+            }
             Err(e) => {
                 if ii <= FIRST_CONNECT_ATTEMPTS {
                     log::warn!(
