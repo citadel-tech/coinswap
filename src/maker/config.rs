@@ -188,7 +188,6 @@ dns_address = {}
 base_fee = {}
 # A percentage fee based on the swap amount
 amount_relative_fee_pct = {}
-mining_fee_rate = {},
 ",
             self.network_port,
             self.rpc_port,
@@ -203,7 +202,6 @@ mining_fee_rate = {},
             self.dns_address,
             self.base_fee,
             self.amount_relative_fee_pct,
-            self.mining_fee_rate,
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
