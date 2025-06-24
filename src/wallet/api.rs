@@ -1172,12 +1172,6 @@ impl Wallet {
         amount: Amount,
         feerate: f64,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        let num_outputs = 1; // Number of outputs
-
-        // Get spendable UTXOs (regular coins and incoming swap coins)
-        let mut unspents = self.list_descriptor_utxo_spend_info()?;
-        unspents.extend(self.list_incoming_swap_coin_utxo_spend_info()?);
-
         // P2PWKH Breaks down as:
         // Non-witness data (multiplied by 4):
         // - Previous txid (32 bytes) * 4     = 128 WU
@@ -1204,8 +1198,15 @@ impl Wallet {
         // Total: 22 bytes
         const P2WPKH_SPK_SIZE: usize = 22;
 
+        // TODO : Create a user input variable with the broader merge split refactor
+        let num_outputs = 1; // Number of outputs
+
+        // Get spendable UTXOs (regular coins and incoming swap coins)
+        let mut unspents = self.list_descriptor_utxo_spend_info()?;
+        unspents.extend(self.list_incoming_swap_coin_utxo_spend_info()?);
+
         // Filter out locked UTXOs
-        let locked_utxos: Vec<OutPoint> = self.list_lock_unspent()?;
+        let locked_utxos = self.list_lock_unspent()?;
         let unspents = unspents
             .into_iter()
             .filter(|(utxo, _)| {
@@ -1256,8 +1257,7 @@ impl Wallet {
         let target_weight = Weight::from_vb_unwrap(
             (Amount::SIZE + VarInt::from(P2WPKH_SPK_SIZE).size() + P2WPKH_SPK_SIZE) as u64,
         );
-        let avg_output_weight =
-            (change_weight.to_wu() + (target_weight.to_wu() * num_outputs)) / (1 + num_outputs);
+        let avg_output_weight = (change_weight.to_wu() + (target_weight.to_wu())) / 2;
         let avg_input_weight = unspents
             .iter()
             .map(|(_, spend_info)| {
@@ -1270,8 +1270,8 @@ impl Wallet {
             / unspents.len() as u64;
 
         // Convert UTXOs to OutputGroups
-        // Note: Consider more sophisticated grouping policies in the future
-        // Group UTXOs by address
+        // TODO: Group UTXOs by address into single OutputGroups to mitigate privacy leaks from address reuse
+        // TODO: Consider more sophisticated grouping policies in the future
         let mut address_groups: Vec<(String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>)> =
             Vec::new();
 
@@ -1338,11 +1338,11 @@ impl Wallet {
 
         match select_coin(&output_groups, &coin_selection_option) {
             Ok(selection) => {
-                let selected_utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)> = selection
+                let selected_utxos = selection
                     .selected_inputs
                     .iter()
-                    .map(|&index| unspents[index].clone())
-                    .collect();
+                    .flat_map(|&group_index| grouped_utxos[group_index].clone())
+                    .collect::<Vec<_>>();
                 log::info!("Coinselection concluded with {:?}", selection.waste);
                 Ok(selected_utxos)
             }
@@ -1365,9 +1365,9 @@ impl Wallet {
                         total_available,
                         amount.to_sat()
                     );
-
                     Ok(unspents)
                 } else {
+                    self.rpc.unlock_unspent_all()?;
                     // For other errors, return the original error
                     Err(WalletError::General(format!("Coin selection failed: {e}")))
                 }
