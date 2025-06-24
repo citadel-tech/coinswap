@@ -233,7 +233,7 @@ impl Wallet {
                     .collect();
 
                 // Flow of Lock Step 3. Lock the selected UTXOs immediately after selection
-                self.rpc.lock_unspent(&outpoints)?;
+                // self.rpc.lock_unspent(&outpoints)?;
                 // Flow of Lock Step 4. Store the locked UTXOs for later unlocking in case of error
                 locked_utxos.extend(outpoints);
 
