@@ -205,20 +205,11 @@ impl Wallet {
         destination: Destination,
         feerate: f64,
     ) -> Result<Transaction, WalletError> {
-        // let old_outpoints = coins
-        //     .iter()
-        //     .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
-        //     .collect::<Vec<OutPoint>>();
-
-        // // Lock the initially selected UTXOs
-        // self.rpc.lock_unspent(&old_outpoints)?;
-
         // Set the Anti-Fee-Snipping locktime
         let current_height = self.rpc.get_block_count()?;
         let lock_time = LockTime::from_height(current_height as u32)?;
 
         let mut updated_coins = coins.clone();
-
         let mut tx = Transaction {
             version: Version::TWO,
             lock_time,
@@ -247,7 +238,7 @@ impl Wallet {
                         witness: Witness::new(),
                         script_sig: ScriptBuf::new(),
                     });
-                    total_witness_size += spend_info.clone().estimate_witness_size();
+                    total_witness_size += spend_info.estimate_witness_size();
                     total_input_value += utxo_data.amount;
                 }
                 UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
@@ -270,7 +261,7 @@ impl Wallet {
                     total_input_value += *input_value;
                 }
                 UTXOSpendInfo::TimelockContract {
-                    ref swapcoin_multisig_redeemscript,
+                    swapcoin_multisig_redeemscript,
                     input_value,
                 } => {
                     let outgoing_swap_coin = self
@@ -289,7 +280,7 @@ impl Wallet {
                     total_input_value += *input_value;
                 }
                 UTXOSpendInfo::HashlockContract {
-                    ref swapcoin_multisig_redeemscript,
+                    swapcoin_multisig_redeemscript,
                     input_value,
                 } => {
                     let incoming_swap_coin = self

@@ -331,27 +331,28 @@ pub fn fund_and_verify_taker(
         initial_utxo_count + utxo_count as usize,
         utxos.len()
     );
-
-    // // Assert each UTXO value
-    // for (i, utxo) in utxos.iter().skip(initial_utxo_count).enumerate() {
-    //     assert_eq!(
-    //         utxo.amount, utxo_value,
-    //         "New UTXO at index {} has amount {} but expected {}",
-    //         i, utxo.amount, utxo_value
-    //     );
-    // }
+    let balances = wallet.get_balances().unwrap();
+  
+    // Assert each UTXO value
+    for (i, utxo) in utxos.iter().skip(initial_utxo_count).enumerate() {
+        assert_eq!(
+            utxo.amount, utxo_value,
+            "New UTXO at index {} has amount {} but expected {}",
+            i, utxo.amount, utxo_value
+        );
+    }
 
     // Calculate expected total balance, previously was 0.05*3 = 0.15 btc
-    // let expected_total = utxo_value * u64::from(utxo_count);
+    let expected_total = utxo_value * u64::from(utxo_count);
 
     let balances = wallet.get_balances().unwrap();
 
-    // // Assert total balance matches expected
-    // assert_eq!(
-    //     balances.regular, expected_total,
-    //     "Expected regular balance {} but got {}",
-    //     expected_total, balances.regular
-    // );
+    // Assert total balance matches expected
+    assert_eq!(
+        balances.regular, expected_total,
+        "Expected regular balance {} but got {}",
+        expected_total, balances.regular
+    );
 
     assert_eq!(balances.fidelity, Amount::ZERO);
     assert_eq!(balances.swap, Amount::ZERO);
@@ -430,7 +431,6 @@ pub fn verify_swap_results(
     {
         let wallet = taker.get_wallet();
         let balances = wallet.get_balances().unwrap();
-        wallet.get_balances().unwrap();
 
         assert!(
             balances.regular == Amount::from_btc(0.14497).unwrap() // Successful coinswap
@@ -476,8 +476,7 @@ pub fn verify_swap_results(
                     || balances.regular == Amount::from_btc(0.14532500).unwrap() // Second maker on successful coinswap
                     || balances.regular == Amount::from_btc(0.14999).unwrap() // No spending
                     || balances.regular == Amount::from_btc(0.14992232).unwrap() // Recovery via timelock
-                    || balances.regular == Amount::from_btc(0.14090858).unwrap() // Mutli-taker case
-                    || balances.regular == Amount::from_btc(0.14590858).unwrap(), // Mutli-taker case
+                    || balances.regular == Amount::from_btc(0.14090858).unwrap(), // Mutli-taker case
                 "Maker seed balance mismatch"
             );
 

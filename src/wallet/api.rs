@@ -11,8 +11,8 @@ use aes_gcm::{
     aead::{AeadCore, OsRng},
     Aes256Gcm,
 };
-use bip39::Mnemonic;
 
+use bip39::Mnemonic;
 use bitcoin::{
     bip32::{ChildNumber, DerivationPath, Xpriv, Xpub},
     hashes::hash160::Hash as Hash160,
@@ -1353,6 +1353,7 @@ impl Wallet {
                     .map(|&index| unspents[index].clone())
                     .collect();
                 log::info!("Coinselection concluded with {:?}", selection.waste);
+
                 let outpoints = selected_utxos
                     .iter()
                     .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
@@ -1363,7 +1364,7 @@ impl Wallet {
 
                 Ok(selected_utxos)
             }
-
+          
             Err(e) => {
                 // This is important for various tests and real life scenarios.
                 log::warn!("Coin selection failed: {e}, attempting with available funds");

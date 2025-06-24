@@ -201,6 +201,7 @@ impl Wallet {
 
     // This function creates funding transactions with random amounts
     // The total `coinswap_amount` is randomly distributed among number of destinations.
+
     fn create_funding_txes_random_amounts(
         &mut self,
         coinswap_amount: Amount,
@@ -230,7 +231,10 @@ impl Wallet {
                     .iter()
                     .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
                     .collect();
-                // Flow of Lock Step 3. Store the locked UTXOs for later unlocking in case of error
+
+                // Flow of Lock Step 3. Lock the selected UTXOs immediately after selection
+                self.rpc.lock_unspent(&outpoints)?;
+                // Flow of Lock Step 4. Store the locked UTXOs for later unlocking in case of error
                 locked_utxos.extend(outpoints);
 
                 let total_input_amount =
@@ -250,10 +254,8 @@ impl Wallet {
                 // Create destination with output - currently, destination is an array with a single address, i.e only a single transaction.
                 let destination =
                     Destination::Multi(vec![(address.clone(), Amount::from_sat(output_value))]);
-                // Destination::MultiDynamic(coinswap_amount, address.clone());
 
                 // Creates and Signs Transactions via the spend_coins API
-                // Flow of Lock Step 4. Lock the utxos in spend api
                 let funding_tx =
                     self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
 

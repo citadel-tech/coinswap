@@ -83,22 +83,6 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             )]);
 
             let coins_to_send = maker.get_wallet().read()?.coin_select(amount, feerate)?;
-
-            // let outpoints = coins_to_send
-            // .iter()
-            // .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
-            // .collect::<Vec<OutPoint>>();
-            // let lock_result = maker
-            //     .get_wallet()
-            //     .write()?
-            //     .rpc
-            //     .lock_unspent(&outpoints);
-
-            // if let Err(e) = lock_result {
-            //     log::error!("Failed to lock unspent outputs: {e:?}");
-            //     return Err(MakerError::RpcError(format!("{e:?}")));
-            // }
-
             let tx = maker.get_wallet().write()?.spend_from_wallet(
                 feerate,
                 destination,
