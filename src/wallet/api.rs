@@ -1364,7 +1364,7 @@ impl Wallet {
 
                 Ok(selected_utxos)
             }
-          
+
             Err(e) => {
                 // This is important for various tests and real life scenarios.
                 log::warn!("Coin selection failed: {e}, attempting with available funds");
