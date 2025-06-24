@@ -1,2 +1,8 @@
 /target
 *.swp
+/docs/fidelity_bonds.md
+Cargo.lock
+.vscode
+.idea
+bin
+/coverage/reports

@@ -1,18 +1,43 @@
 [package]
-name = "teleport"
+name = "coinswap"
 version = "0.1.0"
-authors = ["chris-belcher <chris-belcher@users.noreply.github.com>"]
+authors = ["Developers at Citadel-Tech"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+description = "Functioning, minimal-viable binaries and libraries to perform a trustless, p2p Maxwell-Belcher Coinswap Protocol"
+license = "MIT OR Apache-2.0"          
+documentation = "https://docs.rs/coinswap"
+homepage = "https://github.com/citadel-tech/coinswap" 
+repository = "https://github.com/citadel-tech/coinswap" 
+categories = ["Bitcoin", "Atomic Swap", "HTLC"]   
+keywords = ["bitcoin", "HTLC", "coinswap"]  
+
 [dependencies]
-bitcoincore-rpc = "0.12.0"
-#bitcoincore-rpc = {git="https://github.com/rust-bitcoin/rust-bitcoincore-rpc"}
-bitcoin-wallet = "1.1.0"
-bitcoin = "0.25"
+bip39 =  { version = "2.1.0", features = ["rand"] }
+bitcoin =  "0.32"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "0.3", features = ["full"] }
-futures = "0.3"
-rand = "0.7.3"
+serde_cbor = "0.11.2"
+log = "^0.4"
+dirs = "3.0.1"
+socks = "0.3.4"
+clap = { version = "3.2.22", features = ["derive"] }
+bitcoind = "0.36"
+log4rs = "1.3.0"
+chrono = { version = "0.4.40", features = ["serde"] }
+flate2 = {version = "1.0.35", optional = true}
+tar = {version = "0.4.43", optional = true}
+minreq = { version = "2.12.0", features = ["https"] }
+rust-coinselect = { git = "https://github.com/citadel-tech/rust-coinselect.git", branch = "deterministic" }
+pbkdf2 = { version = "0.12", features = ["simple"] }
+aes-gcm = "0.10.3"
+sha2 = "0.10.9"
+
+#Empty default feature set, (helpful to generalise in github actions)
+[features]
+default = []
+# The following feature set is in response to the issue described at https://github.com/rust-lang/rust/issues/45599
+# Only used for running the integration tests
+integration-test = ['dep:flate2','dep:tar']

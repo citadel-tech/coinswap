@@ -1,0 +1,48 @@
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+name: lint
+
+jobs:
+  fmt:
+    name: rust fmt
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Set default toolchain
+        run: rustup override set nightly
+
+      - name: Set profile
+        run: rustup set profile minimal
+
+      - name: Add rustfmt
+        run: rustup component add rustfmt
+
+      - name: Add clippy
+        run: rustup component add clippy
+
+      - name: Update toolchain
+        run: rustup update
+
+      - name: Check fmt
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # - name: cargo install cargo-hack
+      #   uses: taiki-e/install-action@cargo-hack
+        
+      # - name: cargo hack
+      #   run: cargo hack --feature-powerset check
+
+      - name: Install cargo-docs-rs
+        uses: dtolnay/install@cargo-docs-rs
+        
+      - name: cargo docs-rs
+        run: cargo +nightly docs-rs

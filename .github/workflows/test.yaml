@@ -1,0 +1,33 @@
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+name: test
+
+jobs:
+  test_with_codecov:
+    name: Run tests with coverage reporting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin
+
+      - name: Run cargo-tarpaulin
+        run: cargo tarpaulin --timeout 1900 --out Xml --output-dir "./coverage/reports/" --features integration-test -- --nocapture
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage/reports/cobertura.xml
