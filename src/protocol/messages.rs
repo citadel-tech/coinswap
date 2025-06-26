@@ -371,3 +371,37 @@ pub enum DnsRequest {
         vout: u32,
     },
 }
+
+#[cfg(feature = "tracker")]
+/// Tracker response
+#[derive(Serialize, Deserialize, Debug)]
+pub enum TrackerResponse {
+    /// Address response
+    Address {
+        /// Address response
+        addresses: Vec<String>,
+    },
+    /// Ping response
+    Ping,
+}
+
+/// Enum representing DNS request message types.
+///
+/// These requests and responses are structured using Serde for serialization and deserialization.
+#[cfg(feature = "tracker")]
+#[derive(Serialize, Deserialize, Debug)]
+#[allow(clippy::large_enum_variant)]
+pub enum TrackerRequest {
+    /// A request sent by the maker to register itself with the DNS server and authenticate.
+    Post {
+        /// Metadata containing the maker's URL and fidelity proof.
+        metadata: DnsMetadata,
+    },
+    /// A request sent by the taker to fetch all valid maker addresses from the DNS server.
+    Get,
+    /// To gauge server activity
+    Pong {
+        /// address
+        address: String,
+    },
+}
