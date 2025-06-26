@@ -372,7 +372,6 @@ pub enum DnsRequest {
     },
 }
 
-#[cfg(feature = "tracker")]
 /// Tracker response
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TrackerResponse {
@@ -388,7 +387,7 @@ pub enum TrackerResponse {
 /// Enum representing DNS request message types.
 ///
 /// These requests and responses are structured using Serde for serialization and deserialization.
-#[cfg(feature = "tracker")]
+
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum TrackerRequest {
@@ -404,4 +403,14 @@ pub enum TrackerRequest {
         /// address
         address: String,
     },
+}
+
+/// unified message as maker server can receive any
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum MessageToMaker {
+    /// taker to maker variant
+    TakerToMaker(TakerToMakerMessage),
+    /// tracker request variant
+    TrackerRequest(TrackerRequest),
 }
