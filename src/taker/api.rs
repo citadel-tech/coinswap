@@ -46,7 +46,7 @@ use crate::{
             TakerToMakerMessage,
         },
     },
-    taker::{config::TakerConfig, offers::OfferBook},
+    taker::{config::TakerConfig, offers::OfferBook, send_message_with_prefix},
     utill::*,
     wallet::{
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
@@ -1154,7 +1154,7 @@ impl Taker {
             this_maker.address
         );
         let id = self.ongoing_swap_state.id.clone();
-        send_message(
+        send_message_with_prefix(
             &mut socket,
             &TakerToMakerMessage::RespContractSigsForRecvrAndSender(
                 ContractSigsForRecvrAndSender {
@@ -1728,7 +1728,7 @@ impl Taker {
             ret
         })?;
         log::info!("===> PrivateKeyHandover | {maker_address}");
-        send_message(
+        send_message_with_prefix(
             &mut socket,
             &TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {
                 multisig_privkeys: privkeys_reply,
@@ -2122,7 +2122,7 @@ impl Taker {
 
         socket.set_write_timeout(Some(reconnect_timeout))?;
 
-        send_message(&mut socket, &msg)?;
+        send_message_with_prefix(&mut socket, &msg)?;
         log::info!("===> {msg} | {maker_addr}");
 
         Ok(())

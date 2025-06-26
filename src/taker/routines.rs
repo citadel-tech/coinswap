@@ -28,7 +28,7 @@ use crate::{
         Hash160,
     },
     taker::api::MINER_FEE,
-    utill::{read_message, send_message, ConnectionType},
+    utill::{read_message, ConnectionType},
     wallet::WalletError,
 };
 use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
@@ -37,6 +37,7 @@ use super::{
     config::TakerConfig,
     error::TakerError,
     offers::{MakerAddress, OfferAndAddress},
+    send_message_with_prefix,
 };
 
 use crate::taker::api::{
@@ -65,7 +66,7 @@ pub(crate) struct ContractsInfo {
 ///
 // In the future, handshake can be used to find protocol compatibility across multiple versions.
 pub(crate) fn handshake_maker(socket: &mut TcpStream) -> Result<(), TakerError> {
-    send_message(
+    send_message_with_prefix(
         socket,
         &TakerToMakerMessage::TakerHello(TakerHello {
             protocol_version_min: 1,
@@ -126,7 +127,7 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
         )
         .collect::<Result<Vec<ContractTxInfoForSender>, WalletError>>()?;
 
-    send_message(
+    send_message_with_prefix(
         socket,
         &TakerToMakerMessage::ReqContractSigsForSender(ReqContractSigsForSender {
             txs_info,
@@ -185,7 +186,7 @@ pub(crate) fn req_sigs_for_recvr_once<S: SwapCoin>(
         })
         .collect::<Vec<ContractTxInfoForRecvr>>();
 
-    send_message(
+    send_message_with_prefix(
         socket,
         &TakerToMakerMessage::ReqContractSigsForRecvr(ReqContractSigsForRecvr { txs: txs_info }),
     )?;
@@ -269,7 +270,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         id,
     });
 
-    send_message(socket, &pof_msg)?;
+    send_message_with_prefix(socket, &pof_msg)?;
 
     // Recv ContractSigsAsRecvrAndSender.
     let msg_bytes = read_message(socket)?;
@@ -404,7 +405,7 @@ pub(crate) fn send_hash_preimage_and_get_private_keys(
         preimage: *preimage,
     });
 
-    send_message(socket, &hash_preimage_msg)?;
+    send_message_with_prefix(socket, &hash_preimage_msg)?;
 
     let msg_bytes = read_message(socket)?;
     let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
@@ -452,7 +453,7 @@ fn download_maker_offer_attempt_once(
 
     handshake_maker(&mut socket)?;
 
-    send_message(&mut socket, &TakerToMakerMessage::ReqGiveOffer(GiveOffer))?;
+    send_message_with_prefix(&mut socket, &TakerToMakerMessage::ReqGiveOffer(GiveOffer))?;
 
     let msg_bytes = read_message(&mut socket)?;
     let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
