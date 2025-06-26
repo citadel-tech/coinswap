@@ -4,7 +4,9 @@
 //! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend, and RPC Client Request.
 //! The server listens at two ports: 6102 for P2P, and 6103 for RPC Client requests.
 
-use crate::protocol::messages::{FidelityProof, TrackerRequest, MessageToMaker};
+use crate::protocol::messages::{FidelityProof, MessageToMaker};
+#[cfg(feature = "tracker")]
+use crate::protocol::messages::{TrackerRequest, TrackerResponse};
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use socks::Socks5Stream;
@@ -364,8 +366,9 @@ fn decode_unified_message(data: &[u8]) -> Result<MessageToMaker, MakerError> {
             let msg = serde_cbor::from_slice::<TakerToMakerMessage>(body)?;
             Ok(MessageToMaker::TakerToMaker(msg))
         }
+        #[cfg(feature = "tracker")]
         0x02 => {
-            let msg = serde_cbor::from_slice::<TrackerRequest>(body)?;
+            let msg = serde_cbor::from_slice::<TrackerResponse>(body)?;
             Ok(MessageToMaker::TrackerRequest(msg))
         }
         _ => Err(MakerError::General("Parsing error during decoding")),
@@ -439,9 +442,26 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
                     }
                 }
             }
-            MessageToMaker::TrackerRequest(tracker_msg) => {
-                log::error!("Got message from tracker");
-            }
+            #[cfg(feature = "tracker")]
+            MessageToMaker::TrackerRequest(tracker_msg) => match tracker_msg {
+                TrackerResponse::Ping => {
+                    let hostname = get_tor_hostname(
+                        maker.get_data_dir(),
+                        maker.config.control_port,
+                        maker.config.network_port,
+                        &maker.config.tor_auth_password,
+                    )?;
+                    let address = format!("{}:{}", hostname, maker.config.network_port);
+                    let response = TrackerRequest::Pong { address };
+                    if let Err(e) = send_message(stream, &response) {
+                        log::error!("Failed to send Pong to tracker: {e:?}. Closing connection.");
+                        continue;
+                    }
+                }
+                TrackerResponse::Address { addresses } => {
+                    log::info!("Received address list from tracker: {addresses:?}");
+                }
+            },
         }
     }
 

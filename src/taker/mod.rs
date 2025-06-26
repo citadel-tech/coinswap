@@ -13,8 +13,6 @@ use std::io::Write;
 
 use std::{io::BufWriter, net::TcpStream};
 
-use crate::utill::send_message;
-
 pub use self::api::TakerBehavior;
 pub use api::{SwapParams, Taker};
 pub use config::TakerConfig;

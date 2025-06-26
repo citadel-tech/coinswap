@@ -21,10 +21,15 @@ use serde::{Deserialize, Serialize};
 use socks::Socks5Stream;
 
 use crate::{
-    error::NetError,
-    protocol::messages::{DnsRequest, Offer},
+    protocol::messages::Offer,
     utill::{read_message, send_message, ConnectionType, GLOBAL_PAUSE, NET_TIMEOUT},
 };
+
+#[cfg(not(feature = "tracker"))]
+use crate::protocol::messages::DnsRequest;
+
+#[cfg(not(feature = "tracker"))]
+use crate::error::NetError;
 
 #[cfg(feature = "tracker")]
 use crate::protocol::messages::{TrackerRequest, TrackerResponse};
@@ -50,6 +55,7 @@ struct OnionAddress {
 pub struct MakerAddress(OnionAddress);
 
 impl MakerAddress {
+    #[cfg(not(feature = "tracker"))]
     pub(crate) fn new(address: &str) -> Result<Self, TakerError> {
         if let Some((onion_addr, port)) = address.split_once(':') {
             Ok(Self(OnionAddress {

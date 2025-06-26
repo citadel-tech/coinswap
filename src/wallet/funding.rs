@@ -163,7 +163,10 @@ impl Wallet {
 
             // Create destination with output
             let destination = if normie_flag {
-                Destination::Multi(vec![(destinations[0].clone(), coinswap_amount)])
+                Destination::Multi {
+                    outputs: vec![(destinations[0].clone(), coinswap_amount)],
+                    op_return_data: None,
+                }
             } else {
                 Destination::MultiDynamic(coinswap_amount, destinations)
             };
