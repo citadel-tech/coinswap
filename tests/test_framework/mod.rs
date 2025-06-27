@@ -409,7 +409,10 @@ pub fn fund_and_verify_maker(
 
         let balances = wallet.get_balances().unwrap();
 
-        assert_eq!(balances.regular, Amount::from_btc(0.20).unwrap());
+        assert_eq!(
+            balances.regular,
+            Amount::from_sat(utxo_value.to_sat() * utxo_count as u64)
+        );
         assert_eq!(balances.fidelity, Amount::ZERO);
         assert_eq!(balances.swap, Amount::ZERO);
         assert_eq!(balances.contract, Amount::ZERO);

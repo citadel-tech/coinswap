@@ -361,15 +361,8 @@ fn test_maker_cli(maker_cli: &MakerCli, rx: &Receiver<String>) {
     await_message(rx, "RPC request received: NewAddress");
     assert!(Address::from_str(&address).is_ok());
 
-    let _ = maker_cli.execute_maker_cli(&[
-        "send-to-address",
-        "-t",
-        &address,
-        "-a",
-        "10000",
-        "-f",
-        "1000",
-    ]);
+    let _ =
+        maker_cli.execute_maker_cli(&["send-to-address", "-t", &address, "-a", "10000", "-f", "2"]);
     generate_blocks(&maker_cli.bitcoind, 1);
 
     // sync the wallet cache
@@ -552,7 +545,7 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
     println!("External address: {external_address}");
 
     let amount_to_spend = initial_balance - 2500;
-    let tx_fee = 1_000;
+    let tx_fee_rate = 2;
 
     println!("Amount to spend: {amount_to_spend} sats");
 
@@ -564,7 +557,7 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
         "-a",
         &amount_to_spend.to_string(),
         "-f",
-        &tx_fee.to_string(),
+        &tx_fee_rate.to_string(),
     ]);
     println!("Transaction result: {tx_result}");
 
