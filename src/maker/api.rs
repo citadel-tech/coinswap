@@ -14,7 +14,7 @@ use crate::{
     },
     utill::{
         check_tor_status, get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType,
-        HEART_BEAT_INTERVAL, MIN_FEE_RATE, REQUIRED_CONFIRMS,
+        DEFAULT_TX_FEE_RATE, HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
     },
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
 };
@@ -567,7 +567,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                         for (og_sc, ic_sc) in connection_state
                             .outgoing_swapcoins
                             .iter()
-                            .zip(connection_state.incoming_swapcoins.iter())
+                            .zip(connection_state.incoming_swapcoins.iter_mut())
                         {
                             let contract_timelock = og_sc.get_timelock()?;
                             let next_internal_address =
@@ -577,6 +577,13 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                                 next_internal_address,
                                 MIN_FEE_RATE,
                             )?;
+
+                            if ic_sc.hash_preimage.is_none() {
+                                ic_sc.hash_preimage = get_hashpreimage_from_spending_txn(
+                                    find_spending_transaction(&maker, outgoings.clone())?,
+                                )
+                            }
+
                             let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
                                 ic_sc,
                                 next_internal_address,
@@ -647,13 +654,25 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
     Ok(())
 }
 
+//This function is on hold till further discussions as bitcoin core does not provide with any rpc to find out which transaction spends from a given utxo.
+pub(crate) fn find_spending_transaction(
+    _maker: &Arc<Maker>,
+    // Tuple of ((Multisig_reedemscript, Contract Tx), (Timelock, Timelock Tx))
+    outgoings: Vec<((ScriptBuf, Transaction), (u16, Transaction))>,
+) -> Result<Transaction, MakerError> {
+    if let Some(((_, tx), _)) = outgoings.into_iter().next() {
+        return Ok(tx);
+    }
+    Err(MakerError::General("Failed to find spending transaction"))
+}
+
 /// Checks for swapcoins present in wallet store on reboot and starts recovery if found on bitcoind network.
 ///
 /// If any one of them is ever observed, run the recovery routine.
 pub(crate) fn restore_broadcasted_contracts_on_reboot(
     maker: &Arc<Maker>,
 ) -> Result<(), MakerError> {
-    let (inc, out) = maker.wallet.read()?.find_unfinished_swapcoins();
+    let (mut inc, out) = maker.wallet.read()?.find_unfinished_swapcoins();
     let mut outgoings = Vec::new();
     let mut incomings = Vec::new();
     // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
@@ -688,8 +707,15 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
         ));
     }
 
-    for ic_sc in inc.iter() {
+    for ic_sc in inc.iter_mut() {
         let next_internal_address = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
+
+        if ic_sc.hash_preimage.is_none() {
+            ic_sc.hash_preimage = get_hashpreimage_from_spending_txn(find_spending_transaction(
+                maker,
+                outgoings.clone(),
+            )?)
+        }
         let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
             ic_sc,
             next_internal_address,
@@ -762,10 +788,10 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                     for (og_sc, ic_sc) in state
                         .outgoing_swapcoins
                         .iter()
-                        .zip(state.incoming_swapcoins.iter())
+                        .zip(state.incoming_swapcoins.iter_mut())
                     {
                         let contract_timelock = og_sc.get_timelock()?;
-                        let contract = og_sc.get_fully_signed_contract_tx()?;
+                        let outgoing_contract = og_sc.get_fully_signed_contract_tx()?;
                         let next_internal_address =
                             &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
                         let time_lock_spend = maker.wallet.read()?.create_timelock_spend(
@@ -774,13 +800,19 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                             MIN_FEE_RATE,
                         )?;
 
+                        if ic_sc.hash_preimage.is_none() {
+                            ic_sc.hash_preimage = get_hashpreimage_from_spending_txn(
+                                find_spending_transaction(&maker, outgoings.clone())?,
+                            )
+                        }
+
                         let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
                             ic_sc,
                             next_internal_address,
                             DEFAULT_TX_FEE_RATE,
                         )?;
                         outgoings.push((
-                            (og_sc.get_multisig_redeemscript(), contract),
+                            (og_sc.get_multisig_redeemscript(), outgoing_contract),
                             (contract_timelock, time_lock_spend),
                         ));
                         let incoming_contract = ic_sc.get_fully_signed_contract_tx()?;
