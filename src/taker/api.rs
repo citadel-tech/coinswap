@@ -33,7 +33,7 @@ use bitcoin::{
 
 use super::{
     error::TakerError,
-    offers::{fetch_addresses_from_dns, fetch_offer_from_makers, MakerAddress, OfferAndAddress},
+    offers::{fetch_offer_from_makers, MakerAddress, OfferAndAddress},
     routines::*,
 };
 use crate::{
@@ -46,13 +46,19 @@ use crate::{
             TakerToMakerMessage,
         },
     },
-    taker::{config::TakerConfig, offers::OfferBook},
+    taker::{config::TakerConfig, offers::OfferBook, send_message_with_prefix},
     utill::*,
     wallet::{
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
         WalletSwapCoin, WatchOnlySwapCoin,
     },
 };
+
+#[cfg(not(feature = "tracker"))]
+use crate::taker::offers::fetch_addresses_from_dns;
+
+#[cfg(feature = "tracker")]
+use crate::taker::offers::fetch_addresses_from_tracker;
 
 // Default values for Taker configurations
 pub(crate) const REFUND_LOCKTIME: u16 = 20;
@@ -1148,7 +1154,7 @@ impl Taker {
             this_maker.address
         );
         let id = self.ongoing_swap_state.id.clone();
-        send_message(
+        send_message_with_prefix(
             &mut socket,
             &TakerToMakerMessage::RespContractSigsForRecvrAndSender(
                 ContractSigsForRecvrAndSender {
@@ -1722,7 +1728,7 @@ impl Taker {
             ret
         })?;
         log::info!("===> PrivateKeyHandover | {maker_address}");
-        send_message(
+        send_message_with_prefix(
             &mut socket,
             &TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {
                 multisig_privkeys: privkeys_reply,
@@ -2023,8 +2029,19 @@ impl Taker {
 
         log::info!("Fetching addresses from DNS: {dns_addr}");
 
+        #[cfg(not(feature = "tracker"))]
         let addresses_from_dns =
             match fetch_addresses_from_dns(socks_port, dns_addr, self.config.connection_type) {
+                Ok(dns_addrs) => dns_addrs,
+                Err(e) => {
+                    log::error!("Could not connect to DNS Server: {e:?}");
+                    return Err(e);
+                }
+            };
+
+        #[cfg(feature = "tracker")]
+        let addresses_from_dns =
+            match fetch_addresses_from_tracker(socks_port, dns_addr, self.config.connection_type) {
                 Ok(dns_addrs) => dns_addrs,
                 Err(e) => {
                     log::error!("Could not connect to DNS Server: {e:?}");
@@ -2105,7 +2122,7 @@ impl Taker {
 
         socket.set_write_timeout(Some(reconnect_timeout))?;
 
-        send_message(&mut socket, &msg)?;
+        send_message_with_prefix(&mut socket, &msg)?;
         log::info!("===> {msg} | {maker_addr}");
 
         Ok(())
