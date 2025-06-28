@@ -163,7 +163,10 @@ impl Wallet {
 
             // Create destination with output
             let destination = if normie_flag {
-                Destination::Multi(vec![(destinations[0].clone(), coinswap_amount)])
+                Destination::Multi {
+                    outputs: vec![(destinations[0].clone(), coinswap_amount)],
+                    op_return_data: None,
+                }
             } else {
                 Destination::MultiDynamic(coinswap_amount, destinations)
             };
@@ -242,8 +245,11 @@ impl Wallet {
                     .collect::<Vec<_>>();
 
                 // Create destination with output - currently, destination is an array with a single address, i.e only a single transaction.
-                let destination =
-                    Destination::Multi(vec![(address.clone(), Amount::from_sat(output_value))]);
+                let outputs = vec![(address.clone(), Amount::from_sat(output_value))];
+                let destination = Destination::Multi {
+                    outputs,
+                    op_return_data: None,
+                };
 
                 // Creates and Signs Transactions via the spend_coins API
                 let funding_tx =

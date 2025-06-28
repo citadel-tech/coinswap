@@ -21,10 +21,18 @@ use serde::{Deserialize, Serialize};
 use socks::Socks5Stream;
 
 use crate::{
-    error::NetError,
-    protocol::messages::{DnsRequest, Offer},
+    protocol::messages::Offer,
     utill::{read_message, send_message, ConnectionType, GLOBAL_PAUSE, NET_TIMEOUT},
 };
+
+#[cfg(not(feature = "tracker"))]
+use crate::protocol::messages::DnsRequest;
+
+#[cfg(not(feature = "tracker"))]
+use crate::error::NetError;
+
+#[cfg(feature = "tracker")]
+use crate::protocol::messages::{TrackerRequest, TrackerResponse};
 
 use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
 
@@ -47,6 +55,7 @@ struct OnionAddress {
 pub struct MakerAddress(OnionAddress);
 
 impl MakerAddress {
+    #[cfg(not(feature = "tracker"))]
     pub(crate) fn new(address: &str) -> Result<Self, TakerError> {
         if let Some((onion_addr, port)) = address.split_once(':') {
             Ok(Self(OnionAddress {
@@ -189,6 +198,7 @@ pub(crate) fn fetch_offer_from_makers(
     Ok(result)
 }
 
+#[cfg(not(feature = "tracker"))]
 #[allow(unused_variables)]
 /// Retrieves advertised maker addresses from directory servers based on the specified network.
 pub fn fetch_addresses_from_dns(
@@ -254,5 +264,96 @@ pub fn fetch_addresses_from_dns(
                 continue;
             }
         }
+    }
+}
+
+#[cfg(feature = "tracker")]
+#[allow(unused_variables)]
+/// Retrieves advertised maker addresses from tracker based on the specified network.
+pub fn fetch_addresses_from_tracker(
+    socks_port: Option<u16>,
+    dns_addr: String,
+    connection_type: ConnectionType,
+) -> Result<Vec<MakerAddress>, TakerError> {
+    loop {
+        let mut stream = match connection_type {
+            ConnectionType::CLEARNET => match TcpStream::connect(dns_addr.as_str()) {
+                Err(e) => {
+                    log::error!("Error connecting to DNS: {e:?}");
+                    thread::sleep(GLOBAL_PAUSE);
+                    continue;
+                }
+                Ok(s) => s,
+            },
+            ConnectionType::TOR => {
+                let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
+                match Socks5Stream::connect(socket_addrs, dns_addr.as_str()) {
+                    Err(e) => {
+                        log::error!("Error connecting to DNS: {e:?}");
+                        thread::sleep(GLOBAL_PAUSE);
+                        continue;
+                    }
+                    Ok(s) => s.into_inner(),
+                }
+            }
+        };
+
+        stream.set_read_timeout(Some(NET_TIMEOUT))?;
+        stream.set_write_timeout(Some(NET_TIMEOUT))?;
+        stream.set_nonblocking(false)?;
+
+        if let Err(e) = send_message(&mut stream, &TrackerRequest::Get) {
+            log::error!("Failed to send request. Retrying...{e}");
+            thread::sleep(GLOBAL_PAUSE);
+            continue;
+        }
+
+        let response: TrackerResponse = match read_message(&mut stream) {
+            Ok(resp) => serde_cbor::de::from_slice(&resp[..])?,
+            Err(e) => {
+                log::error!("Error reading DNS response: {e}. Retrying...");
+                thread::sleep(GLOBAL_PAUSE);
+                continue;
+            }
+        };
+
+        if let TrackerResponse::Address { addresses } = response {
+            match addresses
+                .into_iter()
+                .map(MakerAddress::try_from)
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(makers) => return Ok(makers),
+                Err(e) => log::error!("Received invalid maker address. Retrying... {e}"),
+            }
+        }
+
+        thread::sleep(GLOBAL_PAUSE);
+        continue;
+    }
+}
+
+impl TryFrom<String> for OnionAddress {
+    type Error = &'static str;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let mut parts = value.splitn(2, ':');
+        let onion_addr = parts.next().ok_or("Missing onion address")?.to_string();
+        let port = parts.next().ok_or("Missing port")?.to_string();
+
+        if onion_addr.is_empty() || port.is_empty() {
+            return Err("Empty onion address or port");
+        }
+
+        Ok(OnionAddress { onion_addr, port })
+    }
+}
+
+impl TryFrom<String> for MakerAddress {
+    type Error = &'static str;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let onion = OnionAddress::try_from(value)?;
+        Ok(MakerAddress(onion))
     }
 }
