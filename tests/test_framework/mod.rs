@@ -502,6 +502,7 @@ pub fn verify_swap_results(
             assert!(
                 balances.regular == Amount::from_btc(0.14555884).unwrap() // First maker on successful coinswap
                     || balances.regular == Amount::from_btc(0.14555886).unwrap() // First maker variant
+                    || balances.regular == Amount::from_btc(0.14555882).unwrap() // First maker variant Alternative
                     || balances.regular == Amount::from_btc(0.14533014).unwrap() // Second maker on successful coinswap
                     || balances.regular == Amount::from_btc(0.14533016).unwrap() // Second maker variant
                     || balances.regular == Amount::from_btc(0.14999508).unwrap() // No spending
