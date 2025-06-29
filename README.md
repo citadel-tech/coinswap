@@ -106,6 +106,8 @@ The apps can be used to run both the swap maker server and the taker client. The
 
 Once the `makerd` server setup is complete, always stop the server with `maker-cli stop`. Avoid using `ctr+c` to ensure wallet data integrity.
 
+Currently we have three makers running on our custom signet bitcoin network. You can choose to swap with these makers by following the tutorial [here](./docs/taker.md). Check the status of the makers on [marketd](http://xbj5ena6e3mpxk7zxy6bkgxm4uxhy62tbsmda7ibqto6etu6imc4toid.onion)(open in Tor Browser)
+
 # [Dev Mode] Checkout the tests
 
 Extensive functional testing to simulate various edge cases of the protocol, is covered. The [functional tests](./tests/) spawns 
