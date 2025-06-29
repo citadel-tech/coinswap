@@ -27,8 +27,7 @@ use crate::{
         },
         Hash160,
     },
-    taker::api::MINER_FEE,
-    utill::{read_message, ConnectionType},
+    utill::{calculate_fee_sats, read_message, ConnectionType, MIN_FEE_RATE},
     wallet::WalletError,
 };
 use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
@@ -266,7 +265,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         confirmed_funding_txes: tmi.funding_tx_infos.clone(),
         next_coinswap_info,
         refund_locktime: tmi.this_maker_refund_locktime,
-        contract_feerate: MINER_FEE,
+        contract_feerate: MIN_FEE_RATE,
         id,
     });
 
@@ -333,7 +332,12 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         tmi.this_maker.offer.time_relative_fee_pct,
     );
 
-    let miner_fees_paid_by_taker = (tmi.funding_tx_infos.len() as u64) * MINER_FEE;
+    let tx_size = tmi.funding_tx_infos.iter().fold(0u64, |acc, info| {
+        acc + info.funding_tx.weight().to_vbytes_ceil()
+    });
+
+    let miner_fees_paid_by_taker = calculate_fee_sats(tx_size);
+
     let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
 
     if Amount::from_sat(calculated_next_amount) != next_amount {
@@ -345,11 +349,10 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
     }
 
     log::info!(
-        "Maker Received = {} | Maker is Forwarding = {} |  Coinswap Fees = {}  | Miner Fees paid by us = {} ",
+        "Maker Received = {} | Maker is Forwarding = {} |  Coinswap Fees = {}",
         Amount::from_sat(this_amount),
         next_amount,
         Amount::from_sat(coinswap_fees),
-        miner_fees_paid_by_taker,
     );
 
     for ((receivers_contract_tx, contract_tx), contract_redeemscript) in
