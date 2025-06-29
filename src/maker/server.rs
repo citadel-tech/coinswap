@@ -581,7 +581,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     }
 
     while !maker.shutdown.load(Relaxed) {
-        if interval_tracker % RPC_PING_INTERVAL == 0 {
+        if interval_tracker.is_multiple_of(RPC_PING_INTERVAL) {
             check_connection_with_core(maker.as_ref())?;
         }
 
@@ -591,12 +591,12 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         // Running these checks during an active swap might cause the maker to stop responding,
         // potentially aborting the swap.
         if maker.ongoing_swap_state.lock()?.is_empty() {
-            if interval_tracker % FIDELITY_BOND_DNS_UPDATE_INTERVAL == 0 {
+            if interval_tracker.is_multiple_of(FIDELITY_BOND_DNS_UPDATE_INTERVAL) {
                 manage_fidelity_bonds_and_update_dns(maker.as_ref(), &maker_addr, &dns_addr)?;
                 interval_tracker = 0;
             }
 
-            if interval_tracker % SWAP_LIQUIDITY_CHECK_INTERVAL == 0 {
+            if interval_tracker.is_multiple_of(FIDELITY_BOND_DNS_UPDATE_INTERVAL) {
                 check_swap_liquidity(maker.as_ref())?;
             }
         }
@@ -620,8 +620,8 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         // swap liquidity and fidelity bond checks are due. This ensures these checks are
         // not skipped due to an ongoing coinswap and are performed once it completes.
         if maker.ongoing_swap_state.lock()?.is_empty()
-            || interval_tracker % SWAP_LIQUIDITY_CHECK_INTERVAL != 0
-            || interval_tracker % FIDELITY_BOND_DNS_UPDATE_INTERVAL != 0
+            || !interval_tracker.is_multiple_of(SWAP_LIQUIDITY_CHECK_INTERVAL)
+            || !interval_tracker.is_multiple_of(FIDELITY_BOND_DNS_UPDATE_INTERVAL)
         {
             interval_tracker += HEART_BEAT_INTERVAL.as_secs() as u32;
         }
