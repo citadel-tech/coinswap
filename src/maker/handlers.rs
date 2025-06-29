@@ -38,7 +38,7 @@ use crate::{
         },
         Hash160,
     },
-    utill::{DEFAULT_TX_FEE_RATE, REQUIRED_CONFIRMS},
+    utill::{calculate_fee_sats, MIN_FEE_RATE, REQUIRED_CONFIRMS},
     wallet::{IncomingSwapCoin, SwapCoin, WalletError, WalletSwapCoin},
 };
 
@@ -305,7 +305,6 @@ impl Maker {
                 },
                 funding_output.value,
                 &funding_info.contract_redeemscript,
-                Amount::from_sat(message.contract_feerate),
             )?;
 
             let (tweakable_privkey, _) = self.wallet.read()?.get_tweakable_keypair()?;
@@ -366,24 +365,25 @@ impl Maker {
             TIME_RELATIVE_FEE_PCT,
         );
 
-        // NOTE: The `contract_feerate` currently represents the hardcoded `MINER_FEE` of a transaction, not the fee rate.
-        // This will remain unchanged to avoid modifying the structure of the [ProofOfFunding] message.
-        // Once issue https://github.com/citadel-tech/coinswap/issues/309 is resolved,
-        //`contract_feerate` will represent the actual fee rate instead of the `MINER_FEE`.
-        let calc_funding_tx_fees =
-            message.contract_feerate * (message.next_coinswap_info.len() as u64);
+        let total_vbytes = message
+            .confirmed_funding_txes
+            .iter()
+            .fold(0u64, |acc, info| {
+                acc + info.funding_tx.weight().to_vbytes_ceil()
+            });
+
+        let funding_tx_fees = calculate_fee_sats(total_vbytes);
 
         // Check for overflow. If this happens, hard error.
         // This can happen if the fee_rate for funding tx is very high and incoming_amount is very low.
-        let outgoing_amount = if let Some(a) =
-            incoming_amount.checked_sub(calc_coinswap_fees + calc_funding_tx_fees)
-        {
-            a
-        } else {
-            return Err(MakerError::General(
-                "Fatal Error! Total swap fee is more than the swap amount. Failing the swap.",
-            ));
-        };
+        let outgoing_amount =
+            if let Some(a) = incoming_amount.checked_sub(calc_coinswap_fees + funding_tx_fees) {
+                a
+            } else {
+                return Err(MakerError::General(
+                    "Fatal Error! Total swap fee is more than the swap amount. Failing the swap.",
+                ));
+            };
 
         // Create outgoing coinswap of the next hop
         let (my_funding_txes, outgoing_swapcoins, act_funding_txs_fees) = {
@@ -401,7 +401,7 @@ impl Maker {
                     .collect::<Vec<PublicKey>>(),
                 hashvalue,
                 message.refund_locktime,
-                Amount::from_sat(message.contract_feerate),
+                message.contract_feerate,
             )?
         };
 
@@ -419,13 +419,13 @@ impl Maker {
         );
 
         log::info!(
-            "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {} |",
+            "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {}",
             self.config.network_port,
             Amount::from_sat(incoming_amount),
             Amount::from_sat(outgoing_amount),
             Amount::from_sat(act_coinswap_fees),
             message.refund_locktime,
-            act_funding_txs_fees
+            act_funding_txs_fees,
         );
 
         connection_state.pending_funding_txes = my_funding_txes;
@@ -700,7 +700,7 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
             let time_lock_spend = maker.wallet.read()?.create_timelock_spend(
                 og_sc,
                 next_internal_address,
-                DEFAULT_TX_FEE_RATE,
+                MIN_FEE_RATE,
             )?;
             outgoings.push((
                 (og_sc.get_multisig_redeemscript(), contract),
