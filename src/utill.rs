@@ -130,13 +130,13 @@ pub(crate) fn get_dns_dir() -> PathBuf {
 
 /// Creates a FeeRate from the global MIN_FEE_RATE constant
 /// This provides type-safe fee calculations throughout the codebase
-pub fn get_min_fee_rate() -> FeeRate {
-    FeeRate::from_sat_per_vb(MIN_FEE_RATE as u64).expect("valid")
+pub fn get_min_fee_rate() -> Option<FeeRate> {
+    FeeRate::from_sat_per_vb(MIN_FEE_RATE as u64)
 }
 
 /// Calculate fee in satoshis for given virtual bytes using MIN_FEE_RATE
 pub fn calculate_fee_sats(vbytes: u64) -> u64 {
-    let fee_rate = get_min_fee_rate();
+    let fee_rate = get_min_fee_rate().expect("MIN_FEE_RATE should be valid");
     fee_rate
         .fee_vb(vbytes)
         .expect("fee calculation should not overflow")
