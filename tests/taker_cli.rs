@@ -144,10 +144,10 @@ fn test_taker_cli() {
     let balances = serde_json::from_str::<Value>(&balances).unwrap();
 
     // Since the amount is sent back to our wallet, the transaction fee is deducted from the balance.
-    assert_eq!("299999000", balances["regular"].to_string());
+    assert_eq!("299999720", balances["regular"].to_string());
     assert_eq!("0", balances["swap"].to_string());
     assert_eq!("0", balances["contract"].to_string());
-    assert_eq!("299999000", balances["spendable"].to_string());
+    assert_eq!("299999720", balances["spendable"].to_string());
 
     info!("🔍 Checking final UTXO count - expecting 4 UTXOs");
     // Assert that no of seed utxos are 4

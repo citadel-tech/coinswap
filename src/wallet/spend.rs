@@ -10,7 +10,10 @@ use bitcoin::{
 };
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RawTx, RpcApi};
 
-use crate::wallet::{api::UTXOSpendInfo, FidelityError};
+use crate::{
+    utill::calculate_fee_sats,
+    wallet::{api::UTXOSpendInfo, FidelityError},
+};
 
 use super::{error::WalletError, swapcoin::SwapCoin, IncomingSwapCoin, OutgoingSwapCoin, Wallet};
 
@@ -317,19 +320,7 @@ impl Wallet {
                 let base_size = tx.base_size();
                 let vsize = (base_size * 4 + total_witness_size).div_ceil(4);
 
-                let fee = if cfg!(feature = "integration-test") {
-                    // Timelock spend has hardcoded fees 128 * 2 sats for testcases
-                    if coins.len() == 1
-                        && matches!(coins[0].1, UTXOSpendInfo::TimelockContract { .. })
-                    {
-                        Amount::from_sat(256)
-                    } else {
-                        // Otherwise for all the testcases fees will be 1000 sats
-                        Amount::from_sat(1000)
-                    }
-                } else {
-                    Amount::from_sat((feerate * vsize as f64).ceil() as u64)
-                };
+                let fee = Amount::from_sat(calculate_fee_sats(vsize as u64));
 
                 // I don't know if this case is even possible?
                 if fee > total_input_value {
@@ -381,11 +372,7 @@ impl Wallet {
                 let base_wchange = tx_wchange.base_size();
                 let vsize_wchange = (base_wchange * 4 + total_witness_size).div_ceil(4);
 
-                let fee_wchange = if cfg!(feature = "integration-test") {
-                    Amount::from_sat(1000)
-                } else {
-                    Amount::from_sat((feerate * vsize_wchange as f64).ceil() as u64)
-                };
+                let fee_wchange = Amount::from_sat(calculate_fee_sats(vsize_wchange as u64));
 
                 let remaining_wchange =
                     if let Some(diff) = total_input_value.checked_sub(total_output_value) {
@@ -484,11 +471,7 @@ impl Wallet {
                 let base_wchange = tx_wchange.base_size();
                 let vsize_wchange = (base_wchange * 4 + total_witness_size).div_ceil(4);
 
-                let fee_wchange = if cfg!(feature = "integration-test") {
-                    Amount::from_sat(1000)
-                } else {
-                    Amount::from_sat((feerate * vsize_wchange as f64).ceil() as u64)
-                };
+                let fee_wchange = Amount::from_sat(calculate_fee_sats(vsize_wchange as u64));
 
                 let individual_fee_wchange = fee_wchange / change_chunks.len() as u64;
 

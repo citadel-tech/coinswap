@@ -34,7 +34,7 @@ use crate::{
         rpc::start_rpc_server,
     },
     protocol::messages::{DnsMetadata, DnsRequest, DnsResponse, TakerToMakerMessage},
-    utill::{read_message, send_message, ConnectionType, DEFAULT_TX_FEE_RATE, HEART_BEAT_INTERVAL},
+    utill::{read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::WalletError,
 };
 
@@ -242,7 +242,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
                 amount,
                 locktime,
                 Some(maker_address.as_bytes()),
-                DEFAULT_TX_FEE_RATE,
+                MIN_FEE_RATE,
             );
 
             match fidelity_result {

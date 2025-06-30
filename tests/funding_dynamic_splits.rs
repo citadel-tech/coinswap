@@ -5,7 +5,7 @@ use std::vec;
 use bitcoin::{Address, Amount};
 use coinswap::{
     taker::TakerBehavior,
-    utill::{ConnectionType, DEFAULT_TX_FEE_RATE},
+    utill::{ConnectionType, MIN_FEE_RATE},
 };
 use test_framework::*;
 
@@ -40,7 +40,7 @@ fn test_create_funding_txn_with_varied_distributions() {
         90_000,  // Edge case for last wallet
     ];
     //let coinswap_amount = Amount::from_sat(1_000_000); // Example: 0.01 BTC
-    let fee_rate = Amount::from_sat(DEFAULT_TX_FEE_RATE as u64);
+    let fee_rate = Amount::from_sat(MIN_FEE_RATE as u64);
 
     let (test_framework, mut takers, _, _, _) = TestFramework::init(
         vec![],

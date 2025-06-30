@@ -4,7 +4,7 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
-    utill::{ConnectionType, DEFAULT_TX_FEE_RATE},
+    utill::{ConnectionType, MIN_FEE_RATE},
 };
 use std::sync::Arc;
 mod test_framework;
@@ -92,7 +92,12 @@ fn test_abort_case_2_move_on_with_other_makers() {
 
             let balances = wallet.get_balances().unwrap();
 
-            assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
+            let actual = balances.regular.to_sat();
+            assert!(
+                actual == 14999508 || actual == 14999510,
+                "Expected 14999508 or 14999510 sats, got {}",
+                actual
+            );
             assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
             assert_eq!(balances.swap, Amount::ZERO);
             assert_eq!(balances.contract, Amount::ZERO);
@@ -214,7 +219,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
     let addr = taker_wallet_mut.get_next_internal_addresses(1).unwrap()[0].to_owned();
 
     let tx = taker_wallet_mut
-        .spend_from_wallet(DEFAULT_TX_FEE_RATE, Destination::Sweep(addr), &swap_coins)
+        .spend_from_wallet(MIN_FEE_RATE, Destination::Sweep(addr), &swap_coins)
         .unwrap();
 
     assert_eq!(
@@ -231,7 +236,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
     let balances = taker_wallet_mut.get_balances().unwrap();
 
     assert_eq!(balances.swap, Amount::ZERO);
-    assert_eq!(balances.regular, Amount::from_btc(0.14934642).unwrap());
+    assert_eq!(balances.regular, Amount::from_btc(0.14941138).unwrap());
 
     info!("🎉 All checks successful. Terminating integration test case");
 

@@ -1405,7 +1405,7 @@ impl Wallet {
         hashlock_pubkeys: &[PublicKey],
         hashvalue: Hash160,
         locktime: u16,
-        fee_rate: Amount,
+        fee_rate: f64,
     ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, Amount), WalletError> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
             .iter()
@@ -1444,7 +1444,6 @@ impl Wallet {
                 },
                 funding_amount,
                 &contract_redeemscript,
-                fee_rate,
             )?;
 
             // self.import_wallet_contract_redeemscript(&contract_redeemscript)?;

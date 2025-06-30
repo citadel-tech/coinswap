@@ -3,7 +3,7 @@ use std::{net::TcpStream, time::Duration};
 use clap::Parser;
 use coinswap::{
     maker::{MakerError, RpcMsgReq, RpcMsgResp},
-    utill::{read_message, send_message, DEFAULT_TX_FEE_RATE},
+    utill::{read_message, send_message, MIN_FEE_RATE},
 };
 
 /// A simple command line app to operate the makerd server.
@@ -107,7 +107,7 @@ fn main() -> Result<(), MakerError> {
                 RpcMsgReq::SendToAddress {
                     address,
                     amount,
-                    feerate: feerate.unwrap_or(DEFAULT_TX_FEE_RATE),
+                    feerate: feerate.unwrap_or(MIN_FEE_RATE),
                 },
             )?;
         }
