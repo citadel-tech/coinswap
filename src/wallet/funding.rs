@@ -15,7 +15,10 @@ use bitcoind::bitcoincore_rpc::{json::CreateRawTransactionInput, RpcApi};
 
 use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
 
-use crate::{taker::api::MINER_FEE, wallet::Destination};
+use crate::{
+    utill::{calculate_fee_sats, MIN_FEE_RATE},
+    wallet::Destination,
+};
 
 use super::Wallet;
 
@@ -35,7 +38,7 @@ impl Wallet {
         &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: Amount,
+        fee_rate: f64,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let ret = self.create_funding_txes_random_amounts(coinswap_amount, destinations, fee_rate);
         if ret.is_ok() {
@@ -200,7 +203,7 @@ impl Wallet {
         &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: Amount,
+        fee_rate: f64,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
@@ -219,7 +222,7 @@ impl Wallet {
         let result = (|| {
             for (address, &output_value) in destinations.iter().zip(output_values.iter()) {
                 let remaining = Amount::from_sat(output_value);
-                let selected_utxo = self.coin_select(remaining, fee_rate.to_btc())?;
+                let selected_utxo = self.coin_select(remaining, fee_rate)?;
 
                 let outpoints: Vec<OutPoint> = selected_utxo
                     .iter()
@@ -252,8 +255,7 @@ impl Wallet {
                 };
 
                 // Creates and Signs Transactions via the spend_coins API
-                let funding_tx =
-                    self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
+                let funding_tx = self.spend_coins(&coins_to_spend, destination, fee_rate)?;
 
                 // The actual fee is the difference between the sum of output amounts from the total input amount
                 let actual_fee = total_input_amount
@@ -279,7 +281,10 @@ impl Wallet {
 
                 funding_txes.push(funding_tx);
                 payment_output_positions.push(payment_pos);
-                total_miner_fee += fee_rate.to_sat();
+
+                let fee_amount = calculate_fee_sats(tx_size);
+
+                total_miner_fee += fee_amount;
             }
             Ok(CreateFundingTxesResult {
                 funding_txes,
@@ -452,7 +457,6 @@ impl Wallet {
         &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         //this function creates funding txes by
         //using walletcreatefundedpsbt for the total amount, and if
@@ -465,11 +469,12 @@ impl Wallet {
 
         self.lock_unspendable_utxos()?;
 
-        let fee = Amount::from_sat(MINER_FEE);
-
+        // we can remove this line and use `fee_rate`, right?
+        // and then we can also remove MINER_FEE constant.
+        let fee = Amount::from_sat(calculate_fee_sats(150));
         let remaining = coinswap_amount;
 
-        let selected_utxo = self.coin_select(remaining + fee, fee_rate.to_btc())?;
+        let selected_utxo = self.coin_select(remaining + fee, MIN_FEE_RATE)?;
 
         let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
             acc.checked_add(unspet.amount)
@@ -526,7 +531,7 @@ impl Wallet {
         self.create_mostly_sweep_txes_with_one_tx_having_change(
             coinswap_amount,
             destinations,
-            fee_rate,
+            fee,
             &change_address,
             &mut selected_utxo
                 .iter()

@@ -76,12 +76,6 @@ pub(crate) const RECONNECT_SHORT_SLEEP_DELAY: u64 = 1;
 pub(crate) const RECONNECT_LONG_SLEEP_DELAY: u64 = 5;
 pub(crate) const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 30;
 pub(crate) const TCP_TIMEOUT_SECONDS: u64 = 300;
-#[cfg(feature = "integration-test")]
-pub(crate) const MINER_FEE: u64 = 1000;
-
-/// This fee is used for both funding and contract txs.
-#[cfg(not(feature = "integration-test"))]
-pub(crate) const MINER_FEE: u64 = 300; // around 2 sats/vb for funding tx
 
 /// Swap specific parameters. These are user's policy and can differ among swaps.
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
@@ -312,8 +306,9 @@ impl Taker {
         self.ongoing_swap_state.swap_params = swap_params;
         // Check if we have enough balance.
         let available = self.wallet.get_balances()?.spendable;
+        let estimated_fee = Amount::from_sat(calculate_fee_sats(200));
 
-        let required = swap_params.send_amount + Amount::from_sat(1000);
+        let required = swap_params.send_amount + estimated_fee;
         if available < required {
             let err = WalletError::InsufficientFund {
                 available: available.to_sat(),
@@ -513,7 +508,7 @@ impl Taker {
                     &hashlock_pubkeys,
                     self.get_preimage_hash(),
                     swap_locktime,
-                    Amount::from_sat(MINER_FEE),
+                    MIN_FEE_RATE,
                 )?;
 
             let contract_reedemscripts = outgoing_swapcoins
@@ -1259,7 +1254,6 @@ impl Taker {
                         previous_funding_output,
                         maker_funding_tx_value,
                         next_contract_redeemscript,
-                        Amount::from_sat(MINER_FEE),
                     )
                 },
             )
@@ -1914,7 +1908,7 @@ impl Taker {
 
             let timelock_spend =
                 self.wallet
-                    .create_timelock_spend(&outgoing, next_internal, DEFAULT_TX_FEE_RATE)?;
+                    .create_timelock_spend(&outgoing, next_internal, MIN_FEE_RATE)?;
             outgoing_infos.push(((reedemscript, contract_tx), (timelock, timelock_spend)));
         }
 

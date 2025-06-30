@@ -3,7 +3,7 @@ use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
-    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, DEFAULT_TX_FEE_RATE, UTXO},
+    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, MIN_FEE_RATE, UTXO},
     wallet::{Destination, RPCConfig},
 };
 use log::LevelFilter;
@@ -199,7 +199,7 @@ fn main() -> Result<(), TakerError> {
 
             let coins_to_spend = taker
                 .get_wallet_mut()
-                .coin_select(amount, feerate.unwrap_or(DEFAULT_TX_FEE_RATE))?;
+                .coin_select(amount, feerate.unwrap_or(MIN_FEE_RATE))?;
 
             let outputs = vec![(Address::from_str(&address)?.assume_checked(), amount)];
             let destination = Destination::Multi {
@@ -208,7 +208,7 @@ fn main() -> Result<(), TakerError> {
             };
 
             let tx = taker.get_wallet_mut().spend_from_wallet(
-                feerate.unwrap_or(DEFAULT_TX_FEE_RATE),
+                feerate.unwrap_or(MIN_FEE_RATE),
                 destination,
                 &coins_to_spend,
             )?;

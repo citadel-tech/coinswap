@@ -1,6 +1,6 @@
 use crate::{
     protocol::messages::FidelityProof,
-    utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks, DEFAULT_TX_FEE_RATE},
+    utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks, MIN_FEE_RATE},
     wallet::Wallet,
 };
 use bitcoin::{
@@ -436,7 +436,7 @@ impl Wallet {
 
         expired_bond_indices.into_iter().try_for_each(|i| {
             log::info!("Fidelity Bond at index: {i:?} expired | Redeeming it.");
-            self.redeem_fidelity(i, DEFAULT_TX_FEE_RATE).map(|_| ())
+            self.redeem_fidelity(i, MIN_FEE_RATE).map(|_| ())
         })
     }
 
