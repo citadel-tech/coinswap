@@ -702,12 +702,21 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
                 next_internal_address,
                 DEFAULT_TX_FEE_RATE,
             )?;
+
+            let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
+                ic_sc,
+                next_internal_address,
+                DEFAULT_TX_FEE_RATE,
+            )?;
             outgoings.push((
                 (og_sc.get_multisig_redeemscript(), contract),
                 (contract_timelock, time_lock_spend),
             ));
             let incoming_contract = ic_sc.get_fully_signed_contract_tx()?;
-            incomings.push((ic_sc.get_multisig_redeemscript(), incoming_contract));
+            incomings.push((
+                (ic_sc.get_multisig_redeemscript(), incoming_contract),
+                hash_lock_spend,
+            ));
         }
         // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
         let maker_clone = maker.clone();
