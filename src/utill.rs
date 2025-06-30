@@ -5,7 +5,7 @@ use bitcoin::{
     hashes::Hash,
     key::{rand::thread_rng, Keypair},
     secp256k1::{Message, Secp256k1, SecretKey},
-    Address, Amount, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
+    Address, Amount, FeeRate, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
 };
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use log::LevelFilter;
@@ -59,8 +59,9 @@ pub(crate) const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 /// Number of confirmation required funding transaction.
 pub const REQUIRED_CONFIRMS: u32 = 1;
 
-/// Default Transaction Fees in sats/vByte
-pub const DEFAULT_TX_FEE_RATE: f64 = 2.0;
+/// Minimum fee rate in sats/vb for all transactions
+/// This replaces the hardcoded MINER_FEE constant
+pub const MIN_FEE_RATE: f64 = 2.0;
 
 /// Specifies the type of connection: TOR or Clearnet.
 ///
@@ -125,6 +126,21 @@ pub(crate) fn get_taker_dir() -> PathBuf {
 /// Get the DNS Directory
 pub(crate) fn get_dns_dir() -> PathBuf {
     get_data_dir().join("dns")
+}
+
+/// Creates a FeeRate from the global MIN_FEE_RATE constant
+/// This provides type-safe fee calculations throughout the codebase
+pub fn get_min_fee_rate() -> Option<FeeRate> {
+    FeeRate::from_sat_per_vb(MIN_FEE_RATE as u64)
+}
+
+/// Calculate fee in satoshis for given virtual bytes using MIN_FEE_RATE
+pub fn calculate_fee_sats(vbytes: u64) -> u64 {
+    let fee_rate = get_min_fee_rate().expect("MIN_FEE_RATE should be valid");
+    fee_rate
+        .fee_vb(vbytes)
+        .expect("fee calculation should not overflow")
+        .to_sat()
 }
 
 /// Sets up the logger for the taker component.

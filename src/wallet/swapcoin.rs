@@ -612,6 +612,8 @@ mod tests {
         Transaction, TxIn, TxOut, Witness,
     };
 
+    use crate::utill::calculate_fee_sats;
+
     const TEST_CURRENT_HEIGHT: u32 = 100;
 
     #[test]
@@ -880,7 +882,8 @@ mod tests {
             .require_network(bitcoin::Network::Bitcoin)
             .unwrap();
 
-        let miner_fee = 136 * 10; //126 vbytes x 10 sat/vb, size calculated using testmempoolaccept
+        let miner_fee = calculate_fee_sats(136);
+
         let mut tx = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
@@ -960,7 +963,8 @@ mod tests {
             .require_network(bitcoin::Network::Bitcoin)
             .unwrap();
 
-        let miner_fee = 136 * 10;
+        let miner_fee = calculate_fee_sats(136);
+
         let mut tx = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
