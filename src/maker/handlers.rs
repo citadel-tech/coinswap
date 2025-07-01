@@ -17,8 +17,8 @@ use bitcoin::{
 
 use super::{
     api::{
-        recover_from_swap, ConnectionState, ExpectedMessage, Maker, MakerBehavior,
-        MIN_CONTRACT_REACTION_TIME, TIME_RELATIVE_FEE_PCT,
+        find_spending_transaction, recover_from_swap, ConnectionState, ExpectedMessage, Maker,
+        MakerBehavior, MIN_CONTRACT_REACTION_TIME, TIME_RELATIVE_FEE_PCT,
     },
     error::MakerError,
 };
@@ -38,7 +38,9 @@ use crate::{
         },
         Hash160,
     },
-    utill::{calculate_fee_sats, MIN_FEE_RATE, REQUIRED_CONFIRMS},
+    utill::{
+        calculate_fee_sats, get_hashpreimage_from_spending_txn, MIN_FEE_RATE, REQUIRED_CONFIRMS,
+    },
     wallet::{IncomingSwapCoin, SwapCoin, WalletError, WalletSwapCoin},
 };
 
@@ -675,10 +677,12 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
         let mut incomings = Vec::new();
         // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
         // fully signed.
+        let mut is_hashpreimage_known = false;
+
         for (og_sc, ic_sc) in state
             .outgoing_swapcoins
             .iter()
-            .zip(state.incoming_swapcoins.iter())
+            .zip(state.incoming_swapcoins.iter_mut())
         {
             let contract_timelock = og_sc.get_timelock()?;
             let contract = match og_sc.get_fully_signed_contract_tx() {
@@ -703,15 +707,25 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
                 MIN_FEE_RATE,
             )?;
 
-            let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
-                ic_sc,
-                next_internal_address,
-                DEFAULT_TX_FEE_RATE,
-            )?;
             outgoings.push((
                 (og_sc.get_multisig_redeemscript(), contract),
                 (contract_timelock, time_lock_spend),
             ));
+
+            if ic_sc.hash_preimage.is_none() {
+                ic_sc.hash_preimage = get_hashpreimage_from_spending_txn(find_spending_transaction(
+                    &maker,
+                    outgoings.clone(),
+                )?)
+            }
+            is_hashpreimage_known = ic_sc.hash_preimage.is_some();
+
+            let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
+                ic_sc,
+                next_internal_address,
+                MIN_FEE_RATE,
+            )?;
+
             let incoming_contract = ic_sc.get_fully_signed_contract_tx()?;
             incomings.push((
                 (ic_sc.get_multisig_redeemscript(), incoming_contract),
@@ -723,7 +737,9 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
         let handle = std::thread::Builder::new()
             .name("Swap Recovery Thread".to_string())
             .spawn(move || {
-                if let Err(e) = recover_from_swap(maker_clone, outgoings, incomings) {
+                if let Err(e) =
+                    recover_from_swap(maker_clone, outgoings, incomings, is_hashpreimage_known)
+                {
                     log::error!("Failed to recover from swap due to: {e:?}");
                 }
             })?;
