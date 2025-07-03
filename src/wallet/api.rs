@@ -1332,9 +1332,9 @@ impl Wallet {
             change_cost: cost_of_change,
             avg_input_weight,
             avg_output_weight,
-            // The purpose of keeping it 2500 is 2 fold. It gives a minimum threshold and solves for the check in SpendAPI against minimal dust and subtracting by fee_wchange - since our current coinselection doesn't handle multiple change outputs.
+            // The purpose of keeping it hardcoded is 2 fold. It gives a minimum threshold for Privacy Regular Swaps and solves for the check in SpendAPI against minimal dust and subtracting by fee_wchange - since our current coinselection doesn't handle multiple change outputs.
             // Instead of hardcoding it, we can definitely do it in a smarter manner.
-            min_change_value: 2500,
+            min_change_value: 294 * 5,
             excess_strategy: ExcessStrategy::ToChange,
         };
 
