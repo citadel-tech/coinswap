@@ -656,6 +656,18 @@ impl Maker {
         let mut conn_state = self.ongoing_swap_state.lock()?;
         *conn_state = HashMap::default();
 
+        let swept_txids = self
+            .wallet
+            .write()?
+            .sweep_incoming_swapcoins(MIN_FEE_RATE)?;
+        if !swept_txids.is_empty() {
+            log::info!(
+                "Successfully swept {} incoming swap coins: {:?}",
+                swept_txids.len(),
+                swept_txids
+            );
+        }
+
         log::info!("initializing Wallet Sync.");
         {
             let mut wallet_write = self.wallet.write()?;

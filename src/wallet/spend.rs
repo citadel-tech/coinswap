@@ -229,7 +229,13 @@ impl Wallet {
         let mut total_witness_size = 0;
         for (utxo_data, spend_info) in coins.iter() {
             match spend_info {
-                UTXOSpendInfo::SeedCoin { .. } => {
+                UTXOSpendInfo::SeedCoin {
+                    is_swap_utxo: Some(false),
+                    ..
+                }
+                | UTXOSpendInfo::SeedCoin {
+                    is_swap_utxo: None, ..
+                } => {
                     tx.input.push(TxIn {
                         previous_output: OutPoint::new(utxo_data.txid, utxo_data.vout),
                         sequence: Sequence::ZERO,
@@ -239,6 +245,10 @@ impl Wallet {
                     total_witness_size += spend_info.estimate_witness_size();
                     total_input_value += utxo_data.amount;
                 }
+                UTXOSpendInfo::SeedCoin {
+                    is_swap_utxo: Some(true),
+                    ..
+                } => {}
                 UTXOSpendInfo::IncomingSwapCoin { .. } | UTXOSpendInfo::OutgoingSwapCoin { .. } => {
                     tx.input.push(TxIn {
                         previous_output: OutPoint::new(utxo_data.txid, utxo_data.vout),
