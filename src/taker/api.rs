@@ -1793,6 +1793,7 @@ impl Taker {
                 .expect("Outgoing swapcoin expected")
                 .hash_preimage = Some(self.ongoing_swap_state.active_preimage);
         }
+
         log::info!("Sweeping completed incoming swap coins...");
 
         let swept_txids = self.wallet.sweep_incoming_swapcoins(MIN_FEE_RATE)?;
