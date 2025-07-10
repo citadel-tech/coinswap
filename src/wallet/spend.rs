@@ -229,7 +229,7 @@ impl Wallet {
         let mut total_witness_size = 0;
         for (utxo_data, spend_info) in coins.iter() {
             match spend_info {
-                UTXOSpendInfo::SeedCoin { .. } | UTXOSpendInfo::SwapedCoin { .. } => {
+                UTXOSpendInfo::SeedCoin { .. } | UTXOSpendInfo::SweptCoin { .. } => {
                     tx.input.push(TxIn {
                         previous_output: OutPoint::new(utxo_data.txid, utxo_data.vout),
                         sequence: Sequence::ZERO,

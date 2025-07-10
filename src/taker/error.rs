@@ -1,7 +1,10 @@
 //! All Taker-related errors.
 use crate::{
-    error::NetError, market::directory::DirectoryServerError, protocol::error::ProtocolError,
-    utill::TorError, wallet::WalletError,
+    error::NetError,
+    market::directory::DirectoryServerError,
+    protocol::error::ProtocolError,
+    utill::TorError,
+    wallet::{SweepError, WalletError},
 };
 use bitcoin::address::ParseError;
 
@@ -38,6 +41,8 @@ pub enum TakerError {
     TorError(TorError),
     /// Error relating to Bitcoin Address Parsing.
     AddressParseError(ParseError),
+    ///Sweep Incoming swap coins Error
+    SweepError(SweepError),
 }
 
 impl From<TorError> for TakerError {

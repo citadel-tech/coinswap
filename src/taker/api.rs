@@ -1796,7 +1796,10 @@ impl Taker {
 
         log::info!("Sweeping completed incoming swap coins...");
 
-        let swept_txids = self.wallet.sweep_incoming_swapcoins(MIN_FEE_RATE)?;
+        let swept_txids = self
+            .wallet
+            .sweep_incoming_swapcoins(MIN_FEE_RATE)
+            .map_err(TakerError::SweepError)?;
         if !swept_txids.is_empty() {
             log::info!(
                 "Successfully swept {} incoming swap coins: {:?}",

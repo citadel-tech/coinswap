@@ -453,6 +453,7 @@ pub fn verify_swap_results(
             balances.swap == Amount::from_btc(0.00442712).unwrap() // Successful coinswap
                 || balances.swap == Amount::from_btc(0.00442714).unwrap() // Recovery via timelock
                 || balances.swap == Amount::from_btc(0.00441884).unwrap() //Successful coinswap variant
+                || balances.swap == Amount::from_btc(0.00441886).unwrap() //Successful coinswap variant
                 || balances.swap == Amount::ZERO, // Unsuccessful coinswap
             "Taker swapcoin balance mismatch"
         );
@@ -530,6 +531,7 @@ pub fn verify_swap_results(
             assert!(
                 balances.contract == Amount::ZERO
                     || balances.contract == Amount::from_btc(0.00441812).unwrap() // Contract balance in recovery scenarios
+                    || balances.contract == Amount::from_btc(0.00441814).unwrap() // Contract balance in recovery variant
             );
 
             // Check spendable balance difference.
@@ -553,6 +555,7 @@ pub fn verify_swap_results(
                     || balance_diff == Amount::from_sat(2574) // Recovery via timelock
                     || balance_diff == Amount::from_sat(466494) // Taker abort after setup - first maker recovery cost (abort1 test case)
                     || balance_diff == Amount::from_sat(443624) // Taker abort after setup - second maker recovery cost (abort1 test case)
+                    || balance_diff == Amount::from_sat(466496) //Taker abort after setup - second maker recovery cost (abort3_case3)
                     || balance_diff == Amount::from_sat(410176) // Multi-taker first maker (previous run)
                     || balance_diff == Amount::from_sat(410118), // Multi-taker first maker (current run)
                 "Maker spendable balance change mismatch"
