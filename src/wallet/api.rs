@@ -1332,7 +1332,10 @@ impl Wallet {
             change_cost: cost_of_change,
             avg_input_weight,
             avg_output_weight,
-            min_change_value: 100,
+            // The purpose of keeping it hardcoded is 2 fold. It gives a minimum threshold and checks for the Dust Value - since our current coinselection doesn't handle multiple change outputs.
+            // TODO: Instead of hardcoding it, we can definitely do it in a smarter manner.
+            // We are choosing 294 because that's the minimum non-dust value for Change Outputs(5 max).
+            min_change_value: 294 * 5,
             excess_strategy: ExcessStrategy::ToChange,
         };
 
