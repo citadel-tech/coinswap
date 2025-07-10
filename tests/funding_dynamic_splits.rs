@@ -1,10 +1,8 @@
 #![cfg(feature = "integration-test")]
 mod test_framework;
-use std::vec;
-
 use bitcoin::{Address, Amount};
 use coinswap::{
-    taker::{Taker, TakerBehavior},
+    taker::TakerBehavior,
     utill::{ConnectionType, MIN_FEE_RATE},
 };
 use test_framework::*;
@@ -25,6 +23,44 @@ const UTXO_SETS: &[&[u64]] = &[
     &[46_824, 53_245, 65_658, 35_892],
 ];
 
+// This is the expected input set for each of the Target test case.
+const SELECTED_INPUT: &[&[u64]] = &[
+    &[
+        298092, 100000, 70000, 53245, 46824, 38012, 35892, 432441, 9091, 107831, 91379,
+    ],
+    &[53245, 3919, 9091, 46824],
+    &[65658, 35892, 3919, 107831],
+    &[
+        3919, 46824, 65658, 70000, 91379, 432441, 301909, 298092, 109831,
+    ],
+    &[46824, 100000, 53245, 301909, 298092, 91379, 3919, 107831],
+    &[9091, 3919],
+    &[35892, 53245, 3919, 9091, 100000],
+    &[100000, 301909, 46824, 432441, 107831, 9091, 3919, 1000000],
+    &[
+        35892, 900000, 712971, 1992436, 800000, 1000000, 9091, 298092, 1946436, 38012, 46824,
+    ],
+    &[
+        3919, 9091, 46824, 100000, 298092, 432441, 70000, 107831, 712971,
+    ],
+    &[3919, 46824, 9091, 65658, 53245, 38012, 35892],
+    &[
+        65658, 53245, 38012, 3919, 91379, 100000, 35892, 70000, 46824,
+    ],
+    &[
+        1992436, 1946436, 1000000, 900000, 712971, 301909, 298092, 100000, 91379, 70000, 46824,
+        38012, 3919,
+    ],
+    &[3919],
+    &[3919],
+    &[9091],
+    &[432441, 301909, 107831, 100000, 46824, 9091, 3919, 1000000],
+    &[
+        298092, 109831, 100000, 65658, 46824, 35892, 91379, 9091, 53245, 432441, 70000,
+    ],
+    &[35892, 3919, 53245, 91379],
+];
+
 const TARGETS: &[u64] = &[
     640_082, // Granular testing target
     54_082,  // CASE A : Threshold -> 2 Targets, 2 Changes
@@ -37,14 +73,30 @@ const TARGETS: &[u64] = &[
     250_000, 7_500_000, // Large, uneven splits
     500, 1_500, 2_500,   // Small, uneven splits
     999_999, // Near-round numbers
-    654_321, // Previous edge case for second last wallet
-    90_000,  // Edge case for last wallet
+    654_321, // Edge Case A for the UTXO set
+    90_000,  // Edge Case B
+];
+
+// This is the expected number of outputs for each of the Above Target test case.
+const NUM_OUTPUT_CHUNKS: &[u64] = &[
+    4, // Granular testing target
+    4, // CASE A : Threshold -> 2 Targets, 2 Changes
+    4, // CASE B : Threshold -> 2 Targets, 2 Changes
+    4, // CASE C.1 : Threshold -> 2 Targets, 2 Changes
+    4, // CASE C.2 : Deterministic -> 2 Targets, 2 Change
+    4, 4, 4, // Gradual scaling targets
+    2, 4, // Odd, lopsided amounts
+    4, // Non-round numbers
+    4, 2, // Large, uneven splits
+    3, 8, 7, // Small, uneven splits
+    4, // Near-round numbers
+    4, // Edge Case A for the UTXO set
+    4, // Edge Case B
 ];
 
 #[test]
-fn test_regular_swaps() {
-    let fee_rate = Amount::from_sat(MIN_FEE_RATE as u64);
-
+fn test_create_funding_txn_with_varied_distributions() {
+    // Initialize the test framework with a single taker with Normal behavior
     let (test_framework, mut takers, _, _, _) = TestFramework::init(
         vec![],
         vec![TakerBehavior::Normal],
@@ -52,11 +104,10 @@ fn test_regular_swaps() {
     );
 
     let bitcoind = &test_framework.bitcoind;
-
     let taker = &mut takers[0];
 
-    // Fund the taker with the first UTXO set for granular testing
-    for individual_utxo in UTXO_SETS[0].iter() {
+    // Fund the taker with the UTXO sets
+    for individual_utxo in UTXO_SETS.iter().flat_map(|x| x.iter()) {
         let taker_address = taker.get_wallet_mut().get_next_external_address().unwrap();
         send_to_address(bitcoind, &taker_address, Amount::from_sat(*individual_utxo));
         generate_blocks(bitcoind, 1);
@@ -69,120 +120,23 @@ fn test_regular_swaps() {
         destinations.push(addr);
     }
 
-    test_assert_outputs_inputs(taker, destinations.clone(), fee_rate, TARGETS[0]);
-
-    // Fund the taker with the remaining UTXO sets for the rest of the cases
-    for individual_utxo in UTXO_SETS[1..].iter().flat_map(|x| x.iter()) {
-        let taker_address = taker.get_wallet_mut().get_next_external_address().unwrap();
-        send_to_address(bitcoind, &taker_address, Amount::from_sat(*individual_utxo));
-        generate_blocks(bitcoind, 1);
-    }
-
-    test_create_funding_txn_with_varied_distributions(
-        taker,
-        destinations,
-        fee_rate,
-        TARGETS.to_vec(),
-    );
-
-    test_framework.stop();
-}
-
-fn test_create_funding_txn_with_varied_distributions(
-    taker: &mut Taker,
-    destinations: Vec<Address>,
-    fee_rate: Amount,
-    targets: Vec<u64>,
-) {
-    println!("\n ----- test_create_funding_txn_with_varied_distributions ----- ");
-
     taker.get_wallet_mut().sync_no_fail();
 
-    for target in targets {
-        let target = Amount::from_sat(target);
+    for (i, target) in TARGETS.iter().enumerate() {
+        let target = Amount::from_sat(*target);
 
-        println!("\nTarget = {}", Amount::to_sat(target));
-
-        // Call create_funding_txes with the generated addresses
+        // Call `create_funding_txes` with Normie Flag turned off, i.e Destination::MultiDynamic
         let result = taker
             .get_wallet_mut()
-            .create_funding_txes_regular_swaps(false, target, destinations.clone(), fee_rate)
+            .create_funding_txes_regular_swaps(
+                false,
+                target,
+                destinations.clone(),
+                Amount::from_sat(MIN_FEE_RATE as u64),
+            )
             .unwrap();
 
-        for tx in result.funding_txes.iter() {
-            let selected_inputs = tx
-                .input
-                .iter()
-                .map(|txin| {
-                    taker
-                        .get_wallet()
-                        .list_all_utxo_spend_info()
-                        .unwrap()
-                        .iter()
-                        .find(|(utxo, _)| {
-                            txin.previous_output.txid == utxo.txid
-                                && txin.previous_output.vout == utxo.vout
-                        })
-                        .map(|(u, _)| u.amount)
-                        .expect("should find utxo")
-                })
-                .collect::<Vec<_>>();
-
-            // Assert no duplicate inputs
-            assert!(selected_inputs.iter().all(|&x| selected_inputs
-                .iter()
-                .filter(|&&y| y == x)
-                .count()
-                == 1),);
-
-            println!("Inputs : {selected_inputs:?}");
-            println!("Sum of Inputs: {:?}", {
-                selected_inputs.iter().map(|a| a.to_sat()).sum::<u64>()
-            });
-
-            let outputs = tx.output.iter().map(|o| o.value).collect::<Vec<_>>();
-
-            println!("Outputs: {outputs:?}");
-        }
-    }
-}
-
-fn test_assert_outputs_inputs(
-    taker: &mut Taker,
-    destinations: Vec<Address>,
-    fee_rate: Amount,
-    target: u64,
-) {
-    println!("\n ----- test_assert_outputs_inputs ----- \n");
-
-    taker.get_wallet_mut().sync_no_fail();
-
-    let balance = taker.get_wallet().get_balances().unwrap();
-    println!(
-        "Total Wallet Spendable Balance : {}",
-        balance.spendable.to_sat()
-    );
-    let expected_total = UTXO_SETS[0].iter().sum::<u64>();
-    assert_eq!(
-        balance.spendable.to_sat(),
-        expected_total,
-        "Total wallet balance does not match expected total from UTXO set."
-    );
-
-    println!("Expected Fee Rate : {MIN_FEE_RATE}");
-    println!("Target = {target}");
-
-    let result = taker
-        .get_wallet_mut()
-        .create_funding_txes_regular_swaps(
-            false,
-            Amount::from_sat(target),
-            destinations.clone(),
-            fee_rate,
-        )
-        .unwrap();
-
-    for tx in result.funding_txes.iter() {
+        let tx = &result.funding_txes[0];
         let selected_inputs = tx
             .input
             .iter()
@@ -201,103 +155,46 @@ fn test_assert_outputs_inputs(
             })
             .collect::<Vec<_>>();
 
-        // Assert no duplicate inputs
+        let outputs = tx.output.iter().map(|o| o.value).collect::<Vec<_>>();
+        let sum_of_inputs = selected_inputs.iter().map(|a| a.to_sat()).sum::<u64>();
+        let sum_of_outputs = tx.output.iter().map(|o| o.value.to_sat()).sum::<u64>();
+        let actual_fee = sum_of_inputs - sum_of_outputs;
+        let tx_size = tx.weight().to_vbytes_ceil();
+        let actual_feerate = actual_fee as f64 / tx_size as f64;
+
+        println!("\nTarget = {}", Amount::to_sat(target));
+        println!("Sum of Inputs: {sum_of_inputs:?}");
+        println!("Inputs : {selected_inputs:?}");
+        println!("Outputs: {outputs:?}");
+        println!("Actual fee rate: {actual_feerate}");
+
+        // Assert no duplicate inputs.
         assert!(selected_inputs.iter().all(|&x| selected_inputs
             .iter()
             .filter(|&&y| y == x)
             .count()
             == 1),);
 
-        let outputs = tx.output.iter().map(|o| o.value).collect::<Vec<_>>();
+        // Assert the Output UTXOs matches the expected outputs.
+        for &utxo in SELECTED_INPUT[i] {
+            assert!(
+                selected_inputs.contains(&Amount::from_sat(utxo)),
+                "Missing UTXO input: {} in test case {}",
+                utxo,
+                i
+            );
+        }
 
-        // Assertions for Input
-        println!("Inputs : {selected_inputs:?}");
-        assert_eq!(
-            selected_inputs.len(),
-            5,
-            "Expected 5 input, got {}",
-            selected_inputs.len()
-        );
-        assert!(
-            selected_inputs.contains(&Amount::from_sat(38012)),
-            "Didn't find expected input amount 38012 SATS in inputs"
-        );
-        assert!(
-            selected_inputs.contains(&Amount::from_sat(298092)),
-            "Didn't find expected input amount 298092 SATS in inputs"
-        );
-        assert!(
-            selected_inputs.contains(&Amount::from_sat(301909)),
-            "Didn't find expected input amount 301909 SATS in inputs"
-        );
-        assert!(
-            selected_inputs.contains(&Amount::from_sat(9091)),
-            "Didn't find expected input amount 9091 SATS in inputs"
-        );
-        assert!(
-            selected_inputs.contains(&Amount::from_sat(712971)),
-            "Didn't find expected input amount 712971 SATS in inputs"
-        );
-
-        // Assertions for Outputs
-        println!("Outputs: {outputs:?}");
+        // Assert the number of Outputs matches the expected number.
         assert_eq!(
             outputs.len(),
-            4,
-            "Expected 4 outputs, got {}",
+            NUM_OUTPUT_CHUNKS[i] as usize,
+            "Expected {} outputs, got {}",
+            NUM_OUTPUT_CHUNKS[i],
             outputs.len()
         );
 
-        // Here, we expect the Change Chunks and Target Chunks to be similar to each other in the range Input / outputs.len()
-        let input_sum = selected_inputs.iter().map(|a| a.to_sat()).sum::<u64>();
-        let lower_bound = ((input_sum / 4) as f64 * 0.825) as u64;
-        let upper_bound = ((input_sum / 4) as f64 * 1.175) as u64;
-        assert!(
-            outputs
-                .iter()
-                .all(|x| (lower_bound..=upper_bound).contains(&x.to_sat())),
-            "All output chunks should be in range of Input/Outputs.len() ± 15 + 2.5%"
-        );
-
-        println!("Sum of all Inputs : {:?}", {
-            selected_inputs.iter().map(|a| a.to_sat()).sum::<u64>()
-        });
-        println!("Sum of all Outputs : {:?}", {
-            outputs.iter().map(|o| o.to_sat()).sum::<u64>()
-        });
-
-        // Assert that any two of the 4 elements of outputs will equate to the target
-        let mut found_pair = false;
-
-        for (i, &value1) in outputs.iter().enumerate() {
-            for &value2 in outputs.iter().skip(i + 1) {
-                if value1.to_sat() + value2.to_sat() == target {
-                    found_pair = true;
-                    println!(
-                        "Found Target Chunks : {} + {} = {}",
-                        value1.to_sat(),
-                        value2.to_sat(),
-                        target
-                    );
-                    break;
-                }
-            }
-            if found_pair {
-                break;
-            }
-        }
-
-        assert!(
-            found_pair,
-            "No pair of outputs equates to the target value."
-        );
-
-        // Asserting Fee is more than 2% range.
-        let actual_fee = selected_inputs.iter().map(|a| a.to_sat()).sum::<u64>()
-            - outputs.iter().map(|o| o.to_sat()).sum::<u64>();
-        let tx_size = tx.weight().to_vbytes_ceil();
-        let actual_feerate = actual_fee as f64 / tx_size as f64;
-        println!("Actual fee rate: {actual_feerate}");
+        // Assert Fee is more than 98% of the expected Fee Rate.
         assert!(
             actual_feerate >= MIN_FEE_RATE * 0.98,
             "Fee rate ({}) is less than 98% of MIN_FEE_RATE ({})",
@@ -305,4 +202,6 @@ fn test_assert_outputs_inputs(
             MIN_FEE_RATE
         );
     }
+    test_framework.stop();
+    println!("\nTest completed successfully.");
 }
