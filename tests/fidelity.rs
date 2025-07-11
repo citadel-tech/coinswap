@@ -272,6 +272,11 @@ fn test_fidelity() {
 /// - Verifies that regular transactions never select expired fidelity bond UTXOs for spending
 /// - Confirms that new fidelity bond creation can properly consume expired fidelity bond UTXOs
 fn test_fidelity_spending() {
+    // Extract constants at the beginning of the function
+    const TIMELOCK_DURATION: u32 = 50;
+    const FIDELITY_AMOUNT: u64 = 5_000_000;
+    const REGULAR_TX_AMOUNT: u64 = 100_000;
+
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
@@ -299,8 +304,9 @@ fn test_fidelity_spending() {
     maker.get_wallet().write().unwrap().sync_no_fail();
 
     // Create fidelity bond
-    let short_timelock_height = (bitcoind.client.get_block_count().unwrap() as u32) + 50;
-    let fidelity_amount = Amount::from_sat(5_000_000);
+    let short_timelock_height =
+        (bitcoind.client.get_block_count().unwrap() as u32) + TIMELOCK_DURATION;
+    let fidelity_amount = Amount::from_sat(FIDELITY_AMOUNT);
 
     let fidelity_index = {
         let mut wallet = maker.get_wallet().write().unwrap();
@@ -347,7 +353,39 @@ fn test_fidelity_spending() {
         (fidelity_utxo.txid, fidelity_utxo.vout, fidelity_utxo.amount)
     };
 
-    // Test regular transactions don't use fidelity bond UTXO
+    let check_fidelity_utxo_integrity = |iteration: usize| {
+        let wallet = maker.get_wallet().read().unwrap();
+        let all_utxos = wallet.get_all_utxo().unwrap();
+
+        let fidelity_utxo_still_exists = all_utxos.iter().any(|utxo| {
+            utxo.txid == fidelity_utxo_info.0
+                && utxo.vout == fidelity_utxo_info.1
+                && utxo.amount == fidelity_utxo_info.2
+        });
+
+        if !fidelity_utxo_still_exists {
+            panic!("❌ FAILED: Fidelity bond UTXO ({}:{}) was consumed by regular transaction #{iteration}!", 
+                fidelity_utxo_info.0, fidelity_utxo_info.1);
+        }
+
+        let bond = wallet.get_fidelity_bonds().get(&fidelity_index).unwrap();
+        if bond.is_spent() {
+            panic!(
+                "❌ FAILED: Fidelity bond was marked as consumed by regular transaction #{}!",
+                iteration
+            );
+        }
+
+        log::info!(
+            "✅ Fidelity UTXO {}:{} ({} sats) still exists after regular transaction #{}",
+            fidelity_utxo_info.0,
+            fidelity_utxo_info.1,
+            fidelity_utxo_info.2.to_sat(),
+            iteration
+        );
+    };
+
+    // Try 3 regular transactions and verify fidelity bond UTXO is never selected
     log::info!("🧪 Testing regular transactions avoid fidelity bond UTXO");
 
     for i in 0..3 {
@@ -359,7 +397,7 @@ fn test_fidelity_spending() {
         let tx_result = {
             let mut wallet = maker.get_wallet().write().unwrap();
             let selected_utxos = wallet
-                .coin_select(Amount::from_sat(100_000), MIN_FEE_RATE)
+                .coin_select(Amount::from_sat(REGULAR_TX_AMOUNT), MIN_FEE_RATE)
                 .unwrap();
 
             for (_utxo, spend_info) in &selected_utxos {
@@ -372,7 +410,7 @@ fn test_fidelity_spending() {
                 Ok(None)
             } else {
                 let destination = coinswap::wallet::Destination::Multi {
-                    outputs: vec![(external_addr, Amount::from_sat(100_000))],
+                    outputs: vec![(external_addr, Amount::from_sat(REGULAR_TX_AMOUNT))],
                     op_return_data: None,
                 };
                 match wallet.spend_from_wallet(MIN_FEE_RATE, destination, &selected_utxos) {
@@ -387,82 +425,18 @@ fn test_fidelity_spending() {
                 bitcoind.client.send_raw_transaction(&tx).unwrap();
                 generate_blocks(bitcoind, 1);
                 maker.get_wallet().write().unwrap().sync_no_fail();
-
-                // Verify specific fidelity UTXO is still there and unspent
-                let wallet = maker.get_wallet().read().unwrap();
-                let all_utxos = wallet.get_all_utxo().unwrap();
-
-                // Check if our specific fidelity UTXO still exists
-                let fidelity_utxo_still_exists = all_utxos.iter().any(|utxo| {
-                    utxo.txid == fidelity_utxo_info.0
-                        && utxo.vout == fidelity_utxo_info.1
-                        && utxo.amount == fidelity_utxo_info.2
-                });
-
-                if !fidelity_utxo_still_exists {
-                    panic!("❌ FAILED: Fidelity bond UTXO ({}:{}) was consumed by regular transaction!", 
-                        fidelity_utxo_info.0, fidelity_utxo_info.1);
-                }
-
-                // Also check the bond status
-                let bond = wallet.get_fidelity_bonds().get(&fidelity_index).unwrap();
-                if bond.is_spent() {
-                    panic!(
-                        "❌ FAILED: Fidelity bond was marked as consumed by regular transaction!"
-                    );
-                }
-
-                log::info!(
-                    "✅ Fidelity UTXO {}:{} ({} sats) still exists after regular transaction #{}",
-                    fidelity_utxo_info.0,
-                    fidelity_utxo_info.1,
-                    fidelity_utxo_info.2.to_sat(),
-                    i + 1
-                );
+                log::info!("✅ Regular transaction #{} completed successfully", i + 1);
             }
             Ok(None) => {
-                // Verify fidelity UTXO still exists even when no transaction was created
-                let wallet = maker.get_wallet().read().unwrap();
-                let all_utxos = wallet.get_all_utxo().unwrap();
-
-                let fidelity_utxo_still_exists = all_utxos.iter().any(|utxo| {
-                    utxo.txid == fidelity_utxo_info.0
-                        && utxo.vout == fidelity_utxo_info.1
-                        && utxo.amount == fidelity_utxo_info.2
-                });
-
-                if !fidelity_utxo_still_exists {
-                    panic!("❌ FAILED: Fidelity bond UTXO disappeared despite no transaction!");
-                }
-
-                let bond = wallet.get_fidelity_bonds().get(&fidelity_index).unwrap();
-                if bond.is_spent() {
-                    panic!("❌ FAILED: Fidelity bond consumed despite no transaction!");
-                }
+                log::info!("ℹ️ Regular transaction #{} - no UTXOs selected", i + 1);
             }
-            Err(_) => {
-                // Verify fidelity UTXO still exists even when transaction failed
-                let wallet = maker.get_wallet().read().unwrap();
-                let all_utxos = wallet.get_all_utxo().unwrap();
-
-                let fidelity_utxo_still_exists = all_utxos.iter().any(|utxo| {
-                    utxo.txid == fidelity_utxo_info.0
-                        && utxo.vout == fidelity_utxo_info.1
-                        && utxo.amount == fidelity_utxo_info.2
-                });
-
-                if !fidelity_utxo_still_exists {
-                    panic!(
-                        "❌ FAILED: Fidelity bond UTXO disappeared despite transaction failure!"
-                    );
-                }
-
-                let bond = wallet.get_fidelity_bonds().get(&fidelity_index).unwrap();
-                if bond.is_spent() {
-                    panic!("❌ FAILED: Fidelity bond consumed despite transaction failure!");
-                }
+            Err(e) => {
+                log::warn!("⚠️ Regular transaction #{} failed: {:?}", i + 1, e);
             }
         }
+
+        // Check fidelity UTXO integrity after each transaction attempt
+        check_fidelity_utxo_integrity(i + 1);
     }
 
     // Test new fidelity bond uses expired UTXO - verify UTXO consumption
