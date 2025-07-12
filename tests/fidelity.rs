@@ -57,7 +57,7 @@ fn test_fidelity() {
     // Add sync and verification before starting maker server
     {
         let mut wallet = maker.get_wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
         let balances = wallet.get_balances().unwrap();
         log::info!(
             "📊 Initial wallet balance: {} sats",
@@ -233,7 +233,7 @@ fn test_fidelity() {
         let maker = maker.clone();
         move || {
             let mut maker_write_wallet = maker.get_wallet().write().unwrap();
-            maker_write_wallet.sync().unwrap();
+            maker_write_wallet.sync_and_save().unwrap();
         }
     });
 

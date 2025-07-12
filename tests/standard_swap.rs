@@ -140,12 +140,12 @@ fn test_standard_coinswap() {
     // | **Maker6102**  | 465,384 - 438,642 - 3,000 = +21,858                               |
 
     let taker_wallet = taker.get_wallet_mut();
-    taker_wallet.sync().unwrap();
+    taker_wallet.sync_and_save().unwrap();
 
     // Synchronize each maker's wallet.
     for maker in makers.iter() {
         let mut wallet = maker.get_wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
     }
 
     info!("📊 Verifying swap results");
@@ -182,7 +182,8 @@ fn test_standard_coinswap() {
     bitcoind.client.send_raw_transaction(&tx).unwrap();
     generate_blocks(bitcoind, 1);
 
-    taker_wallet_mut.sync().unwrap();
+    taker_wallet_mut.sync_and_save().unwrap();
+
     let balances = taker_wallet_mut.get_balances().unwrap();
 
     assert_eq!(balances.swap, Amount::ZERO);

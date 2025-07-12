@@ -659,8 +659,7 @@ impl Maker {
         log::info!("initializing Wallet Sync.");
         {
             let mut wallet_write = self.wallet.write()?;
-            wallet_write.sync()?;
-            wallet_write.save_to_disk()?;
+            wallet_write.sync_and_save()?;
         }
         log::info!("Completed Wallet Sync.");
         log::info!("Successfully Completed Coinswap");
