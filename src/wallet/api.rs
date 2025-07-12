@@ -356,13 +356,9 @@ impl Wallet {
         Ok(wallet)
     }
 
-    /// Update external index and saves to disk.
-    pub(crate) fn update_external_index(
-        &mut self,
-        new_external_index: u32,
-    ) -> Result<(), WalletError> {
+    /// Update external index.
+    pub(crate) fn update_external_index(&mut self, new_external_index: u32) {
         self.store.external_index = new_external_index;
-        self.save_to_disk()
     }
 
     /// Update the existing file. Error if path does not exist.
@@ -937,7 +933,7 @@ impl Wallet {
         Ok((max_index + 1) as u32)
     }
 
-    /// Gets the next external address from the HD keychain.
+    /// Gets the next external address from the HD keychain. Saves the wallet to disk
     pub fn get_next_external_address(&mut self) -> Result<Address, WalletError> {
         let descriptors = self.get_wallet_descriptors()?;
         let receive_branch_descriptor = descriptors
@@ -948,7 +944,8 @@ impl Wallet {
             Some([self.store.external_index, self.store.external_index]),
         )?[0]
             .clone();
-        self.update_external_index(self.store.external_index + 1)?;
+        self.update_external_index(self.store.external_index + 1);
+        self.save_to_disk()?;
         Ok(receive_address.assume_checked())
     }
 
