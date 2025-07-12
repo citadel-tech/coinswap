@@ -152,3 +152,19 @@ impl From<bitcoin::consensus::encode::Error> for WalletError {
         Self::Consensus(value.to_string())
     }
 }
+
+///Represents various error that can occur while sweeping incoming swapcoins
+#[derive(Debug)]
+pub enum SweepError {
+    ///Represents an Utxo error, typically occurs when a desired UTXO doesn't exists.  
+    UtxoNotFound(WalletError),
+
+    ///Represents an error which can occur while transaction creation.
+    TransactionCreationFailed(WalletError),
+
+    ///Represents an error which can occur while broadcasting transactions.
+    BroadcastFailed(WalletError),
+
+    ///Represents an error which can occur while saving wallet states.
+    SaveFailed(WalletError),
+}
