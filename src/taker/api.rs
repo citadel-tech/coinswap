@@ -265,7 +265,7 @@ impl Taker {
         };
 
         log::info!("Initializing wallet sync");
-        wallet.sync()?;
+        wallet.sync_and_save()?;
         log::info!("Completed wallet sync");
 
         Ok(Self {
@@ -1322,7 +1322,7 @@ impl Taker {
                 o_ms_pubkey1
             };
 
-            self.wallet.sync()?;
+            self.wallet.sync_and_save()?;
 
             let mut incoming_swapcoin = IncomingSwapCoin::new(
                 maker_funded_multisig_privkey,
@@ -1890,7 +1890,8 @@ impl Taker {
         let mut outgoing_infos = Vec::new();
 
         // Broadcast the Outgoing Contracts
-        self.get_wallet_mut().sync()?;
+        let wallet = self.get_wallet_mut();
+        wallet.sync_and_save()?;
 
         for outgoing in outgoings {
             let contract_tx = outgoing.get_fully_signed_contract_tx()?;
@@ -1915,7 +1916,8 @@ impl Taker {
             let timelock = outgoing.get_timelock()?;
             let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
 
-            self.get_wallet_mut().sync()?;
+            let wallet = self.get_wallet_mut();
+            wallet.sync_and_save()?;
 
             let timelock_spend =
                 self.wallet
@@ -1927,8 +1929,7 @@ impl Taker {
         let mut timelock_boardcasted = Vec::new();
 
         // Save the wallet file here before going into the expensive loop.
-        self.wallet.sync()?;
-        self.wallet.save_to_disk()?;
+        self.wallet.sync_and_save()?;
         log::info!("Wallet file synced and saved.");
 
         // Start the loop to keep checking for timelock maturity, and spend from the contract asap.
@@ -1980,8 +1981,7 @@ impl Taker {
                                 outgoing_removed.contract_tx.compute_txid()
                             );
                             log::info!("Initializing Wallet sync and save");
-                            self.wallet.sync()?;
-                            self.wallet.save_to_disk()?;
+                            self.wallet.sync_and_save()?;
                             log::info!("Completed wallet sync and save");
                         }
                     }
