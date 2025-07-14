@@ -45,6 +45,7 @@ use crate::taker::api::{
 
 use crate::wallet::SwapCoin;
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub(crate) struct ContractTransaction {
     pub(crate) tx: Transaction,
@@ -54,6 +55,7 @@ pub(crate) struct ContractTransaction {
     pub(crate) timelock_spend_broadcasted: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub(crate) struct ContractsInfo {
     pub(crate) contract_txes: Vec<ContractTransaction>,

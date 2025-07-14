@@ -73,6 +73,18 @@ pub enum WalletError {
         /// The amount of funds needed to complete the operation.
         required: u64,
     },
+
+    ///Represents an Utxo error, typically occurs when a desired UTXO doesn't exists.  
+    UtxoNotFound(String),
+
+    ///Represents an error which can occur while transaction creation.
+    TransactionCreationFailed(String),
+
+    ///Represents an error which can occur while broadcasting transactions.
+    BroadcastFailed(String),
+
+    ///Represents an error which can occur while saving wallet states.
+    SaveFailed(String),
 }
 
 impl From<std::io::Error> for WalletError {
@@ -151,20 +163,4 @@ impl From<bitcoin::consensus::encode::Error> for WalletError {
     fn from(value: bitcoin::consensus::encode::Error) -> Self {
         Self::Consensus(value.to_string())
     }
-}
-
-///Represents various error that can occur while sweeping incoming swapcoins
-#[derive(Debug)]
-pub enum SweepError {
-    ///Represents an Utxo error, typically occurs when a desired UTXO doesn't exists.  
-    UtxoNotFound(WalletError),
-
-    ///Represents an error which can occur while transaction creation.
-    TransactionCreationFailed(WalletError),
-
-    ///Represents an error which can occur while broadcasting transactions.
-    BroadcastFailed(WalletError),
-
-    ///Represents an error which can occur while saving wallet states.
-    SaveFailed(WalletError),
 }

@@ -5,10 +5,7 @@ use std::sync::{MutexGuard, PoisonError, RwLockReadGuard, RwLockWriteGuard};
 use bitcoin::secp256k1;
 
 use crate::{
-    error::NetError,
-    protocol::error::ProtocolError,
-    utill::TorError,
-    wallet::{SweepError, WalletError},
+    error::NetError, protocol::error::ProtocolError, utill::TorError, wallet::WalletError,
 };
 
 use super::MakerBehavior;
@@ -46,7 +43,7 @@ pub enum MakerError {
     /// Tor Error.
     TorError(TorError),
     ///Sweep incoming swap coins Error.
-    Sweep(SweepError),
+    Sweep(WalletError),
 }
 
 impl From<TorError> for MakerError {

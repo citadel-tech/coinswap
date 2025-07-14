@@ -183,13 +183,10 @@ fn test_standard_coinswap() {
     taker_wallet_mut.sync().unwrap();
     let balances = taker_wallet_mut.get_balances().unwrap();
 
-    assert!(
-        balances.swap == Amount::ZERO || balances.swap == Amount::from_sat(441394),
-        "swap balance mismatch",
-    );
-    assert!(
-        balances.regular == Amount::from_btc(0.14941138).unwrap()
-            || balances.regular == Amount::from_btc(0.14499088).unwrap(),
+    assert!(balances.swap == Amount::ZERO, "swap balance mismatch",);
+    assert_eq!(
+        balances.regular,
+        Amount::from_btc(0.14499088).unwrap(),
         "Regualr balance mismatch",
     );
     info!("🎉 All checks successful. Terminating integration test case");
