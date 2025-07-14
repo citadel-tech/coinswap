@@ -65,7 +65,7 @@ impl Wallet {
                 let sum: f64 = randomized.iter().sum();
                 let normalized: Vec<u64> = randomized
                     .iter()
-                    .map(|&r| ((total as f64 * r / sum).round() as u64))
+                    .map(|&r| (total as f64 * r / sum).round() as u64)
                     .collect();
 
                 // Fix rounding errors
