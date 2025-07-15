@@ -231,7 +231,14 @@ impl Wallet {
             .to_string();
 
         let wallet_birthday = rpc.get_block_count()?;
-        let store = WalletStore::init(file_name, path, network, master_key, Some(wallet_birthday))?;
+        let store = WalletStore::init(
+            file_name,
+            path,
+            network,
+            master_key,
+            Some(wallet_birthday),
+            &store_enc_material,
+        )?;
 
         Ok(Self {
             rpc,
