@@ -101,7 +101,7 @@ impl WalletStore {
         // create: creates new file if doesn't exist.
         File::create(path)?;
 
-        store.write_to_disk(path, store_enc_material).unwrap();
+        store.write_to_disk(path, store_enc_material)?;
 
         Ok(store)
     }
