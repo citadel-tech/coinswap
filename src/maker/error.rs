@@ -42,8 +42,6 @@ pub enum MakerError {
     Protocol(ProtocolError),
     /// Tor Error.
     TorError(TorError),
-    ///Sweep incoming swap coins Error.
-    Sweep(WalletError),
 }
 
 impl From<TorError> for MakerError {

@@ -1666,8 +1666,7 @@ impl Wallet {
 
         for (multisig_redeemscript, _) in completed_swapcoins {
             let utxo_info = self
-                .list_incoming_swap_coin_utxo_spend_info()
-                .map_err(|_| WalletError::UtxoNotFound("Utxo not found".to_string()))?
+                .list_incoming_swap_coin_utxo_spend_info()?
                 .into_iter()
                 .find(|(_, spend_info)| {
                     matches!(spend_info, UTXOSpendInfo::IncomingSwapCoin {
@@ -1676,35 +1675,20 @@ impl Wallet {
                 });
 
             if let Some((utxo, spend_info)) = utxo_info {
-                let internal_address = self.get_next_internal_addresses(1).map_err(|_| {
-                    WalletError::TransactionCreationFailed(
-                        "Creation of sweep transactions failed".to_string(),
-                    )
-                })?[0]
-                    .clone();
+                let internal_address = self.get_next_internal_addresses(1)?[0].clone();
                 log::info!(
                     "Sweeping incoming swap coin {} to internal address {}",
                     utxo.txid,
                     internal_address
                 );
 
-                let sweep_tx = self
-                    .spend_coins(
-                        &vec![(utxo.clone(), spend_info)],
-                        Destination::Sweep(internal_address.clone()),
-                        feerate,
-                    )
-                    .map_err(|_| {
-                        WalletError::TransactionCreationFailed(
-                            "Creation of Sweep transaction failed".to_string(),
-                        )
-                    })?;
+                let sweep_tx = self.spend_coins(
+                    &vec![(utxo.clone(), spend_info)],
+                    Destination::Sweep(internal_address.clone()),
+                    feerate,
+                )?;
 
-                let txid = self.send_tx(&sweep_tx).map_err(|_| {
-                    WalletError::BroadcastFailed(
-                        "Broadcast of sweep transactions failed".to_string(),
-                    )
-                })?;
+                let txid = self.send_tx(&sweep_tx)?;
                 swept_txids.push(txid);
 
                 let output_scriptpubkey = internal_address.script_pubkey();
@@ -1718,9 +1702,7 @@ impl Wallet {
             }
         }
 
-        self.save_to_disk()
-            .map_err(|_| WalletError::SaveFailed("Wallet could not be saved".to_string()))?;
-
+        self.save_to_disk()?;
         Ok(swept_txids)
     }
 }

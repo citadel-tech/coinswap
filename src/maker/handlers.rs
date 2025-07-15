@@ -653,6 +653,9 @@ impl Maker {
                 .expect("incoming swapcoin not found")
                 .apply_privkey(swapcoin_private_key.key)?;
         }
+        // Reset the connection state so watchtowers are not triggered.
+        let mut conn_state = self.ongoing_swap_state.lock()?;
+        *conn_state = HashMap::default();
 
         log::info!("initializing Wallet Sync.");
         {
@@ -669,8 +672,7 @@ impl Maker {
         let swept_txids = self
             .wallet
             .write()?
-            .sweep_incoming_swapcoins(MIN_FEE_RATE)
-            .map_err(MakerError::Sweep)?;
+            .sweep_incoming_swapcoins(MIN_FEE_RATE)?;
         if !swept_txids.is_empty() {
             log::info!(
                 "✅ Successfully swept {} incoming swap coins: {:?}",
@@ -678,11 +680,6 @@ impl Maker {
                 swept_txids
             );
         }
-
-        // Reset the connection state so watchtowers are not triggered.
-        let mut conn_state = self.ongoing_swap_state.lock()?;
-        *conn_state = HashMap::default();
-
         self.wallet.write()?.sync()?;
         self.wallet.write()?.save_to_disk()?;
         log::info!("✅ Maker wallet sync and save completed.");
