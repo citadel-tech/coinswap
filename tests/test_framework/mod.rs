@@ -438,7 +438,7 @@ pub fn verify_swap_results(
         log::info!(
             "🔍 DEBUG Taker - Regular: {}, Swap: {}, Spendable: {}",
             balances.regular.to_btc(),
-            balances.swept.to_btc(),
+            balances.swap.to_btc(),
             balances.spendable.to_btc()
         );
 
@@ -450,10 +450,10 @@ pub fn verify_swap_results(
         );
 
         assert!(
-            balances.swept == Amount::from_btc(0.00442714).unwrap() // Recovery via timelock
-                || balances.swept == Amount::from_btc(0.00441886).unwrap() //Successful coinswap
-                || balances.swept == Amount::from_btc(0.00441884).unwrap() //Successful coinswap (alternate transaction size: -2 sats)
-                || balances.swept == Amount::ZERO, // Unsuccessful coinswap
+            balances.swap == Amount::from_btc(0.00442714).unwrap() // Recovery via timelock
+                || balances.swap == Amount::from_btc(0.00441886).unwrap() //Successful coinswap
+                || balances.swap == Amount::from_btc(0.00441884).unwrap() //Successful coinswap (alternate transaction size: -2 sats)
+                || balances.swap == Amount::ZERO, // Unsuccessful coinswap
             "Taker swapcoin balance mismatch"
         );
 
@@ -495,7 +495,7 @@ pub fn verify_swap_results(
                 "🔍 DEBUG Maker {} - Regular: {}, Swap: {}, Contract: {}, Spendable: {}",
                 maker_index,
                 balances.regular.to_btc(),
-                balances.swept.to_btc(),
+                balances.swap.to_btc(),
                 balances.contract.to_btc(),
                 balances.spendable.to_btc()
             );
@@ -512,11 +512,11 @@ pub fn verify_swap_results(
             );
 
             assert!(
-                balances.swept == Amount::from_btc(0.00499172).unwrap() //First maker
-                    || balances.swept == Amount::from_btc(0.00464754).unwrap() //Second maker
-                    || balances.swept == Amount::from_btc(0.00442712).unwrap() // Taker swap amount
-                    || balances.swept == Amount::from_btc(0.00442714).unwrap() // Alternative transaction size (+2 sats)
-                    || balances.swept == Amount::ZERO, // No swap or funding tx missing
+                balances.swap == Amount::from_btc(0.00499172).unwrap() //First maker
+                    || balances.swap == Amount::from_btc(0.00464754).unwrap() //Second maker
+                    || balances.swap == Amount::from_btc(0.00442712).unwrap() // Taker swap amount
+                    || balances.swap == Amount::from_btc(0.00442714).unwrap() // Alternative transaction size (+2 sats)
+                    || balances.swap == Amount::ZERO, // No swap or funding tx missing
                 "Maker swapcoin balance mismatch"
             );
 

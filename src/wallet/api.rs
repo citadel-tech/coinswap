@@ -209,8 +209,6 @@ pub struct Balances {
     pub fidelity: Amount,
     /// Spendable amount in wallet (regular + swap balance).
     pub spendable: Amount,
-    ///All incoming coins swept in swaps.
-    pub swept: Amount,
 }
 
 impl Wallet {
@@ -464,18 +462,14 @@ impl Wallet {
             .iter()
             .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount);
         let swap = self
-            .list_incoming_swap_coin_utxo_spend_info()?
+            .list_swept_incoming_swap_utxos()?
             .iter()
             .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount);
         let fidelity = self
             .list_fidelity_spend_info()?
             .iter()
             .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount);
-        let swept = self
-            .list_swept_incoming_swap_utxos()?
-            .iter()
-            .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount);
-        let spendable = regular + swept;
+        let spendable = regular + swap;
 
         Ok(Balances {
             regular,
@@ -483,7 +477,6 @@ impl Wallet {
             contract,
             fidelity,
             spendable,
-            swept,
         })
     }
 

@@ -151,7 +151,7 @@ fn multi_taker_single_maker_swap() {
                 let wallet = maker.get_wallet().read().unwrap();
                 let balances = wallet.get_balances().unwrap();
                 assert!(
-                    balances.spendable == balances.regular + balances.swept,
+                    balances.spendable == balances.regular + balances.swap,
                     "Maker balances mismatch"
                 );
                 let balance_diff = balances.spendable.to_sat() - org_spend_balance.to_sat();
