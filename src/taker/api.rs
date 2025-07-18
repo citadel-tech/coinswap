@@ -1722,7 +1722,6 @@ impl Taker {
             ret
         })?;
         log::info!("===> PrivateKeyHandover | {maker_address}");
-
         send_message_with_prefix(
             &mut socket,
             &TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {

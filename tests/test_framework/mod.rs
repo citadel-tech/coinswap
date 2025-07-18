@@ -449,6 +449,7 @@ pub fn verify_swap_results(
             "Taker seed balance mismatch"
         );
 
+        //TODO:Figure out why there is +-2 sats difference in swap balance in some cases.
         assert!(
             balances.swap == Amount::from_btc(0.00442714).unwrap() // Recovery via timelock
                 || balances.swap == Amount::from_btc(0.00441886).unwrap() //Successful coinswap
@@ -510,6 +511,8 @@ pub fn verify_swap_results(
                     || balances.regular == Amount::from_btc(0.24999510).unwrap(), // Multi-taker scenario
                 "Maker seed balance mismatch"
             );
+
+            //TODO:Figure out why there is +-2 sats difference in regular and swap balance in some cases.
 
             assert!(
                 balances.swap == Amount::from_btc(0.00499172).unwrap() //First maker

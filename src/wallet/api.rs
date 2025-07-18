@@ -1680,10 +1680,16 @@ impl Wallet {
                     Destination::Sweep(internal_address.clone()),
                     feerate,
                 )?;
-
                 let txid = self.send_tx(&sweep_tx)?;
-                swept_txids.push(txid);
 
+                self.remove_incoming_swapcoin(&multisig_redeemscript)?;
+                log::info!("Successfully removed incoming swaps coins");
+
+                if self.rpc.get_raw_transaction_info(&txid, None).is_ok() {
+                    swept_txids.push(txid);
+                } else {
+                    log::warn!("Sweep transaction not confirmed, txid: {txid}");
+                }
                 let output_scriptpubkey = internal_address.script_pubkey();
                 self.store
                     .swept_incoming_swapcoins
@@ -1694,7 +1700,6 @@ impl Wallet {
                 log::warn!("Could not find UTXO for completed incoming swap coin");
             }
         }
-
         self.save_to_disk()?;
         Ok(swept_txids)
     }

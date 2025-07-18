@@ -184,8 +184,7 @@ fn test_standard_coinswap() {
     let balances = taker_wallet_mut.get_balances().unwrap();
 
     assert!(
-        balances.swap == Amount::ZERO //unsuccessful coinswap case(abort case)
-         || balances.swap == Amount::from_sat(441394), //successful coinswap
+        balances.swap == Amount::from_sat(441394),
         "swap balance mismatch",
     );
     assert_eq!(
