@@ -73,18 +73,6 @@ pub enum WalletError {
         /// The amount of funds needed to complete the operation.
         required: u64,
     },
-
-    ///Represents an Utxo error, typically occurs when a desired UTXO doesn't exists.  
-    UtxoNotFound(String),
-
-    ///Represents an error which can occur while transaction creation.
-    TransactionCreationFailed(String),
-
-    ///Represents an error which can occur while broadcasting transactions.
-    BroadcastFailed(String),
-
-    ///Represents an error which can occur while saving wallet states.
-    SaveFailed(String),
 }
 
 impl From<std::io::Error> for WalletError {

@@ -503,8 +503,10 @@ pub fn verify_swap_results(
 
             assert!(
                 balances.regular == Amount::from_btc(0.14555884).unwrap() // First maker
-                    || balances.regular == Amount::from_btc(0.14533014).unwrap() // Second maker
-                    || balances.regular == Amount::from_btc(0.14999508).unwrap() // No spending
+                || balances.regular == Amount::from_btc(0.14533014).unwrap() // Second maker
+                || balances.regular == Amount::from_btc(0.14999508).unwrap() // No spending
+
+                //TODO:Figure out why there is +-2 sats difference in regular balance in these cases.
                     || balances.regular == Amount::from_btc(0.14999510).unwrap() // No spending variant (alternate transaction size +2 sats)
                     || balances.regular == Amount::from_btc(0.14533016).unwrap() // maker alternative transaction size (+2 sats)
                     || balances.regular == Amount::from_btc(0.14555886).unwrap() // maker alternative transaction size (+2 sats)
@@ -512,11 +514,11 @@ pub fn verify_swap_results(
                 "Maker seed balance mismatch"
             );
 
-            //TODO:Figure out why there is +-2 sats difference in regular and swap balance in some cases.
-
             assert!(
                 balances.swap == Amount::from_btc(0.00499172).unwrap() //First maker
-                    || balances.swap == Amount::from_btc(0.00464754).unwrap() //Second maker
+                || balances.swap == Amount::from_btc(0.00464754).unwrap() //Second maker
+
+                //TODO:Figure out why there is +-2 sats difference in swap balance in these cases.
                     || balances.swap == Amount::from_btc(0.00442712).unwrap() // Taker swap amount
                     || balances.swap == Amount::from_btc(0.00442714).unwrap() // Alternative transaction size (+2 sats)
                     || balances.swap == Amount::ZERO, // No swap or funding tx missing
