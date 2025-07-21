@@ -29,17 +29,17 @@ use std::path::Path;
 
 use crate::{
     protocol::contract,
-    utill,
     utill::{
-        compute_checksum, generate_keypair, get_hd_path_from_descriptor,
-        redeemscript_to_scriptpubkey,
+        compute_checksum, generate_keypair, get_hd_path_from_descriptor, prompt_password,
+        redeemscript_to_scriptpubkey, MIN_FEE_RATE,
     },
+    wallet::split_utxos::MAX_SPLITS,
 };
 
 use rust_coinselect::{
     selectcoin::select_coin,
     types::{CoinSelectionOpt, ExcessStrategy, OutputGroup},
-    utils::{calculate_base_weight_btc, calculate_fee},
+    utils::calculate_fee,
 };
 
 use super::{
@@ -309,9 +309,7 @@ impl Wallet {
         let wallet_enc_password = if cfg!(feature = "integration-test") || cfg!(test) {
             "integration-test".to_string()
         } else {
-            utill::prompt_password(
-                "Enter wallet encryption passphrase (empty for no encryption): ",
-            )?
+            prompt_password("Enter wallet encryption passphrase (empty for no encryption): ")?
         };
 
         // If user entered empty password, no encryption key material is created.
@@ -1319,20 +1317,30 @@ impl Wallet {
             })
             .collect::<Vec<_>>();
 
+        // VERSION_SIZE: 4 bytes - 16 WU
+        // SEGWIT_MARKER_SIZE: 2 bytes - 2 WU
+        // NUM_INPUTS_SIZE: 1 byte - 4 WU
+        // NUM_OUTPUTS_SIZE: 1 byte - 4 WU
+        // NUM_WITNESS_SIZE: 1 byte - 1 WU
+        // LOCK_TIME_SIZE: 4 bytes - 16 WU
+        // OUTPUT_VALUE_SIZE: variable
+
+        // Total default: (16 + 2 + 4 + 4 + 1 + 16 = 43 WU + variable) WU
+        // Source - https://docs.rs/bitcoin/latest/src/bitcoin/blockdata/transaction.rs.html#599-602
+        let base_weight = 43 + MAX_SPLITS as u64 * (target_weight.to_wu() + change_weight.to_wu());
+
         // Create coin selection options
         let coin_selection_option = CoinSelectionOpt {
             target_value: amount.to_sat(),
             target_feerate: feerate as f32,
             long_term_feerate: Some(LONG_TERM_FEERATE),
-            min_absolute_fee: 500,
-            base_weight: calculate_base_weight_btc(
-                target_weight.to_wu() + change_weight.to_wu(), // TODO: Currently we are assuming one target and one change. This is not true for the new split utxo algo. Change this accordingly.
-            ),
+            min_absolute_fee: MIN_FEE_RATE as u64 * base_weight,
+            base_weight,
             change_weight: change_weight.to_wu(),
             change_cost: cost_of_change,
             avg_input_weight,
             avg_output_weight,
-            min_change_value: 100,
+            min_change_value: 294, // Minimal NonDust value: 294
             excess_strategy: ExcessStrategy::ToChange,
         };
 

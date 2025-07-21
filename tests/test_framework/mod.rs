@@ -471,6 +471,7 @@ pub fn verify_swap_results(
 
         assert!(
             balance_diff == Amount::from_sat(58200) // Successful coinswap
+                || balance_diff == Amount::from_sat(58198)
                 || balance_diff == Amount::from_sat(2184) // Recovery via timelock
                 || balance_diff == Amount::from_sat(503000) // Spent swapcoin
                 || balance_diff == Amount::from_sat(2574) // Recovery via timelock (new fee system)
