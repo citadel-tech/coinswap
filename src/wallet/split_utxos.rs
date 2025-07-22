@@ -13,7 +13,7 @@ struct FeeOptimizationResult {
 }
 
 const MIN_TARGET_CHUNKS: usize = 2;
-const MAX_SPLITS: usize = 5;
+pub const MAX_SPLITS: usize = 5;
 
 impl Wallet {
     /// Performs simple fee optimization based on the number of selected inputs and target chunks, change chunks
@@ -27,10 +27,22 @@ impl Wallet {
         const INPUT_W: f64 = 2.0;
         const OUTPUT_TARGET_W: f64 = 1.0;
         const OUTPUT_CHANGE_W: f64 = 0.75;
+
         if target_chunks.len() == 1 && change_chunks.len() == 1 {
             // Single output, no fee optimization needed
             return f64::MAX;
         }
+
+        let mean_target = target_chunks.iter().sum::<u64>() / target_chunks.len() as u64;
+        let mean_change = change_chunks.iter().sum::<u64>() / change_chunks.len() as u64;
+        let diff = mean_target.abs_diff(mean_change);
+        let max_avg = mean_target.max(mean_change) as f64;
+        let relative_diff = diff as f64 / max_avg;
+        if relative_diff > 0.15 {
+            // If the relative difference is too high, return a very high score
+            return f64::MAX;
+        }
+
         selected_inputs.len() as f64 * INPUT_W
             + target_chunks.len() as f64 * OUTPUT_TARGET_W
             + change_chunks.len() as f64 * OUTPUT_CHANGE_W
@@ -116,30 +128,30 @@ impl Wallet {
         );
 
         // Test all possible split combinations
-        'outer: for n_t in 1..=max_splits {
-            for n_s in 1..=max_splits {
-                let avg_t = target / n_t as u64;
-                let avg_s = target_change / n_s as u64;
-                let diff = avg_t.abs_diff(avg_s);
-                let max_avg = avg_t.max(avg_s) as f64;
+        for num_target_chunks in 1..=max_splits {
+            for num_change_chunks in 1..=max_splits {
+                let mean_target = target / num_target_chunks as u64;
+                let mean_change = target_change / num_change_chunks as u64;
+                let diff = mean_target.abs_diff(mean_change);
+                let max_avg = mean_target.max(mean_change) as f64;
                 let relative_diff = diff as f64 / max_avg;
 
                 // Update best if we find a better split
                 if relative_diff < resulting_splits.4 {
                     resulting_splits = (
-                        n_t,
-                        n_s,
-                        avg_t,
-                        avg_s,
+                        num_target_chunks,
+                        num_change_chunks,
+                        mean_target,
+                        mean_change,
                         relative_diff,
-                        vec![avg_t; n_t],
-                        vec![avg_s; n_s],
+                        vec![mean_target; num_target_chunks],
+                        vec![mean_change; num_change_chunks],
                     );
                 }
 
                 // Early exit if we meet privacy threshold
                 if relative_diff <= 0.15 {
-                    break 'outer;
+                    break;
                 }
             }
         }
