@@ -544,7 +544,7 @@ fn test_liquidity_threshold(maker_cli: &MakerCli) {
 
     println!("External address: {external_address}");
 
-    let amount_to_spend = initial_balance - 2500;
+    let amount_to_spend = initial_balance - 3500;
     let tx_fee_rate = 2;
 
     println!("Amount to spend: {amount_to_spend} sats");
