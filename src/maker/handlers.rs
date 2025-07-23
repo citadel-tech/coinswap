@@ -206,6 +206,8 @@ pub(crate) fn handle_message(
             if let TakerToMakerMessage::RespPrivKeyHandover(message) = message {
                 // Nothing to send. Successfully completed swap
                 maker.handle_private_key_handover(message)?;
+                //Successfully sweep the incoming swapcoins.
+                maker.sweep_after_successful_coinswap()?;
                 None
             } else {
                 return Err(MakerError::General("Expected privatekey handover"));
@@ -651,19 +653,36 @@ impl Maker {
                 .expect("incoming swapcoin not found")
                 .apply_privkey(swapcoin_private_key.key)?;
         }
-
         // Reset the connection state so watchtowers are not triggered.
         let mut conn_state = self.ongoing_swap_state.lock()?;
         *conn_state = HashMap::default();
 
         log::info!("initializing Wallet Sync.");
         {
-            let mut wallet_write = self.wallet.write()?;
-            wallet_write.sync()?;
+            let wallet_write = self.wallet.write()?;
             wallet_write.save_to_disk()?;
         }
         log::info!("Completed Wallet Sync.");
         log::info!("Successfully Completed Coinswap");
+        Ok(())
+    }
+
+    ///sweep incoming swapcoins after successful coinswap
+    pub fn sweep_after_successful_coinswap(&self) -> Result<(), MakerError> {
+        let swept_txids = self
+            .wallet
+            .write()?
+            .sweep_incoming_swapcoins(MIN_FEE_RATE)?;
+        if !swept_txids.is_empty() {
+            log::info!(
+                "✅ Successfully swept {} incoming swap coins: {:?}",
+                swept_txids.len(),
+                swept_txids
+            );
+        }
+        self.wallet.write()?.sync()?;
+        self.wallet.write()?.save_to_disk()?;
+        log::info!("✅ Maker wallet sync and save completed.");
         Ok(())
     }
 }

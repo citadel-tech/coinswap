@@ -46,7 +46,6 @@ use crate::wallet::SwapCoin;
 
 /// Make a handshake with a maker.
 /// Ensures that the Maker is alive and responding.
-///
 // In the future, handshake can be used to find protocol compatibility across multiple versions.
 pub(crate) fn handshake_maker(socket: &mut TcpStream) -> Result<(), TakerError> {
     send_message_with_prefix(

@@ -163,9 +163,7 @@ fn test_standard_coinswap() {
     info!("💸 Checking spend from swapcoins");
 
     let taker_wallet_mut = taker.get_wallet_mut();
-    let swap_coins = taker_wallet_mut
-        .list_incoming_swap_coin_utxo_spend_info()
-        .unwrap();
+    let swap_coins = taker_wallet_mut.list_swept_incoming_swap_utxos().unwrap();
 
     let addr = taker_wallet_mut.get_next_internal_addresses(1).unwrap()[0].to_owned();
 
@@ -185,9 +183,15 @@ fn test_standard_coinswap() {
     taker_wallet_mut.sync().unwrap();
     let balances = taker_wallet_mut.get_balances().unwrap();
 
-    assert_eq!(balances.swap, Amount::ZERO);
-    assert_eq!(balances.regular, Amount::from_btc(0.14941138).unwrap());
-
+    assert!(
+        balances.swap == Amount::from_sat(441394),
+        "swap balance mismatch",
+    );
+    assert_eq!(
+        balances.regular,
+        Amount::from_btc(0.14499088).unwrap(),
+        "Regualr balance mismatch",
+    );
     info!("🎉 All checks successful. Terminating integration test case");
 
     test_framework.stop();

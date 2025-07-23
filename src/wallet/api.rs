@@ -12,6 +12,8 @@ use aes_gcm::{
     Aes256Gcm,
 };
 
+use crate::wallet::Destination;
+
 use bip39::Mnemonic;
 use bitcoin::{
     bip32::{ChildNumber, DerivationPath, Xpriv, Xpub},
@@ -151,6 +153,12 @@ pub enum UTXOSpendInfo {
     },
     /// Fidelity Bond Coin
     FidelityBondCoin { index: u32, input_value: Amount },
+    ///Swept incoming swap coin
+    SweptCoin {
+        path: String,
+        input_value: Amount,
+        original_multisig_redeemscript: ScriptBuf,
+    },
 }
 
 impl UTXOSpendInfo {
@@ -160,7 +168,7 @@ impl UTXOSpendInfo {
         const FIDELITY_BOND_WITNESS_SIZE: usize = 115;
         const CONTRACT_TX_WITNESS_SIZE: usize = 179;
         match *self {
-            Self::SeedCoin { .. } => P2PWPKH_WITNESS_SIZE,
+            Self::SeedCoin { .. } | Self::SweptCoin { .. } => P2PWPKH_WITNESS_SIZE,
             Self::IncomingSwapCoin { .. } | Self::OutgoingSwapCoin { .. } => {
                 P2WSH_MULTISIG_2OF2_WITNESS_SIZE
             }
@@ -175,7 +183,10 @@ impl UTXOSpendInfo {
 impl Display for UTXOSpendInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self {
-            UTXOSpendInfo::SeedCoin { .. } => write!(f, "regular"),
+            UTXOSpendInfo::SeedCoin { .. } => {
+                write!(f, "regular")
+            }
+            UTXOSpendInfo::SweptCoin { .. } => write!(f, "swept-incoming-swap"),
             UTXOSpendInfo::FidelityBondCoin { .. } => write!(f, "fidelity-bond"),
             UTXOSpendInfo::HashlockContract { .. } => write!(f, "hashlock-contract"),
             UTXOSpendInfo::TimelockContract { .. } => write!(f, "timelock-contract"),
@@ -449,7 +460,7 @@ impl Wallet {
             .iter()
             .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount);
         let swap = self
-            .list_incoming_swap_coin_utxo_spend_info()?
+            .list_swept_incoming_swap_utxos()?
             .iter()
             .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount);
         let fidelity = self
@@ -644,6 +655,30 @@ impl Wallet {
         })
     }
 
+    /// Check if a UTXO is a swept incoming swap coin based on ScriptPubkey
+    fn check_if_swept_incoming_swapcoin(
+        &self,
+        utxo: &ListUnspentResultEntry,
+    ) -> Option<UTXOSpendInfo> {
+        if let Some(original_multisig_redeemscript) = self
+            .store
+            .swept_incoming_swapcoins
+            .get(&utxo.script_pub_key)
+        {
+            if let Some(descriptor) = &utxo.descriptor {
+                if let Some((_, addr_type, index)) = get_hd_path_from_descriptor(descriptor) {
+                    let path = format!("m/{addr_type}/{index}");
+                    return Some(UTXOSpendInfo::SweptCoin {
+                        input_value: utxo.amount,
+                        path,
+                        original_multisig_redeemscript: original_multisig_redeemscript.clone(),
+                    });
+                }
+            }
+        }
+        None
+    }
+
     /// Checks if a UTXO belongs to live contracts, and then returns corresponding UTXOSpendInfo
     /// ### Note
     /// This is a costly search and should be used with care.
@@ -684,6 +719,12 @@ impl Wallet {
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Result<Option<UTXOSpendInfo>, WalletError> {
+        // First check if it's a swept incoming swap coin
+        if let Some(swept_info) = self.check_if_swept_incoming_swapcoin(utxo) {
+            return Ok(Some(swept_info));
+        }
+
+        // Existing logic for other UTXO types
         if let Some(descriptor) = &utxo.descriptor {
             // Descriptor logic here
             if let Some(ret) = get_hd_path_from_descriptor(descriptor) {
@@ -858,6 +899,18 @@ impl Wallet {
         let filtered_utxos: Vec<_> = all_valid_utxo
             .iter()
             .filter(|x| matches!(x.1, UTXOSpendInfo::IncomingSwapCoin { .. }))
+            .cloned()
+            .collect();
+        Ok(filtered_utxos)
+    }
+    /// Lists all swept incoming swapcoin UTXOs along with their [UTXOSpendInfo].
+    pub fn list_swept_incoming_swap_utxos(
+        &self,
+    ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+        let all_valid_utxo = self.list_all_utxo_spend_info()?;
+        let filtered_utxos: Vec<_> = all_valid_utxo
+            .iter()
+            .filter(|(_, spend_info)| matches!(spend_info, UTXOSpendInfo::SweptCoin { .. }))
             .cloned()
             .collect();
         Ok(filtered_utxos)
@@ -1080,7 +1133,10 @@ impl Wallet {
                         .expect("incoming swapcoin missing")
                         .sign_transaction_input(ix, &tx_clone, input, &multisig_redeemscript)?;
                 }
-                UTXOSpendInfo::SeedCoin { path, input_value } => {
+                UTXOSpendInfo::SeedCoin { path, input_value }
+                | UTXOSpendInfo::SweptCoin {
+                    path, input_value, ..
+                } => {
                     let privkey = master_private_key
                         .derive_priv(&secp, &DerivationPath::from_str(&path)?)?
                         .private_key;
@@ -1579,5 +1635,96 @@ impl Wallet {
     /// Uses internal RPC client to broadcast a transaction
     pub fn send_tx(&self, tx: &Transaction) -> Result<Txid, WalletError> {
         Ok(self.rpc.send_raw_transaction(tx)?)
+    }
+
+    pub fn sweep_incoming_swapcoins(&mut self, feerate: f64) -> Result<Vec<Txid>, WalletError> {
+        let mut swept_txids = Vec::new();
+
+        let completed_swapcoins: Vec<_> = self
+            .store
+            .incoming_swapcoins
+            .iter()
+            .filter_map(|(redeemscript, swapcoin)| {
+                if swapcoin.other_privkey.is_some() {
+                    Some((redeemscript.clone(), swapcoin.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if completed_swapcoins.is_empty() {
+            log::info!("No completed incoming swap coins to sweep");
+            return Ok(swept_txids);
+        }
+
+        log::info!(
+            "Sweeping {} completed incoming swap coins",
+            completed_swapcoins.len()
+        );
+
+        self.sync_no_fail();
+
+        for (multisig_redeemscript, _) in completed_swapcoins {
+            let utxo_info = self
+                .list_incoming_swap_coin_utxo_spend_info()?
+                .into_iter()
+                .find(|(_, spend_info)| {
+                    matches!(spend_info, UTXOSpendInfo::IncomingSwapCoin {
+                        multisig_redeemscript: rs
+                    } if rs == &multisig_redeemscript)
+                });
+
+            if let Some((utxo, spend_info)) = utxo_info {
+                let internal_address = self.get_next_internal_addresses(1)?[0].clone();
+                log::info!(
+                    "Sweeping incoming swap coin {} to internal address {}",
+                    utxo.txid,
+                    internal_address
+                );
+                let sweep_tx = self.spend_coins(
+                    &vec![(utxo.clone(), spend_info)],
+                    Destination::Sweep(internal_address.clone()),
+                    feerate,
+                )?;
+                let txid = self.send_tx(&sweep_tx)?;
+                let conf_height = self.wait_for_sweep_tx_confirmation(txid)?;
+                log::info!("Sweep Transaction {txid} confirmed at blockheight: {conf_height}");
+
+                swept_txids.push(txid);
+                log::info!("Successfully swept incoming swap coin, txid: {txid}");
+                self.remove_incoming_swapcoin(&multisig_redeemscript)?;
+                log::info!("Successfully removed incoming swaps coins");
+
+                let output_scriptpubkey = internal_address.script_pubkey();
+                self.store
+                    .swept_incoming_swapcoins
+                    .insert(output_scriptpubkey, multisig_redeemscript.clone());
+            } else {
+                log::warn!("Could not find UTXO for completed incoming swap coin");
+            }
+        }
+        self.save_to_disk()?;
+        Ok(swept_txids)
+    }
+
+    /// Waits for a sweep transaction to confirm and returns its block height.
+    pub fn wait_for_sweep_tx_confirmation(&self, txid: Txid) -> Result<u32, WalletError> {
+        let sleep_increment = 10;
+        let mut sleep_multiplier = 0;
+
+        let ht = loop {
+            sleep_multiplier += 1;
+            let get_tx_result = self.rpc.get_transaction(&txid, None)?;
+            if let Some(ht) = get_tx_result.info.blockheight {
+                break ht;
+            } else {
+                log::info!("Sweep Transaction {txid} seen in mempool, waiting for confirmation.");
+                let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60); // Caps at 10 minutes
+                log::info!("Next sync in {total_sleep:?} secs");
+                std::thread::sleep(std::time::Duration::from_secs(total_sleep));
+            }
+        };
+        Ok(ht)
     }
 }
