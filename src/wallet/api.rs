@@ -1153,8 +1153,16 @@ impl Wallet {
     /// - Change output costs
     /// - Privacy considerations
     ///
+    /// Implements mandatory address grouping with strategic selection:
+    /// 1. Groups UTXOs by address
+    /// 2. Tries single group optimization (finds smallest group that covers target+fees)
+    /// 3. Falls back to multi-group selection with privacy-focused sorting
+    /// 4. Uses all-or-nothing principle (always selects entire groups)
+    /// 5. Runs normal coin selection on remaining UTXOs if needed
+    ///
     /// # Arguments
     /// * `amount` - The target amount to select coins for
+    /// * `feerate` - Fee rate in sats/vbyte
     ///
     /// # Returns
     /// * `Ok(Vec<(ListUnspentResultEntry, UTXOSpendInfo)>)` - Selected UTXOs and their spend info
@@ -1170,7 +1178,7 @@ impl Wallet {
         amount: Amount,
         feerate: f64,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        // P2PWKH Breaks down as:
+        // P2WPKH Breaks down as:
         // Non-witness data (multiplied by 4):
         // - Previous txid (32 bytes) * 4     = 128 WU
         // - Prev vout (4 bytes) * 4          = 16 WU
@@ -1195,6 +1203,7 @@ impl Wallet {
         // - 20-byte pubkey hash
         // Total: 22 bytes
         const P2WPKH_SPK_SIZE: usize = 22;
+        const LONG_TERM_FEERATE: f32 = 10.0;
 
         // Get spendable UTXOs (regular coins and incoming swap coins)
         let mut unspents = self.list_descriptor_utxo_spend_info()?;
@@ -1227,10 +1236,6 @@ impl Wallet {
             "Fidelity, Outgoing Swapcoins, Hashlock and Timelock coins are not included in coin selection"
         );
 
-        // TOOD: Move all the static calculations at the top  of the function.
-        // Prepare CoinSelectionOpt: Calculate required weights and costs, additional metrics
-        const LONG_TERM_FEERATE: f32 = 10.0;
-        // TODO: Turn it into a contsant value.
         let change_weight = Weight::from_vb_unwrap(
             (Amount::SIZE // 8 bytes for amount
                     + VarInt::from(P2WPKH_SPK_SIZE).size() // VarInt size for script_pubkey
@@ -1255,55 +1260,132 @@ impl Wallet {
         let target_weight = Weight::from_vb_unwrap(
             (Amount::SIZE + VarInt::from(P2WPKH_SPK_SIZE).size() + P2WPKH_SPK_SIZE) as u64,
         );
-        let avg_output_weight = (change_weight.to_wu() + (target_weight.to_wu())) / 2;
+        let avg_output_weight = (change_weight.to_wu() + target_weight.to_wu()) / 2;
         let avg_input_weight = unspents
             .iter()
             .map(|(_, spend_info)| {
                 // Base weight of the input (OutPoint + sequence + empty script_sig)
-                let base_weight = 32 + 4 + 4 + 1; // 32 bytes for OutPoint, 4 bytes for sequence,4 bytes for vout, 1 byte for empty script_sig
+                let input_base_weight = 32 + 4 + 4 + 1; // OutPoint + sequence + vout + empty script_sig
                 let witness_weight = spend_info.estimate_witness_size();
-                base_weight + witness_weight as u64
+                input_base_weight + witness_weight as u64
             })
             .sum::<u64>()
             / unspents.len() as u64;
 
-        // Note: Consider more sophisticated grouping policies in the future
-        // Group UTXOs by address
-        // TODO: Change this to HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>
-        let mut address_groups: Vec<(String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>)> =
-            Vec::new();
+        let target_amount = amount.to_sat();
 
-        for (utxo, spend_info) in &unspents {
+        // Helper function to estimate fees for a group of UTXOs
+        let estimate_group_fee =
+            |group: &[(ListUnspentResultEntry, UTXOSpendInfo)]| -> Result<u64, WalletError> {
+                let input_weight: u64 = group
+                    .iter()
+                    .map(|(_, spend_info)| {
+                        let input_base_weight = 32 + 4 + 4 + 1; // OutPoint + sequence + vout + empty script_sig
+                        input_base_weight + spend_info.estimate_witness_size() as u64
+                    })
+                    .sum();
+
+                // Transaction weight: base + inputs + one target output (assume no change for grouping decisions)
+                let tx_weight = 43 + input_weight + target_weight.to_wu();
+                let fee = calculate_fee(tx_weight / 4, feerate as f32).map_err(|e| {
+                    WalletError::General(format!("Group fee calculation failed: {e}"))
+                })?;
+                Ok(fee)
+            };
+
+        // Smart Address Grouping
+        let mut address_groups: HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
+            HashMap::new();
+        for (utxo, spend_info) in unspents {
             let address_str = utxo
                 .address
                 .as_ref()
                 .map(|addr| addr.clone().assume_checked().to_string())
                 .unwrap_or_else(|| format!("script_{}", utxo.script_pub_key));
-
-            match address_groups
-                .iter_mut()
-                .find(|(addr, _)| addr == &address_str)
-            {
-                Some(group) => group.1.push((utxo.clone(), spend_info.clone())),
-                None => {
-                    address_groups.push((address_str, vec![(utxo.clone(), spend_info.clone())]))
-                }
-            }
+            address_groups
+                .entry(address_str)
+                .or_default()
+                .push((utxo, spend_info));
         }
 
-        let grouped_utxos = address_groups
-            .into_iter()
-            .map(|(_, utxos)| utxos)
-            .collect::<Vec<_>>();
+        let (mut grouped_addresses, single_addresses): (Vec<_>, Vec<_>) = address_groups
+            .into_values()
+            .partition(|group| group.len() > 1);
 
-        let output_groups = grouped_utxos
+        // Sort for single group optimization
+        grouped_addresses.sort_by_key(|group| {
+            group
+                .iter()
+                .map(|(u, _): &(ListUnspentResultEntry, UTXOSpendInfo)| u.amount.to_sat())
+                .sum::<u64>()
+        });
+
+        // First, try to find single group that covers target+fees
+        if let Some(single_group) = grouped_addresses.iter().find(|group| {
+            let group_total: u64 = group
+                .iter()
+                .map(|(u, _): &(ListUnspentResultEntry, UTXOSpendInfo)| u.amount.to_sat())
+                .sum();
+            let estimated_fee = estimate_group_fee(group).unwrap_or(0);
+            group_total >= target_amount + estimated_fee
+        }) {
+            let group_total: u64 = single_group
+                .iter()
+                .map(|(u, _): &(ListUnspentResultEntry, UTXOSpendInfo)| u.amount.to_sat())
+                .sum();
+            let estimated_fee = estimate_group_fee(single_group).unwrap_or(0);
+            log::info!("Address grouping: Single group solution - {} UTXOs (total: {} sats, target+fee: {} sats)", 
+                single_group.len(), group_total, target_amount + estimated_fee);
+            return Ok(single_group.clone());
+        }
+
+        // Multi-group selection: accumulate groups until target+fees is met
+        let mut pre_selected_utxos = Vec::new();
+        let mut pre_selected_total = 0u64;
+        let mut all_groups = single_addresses;
+
+        for group in grouped_addresses {
+            let group_total: u64 = group
+                .iter()
+                .map(|(u, _): &(ListUnspentResultEntry, UTXOSpendInfo)| u.amount.to_sat())
+                .sum();
+
+            // Check if we need more funds
+            let current_estimated_fee = if pre_selected_utxos.is_empty() {
+                0
+            } else {
+                estimate_group_fee(&pre_selected_utxos).unwrap_or(0)
+            };
+
+            if pre_selected_total < target_amount + current_estimated_fee {
+                log::info!(
+                    "Address grouping: Pre-selecting {} UTXOs (total: {} sats)",
+                    group.len(),
+                    group_total
+                );
+                pre_selected_total += group_total;
+                pre_selected_utxos.extend(group.iter().cloned());
+            }
+            all_groups.push(group);
+        }
+
+        // Check if pre-selected groups cover target+fees
+        let final_estimated_fee = estimate_group_fee(&pre_selected_utxos).unwrap_or(0);
+        if pre_selected_total >= target_amount + final_estimated_fee {
+            log::info!("Address grouping covers target+fees - returning {} pre-selected UTXOs (total: {} sats, target+fee: {} sats)", 
+                pre_selected_utxos.len(), pre_selected_total, target_amount + final_estimated_fee);
+            return Ok(pre_selected_utxos);
+        }
+
+        // Run coin selection on all groups
+        let output_groups = all_groups
             .iter()
-            .map(|utxos_in_group| {
-                let total_value: u64 = utxos_in_group
+            .map(|group| {
+                let total_value: u64 = group
                     .iter()
-                    .map(|(utxo, _)| utxo.amount.to_sat())
+                    .map(|(utxo, _): &(ListUnspentResultEntry, UTXOSpendInfo)| utxo.amount.to_sat())
                     .sum();
-                let total_weight: u64 = utxos_in_group
+                let total_weight: u64 = group
                     .iter()
                     .map(|(_, spend_info)| 36 + spend_info.estimate_witness_size() as u64)
                     .sum();
@@ -1311,7 +1393,7 @@ impl Wallet {
                 OutputGroup {
                     value: total_value,
                     weight: total_weight,
-                    input_count: utxos_in_group.len(),
+                    input_count: group.len(),
                     creation_sequence: None,
                 }
             })
@@ -1327,15 +1409,15 @@ impl Wallet {
 
         // Total default: (16 + 2 + 4 + 4 + 1 + 16 = 43 WU + variable) WU
         // Source - https://docs.rs/bitcoin/latest/src/bitcoin/blockdata/transaction.rs.html#599-602
-        let base_weight = 43 + MAX_SPLITS as u64 * (target_weight.to_wu() + change_weight.to_wu());
-
+        let tx_base_weight =
+            43 + MAX_SPLITS as u64 * (target_weight.to_wu() + change_weight.to_wu());
         // Create coin selection options
         let coin_selection_option = CoinSelectionOpt {
             target_value: amount.to_sat(),
             target_feerate: feerate as f32,
             long_term_feerate: Some(LONG_TERM_FEERATE),
-            min_absolute_fee: MIN_FEE_RATE as u64 * base_weight,
-            base_weight,
+            min_absolute_fee: MIN_FEE_RATE as u64 * tx_base_weight,
+            base_weight: tx_base_weight,
             change_weight: change_weight.to_wu(),
             change_cost: cost_of_change,
             avg_input_weight,
@@ -1349,13 +1431,17 @@ impl Wallet {
                 let selected_utxos = selection
                     .selected_inputs
                     .iter()
-                    .flat_map(|&group_index| grouped_utxos[group_index].clone())
+                    .flat_map(|&group_index| all_groups[group_index].clone())
                     .collect::<Vec<_>>();
-                log::info!("Coinselection concluded with {:?}", selection.waste);
+                log::info!("Coin selection concluded with {:?}", selection.waste);
                 Ok(selected_utxos)
             }
             Err(e) if e.to_string().contains("The Inputs funds are insufficient") => {
-                let available = unspents.iter().map(|(u, _)| u.amount.to_sat()).sum();
+                let available = all_groups
+                    .iter()
+                    .flatten()
+                    .map(|(u, _): &(ListUnspentResultEntry, UTXOSpendInfo)| u.amount.to_sat())
+                    .sum();
                 Err(WalletError::InsufficientFund {
                     available,
                     required: amount.to_sat(),
