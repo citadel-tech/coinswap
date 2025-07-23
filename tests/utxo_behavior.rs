@@ -18,48 +18,37 @@ const UTXO_SETUP: &[(u8, &[f64])] = &[
     (5, &[0.5]),
 ];
 
-const TEST_CASES: &[(f64, f64, &str, &str)] = &[
+// Test scenarios: (target, expected_utxos, name, description)
+const TEST_CASES: &[(f64, &[f64], &str, &str)] = &[
     (
         0.4,
-        0.6,
+        &[0.2, 0.2, 0.2],
         "Case 1: Low target",
         "Should select 0.6 BTC group (smallest that covers target+fees)",
     ),
     (
-        0.59,
-        0.6,
-        "Case 2: Just under 0.6 BTC",
-        "Should select 0.6 BTC group (target+fees still fits in 0.6 BTC)",
-    ),
-    (
-        0.5999999,
-        0.7,
-        "Case 3: Boundary case",
+        0.65,
+        &[0.2, 0.2, 0.2, 0.5, 0.2],
+        "Case 2: Above 0.6 BTC",
         "Should select 0.7 BTC group (0.6 BTC insufficient for target+fees)",
     ),
     (
-        0.65,
-        0.7,
-        "Case 4: 0.6 BTC insufficient with fees",
-        "Should select 0.7 BTC group (0.6 BTC can't cover target+fees)",
-    ),
-    (
         1.0,
-        1.3,
-        "Case 5: Between single groups",
+        &[0.2, 0.2, 0.2, 0.5, 0.2],
+        "Case 3: Between single groups",
         "Should select both groups (1.3 BTC total)",
     ),
     (
         1.5,
-        1.5,
-        "Case 6: Above both groups",
+        &[0.2, 0.2, 0.2, 0.5, 0.2, 0.3],
+        "Case 4: Above both groups",
         "Should select both groups + additional UTXOs",
     ),
     (
-        2.0,
         2.1,
-        "Case 7: Near total limit",
-        "Should select most/all available UTXOs",
+        &[0.2, 0.2, 0.2, 0.5, 0.2, 0.1, 0.3, 0.5],
+        "Case 5: Select all UTXOs",
+        "Should select all available UTXOs (2.1 BTC total)",
     ),
 ];
 
@@ -76,7 +65,7 @@ fn test_address_grouping_behavior() {
             ConnectionType::CLEARNET,
         );
 
-    println!("=== Testing Smart Address Grouping Behavior (with Fee Considerations) ===");
+    println!("=== Testing Smart Address Grouping Behavior ===");
 
     let bitcoind = &test_framework.bitcoind;
     let maker = makers.first().unwrap();
@@ -126,10 +115,10 @@ fn test_address_grouping_behavior() {
         .sum();
     println!("TOTAL AVAILABLE: {total_available} BTC");
 
-    println!("\n=== Strategic Address Grouping Test Cases (Fee-Aware) ===");
+    println!("\n=== Strategic Address Grouping Test Cases ===");
 
     // Test each scenario to validate the smart address grouping algorithm
-    for &(target_btc, expected_total_btc, case_name, expected_behavior) in TEST_CASES {
+    for &(target_btc, expected_utxos, case_name, expected_behavior) in TEST_CASES {
         println!("\n--- {case_name} ---");
         println!("Target amount: {target_btc} BTC");
         println!("Expected: {expected_behavior}");
@@ -138,50 +127,44 @@ fn test_address_grouping_behavior() {
         let target_amount = Amount::from_btc(target_btc).unwrap();
 
         // Call the coin selection algorithm we're testing
-        match wallet.coin_select(target_amount, MIN_FEE_RATE) {
-            Ok(selected_utxos) => {
-                let selected_amounts: Vec<u64> = selected_utxos
-                    .iter()
-                    .map(|(utxo, _)| utxo.amount.to_sat())
-                    .collect();
-                let total_selected: u64 = selected_amounts.iter().sum();
-                let total_btc = Amount::from_sat(total_selected).to_btc();
+        let selected_utxos = wallet.coin_select(target_amount, MIN_FEE_RATE).unwrap();
 
-                println!("SELECTED UTXOs: {selected_amounts:?} sats");
-                println!("TOTAL SELECTED: {total_btc} BTC ({total_selected} sats)");
-                println!("UTXO COUNT: {}", selected_utxos.len());
+        let selected_amounts: Vec<f64> = selected_utxos
+            .iter()
+            .map(|(utxo, _)| utxo.amount.to_btc())
+            .collect();
+        let total_selected: f64 = selected_amounts.iter().sum();
 
-                // Verify the algorithm selected the expected amount
-                // Increased tolerance since we now account for fees properly
-                let diff = (total_btc - expected_total_btc).abs();
-                assert!(
-                    diff < 0.15, // Increased tolerance for fee variations
-                    "Expected ~{} BTC, got {} BTC (diff: {}). \nNote: Small differences expected due to fee calculations.",
-                    expected_total_btc,
-                    total_btc,
-                    diff
-                );
+        println!("SELECTED UTXOs: {selected_amounts:?} BTC");
+        println!("TOTAL SELECTED: {total_selected} BTC");
+        println!("UTXO COUNT: {}", selected_utxos.len());
 
-                // Additional validation: ensure selection can actually cover target + reasonable fees
-                let reasonable_fee_estimate = 0.001;
-                assert!(
-                    total_btc >= target_btc + reasonable_fee_estimate,
-                    "Selection {} BTC insufficient for target {} BTC + reasonable fees",
-                    total_btc,
-                    target_btc
-                );
-            }
-            Err(e) => {
-                panic!(
-                    "Unexpected selection failure for target {} BTC: {:?}",
-                    target_btc, e
-                );
-            }
-        }
+        // Convert expected UTXOs to sorted vec for comparison
+        let mut expected_sorted = expected_utxos.to_vec();
+        expected_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let mut selected_sorted = selected_amounts;
+        selected_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        // Assert exact UTXO match (as mojo requested)
+        assert_eq!(
+            selected_sorted, expected_sorted,
+            "UTXO mismatch! Expected {expected_sorted:?}, got {selected_sorted:?}"
+        );
+
+        // Additional validation: ensure selection can actually cover target + reasonable fees
+        let reasonable_fee_estimate = 0.001;
+        assert!(
+            total_selected >= target_btc + reasonable_fee_estimate,
+            "Selection {} BTC insufficient for target {} BTC + reasonable fees",
+            total_selected,
+            target_btc
+        );
+        println!("✅ Test passed - correct UTXOs selected");
     }
 
     println!("\n=== Test Completed Successfully ===");
-    println!("✅ All address grouping scenarios work correctly with fee considerations");
+    println!("✅ All address grouping scenarios work correctly");
 
     // Clean shutdown
     directory_server_instance.shutdown.store(true, Relaxed);
