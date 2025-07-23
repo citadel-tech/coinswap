@@ -172,7 +172,10 @@ fn test_address_grouping_behavior() {
                 );
             }
             Err(e) => {
-                panic!("Unexpected selection failure for target {} BTC: {:?}", target_btc, e);
+                panic!(
+                    "Unexpected selection failure for target {} BTC: {:?}",
+                    target_btc, e
+                );
             }
         }
     }
