@@ -95,15 +95,7 @@ fn multi_taker_single_maker_swap() {
 
             let balances = wallet.get_balances().unwrap();
 
-            let actual = balances.regular.to_sat();
-            assert!(
-                actual == 24999508 || actual == 24999510,
-                "Expected 24999508 or 24999510 sats, got {}",
-                actual
-            );
-            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
-            assert_eq!(balances.swap, Amount::ZERO);
-            assert_eq!(balances.contract, Amount::ZERO);
+            verify_maker_pre_swap_balances(&balances, 24999508);
 
             balances.spendable
         })
