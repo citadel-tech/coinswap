@@ -19,7 +19,7 @@ use bitcoin::{
     secp256k1,
     secp256k1::{Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
-    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, VarInt, Weight,
+    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, Weight,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
 use pbkdf2::pbkdf2_hmac_array;
@@ -115,14 +115,6 @@ impl KeychainKind {
             Self::External => 0,
             Self::Internal => 1,
         }
-    }
-}
-
-use rust_coinselect::types::SelectionError;
-
-impl From<SelectionError> for WalletError {
-    fn from(err: SelectionError) -> Self {
-        WalletError::General(format!("Coin selection error: {err}"))
     }
 }
 
@@ -1205,6 +1197,24 @@ impl Wallet {
         const P2WPKH_SPK_SIZE: usize = 22;
         const LONG_TERM_FEERATE: f32 = 10.0;
 
+        // Base transaction weight constants
+        // VERSION_SIZE: 4 bytes - 16 WU
+        // SEGWIT_MARKER_SIZE: 2 bytes - 2 WU
+        // NUM_INPUTS_SIZE: 1 byte - 4 WU
+        // NUM_OUTPUTS_SIZE: 1 byte - 4 WU
+        // NUM_WITNESS_SIZE: 1 byte - 1 WU
+        // LOCK_TIME_SIZE: 4 bytes - 16 WU
+        // Total: (16 + 2 + 4 + 4 + 1 + 16 = 43 WU)
+        // Source: https://docs.rs/bitcoin/latest/src/bitcoin/blockdata/transaction.rs.html#599-602
+        const TX_BASE_WEIGHT: u64 = 43;
+
+        // P2WPKH input weight: OutPoint(32) + sequence(4) + vout(4) + empty_scriptsig(1) = 41 bytes
+        const INPUT_BASE_WEIGHT: u64 = 32 + 4 + 4 + 1;
+
+        // P2WPKH output weight: Amount(8) + VarInt(1) + script_pubkey(22) = 31 bytes
+        const TARGET_OUTPUT_WEIGHT: u64 = Amount::SIZE as u64 + 1 + P2WPKH_SPK_SIZE as u64; // ~31 bytes
+        const CHANGE_OUTPUT_WEIGHT: u64 = Amount::SIZE as u64 + 1 + P2WPKH_SPK_SIZE as u64; // ~31 bytes
+
         // Get spendable UTXOs (regular coins and incoming swap coins)
         let mut unspents = self.list_descriptor_utxo_spend_info()?;
         unspents.extend(self.list_incoming_swap_coin_utxo_spend_info()?);
@@ -1236,44 +1246,28 @@ impl Wallet {
             "Fidelity, Outgoing Swapcoins, Hashlock and Timelock coins are not included in coin selection"
         );
 
-        let change_weight = Weight::from_vb_unwrap(
-            (Amount::SIZE // 8 bytes for amount
-                    + VarInt::from(P2WPKH_SPK_SIZE).size() // VarInt size for script_pubkey
-                    + P2WPKH_SPK_SIZE) as u64, // script_pubkey size
-        );
+        let change_weight = Weight::from_vb_unwrap(CHANGE_OUTPUT_WEIGHT);
 
-        // Total cost associated with creating and later spending a change output in a transaction.
-        // This includes the transaction fees for both the current transaction (where the change is created) and the future transaction (where the change is spent).
-        // Calculate fee generally uses the units :- vbytes * sats/vbyte
         let cost_of_change = {
-            let creation_cost = calculate_fee(change_weight.to_vbytes_ceil(), feerate as f32)
-                .map_err(|e| WalletError::General(format!("Fee calculation failed: {e}")))?;
-
-            let future_spending_cost = calculate_fee(P2WPKH_INPUT_WEIGHT / 4, LONG_TERM_FEERATE) // divide by 4 to convert weight to vbytes
-                .map_err(|e| WalletError::General(format!("Fee calculation failed: {e}")))?;
-
+            let creation_cost = calculate_fee(change_weight.to_vbytes_ceil(), feerate as f32)?;
+            let future_spending_cost = calculate_fee(P2WPKH_INPUT_WEIGHT / 4, LONG_TERM_FEERATE)?;
             creation_cost + future_spending_cost
         };
 
-        // Assuming target is a p2wpkh.
-        // TODO: Turn it into a constant value.
-        let target_weight = Weight::from_vb_unwrap(
-            (Amount::SIZE + VarInt::from(P2WPKH_SPK_SIZE).size() + P2WPKH_SPK_SIZE) as u64,
-        );
+        let target_weight = Weight::from_vb_unwrap(TARGET_OUTPUT_WEIGHT);
         let avg_output_weight = (change_weight.to_wu() + target_weight.to_wu()) / 2;
         let avg_input_weight = unspents
             .iter()
             .map(|(_, spend_info)| {
-                // Base weight of the input (OutPoint + sequence + empty script_sig)
-                let input_base_weight = 32 + 4 + 4 + 1; // OutPoint + sequence + vout + empty script_sig
                 let witness_weight = spend_info.estimate_witness_size();
-                input_base_weight + witness_weight as u64
+                INPUT_BASE_WEIGHT + witness_weight as u64
             })
             .sum::<u64>()
             / unspents.len() as u64;
 
         let target_amount = amount.to_sat();
 
+        // Group UTXOs by address
         let mut address_groups: HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
             HashMap::new();
         for (utxo, spend_info) in unspents {
@@ -1296,7 +1290,7 @@ impl Wallet {
         grouped_addresses
             .sort_by_key(|group| group.iter().map(|(u, _)| u.amount.to_sat()).sum::<u64>());
 
-        // Mojo's Ultra-Compressed: Single loop with let binding
+        // Single loop for address group selection
         let (selected_utxos, selected_total, selected_weight) = {
             let mut result_utxos = Vec::new();
             let mut result_total = 0u64;
@@ -1307,14 +1301,14 @@ impl Wallet {
                 let group_weight: u64 = group
                     .iter()
                     .map(|(_, spend_info)| {
-                        32 + 4 + 4 + 1 + spend_info.estimate_witness_size() as u64
+                        INPUT_BASE_WEIGHT + spend_info.estimate_witness_size() as u64
                     })
                     .sum();
 
                 // Inline fee calculation (3 lines)
-                let tx_weight = 43 + result_weight + group_weight + target_weight.to_wu();
-                let estimated_fee = calculate_fee(tx_weight / 4, feerate as f32)
-                    .map_err(|e| WalletError::General(format!("Fee calculation failed: {e}")))?;
+                let tx_weight =
+                    TX_BASE_WEIGHT + result_weight + group_weight + target_weight.to_wu();
+                let estimated_fee = calculate_fee(tx_weight / 4, feerate as f32)?;
 
                 result_total += group_total;
                 result_weight += group_weight;
@@ -1334,7 +1328,7 @@ impl Wallet {
             (result_utxos, result_total, result_weight)
         };
 
-        // Run coin selection on single addresses
+        // Group selection didn't cover the whole target, run coin selection on single addresses for remaining amount
         let single_output_groups = single_addresses
             .iter()
             .map(|single_address_utxos| {
@@ -1356,17 +1350,8 @@ impl Wallet {
             })
             .collect::<Vec<_>>();
 
-        // VERSION_SIZE: 4 bytes - 16 WU
-        // SEGWIT_MARKER_SIZE: 2 bytes - 2 WU
-        // NUM_INPUTS_SIZE: 1 byte - 4 WU
-        // NUM_OUTPUTS_SIZE: 1 byte - 4 WU
-        // NUM_WITNESS_SIZE: 1 byte - 1 WU
-        // LOCK_TIME_SIZE: 4 bytes - 16 WU
-        // OUTPUT_VALUE_SIZE: variable
-
-        // Total default: (16 + 2 + 4 + 4 + 1 + 16 = 43 WU + variable) WU
-        // Source - https://docs.rs/bitcoin/latest/src/bitcoin/blockdata/transaction.rs.html#599-602
-        let tx_base_weight = 43
+        // Calculate base weight
+        let tx_base_weight = TX_BASE_WEIGHT
             + selected_weight
             + MAX_SPLITS as u64 * (target_weight.to_wu() + change_weight.to_wu());
 
@@ -1385,6 +1370,7 @@ impl Wallet {
             excess_strategy: ExcessStrategy::ToChange,
         };
 
+        // Run coin selection on single addresses only
         match select_coin(&single_output_groups, &coin_selection_option) {
             Ok(selection) => {
                 let additional_utxos: Vec<_> = selection
