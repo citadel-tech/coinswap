@@ -73,6 +73,11 @@ pub enum WalletError {
         /// The amount of funds needed to complete the operation.
         required: u64,
     },
+
+    /// Represents an error from the rust-coinselect library.
+    ///
+    /// Typically occurs during fee calculation or coin selection operations.
+    Selection(rust_coinselect::types::SelectionError),
 }
 
 impl From<std::io::Error> for WalletError {
@@ -150,5 +155,11 @@ impl From<bitcoin::transaction::InputsIndexError> for WalletError {
 impl From<bitcoin::consensus::encode::Error> for WalletError {
     fn from(value: bitcoin::consensus::encode::Error) -> Self {
         Self::Consensus(value.to_string())
+    }
+}
+
+impl From<rust_coinselect::types::SelectionError> for WalletError {
+    fn from(value: rust_coinselect::types::SelectionError) -> Self {
+        Self::Selection(value)
     }
 }
