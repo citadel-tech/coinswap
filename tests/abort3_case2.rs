@@ -90,15 +90,7 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
 
             let balances = wallet.get_balances().unwrap();
 
-            let actual = balances.regular.to_sat();
-            assert!(
-                actual == 14999508 || actual == 14999510,
-                "Expected 14999508 or 14999510 sats, got {}",
-                actual
-            );
-            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
-            assert_eq!(balances.swap, Amount::ZERO);
-            assert_eq!(balances.contract, Amount::ZERO);
+            verify_maker_pre_swap_balances(&balances, 14999508);
 
             balances.spendable
         })

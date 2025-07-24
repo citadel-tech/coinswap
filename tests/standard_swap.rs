@@ -77,15 +77,7 @@ fn test_standard_coinswap() {
 
             let balances = wallet.get_balances().unwrap();
 
-            let actual = balances.regular.to_sat();
-            assert!(
-                actual == 14999508 || actual == 14999510,
-                "Expected 14999508 or 14999510 sats, got {}",
-                actual
-            );
-            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
-            assert_eq!(balances.swap, Amount::ZERO);
-            assert_eq!(balances.contract, Amount::ZERO);
+            verify_maker_pre_swap_balances(&balances, 14999508);
 
             balances.spendable
         })
@@ -183,15 +175,13 @@ fn test_standard_coinswap() {
     taker_wallet_mut.sync().unwrap();
     let balances = taker_wallet_mut.get_balances().unwrap();
 
-    assert!(
-        balances.swap == Amount::from_sat(441394),
-        "swap balance mismatch",
+    assert_in_range!(balances.swap.to_sat(), [441394], "Swap Balance Mismatch");
+    assert_in_range!(
+        balances.regular.to_sat(),
+        [14499088],
+        "Taker regular balance mismatch"
     );
-    assert_eq!(
-        balances.regular,
-        Amount::from_btc(0.14499088).unwrap(),
-        "Regualr balance mismatch",
-    );
+
     info!("🎉 All checks successful. Terminating integration test case");
 
     test_framework.stop();
