@@ -12,6 +12,21 @@
 //!
 //! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
 
+// Temporary custom assert macro to check for balances ranging +-2 Sats owing to variability in Transaction Size by 1 vbyte(low-s).
+#[macro_export]
+macro_rules! assert_in_range {
+    ($value:expr, $allowed:expr, $msg:expr) => {{
+        let (value, allowed) = ($value, $allowed);
+        const RANGE: u64 = 2;
+        if !allowed
+            .iter()
+            .any(|x| x + RANGE == value || x.saturating_sub(RANGE) == value || *x == value)
+        {
+            panic!("{}", $msg);
+        }
+    }};
+}
+
 use bitcoin::Amount;
 use std::{
     env,
@@ -41,7 +56,7 @@ use coinswap::{
     market::directory::{start_directory_server, DirectoryServer},
     taker::{Taker, TakerBehavior},
     utill::{setup_logger, ConnectionType},
-    wallet::RPCConfig,
+    wallet::{Balances, RPCConfig},
 };
 
 const BITCOIN_VERSION: &str = "28.1";
@@ -442,19 +457,23 @@ pub fn verify_swap_results(
             balances.spendable.to_btc()
         );
 
-        assert!(
-            balances.regular == Amount::from_btc(0.14499088).unwrap() // Successful coinswap
-                || balances.regular == Amount::from_btc(0.14997426).unwrap() // Recovery via timelock
-                || balances.regular == Amount::from_btc(0.15).unwrap(), // No spending
+        assert_in_range!(
+            balances.regular.to_sat(),
+            [
+                14499088, // Successful coinswap
+                14997426, // Recovery via timelock
+                15000000, // No spending
+            ],
             "Taker seed balance mismatch"
         );
 
-        //TODO:Figure out why there is +-2 sats difference in swap balance in some cases.
-        assert!(
-            balances.swap == Amount::from_btc(0.00442714).unwrap() // Recovery via timelock
-                || balances.swap == Amount::from_btc(0.00441886).unwrap() //Successful coinswap
-                || balances.swap == Amount::from_btc(0.00441884).unwrap() //Successful coinswap (alternate transaction size: -2 sats)
-                || balances.swap == Amount::ZERO, // Unsuccessful coinswap
+        assert_in_range!(
+            balances.swap.to_sat(),
+            [
+                441886, // Successful coinswap
+                442714, // Recovery via timelock
+                0,      // Unsuccessful coinswap
+            ],
             "Taker swapcoin balance mismatch"
         );
 
@@ -471,12 +490,15 @@ pub fn verify_swap_results(
             balance_diff.to_sat()
         );
 
-        assert!(
-            balance_diff == Amount::from_sat(59028) //Successful coinswap
-                || balance_diff == Amount::from_sat(2184) // Recovery via timelock
-                || balance_diff == Amount::from_sat(503000) // Spent swapcoin
-                || balance_diff == Amount::from_sat(2574) // Recovery via timelock (new fee system)
-                || balance_diff == Amount::ZERO, // No spending
+        assert_in_range!(
+            balance_diff.to_sat(),
+            [
+                59028,  // Successful coinswap
+                2184,   // Recovery via timelock
+                503000, // Spent swapcoin
+                2574,   // Recovery via timelock (new fee system)
+                0       // No spending
+            ],
             "Taker spendable balance change mismatch"
         );
     }
@@ -501,27 +523,25 @@ pub fn verify_swap_results(
                 balances.spendable.to_btc()
             );
 
-            assert!(
-                balances.regular == Amount::from_btc(0.14555884).unwrap() // First maker
-                || balances.regular == Amount::from_btc(0.14533014).unwrap() // Second maker
-                || balances.regular == Amount::from_btc(0.14999508).unwrap() // No spending
-
-                //TODO:Figure out why there is +-2 sats difference in regular balance in these cases.
-                    || balances.regular == Amount::from_btc(0.14999510).unwrap() // No spending variant (alternate transaction size +2 sats)
-                    || balances.regular == Amount::from_btc(0.14533016).unwrap() // maker alternative transaction size (+2 sats)
-                    || balances.regular == Amount::from_btc(0.14555886).unwrap() // maker alternative transaction size (+2 sats)
-                    || balances.regular == Amount::from_btc(0.24999510).unwrap(), // Multi-taker scenario
+            assert_in_range!(
+                balances.regular.to_sat(),
+                [
+                    14555884, // First maker on successful coinswap
+                    14533014, // Second maker on successful coinswap
+                    14999508, // No spending
+                    24999510, // Multi-taker scenario
+                ],
                 "Maker seed balance mismatch"
             );
 
-            assert!(
-                balances.swap == Amount::from_btc(0.00499172).unwrap() //First maker
-                || balances.swap == Amount::from_btc(0.00464754).unwrap() //Second maker
-
-                //TODO:Figure out why there is +-2 sats difference in swap balance in these cases.
-                    || balances.swap == Amount::from_btc(0.00442712).unwrap() // Taker swap amount
-                    || balances.swap == Amount::from_btc(0.00442714).unwrap() // Alternative transaction size (+2 sats)
-                    || balances.swap == Amount::ZERO, // No swap or funding tx missing
+            assert_in_range!(
+                balances.swap.to_sat(),
+                [
+                    499172, // First maker
+                    464754, // Second maker
+                    442712, // Taker swap amount
+                    0,      // No swap or funding tx missing
+                ],
                 "Maker swapcoin balance mismatch"
             );
 
@@ -545,22 +565,38 @@ pub fn verify_swap_results(
                 balance_diff.to_sat()
             );
 
-            assert!(
-                balance_diff == Amount::from_sat(21130) //First maker fee
-                    || balance_diff == Amount::from_sat(32678) // Second maker fee
-                    || balance_diff == Amount::ZERO // No spending
-                    || balance_diff == Amount::from_sat(2574) // Recovery via timelock
-                    || balance_diff == Amount::from_sat(466494) // Taker abort after setup - first maker recovery cost (abort1 test case)
-                    || balance_diff == Amount::from_sat(443624) // Taker abort after setup - second maker recovery cost (abort1 test case)
-                    || balance_diff == Amount::from_sat(466496) // Maker abort after setup(abort3_case3)
-                    || balance_diff == Amount::from_sat(410176) // Multi-taker first maker (previous run)
-                    || balance_diff == Amount::from_sat(410118), // Multi-taker first maker (current run)
+            assert_in_range!(
+                balance_diff.to_sat(),
+                [
+                    21130,  // First maker fee
+                    32678,  // Second maker fee
+                    0,      // No spending
+                    2574,   // Recovery via timelock
+                    466494, // Taker abort after setup - first maker recovery cost (abort1 test case)
+                    443624, // Taker abort after setup - second maker recovery cost (abort1 test case)
+                    466496, // Maker abort after setup(abort3_case3)
+                    410176, // Multi-taker first maker (previous run)
+                    410118, // Multi-taker first maker (current run)
+                ],
                 "Maker spendable balance change mismatch"
             );
         });
 
     log::info!("✅ Swap results verification complete");
 }
+
+#[allow(dead_code)]
+pub fn verify_maker_pre_swap_balances(balances: &Balances, assert_regular_balance: u64) {
+    assert_in_range!(
+        balances.regular.to_sat(),
+        [assert_regular_balance],
+        "Maker regular balance mismatch"
+    );
+    assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
+    assert_eq!(balances.swap, Amount::ZERO);
+    assert_eq!(balances.contract, Amount::ZERO);
+}
+
 /// The Test Framework.
 ///
 /// Handles initializing, operating and cleaning up of all backend processes. Bitcoind, Taker and Makers.
