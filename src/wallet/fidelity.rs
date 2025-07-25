@@ -10,15 +10,14 @@ use bitcoin::{
     opcodes::all::{OP_CHECKSIGVERIFY, OP_CLTV},
     script::{Builder, Instruction},
     secp256k1::{Keypair, Message, Secp256k1},
-    Address, Amount, OutPoint, PublicKey, ScriptBuf, Txid,
+    Address, Amount, OutPoint, PublicKey, ScriptBuf,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     str::FromStr,
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use super::{Destination, WalletError};
@@ -365,36 +364,11 @@ impl Wallet {
             self.save_to_disk()?;
         }
 
-        let conf_height = self.wait_for_fidelity_tx_confirmation(txid)?;
+        let conf_height = self.wait_for_tx_confirmation(txid)?;
 
         self.update_fidelity_bond_conf_details(index, conf_height)?;
 
         Ok(index)
-    }
-
-    /// Waits for the fidelity transaction to confirm and returns its block height.
-    pub(crate) fn wait_for_fidelity_tx_confirmation(&self, txid: Txid) -> Result<u32, WalletError> {
-        let sleep_increment = 10;
-        let mut sleep_multiplier = 0;
-
-        let ht = loop {
-            sleep_multiplier += 1;
-
-            let get_tx_result = self.rpc.get_transaction(&txid, None)?;
-            if let Some(ht) = get_tx_result.info.blockheight {
-                log::info!("Fidelity Transaction {txid} confirmed at blockheight: {ht}");
-                break ht;
-            } else {
-                log::info!(
-                    "Fidelity Transaction {txid} seen in mempool, waiting for confirmation."
-                );
-                let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60); // Caps at 10 minutes
-                log::info!("Next sync in {total_sleep:?} secs");
-                thread::sleep(Duration::from_secs(total_sleep));
-            }
-        };
-
-        Ok(ht)
     }
 
     pub(crate) fn update_fidelity_bond_conf_details(
