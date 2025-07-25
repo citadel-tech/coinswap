@@ -351,7 +351,7 @@ impl Maker {
                 .filter_map(|(i, bond)| {
                     if bond.conf_height.is_none() && bond.cert_expiry.is_none() {
                         let conf_height = wallet_read
-                            .wait_for_fidelity_tx_confirmation(bond.outpoint.txid)
+                            .wait_for_tx_confirmation(bond.outpoint.txid)
                             .unwrap();
                         Some((*i, conf_height))
                     } else {
