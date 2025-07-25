@@ -121,7 +121,7 @@ impl MakerCli {
         );
 
         // Wait for fidelity bond confirmation
-        await_message(&rx, "Fidelity Transaction");
+        await_message(&rx, "Transaction");
 
         generate_blocks(&self.bitcoind, 1);
         await_message(&rx, "Successfully created fidelity bond");

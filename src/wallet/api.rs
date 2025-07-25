@@ -3,7 +3,7 @@
 //! Currently, wallet synchronization is exclusively performed through RPC for makers.
 //! In the future, takers might adopt alternative synchronization methods, such as lightweight wallet solutions.
 
-use std::{convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr};
+use std::{convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr, thread, time::Duration};
 
 use std::collections::HashMap;
 
@@ -1724,7 +1724,7 @@ impl Wallet {
                     feerate,
                 )?;
                 let txid = self.send_tx(&sweep_tx)?;
-                let conf_height = self.wait_for_sweep_tx_confirmation(txid)?;
+                let conf_height = self.wait_for_tx_confirmation(txid)?;
                 log::info!("Sweep Transaction {txid} confirmed at blockheight: {conf_height}");
 
                 swept_txids.push(txid);
@@ -1744,23 +1744,26 @@ impl Wallet {
         Ok(swept_txids)
     }
 
-    /// Waits for a sweep transaction to confirm and returns its block height.
-    pub fn wait_for_sweep_tx_confirmation(&self, txid: Txid) -> Result<u32, WalletError> {
+    /// Waits for a transaction to confirm and returns its block height.
+    pub(crate) fn wait_for_tx_confirmation(&self, txid: Txid) -> Result<u32, WalletError> {
         let sleep_increment = 10;
         let mut sleep_multiplier = 0;
 
         let ht = loop {
             sleep_multiplier += 1;
+
             let get_tx_result = self.rpc.get_transaction(&txid, None)?;
             if let Some(ht) = get_tx_result.info.blockheight {
+                log::info!("Transaction {txid} confirmed at blockheight: {ht}");
                 break ht;
             } else {
-                log::info!("Sweep Transaction {txid} seen in mempool, waiting for confirmation.");
+                log::info!("Transaction {txid} seen in mempool, waiting for confirmation.");
                 let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60); // Caps at 10 minutes
                 log::info!("Next sync in {total_sleep:?} secs");
-                std::thread::sleep(std::time::Duration::from_secs(total_sleep));
+                thread::sleep(Duration::from_secs(total_sleep));
             }
         };
+
         Ok(ht)
     }
 }
