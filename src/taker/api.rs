@@ -463,8 +463,20 @@ impl Taker {
 
         match self.settle_all_swaps() {
             Ok(_) => {
-                log::info!("Initializing Sync and Save.");
+                log::info!(
+                    "Swaps settled successfully. Sweeping the coins and reseting everything."
+                );
                 self.save_and_reset_swap_round()?;
+                // Sweep incoming swapcoins after successful swap completion
+                log::info!("Sweeping completed incoming swap coins...");
+                let swept_txids = self.wallet.sweep_incoming_swapcoins(MIN_FEE_RATE)?;
+                if !swept_txids.is_empty() {
+                    log::info!(
+                        "Successfully swept {} incoming swap coins: {:?}",
+                        swept_txids.len(),
+                        swept_txids
+                    );
+                }
             }
             Err(e) => {
                 log::error!("Swap Settlement Failed : {e:?}");
@@ -473,7 +485,6 @@ impl Taker {
                 return Ok(());
             }
         }
-        log::info!("Completed Sync and Save.");
         log::info!("Successfully Completed Coinswap.");
         Ok(())
     }
@@ -1792,30 +1803,6 @@ impl Taker {
                 .find_outgoing_swapcoin_mut(&outgoing_swapcoins.get_multisig_redeemscript())
                 .expect("Outgoing swapcoin expected")
                 .hash_preimage = Some(self.ongoing_swap_state.active_preimage);
-        }
-
-        // Only sweep incoming swapcoins if we're not in a recovery situation
-        // Check if any swapcoins need recovery by looking for unfinished ones
-        let (unfinished_incomings, _) = self.wallet.find_unfinished_swapcoins();
-
-        if unfinished_incomings.is_empty() {
-            log::info!(
-                "No unfinished swapcoins detected, sweeping completed incoming swap coins..."
-            );
-
-            let swept_txids = self.wallet.sweep_incoming_swapcoins(MIN_FEE_RATE)?;
-            if !swept_txids.is_empty() {
-                log::info!(
-                    "Successfully swept {} incoming swap coins: {:?}",
-                    swept_txids.len(),
-                    swept_txids
-                );
-            }
-        } else {
-            log::info!(
-                "Unfinished swapcoins detected ({}), skipping automatic sweep to allow recovery",
-                unfinished_incomings.len()
-            );
         }
 
         self.wallet.sync_no_fail();
