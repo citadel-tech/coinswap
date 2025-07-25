@@ -462,7 +462,10 @@ impl Taker {
         }
 
         match self.settle_all_swaps() {
-            Ok(_) => (),
+            Ok(_) => {
+                log::info!("Initializing Sync and Save.");
+                self.save_and_reset_swap_round()?;
+            }
             Err(e) => {
                 log::error!("Swap Settlement Failed : {e:?}");
                 log::warn!("Starting recovery from existing swap");
@@ -470,9 +473,6 @@ impl Taker {
                 return Ok(());
             }
         }
-
-        log::info!("Initializing Sync and Save.");
-        self.save_and_reset_swap_round()?;
         log::info!("Completed Sync and Save.");
         log::info!("Successfully Completed Coinswap.");
         Ok(())
@@ -1794,14 +1794,27 @@ impl Taker {
                 .hash_preimage = Some(self.ongoing_swap_state.active_preimage);
         }
 
-        log::info!("Sweeping completed incoming swap coins...");
+        // Only sweep incoming swapcoins if we're not in a recovery situation
+        // Check if any swapcoins need recovery by looking for unfinished ones
+        let (unfinished_incomings, _) = self.wallet.find_unfinished_swapcoins();
 
-        let swept_txids = self.wallet.sweep_incoming_swapcoins(MIN_FEE_RATE)?;
-        if !swept_txids.is_empty() {
+        if unfinished_incomings.is_empty() {
             log::info!(
-                "Successfully swept {} incoming swap coins: {:?}",
-                swept_txids.len(),
-                swept_txids
+                "No unfinished swapcoins detected, sweeping completed incoming swap coins..."
+            );
+
+            let swept_txids = self.wallet.sweep_incoming_swapcoins(MIN_FEE_RATE)?;
+            if !swept_txids.is_empty() {
+                log::info!(
+                    "Successfully swept {} incoming swap coins: {:?}",
+                    swept_txids.len(),
+                    swept_txids
+                );
+            }
+        } else {
+            log::info!(
+                "Unfinished swapcoins detected ({}), skipping automatic sweep to allow recovery",
+                unfinished_incomings.len()
             );
         }
 
