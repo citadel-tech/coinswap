@@ -462,7 +462,22 @@ impl Taker {
         }
 
         match self.settle_all_swaps() {
-            Ok(_) => (),
+            Ok(_) => {
+                log::info!(
+                    "Swaps settled successfully. Sweeping the coins and reseting everything."
+                );
+                self.save_and_reset_swap_round()?;
+                // Sweep incoming swapcoins after successful swap completion
+                log::info!("Sweeping completed incoming swap coins...");
+                let swept_txids = self.wallet.sweep_incoming_swapcoins(MIN_FEE_RATE)?;
+                if !swept_txids.is_empty() {
+                    log::info!(
+                        "Successfully swept {} incoming swap coins: {:?}",
+                        swept_txids.len(),
+                        swept_txids
+                    );
+                }
+            }
             Err(e) => {
                 log::error!("Swap Settlement Failed : {e:?}");
                 log::warn!("Starting recovery from existing swap");
@@ -470,10 +485,6 @@ impl Taker {
                 return Ok(());
             }
         }
-
-        log::info!("Initializing Sync and Save.");
-        self.save_and_reset_swap_round()?;
-        log::info!("Completed Sync and Save.");
         log::info!("Successfully Completed Coinswap.");
         Ok(())
     }
@@ -1792,17 +1803,6 @@ impl Taker {
                 .find_outgoing_swapcoin_mut(&outgoing_swapcoins.get_multisig_redeemscript())
                 .expect("Outgoing swapcoin expected")
                 .hash_preimage = Some(self.ongoing_swap_state.active_preimage);
-        }
-
-        log::info!("Sweeping completed incoming swap coins...");
-
-        let swept_txids = self.wallet.sweep_incoming_swapcoins(MIN_FEE_RATE)?;
-        if !swept_txids.is_empty() {
-            log::info!(
-                "Successfully swept {} incoming swap coins: {:?}",
-                swept_txids.len(),
-                swept_txids
-            );
         }
 
         self.wallet.sync_no_fail();
