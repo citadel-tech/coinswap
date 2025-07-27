@@ -661,14 +661,38 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
     Ok(())
 }
 
-//This function is on hold till further discussions as bitcoin core does not provide with any rpc to find out which transaction spends from a given utxo.
+//Loops over utxo set to find a transaction that spents from the given Contract Transaction.
 pub(crate) fn find_spending_transaction(
-    _maker: &Arc<Maker>,
+    maker: &Arc<Maker>,
     // Tuple of ((Multisig_reedemscript, Contract Tx), (Timelock, Timelock Tx))
     outgoings: Vec<((ScriptBuf, Transaction), (u16, Transaction))>,
 ) -> Result<Transaction, MakerError> {
     if let Some(((_, tx), _)) = outgoings.into_iter().next() {
-        return Ok(tx);
+        let txid = tx.compute_txid();
+        let vout = 0;
+        loop {
+            let rpc = &maker.get_wallet().read()?.rpc;
+            let is_tx_spent = rpc.get_tx_out(&txid, vout, None).unwrap();
+            if is_tx_spent.is_none() {
+                log::info!("Output is spent,finding the Spender");
+                let block_hash = rpc.get_best_block_hash().unwrap();
+
+                let block = rpc.get_block(&block_hash).unwrap();
+
+                for tx in block.txdata {
+                    for input in tx.input.iter() {
+                        if input.previous_output.txid == txid && input.previous_output.vout == vout
+                        {
+                            log::info!("Spending tx found by Txid: {}", tx.compute_txid());
+
+                            return Ok(tx);
+                        }
+                    }
+                }
+            } else {
+                log::info!("Still unspent");
+            }
+        }
     }
     Err(MakerError::General("Failed to find spending transaction"))
 }
