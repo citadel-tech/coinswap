@@ -32,7 +32,7 @@ use crate::protocol::messages::DnsRequest;
 use crate::error::NetError;
 
 #[cfg(feature = "tracker")]
-use crate::protocol::messages::{TrackerRequest, TrackerResponse};
+use crate::protocol::messages::{TrackerClientToServer, TrackerServerToClient};
 
 use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
 
@@ -302,13 +302,13 @@ pub fn fetch_addresses_from_tracker(
         stream.set_write_timeout(Some(NET_TIMEOUT))?;
         stream.set_nonblocking(false)?;
 
-        if let Err(e) = send_message(&mut stream, &TrackerRequest::Get) {
+        if let Err(e) = send_message(&mut stream, &TrackerClientToServer::Get) {
             log::error!("Failed to send request. Retrying...{e}");
             thread::sleep(GLOBAL_PAUSE);
             continue;
         }
 
-        let response: TrackerResponse = match read_message(&mut stream) {
+        let response: TrackerServerToClient = match read_message(&mut stream) {
             Ok(resp) => serde_cbor::de::from_slice(&resp[..])?,
             Err(e) => {
                 log::error!("Error reading DNS response: {e}. Retrying...");
@@ -317,7 +317,7 @@ pub fn fetch_addresses_from_tracker(
             }
         };
 
-        if let TrackerResponse::Address { addresses } = response {
+        if let TrackerServerToClient::Address { addresses } = response {
             match addresses
                 .into_iter()
                 .map(MakerAddress::try_from)

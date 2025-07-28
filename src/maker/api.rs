@@ -233,6 +233,9 @@ pub struct Maker {
     data_dir: PathBuf,
     /// Thread pool for managing all spawned threads
     pub(crate) thread_pool: Arc<ThreadPool>,
+    #[cfg(feature = "tracker")]
+    /// Indexer address to poll for UTXO
+    pub(crate) tracker: RwLock<Option<String>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -323,6 +326,8 @@ impl Maker {
             is_setup_complete: AtomicBool::new(false),
             data_dir,
             thread_pool: Arc::new(ThreadPool::new(network_port)),
+            #[cfg(feature = "tracker")]
+            tracker: RwLock::new(None),
         })
     }
 
