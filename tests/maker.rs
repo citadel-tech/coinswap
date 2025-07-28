@@ -122,8 +122,8 @@ impl MakerCli {
 
         // Wait for fidelity bond confirmation
         await_message(&rx, "Transaction seen in mempool");
-
         generate_blocks(&self.bitcoind, 1);
+        await_message(&rx, "Transaction confirmed at");
         await_message(&rx, "Successfully created fidelity bond");
 
         // Ensure successful DNS registration
@@ -271,7 +271,7 @@ fn test_bond_registration_before_confirmation(
     println!("✅ Verified redemption transaction was broadcasted");
 
     await_message(&rx, "No active Fidelity Bonds found. Creating one.");
-    await_message(&rx, "seen in mempool, waiting for confirmation");
+    await_message(&rx, "Transaction seen in mempool");
     println!("✅ Verified new bond creation initiated");
 
     println!("🔧 Shutting down maker server while waiting for confirmation");
