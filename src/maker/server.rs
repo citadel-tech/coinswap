@@ -6,9 +6,10 @@
 
 use crate::protocol::messages::{FidelityProof, MessageToMaker};
 #[cfg(feature = "tracker")]
-use crate::protocol::messages::{TrackerRequest, TrackerResponse};
+use crate::protocol::messages::{TrackerClientToServer, TrackerServerToClient};
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
+#[cfg(not(feature = "tracker"))]
 use socks::Socks5Stream;
 use std::{
     io::ErrorKind,
@@ -33,10 +34,13 @@ use crate::{
         handlers::handle_message,
         rpc::start_rpc_server,
     },
-    protocol::messages::{DnsMetadata, DnsRequest, DnsResponse, TakerToMakerMessage},
+    protocol::messages::TakerToMakerMessage,
     utill::{read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::WalletError,
 };
+
+#[cfg(not(feature = "tracker"))]
+use crate::protocol::messages::{DnsMetadata, DnsRequest, DnsResponse};
 
 use crate::maker::error::MakerError;
 
@@ -93,13 +97,15 @@ fn manage_fidelity_bonds_and_update_dns(
 ) -> Result<(), MakerError> {
     maker.wallet.write()?.redeem_expired_fidelity_bonds()?;
 
-    let proof = setup_fidelity_bond(maker, maker_addr)?;
+    let _proof = setup_fidelity_bond(maker, maker_addr)?;
 
+    #[cfg(not(feature = "tracker"))]
     let dns_metadata = DnsMetadata {
         url: maker_addr.to_string(),
-        proof,
+        proof: _proof,
     };
 
+    #[cfg(not(feature = "tracker"))]
     let request = DnsRequest::Post {
         metadata: dns_metadata,
     };
@@ -108,6 +114,7 @@ fn manage_fidelity_bonds_and_update_dns(
 
     log::info!("[{network_port}] Connecting to DNS: {dns_addr}");
 
+    #[cfg(not(feature = "tracker"))]
     while !maker.shutdown.load(Relaxed) {
         let stream = match maker.config.connection_type {
             ConnectionType::CLEARNET => TcpStream::connect(dns_addr),
@@ -368,8 +375,8 @@ fn decode_unified_message(data: &[u8]) -> Result<MessageToMaker, MakerError> {
         }
         #[cfg(feature = "tracker")]
         0x02 => {
-            let msg = serde_cbor::from_slice::<TrackerResponse>(body)?;
-            Ok(MessageToMaker::TrackerRequest(msg))
+            let msg = serde_cbor::from_slice::<TrackerServerToClient>(body)?;
+            Ok(MessageToMaker::TrackerMessage(msg))
         }
         _ => Err(MakerError::General("Parsing error during decoding")),
     }
@@ -443,8 +450,15 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
                 }
             }
             #[cfg(feature = "tracker")]
-            MessageToMaker::TrackerRequest(tracker_msg) => match tracker_msg {
-                TrackerResponse::Ping => {
+            MessageToMaker::TrackerMessage(tracker_msg) => match tracker_msg {
+                TrackerServerToClient::Ping { address, port } => {
+                    log::info!("Received a ping from tracker");
+                    if let Ok(mut guard) = maker.tracker.write() {
+                        if guard.is_none() {
+                            let tracker_address = format!("{address}:{port}");
+                            *guard = Some(tracker_address);
+                        }
+                    }
                     let hostname = get_tor_hostname(
                         maker.get_data_dir(),
                         maker.config.control_port,
@@ -452,14 +466,16 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
                         &maker.config.tor_auth_password,
                     )?;
                     let address = format!("{}:{}", hostname, maker.config.network_port);
-                    let response = TrackerRequest::Pong { address };
+                    let response = TrackerClientToServer::Pong { address };
                     if let Err(e) = send_message(stream, &response) {
                         log::error!("Failed to send Pong to tracker: {e:?}. Closing connection.");
                         continue;
                     }
                 }
-                TrackerResponse::Address { addresses } => {
-                    log::info!("Received address list from tracker: {addresses:?}");
+                _ => {
+                    unimplemented!(
+                        "We gonna handle other messages considering tracker as the server"
+                    );
                 }
             },
         }
