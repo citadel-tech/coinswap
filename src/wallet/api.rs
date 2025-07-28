@@ -1201,12 +1201,8 @@ impl Wallet {
     /// - Change output costs
     /// - Privacy considerations
     ///
-    /// Implements mandatory address grouping with strategic selection:
-    /// 1. Groups UTXOs by address
-    /// 2. Tries single group optimization (finds smallest group that covers target+fees)
-    /// 3. Falls back to multi-group selection with privacy-focused sorting
-    /// 4. Uses all-or-nothing principle (always selects entire groups)
-    /// 5. Runs normal coin selection on remaining UTXOs if needed
+    /// Always prefers to spend reused addresses first to preserve privacy.
+    /// Selects more UTXOs if total reused addresses amount isn't adequate.
     ///
     /// # Arguments
     /// * `amount` - The target amount to select coins for
@@ -1337,12 +1333,13 @@ impl Wallet {
                 .or_default()
                 .push((utxo, spend_info));
         }
-
+        // Separate addresses with multiple UTXOs from addresses with a single UTXO
         let (mut grouped_addresses, single_addresses): (Vec<_>, Vec<_>) = address_groups
             .into_values()
             .partition(|group| group.len() > 1);
 
-        // Sort by value
+        // Sort reused addresses by total value
+        // This enables optimal selection: find the smallest group that covers target+fees
         grouped_addresses
             .sort_by_key(|group| group.iter().map(|(u, _)| u.amount.to_sat()).sum::<u64>());
 
@@ -1361,16 +1358,18 @@ impl Wallet {
                     })
                     .sum();
 
-                // Inline fee calculation (3 lines)
+                // Calculate transaction fees for current selection including this group
                 let tx_weight =
                     TX_BASE_WEIGHT + result_weight + group_weight + target_weight.to_wu();
                 let estimated_fee = calculate_fee(tx_weight / 4, feerate as f32)?;
 
+                // Add the reused address group to selection
+                // Always take entire groups to maintain address privacy - never partial groups
                 result_total += group_total;
                 result_weight += group_weight;
                 result_utxos.extend(group);
 
-                // Check if we have enough (either single group or accumulated)
+                // Check if reused addresses now cover target + fees
                 if result_total >= target_amount + estimated_fee {
                     log::info!(
                         "Address grouping: Selected {} UTXOs (total: {} sats, target+fee: {} sats)",
@@ -1384,7 +1383,7 @@ impl Wallet {
             (result_utxos, result_total, result_weight)
         };
 
-        // Group selection didn't cover the whole target, run coin selection on single addresses for remaining amount
+        // Group selection worked but didn't cover the whole target, run coin selection on single addresses
         let single_output_groups = single_addresses
             .iter()
             .map(|single_address_utxos| {
