@@ -1754,10 +1754,10 @@ impl Wallet {
 
             let get_tx_result = self.rpc.get_transaction(&txid, None)?;
             if let Some(ht) = get_tx_result.info.blockheight {
-                log::info!("Transaction {txid} confirmed at blockheight: {ht}");
+                log::info!("Transaction confirmed at blockheight: {ht}, txid : {txid}");
                 break ht;
             } else {
-                log::info!("Transaction {txid} seen in mempool, waiting for confirmation.");
+                log::info!("Transaction seen in mempool,waiting for confirmation, txid: {txid}");
                 let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60); // Caps at 10 minutes
                 log::info!("Next sync in {total_sleep:?} secs");
                 thread::sleep(Duration::from_secs(total_sleep));
