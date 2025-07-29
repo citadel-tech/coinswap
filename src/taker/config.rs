@@ -1,21 +1,19 @@
 //! Taker configuration. Controlling various behaviors.
 //!
-//! This module defines the configuration options for the Taker module, controlling various aspects
-//! of the taker's behavior including network settings, connection preferences, and security settings.
+//! Represents the configuration options for the Taker module, controlling behaviors
+//! such as refund locktime, connection attempts, sleep delays, and timeouts.
 
 use crate::utill::{get_taker_dir, parse_field, parse_toml};
 use std::{io, io::Write, path::Path};
 
-/// Taker configuration
-///
-/// This struct defines all configurable parameters for the Taker app, including all network ports and marketplace settings
+/// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
-    /// Control port for Tor interface (default: 9051)
+    /// Control port
     pub control_port: u16,
-    /// Socks port for Tor proxy (default: 9050)
+    /// Socks proxy port used to connect TOR
     pub socks_port: u16,
-    /// Authentication password for Tor interface
+    /// Authentication password
     pub tor_auth_password: String,
     /// Tracker address for maker discovery
     pub tracker_address: String,
@@ -80,16 +78,11 @@ impl TakerConfig {
         })
     }
 
-    /// This method serializes the TakerConfig into a TOML format and writes it to disk.
-    /// It creates the parent directory if it doesn't exist.
+    // Method to manually serialize the Taker Config into a TOML string
     pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
-            "# Taker Configuration File
-# Control port for Tor control interface
-control_port = {}
-# Socks port for Tor proxy
+            "control_port = {}
 socks_port = {}
-# Authentication password for Tor control interface
 tor_auth_password = {}
 # Tracker address
 tracker_address = {}",

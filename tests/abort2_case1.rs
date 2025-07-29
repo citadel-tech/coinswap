@@ -43,12 +43,11 @@ fn test_abort_case_2_move_on_with_other_makers() {
         TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!(
-        "🧪 Running Test: Maker 6102 closes before sending sender's sigs. Taker moves on with other Makers."
+        "Running Test: Maker 6102 closes before sending sender's sigs. Taker moves on with other Makers."
     );
 
     let bitcoind = &test_framework.bitcoind;
 
-    info!("💰 Funding taker and makers");
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
     let taker = &mut takers[0];
     let org_taker_spend_balance =
@@ -60,7 +59,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
     fund_and_verify_maker(makers_ref, bitcoind, 4, Amount::from_btc(0.05).unwrap());
 
     //  Start the Maker Server threads
-    info!("🚀 Initiating Maker servers");
+    log::info!("Initiating Maker...");
 
     let maker_threads = makers
         .iter()
@@ -77,7 +76,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                info!("⏳ Waiting for maker setup completion");
+                log::info!("Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -88,14 +87,17 @@ fn test_abort_case_2_move_on_with_other_makers() {
 
             let balances = wallet.get_balances().unwrap();
 
-            verify_maker_pre_swap_balances(&balances, 14999508);
+            assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
+            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
+            assert_eq!(balances.swap, Amount::ZERO);
+            assert_eq!(balances.contract, Amount::ZERO);
 
             balances.spendable
         })
         .collect::<Vec<_>>();
 
     // Initiate Coinswap
-    info!("🔄 Initiating coinswap protocol");
+    log::info!("Initiating coinswap protocol");
 
     // Swap params for coinswap.
     let swap_params = SwapParams {
@@ -172,7 +174,6 @@ fn test_abort_case_2_move_on_with_other_makers() {
     // |                                                                                                      |
     // +------------------------------------------------------------------------------------------------------+
 
-    info!("🚫 Checking if naughty maker got banned (may not occur if not selected)");
     // Maker might not get banned as Taker may not try 16102 for swap. If it does then check its 16102.
     if !taker.get_bad_makers().is_empty() {
         assert_eq!(
@@ -181,7 +182,6 @@ fn test_abort_case_2_move_on_with_other_makers() {
         );
     }
 
-    info!("📊 Verifying swap results");
     // After Swap checks:
     verify_swap_results(
         taker,
@@ -190,19 +190,21 @@ fn test_abort_case_2_move_on_with_other_makers() {
         org_maker_spend_balances,
     );
 
-    info!("✅ Balance check successful");
+    info!("Balance check successful.");
 
     // Check spending from swapcoins.
-    info!("💸 Checking spend from swapcoins");
+    info!("Checking Spend from Swapcoin");
 
     let taker_wallet_mut = taker.get_wallet_mut();
 
-    let swap_coins = taker_wallet_mut.list_swept_incoming_swap_utxos().unwrap();
+    let swap_coins = taker_wallet_mut
+        .list_incoming_swap_coin_utxo_spend_info()
+        .unwrap();
 
     let addr = taker_wallet_mut.get_next_internal_addresses(1).unwrap()[0].to_owned();
 
     let tx = taker_wallet_mut
-        .spend_from_wallet(MIN_FEE_RATE, Destination::Sweep(addr), &swap_coins)
+        .spend_from_wallet(DEFAULT_TX_FEE_RATE, Destination::Sweep(addr), &swap_coins)
         .unwrap();
 
     assert_eq!(
@@ -229,7 +231,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
         "Taker regular balance mismatch",
     );
 
-    info!("🎉 All checks successful. Terminating integration test case");
+    info!("All checks successful. Terminating integration test case");
 
     test_framework.stop();
 
