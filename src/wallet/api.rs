@@ -30,13 +30,12 @@ use crate::{
         compute_checksum, generate_keypair, get_hd_path_from_descriptor,
         redeemscript_to_scriptpubkey, MIN_FEE_RATE,
     },
-    wallet::split_utxos::MAX_SPLITS,
 };
 
 use rust_coinselect::{
     selectcoin::select_coin,
     types::{CoinSelectionOpt, ExcessStrategy, OutputGroup},
-    utils::calculate_fee,
+    utils::{calculate_base_weight_btc, calculate_fee},
 };
 
 use super::{
@@ -148,12 +147,6 @@ pub enum UTXOSpendInfo {
     },
     /// Fidelity Bond Coin
     FidelityBondCoin { index: u32, input_value: Amount },
-    ///Swept incoming swap coin
-    SweptCoin {
-        path: String,
-        input_value: Amount,
-        original_multisig_redeemscript: ScriptBuf,
-    },
 }
 
 impl UTXOSpendInfo {
@@ -165,7 +158,7 @@ impl UTXOSpendInfo {
         const HASH_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 211;
 
         match *self {
-            Self::SeedCoin { .. } | Self::SweptCoin { .. } => P2PWPKH_WITNESS_SIZE,
+            Self::SeedCoin { .. } => P2PWPKH_WITNESS_SIZE,
             Self::IncomingSwapCoin { .. } | Self::OutgoingSwapCoin { .. } => {
                 P2WSH_MULTISIG_2OF2_WITNESS_SIZE
             }
@@ -179,10 +172,7 @@ impl UTXOSpendInfo {
 impl Display for UTXOSpendInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self {
-            UTXOSpendInfo::SeedCoin { .. } => {
-                write!(f, "regular")
-            }
-            UTXOSpendInfo::SweptCoin { .. } => write!(f, "swept-incoming-swap"),
+            UTXOSpendInfo::SeedCoin { .. } => write!(f, "regular"),
             UTXOSpendInfo::FidelityBondCoin { .. } => write!(f, "fidelity-bond"),
             UTXOSpendInfo::HashlockContract { .. } => write!(f, "hashlock-contract"),
             UTXOSpendInfo::TimelockContract { .. } => write!(f, "timelock-contract"),
@@ -212,11 +202,7 @@ impl Wallet {
     ///
     /// The path should include the full path for a wallet file.
     /// If the wallet file doesn't exist it will create a new wallet file.
-    pub fn init(
-        path: &Path,
-        rpc_config: &RPCConfig,
-        store_enc_material: Option<KeyMaterial>,
-    ) -> Result<Self, WalletError> {
+    pub fn init(path: &Path, rpc_config: &RPCConfig) -> Result<Self, WalletError> {
         let rpc = Client::try_from(rpc_config)?;
         let network = rpc.get_blockchain_info()?.chain;
 
@@ -251,7 +237,6 @@ impl Wallet {
             rpc,
             wallet_file_path: path.to_path_buf(),
             store,
-            store_enc_material,
         })
     }
     /// Get the wallet name
@@ -329,8 +314,7 @@ impl Wallet {
 
     /// Update the existing file. Error if path does not exist.
     pub(crate) fn save_to_disk(&self) -> Result<(), WalletError> {
-        self.store
-            .write_to_disk(&self.wallet_file_path, &self.store_enc_material)
+        self.store.write_to_disk(&self.wallet_file_path)
     }
 
     /// Finds an incoming swap coin with the specified multisig redeem script.
@@ -596,7 +580,7 @@ impl Wallet {
 
     /// Checks if a UTXO belongs to fidelity bonds, and then returns corresponding UTXOSpendInfo
     fn check_if_fidelity(&self, utxo: &ListUnspentResultEntry) -> Option<UTXOSpendInfo> {
-        self.store.fidelity_bond.iter().find_map(|(i, bond)| {
+        self.store.fidelity_bond.iter().find_map(|(i, (bond, _))| {
             if bond.script_pub_key() == utxo.script_pub_key && bond.amount == utxo.amount {
                 Some(UTXOSpendInfo::FidelityBondCoin {
                     index: *i,
@@ -606,30 +590,6 @@ impl Wallet {
                 None
             }
         })
-    }
-
-    /// Check if a UTXO is a swept incoming swap coin based on ScriptPubkey
-    fn check_if_swept_incoming_swapcoin(
-        &self,
-        utxo: &ListUnspentResultEntry,
-    ) -> Option<UTXOSpendInfo> {
-        if let Some(original_multisig_redeemscript) = self
-            .store
-            .swept_incoming_swapcoins
-            .get(&utxo.script_pub_key)
-        {
-            if let Some(descriptor) = &utxo.descriptor {
-                if let Some((_, addr_type, index)) = get_hd_path_from_descriptor(descriptor) {
-                    let path = format!("m/{addr_type}/{index}");
-                    return Some(UTXOSpendInfo::SweptCoin {
-                        input_value: utxo.amount,
-                        path,
-                        original_multisig_redeemscript: original_multisig_redeemscript.clone(),
-                    });
-                }
-            }
-        }
-        None
     }
 
     /// Checks if a UTXO belongs to live contracts, and then returns corresponding UTXOSpendInfo
@@ -672,12 +632,6 @@ impl Wallet {
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Result<Option<UTXOSpendInfo>, WalletError> {
-        // First check if it's a swept incoming swap coin
-        if let Some(swept_info) = self.check_if_swept_incoming_swapcoin(utxo) {
-            return Ok(Some(swept_info));
-        }
-
-        // Existing logic for other UTXO types
         if let Some(descriptor) = &utxo.descriptor {
             // Descriptor logic here
             if let Some(ret) = get_hd_path_from_descriptor(descriptor) {
@@ -1074,10 +1028,7 @@ impl Wallet {
                         .expect("incoming swapcoin missing")
                         .sign_transaction_input(ix, &tx_clone, input, &multisig_redeemscript)?;
                 }
-                UTXOSpendInfo::SeedCoin { path, input_value }
-                | UTXOSpendInfo::SweptCoin {
-                    path, input_value, ..
-                } => {
+                UTXOSpendInfo::SeedCoin { path, input_value } => {
                     let privkey = master_private_key
                         .derive_priv(&secp, &DerivationPath::from_str(&path)?)?
                         .private_key;
@@ -1518,7 +1469,7 @@ impl Wallet {
             change_cost: cost_of_change,
             avg_input_weight,
             avg_output_weight,
-            min_change_value: 294, // Minimal NonDust value: 294
+            min_change_value: 100,
             excess_strategy: ExcessStrategy::ToChange,
         };
 
@@ -1579,6 +1530,8 @@ impl Wallet {
         // redeemscript and descriptor show up in `getaddressinfo` only after
         // the address gets outputs on it-
         Ok((
+            //TODO should completely avoid derive_addresses
+            //because it's slower and provides no benefit over using rust-bitcoin
             self.rpc.derive_addresses(&descriptor[..], None)?[0]
                 .clone()
                 .assume_checked(),
@@ -1595,7 +1548,7 @@ impl Wallet {
         hashlock_pubkeys: &[PublicKey],
         hashvalue: Hash160,
         locktime: u16,
-        fee_rate: f64,
+        fee_rate: Amount,
     ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, Amount), WalletError> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
             .iter()
@@ -1638,6 +1591,7 @@ impl Wallet {
                 },
                 funding_amount,
                 &contract_redeemscript,
+                fee_rate,
             )?;
 
             // self.import_wallet_contract_redeemscript(&contract_redeemscript)?;
@@ -1749,7 +1703,7 @@ impl Wallet {
             self.store
                 .fidelity_bond
                 .values()
-                .map(|bond| {
+                .map(|(bond, _)| {
                     let descriptor_without_checksum = format!("raw({:x})", bond.script_pub_key());
                     Ok(format!(
                         "{}#{}",

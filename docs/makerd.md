@@ -35,8 +35,8 @@ amount_relative_fee_pct = 0.1,
 - `socks_port`: The Tor Socks Port.  Check the [tor doc](tor.md) for more details.
 - `control_port`: The Tor Control Port. Check the [tor doc](tor.md) for more details.
 - `tor_auth_password`: Optional password for Tor control authentication; empty by default.
-- `min_swap_amount`: Minimum swap amount (in satoshis).
-- `fidelity_amount`: Amount (in satoshis) locked as a fidelity bond to deter Sybil attacks.
+- `min_swap_amount`: Minimum swap amount in satoshis.
+- `fidelity_amount`: Amount in satoshis locked as a fidelity bond to deter Sybil attacks.
 - `fidelity_timelock`: Lock duration in block heights for the fidelity bond.
 - `connection_type`: Specifies the network mode; set to "TOR" in production for privacy, or "CLEARNET" during testing.
 - `base_fee`: A fixed fee charged by the Maker for providing its services (in satoshis).

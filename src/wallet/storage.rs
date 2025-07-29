@@ -18,6 +18,8 @@ use std::{
     path::Path,
 };
 
+use super::{error::WalletError, fidelity::FidelityBond};
+
 use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
 
 use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
@@ -39,13 +41,16 @@ pub(crate) struct WalletStore {
     pub(super) incoming_swapcoins: HashMap<ScriptBuf, IncomingSwapCoin>,
     /// Map of multisig redeemscript to outgoing swapcoins.
     pub(super) outgoing_swapcoins: HashMap<ScriptBuf, OutgoingSwapCoin>,
+    /// Map of multisig redeemscript to incoming taproot swapcoins.
+    #[serde(default)]
+    pub(super) incoming_swapcoins2: HashMap<ScriptBuf, IncomingSwapCoin2>,
+    /// Map of multisig redeemscript to outgoing taproot swapcoins.
+    #[serde(default)]
+    pub(super) outgoing_swapcoins2: HashMap<ScriptBuf, OutgoingSwapCoin2>,
     /// Map of prevout to contract redeemscript.
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
-    /// Map of swept incoming swap coins to prevent mixing with regular UTXOs
-    /// Key: ScriptPubKey of swept UTXO, Value: Original multisig redeemscript
-    pub(super) swept_incoming_swapcoins: HashMap<ScriptBuf, ScriptBuf>,
-    /// Map for all the fidelity bond information.
-    pub(crate) fidelity_bond: HashMap<u32, FidelityBond>,
+    /// Map for all the fidelity bond information. (index, (Bond, redeemed)).
+    pub(crate) fidelity_bond: HashMap<u32, (FidelityBond, bool)>,
     pub(super) last_synced_height: Option<u64>,
 
     pub(super) wallet_birthday: Option<u64>,
@@ -73,8 +78,9 @@ impl WalletStore {
             offer_maxsize: 0,
             incoming_swapcoins: HashMap::new(),
             outgoing_swapcoins: HashMap::new(),
+            incoming_swapcoins2: HashMap::new(),
+            outgoing_swapcoins2: HashMap::new(),
             prevout_to_contract_map: HashMap::new(),
-            swept_incoming_swapcoins: HashMap::new(),
             fidelity_bond: HashMap::new(),
             last_synced_height: None,
             wallet_birthday,
@@ -92,11 +98,7 @@ impl WalletStore {
     }
 
     /// Load existing file, updates it, writes it back (errors if path doesn't exist).
-    pub(crate) fn write_to_disk(
-        &self,
-        path: &Path,
-        store_enc_material: &Option<KeyMaterial>,
-    ) -> Result<(), WalletError> {
+    pub(crate) fn write_to_disk(&self, path: &Path) -> Result<(), WalletError> {
         let wallet_file = fs::OpenOptions::new().write(true).open(path)?;
         let writer = BufWriter::new(wallet_file);
 
@@ -154,9 +156,7 @@ mod tests {
         )
         .unwrap();
 
-        original_wallet_store
-            .write_to_disk(&file_path, &None)
-            .unwrap();
+        original_wallet_store.write_to_disk(&file_path).unwrap();
 
         let (read_wallet, _nonce) = WalletStore::read_from_disk(&file_path).unwrap();
         assert_eq!(original_wallet_store, read_wallet);

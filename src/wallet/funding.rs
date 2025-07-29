@@ -15,26 +15,23 @@ use bitcoind::bitcoincore_rpc::{json::CreateRawTransactionInput, RpcApi};
 
 use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
 
-use crate::{
-    utill::{calculate_fee_sats, MIN_FEE_RATE},
-    wallet::Destination,
-};
+use crate::{taker::api::MINER_FEE, wallet::Destination};
 
 use super::Wallet;
 
 use super::error::WalletError;
 
 #[derive(Debug)]
-pub struct CreateFundingTxesResult {
-    pub funding_txes: Vec<Transaction>,
-    pub payment_output_positions: Vec<u32>,
-    pub total_miner_fee: u64,
+pub(crate) struct CreateFundingTxesResult {
+    pub(crate) funding_txes: Vec<Transaction>,
+    pub(crate) payment_output_positions: Vec<u32>,
+    pub(crate) total_miner_fee: u64,
 }
 
 impl Wallet {
     // Attempts to create the funding transactions.
     /// Returns Ok(None) if there was no error but the wallet was unable to create funding txes
-    pub fn create_funding_txes(
+    pub(crate) fn create_funding_txes(
         &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
@@ -48,9 +45,11 @@ impl Wallet {
             manually_selected_outpoints,
         );
         if ret.is_ok() {
-            log::info!(target: "wallet", "created funding txes random amounts");
+            log::info!(target: "wallet", "created funding txes with random amounts");
             return ret;
         }
+
+        // TODO: Unlock this code when we are sure that the routines actually works.
 
         // let ret = self.create_funding_txes_utxo_max_sends(coinswap_amount, destinations, fee_rate);
         // if ret.is_ok() {
@@ -261,14 +260,12 @@ impl Wallet {
                     .collect::<Vec<_>>();
 
                 // Create destination with output - currently, destination is an array with a single address, i.e only a single transaction.
-                let outputs = vec![(address.clone(), Amount::from_sat(output_value))];
-                let destination = Destination::Multi {
-                    outputs,
-                    op_return_data: None,
-                };
+                let destination =
+                    Destination::Multi(vec![(address.clone(), Amount::from_sat(output_value))]);
 
                 // Creates and Signs Transactions via the spend_coins API
-                let funding_tx = self.spend_coins(&coins_to_spend, destination, fee_rate)?;
+                let funding_tx =
+                    self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
 
                 // The actual fee is the difference between the sum of output amounts from the total input amount
                 let actual_fee = total_input_amount
@@ -294,10 +291,7 @@ impl Wallet {
 
                 funding_txes.push(funding_tx);
                 payment_output_positions.push(payment_pos);
-
-                let fee_amount = calculate_fee_sats(tx_size);
-
-                total_miner_fee += fee_amount;
+                total_miner_fee += fee_rate.to_sat();
             }
             Ok(CreateFundingTxesResult {
                 funding_txes,
@@ -306,11 +300,14 @@ impl Wallet {
             })
         })();
 
-        self.rpc.unlock_unspent_all()?;
+        // FLow of Lock Step 5. We unlock the UTXOs on error i.e a rollback mechanism, OR keep locked on success
+        if result.is_err() {
+            self.rpc.unlock_unspent(&locked_utxos)?;
+        }
 
         result
     }
-    
+
     // UNUSED
     fn create_mostly_sweep_txes_with_one_tx_having_change(
         &self,
@@ -472,6 +469,7 @@ impl Wallet {
         &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
+        fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         //this function creates funding txes by
         //using walletcreatefundedpsbt for the total amount, and if
@@ -484,9 +482,8 @@ impl Wallet {
 
         self.lock_unspendable_utxos()?;
 
-        // we can remove this line and use `fee_rate`, right?
-        // and then we can also remove MINER_FEE constant.
-        let fee = Amount::from_sat(calculate_fee_sats(150));
+        let fee = Amount::from_sat(MINER_FEE);
+
         let remaining = coinswap_amount;
 
         let selected_utxo = self.coin_select(remaining + fee, MIN_FEE_RATE, None)?;
@@ -546,7 +543,7 @@ impl Wallet {
         self.create_mostly_sweep_txes_with_one_tx_having_change(
             coinswap_amount,
             destinations,
-            fee,
+            fee_rate,
             &change_address,
             &mut selected_utxo
                 .iter()
@@ -604,6 +601,7 @@ impl Wallet {
             .map(|(l, _)| l.amount.to_sat())
             .any(|utxo_value| utxo_value > coinswap_amount.to_sat())
         {
+            // TODO: Handle this case
             Err(WalletError::General(
                 "Some stupid error that will never occur".to_string(),
             ))

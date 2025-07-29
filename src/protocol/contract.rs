@@ -23,7 +23,7 @@ use bitcoin::{
 
 pub(crate) use bitcoin::hashes::hash160::Hash as Hash160;
 
-use crate::utill::{calculate_fee_sats, redeemscript_to_scriptpubkey};
+use crate::utill::redeemscript_to_scriptpubkey;
 
 use super::{
     error::ProtocolError,
@@ -390,9 +390,8 @@ pub(crate) fn create_senders_contract_tx(
     input: OutPoint,
     input_value: Amount,
     contract_redeemscript: &ScriptBuf,
+    fee_rate: Amount,
 ) -> Result<Transaction, ProtocolError> {
-    let fee_amount = calculate_fee_sats(150);
-
     Ok(Transaction {
         input: vec![TxIn {
             previous_output: input,
@@ -402,7 +401,7 @@ pub(crate) fn create_senders_contract_tx(
         }],
         output: vec![TxOut {
             script_pubkey: redeemscript_to_scriptpubkey(contract_redeemscript)?,
-            value: input_value - Amount::from_sat(fee_amount),
+            value: input_value - fee_rate,
         }],
         lock_time: LockTime::ZERO,
         version: Version::TWO,
@@ -414,10 +413,11 @@ pub(crate) fn create_receivers_contract_tx(
     input: OutPoint,
     input_value: Amount,
     contract_redeemscript: &ScriptBuf,
+    fee_rate: Amount,
 ) -> Result<Transaction, ProtocolError> {
     // exactly the same thing as senders contract for now, until collateral
     // inputs are implemented
-    create_senders_contract_tx(input, input_value, contract_redeemscript)
+    create_senders_contract_tx(input, input_value, contract_redeemscript, fee_rate)
 }
 
 /// Check if a contract output is valid.
@@ -723,9 +723,13 @@ mod test {
         .unwrap();
 
         // Create a contract transaction spending the above utxo
-        let contract_tx =
-            create_receivers_contract_tx(spending_utxo, Amount::from_sat(30000), &contract_script)
-                .unwrap();
+        let contract_tx = create_receivers_contract_tx(
+            spending_utxo,
+            Amount::from_sat(30000),
+            &contract_script,
+            Amount::from_sat(1000),
+        )
+        .unwrap();
 
         // Check creation matches expectation
         let expected_tx_hex = String::from(
@@ -867,6 +871,7 @@ mod test {
             funding_outpoint,
             funding_tx.output[0].value,
             &contract_script,
+            Amount::from_sat(1000),
         )
         .unwrap();
 
@@ -1096,13 +1101,13 @@ mod test {
     #[test]
     fn calculate_coinswap_fee_normal() {
         // Test with typical values
-        let base_fee_sat = calculate_fee_sats(150);
+        let base_fee_sat = 1000;
         let amt_rel_fee_pct = 2.5;
         let time_rel_fee_pct = 0.1;
         let swap_amount = 100_000;
         let refund_locktime = 20;
 
-        let expected_fee = 4800;
+        let expected_fee = 5500;
 
         let calculated_fee = calculate_coinswap_fee(
             swap_amount,
@@ -1123,7 +1128,7 @@ mod test {
         // Test with only the absolute fee being non-zero
         assert_eq!(
             calculate_coinswap_fee(swap_amount, refund_locktime, base_fee_sat, 0.0, 0.0),
-            300
+            1000
         );
 
         // Test with only the relative fees being non-zero
@@ -1289,7 +1294,7 @@ mod test {
                 next_multisig_pubkey: pub_2,
             }],
             refund_locktime: u16::default(),
-            contract_feerate: f64::default(),
+            contract_feerate: u64::default(),
             id: "random".to_string(),
         };
 
@@ -1319,7 +1324,7 @@ mod test {
                 next_multisig_pubkey: pub_2,
             }],
             refund_locktime: u16::default(),
-            contract_feerate: f64::default(),
+            contract_feerate: u64::default(),
             id: "random".to_string(),
         };
 
