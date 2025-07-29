@@ -5,7 +5,7 @@ use std::{convert::TryFrom, thread};
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Auth, Client, RpcApi};
 use serde_json::{json, Value};
 
-use crate::{utill::HEART_BEAT_INTERVAL, wallet::api::KeychainKind};
+use crate::{utill::HEART_BEAT_INTERVAL, wallet::KeychainKind};
 
 use serde::Deserialize;
 

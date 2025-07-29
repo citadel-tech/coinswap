@@ -9,6 +9,7 @@ mod fidelity;
 mod funding;
 mod rpc;
 mod spend;
+mod split_utxos;
 mod storage;
 mod swapcoin;
 mod swapcoin2;

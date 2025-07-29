@@ -80,6 +80,9 @@ pub(crate) const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 /// Number of confirmation required funding transaction.
 pub const REQUIRED_CONFIRMS: u32 = 1;
 
+/// Default Transaction Fees in sats/vByte
+pub const DEFAULT_TX_FEE_RATE: f64 = 2.0;
+
 /// Minimum fee rate in sats/vb for all transactions
 /// This replaces the hardcoded MINER_FEE constant
 pub const MIN_FEE_RATE: f64 = 2.0;

@@ -236,11 +236,11 @@ impl Taker {
         rpc_config.wallet_name = wallet_file_name;
 
         let mut wallet = if wallet_path.exists() {
-            let wallet = Wallet::load(&wallet_path, &rpc_config)?;
+            let wallet = Wallet::load(&wallet_path, &rpc_config, &None)?;
             // log::info!("Loaded wallet from {}", wallet_path.display());
             wallet
         } else {
-            let wallet = Wallet::init(&wallet_path, &rpc_config)?;
+            let wallet = Wallet::init(&wallet_path, &rpc_config, None)?;
             // log::info!("New Wallet created at {:?}", wallet_path);
             wallet
         };
@@ -433,10 +433,10 @@ impl Taker {
                 if cfg!(feature = "integration-test") {
                     format!("127.0.0.1:{}", 8080)
                 } else {
-                    self.config.directory_server_address.clone()
+                    self.config.dns_address.clone()
                 }
             }
-            ConnectionType::TOR => self.config.directory_server_address.clone(),
+            ConnectionType::TOR => self.config.dns_address.clone(),
         };
 
         #[cfg(not(feature = "integration-test"))]
