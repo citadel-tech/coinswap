@@ -205,8 +205,7 @@ impl Wallet {
         }
         Err(WalletError::General("Contract Does not exist".to_string()))
     }
-
-    pub fn spend_coins(
+    pub(crate) fn spend_coins(
         &self,
         coins: &[(ListUnspentResultEntry, UTXOSpendInfo)],
         destination: Destination,
