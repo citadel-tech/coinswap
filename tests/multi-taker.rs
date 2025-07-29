@@ -25,11 +25,7 @@ use test_framework::*;
 /// The test verifies that the Maker can properly manage multiple concurrent swaps with
 /// different taker behaviors and recover appropriately in each case if required.
 #[test]
-<<<<<<< HEAD
 fn multi_taker_single_maker_swap() {
-=======
-fn mutli_taker_single_maker_swap() {
->>>>>>> f22b38c (feat: implement taproot coinswap with musig2 signatures)
     let makers_config_map = [
         ((6102, None), MakerBehavior::Normal),
         ((16102, None), MakerBehavior::Normal),
@@ -37,18 +33,13 @@ fn mutli_taker_single_maker_swap() {
 
     let taker_behavior = vec![
         TakerBehavior::Normal,
-<<<<<<< HEAD
         TakerBehavior::Normal, // TODO: Making a taker misbehave, makes the behavior of makers unpredictable. Fix It.
-=======
-        TakerBehavior::DropConnectionAfterFullSetup,
->>>>>>> f22b38c (feat: implement taproot coinswap with musig2 signatures)
     ];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
     let (test_framework, mut takers, makers, block_generation_handle) =
         TestFramework::init(makers_config_map.into(), taker_behavior);
 
-<<<<<<< HEAD
     warn!("🧪 Running Test: Multiple Takers with Different Behaviors");
 
     info!("💰 Funding multiple takers with UTXOs");
@@ -61,42 +52,18 @@ fn mutli_taker_single_maker_swap() {
             Amount::from_btc(0.05).unwrap(),
         );
     }
-=======
-    warn!("Running Test: Multiple Takers with Different Behaviors");
-
-    // Fund the Takers with 3 utxos of 0.05 btc each and do basic checks on the balance
-    let org_taker_spend_balances = takers
-        .iter_mut()
-        .map(|taker| {
-            fund_and_verify_taker(
-                taker,
-                &test_framework.bitcoind,
-                3,
-                Amount::from_btc(0.05).unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
->>>>>>> f22b38c (feat: implement taproot coinswap with musig2 signatures)
 
     // Fund the Maker with 4 utxos of 0.05 btc each and do basic checks on the balance.
     let makers_ref = makers.iter().map(Arc::as_ref).collect::<Vec<_>>();
     fund_and_verify_maker(
         makers_ref,
         &test_framework.bitcoind,
-<<<<<<< HEAD
         6,
-=======
-        4,
->>>>>>> f22b38c (feat: implement taproot coinswap with musig2 signatures)
         Amount::from_btc(0.05).unwrap(),
     );
 
     // Start the Maker Server threads
-<<<<<<< HEAD
     info!("🚀 Initiating Maker servers");
-=======
-    log::info!("Initiating Maker...");
->>>>>>> f22b38c (feat: implement taproot coinswap with musig2 signatures)
     let maker_threads = makers
         .iter()
         .map(|maker| {
@@ -112,11 +79,7 @@ fn mutli_taker_single_maker_swap() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-<<<<<<< HEAD
                 info!("⏳ Waiting for maker setup completion");
-=======
-                log::info!("Waiting for maker setup completion");
->>>>>>> f22b38c (feat: implement taproot coinswap with musig2 signatures)
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -127,25 +90,14 @@ fn mutli_taker_single_maker_swap() {
 
             let balances = wallet.get_balances().unwrap();
 
-<<<<<<< HEAD
             verify_maker_pre_swap_balances(&balances, 24999508);
-=======
-            assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
-            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
-            assert_eq!(balances.swap, Amount::ZERO);
-            assert_eq!(balances.contract, Amount::ZERO);
->>>>>>> f22b38c (feat: implement taproot coinswap with musig2 signatures)
 
             balances.spendable
         })
         .collect::<Vec<_>>();
 
     // Initiate Coinswap for both Takers concurrently
-<<<<<<< HEAD
     info!("🔄 Initiating coinswap protocol for multiple takers");
-=======
-    log::info!("Initiating coinswap protocol for multiple takers");
->>>>>>> f22b38c (feat: implement taproot coinswap with musig2 signatures)
 
     // Spawn threads for each taker to initiate coinswap concurrently
     thread::scope(|s| {
@@ -171,15 +123,10 @@ fn mutli_taker_single_maker_swap() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-<<<<<<< HEAD
     info!("🎯 All coinswaps processed. Transactions complete.");
-=======
-    log::info!("All coinswaps processed. Transactions complete.");
->>>>>>> f22b38c (feat: implement taproot coinswap with musig2 signatures)
 
     thread::sleep(Duration::from_secs(10));
 
-<<<<<<< HEAD
     info!("📊 Verifying Maker balances");
     // Verify spendable balances for makers.
     // TODO - Add more assertions / checks for balances.
@@ -204,23 +151,6 @@ fn mutli_taker_single_maker_swap() {
     }
 
     info!("🎉 All checks successful. Terminating integration test case");
-=======
-    // For Taker2 (DropConnectionAfterFullSetup), run recovery
-    warn!("Starting Taker recovery process");
-    takers[1].recover_from_swap().unwrap();
-
-    // Verify final state for all participants
-    for (i, taker) in takers.iter().enumerate() {
-        verify_swap_results(
-            taker,
-            &makers,
-            org_taker_spend_balances[i],
-            org_maker_spend_balances.clone(),
-        );
-    }
-
-    info!("All checks successful. Terminating integration test case");
->>>>>>> f22b38c (feat: implement taproot coinswap with musig2 signatures)
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

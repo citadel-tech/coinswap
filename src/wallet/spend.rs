@@ -5,12 +5,15 @@
 //! parsing mechanisms for transaction inputs and outputs.
 
 use bitcoin::{
-    absolute::LockTime, transaction::Version, Address, Amount, OutPoint, ScriptBuf, Sequence,
-    Transaction, TxIn, TxOut, Witness,
+    absolute::LockTime, script::PushBytesBuf, transaction::Version, Address, Amount, OutPoint,
+    ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RawTx, RpcApi};
 
-use crate::wallet::{FidelityError, UTXOSpendInfo};
+use crate::{
+    utill::calculate_fee_sats,
+    wallet::{api::UTXOSpendInfo, FidelityError},
+};
 
 use super::{error::WalletError, swapcoin::SwapCoin, IncomingSwapCoin, OutgoingSwapCoin, Wallet};
 
@@ -20,7 +23,14 @@ pub enum Destination {
     /// Sweep
     Sweep(Address),
     /// Multi
-    Multi(Vec<(Address, Amount)>),
+    Multi {
+        /// List of outputs (address, amounts)
+        outputs: Vec<(Address, Amount)>,
+        /// OP_RETURN data, used to create a OP_RETURN TxOut
+        op_return_data: Option<Box<[u8]>>,
+    },
+    /// Send Dynamic Random Amounts to Multiple Addresses
+    MultiDynamic(Amount, Vec<Address>),
 }
 
 impl Wallet {
@@ -71,13 +81,13 @@ impl Wallet {
     /// This function creates a spending transaction from the fidelity bond, signs and broadcasts it.
     /// Returns the txid of the spending tx, and mark the bond as spent.
     pub fn redeem_fidelity(&mut self, idx: u32, feerate: f64) -> Result<(), WalletError> {
-        let (bond, redeemed) = self
+        let bond = self
             .store
             .fidelity_bond
             .get(&idx)
             .ok_or(FidelityError::BondDoesNotExist)?;
 
-        if *redeemed {
+        if bond.is_spent {
             log::info!("Fidelity bond already spent.");
             return Ok(());
         }
@@ -104,12 +114,12 @@ impl Wallet {
                 // As a temporary fix, we mark the bond as redeemed and exit gracefully.
                 log::info!("Fidelity bond already spent.");
 
-                let (_, redeemed) = self
+                let bond = self
                     .store
                     .fidelity_bond
                     .get_mut(&idx)
                     .ok_or(FidelityError::BondDoesNotExist)?;
-                *redeemed = true;
+                bond.is_spent = true;
 
                 return Ok(());
             }
@@ -119,26 +129,19 @@ impl Wallet {
         let tx = self.spend_coins(&[(utxo, expired_fidelity_spend_info)], destination, feerate)?;
         let txid = self.send_tx(&tx)?;
 
-        // TODO: Potential data inconsistency issue
-        // If the server crashes after broadcasting the redemption transaction but before updating
-        // the `redeemed` flag, the bond will appear unspent on restart. The system will then
-        // attempt to create a new redemption transaction, but the UTXO will already be spent,
-        // causing an unrecoverable error.
-        // Temporary fix: Log the status and mark the bond as redeemed to prevent repeated failures.
-        // A more robust solution is needed to ensure atomic updates.
         log::info!("Fidelity redeem transaction broadcasted. txid: {txid}");
 
         // No need to wait for confirmation as that will delay the rpc call. Just send back the txid.
 
         // mark is_spent
         {
-            let (_, redeemed) = self
+            let bond = self
                 .store
                 .fidelity_bond
                 .get_mut(&idx)
                 .ok_or(FidelityError::BondDoesNotExist)?;
 
-            *redeemed = true;
+            bond.is_spent = true;
         }
 
         Ok(())
@@ -201,13 +204,15 @@ impl Wallet {
     /// Creates a [`Transaction`] spending given UTXOs to a [`Destination`] with fee calculated from `feerate`.
     pub fn spend_coins(
         &self,
-        coins: &Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
+        coins: &[(ListUnspentResultEntry, UTXOSpendInfo)],
         destination: Destination,
         feerate: f64,
     ) -> Result<Transaction, WalletError> {
         // Set the Anti-Fee-Snipping locktime
         let current_height = self.rpc.get_block_count()?;
         let lock_time = LockTime::from_height(current_height as u32)?;
+
+        let mut coins = coins.to_vec();
 
         let mut tx = Transaction {
             version: Version::TWO,
@@ -218,9 +223,9 @@ impl Wallet {
 
         let mut total_input_value = Amount::ZERO;
         let mut total_witness_size = 0;
-        for (utxo_data, spend_info) in coins {
+        for (utxo_data, spend_info) in coins.iter() {
             match spend_info {
-                UTXOSpendInfo::SeedCoin { .. } => {
+                UTXOSpendInfo::SeedCoin { .. } | UTXOSpendInfo::SweptCoin { .. } => {
                     tx.input.push(TxIn {
                         previous_output: OutPoint::new(utxo_data.txid, utxo_data.vout),
                         sequence: Sequence::ZERO,
@@ -241,13 +246,12 @@ impl Wallet {
                     total_input_value += utxo_data.amount;
                 }
                 UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
-                    let (bond, redeemed) = self
+                    let bond = self
                         .store
                         .fidelity_bond
                         .get(index)
                         .ok_or(FidelityError::BondDoesNotExist)?;
-
-                    if *redeemed {
+                    if bond.is_spent {
                         return Err(FidelityError::BondAlreadyRedeemed.into());
                     }
 
@@ -298,17 +302,6 @@ impl Wallet {
                     total_witness_size += spend_info.estimate_witness_size();
                     total_input_value += *input_value;
                 }
-                UTXOSpendInfo::IncomingSwapCoin2 { .. }
-                | UTXOSpendInfo::OutgoingSwapCoin2 { .. } => {
-                    tx.input.push(TxIn {
-                        previous_output: OutPoint::new(utxo_data.txid, utxo_data.vout),
-                        sequence: Sequence::ZERO,
-                        witness: Witness::new(),
-                        script_sig: ScriptBuf::new(),
-                    });
-                    total_witness_size += spend_info.estimate_witness_size();
-                    total_input_value += utxo_data.amount;
-                }
             }
         }
 
@@ -323,18 +316,7 @@ impl Wallet {
                 let base_size = tx.base_size();
                 let vsize = (base_size * 4 + total_witness_size).div_ceil(4);
 
-                let fee = Amount::from_sat((feerate * vsize as f64).ceil() as u64);
-
-                #[cfg(feature = "integration-test")]
-                let fee =
-                    // Timelock spend has hardcoded fees 128 * 2 sats for testcases
-                    if coins.len() == 1 && matches!(coins[0].1, UTXOSpendInfo::TimelockContract{..}) {
-                        Amount::from_sat(256)
-                    }
-                    // Otherwise for all the testcases fees will be 1000 sats
-                    else {
-                        Amount::from_sat(1000)
-                    };
+                let fee = Amount::from_sat(calculate_fee_sats(vsize as u64));
 
                 // I don't know if this case is even possible?
                 if fee > total_input_value {
@@ -347,13 +329,30 @@ impl Wallet {
                 log::info!("Fee: {} sats", fee.to_sat());
                 tx.output[0].value = total_input_value - fee;
             }
-            Destination::Multi(addresses) => {
+            Destination::Multi {
+                outputs,
+                op_return_data,
+            } => {
                 let mut total_output_value = Amount::ZERO;
-                for (address, amount) in addresses {
+                for (address, amount) in outputs {
                     total_output_value += amount;
                     let txout = TxOut {
                         script_pubkey: address.script_pubkey(),
                         value: amount,
+                    };
+                    tx.output.push(txout);
+                }
+                if let Some(data) = op_return_data {
+                    let mut push_bytes = PushBytesBuf::new();
+                    push_bytes.extend_from_slice(&data).map_err(|_| {
+                        WalletError::General(
+                            "Failed to add OP_RETURN data to transaction output".to_owned(),
+                        )
+                    })?;
+                    let op_return_script = ScriptBuf::new_op_return(&push_bytes);
+                    let txout = TxOut {
+                        script_pubkey: op_return_script,
+                        value: Amount::ZERO,
                     };
                     tx.output.push(txout);
                 }
@@ -369,10 +368,7 @@ impl Wallet {
                 let base_wchange = tx_wchange.base_size();
                 let vsize_wchange = (base_wchange * 4 + total_witness_size).div_ceil(4);
 
-                let fee_wchange = Amount::from_sat((feerate * vsize_wchange as f64).ceil() as u64);
-
-                #[cfg(feature = "integration-test")]
-                let fee_wchange = Amount::from_sat(1000);
+                let fee_wchange = Amount::from_sat(calculate_fee_sats(vsize_wchange as u64));
 
                 let remaining_wchange =
                     if let Some(diff) = total_input_value.checked_sub(total_output_value) {
@@ -409,9 +405,95 @@ impl Wallet {
                     );
                 }
             }
+
+            // This Destination option facilitates creating txes with dynamic splits for coinswap
+            Destination::MultiDynamic(coinswap_amount, addresses) => {
+                let (selected_inputs, target_chunks, change_chunks) = self.create_dynamic_splits(
+                    coins.to_vec(),
+                    Amount::to_sat(coinswap_amount),
+                    feerate,
+                );
+
+                let new_utxos = selected_inputs
+                    .iter()
+                    .filter(|utxo| !coins.contains(utxo))
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                if !new_utxos.is_empty() {
+                    total_input_value += new_utxos
+                        .iter()
+                        .map(|(utxo, _)| utxo.amount)
+                        .sum::<Amount>();
+
+                    total_witness_size += new_utxos
+                        .iter()
+                        .map(|(_, spend_info)| spend_info.estimate_witness_size())
+                        .sum::<usize>();
+
+                    coins.extend(new_utxos.clone());
+
+                    for (utxo, _) in new_utxos {
+                        tx.input.push(TxIn {
+                            previous_output: OutPoint::new(utxo.txid, utxo.vout),
+                            sequence: Sequence::ZERO,
+                            witness: Witness::new(),
+                            script_sig: ScriptBuf::new(),
+                        });
+                    }
+                }
+
+                // We are selecting the addresses from the initial vector as per the num of targets required.
+                // There can be more addresses in the vec, which are ignored.
+                for (i, target_chunk) in target_chunks.iter().enumerate() {
+                    let txout = TxOut {
+                        script_pubkey: addresses[i].script_pubkey(),
+                        value: Amount::from_sat(*target_chunk),
+                    };
+                    tx.output.push(txout);
+                }
+
+                let internal_spks = self.get_next_internal_addresses(change_chunks.len() as u32)?;
+
+                // Add dummy changes to calculate the final weight of the transactions.
+                let mut tx_wchange = tx.clone();
+                for (i, _) in change_chunks.iter().enumerate() {
+                    tx_wchange.output.push(TxOut {
+                        value: Amount::ZERO, // Adjusted later
+                        script_pubkey: internal_spks[i].script_pubkey(),
+                    });
+                }
+
+                let base_wchange = tx_wchange.base_size();
+                let vsize_wchange = (base_wchange * 4 + total_witness_size).div_ceil(4);
+
+                let fee_wchange = Amount::from_sat(calculate_fee_sats(vsize_wchange as u64));
+
+                let individual_fee_wchange = fee_wchange / change_chunks.len() as u64;
+
+                for (i, change_chunk) in change_chunks.iter().enumerate() {
+                    // Distributing the change fee across the individual changes.
+                    let change = Amount::from_sat(
+                        change_chunk.saturating_sub(individual_fee_wchange.to_sat()),
+                    );
+                    if change > internal_spks[i].script_pubkey().minimal_non_dust() {
+                        tx.output.push(TxOut {
+                            script_pubkey: internal_spks[i].script_pubkey(),
+                            value: change,
+                        });
+                    } else {
+                        log::info!(
+                            "Remaining change {} sats indexed {} is below dust threshold. Skipping change output. (fee: {} sats)",
+                            i,
+                            change.to_sat(),
+                            fee_wchange.to_sat()
+                        );
+                    }
+                }
+            }
         }
 
-        self.sign_transaction(&mut tx, &mut coins.iter().map(|(_, usi)| usi.clone()))?;
+        self.sign_transaction(&mut tx, coins.iter().map(|(_, usi)| usi.clone()))?;
         let calc_vsize = (tx.base_size() * 4 + total_witness_size).div_ceil(4);
         let signed_tx_vsize = tx.vsize();
 
@@ -425,6 +507,25 @@ impl Wallet {
             calc_vsize,
             signed_tx_vsize,
             total_tolerance
+        );
+
+        // The actual fee is the difference between the sum of output amounts from the total input amount
+        let total_output_value = tx
+            .output
+            .iter()
+            .map(|txo| txo.value)
+            .try_fold(Amount::ZERO, |acc, val| acc.checked_add(val))
+            .expect("output amount summation overflowed");
+        let actual_fee = total_input_value - total_output_value;
+        let tx_size = tx.weight().to_vbytes_ceil();
+        let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
+
+        log::info!(
+            "Created Funding tx, txid: {} | Size: {} vB | Fee: {} sats | Feerate: {:.2} sat/vB",
+            tx.compute_txid(),
+            tx_size,
+            actual_fee.to_sat(),
+            actual_feerate
         );
 
         log::debug!("Signed Transaction : {:?}", tx.raw_hex());

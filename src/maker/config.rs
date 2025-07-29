@@ -1,4 +1,7 @@
-//! Maker Configuration. Controlling various behaviors.
+//! Maker Configuration. Controlling various Maker behaviors.
+//!
+//! This module defines the configuration options for the Maker server, controlling various aspects
+//! of the maker's behavior including network settings, swap parameters, and security settings.
 
 use crate::utill::parse_toml;
 use std::{io, path::Path};
@@ -18,23 +21,21 @@ use super::api::MIN_SWAP_AMOUNT;
 /// - Connection preferences
 #[derive(Debug, Clone, PartialEq)]
 pub struct MakerConfig {
-    /// RPC listening port
+    /// RPC listening port for maker-cli operations
     pub rpc_port: u16,
-    /// Minimum Coinswap amount
-    pub min_swap_amount: u64,
-    /// Target listening port
+    /// Network port for client connections
     pub network_port: u16,
-    /// Control port
+    /// Control port for Tor interface
     pub control_port: u16,
-    /// Socks port
+    /// Socks port for Tor proxy
     pub socks_port: u16,
-    /// Authentication password
+    /// Authentication password for Tor interface
     pub tor_auth_password: String,
     /// Minimum amount in satoshis that can be swapped
     pub min_swap_amount: u64,
     /// Fidelity Bond amount in satoshis
     pub fidelity_amount: u64,
-    /// Fidelity Bond timelock in Block heights.
+    /// Fidelity Bond relative timelock in number of blocks
     pub fidelity_timelock: u32,
     /// A fixed base fee charged by the Maker for providing its services
     pub base_fee: u64,
@@ -44,6 +45,13 @@ pub struct MakerConfig {
 
 impl Default for MakerConfig {
     fn default() -> Self {
+        let (fidelity_amount, fidelity_timelock, base_fee, amount_relative_fee_pct) =
+            if cfg!(feature = "integration-test") {
+                (5_000_000, 26_000, 1000, 2.50) // Test values
+            } else {
+                (50_000, 13104, 100, 0.1) // Production values
+            };
+
         Self {
             rpc_port: 6103,
             min_swap_amount: MIN_SWAP_AMOUNT,
@@ -122,16 +130,26 @@ impl MakerConfig {
         })
     }
 
-    // Method to serialize the MakerConfig into a TOML string and write it to a file
+    /// This function serializes the MakerConfig into a TOML format and writes it to disk.
+    /// It creates the parent directory if it doesn't exist.
     pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
-            "network_port = {}
+            "# Maker Configuration File
+# Network port for client connections
+network_port = {}
+# RPC port for maker-cli operations
 rpc_port = {}
+# Socks port for Tor proxy
 socks_port = {}
+# Control port for Tor  interface
 control_port = {}
+# Authentication password for Tor interface
 tor_auth_password = {}
+# Minimum amount in satoshis that can be swapped
 min_swap_amount = {}
+# Fidelity Bond amount in satoshis
 fidelity_amount = {}
+# Fidelity Bond relative timelock in number of blocks 
 fidelity_timelock = {}
 # A fixed base fee charged by the Maker for providing its services (in satoshis)
 base_fee = {}
@@ -153,7 +171,6 @@ amount_relative_fee_pct = {}
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;
         file.write_all(toml_data.as_bytes())?;
-        // TODO: Why we do require Flush?
         file.flush()?;
         Ok(())
     }
@@ -184,7 +201,6 @@ mod tests {
         let contents = r#"
             network_port = 6102
             rpc_port = 6103
-            required_confirms = 1
             min_swap_amount = 10000
             socks_port = 9050
         "#;

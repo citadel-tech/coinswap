@@ -94,7 +94,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
 
     if let Some(i) = highest_index {
         let wallet_read = maker.get_wallet().read()?;
-        let (bond, _) = wallet_read.store.fidelity_bond.get(&i).unwrap();
+        let bond = wallet_read.store.fidelity_bond.get(&i).unwrap();
 
         let current_height = wallet_read
             .rpc
@@ -151,11 +151,12 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
             // sync the wallet
             maker.get_wallet().write()?.sync_no_fail();
 
-            let fidelity_result =
-                maker
-                    .get_wallet()
-                    .write()?
-                    .create_fidelity(amount, locktime, DEFAULT_TX_FEE_RATE);
+            let fidelity_result = maker.get_wallet().write()?.create_fidelity(
+                amount,
+                locktime,
+                Some(maker_address.as_bytes()),
+                MIN_FEE_RATE,
+            );
 
             match fidelity_result {
                 // Wait for sufficient funds to create fidelity bond.
@@ -243,7 +244,7 @@ fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
 
 /// Continuously checks if the Bitcoin Core RPC connection is live.
 fn check_connection_with_core(maker: &Maker) -> Result<(), MakerError> {
-    let mut rpc_ping_success = true;
+    let mut rcp_ping_success = true;
     while !maker.shutdown.load(Relaxed) {
         if let Err(e) = maker.wallet.read()?.rpc.get_blockchain_info() {
             log::error!(
@@ -251,9 +252,9 @@ fn check_connection_with_core(maker: &Maker) -> Result<(), MakerError> {
                 maker.config.network_port,
                 e
             );
-            rpc_ping_success = false;
+            rcp_ping_success = false;
         } else {
-            if !rpc_ping_success {
+            if !rcp_ping_success {
                 log::info!(
                     "[{}] Bitcoin Core RPC connection is live.",
                     maker.config.network_port
@@ -293,9 +294,9 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
     let mut connection_state = ConnectionState::default();
 
     while !maker.shutdown.load(Relaxed) {
-        let mut taker_msg_bytes = Vec::new();
+        let mut bytes = Vec::new();
         match read_message(stream) {
-            Ok(b) => taker_msg_bytes = b,
+            Ok(b) => bytes = b,
             Err(e) => {
                 if let NetError::IO(e) = e {
                     if e.kind() == ErrorKind::UnexpectedEof {
@@ -310,10 +311,13 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
             }
         }
 
-        let taker_msg: TakerToMakerMessage = serde_cbor::from_slice(&taker_msg_bytes)?;
-        log::info!("[{}] <=== {}", maker.config.network_port, taker_msg);
+        let unified = decode_unified_message(&bytes)?;
 
-        let reply = handle_message(maker, &mut connection_state, taker_msg);
+        match unified {
+            MessageToMaker::TakerToMaker(taker_msg) => {
+                log::info!("[{}] <=== {}", maker.config.network_port, taker_msg);
+
+                let reply = handle_message(maker, &mut connection_state, taker_msg);
 
                 match reply {
                     Ok(reply) => {
@@ -501,7 +505,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     }
 
     while !maker.shutdown.load(Relaxed) {
-        if interval_tracker % RPC_PING_INTERVAL == 0 {
+        if interval_tracker.is_multiple_of(RPC_PING_INTERVAL) {
             check_connection_with_core(maker.as_ref())?;
         }
 
