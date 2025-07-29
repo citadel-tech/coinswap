@@ -80,7 +80,8 @@ pub fn generate_partial_signature_i(
     let message_bytes = message.as_ref();
     let message = secp256k1::Message::from_digest(*message_bytes);
     let keypair_secret = keypair.secret_bytes();
-    let keypair = secp256k1::Keypair::from_seckey_byte_array(&secp, keypair_secret).unwrap();
+    let secret_key = secp256k1::SecretKey::from_slice(&keypair_secret).unwrap();
+    let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
     generate_partial_signature(message, agg_nonce, sec_nonce, keypair, tap_tweak, &pubkeys)
 }
 

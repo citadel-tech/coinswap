@@ -6,10 +6,10 @@
 
 use bitcoin::Amount;
 use coinswap::{
-    maker::{start_maker_server_taproot, TaprootMaker, TaprootMakerBehavior},
-    taker::{api2::SwapParams, TaprootTaker},
-    utill::{ConnectionType, DEFAULT_TX_FEE_RATE},
-    wallet::{Destination, TaprootWallet},
+    maker::{TaprootMaker, TaprootMakerBehavior, start_maker_server_taproot},
+    taker::{api2::{SwapParams, Taker}},
+    utill::ConnectionType,
+    wallet::{Destination, Wallet, RPCConfig},
 };
 use std::sync::Arc;
 
@@ -265,11 +265,11 @@ fn create_taproot_makers(
         .iter()
         .enumerate()
         .map(|(index, ((network_port, rpc_port), behavior))| {
-            let data_dir = test_framework
-                .get_temp_dir()
+            let data_dir = std::env::temp_dir()
+                .join("coinswap")
                 .join(format!("taproot_maker{}", index));
 
-            let rpc_config = test_framework.into();
+            let rpc_config = RPCConfig::from(test_framework);
 
             Arc::new(
                 TaprootMaker::init(
@@ -335,18 +335,18 @@ fn fund_taproot_makers(
 }
 
 /// Create a taproot taker with the test framework configuration
-fn create_taproot_taker(test_framework: &TestFramework) -> TaprootTaker {
+fn create_taproot_taker(test_framework: &TestFramework) -> Taker {
     // Use a unique directory with timestamp to avoid wallet conflicts
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let data_dir = test_framework
-        .get_temp_dir()
+    let data_dir = std::env::temp_dir()
+        .join("coinswap")
         .join(format!("taproot_taker_{}", timestamp));
-    let rpc_config = test_framework.into();
+    let rpc_config = RPCConfig::from(test_framework);
 
-    TaprootTaker::init(
+    Taker::init(
         Some(data_dir),
         Some("taproot_taker_wallet".to_string()),
         Some(rpc_config),
@@ -359,7 +359,7 @@ fn create_taproot_taker(test_framework: &TestFramework) -> TaprootTaker {
 
 /// Fund taproot taker and verify balance
 fn fund_taproot_taker(
-    taker: &mut TaprootTaker,
+    taker: &mut Taker,
     bitcoind: &bitcoind::BitcoinD,
     utxo_count: u32,
     utxo_value: Amount,
@@ -389,7 +389,7 @@ fn fund_taproot_taker(
 
 /// Verify the results of a taproot swap
 fn verify_taproot_swap_results(
-    taker_wallet: &TaprootWallet,
+    taker_wallet: &Wallet,
     makers: &[Arc<TaprootMaker>],
     org_taker_spend_balance: Amount,
     org_maker_spend_balances: Vec<Amount>,

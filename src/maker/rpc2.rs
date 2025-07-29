@@ -82,10 +82,13 @@ fn handle_request_taproot(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<
             feerate,
         } => {
             let amount = Amount::from_sat(amount);
-            let destination = Destination::Multi(vec![(
-                Address::from_str(&address).unwrap().assume_checked(),
-                amount,
-            )]);
+            let destination = Destination::Multi {
+                outputs: vec![(
+                    Address::from_str(&address).unwrap().assume_checked(),
+                    amount,
+                )],
+                op_return_data: None,
+            };
 
             let coins_to_send = maker.get_wallet().read()?.coin_select(amount, feerate)?;
             let tx = maker.get_wallet().write()?.spend_from_wallet(

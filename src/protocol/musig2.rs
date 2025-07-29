@@ -39,7 +39,7 @@ pub fn generate_new_nonce_pair(
     extra_rand: Option<[u8; 32]>,
 ) -> (SecretNonce, PublicNonce) {
     let secp = Secp256k1::new();
-    let musig_session_sec_rand = SessionSecretRand::from_rng(&mut rand::rng());
+    let musig_session_sec_rand = SessionSecretRand::from_rng(&mut rand::thread_rng());
     let mut musig_key_agg_cache = KeyAggCache::new(&secp, pubkeys);
     musig_key_agg_cache
         .pubkey_xonly_tweak_add(&secp, &tap_tweak)
@@ -48,7 +48,7 @@ pub fn generate_new_nonce_pair(
         &secp,
         musig_session_sec_rand,
         pubkey,
-        msg.as_ref(),
+        msg,
         extra_rand,
     )
 }
@@ -77,7 +77,7 @@ pub fn generate_partial_signature(
         &secp,
         &musig_key_agg_cache,
         agg_nonce.clone(),
-        message.as_ref(),
+        message,
     );
     session.partial_sign(&secp, sec_nonce, &keypair, &musig_key_agg_cache)
 }
@@ -99,7 +99,7 @@ pub fn aggregate_partial_signatures(
         &secp,
         &musig_key_agg_cache,
         agg_nonce.clone(),
-        message.as_ref(),
+        message,
     );
     session.partial_sig_agg(partial_sigs.as_slice())
 }
@@ -116,8 +116,8 @@ pub fn verify_partial_signature(
     session.partial_verify(
         &secp,
         musig_key_agg_cache,
-        &partial_sign,
-        &pub_nonce,
+        partial_sign,
+        pub_nonce,
         pubkey,
     )
 }

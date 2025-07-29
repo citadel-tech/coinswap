@@ -48,7 +48,7 @@ fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<(String, String), Make
             let dns_address = if cfg!(feature = "integration-test") {
                 format!("127.0.0.1:{}", 8080)
             } else {
-                maker.config.directory_server_address.clone()
+                maker.config.dns_address.clone()
             };
 
             (maker_address, dns_address)
@@ -62,7 +62,7 @@ fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<(String, String), Make
             )?;
             let maker_address = format!("{}:{}", maker_hostname, maker.config.network_port);
 
-            let dns_address = maker.config.directory_server_address.clone();
+            let dns_address = maker.config.dns_address.clone();
             (maker_address, dns_address)
         }
     };
@@ -180,7 +180,7 @@ fn setup_fidelity_bond_taproot(
 
     if let Some(i) = highest_index {
         let wallet_read = maker.get_wallet().read()?;
-        let (bond, _) = wallet_read.store.fidelity_bond.get(&i).unwrap();
+        let bond = wallet_read.store.fidelity_bond.get(&i).unwrap();
 
         let current_height = wallet_read
             .rpc
@@ -252,7 +252,7 @@ fn setup_fidelity_bond_taproot(
             maker
                 .get_wallet()
                 .write()?
-                .create_fidelity(amount, locktime, DEFAULT_TX_FEE_RATE);
+                .create_fidelity(amount, locktime, None, DEFAULT_TX_FEE_RATE);
 
         match fidelity_result {
             // Wait for sufficient funds to create fidelity bond.
