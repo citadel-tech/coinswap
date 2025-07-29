@@ -15,35 +15,36 @@ use bitcoind::bitcoincore_rpc::{json::CreateRawTransactionInput, RpcApi};
 
 use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
 
-use crate::{taker::api::MINER_FEE, wallet::Destination};
+use crate::{
+    utill::{calculate_fee_sats, MIN_FEE_RATE},
+    wallet::Destination,
+};
 
 use super::Wallet;
 
 use super::error::WalletError;
 
 #[derive(Debug)]
-pub(crate) struct CreateFundingTxesResult {
-    pub(crate) funding_txes: Vec<Transaction>,
-    pub(crate) payment_output_positions: Vec<u32>,
-    pub(crate) total_miner_fee: u64,
+pub struct CreateFundingTxesResult {
+    pub funding_txes: Vec<Transaction>,
+    pub payment_output_positions: Vec<u32>,
+    pub total_miner_fee: u64,
 }
 
 impl Wallet {
     // Attempts to create the funding transactions.
     /// Returns Ok(None) if there was no error but the wallet was unable to create funding txes
-    pub(crate) fn create_funding_txes(
+    pub fn create_funding_txes(
         &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: Amount,
+        fee_rate: f64,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let ret = self.create_funding_txes_random_amounts(coinswap_amount, destinations, fee_rate);
         if ret.is_ok() {
-            log::info!(target: "wallet", "created funding txes with random amounts");
+            log::info!(target: "wallet", "created funding txes random amounts");
             return ret;
         }
-
-        // TODO: Unlock this code when we are sure that the routines actually works.
 
         // let ret = self.create_funding_txes_utxo_max_sends(coinswap_amount, destinations, fee_rate);
         // if ret.is_ok() {
@@ -122,13 +123,87 @@ impl Wallet {
         Ok(output_values)
     }
 
-    /// This function creates funding transactions with random amounts
-    /// The total `coinswap_amount` is randomly distributed among number of destinations.
+    // This function creates a single funding transaction with random, distrubuted, bounded amounts
+    // Which are distributed among the destinations in different outputs.
+    pub fn create_funding_txes_regular_swaps(
+        &mut self,
+        normie_flag: bool,
+        coinswap_amount: Amount,
+        destinations: Vec<Address>,
+        fee_rate: Amount,
+    ) -> Result<CreateFundingTxesResult, WalletError> {
+        // Unlock all unspent UTXOs
+        self.rpc.unlock_unspent_all()?;
+
+        // Unlock all unspent UTXOs && Lock all unspendable UTXOs
+        self.lock_unspendable_utxos()?;
+
+        let mut funding_txes = Vec::<Transaction>::new();
+        let mut payment_output_positions = Vec::<u32>::new();
+        let mut total_miner_fee = 0;
+        let mut locked_utxos = Vec::new();
+
+        // Here, we are gonna use a closure to ensure proper cleanup on error (since we need a rollback)
+        let result = (|| {
+            let selected_utxo = self.coin_select(coinswap_amount, fee_rate.to_btc())?;
+
+            let outpoints: Vec<OutPoint> = selected_utxo
+                .iter()
+                .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                .collect();
+
+            // // Lock the selected UTXOs immediately after selection
+            self.rpc.lock_unspent(&outpoints)?;
+
+            // Store the locked UTXOs for later unlocking in case of error
+            locked_utxos.extend(outpoints);
+
+            // Here, prepare coins for spend_coins API, since this API would require owned data to avoid lifetime issues
+            let coins_to_spend = selected_utxo
+                .iter()
+                .map(|(unspent, spend_info)| (unspent.clone(), spend_info.clone()))
+                .collect::<Vec<_>>();
+
+            // Create destination with output
+            let destination = if normie_flag {
+                Destination::Multi {
+                    outputs: vec![(destinations[0].clone(), coinswap_amount)],
+                    op_return_data: None,
+                }
+            } else {
+                Destination::MultiDynamic(coinswap_amount, destinations)
+            };
+
+            // Creates and Signs Transactions via the spend_coins API
+            let funding_tx =
+                self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
+
+            // Record this transaction in our results.
+            let payment_pos = 0; // assuming the payment output position is 0
+
+            funding_txes.push(funding_tx);
+            payment_output_positions.push(payment_pos as u32);
+            total_miner_fee += fee_rate.to_sat();
+
+            Ok(CreateFundingTxesResult {
+                funding_txes,
+                payment_output_positions,
+                total_miner_fee,
+            })
+        })();
+
+        self.rpc.unlock_unspent_all()?;
+
+        result
+    }
+
+    // This function creates funding transactions with random amounts
+    // The total `coinswap_amount` is randomly distributed among number of destinations.
     fn create_funding_txes_random_amounts(
         &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: Amount,
+        fee_rate: f64,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
@@ -147,7 +222,7 @@ impl Wallet {
         let result = (|| {
             for (address, &output_value) in destinations.iter().zip(output_values.iter()) {
                 let remaining = Amount::from_sat(output_value);
-                let selected_utxo = self.coin_select(remaining, fee_rate.to_btc())?;
+                let selected_utxo = self.coin_select(remaining, fee_rate)?;
 
                 let outpoints: Vec<OutPoint> = selected_utxo
                     .iter()
@@ -173,12 +248,14 @@ impl Wallet {
                     .collect::<Vec<_>>();
 
                 // Create destination with output - currently, destination is an array with a single address, i.e only a single transaction.
-                let destination =
-                    Destination::Multi(vec![(address.clone(), Amount::from_sat(output_value))]);
+                let outputs = vec![(address.clone(), Amount::from_sat(output_value))];
+                let destination = Destination::Multi {
+                    outputs,
+                    op_return_data: None,
+                };
 
                 // Creates and Signs Transactions via the spend_coins API
-                let funding_tx =
-                    self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
+                let funding_tx = self.spend_coins(&coins_to_spend, destination, fee_rate)?;
 
                 // The actual fee is the difference between the sum of output amounts from the total input amount
                 let actual_fee = total_input_amount
@@ -204,7 +281,10 @@ impl Wallet {
 
                 funding_txes.push(funding_tx);
                 payment_output_positions.push(payment_pos);
-                total_miner_fee += fee_rate.to_sat();
+
+                let fee_amount = calculate_fee_sats(tx_size);
+
+                total_miner_fee += fee_amount;
             }
             Ok(CreateFundingTxesResult {
                 funding_txes,
@@ -213,15 +293,11 @@ impl Wallet {
             })
         })();
 
-        // FLow of Lock Step 5. We unlock the UTXOs on error i.e a rollback mechanism, OR keep locked on success
-        if result.is_err() {
-            self.rpc.unlock_unspent(&locked_utxos)?;
-        }
+        self.rpc.unlock_unspent_all()?;
 
         result
     }
 
-    // UNUSED
     fn create_mostly_sweep_txes_with_one_tx_having_change(
         &self,
         coinswap_amount: Amount,
@@ -377,12 +453,10 @@ impl Wallet {
         })
     }
 
-    // UNUSED
     fn create_funding_txes_utxo_max_sends(
         &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
-        fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         //this function creates funding txes by
         //using walletcreatefundedpsbt for the total amount, and if
@@ -395,11 +469,12 @@ impl Wallet {
 
         self.lock_unspendable_utxos()?;
 
-        let fee = Amount::from_sat(MINER_FEE);
-
+        // we can remove this line and use `fee_rate`, right?
+        // and then we can also remove MINER_FEE constant.
+        let fee = Amount::from_sat(calculate_fee_sats(150));
         let remaining = coinswap_amount;
 
-        let selected_utxo = self.coin_select(remaining + fee, fee_rate.to_btc())?;
+        let selected_utxo = self.coin_select(remaining + fee, MIN_FEE_RATE)?;
 
         let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
             acc.checked_add(unspet.amount)
@@ -456,7 +531,7 @@ impl Wallet {
         self.create_mostly_sweep_txes_with_one_tx_having_change(
             coinswap_amount,
             destinations,
-            fee_rate,
+            fee,
             &change_address,
             &mut selected_utxo
                 .iter()
@@ -464,7 +539,6 @@ impl Wallet {
         )
     }
 
-    // UNUSED
     fn create_funding_txes_use_biggest_utxos(
         &self,
         coinswap_amount: Amount,
@@ -514,7 +588,6 @@ impl Wallet {
             .map(|(l, _)| l.amount.to_sat())
             .any(|utxo_value| utxo_value > coinswap_amount.to_sat())
         {
-            // TODO: Handle this case
             Err(WalletError::General(
                 "Some stupid error that will never occur".to_string(),
             ))

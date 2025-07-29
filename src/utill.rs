@@ -5,7 +5,7 @@ use bitcoin::{
     hashes::Hash,
     key::{rand::thread_rng, Keypair},
     secp256k1::{Message, Secp256k1, SecretKey},
-    Address, Amount, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
+    Address, Amount, FeeRate, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
 };
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use log::LevelFilter;
@@ -16,20 +16,17 @@ use log4rs::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     env, fmt, fs,
-    io::{BufReader, BufWriter, ErrorKind, Read},
+    io::{self, BufReader, BufWriter, ErrorKind, Read, Write},
     net::TcpStream,
+    os::unix::io::AsRawFd,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Once,
-};
-
-use std::{
-    collections::HashMap,
-    io::{self, Write},
-    sync::OnceLock,
+    sync::{Once, OnceLock},
     time::Duration,
 };
+
 static LOGGER: OnceLock<()> = OnceLock::new();
 
 use crate::{
@@ -62,8 +59,9 @@ pub(crate) const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 /// Number of confirmation required funding transaction.
 pub const REQUIRED_CONFIRMS: u32 = 1;
 
-/// Default Transaction Fees in sats/vByte
-pub const DEFAULT_TX_FEE_RATE: f64 = 2.0;
+/// Minimum fee rate in sats/vb for all transactions
+/// This replaces the hardcoded MINER_FEE constant
+pub const MIN_FEE_RATE: f64 = 2.0;
 
 /// Specifies the type of connection: TOR or Clearnet.
 ///
@@ -130,6 +128,21 @@ pub(crate) fn get_dns_dir() -> PathBuf {
     get_data_dir().join("dns")
 }
 
+/// Creates a FeeRate from the global MIN_FEE_RATE constant
+/// This provides type-safe fee calculations throughout the codebase
+pub fn get_min_fee_rate() -> Option<FeeRate> {
+    FeeRate::from_sat_per_vb(MIN_FEE_RATE as u64)
+}
+
+/// Calculate fee in satoshis for given virtual bytes using MIN_FEE_RATE
+pub fn calculate_fee_sats(vbytes: u64) -> u64 {
+    let fee_rate = get_min_fee_rate().expect("MIN_FEE_RATE should be valid");
+    fee_rate
+        .fee_vb(vbytes)
+        .expect("fee calculation should not overflow")
+        .to_sat()
+}
+
 /// Sets up the logger for the taker component.
 ///
 /// This method initializes the logging configuration for the taker, directing logs to both
@@ -164,7 +177,10 @@ pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<
         };
 
         let config = config.build(root_logger).unwrap();
-        log4rs::init_config(config).unwrap();
+        match log4rs::init_config(config) {
+            Ok(_) => log::info!("✅ Logger initialized successfully"),
+            Err(e) => log::error!("❌ Failed to initialize logger: {e}"),
+        }
     });
 }
 
@@ -192,7 +208,10 @@ pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
             .build(Root::builder().appender("stdout").build(filter))
             .unwrap();
 
-        log4rs::init_config(config).unwrap();
+        match log4rs::init_config(config) {
+            Ok(_) => log::info!("✅ Logger initialized successfully"),
+            Err(e) => log::error!("❌ Failed to initialize logger: {e}"),
+        }
     });
 }
 
@@ -220,7 +239,10 @@ pub fn setup_directory_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
             .build(Root::builder().appender("stdout").build(filter))
             .unwrap();
 
-        log4rs::init_config(config).unwrap();
+        match log4rs::init_config(config) {
+            Ok(_) => log::info!("✅ Logger initialized successfully"),
+            Err(e) => log::error!("❌ Failed to initialize logger: {e}"),
+        }
     });
 }
 
@@ -641,6 +663,115 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
     }
     Ok(())
 }
+// Representation of the C `struct termios` from <termios.h>
+// Used for manipulating terminal I/O settings
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct Termios {
+    c_iflag: u32,
+    c_oflag: u32,
+    c_cflag: u32,
+    c_lflag: u32,
+    c_line: u8,
+    c_cc: [u8; 32],
+    c_ispeed: u32,
+    c_ospeed: u32,
+}
+
+// Constants (from <termios.h>)
+// Terminal flag to enable/disable input echo
+const ECHO: u32 = 0x00000008;
+// Action to apply terminal attributes immediately
+const TCSANOW: i32 = 0;
+// ICANON flag: enables canonical (line-buffered) input mode
+const ICANON: u32 = 0o0000002;
+
+// Foreign Function Interface (FFI) declarations
+// Bindings to C library functions from <termios.h>
+extern "C" {
+    fn tcgetattr(fd: i32, termios_p: *mut Termios) -> i32;
+    fn tcsetattr(fd: i32, optional_actions: i32, termios_p: *const Termios) -> i32;
+}
+/// Sets the terminal input mode by enabling or disabling canonical mode and echo.
+///
+/// - When `echo` is `true`, the terminal behaves normally (line-buffered, characters visible).
+/// - When `echo` is `false`, input is read character-by-character and hidden (used for password input).
+///
+/// # Safety
+/// This function uses unsafe FFI calls and directly modifies terminal settings.
+/// Also needed for zeroing [`Termios`] struct.
+fn set_terminal_mode(fd: i32, echo: bool) {
+    unsafe {
+        let mut term: Termios = std::mem::zeroed(); // Create a zeroed termios struct
+        if tcgetattr(fd, &mut term) != 0 {
+            panic!("Failed to get terminal attributes");
+        }
+
+        if echo {
+            term.c_lflag |= ECHO | ICANON; // Enable echo and canonical mode
+        } else {
+            term.c_lflag &= !(ECHO | ICANON); // Disable echo and canonical mode
+        }
+        // Apply modified settings immediately
+        if tcsetattr(fd, TCSANOW, &term) != 0 {
+            panic!("Failed to set terminal attributes");
+        }
+    }
+}
+
+/// Prompts the user for a password using the given prompt string.
+/// Temporarily disables canonical mode and echo to mask each typed
+/// character with `*` as feedback.
+pub fn prompt_password(message: &'static str) -> std::io::Result<String> {
+    let stdin = io::stdin();
+    let fd = stdin.as_raw_fd();
+
+    print!("{message}");
+    io::stdout().flush()?; // Ensure the prompt is printed
+
+    set_terminal_mode(fd, false); // disable echo & canonical mode
+
+    let mut password = String::new();
+    // Buffer to read one byte at a time from stdin.
+    // We read input character-by-character because we disabled canonical mode (ICANON),
+    // which normally buffers input until Enter is pressed.
+    let mut buf = [0u8; 1];
+
+    while stdin.lock().read(&mut buf).unwrap() == 1 {
+        let c = buf[0] as char;
+        match c {
+            '\n' | '\r' => {
+                // - If the byte is newline (`\n`, ASCII 0x0A) or carriage return (`\r`, ASCII 0x0D),
+                //   it signals the end of input, so we break the loop.
+                println!();
+                break;
+            }
+            '\x08' | '\x7f' => {
+                // - If the byte is Backspace (ASCII 0x08 or 0x7f),
+                //   we remove the last character from the password (if any),
+                //   and erase the asterisk from the terminal by moving the cursor back,
+                //   writing a space to overwrite, then moving the cursor back again.
+                if !password.is_empty() {
+                    password.pop();
+                    print!("\x08 \x08");
+                    io::stdout().flush().unwrap();
+                }
+            }
+            _ => {
+                // - Otherwise, for any other character, we append it to the password string
+                //   and print an asterisk '*' as a visual placeholder for the typed character.
+                password.push(c);
+                print!("*");
+                io::stdout().flush().unwrap();
+            }
+        }
+    }
+
+    set_terminal_mode(fd, true); // restore terminal settings
+
+    println!(); // move to next line after input
+    Ok(password.trim_end().to_string())
+}
 
 pub(crate) fn get_emphemeral_address(
     control_port: u16,
@@ -744,6 +875,33 @@ pub(crate) fn get_tor_hostname(
     log::info!("Generated new Tor Hidden Service Hostname: {hostname}");
 
     Ok(hostname)
+}
+
+/// Deserialize any generic type from a CBOR file. The type should impl [serde::de::Deserialize].
+pub fn deserialize_from_cbor<T, E>(mut reader: Vec<u8>) -> Result<T, E>
+where
+    T: serde::de::DeserializeOwned,
+    E: From<serde_cbor::Error> + std::fmt::Debug,
+{
+    match serde_cbor::from_slice::<T>(&reader) {
+        Ok(store) => Ok(store),
+        Err(e) => {
+            let err_string = format!("{e:?}");
+            if err_string.contains("code: TrailingData") {
+                // Defensive error handling - monitor logs to confirm wallet files stay clean.
+                log::info!("Wallet file has trailing data, trying to restore");
+                loop {
+                    reader.pop();
+                    match serde_cbor::from_slice::<T>(&reader) {
+                        Ok(store) => break Ok(store),
+                        Err(_) => continue,
+                    }
+                }
+            } else {
+                Err(e.into())
+            }
+        }
+    }
 }
 
 #[cfg(test)]

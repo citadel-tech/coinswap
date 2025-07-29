@@ -1,4 +1,7 @@
-//! Maker Configuration. Controlling various behaviors.
+//! Maker Configuration. Controlling various Maker behaviors.
+//!
+//! This module defines the configuration options for the Maker server, controlling various aspects
+//! of the maker's behavior including network settings, swap parameters, and security settings.
 
 use crate::utill::parse_toml;
 use std::{io, path::Path};
@@ -9,33 +12,54 @@ use crate::utill::{get_maker_dir, parse_field, ConnectionType};
 
 use super::api::MIN_SWAP_AMOUNT;
 
-/// Maker Configuration, controlling various maker behavior.
+/// Maker Configuration
+///
+/// This struct defines all configurable parameters for the Maker module, including:
+/// - All the networking ports
+/// - Swap amount limits
+/// - Market settings, like DNS and Fidelity Bonds
+/// - Connection preferences
 #[derive(Debug, Clone, PartialEq)]
 pub struct MakerConfig {
-    /// RPC listening port
+    /// RPC listening port for maker-cli operations
     pub rpc_port: u16,
-    /// Minimum Coinswap amount
-    pub min_swap_amount: u64,
-    /// Target listening port
+    /// Network port for client connections
     pub network_port: u16,
-    /// Control port
+    /// Control port for Tor interface
     pub control_port: u16,
-    /// Socks port
+    /// Socks port for Tor proxy
     pub socks_port: u16,
-    /// Authentication password
+    /// Authentication password for Tor interface
     pub tor_auth_password: String,
-    /// Directory server address (can be clearnet or onion)
-    pub directory_server_address: String,
-    /// Fidelity Bond amount
+    /// DNS Tor address. Change this to connect to a different DNS server
+    pub dns_address: String,
+    /// Minimum amount in satoshis that can be swapped
+    pub min_swap_amount: u64,
+    /// Fidelity Bond amount in satoshis
     pub fidelity_amount: u64,
-    /// Fidelity Bond timelock in Block heights.
+    /// Fidelity Bond relative timelock in number of blocks
     pub fidelity_timelock: u32,
-    /// Connection type
+    /// Connection type (TOR or CLEARNET)
+    ///
+    /// # Deprecated
+    /// This field will be removed in a future version as the application will be Tor-only.
+    /// Clearnet support is being phased out for security reasons.
     pub connection_type: ConnectionType,
+    /// A fixed base fee charged by the Maker for providing its services
+    pub base_fee: u64,
+    /// A percentage fee based on the swap amount.
+    pub amount_relative_fee_pct: f64,
 }
 
 impl Default for MakerConfig {
     fn default() -> Self {
+        let (fidelity_amount, fidelity_timelock, base_fee, amount_relative_fee_pct) =
+            if cfg!(feature = "integration-test") {
+                (5_000_000, 26_000, 1000, 2.50) // Test values
+            } else {
+                (50_000, 13104, 100, 0.1) // Production values
+            };
+
         Self {
             rpc_port: 6103,
             min_swap_amount: MIN_SWAP_AMOUNT,
@@ -43,21 +67,17 @@ impl Default for MakerConfig {
             control_port: 9051,
             socks_port: 9050,
             tor_auth_password: "".to_string(),
-            directory_server_address:
-                "kizqnaslcb2r3mbk2vm77bdff3madcvddntmaaz2htmkyuw7sgh4ddqd.onion:8080".to_string(),
-            #[cfg(feature = "integration-test")]
-            fidelity_amount: 5_000_000, // 0.05 BTC for tests
-            #[cfg(feature = "integration-test")]
-            fidelity_timelock: 26_000, // Approx 6 months of blocks for test
-            #[cfg(not(feature = "integration-test"))]
-            fidelity_amount: 50_000, // 50K sats for production
-            #[cfg(not(feature = "integration-test"))]
-            fidelity_timelock: 13104, // Approx 3 months of blocks in production
+            dns_address: "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080"
+                .to_string(),
+            fidelity_amount,
+            fidelity_timelock,
             connection_type: if cfg!(feature = "integration-test") {
                 ConnectionType::CLEARNET
             } else {
                 ConnectionType::TOR
             },
+            base_fee,
+            amount_relative_fee_pct,
         }
     }
 }
@@ -109,10 +129,7 @@ impl MakerConfig {
                 config_map.get("tor_auth_password"),
                 default_config.tor_auth_password,
             ),
-            directory_server_address: parse_field(
-                config_map.get("directory_server_address"),
-                default_config.directory_server_address,
-            ),
+            dns_address: parse_field(config_map.get("dns_address"), default_config.dns_address),
             fidelity_amount: parse_field(
                 config_map.get("fidelity_amount"),
                 default_config.fidelity_amount,
@@ -125,22 +142,43 @@ impl MakerConfig {
                 config_map.get("connection_type"),
                 default_config.connection_type,
             ),
+            base_fee: parse_field(config_map.get("base_fee"), default_config.base_fee),
+            amount_relative_fee_pct: parse_field(
+                config_map.get("amount_relative_fee_pct"),
+                default_config.amount_relative_fee_pct,
+            ),
         })
     }
 
-    // Method to serialize the MakerConfig into a TOML string and write it to a file
+    /// This function serializes the MakerConfig into a TOML format and writes it to disk.
+    /// It creates the parent directory if it doesn't exist.
     pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
-            "network_port = {}
+            "# Maker Configuration File
+# Network port for client connections
+network_port = {}
+# RPC port for maker-cli operations
 rpc_port = {}
+# Socks port for Tor proxy
 socks_port = {}
+# Control port for Tor  interface
 control_port = {}
+# Authentication password for Tor interface
 tor_auth_password = {}
+# Minimum amount in satoshis that can be swapped
 min_swap_amount = {}
+# Fidelity Bond amount in satoshis
 fidelity_amount = {}
+# Fidelity Bond relative timelock in number of blocks 
 fidelity_timelock = {}
+# Connection type (TOR or CLEARNET)
 connection_type = {:?}
-directory_server_address = {}
+# DNS Tor address. Change this to connect to a different DNS server 
+dns_address = {}
+# A fixed base fee charged by the Maker for providing its services (in satoshis)
+base_fee = {}
+# A percentage fee based on the swap amount
+amount_relative_fee_pct = {}
 ",
             self.network_port,
             self.rpc_port,
@@ -151,13 +189,14 @@ directory_server_address = {}
             self.fidelity_amount,
             self.fidelity_timelock,
             self.connection_type,
-            self.directory_server_address,
+            self.dns_address,
+            self.base_fee,
+            self.amount_relative_fee_pct,
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;
         file.write_all(toml_data.as_bytes())?;
-        // TODO: Why we do require Flush?
         file.flush()?;
         Ok(())
     }
@@ -188,7 +227,6 @@ mod tests {
         let contents = r#"
             network_port = 6102
             rpc_port = 6103
-            required_confirms = 1
             min_swap_amount = 10000
             socks_port = 9050
         "#;
