@@ -289,11 +289,11 @@ impl Maker {
         rpc_config.wallet_name = wallet_file_name;
 
         let mut wallet = if wallet_path.exists() {
-            let wallet = Wallet::load(&wallet_path, &rpc_config)?;
+            let wallet = Wallet::load(&wallet_path, &rpc_config, &None)?;
             // log::info!("Wallet file at {wallet_path:?} successfully loaded.");
             wallet
         } else {
-            let wallet = Wallet::init(&wallet_path, &rpc_config)?;
+            let wallet = Wallet::init(&wallet_path, &rpc_config, None)?;
             // log::info!("New Wallet created at : {wallet_path:?}");
             wallet
         };
@@ -834,7 +834,7 @@ impl Maker {
                 .store
                 .fidelity_bond
                 .iter()
-                .filter_map(|(i, (bond, _))| {
+                .filter_map(|(i, bond)| {
                     if bond.conf_height.is_none() && bond.cert_expiry.is_none() {
                         let conf_height = wallet_read
                             .wait_for_fidelity_tx_confirmation(bond.outpoint.txid)

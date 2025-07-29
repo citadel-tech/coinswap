@@ -12,7 +12,7 @@ use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RawTx, RpcApi};
 
 use crate::{
     utill::calculate_fee_sats,
-    wallet::{api::UTXOSpendInfo, FidelityError},
+    wallet::{UTXOSpendInfo, FidelityError},
 };
 
 use super::{error::WalletError, swapcoin::SwapCoin, IncomingSwapCoin, OutgoingSwapCoin, Wallet};
@@ -206,6 +206,7 @@ impl Wallet {
         Err(WalletError::General("Contract Does not exist".to_string()))
     }
 
+    /// Creates and signs a transaction spending the given coins to the specified destination
     pub fn spend_coins(
         &self,
         coins: &[(ListUnspentResultEntry, UTXOSpendInfo)],
@@ -239,7 +240,8 @@ impl Wallet {
                     total_witness_size += spend_info.estimate_witness_size();
                     total_input_value += utxo_data.amount;
                 }
-                UTXOSpendInfo::IncomingSwapCoin { .. } | UTXOSpendInfo::OutgoingSwapCoin { .. } => {
+                UTXOSpendInfo::IncomingSwapCoin { .. } | UTXOSpendInfo::OutgoingSwapCoin { .. } | 
+                UTXOSpendInfo::IncomingSwapCoin2 { .. } | UTXOSpendInfo::OutgoingSwapCoin2 { .. } => {
                     tx.input.push(TxIn {
                         previous_output: OutPoint::new(utxo_data.txid, utxo_data.vout),
                         sequence: Sequence::ZERO,

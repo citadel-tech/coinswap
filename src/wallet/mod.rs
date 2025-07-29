@@ -7,12 +7,12 @@ mod fidelity;
 mod funding;
 mod rpc;
 mod spend;
+mod split_utxos;
 mod storage;
 mod swapcoin;
 mod swapcoin2;
 
-pub use api2::Wallet as TaprootWallet;
-pub(crate) use api2::{Balances, KeychainKind, UTXOSpendInfo, Wallet};
+pub use api2::{Balances, KeychainKind, UTXOSpendInfo, Wallet};
 pub use error::WalletError;
 pub(crate) use fidelity::{fidelity_redeemscript, FidelityBond, FidelityError};
 pub use rpc::RPCConfig;
