@@ -46,6 +46,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     let (test_framework, mut takers, makers, block_generation_handle) =
         TestFramework::init(makers_config_map.into(), taker_behavior);
 
+    info!("💰 Funding taker and makers");
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
     let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
@@ -65,7 +66,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     );
 
     //  Start the Maker Server threads
-    log::info!("Initiating Maker...");
+    info!("🚀 Initiating Maker servers");
 
     let maker_threads = makers
         .iter()
@@ -82,7 +83,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                log::info!("Waiting for maker setup completion");
+                info!("⏳ Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -93,17 +94,14 @@ fn test_abort_case_2_recover_if_no_makers_found() {
 
             let balances = wallet.get_balances().unwrap();
 
-            assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
-            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
-            assert_eq!(balances.swap, Amount::ZERO);
-            assert_eq!(balances.contract, Amount::ZERO);
+            verify_maker_pre_swap_balances(&balances, 14999508);
 
             balances.spendable
         })
         .collect::<Vec<_>>();
 
     // Initiate Coinswap
-    log::info!("Initiating coinswap protocol");
+    info!("🔄 Initiating coinswap protocol");
 
     // Swap params for coinswap.
     let swap_params = SwapParams {
@@ -114,7 +112,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
 
     if let Err(e) = taker.do_coinswap(swap_params) {
         assert_eq!(format!("{e:?}"), "NotEnoughMakersInOfferBook".to_string());
-        info!("Coinswap failed because the first maker rejected for signature");
+        info!("❌ Coinswap failed because the first maker rejected for signature");
     }
 
     // After Swap is done, wait for maker threads to conclude.
@@ -181,12 +179,14 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     // | **Maker6102**  | 0 (Marked as a bad maker by the Taker)   |
     // | **Maker16102** | 0                                        |
 
+    info!("🚫 Verifying naughty maker gets banned");
     // Maker gets banned for being naughty.
     assert_eq!(
         format!("127.0.0.1:{naughty}"),
         taker.get_bad_makers()[0].address.to_string()
     );
 
+    info!("📊 Verifying swap results after maker drops connection");
     // After Swap checks:
     verify_swap_results(
         taker,
@@ -194,6 +194,9 @@ fn test_abort_case_2_recover_if_no_makers_found() {
         org_taker_spend_balance,
         org_maker_spend_balances,
     );
+
+    info!("🎉 All checks successful. Terminating integration test case");
+
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

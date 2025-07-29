@@ -71,10 +71,8 @@ pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
 ///
 /// These parameters define the fees charged by Makers in a coinswap transaction.
 ///
-/// TODO: These parameters are currently hardcoded. Consider making them configurable for Makers in the future.
-///
-/// - `BASE_FEE`: A fixed base fee charged by the Maker for providing its services
-/// - `AMOUNT_RELATIVE_FEE_PCT`: A percentage fee based on the swap amount.
+/// - `base_fee`: A fixed base fee charged by the Maker for providing its services (configurable in maker config, default: 100 sats in production, 1000 sats in tests)
+/// - `amount_relative_fee_pct`: A percentage fee based on the swap amount (configurable in maker config, default: 0.1% in production, 2.5% in tests)
 /// - `TIME_RELATIVE_FEE_PCT`: A percentage fee based on the refund locktime (duration the Maker must wait for a refund).
 ///
 /// The coinswap fee increases with both the swap amount and the refund locktime.
@@ -86,27 +84,19 @@ pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
 ///
 /// ### Example (Default Values)
 /// For a swap amount of 100,000 sats and a refund locktime of 20 blocks:
-/// - `base_fee` = 1,000 sats
-/// - `amount_relative_fee` = (100,000 * 2.5) / 100 = 2,500 sats
-/// - `time_relative_fee` = (100,000 * 20 * 0.1) / 100 = 2,000 sats
-/// - `total_fee` = 5,500 sats (5.5%)
+/// - `base_fee` = 100 sats (default production value)
+/// - `amount_relative_fee` = (100,000 * 0.1) / 100 = 100 sats (default production value)
+/// - `time_relative_fee` = (100,000 * 20 * 0.005) / 100 = 100 sats (default production value)
+/// - `total_fee` = 300 sats (0.3%)
 ///
-/// Fee rates are designed to asymptotically approach 5% of the swap amount as the swap amount increases...
-#[cfg(feature = "integration-test")]
-pub const BASE_FEE: u64 = 1000;
-#[cfg(feature = "integration-test")]
-pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 2.50;
+/// The default fee rate values are designed to asymptotically approach 5% of the swap amount as the swap amount increases.
+///
+/// Minimum Coinswap amount; makers will not accept amounts below this.
 #[cfg(feature = "integration-test")]
 pub const TIME_RELATIVE_FEE_PCT: f64 = 0.10;
-
-#[cfg(not(feature = "integration-test"))]
-pub const BASE_FEE: u64 = 100;
-#[cfg(not(feature = "integration-test"))]
-pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 0.1;
 #[cfg(not(feature = "integration-test"))]
 pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
 
-/// Minimum Coinswap amount; makers will not accept amounts below this.
 pub const MIN_SWAP_AMOUNT: u64 = 10_000;
 
 /// Interval for redeeming expired bonds, creating new ones if needed,
@@ -284,17 +274,7 @@ impl Maker {
 
         rpc_config.wallet_name = wallet_file_name;
 
-        let mut wallet = if wallet_path.exists() {
-            // wallet already exists, load the wallet
-            let wallet = Wallet::load(&wallet_path, &rpc_config)?;
-            log::info!("Wallet file at {wallet_path:?} successfully loaded.");
-            wallet
-        } else {
-            // wallet doesn't exist at the given path, create a new one
-            let wallet = Wallet::init(&wallet_path, &rpc_config)?;
-            log::info!("New Wallet created at : {wallet_path:?}");
-            wallet
-        };
+        let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config)?;
 
         // If the config file doesn't exist, the default config will be loaded.
         let mut config = MakerConfig::new(Some(&data_dir.join("config.toml")))?;
@@ -362,7 +342,7 @@ impl Maker {
                 .store
                 .fidelity_bond
                 .iter()
-                .filter_map(|(i, (bond, _))| {
+                .filter_map(|(i, bond)| {
                     if bond.conf_height.is_none() && bond.cert_expiry.is_none() {
                         let conf_height = wallet_read
                             .wait_for_tx_confirmation(bond.outpoint.txid)

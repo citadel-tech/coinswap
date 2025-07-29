@@ -66,7 +66,6 @@ impl TryFrom<&mut TcpStream> for MakerAddress {
 
 /// An ephemeral Offerbook tracking good and bad makers. Currently, Offerbook is initiated
 /// at the start of every swap. So good and bad maker list will not be persisted.
-// TODO: Persist the offerbook in disk.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct OfferBook {
     pub(super) all_makers: Vec<OfferAndAddress>,
@@ -74,12 +73,6 @@ pub struct OfferBook {
 }
 
 impl OfferBook {
-    // TODO: design a better offerbook:
-    // - unique key.
-    // - clear good-bad separations.
-    // - ranking system.
-    // - various categories of livelinesss, to smartly distribute try counts.
-
     /// Gets all "not-bad" offers.
     pub fn all_good_makers(&self) -> Vec<&OfferAndAddress> {
         self.all_makers
@@ -141,28 +134,8 @@ impl OfferBook {
 
     /// Reads from a path (errors if path doesn't exist).
     pub fn read_from_disk(path: &Path) -> Result<Self, TakerError> {
-        //let wallet_file = File::open(path)?;
-        let mut reader = std::fs::read_to_string(path)?;
-        let book = match serde_json::from_str(&reader) {
-            Ok(book) => book,
-            Err(e) => {
-                let err_string = format!("{e:?}");
-                // TODO: Investigate why files end up with trailing data.
-                if err_string.contains("code: TrailingData") {
-                    // loop until all trailing bytes are removed.
-                    loop {
-                        reader.pop();
-                        match serde_json::from_slice::<Self>(reader.as_bytes()) {
-                            Ok(book) => break book,
-                            Err(_) => continue,
-                        }
-                    }
-                } else {
-                    return Err(e.into());
-                }
-            }
-        };
-        Ok(book)
+        let content = std::fs::read_to_string(path)?;
+        Ok(serde_json::from_str(&content)?)
     }
 }
 
