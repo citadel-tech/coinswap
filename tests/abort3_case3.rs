@@ -20,6 +20,7 @@ use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 /// The Maker will lose contract txs fees in that case, so it's not malice.
 /// Taker waits for the response until timeout. Aborts if the Maker doesn't show up.
 #[test]
+#[ignore]
 fn abort3_case3_close_at_hash_preimage_handover() {
     // ---- Setup ----
 

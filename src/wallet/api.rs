@@ -21,7 +21,7 @@ use bitcoin::{
     secp256k1,
     secp256k1::{Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
-    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, VarInt, Weight,
+    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, Weight,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
 use pbkdf2::pbkdf2_hmac_array;
@@ -117,14 +117,6 @@ impl KeychainKind {
             Self::External => 0,
             Self::Internal => 1,
         }
-    }
-}
-
-use rust_coinselect::types::SelectionError;
-
-impl From<SelectionError> for WalletError {
-    fn from(err: SelectionError) -> Self {
-        WalletError::General(format!("Coin selection error: {err}"))
     }
 }
 
@@ -1209,8 +1201,12 @@ impl Wallet {
     /// - Change output costs
     /// - Privacy considerations
     ///
+    /// Always prefers to spend reused addresses first to preserve privacy.
+    /// Selects more UTXOs if total reused addresses amount isn't adequate.
+    ///
     /// # Arguments
     /// * `amount` - The target amount to select coins for
+    /// * `feerate` - Fee rate in sats/vbyte
     ///
     /// # Returns
     /// * `Ok(Vec<(ListUnspentResultEntry, UTXOSpendInfo)>)` - Selected UTXOs and their spend info
@@ -1226,7 +1222,7 @@ impl Wallet {
         amount: Amount,
         feerate: f64,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        // P2PWKH Breaks down as:
+        // P2WPKH Breaks down as:
         // Non-witness data (multiplied by 4):
         // - Previous txid (32 bytes) * 4     = 128 WU
         // - Prev vout (4 bytes) * 4          = 16 WU
@@ -1251,6 +1247,25 @@ impl Wallet {
         // - 20-byte pubkey hash
         // Total: 22 bytes
         const P2WPKH_SPK_SIZE: usize = 22;
+        const LONG_TERM_FEERATE: f32 = 10.0;
+
+        // Base transaction weight constants
+        // VERSION_SIZE: 4 bytes - 16 WU
+        // SEGWIT_MARKER_SIZE: 2 bytes - 2 WU
+        // NUM_INPUTS_SIZE: 1 byte - 4 WU
+        // NUM_OUTPUTS_SIZE: 1 byte - 4 WU
+        // NUM_WITNESS_SIZE: 1 byte - 1 WU
+        // LOCK_TIME_SIZE: 4 bytes - 16 WU
+        // Total: (16 + 2 + 4 + 4 + 1 + 16 = 43 WU)
+        // Source: https://docs.rs/bitcoin/latest/src/bitcoin/blockdata/transaction.rs.html#599-602
+        const TX_BASE_WEIGHT: u64 = 43;
+
+        // P2WPKH input weight: OutPoint(32) + sequence(4) + vout(4) + empty_scriptsig(1) = 41 bytes
+        const INPUT_BASE_WEIGHT: u64 = 32 + 4 + 4 + 1;
+
+        // P2WPKH output weight: Amount(8) + VarInt(1) + script_pubkey(22) = 31 bytes
+        const TARGET_OUTPUT_WEIGHT: u64 = Amount::SIZE as u64 + 1 + P2WPKH_SPK_SIZE as u64; // ~31 bytes
+        const CHANGE_OUTPUT_WEIGHT: u64 = Amount::SIZE as u64 + 1 + P2WPKH_SPK_SIZE as u64; // ~31 bytes
 
         // Get spendable UTXOs (regular coins and incoming swap coins)
         let mut unspents = self.list_descriptor_utxo_spend_info()?;
@@ -1283,83 +1298,100 @@ impl Wallet {
             "Fidelity, Outgoing Swapcoins, Hashlock and Timelock coins are not included in coin selection"
         );
 
-        // TOOD: Move all the static calculations at the top  of the function.
-        // Prepare CoinSelectionOpt: Calculate required weights and costs, additional metrics
-        const LONG_TERM_FEERATE: f32 = 10.0;
-        // TODO: Turn it into a contsant value.
-        let change_weight = Weight::from_vb_unwrap(
-            (Amount::SIZE // 8 bytes for amount
-                    + VarInt::from(P2WPKH_SPK_SIZE).size() // VarInt size for script_pubkey
-                    + P2WPKH_SPK_SIZE) as u64, // script_pubkey size
-        );
+        let change_weight = Weight::from_vb_unwrap(CHANGE_OUTPUT_WEIGHT);
 
-        // Total cost associated with creating and later spending a change output in a transaction.
-        // This includes the transaction fees for both the current transaction (where the change is created) and the future transaction (where the change is spent).
-        // Calculate fee generally uses the units :- vbytes * sats/vbyte
         let cost_of_change = {
-            let creation_cost = calculate_fee(change_weight.to_vbytes_ceil(), feerate as f32)
-                .map_err(|e| WalletError::General(format!("Fee calculation failed: {e}")))?;
-
-            let future_spending_cost = calculate_fee(P2WPKH_INPUT_WEIGHT / 4, LONG_TERM_FEERATE) // divide by 4 to convert weight to vbytes
-                .map_err(|e| WalletError::General(format!("Fee calculation failed: {e}")))?;
-
+            let creation_cost = calculate_fee(change_weight.to_vbytes_ceil(), feerate as f32)?;
+            let future_spending_cost = calculate_fee(P2WPKH_INPUT_WEIGHT / 4, LONG_TERM_FEERATE)?;
             creation_cost + future_spending_cost
         };
 
-        // Assuming target is a p2wpkh.
-        // TODO: Turn it into a constant value.
-        let target_weight = Weight::from_vb_unwrap(
-            (Amount::SIZE + VarInt::from(P2WPKH_SPK_SIZE).size() + P2WPKH_SPK_SIZE) as u64,
-        );
-        let avg_output_weight = (change_weight.to_wu() + (target_weight.to_wu())) / 2;
+        let target_weight = Weight::from_vb_unwrap(TARGET_OUTPUT_WEIGHT);
+        let avg_output_weight = (change_weight.to_wu() + target_weight.to_wu()) / 2;
         let avg_input_weight = unspents
             .iter()
             .map(|(_, spend_info)| {
-                // Base weight of the input (OutPoint + sequence + empty script_sig)
-                let base_weight = 32 + 4 + 4 + 1; // 32 bytes for OutPoint, 4 bytes for sequence,4 bytes for vout, 1 byte for empty script_sig
                 let witness_weight = spend_info.estimate_witness_size();
-                base_weight + witness_weight as u64
+                INPUT_BASE_WEIGHT + witness_weight as u64
             })
             .sum::<u64>()
             / unspents.len() as u64;
 
-        // Note: Consider more sophisticated grouping policies in the future
-        // Group UTXOs by address
-        // TODO: Change this to HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>>
-        let mut address_groups: Vec<(String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>)> =
-            Vec::new();
+        let target_amount = amount.to_sat();
 
-        for (utxo, spend_info) in &unspents {
+        // Group UTXOs by address
+        let mut address_groups: HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
+            HashMap::new();
+        for (utxo, spend_info) in unspents {
             let address_str = utxo
                 .address
                 .as_ref()
                 .map(|addr| addr.clone().assume_checked().to_string())
                 .unwrap_or_else(|| format!("script_{}", utxo.script_pub_key));
+            address_groups
+                .entry(address_str)
+                .or_default()
+                .push((utxo, spend_info));
+        }
+        // Separate addresses with multiple UTXOs from addresses with a single UTXO
+        let (mut grouped_addresses, single_addresses): (Vec<_>, Vec<_>) = address_groups
+            .into_values()
+            .partition(|group| group.len() > 1);
 
-            match address_groups
-                .iter_mut()
-                .find(|(addr, _)| addr == &address_str)
-            {
-                Some(group) => group.1.push((utxo.clone(), spend_info.clone())),
-                None => {
-                    address_groups.push((address_str, vec![(utxo.clone(), spend_info.clone())]))
+        // Sort reused addresses by total value
+        // This enables optimal selection: find the smallest group that covers target+fees
+        grouped_addresses
+            .sort_by_key(|group| group.iter().map(|(u, _)| u.amount.to_sat()).sum::<u64>());
+
+        // Single loop for address group selection
+        let (selected_utxos, selected_total, selected_weight) = {
+            let mut result_utxos = Vec::new();
+            let mut result_total = 0u64;
+            let mut result_weight = 0u64;
+
+            for group in grouped_addresses {
+                let group_total: u64 = group.iter().map(|(u, _)| u.amount.to_sat()).sum();
+                let group_weight: u64 = group
+                    .iter()
+                    .map(|(_, spend_info)| {
+                        INPUT_BASE_WEIGHT + spend_info.estimate_witness_size() as u64
+                    })
+                    .sum();
+
+                // Calculate transaction fees for current selection including this group
+                let tx_weight =
+                    TX_BASE_WEIGHT + result_weight + group_weight + target_weight.to_wu();
+                let estimated_fee = calculate_fee(tx_weight / 4, feerate as f32)?;
+
+                // Add the reused address group to selection
+                // Always take entire groups to maintain address privacy - never partial groups
+                result_total += group_total;
+                result_weight += group_weight;
+                result_utxos.extend(group);
+
+                // Check if reused addresses now cover target + fees
+                if result_total >= target_amount + estimated_fee {
+                    log::info!(
+                        "Address grouping: Selected {} UTXOs (total: {} sats, target+fee: {} sats)",
+                        result_utxos.len(),
+                        result_total,
+                        target_amount + estimated_fee
+                    );
+                    return Ok(result_utxos);
                 }
             }
-        }
+            (result_utxos, result_total, result_weight)
+        };
 
-        let grouped_utxos = address_groups
-            .into_iter()
-            .map(|(_, utxos)| utxos)
-            .collect::<Vec<_>>();
-
-        let output_groups = grouped_utxos
+        // Group selection worked but didn't cover the whole target, run coin selection on single addresses
+        let single_output_groups = single_addresses
             .iter()
-            .map(|utxos_in_group| {
-                let total_value: u64 = utxos_in_group
+            .map(|single_address_utxos| {
+                let total_value: u64 = single_address_utxos
                     .iter()
-                    .map(|(utxo, _)| utxo.amount.to_sat())
+                    .map(|(utxo, _): &(ListUnspentResultEntry, UTXOSpendInfo)| utxo.amount.to_sat())
                     .sum();
-                let total_weight: u64 = utxos_in_group
+                let total_weight: u64 = single_address_utxos
                     .iter()
                     .map(|(_, spend_info)| 36 + spend_info.estimate_witness_size() as u64)
                     .sum();
@@ -1367,31 +1399,24 @@ impl Wallet {
                 OutputGroup {
                     value: total_value,
                     weight: total_weight,
-                    input_count: utxos_in_group.len(),
+                    input_count: single_address_utxos.len(),
                     creation_sequence: None,
                 }
             })
             .collect::<Vec<_>>();
 
-        // VERSION_SIZE: 4 bytes - 16 WU
-        // SEGWIT_MARKER_SIZE: 2 bytes - 2 WU
-        // NUM_INPUTS_SIZE: 1 byte - 4 WU
-        // NUM_OUTPUTS_SIZE: 1 byte - 4 WU
-        // NUM_WITNESS_SIZE: 1 byte - 1 WU
-        // LOCK_TIME_SIZE: 4 bytes - 16 WU
-        // OUTPUT_VALUE_SIZE: variable
+        // Calculate base weight
+        let tx_base_weight = TX_BASE_WEIGHT
+            + selected_weight
+            + MAX_SPLITS as u64 * (target_weight.to_wu() + change_weight.to_wu());
 
-        // Total default: (16 + 2 + 4 + 4 + 1 + 16 = 43 WU + variable) WU
-        // Source - https://docs.rs/bitcoin/latest/src/bitcoin/blockdata/transaction.rs.html#599-602
-        let base_weight = 43 + MAX_SPLITS as u64 * (target_weight.to_wu() + change_weight.to_wu());
-
-        // Create coin selection options
+        // Create coin selection options with adjusted target
         let coin_selection_option = CoinSelectionOpt {
-            target_value: amount.to_sat(),
+            target_value: amount.to_sat().saturating_sub(selected_total),
             target_feerate: feerate as f32,
             long_term_feerate: Some(LONG_TERM_FEERATE),
-            min_absolute_fee: MIN_FEE_RATE as u64 * base_weight,
-            base_weight,
+            min_absolute_fee: MIN_FEE_RATE as u64 * tx_base_weight,
+            base_weight: tx_base_weight,
             change_weight: change_weight.to_wu(),
             change_cost: cost_of_change,
             avg_input_weight,
@@ -1400,20 +1425,31 @@ impl Wallet {
             excess_strategy: ExcessStrategy::ToChange,
         };
 
-        match select_coin(&output_groups, &coin_selection_option) {
+        // Run coin selection on single addresses only
+        match select_coin(&single_output_groups, &coin_selection_option) {
             Ok(selection) => {
-                let selected_utxos = selection
+                let additional_utxos: Vec<_> = selection
                     .selected_inputs
                     .iter()
-                    .flat_map(|&group_index| grouped_utxos[group_index].clone())
-                    .collect::<Vec<_>>();
-                log::info!("Coinselection concluded with {:?}", selection.waste);
-                Ok(selected_utxos)
+                    .flat_map(|&group_index| single_addresses[group_index].clone())
+                    .collect();
+
+                // Combine pre-selected groups + coin selection results
+                let mut final_selection = selected_utxos;
+                final_selection.extend(additional_utxos);
+
+                log::info!("Coin selection concluded with {:?}", selection.waste);
+                Ok(final_selection)
             }
             Err(e) if e.to_string().contains("The Inputs funds are insufficient") => {
-                let available = unspents.iter().map(|(u, _)| u.amount.to_sat()).sum();
+                let total_available = selected_total
+                    + single_addresses
+                        .iter()
+                        .flatten()
+                        .map(|(u, _)| u.amount.to_sat())
+                        .sum::<u64>();
                 Err(WalletError::InsufficientFund {
-                    available,
+                    available: total_available,
                     required: amount.to_sat(),
                 })
             }
