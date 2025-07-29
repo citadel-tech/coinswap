@@ -8,6 +8,7 @@ use coinswap::{
 mod test_framework;
 use log::{info, warn};
 use std::{
+    assert_eq,
     sync::{atomic::Ordering::Relaxed, Arc},
     thread,
     time::Duration,
@@ -43,10 +44,8 @@ fn test_stop_taker_after_setup() {
             ConnectionType::CLEARNET,
         );
 
-    warn!("🧪 Running Test: Taker cheats on everybody");
+    warn!("Running Test: Taker Cheats on Everybody.");
     let taker = &mut takers[0];
-
-    info!("💰 Funding taker and makers");
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
     let org_taker_spend_balance = fund_and_verify_taker(
         taker,
@@ -65,7 +64,7 @@ fn test_stop_taker_after_setup() {
     );
 
     //  Start the Maker Server threads
-    info!("🚀 Initiating Maker servers");
+    log::info!("Initiating Maker...");
 
     let maker_threads = makers
         .iter()
@@ -82,7 +81,7 @@ fn test_stop_taker_after_setup() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                info!("⏳ Waiting for maker setup completion");
+                log::info!("Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -93,20 +92,24 @@ fn test_stop_taker_after_setup() {
 
             let balances = wallet.get_balances().unwrap();
 
-            verify_maker_pre_swap_balances(&balances, 14999508);
+            assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
+            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
+            assert_eq!(balances.swap, Amount::ZERO);
+            assert_eq!(balances.contract, Amount::ZERO);
 
             balances.spendable
         })
         .collect::<Vec<_>>();
 
     // Initiate Coinswap
-    info!("🔄 Initiating coinswap protocol");
+    log::info!("Initiating coinswap protocol");
 
     // Swap params for coinswap.
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
         tx_count: 3,
+        required_confirms: 1,
     };
     taker.do_coinswap(swap_params).unwrap();
 
@@ -120,7 +123,7 @@ fn test_stop_taker_after_setup() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    info!("🎯 All coinswaps processed successfully. Transaction complete.");
+    log::info!("All coinswaps processed successfully. Transaction complete.");
 
     // Shutdown Directory Server
     directory_server_instance.shutdown.store(true, Relaxed);
@@ -139,7 +142,8 @@ fn test_stop_taker_after_setup() {
     ///////////////
 
     //Run Recovery script
-    warn!("🔧 Starting Taker recovery process");
+    // TODO: do something about this?
+    warn!("Starting Taker recovery process");
     taker.recover_from_swap().unwrap();
 
     // ## Fee Tracking and Workflow:
@@ -170,16 +174,13 @@ fn test_stop_taker_after_setup() {
     // | Maker6102        | 3,000                              | 768                 | 3,000             | 6,768                      |
     // +------------------+------------------------------------+---------------------+--------------------+----------------------------+
     //
-
-    info!("📊 Verifying swap results after taker recovery");
     verify_swap_results(
         taker,
         &makers,
         org_taker_spend_balance,
         org_maker_spend_balances,
     );
-
-    info!("🎉 All checks successful. Terminating integration test case");
+    info!("All checks successful. Terminating integration test case");
 
     test_framework.stop();
 

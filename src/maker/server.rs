@@ -4,9 +4,7 @@
 //! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend, and RPC Client Request.
 //! The server listens at two ports: 6102 for P2P, and 6103 for RPC Client requests.
 
-use crate::protocol::messages::{FidelityProof, MessageToMaker};
-#[cfg(feature = "tracker")]
-use crate::protocol::messages::{TrackerRequest, TrackerResponse};
+use crate::protocol::messages::FidelityProof;
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use socks::Socks5Stream;
@@ -34,7 +32,7 @@ use crate::{
         rpc::start_rpc_server,
     },
     protocol::messages::{DnsMetadata, DnsRequest, DnsResponse, TakerToMakerMessage},
-    utill::{read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
+    utill::{read_message, send_message, ConnectionType, DEFAULT_TX_FEE_RATE, HEART_BEAT_INTERVAL},
     wallet::WalletError,
 };
 
@@ -46,12 +44,13 @@ use crate::maker::error::MakerError;
 fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> {
     let maker_port = maker.config.network_port;
     let (maker_address, dns_address) = match maker.config.connection_type {
+        // clearnet not needed after
         ConnectionType::CLEARNET => {
             let maker_address = format!("127.0.0.1:{maker_port}");
             let dns_address = if cfg!(feature = "integration-test") {
                 format!("127.0.0.1:{}", 8080)
             } else {
-                maker.config.dns_address.clone()
+                maker.config.directory_server_address.clone()
             };
 
             (maker_address, dns_address)
@@ -65,7 +64,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> 
             )?;
             let maker_address = format!("{}:{}", maker_hostname, maker.config.network_port);
 
-            let dns_address = maker.config.dns_address.clone();
+            let dns_address = maker.config.directory_server_address.clone();
             (maker_address, dns_address)
         }
     };
@@ -181,7 +180,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
 
     if let Some(i) = highest_index {
         let wallet_read = maker.get_wallet().read()?;
-        let bond = wallet_read.store.fidelity_bond.get(&i).unwrap();
+        let (bond, _) = wallet_read.store.fidelity_bond.get(&i).unwrap();
 
         let current_height = wallet_read
             .rpc
@@ -238,12 +237,11 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
             // sync the wallet
             maker.get_wallet().write()?.sync_no_fail();
 
-            let fidelity_result = maker.get_wallet().write()?.create_fidelity(
-                amount,
-                locktime,
-                Some(maker_address.as_bytes()),
-                MIN_FEE_RATE,
-            );
+            let fidelity_result =
+                maker
+                    .get_wallet()
+                    .write()?
+                    .create_fidelity(amount, locktime, DEFAULT_TX_FEE_RATE);
 
             match fidelity_result {
                 // Wait for sufficient funds to create fidelity bond.
@@ -331,7 +329,7 @@ fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
 
 /// Continuously checks if the Bitcoin Core RPC connection is live.
 fn check_connection_with_core(maker: &Maker) -> Result<(), MakerError> {
-    let mut rcp_ping_success = true;
+    let mut rpc_ping_success = true;
     while !maker.shutdown.load(Relaxed) {
         if let Err(e) = maker.wallet.read()?.rpc.get_blockchain_info() {
             log::error!(
@@ -339,9 +337,9 @@ fn check_connection_with_core(maker: &Maker) -> Result<(), MakerError> {
                 maker.config.network_port,
                 e
             );
-            rcp_ping_success = false;
+            rpc_ping_success = false;
         } else {
-            if !rcp_ping_success {
+            if !rpc_ping_success {
                 log::info!(
                     "[{}] Bitcoin Core RPC connection is live.",
                     maker.config.network_port
@@ -357,24 +355,6 @@ fn check_connection_with_core(maker: &Maker) -> Result<(), MakerError> {
     Ok(())
 }
 
-fn decode_unified_message(data: &[u8]) -> Result<MessageToMaker, MakerError> {
-    let (prefix, body) = data
-        .split_first()
-        .ok_or_else(|| MakerError::General("Parsing error during decoding"))?;
-    match *prefix {
-        0x01 => {
-            let msg = serde_cbor::from_slice::<TakerToMakerMessage>(body)?;
-            Ok(MessageToMaker::TakerToMaker(msg))
-        }
-        #[cfg(feature = "tracker")]
-        0x02 => {
-            let msg = serde_cbor::from_slice::<TrackerResponse>(body)?;
-            Ok(MessageToMaker::TrackerRequest(msg))
-        }
-        _ => Err(MakerError::General("Parsing error during decoding")),
-    }
-}
-
 /// Handle a single client connection.
 fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerError> {
     stream.set_nonblocking(false)?; // Block this thread until message is read.
@@ -382,9 +362,9 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
     let mut connection_state = ConnectionState::default();
 
     while !maker.shutdown.load(Relaxed) {
-        let mut bytes = Vec::new();
+        let mut taker_msg_bytes = Vec::new();
         match read_message(stream) {
-            Ok(b) => bytes = b,
+            Ok(b) => taker_msg_bytes = b,
             Err(e) => {
                 if let NetError::IO(e) = e {
                     if e.kind() == ErrorKind::UnexpectedEof {
@@ -399,69 +379,44 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
             }
         }
 
-        let unified = decode_unified_message(&bytes)?;
+        let taker_msg: TakerToMakerMessage = serde_cbor::from_slice(&taker_msg_bytes)?;
+        log::info!("[{}] <=== {}", maker.config.network_port, taker_msg);
 
-        match unified {
-            MessageToMaker::TakerToMaker(taker_msg) => {
-                log::info!("[{}] <=== {}", maker.config.network_port, taker_msg);
+        let reply = handle_message(maker, &mut connection_state, taker_msg);
 
-                let reply = handle_message(maker, &mut connection_state, taker_msg);
-
-                match reply {
-                    Ok(reply) => {
-                        if let Some(message) = reply {
-                            log::info!("[{}] ===> {} ", maker.config.network_port, message);
-                            if let Err(e) = send_message(stream, &message) {
-                                log::error!("Closing due to IO error in sending message: {e:?}");
-                                continue;
-                            }
-                        } else {
-                            continue;
-                        }
-                    }
-                    Err(err) => {
-                        match &err {
-                            // Shutdown server if special behavior is set
-                            MakerError::SpecialBehaviour(sp) => {
-                                log::error!(
-                                    "[{}] Maker Special Behavior : {:?}",
-                                    maker.config.network_port,
-                                    sp
-                                );
-                                maker.shutdown.store(true, Relaxed);
-                            }
-                            e => {
-                                log::error!(
-                                    "[{}] Internal message handling error occurred: {:?}",
-                                    maker.config.network_port,
-                                    e
-                                );
-                            }
-                        }
-                        return Err(err);
-                    }
-                }
-            }
-            #[cfg(feature = "tracker")]
-            MessageToMaker::TrackerRequest(tracker_msg) => match tracker_msg {
-                TrackerResponse::Ping => {
-                    let hostname = get_tor_hostname(
-                        maker.get_data_dir(),
-                        maker.config.control_port,
-                        maker.config.network_port,
-                        &maker.config.tor_auth_password,
-                    )?;
-                    let address = format!("{}:{}", hostname, maker.config.network_port);
-                    let response = TrackerRequest::Pong { address };
-                    if let Err(e) = send_message(stream, &response) {
-                        log::error!("Failed to send Pong to tracker: {e:?}. Closing connection.");
+        match reply {
+            Ok(reply) => {
+                if let Some(message) = reply {
+                    log::info!("[{}] ===> {} ", maker.config.network_port, message);
+                    if let Err(e) = send_message(stream, &message) {
+                        log::error!("Closing due to IO error in sending message: {e:?}");
                         continue;
                     }
+                } else {
+                    continue;
                 }
-                TrackerResponse::Address { addresses } => {
-                    log::info!("Received address list from tracker: {addresses:?}");
+            }
+            Err(err) => {
+                match &err {
+                    // Shutdown server if special behavior is set
+                    MakerError::SpecialBehaviour(sp) => {
+                        log::error!(
+                            "[{}] Maker Special Behavior : {:?}",
+                            maker.config.network_port,
+                            sp
+                        );
+                        maker.shutdown.store(true, Relaxed);
+                    }
+                    e => {
+                        log::error!(
+                            "[{}] Internal message handling error occurred: {:?}",
+                            maker.config.network_port,
+                            e
+                        );
+                    }
                 }
-            },
+                return Err(err);
+            }
         }
     }
 
@@ -581,7 +536,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     }
 
     while !maker.shutdown.load(Relaxed) {
-        if interval_tracker.is_multiple_of(RPC_PING_INTERVAL) {
+        if interval_tracker % RPC_PING_INTERVAL == 0 {
             check_connection_with_core(maker.as_ref())?;
         }
 
@@ -591,12 +546,12 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         // Running these checks during an active swap might cause the maker to stop responding,
         // potentially aborting the swap.
         if maker.ongoing_swap_state.lock()?.is_empty() {
-            if interval_tracker.is_multiple_of(FIDELITY_BOND_DNS_UPDATE_INTERVAL) {
+            if interval_tracker % FIDELITY_BOND_DNS_UPDATE_INTERVAL == 0 {
                 manage_fidelity_bonds_and_update_dns(maker.as_ref(), &maker_addr, &dns_addr)?;
                 interval_tracker = 0;
             }
 
-            if interval_tracker.is_multiple_of(FIDELITY_BOND_DNS_UPDATE_INTERVAL) {
+            if interval_tracker % SWAP_LIQUIDITY_CHECK_INTERVAL == 0 {
                 check_swap_liquidity(maker.as_ref())?;
             }
         }
@@ -620,8 +575,8 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         // swap liquidity and fidelity bond checks are due. This ensures these checks are
         // not skipped due to an ongoing coinswap and are performed once it completes.
         if maker.ongoing_swap_state.lock()?.is_empty()
-            || !interval_tracker.is_multiple_of(SWAP_LIQUIDITY_CHECK_INTERVAL)
-            || !interval_tracker.is_multiple_of(FIDELITY_BOND_DNS_UPDATE_INTERVAL)
+            || interval_tracker % SWAP_LIQUIDITY_CHECK_INTERVAL != 0
+            || interval_tracker % FIDELITY_BOND_DNS_UPDATE_INTERVAL != 0
         {
             interval_tracker += HEART_BEAT_INTERVAL.as_secs() as u32;
         }

@@ -41,10 +41,9 @@ fn maker_drops_after_sending_senders_sigs() {
         );
 
     warn!(
-        "🧪 Running Test: Maker {naughty} Closes after sending sender's signature. This is really bad. Recovery is the only option."
+        "Running Test: Maker {naughty} Closes after sending sender's signature. This is really bad. Recovery is the only option."
     );
 
-    info!("💰 Funding taker and makers");
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
     let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
@@ -64,7 +63,7 @@ fn maker_drops_after_sending_senders_sigs() {
     );
 
     //  Start the Maker Server threads
-    info!("🚀 Initiating Maker servers");
+    info!("Initiating Maker...");
 
     let maker_threads = makers
         .iter()
@@ -81,7 +80,7 @@ fn maker_drops_after_sending_senders_sigs() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                info!("⏳ Waiting for maker setup completion");
+                info!("Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -92,20 +91,24 @@ fn maker_drops_after_sending_senders_sigs() {
 
             let balances = wallet.get_balances().unwrap();
 
-            verify_maker_pre_swap_balances(&balances, 14999508);
+            assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
+            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
+            assert_eq!(balances.swap, Amount::ZERO);
+            assert_eq!(balances.contract, Amount::ZERO);
 
             balances.spendable
         })
         .collect::<Vec<_>>();
 
     // Initiate Coinswap
-    info!("🔄 Initiating coinswap protocol");
+    info!("Initiating coinswap protocol");
 
     // Swap params for coinswap.
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
         tx_count: 3,
+        required_confirms: 1,
     };
     taker.do_coinswap(swap_params).unwrap();
 
@@ -118,7 +121,7 @@ fn maker_drops_after_sending_senders_sigs() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    info!("🎯 All coinswaps processed successfully. Transaction complete.");
+    info!("All coinswaps processed successfully. Transaction complete.");
 
     // Shutdown Directory Server
     directory_server_instance.shutdown.store(true, Relaxed);
@@ -190,14 +193,12 @@ fn maker_drops_after_sending_senders_sigs() {
     // | **Taker**      | 3,000                              | 768                 | 3,000              | 6,768                      |
     // | **Maker16102** | 3,000                              | 768                 | 3,000              | 6,768                      |
 
-    info!("🚫 Verifying naughty maker gets banned");
     // Maker6102 gets banned for being naughty.
     assert_eq!(
         format!("127.0.0.1:{naughty}"),
         taker.get_bad_makers()[0].address.to_string()
     );
 
-    info!("📊 Verifying swap results after maker drops connection");
     // After Swap checks:
     verify_swap_results(
         taker,
@@ -206,7 +207,7 @@ fn maker_drops_after_sending_senders_sigs() {
         org_maker_spend_balances,
     );
 
-    info!("🎉 All checks successful. Terminating integration test case");
+    info!("All checks successful. Terminating integration test case");
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

@@ -73,6 +73,12 @@ pub enum WalletError {
         /// The amount of funds needed to complete the operation.
         required: u64,
     },
+
+    /// Represents an error when a transaction is not found in the wallet.
+    ///
+    /// This typically occurs when trying to access a transaction that doesn't exist
+    /// in the wallet's transaction database.
+    TransactionNotFound(bitcoin::Txid),
 }
 
 impl From<std::io::Error> for WalletError {

@@ -1,5 +1,6 @@
 use bitcoin::{
     ecdsa::Signature,
+    locktime::absolute::LockTime as Locktime,
     secp256k1::{self, Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, SighashCache},
     Amount, PublicKey, Script, ScriptBuf, Transaction, TxIn,
@@ -15,8 +16,11 @@ use crate::protocol::{
     },
     error::ProtocolError,
     messages::Preimage,
+    messages2::{SerializablePartialSignature, SerializablePublicNonce},
     Hash160,
 };
+
+// use secp256k1::musig::{PublicNonce, SecretNonce, PartialSignature};
 
 /// Defines an incoming swapcoin, which can either be currently active or successfully completed.
 ///
@@ -35,14 +39,26 @@ use crate::protocol::{
 pub(crate) struct IncomingSwapCoin {
     pub(crate) my_privkey: SecretKey,
     pub(crate) other_pubkey: PublicKey,
-    pub(crate) my_sec_nonce: SecretNonce,
-    pub(crate) other_nonce: Option<PublicNonce>,
+    pub(crate) other_privkey: Option<SecretKey>,
     pub(crate) contract_tx: Option<Transaction>,
+    pub(crate) contract_redeemscript: ScriptBuf,
     pub(crate) hashlock_script: ScriptBuf,
+    pub(crate) hashlock_privkey: SecretKey,
     pub(crate) timelock: Locktime,
     pub(crate) hash_preimage: Option<Preimage>,
-    pub(crate) contract_amount: Amount,
-    pub(crate) other_partial_sig: Option<Signature>,
+    pub(crate) funding_amount: Amount,
+    pub(crate) others_contract_sig: Option<Signature>,
+    // Taproot specific fields
+    pub(crate) my_sec_nonce: Option<SerializablePublicNonce>,
+    pub(crate) other_nonce: Option<SerializablePublicNonce>,
+    pub(crate) other_partial_sig: Option<SerializablePartialSignature>,
+}
+
+impl IncomingSwapCoin {
+    /// Get the funding transaction ID if available
+    pub fn get_funding_txid(&self) -> Option<bitcoin::Txid> {
+        self.contract_tx.as_ref().map(|tx| tx.compute_txid())
+    }
 }
 
 /// Describes an outgoing swapcoin, which can either be currently active or successfully completed.
@@ -62,14 +78,23 @@ pub(crate) struct IncomingSwapCoin {
 pub(crate) struct OutgoingSwapCoin {
     pub(crate) my_privkey: SecretKey,
     pub(crate) other_pubkey: PublicKey,
-    pub(crate) my_sec_nonce: SecretNonce,
-    pub(crate) other_nonce: Option<PublicNonce>,
     pub(crate) contract_tx: Option<Transaction>,
+    pub(crate) contract_redeemscript: ScriptBuf,
     pub(crate) timelock: Locktime,
     pub(crate) hashlock_script: ScriptBuf,
     pub(crate) funding_amount: Amount,
     pub(crate) others_contract_sig: Option<Signature>,
     pub(crate) hash_preimage: Option<Preimage>,
+    // Taproot specific fields
+    pub(crate) my_sec_nonce: Option<SerializablePublicNonce>,
+    pub(crate) other_nonce: Option<SerializablePublicNonce>,
+}
+
+impl OutgoingSwapCoin {
+    /// Get the funding transaction ID if available
+    pub fn get_funding_txid(&self) -> Option<bitcoin::Txid> {
+        self.contract_tx.as_ref().map(|tx| tx.compute_txid())
+    }
 }
 
 /// Represents a watch-only view of a coinswap between two makers.
@@ -82,14 +107,15 @@ pub(crate) struct WatchOnlySwapCoin {
     /// Public key of the receiver (maker).
     pub(crate) receiver_pubkey: PublicKey,
     /// Transaction representing the coinswap contract.
-    pub(crate) contract_tx: Transaction,
+    pub(crate) contract_tx: Option<Transaction>,
     /// Redeem script associated with the coinswap contract.
+    pub(crate) contract_redeemscript: ScriptBuf,
     pub(crate) hashlock_script: ScriptBuf,
     /// The funding amount of the coinswap.
-    pub(crate) contract_amount: Amount,
-    pub(crate) sender_partial_sig: Option<Signature>,
-    pub(crate) sender_pub_nonce: Option<PublicNonce>,
-    pub(crate) receiver_pub_nonce: Option<PublicNonce>,
+    pub(crate) funding_amount: Amount,
+    pub(crate) sender_partial_sig: Option<SerializablePartialSignature>,
+    pub(crate) sender_pub_nonce: Option<SerializablePublicNonce>,
+    pub(crate) receiver_pub_nonce: Option<SerializablePublicNonce>,
 }
 
 ///[TAPROOT] TODO: Replace the below functions with the new Taproot functions
@@ -99,7 +125,7 @@ pub(crate) trait SwapCoin {
     /// Get the multisig redeem script.
     fn get_multisig_redeemscript(&self) -> ScriptBuf;
     /// Get the contract transaction.
-    fn get_contract_tx(&self) -> Transaction;
+    fn get_contract_tx(&self) -> Option<Transaction>;
     /// Get the contract redeem script.
     fn get_contract_redeemscript(&self) -> ScriptBuf;
     /// Get the timelock public key.
@@ -147,13 +173,17 @@ macro_rules! impl_walletswapcoin {
                         "Other's contract signature not known",
                     ));
                 }
+                let contract_tx = self
+                    .contract_tx
+                    .as_ref()
+                    .ok_or_else(|| ProtocolError::General("Contract transaction not available"))?;
                 let my_pubkey = self.get_my_pubkey();
                 let multisig_redeemscript =
                     create_multisig_redeemscript(&my_pubkey, &self.other_pubkey);
                 let index = 0;
                 let secp = Secp256k1::new();
                 let sighash = secp256k1::Message::from_digest_slice(
-                    &SighashCache::new(&self.contract_tx)
+                    &SighashCache::new(contract_tx)
                         .p2wsh_signature_hash(
                             index,
                             &multisig_redeemscript,
@@ -168,7 +198,7 @@ macro_rules! impl_walletswapcoin {
                     sighash_type: EcdsaSighashType::All,
                 };
 
-                let mut signed_contract_tx = self.contract_tx.clone();
+                let mut signed_contract_tx = contract_tx.clone();
                 apply_two_signatures_to_2of2_multisig_spend(
                     &my_pubkey,
                     &self.other_pubkey,
@@ -212,7 +242,7 @@ macro_rules! impl_swapcoin_getters {
             Ok(read_hashvalue_from_contract(&self.contract_redeemscript)?)
         }
 
-        fn get_contract_tx(&self) -> Transaction {
+        fn get_contract_tx(&self) -> Option<Transaction> {
             self.contract_tx.clone()
         }
 
@@ -230,7 +260,7 @@ impl IncomingSwapCoin {
     pub(crate) fn new(
         my_privkey: SecretKey,
         other_pubkey: PublicKey,
-        contract_tx: Transaction,
+        contract_tx: Option<Transaction>,
         contract_redeemscript: ScriptBuf,
         hashlock_privkey: SecretKey,
         funding_amount: Amount,
@@ -247,10 +277,16 @@ impl IncomingSwapCoin {
             other_privkey: None,
             contract_tx,
             contract_redeemscript,
+            hashlock_script: ScriptBuf::new(),
             hashlock_privkey,
+            timelock: Locktime::ZERO,
+            hash_preimage: None,
             funding_amount,
             others_contract_sig: None,
-            hash_preimage: None,
+            // Taproot specific fields
+            my_sec_nonce: None,
+            other_nonce: None,
+            other_partial_sig: None,
         })
     }
 
@@ -354,8 +390,11 @@ impl IncomingSwapCoin {
     }
 
     pub(crate) fn verify_contract_tx_sig(&self, sig: &Signature) -> Result<(), WalletError> {
+        let contract_tx = self.contract_tx.as_ref().ok_or_else(|| {
+            WalletError::Protocol(ProtocolError::General("Contract transaction not available"))
+        })?;
         Ok(verify_contract_tx_sig(
-            &self.contract_tx,
+            contract_tx,
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.other_pubkey,
@@ -368,26 +407,24 @@ impl OutgoingSwapCoin {
     pub(crate) fn new(
         my_privkey: SecretKey,
         other_pubkey: PublicKey,
-        contract_tx: Transaction,
+        contract_tx: Option<Transaction>,
         contract_redeemscript: ScriptBuf,
-        timelock_privkey: SecretKey,
+        timelock: Locktime,
         funding_amount: Amount,
     ) -> Result<Self, WalletError> {
-        let secp = Secp256k1::new();
-        let timelock_pubkey = PublicKey {
-            compressed: true,
-            inner: secp256k1::PublicKey::from_secret_key(&secp, &timelock_privkey),
-        };
-        assert!(timelock_pubkey == read_timelock_pubkey_from_contract(&contract_redeemscript)?);
         Ok(Self {
             my_privkey,
             other_pubkey,
             contract_tx,
             contract_redeemscript,
-            timelock_privkey,
+            timelock,
+            hashlock_script: ScriptBuf::new(),
             funding_amount,
             others_contract_sig: None,
             hash_preimage: None,
+            // Taproot specific fields
+            my_sec_nonce: None,
+            other_nonce: None,
         })
     }
 
@@ -411,7 +448,7 @@ impl OutgoingSwapCoin {
         )
         .map_err(ProtocolError::Secp)?;
 
-        let sig_timelock = secp.sign_ecdsa(&sighash, &self.timelock_privkey);
+        let sig_timelock = secp.sign_ecdsa(&sighash, &self.my_privkey);
 
         let mut sig_timelock_bytes = sig_timelock.serialize_der().to_vec();
         sig_timelock_bytes.push(EcdsaSighashType::All as u8);
@@ -436,8 +473,11 @@ impl OutgoingSwapCoin {
     }
 
     pub(crate) fn verify_contract_tx_sig(&self, sig: &Signature) -> Result<(), WalletError> {
+        let contract_tx = self.contract_tx.as_ref().ok_or_else(|| {
+            WalletError::Protocol(ProtocolError::General("Contract transaction not available"))
+        })?;
         Ok(verify_contract_tx_sig(
-            &self.contract_tx,
+            contract_tx,
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.other_pubkey,
@@ -450,7 +490,7 @@ impl WatchOnlySwapCoin {
     pub(crate) fn new(
         multisig_redeemscript: &ScriptBuf,
         receiver_pubkey: PublicKey,
-        contract_tx: Transaction,
+        contract_tx: Option<Transaction>,
         contract_redeemscript: ScriptBuf,
         funding_amount: Amount,
     ) -> Result<WatchOnlySwapCoin, ProtocolError> {
@@ -471,6 +511,10 @@ impl WatchOnlySwapCoin {
             contract_tx,
             contract_redeemscript,
             funding_amount,
+            hashlock_script: ScriptBuf::new(),
+            sender_partial_sig: None,
+            sender_pub_nonce: None,
+            receiver_pub_nonce: None,
         })
     }
 }
@@ -576,8 +620,11 @@ impl SwapCoin for WatchOnlySwapCoin {
         verify receiver sig uses the sender_pubkey
     */
     fn verify_contract_tx_sender_sig(&self, sig: &Signature) -> Result<(), WalletError> {
+        let contract_tx = self.contract_tx.as_ref().ok_or_else(|| {
+            WalletError::Protocol(ProtocolError::General("Contract transaction not available"))
+        })?;
         Ok(verify_contract_tx_sig(
-            &self.contract_tx,
+            contract_tx,
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.receiver_pubkey,
@@ -586,8 +633,11 @@ impl SwapCoin for WatchOnlySwapCoin {
     }
 
     fn verify_contract_tx_receiver_sig(&self, sig: &Signature) -> Result<(), WalletError> {
+        let contract_tx = self.contract_tx.as_ref().ok_or_else(|| {
+            WalletError::Protocol(ProtocolError::General("Contract transaction not available"))
+        })?;
         Ok(verify_contract_tx_sig(
-            &self.contract_tx,
+            contract_tx,
             &self.get_multisig_redeemscript(),
             self.funding_amount,
             &self.sender_pubkey,

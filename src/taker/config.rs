@@ -1,29 +1,23 @@
 //! Taker configuration. Controlling various behaviors.
 //!
-//! This module defines the configuration options for the Taker module, controlling various aspects
-//! of the taker's behavior including network settings, connection preferences, and security settings.
+//! Represents the configuration options for the Taker module, controlling behaviors
+//! such as refund locktime, connection attempts, sleep delays, and timeouts.
 
 use crate::utill::{get_taker_dir, parse_field, parse_toml, ConnectionType};
 use std::{io, io::Write, path::Path};
 
-/// Taker configuration
-///
-/// This struct defines all configurable parameters for the Taker app, including all network ports and marketplace settings
+/// Taker configuration with refund, connection, and sleep settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakerConfig {
-    /// Control port for Tor interface (default: 9051)
+    /// Control port
     pub control_port: u16,
-    /// Socks port for Tor proxy (default: 9050)
+    /// Socks proxy port used to connect TOR
     pub socks_port: u16,
-    /// Authentication password for Tor interface
+    /// Authentication password
     pub tor_auth_password: String,
-    /// DNS address (can be clearnet or onion) for maker discovery
-    pub dns_address: String,
-    /// Connection type (TOR or CLEARNET)
-    ///
-    /// # Deprecated
-    /// This field will be removed in a future version as the application will be Tor-only.
-    /// Clearnet support is being phased out for security reasons.
+    /// Directory server address (can be clearnet or onion)
+    pub directory_server_address: String,
+    /// Connection type
     pub connection_type: ConnectionType,
 }
 
@@ -33,8 +27,8 @@ impl Default for TakerConfig {
             control_port: 9051,
             socks_port: 9050,
             tor_auth_password: "".to_string(),
-            dns_address: "kizqnaslcb2r3mbk2vm77bdff3madcvddntmaaz2htmkyuw7sgh4ddqd.onion:8080"
-                .to_string(),
+            directory_server_address:
+                "kizqnaslcb2r3mbk2vm77bdff3madcvddntmaaz2htmkyuw7sgh4ddqd.onion:8080".to_string(),
             connection_type: if cfg!(feature = "integration-test") {
                 ConnectionType::CLEARNET
             } else {
@@ -84,7 +78,10 @@ impl TakerConfig {
                 config_map.get("tor_auth_password"),
                 default_config.tor_auth_password,
             ),
-            dns_address: parse_field(config_map.get("dns_address"), default_config.dns_address),
+            directory_server_address: parse_field(
+                config_map.get("directory_server_address"),
+                default_config.directory_server_address,
+            ),
             connection_type: parse_field(
                 config_map.get("connection_type"),
                 default_config.connection_type,
@@ -92,24 +89,18 @@ impl TakerConfig {
         })
     }
 
-    /// This method serializes the TakerConfig into a TOML format and writes it to disk.
-    /// It creates the parent directory if it doesn't exist.
+    // Method to manually serialize the Taker Config into a TOML string
     pub(crate) fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let toml_data = format!(
-            "# Taker Configuration File
-# Control port for Tor control interface
-control_port = {}
-# Socks port for Tor proxy
+            "control_port = {}
 socks_port = {}
-# Authentication password for Tor control interface
 tor_auth_password = {}
-# DNS address (can be clearnet or onion)
-dns_address = {}
+directory_server_address = {}
 connection_type = {:?}",
             self.control_port,
             self.socks_port,
             self.tor_auth_password,
-            self.dns_address,
+            self.directory_server_address,
             self.connection_type
         );
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;

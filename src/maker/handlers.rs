@@ -18,7 +18,7 @@ use bitcoin::{
 use super::{
     api::{
         recover_from_swap, ConnectionState, ExpectedMessage, Maker, MakerBehavior,
-        MIN_CONTRACT_REACTION_TIME, TIME_RELATIVE_FEE_PCT,
+        AMOUNT_RELATIVE_FEE_PCT, BASE_FEE, MIN_CONTRACT_REACTION_TIME, TIME_RELATIVE_FEE_PCT,
     },
     error::MakerError,
 };
@@ -38,7 +38,7 @@ use crate::{
         },
         Hash160,
     },
-    utill::{calculate_fee_sats, MIN_FEE_RATE, REQUIRED_CONFIRMS},
+    utill::{DEFAULT_TX_FEE_RATE, REQUIRED_CONFIRMS},
     wallet::{IncomingSwapCoin, SwapCoin, WalletError, WalletSwapCoin},
 };
 
@@ -101,8 +101,8 @@ pub(crate) fn handle_message(
                 let fidelity = maker.highest_fidelity_proof.read()?;
                 let fidelity = fidelity.as_ref().expect("proof expected");
                 Some(MakerToTakerMessage::RespOffer(Box::new(Offer {
-                    base_fee: maker.config.base_fee,
-                    amount_relative_fee_pct: maker.config.amount_relative_fee_pct,
+                    base_fee: BASE_FEE,
+                    amount_relative_fee_pct: AMOUNT_RELATIVE_FEE_PCT,
                     time_relative_fee_pct: TIME_RELATIVE_FEE_PCT,
                     required_confirms: REQUIRED_CONFIRMS,
                     minimum_locktime: MIN_CONTRACT_REACTION_TIME,
@@ -206,8 +206,6 @@ pub(crate) fn handle_message(
             if let TakerToMakerMessage::RespPrivKeyHandover(message) = message {
                 // Nothing to send. Successfully completed swap
                 maker.handle_private_key_handover(message)?;
-                //Successfully sweep the incoming swapcoins.
-                maker.sweep_after_successful_coinswap()?;
                 None
             } else {
                 return Err(MakerError::General("Expected privatekey handover"));
@@ -307,6 +305,7 @@ impl Maker {
                 },
                 funding_output.value,
                 &funding_info.contract_redeemscript,
+                Amount::from_sat(message.contract_feerate),
             )?;
 
             let (tweakable_privkey, _) = self.wallet.read()?.get_tweakable_keypair()?;
@@ -362,30 +361,30 @@ impl Maker {
         let calc_coinswap_fees = calculate_coinswap_fee(
             incoming_amount,
             message.refund_locktime,
-            self.config.base_fee,
-            self.config.amount_relative_fee_pct,
+            BASE_FEE,
+            AMOUNT_RELATIVE_FEE_PCT,
             TIME_RELATIVE_FEE_PCT,
         );
 
-        let total_vbytes = message
-            .confirmed_funding_txes
-            .iter()
-            .fold(0u64, |acc, info| {
-                acc + info.funding_tx.weight().to_vbytes_ceil()
-            });
-
-        let funding_tx_fees = calculate_fee_sats(total_vbytes);
+        // NOTE: The `contract_feerate` currently represents the hardcoded `MINER_FEE` of a transaction, not the fee rate.
+        // This will remain unchanged to avoid modifying the structure of the [ProofOfFunding] message.
+        // Once issue https://github.com/citadel-tech/coinswap/issues/309 is resolved,
+        //`contract_feerate` will represent the actual fee rate instead of the `MINER_FEE`.
+        let calc_funding_tx_fees =
+            message.contract_feerate * (message.next_coinswap_info.len() as u64);
 
         // Check for overflow. If this happens, hard error.
         // This can happen if the fee_rate for funding tx is very high and incoming_amount is very low.
-        let outgoing_amount =
-            if let Some(a) = incoming_amount.checked_sub(calc_coinswap_fees + funding_tx_fees) {
-                a
-            } else {
-                return Err(MakerError::General(
-                    "Fatal Error! Total swap fee is more than the swap amount. Failing the swap.",
-                ));
-            };
+        // TODO: Ensure at Taker protocol that this never happens.
+        let outgoing_amount = if let Some(a) =
+            incoming_amount.checked_sub(calc_coinswap_fees + calc_funding_tx_fees)
+        {
+            a
+        } else {
+            return Err(MakerError::General(
+                "Fatal Error! Total swap fee is more than the swap amount. Failing the swap.",
+            ));
+        };
 
         // Create outgoing coinswap of the next hop
         let (my_funding_txes, outgoing_swapcoins, act_funding_txs_fees) = {
@@ -403,7 +402,7 @@ impl Maker {
                     .collect::<Vec<PublicKey>>(),
                 hashvalue,
                 message.refund_locktime,
-                message.contract_feerate,
+                Amount::from_sat(message.contract_feerate),
             )?
         };
 
@@ -421,13 +420,13 @@ impl Maker {
         );
 
         log::info!(
-            "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {}",
+            "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {} |",
             self.config.network_port,
             Amount::from_sat(incoming_amount),
             Amount::from_sat(outgoing_amount),
             Amount::from_sat(act_coinswap_fees),
             message.refund_locktime,
-            act_funding_txs_fees,
+            act_funding_txs_fees
         );
 
         connection_state.pending_funding_txes = my_funding_txes;
@@ -653,36 +652,19 @@ impl Maker {
                 .expect("incoming swapcoin not found")
                 .apply_privkey(swapcoin_private_key.key)?;
         }
+
         // Reset the connection state so watchtowers are not triggered.
         let mut conn_state = self.ongoing_swap_state.lock()?;
         *conn_state = HashMap::default();
 
         log::info!("initializing Wallet Sync.");
         {
-            let wallet_write = self.wallet.write()?;
+            let mut wallet_write = self.wallet.write()?;
+            wallet_write.sync()?;
             wallet_write.save_to_disk()?;
         }
         log::info!("Completed Wallet Sync.");
         log::info!("Successfully Completed Coinswap");
-        Ok(())
-    }
-
-    ///sweep incoming swapcoins after successful coinswap
-    pub fn sweep_after_successful_coinswap(&self) -> Result<(), MakerError> {
-        let swept_txids = self
-            .wallet
-            .write()?
-            .sweep_incoming_swapcoins(MIN_FEE_RATE)?;
-        if !swept_txids.is_empty() {
-            log::info!(
-                "✅ Successfully swept {} incoming swap coins: {:?}",
-                swept_txids.len(),
-                swept_txids
-            );
-        }
-        self.wallet.write()?.sync()?;
-        self.wallet.write()?.save_to_disk()?;
-        log::info!("✅ Maker wallet sync and save completed.");
         Ok(())
     }
 }
@@ -719,7 +701,7 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
             let time_lock_spend = maker.wallet.read()?.create_timelock_spend(
                 og_sc,
                 next_internal_address,
-                MIN_FEE_RATE,
+                DEFAULT_TX_FEE_RATE,
             )?;
             outgoings.push((
                 (og_sc.get_multisig_redeemscript(), contract),

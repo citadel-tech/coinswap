@@ -3,7 +3,10 @@ use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
-    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, MIN_FEE_RATE, UTXO},
+    utill::{
+        parse_proxy_auth, setup_taker_logger, ConnectionType, DEFAULT_TX_FEE_RATE,
+        REQUIRED_CONFIRMS, UTXO,
+    },
     wallet::{Destination, RPCConfig},
 };
 use log::LevelFilter;
@@ -156,7 +159,9 @@ fn main() -> Result<(), TakerError> {
             }
         }
         Commands::ListUtxoSwap => {
-            let utxos = taker.get_wallet().list_swept_incoming_swap_utxos()?;
+            let utxos = taker
+                .get_wallet()
+                .list_incoming_swap_coin_utxo_spend_info()?;
             for utxo in utxos {
                 let utxo = UTXO::from_utxo_data(utxo);
                 println!("{}", serde_json::to_string_pretty(&utxo)?);
@@ -197,16 +202,15 @@ fn main() -> Result<(), TakerError> {
 
             let coins_to_spend = taker
                 .get_wallet_mut()
-                .coin_select(amount, feerate.unwrap_or(MIN_FEE_RATE))?;
+                .coin_select(amount, feerate.unwrap_or(DEFAULT_TX_FEE_RATE))?;
 
-            let outputs = vec![(Address::from_str(&address)?.assume_checked(), amount)];
-            let destination = Destination::Multi {
-                outputs,
-                op_return_data: None,
-            };
+            let destination = Destination::Multi(vec![(
+                Address::from_str(&address).unwrap().assume_checked(),
+                amount,
+            )]);
 
             let tx = taker.get_wallet_mut().spend_from_wallet(
-                feerate.unwrap_or(MIN_FEE_RATE),
+                feerate.unwrap_or(DEFAULT_TX_FEE_RATE),
                 destination,
                 &coins_to_spend,
             )?;
@@ -243,6 +247,7 @@ fn main() -> Result<(), TakerError> {
                 send_amount: Amount::from_sat(amount),
                 maker_count: makers,
                 tx_count: 1,
+                required_confirms: REQUIRED_CONFIRMS,
             };
             taker.do_coinswap(swap_params)?;
         }

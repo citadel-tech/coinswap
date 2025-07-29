@@ -3,7 +3,6 @@ use crate::{
     error::NetError, market::directory::DirectoryServerError, protocol::error::ProtocolError,
     utill::TorError, wallet::WalletError,
 };
-use bitcoin::address::ParseError;
 
 /// Represents errors that can occur during Taker operations.
 ///
@@ -36,8 +35,18 @@ pub enum TakerError {
     MPSC(String),
     /// Tor error
     TorError(TorError),
-    /// Error relating to Bitcoin Address Parsing.
-    AddressParseError(ParseError),
+    /// Error indicating failure to send contract message
+    SendersContractFailed,
+    /// Error indicating unexpected message received
+    UnexpectedMessage,
+    /// Error indicating maker not found
+    MakerNotFound,
+    /// Error indicating failure to send partial signature and nonce
+    PartialSignatureAndNonceFailed,
+    /// Error indicating DNS related issues
+    DnsError,
+    /// General error with descriptive message
+    General(String),
 }
 
 impl From<TorError> for TakerError {
@@ -97,11 +106,5 @@ impl From<std::sync::mpsc::RecvError> for TakerError {
 impl<T> From<std::sync::mpsc::SendError<T>> for TakerError {
     fn from(value: std::sync::mpsc::SendError<T>) -> Self {
         Self::MPSC(value.to_string())
-    }
-}
-
-impl From<ParseError> for TakerError {
-    fn from(value: ParseError) -> Self {
-        Self::AddressParseError(value)
     }
 }

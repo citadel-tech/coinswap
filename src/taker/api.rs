@@ -33,7 +33,7 @@ use bitcoin::{
 
 use super::{
     error::TakerError,
-    offers::{fetch_offer_from_makers, MakerAddress, OfferAndAddress},
+    offers::{fetch_addresses_from_dns, fetch_offer_from_makers, MakerAddress, OfferAndAddress},
     routines::*,
 };
 use crate::{
@@ -46,19 +46,13 @@ use crate::{
             TakerToMakerMessage,
         },
     },
-    taker::{config::TakerConfig, offers::OfferBook, send_message_with_prefix},
+    taker::{config::TakerConfig, offers::OfferBook},
     utill::*,
     wallet::{
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
         WalletSwapCoin, WatchOnlySwapCoin,
     },
 };
-
-#[cfg(not(feature = "tracker"))]
-use crate::taker::offers::fetch_addresses_from_dns;
-
-#[cfg(feature = "tracker")]
-use crate::taker::offers::fetch_addresses_from_tracker;
 
 // Default values for Taker configurations
 pub(crate) const REFUND_LOCKTIME: u16 = 20;
@@ -76,6 +70,14 @@ pub(crate) const RECONNECT_SHORT_SLEEP_DELAY: u64 = 1;
 pub(crate) const RECONNECT_LONG_SLEEP_DELAY: u64 = 5;
 pub(crate) const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 30;
 pub(crate) const TCP_TIMEOUT_SECONDS: u64 = 300;
+// TODO: Maker should decide this miner fee
+// This fee is used for both funding and contract txs.
+#[cfg(feature = "integration-test")]
+pub(crate) const MINER_FEE: u64 = 1000;
+
+/// This fee is used for both funding and contract txs.
+#[cfg(not(feature = "integration-test"))]
+pub(crate) const MINER_FEE: u64 = 300; // around 2 sats/vb for funding tx
 
 /// Swap specific parameters. These are user's policy and can differ among swaps.
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
@@ -89,6 +91,9 @@ pub struct SwapParams {
     pub maker_count: usize,
     /// How many splits
     pub tx_count: u32,
+    // TODO: Following two should be moved to TakerConfig as global configuration.
+    /// Confirmation count required for funding txs.
+    pub required_confirms: u32,
 }
 
 // Defines the Taker's position in the current ongoing swap.
@@ -216,7 +221,17 @@ impl Taker {
         let mut rpc_config = rpc_config.unwrap_or_default();
         rpc_config.wallet_name = wallet_file_name;
 
-        let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config)?;
+        let mut wallet = if wallet_path.exists() {
+            // wallet already exists , load the wallet
+            let wallet = Wallet::load(&wallet_path, &rpc_config)?;
+            log::info!("Wallet file at {wallet_path:?} successfully loaded.");
+            wallet
+        } else {
+            // wallet doesn't exists at the given path , create a new one
+            let wallet = Wallet::init(&wallet_path, &rpc_config)?;
+            log::info!("New Wallet created at : {wallet_path:?}");
+            wallet
+        };
 
         // If config file doesn't exist, default config will be loaded.
         let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
@@ -260,7 +275,7 @@ impl Taker {
             let empty_book = OfferBook::default();
             let file = std::fs::File::create(&offerbook_path)?;
             let writer = BufWriter::new(file);
-            serde_json::to_writer_pretty(writer, &empty_book)?;
+            serde_cbor::to_writer(writer, &empty_book)?;
             empty_book
         };
 
@@ -306,9 +321,10 @@ impl Taker {
         self.ongoing_swap_state.swap_params = swap_params;
         // Check if we have enough balance.
         let available = self.wallet.get_balances()?.spendable;
-        let estimated_fee = Amount::from_sat(calculate_fee_sats(200));
 
-        let required = swap_params.send_amount + estimated_fee;
+        // TODO: Make more exact estimate of swap cost and ensure balance.
+        // For now ensure at least swap_amount + 1000 sats is available.
+        let required = swap_params.send_amount + Amount::from_sat(1000);
         if available < required {
             let err = WalletError::InsufficientFund {
                 available: available.to_sat(),
@@ -462,22 +478,7 @@ impl Taker {
         }
 
         match self.settle_all_swaps() {
-            Ok(_) => {
-                log::info!(
-                    "Swaps settled successfully. Sweeping the coins and reseting everything."
-                );
-                self.save_and_reset_swap_round()?;
-                // Sweep incoming swapcoins after successful swap completion
-                log::info!("Sweeping completed incoming swap coins...");
-                let swept_txids = self.wallet.sweep_incoming_swapcoins(MIN_FEE_RATE)?;
-                if !swept_txids.is_empty() {
-                    log::info!(
-                        "Successfully swept {} incoming swap coins: {:?}",
-                        swept_txids.len(),
-                        swept_txids
-                    );
-                }
-            }
+            Ok(_) => (),
             Err(e) => {
                 log::error!("Swap Settlement Failed : {e:?}");
                 log::warn!("Starting recovery from existing swap");
@@ -485,6 +486,10 @@ impl Taker {
                 return Ok(());
             }
         }
+
+        log::info!("Initializing Sync and Save.");
+        self.save_and_reset_swap_round()?;
+        log::info!("Completed Sync and Save.");
         log::info!("Successfully Completed Coinswap.");
         Ok(())
     }
@@ -519,7 +524,7 @@ impl Taker {
                     &hashlock_pubkeys,
                     self.get_preimage_hash(),
                     swap_locktime,
-                    MIN_FEE_RATE,
+                    Amount::from_sat(MINER_FEE),
                 )?;
 
             let contract_reedemscripts = outgoing_swapcoins
@@ -636,7 +641,7 @@ impl Taker {
         // Find next maker's details
         let required_confirmations =
             if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
-                REQUIRED_CONFIRMS
+                self.ongoing_swap_state.swap_params.required_confirms
             } else {
                 self.ongoing_swap_state
                     .peer_infos
@@ -672,6 +677,7 @@ impl Taker {
 
         loop {
             // Abort if any of the contract transaction is broadcasted
+            // TODO: Find the culprit Maker, and ban it's fidelity bond.
             let contracts_broadcasted = self.check_for_broadcasted_contract_txes();
             if !contracts_broadcasted.is_empty() {
                 log::error!(
@@ -722,6 +728,7 @@ impl Taker {
                 }
 
                 // handle confirmations
+                //TODO handle confirm<0
                 if gettx.confirmations >= Some(required_confirmations) {
                     txid_tx_map.insert(
                         *txid,
@@ -1160,7 +1167,7 @@ impl Taker {
             this_maker.address
         );
         let id = self.ongoing_swap_state.id.clone();
-        send_message_with_prefix(
+        send_message(
             &mut socket,
             &TakerToMakerMessage::RespContractSigsForRecvrAndSender(
                 ContractSigsForRecvrAndSender {
@@ -1205,6 +1212,8 @@ impl Taker {
                 },
             )
             .collect::<Result<Vec<WatchOnlySwapCoin>, _>>()?;
+        //TODO error handle here the case where next_swapcoin.contract_tx script pubkey
+        // is not equal to p2wsh(next_swap_contract_redeemscripts)
         for swapcoin in &next_swapcoins {
             self.wallet
                 .import_watchonly_redeemscript(&swapcoin.get_multisig_redeemscript())?;
@@ -1265,6 +1274,7 @@ impl Taker {
                         previous_funding_output,
                         maker_funding_tx_value,
                         next_contract_redeemscript,
+                        Amount::from_sat(MINER_FEE),
                     )
                 },
             )
@@ -1558,7 +1568,7 @@ impl Taker {
     /// Pass around the Maker's multisig privatekeys. Saves all the data in wallet file. This marks
     /// the ends of swap round.
     fn settle_all_swaps(&mut self) -> Result<(), TakerError> {
-        let mut outgoing_privkeys: Vec<MultisigPrivkey> = Vec::new();
+        let mut outgoing_privkeys: Option<Vec<MultisigPrivkey>> = None;
 
         // Because the last peer info is the Taker, we take upto (0..n-1), where n = peer_info.len()
         let maker_addresses = self.ongoing_swap_state.peer_infos
@@ -1674,7 +1684,7 @@ impl Taker {
         &mut self,
         maker_address: &MakerAddress,
         index: usize,
-        outgoing_privkeys: &mut Vec<MultisigPrivkey>,
+        outgoing_privkeys: &mut Option<Vec<MultisigPrivkey>>, // TODO: Instead of Option, just take a vector, where empty vector denotes the `None` equivalent.
         senders_multisig_redeemscripts: &[ScriptBuf],
         receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {
@@ -1711,9 +1721,12 @@ impl Taker {
                 })
                 .collect::<Vec<MultisigPrivkey>>()
         } else {
-            assert!(!outgoing_privkeys.is_empty());
-            let reply = outgoing_privkeys.clone();
-            *outgoing_privkeys = Vec::new();
+            assert!(outgoing_privkeys.is_some());
+            let reply = outgoing_privkeys
+                .as_ref()
+                .expect("outgoing privkey expected")
+                .to_vec();
+            *outgoing_privkeys = None;
             reply
         };
         (if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
@@ -1729,11 +1742,11 @@ impl Taker {
                     .expect("watchonly coins expected"),
                 &maker_private_key_handover.multisig_privkeys,
             );
-            *outgoing_privkeys = maker_private_key_handover.multisig_privkeys;
+            *outgoing_privkeys = Some(maker_private_key_handover.multisig_privkeys);
             ret
         })?;
         log::info!("===> PrivateKeyHandover | {maker_address}");
-        send_message_with_prefix(
+        send_message(
             &mut socket,
             &TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {
                 multisig_privkeys: privkeys_reply,
@@ -1838,6 +1851,8 @@ impl Taker {
             )
             .collect::<Vec<_>>();
 
+        // TODO: Find out which txid was boradcasted first
+        // This requires -txindex to be enabled in the node.
         let seen_txids = contract_txids
             .iter()
             .filter(|txid| self.wallet.rpc.get_raw_transaction_info(txid, None).is_ok())
@@ -1919,7 +1934,7 @@ impl Taker {
 
             let timelock_spend =
                 self.wallet
-                    .create_timelock_spend(&outgoing, next_internal, MIN_FEE_RATE)?;
+                    .create_timelock_spend(&outgoing, next_internal, DEFAULT_TX_FEE_RATE)?;
             outgoing_infos.push(((reedemscript, contract_tx), (timelock, timelock_spend)));
         }
 
@@ -1996,7 +2011,8 @@ impl Taker {
             );
             if timelock_boardcasted.len() == outgoing_infos.len() {
                 log::info!("All outgoing contracts redeemed. Cleared ongoing swap state");
-                self.clear_ongoing_swaps();
+                // TODO: Reevaluate this.
+                self.clear_ongoing_swaps(); // This could be a bug if Taker is in middle of multiple swaps. For now we assume Taker will only do one swap at a time.
                 break;
             }
 
@@ -2020,10 +2036,10 @@ impl Taker {
                 if cfg!(feature = "integration-test") {
                     format!("127.0.0.1:{}", 8080)
                 } else {
-                    self.config.dns_address.clone()
+                    self.config.directory_server_address.clone()
                 }
             }
-            ConnectionType::TOR => self.config.dns_address.clone(),
+            ConnectionType::TOR => self.config.directory_server_address.clone(),
         };
 
         #[cfg(not(feature = "integration-test"))]
@@ -2034,19 +2050,8 @@ impl Taker {
 
         log::info!("Fetching addresses from DNS: {dns_addr}");
 
-        #[cfg(not(feature = "tracker"))]
         let addresses_from_dns =
             match fetch_addresses_from_dns(socks_port, dns_addr, self.config.connection_type) {
-                Ok(dns_addrs) => dns_addrs,
-                Err(e) => {
-                    log::error!("Could not connect to DNS Server: {e:?}");
-                    return Err(e);
-                }
-            };
-
-        #[cfg(feature = "tracker")]
-        let addresses_from_dns =
-            match fetch_addresses_from_tracker(socks_port, dns_addr, self.config.connection_type) {
                 Ok(dns_addrs) => dns_addrs,
                 Err(e) => {
                     log::error!("Could not connect to DNS Server: {e:?}");
@@ -2127,7 +2132,7 @@ impl Taker {
 
         socket.set_write_timeout(Some(reconnect_timeout))?;
 
-        send_message_with_prefix(&mut socket, &msg)?;
+        send_message(&mut socket, &msg)?;
         log::info!("===> {msg} | {maker_addr}");
 
         Ok(())
