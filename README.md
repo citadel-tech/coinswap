@@ -7,10 +7,6 @@
   </p>
 
 <p>
-    <!--
-    <a href="https://crates.io/crates/coinswap"><img alt="Crate Info" src="https://img.shields.io/crates/v/coinswap.svg"/></a>
-    <a href="https://docs.rs/coinswap"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-coinswap-green"/></a>
-    -->
     <a href="https://github.com/citadel-tech/coinswap/blob/master/LICENSE"><img alt="MIT or Apache-2.0 Licensed" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg"/></a>
     <a href="https://github.com/citadel-tech/coinswap/actions/workflows/build.yaml"><img alt="CI Status" src="https://github.com/citadel-tech/coinswap/actions/workflows/build.yaml/badge.svg"></a>
     <a href="https://github.com/citadel-tech/coinswap/actions/workflows/lint.yaml"><img alt="CI Status" src="https://github.com/citadel-tech/coinswap/actions/workflows/lint.yaml/badge.svg"></a>
@@ -22,128 +18,99 @@
   </p>
 </div>
 
-### ⚠️ Info
-
+### ⚠️ Important
 Coinswap v0.1.0 marketplace is now live on Custom Signet. Follow [The Demo Doc](./docs/demo.md) **TO JOIN THE MARKET**.
 
 ### ⚠️ Warning
-
 This library is currently under beta development and is in an experimental stage. There are known and unknown bugs. **Mainnet use is strictly NOT recommended.** 
 
 # About
 
 Coinswap is a decentralized [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol that enables trustless swaps of Bitcoin UTXOs through a decentralized, Sybil-resistant marketplace.
 
-While atomic swaps are not new, existing solutions are centralized, rely on large swap servers, and inherently have the service provider as a [single point of failure (SPOF)](https://en.wikipedia.org/wiki/Single_point_of_failure) for censorship and privacy attacks. This project aims to implement atomic swaps via a decentralized market-based protocol.
+Existing atomic swap solutions are centralized, rely on large swap servers, and have service providers as [single points of failure](https://en.wikipedia.org/wiki/Single_point_of_failure) for censorship and privacy attacks. This project implements atomic swaps via a decentralized market-based protocol.
 
-The project builds on the work of many predecessors and is a continuation of Bitcoin researcher Chris Belcher's [teleport-transactions](https://github.com/bitcoin-teleport/teleport-transactions). Since Belcher's prototype, the project has significantly matured, incorporating complete protocol handling, functional testing, Sybil resistance, and command-line applications, making it a practical swap solution for live networks.
+The project builds on Chris Belcher's [teleport-transactions](https://github.com/bitcoin-teleport/teleport-transactions) and has significantly matured with complete protocol handling, functional testing, Sybil resistance, and command-line applications.
 
-Anyone can become a swap service provider (aka `Maker`) and earn fees by running the `makerd` app. Clients (aka `Takers`) can perform swaps with multiple makers using the `taker` app. A taker selects multiple makers from the market to swap with, splitting and routing swaps through various makers while maintaining privacy. 
+Anyone can become a swap service provider (**Maker**) by running `makerd` to earn fees. **Takers** use the `taker` app to swap with multiple makers, routing through various makers for privacy. The system uses a *smart-client-dumb-server* philosophy with minimal server requirements, allowing any home node operator to run a maker.
 
-The system is designed with a *smart-client-dumb-server* philosophy, minimizing server requirements. This allows any home node operator to run `makerd` on their node box. The protocol employs [fidelity bonds](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md) as a Sybil and DoS resistance mechanism for the market. Takers will avoid swapping with makers holding expired or invalid fidelity bonds.
+The protocol employs [fidelity bonds](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md) for Sybil and DoS resistance. Takers coordinate swaps and handle recovery; makers respond to queries. All communication occurs over Tor.
 
-Takers, acting as smart clients, handle critical roles such as coordinating swap rounds, validating data, managing interactions with multiple makers, and recovering swaps in case of errors. Makers, acting as dumb servers, respond to taker queries and do not communicate with each other. Instead, the taker routes all inter-maker messages. All communication strictly occurs over Tor.
+For technical details, see the [Coinswap Protocol Specification](https://github.com/citadel-tech/Coinswap-Protocol-Specification).
 
-For more details on the protocol and market mechanisms, refer to the [Coinswap Protocol Specification](https://github.com/citadel-tech/Coinswap-Protocol-Specification).
+# Setup & Installation
 
-
-# Run the apps
-### Dependencies
-
-Ensure you have the following dependency installed before compiling.
+## Dependencies
 
 ```shell
 sudo apt install build-essential automake libtool
 ```
 
-### **Tor Installation**  
+**Tor Installation**: Required for all operations. Download from torproject.org for your OS. Bitcoin Core automatically detects Tor and creates anonymous services. See the [Tor guide](./docs/tor.md) for configuration details.
 
-Tor is required to run CoinSwap. If you don't have Tor pre-installed, please follow the instructions in the [Tor guide](./docs/tor.md).
+**Bitcoin Core**: Requires fully synced, non-pruned node with RPC access on Custom Signet with `-txindex` enabled. Follow the [bitcoind setup guide](./docs/bitcoind.md).
 
-The project also requires working `rust` and `cargo` installation to compile. Precompiled binaries will be available soon. Cargo can be installed from [here](https://www.rust-lang.org/learn/get-started).
+## Build and Install
 
-### Bitcoind Setup
-
-The apps also require a fully synced, non-prunded `bitcoind` node with RPC access on [Custom Signet](./docs/demo.md#2-start-bitcoin-core) with `-txindex` enabled. Follow the [guide here](./docs/bitcoind.md) for setup instructions.
-### Build and Run the Apps
 ```console
 git clone https://github.com/citadel-tech/coinswap.git
 cd coinswap
 cargo build --release
 ```
 
-After compilation you will get the binaries in the `./target/release` folder. 
-
 Install the necessary binaries in your system:
+
 ```console
 sudo install ./target/release/taker /usr/local/bin/
 sudo install ./target/release/makerd /usr/local/bin/  
 sudo install ./target/release/maker-cli /usr/local/bin/  
 ```
 
-Run the app help commands to see all available app commands.
+## Verify Setup
+
 ```console
 makerd --help
 maker-cli --help
 taker --help
-```
-If all is setup, then try out the `taker` app to fetch current market offers.
-```console
+
+# Test connection to market
 taker fetch-offers
 ```
-If you find any problem setting up and running the apps, feel free to open an Issue.
 
-### Apps overview
-The apps can be used to run both the swap maker server and the taker client. The maker server is suitable to run inside a full node, or *always online* system. Although shutting down the server, and using it intermittently will also work. 
+# Applications
 
-  `makerd`: The backend server daemon. This requires continuous uptime and connection to live bitcoin core RPC. App demo [here](./docs/makerd.md)
-  
-  `maker-cli`: The RPC controller of the server daemon. This can be used to manage the server, access internal wallet, see swap statistics, etc. App demo [here](./docs/maker-cli.md)
-  
-  `taker`: The swap client app. This acts as a regular bitcoin wallet with swap capability. App demo [here](./docs/taker.md)
+**`makerd`**: Server daemon for swap providers. Requires continuous uptime and Bitcoin Core RPC connection. [Demo](./docs/makerd.md)
+
+**`maker-cli`**: RPC controller for `makerd`. Manage server, access wallet, view swap statistics. [Demo](./docs/maker-cli.md)
+
+**`taker`**: Swap client acting as a Bitcoin wallet with swap capability. [Demo](./docs/taker.md)
 
 ### ❗ Important
 
-Once the `makerd` server setup is complete, always stop the server with `maker-cli stop`. Avoid using `ctr+c` to ensure wallet data integrity.
+Always stop `makerd` with `maker-cli stop` to ensure wallet data integrity. Avoid using `ctrl+c`.
 
-Currently we have three makers running on our custom signet bitcoin network. You can choose to swap with these makers by following the tutorial [here](./docs/taker.md). Check the status of the makers on [marketd](http://xbj5ena6e3mpxk7zxy6bkgxm4uxhy62tbsmda7ibqto6etu6imc4toid.onion)(open in Tor Browser)
+Currently three makers are running on Custom Signet. Check status on [marketd](http://xbj5ena6e3mpxk7zxy6bkgxm4uxhy62tbsmda7ibqto6etu6imc4toid.onion) (Tor Browser required).
 
-# [Dev Mode] Checkout the tests
+# Development
 
-Extensive functional testing to simulate various edge cases of the protocol, is covered. The [functional tests](./tests/) spawns 
-a toy marketplace in Bitcoin regtest and plays out various protocol situations. Functional test logs are a good way to look at simulations of various
-edge cases in the protocol, and how the taker and makers recover from failed swaps. 
+## Testing
 
-Each test in the [tests](./tests/) folder covers a different edge-case situation and demonstrates how the taker and makers recover
-from various types of swap failures.
-
-Run all the functional tests and see the logs:
+Extensive functional testing simulates various protocol edge cases:
 
 ```console
-$ cargo test --features=integration-test -- --nocapture
+cargo test --features=integration-test -- --nocapture
 ```
 
-A rust based [`TestFramework`](./tests/test_framework/mod.rs) (Inspired from the Bitcoin Core [testframeowrk](https://github.com/bitcoin/bitcoin/tree/master/test/functional)) has been designed to easily spawn the test situations, with many makers and takers. For example checkout the simple [`standard_swap` module](./tests/standard_swap.rs) to see how to simulate a simple swap case programatically. 
+The [Test Framework](./tests/test_framework/mod.rs) spawns toy marketplaces in Bitcoin regtest to test swap scenarios. Each test in [tests](./tests/) covers different edge cases. Start with [standard_swap](./tests/standard_swap.rs) to understand programmatic simulation.
 
-The functional tests is a good place for potential contributors to start tinkering and gathering context.
+## Contributing
 
-# Contributing
+- Browse [issues](https://github.com/citadel-tech/coinswap/issues), especially [`good first issue`](https://github.com/citadel-tech/coinswap/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) tags
+- Review [open PRs](https://github.com/citadel-tech/coinswap/pulls) 
+- Search for `TODO`s in the codebase
+- Read the [docs](./docs)
 
-The project is under active development by developers at Citadel Tech. Any contribution for features, tests, docs and other fixes/upgrades is encouraged and welcomed. The maintainers will use the PR thread to provide quick reviews and suggestions and are generally proactive at merging good contributions.
-
-Few directions for new contributors:
-
-- The list of [issues](https://github.com/citadel-tech/coinswap/issues) is a good place to look for contributable tasks and open problems.
-
-- Issues marked with [`good first issue`](https://github.com/citadel-tech/coinswap/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) are good places to get started for newbie Rust/Bitcoin devs.
-
-- The [docs](./docs) are a good place to start reading up on the protocol.
-
-- Reviewing [open PRs](https://github.com/citadel-tech/coinswap/pulls) are a good place to start gathering a contextual understanding of the codebase.
-
-- Search for `TODO`s in the codebase to find in-line marked code todos and smaller improvements.
-
-### Setting Up Git Hooks
+### Git Hooks
 
 The repo contains pre-commit githooks to do auto-linting before commits. Set up the pre-commit hook by running:
 
@@ -153,8 +120,9 @@ ln -s ../../git_hooks/pre-commit .git/hooks/pre-commit
 
 ## Community
 
-The dev community lurks [here](https://discord.gg/Wz42hVmrrK).
+Dev community: [Discord](https://discord.gg/Wz42hVmrrK)
 
 Dev discussions predominantly happen via FOSS best practices, and by using Github as the major community forum.
 
 The Issues, PRs and Discussions are where all the hard lifting is happening.
+
