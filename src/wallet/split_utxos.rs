@@ -1,5 +1,5 @@
 use super::Wallet;
-use crate::wallet::api::UTXOSpendInfo;
+use crate::wallet::UTXOSpendInfo;
 use bip39::rand::{thread_rng, Rng};
 use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};

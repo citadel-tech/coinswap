@@ -38,6 +38,8 @@ pub enum TakerError {
     TorError(TorError),
     /// Error relating to Bitcoin Address Parsing.
     AddressParseError(ParseError),
+    /// General error with a custom message
+    General(String),
 }
 
 impl From<TorError> for TakerError {

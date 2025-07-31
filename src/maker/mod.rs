@@ -11,13 +11,22 @@
 //! 6103: RPC Connection for operations.
 
 mod api;
+mod api2;
 mod config;
 mod error;
 mod handlers;
+mod handlers2;
 mod rpc;
+mod rpc2;
 mod server;
+mod server2;
 
 pub use api::{Maker, MakerBehavior};
 pub use error::MakerError;
 pub use rpc::{RpcMsgReq, RpcMsgResp};
 pub use server::start_maker_server;
+
+// Taproot protocol exports
+pub use api2::Maker as TaprootMaker;
+pub use api2::MakerBehavior as TaprootMakerBehavior;
+pub use server2::start_maker_server_taproot;
