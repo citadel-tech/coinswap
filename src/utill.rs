@@ -17,7 +17,6 @@ use log4rs::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    convert::TryInto,
     env, fmt, fs,
     io::{self, BufReader, BufWriter, ErrorKind, Read, Write},
     net::TcpStream,
@@ -310,15 +309,6 @@ pub(crate) fn check_and_apply_maker_private_keys<S: SwapCoin>(
         swapcoin.apply_privkey(swapcoin_private_key.key)?;
     }
     Ok(())
-}
-
-///Obtain Preimage from a Spending Transaction
-pub(crate) fn get_hashpreimage_from_spending_txn(tx: Transaction) -> Option<[u8; 32]> {
-    //for hashlock spending path witness stack is-:
-    //<hashlock_signature> <preimage len 32>
-    let preimage: [u8; 32] = tx.input[0].witness[1].try_into().ok()?;
-
-    Some(preimage)
 }
 
 /// Generate The Maker's Multisig and HashLock keys and respective nonce values.

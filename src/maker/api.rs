@@ -13,9 +13,8 @@ use crate::{
         Hash160,
     },
     utill::{
-        check_tor_status, get_hashpreimage_from_spending_txn, get_maker_dir,
-        redeemscript_to_scriptpubkey, ConnectionType, HEART_BEAT_INTERVAL, MIN_FEE_RATE,
-        REQUIRED_CONFIRMS,
+        check_tor_status, get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType,
+        HEART_BEAT_INTERVAL, MIN_FEE_RATE, REQUIRED_CONFIRMS,
     },
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
 };
@@ -581,12 +580,6 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                                 next_internal_address,
                                 MIN_FEE_RATE,
                             )?;
-
-                            if ic_sc.hash_preimage.is_none() {
-                                ic_sc.hash_preimage = get_hashpreimage_from_spending_txn(
-                                    find_spending_transaction(&maker, outgoings.clone())?,
-                                );
-                            }
                             is_hashpreimage_known = ic_sc.hash_preimage.is_some();
 
                             let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
@@ -662,43 +655,6 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
 
     Ok(())
 }
-
-//Loops over utxo set to find a transaction that spents from the given Contract Transaction.
-pub(crate) fn find_spending_transaction(
-    maker: &Arc<Maker>,
-    // Tuple of ((Multisig_reedemscript, Contract Tx), (Timelock, Timelock Tx))
-    outgoings: Vec<((ScriptBuf, Transaction), (u16, Transaction))>,
-) -> Result<Transaction, MakerError> {
-    if let Some(((_, tx), _)) = outgoings.into_iter().next() {
-        let txid = tx.compute_txid();
-        let vout = 0;
-        loop {
-            let rpc = &maker.get_wallet().read()?.rpc;
-            let is_tx_spent = rpc.get_tx_out(&txid, vout, None).unwrap();
-            if is_tx_spent.is_none() {
-                log::info!("Output is spent,finding the Spender");
-                let block_hash = rpc.get_best_block_hash().unwrap();
-
-                let block = rpc.get_block(&block_hash).unwrap();
-
-                for tx in block.txdata {
-                    for input in tx.input.iter() {
-                        if input.previous_output.txid == txid && input.previous_output.vout == vout
-                        {
-                            log::info!("Spending tx found by Txid: {}", tx.compute_txid());
-
-                            return Ok(tx);
-                        }
-                    }
-                }
-            } else {
-                log::info!("Still unspent");
-            }
-        }
-    }
-    Err(MakerError::General("Failed to find spending transaction"))
-}
-
 /// Checks for swapcoins present in wallet store on reboot and starts recovery if found on bitcoind network.
 ///
 /// If any one of them is ever observed, run the recovery routine.
@@ -743,13 +699,6 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
 
     for ic_sc in inc.iter_mut() {
         let next_internal_address = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
-
-        if ic_sc.hash_preimage.is_none() {
-            ic_sc.hash_preimage = get_hashpreimage_from_spending_txn(find_spending_transaction(
-                maker,
-                outgoings.clone(),
-            )?);
-        }
         is_hashpreimage_known = ic_sc.hash_preimage.is_some();
 
         let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
@@ -839,12 +788,6 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                             next_internal_address,
                             MIN_FEE_RATE,
                         )?;
-
-                        if ic_sc.hash_preimage.is_none() {
-                            ic_sc.hash_preimage = get_hashpreimage_from_spending_txn(
-                                find_spending_transaction(&maker, outgoings.clone())?,
-                            )
-                        }
                         is_hashpreimage_known = ic_sc.hash_preimage.is_some();
 
                         let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(

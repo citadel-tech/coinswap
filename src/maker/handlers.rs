@@ -17,8 +17,8 @@ use bitcoin::{
 
 use super::{
     api::{
-        find_spending_transaction, recover_from_swap, ConnectionState, ExpectedMessage, Maker,
-        MakerBehavior, MIN_CONTRACT_REACTION_TIME, TIME_RELATIVE_FEE_PCT,
+        recover_from_swap, ConnectionState, ExpectedMessage, Maker, MakerBehavior,
+        MIN_CONTRACT_REACTION_TIME, TIME_RELATIVE_FEE_PCT,
     },
     error::MakerError,
 };
@@ -38,9 +38,7 @@ use crate::{
         },
         Hash160,
     },
-    utill::{
-        calculate_fee_sats, get_hashpreimage_from_spending_txn, MIN_FEE_RATE, REQUIRED_CONFIRMS,
-    },
+    utill::{calculate_fee_sats, MIN_FEE_RATE, REQUIRED_CONFIRMS},
     wallet::{IncomingSwapCoin, SwapCoin, WalletError, WalletSwapCoin},
 };
 
@@ -730,13 +728,6 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
                 (og_sc.get_multisig_redeemscript(), contract),
                 (contract_timelock, time_lock_spend),
             ));
-
-            if ic_sc.hash_preimage.is_none() {
-                ic_sc.hash_preimage = get_hashpreimage_from_spending_txn(find_spending_transaction(
-                    &maker,
-                    outgoings.clone(),
-                )?)
-            }
             is_hashpreimage_known = ic_sc.hash_preimage.is_some();
 
             let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
