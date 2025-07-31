@@ -563,14 +563,14 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                             txid
                         );
                         let mut is_hashpreimage_known = false;
-                        // Extract Incoming and Outgoing contracts,hashlock spends and timelock spends of the contract transactions.
+                        // Extract Incoming and Outgoing contracts,create hashlock spends and timelock spends of the contract transactions.
                         // fully signed.
                         for (og_sc, ic_sc) in connection_state
                             .outgoing_swapcoins
                             .iter()
                             .zip(connection_state.incoming_swapcoins.iter_mut())
                         {
-                            let contract_timelock = og_sc.get_timelock()?;
+                            let outgoing_contract_timelock = og_sc.get_timelock()?;
                             let next_internal_address =
                                 &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
                             let time_lock_spend = maker.wallet.read()?.create_timelock_spend(
@@ -580,6 +580,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                             )?;
                             is_hashpreimage_known = ic_sc.hash_preimage.is_some();
 
+                            let incoming_contract_timelock = ic_sc.get_timelock()?;
                             let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
                                 ic_sc,
                                 next_internal_address,
@@ -594,7 +595,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                             if let Ok(tx) = og_sc.get_fully_signed_contract_tx() {
                                 outgoings.push((
                                     (og_sc.get_multisig_redeemscript(), tx),
-                                    (contract_timelock, time_lock_spend),
+                                    (outgoing_contract_timelock, time_lock_spend),
                                 ));
                             } else {
                                 log::warn!(
@@ -605,7 +606,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                             if let Ok(tx) = ic_sc.get_fully_signed_contract_tx() {
                                 incomings.push((
                                     (ic_sc.get_multisig_redeemscript(), tx),
-                                    hash_lock_spend,
+                                    (incoming_contract_timelock, hash_lock_spend),
                                 ));
                             } else {
                                 log::warn!(
@@ -616,7 +617,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                         }
                         failed_swap_ip.push(ip.clone());
 
-                        // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
+                        // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
                         let maker_clone = maker.clone();
                         log::info!(
                             "[{}] Spawning recovery thread after seeing contracts in mempool",
@@ -653,8 +654,8 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
 
     Ok(())
 }
+
 /// Checks for swapcoins present in wallet store on reboot and starts recovery if found on bitcoind network.
-///
 /// If any one of them is ever observed, run the recovery routine.
 pub(crate) fn restore_broadcasted_contracts_on_reboot(
     maker: &Arc<Maker>,
@@ -662,10 +663,10 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
     let (mut inc, out) = maker.wallet.read()?.find_unfinished_swapcoins();
     let mut outgoings = Vec::new();
     let mut incomings = Vec::new();
-    // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
+    // Extract Incoming and Outgoing contracts, create hashlock and timelock spends of the contract transactions.
     // fully signed.
     for og_sc in out.iter() {
-        let contract_timelock = og_sc.get_timelock()?;
+        let outgoing_contract_timelock = og_sc.get_timelock()?;
         let next_internal_address = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
         let time_lock_spend = maker.wallet.read()?.create_timelock_spend(
             og_sc,
@@ -690,7 +691,7 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
         };
         outgoings.push((
             (og_sc.get_multisig_redeemscript(), tx),
-            (contract_timelock, time_lock_spend),
+            (outgoing_contract_timelock, time_lock_spend),
         ));
     }
     let mut is_hashpreimage_known: bool = false;
@@ -699,6 +700,7 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
         let next_internal_address = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
         is_hashpreimage_known = ic_sc.hash_preimage.is_some();
 
+        let incoming_contract_timelock = ic_sc.get_timelock()?;
         let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
             ic_sc,
             next_internal_address,
@@ -719,10 +721,13 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
                 continue;
             }
         };
-        incomings.push(((ic_sc.get_multisig_redeemscript(), tx), hash_lock_spend));
+        incomings.push((
+            (ic_sc.get_multisig_redeemscript(), tx),
+            (incoming_contract_timelock, hash_lock_spend),
+        ));
     }
 
-    // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
+    // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
     let maker_clone = maker.clone();
     let handle = std::thread::Builder::new()
         .name("Swap recovery thread".to_string())
@@ -770,14 +775,14 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
 
                     let mut is_hashpreimage_known = false;
 
-                    // Extract Incoming and Outgoing contracts,timelock spends and hashlock spends of the contract transactions.
+                    // Extract Incoming and Outgoing contracts,creates timelock spends and hashlock spends of the contract transactions.
                     // fully signed.
                     for (og_sc, ic_sc) in state
                         .outgoing_swapcoins
                         .iter()
                         .zip(state.incoming_swapcoins.iter_mut())
                     {
-                        let contract_timelock = og_sc.get_timelock()?;
+                        let outgoing_contract_timelock = og_sc.get_timelock()?;
                         let outgoing_contract = og_sc.get_fully_signed_contract_tx()?;
                         let next_internal_address =
                             &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
@@ -788,6 +793,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                         )?;
                         is_hashpreimage_known = ic_sc.hash_preimage.is_some();
 
+                        let incoming_contract_timelock = ic_sc.get_timelock()?;
                         let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
                             ic_sc,
                             next_internal_address,
@@ -795,12 +801,12 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                         )?;
                         outgoings.push((
                             (og_sc.get_multisig_redeemscript(), outgoing_contract),
-                            (contract_timelock, time_lock_spend),
+                            (outgoing_contract_timelock, time_lock_spend),
                         ));
                         let incoming_contract = ic_sc.get_fully_signed_contract_tx()?;
                         incomings.push((
                             (ic_sc.get_multisig_redeemscript(), incoming_contract),
-                            hash_lock_spend,
+                            (incoming_contract_timelock, hash_lock_spend),
                         ));
                     }
                     bad_ip.push(ip.clone());
@@ -841,19 +847,19 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
     Ok(())
 }
 
-/// Broadcast Incoming and Outgoing Contract transactions & timelock,hashlock transactions after maturity.
+/// Broadcast Incoming and Outgoing Contract transactions & timelock or hashlock transactions after maturity.
 /// Remove contract transactions from the wallet.
 pub(crate) fn recover_from_swap(
     maker: Arc<Maker>,
     // Tuple of ((Multisig_reedemscript, Contract Tx), (Timelock, Timelock Tx))
     outgoings: Vec<((ScriptBuf, Transaction), (u16, Transaction))>,
-    // Tuple of ((Multisig Reedemscript, Contract Tx),Timelock,Hashlock Tx)
-    incomings: Vec<((ScriptBuf, Transaction), Transaction)>,
-    //Does the current Maker contains hashpreimage
+    // Tuple of ((Multisig Reedemscript, Contract Tx),Hashlock Tx)
+    incomings: Vec<((ScriptBuf, Transaction), (u16, Transaction))>,
+    //Does the current Maker have received hashpreimage
     is_hashpreimage_known: bool,
 ) -> Result<(), MakerError> {
-    // Broadcast all the incoming contracts and remove them from the wallet.
-    for ((ic_rs, tx), _) in incomings.iter() {
+    // Broadcast all the incoming contracts.
+    for ((_, tx), _) in incomings.iter() {
         let check_tx_result = maker
             .wallet
             .read()?
@@ -883,14 +889,6 @@ pub(crate) fn recover_from_swap(
                             tx.compute_txid(),
                             e
                         );
-                        if format!("{e:?}").contains("bad-txns-inputs-missingorspent") {
-                            // This means the funding utxo doesn't exist anymore. Just remove this coin.
-                            maker
-                                .get_wallet()
-                                .write()?
-                                .remove_incoming_swapcoin(ic_rs)?;
-                            log::info!("Removed outgoing swapcoin: {}", tx.compute_txid());
-                        }
                     }
                 }
             }
@@ -957,14 +955,17 @@ pub(crate) fn recover_from_swap(
         //check for contract transactions and broadcast hashlocked transaction
         let mut hashlocked_broadcasted = Vec::new();
 
-        let mut y = 0;
+        //counter
+        let mut i = 0;
         while !maker.shutdown.load(Relaxed) {
-            if y >= trigger_count || y == 0 {
-                for ((ic_rs, contract), hashlock_tx) in incomings.iter() {
+            if i >= trigger_count || i == 0 {
+                for ((ic_rs, contract), (timelock, hashlock_tx)) in incomings.iter() {
                     // We have already broadcasted this tx, so skip
                     if hashlocked_broadcasted.contains(&hashlock_tx) {
                         continue;
                     }
+                    // Check if the contract tx has reached the required maturity
+                    // Failure here means the transaction hasn't been broadcasted yet. So do nothing and try again.
                     let tx_from_chain = if let Ok(result) = maker
                         .wallet
                         .read()?
@@ -982,36 +983,46 @@ pub(crate) fn recover_from_swap(
                         continue;
                     };
                     if let Some(confirmations) = tx_from_chain.confirmations {
-                        log::info!(
+                        if confirmations > (*timelock as u32) {
+                            log::info!(
                     "[{}] Incoming Contract Confirmed for Contract Txid: {} with confirmations:{}",
                     maker.config.network_port,
                     contract.compute_txid(),
                     confirmations
                 );
-                        log::info!(
-                            "[{}] Broadcasting Hashlocked tx:{}",
-                            maker.config.network_port,
-                            hashlock_tx.compute_txid(),
-                        );
-                        maker
-                            .wallet
-                            .read()?
-                            .rpc
-                            .send_raw_transaction(hashlock_tx)
-                            .map_err(WalletError::Rpc)?;
-                        hashlocked_broadcasted.push(hashlock_tx);
+                            log::info!(
+                                "[{}] Broadcasting Hashlocked tx:{}",
+                                maker.config.network_port,
+                                hashlock_tx.compute_txid(),
+                            );
+                            maker
+                                .wallet
+                                .read()?
+                                .rpc
+                                .send_raw_transaction(hashlock_tx)
+                                .map_err(WalletError::Rpc)?;
+                            hashlocked_broadcasted.push(hashlock_tx);
 
-                        let incoming_removed = maker
-                            .wallet
-                            .write()?
-                            .remove_incoming_swapcoin(ic_rs)?
-                            .expect("incoming swapcoins expected");
+                            let incoming_removed = maker
+                                .wallet
+                                .write()?
+                                .remove_incoming_swapcoin(ic_rs)?
+                                .expect("incoming swapcoins expected");
 
-                        log::info!(
-                            "[{}] Removed Incoming Swapcoin from Wallet,Contract Txid:{}",
-                            maker.config.network_port,
-                            incoming_removed.contract_tx.compute_txid()
-                        );
+                            log::info!(
+                                "[{}] Removed Incoming Swapcoin from Wallet,Contract Txid:{}",
+                                maker.config.network_port,
+                                incoming_removed.contract_tx.compute_txid()
+                            );
+
+                            log::info!("initializing Wallet Sync.");
+                            {
+                                let mut wallet_write = maker.wallet.write()?;
+                                wallet_write.sync()?;
+                                wallet_write.save_to_disk()?;
+                            }
+                            log::info!("Completed Wallet Sync.");
+                        }
                     }
                     log::info!(
                         "{} incoming contracts detected | {} hashlock txs broadcasted.",
@@ -1026,9 +1037,9 @@ pub(crate) fn recover_from_swap(
                         break;
                     }
                     //reset-counter
-                    y = 0;
+                    i = 0;
                 }
-                y += 1;
+                i += 1;
                 std::thread::sleep(HEART_BEAT_INTERVAL);
             }
         }
