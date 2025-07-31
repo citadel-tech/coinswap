@@ -1851,15 +1851,15 @@ impl Taker {
     pub fn recover_from_swap(&mut self, is_hash_preimage_known: bool) -> Result<(), TakerError> {
         let (incomings, outgoings) = self.wallet.find_unfinished_swapcoins();
 
-        // Check for contract confirmations and broadcast timelocked transaction
+        //data structure for broadcasting timelocked,hashlocked transaction
         let mut timelock_boardcasted = Vec::new();
         let mut hashlock_boardcasted = Vec::new();
 
-        //Start the loop to keep checking for hashlock maturity,and spend from the contract asap.
+        //If contract are already established and their is need for recovery then start the loop to keep checking for hashlock maturity else loop to keep checking for timelock maturity,and spend from the contract asap.
         if is_hash_preimage_known {
             let mut incoming_infos = Vec::new();
 
-            // Broadcasted incoming contracts
+            // Broadcast incoming contracts
             for incoming in incomings {
                 let contract_tx = incoming.get_fully_signed_contract_tx()?;
                 if self
@@ -1894,6 +1894,7 @@ impl Taker {
             self.wallet.save_to_disk()?;
             log::info!("Wallet file synced and saved.");
 
+            // Start the loop to keep checking for hashlock maturity, and spend from the contract asap.
             loop {
                 if incoming_infos.is_empty() {
                     break;
@@ -1967,7 +1968,6 @@ impl Taker {
             let mut outgoing_infos = Vec::new();
 
             // Broadcast the Outgoing Contracts
-            self.get_wallet_mut().sync()?;
 
             for outgoing in outgoings {
                 let contract_tx = outgoing.get_fully_signed_contract_tx()?;
@@ -1991,7 +1991,6 @@ impl Taker {
                 let reedemscript = outgoing.get_multisig_redeemscript();
                 let timelock = outgoing.get_timelock()?;
                 let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
-
                 self.get_wallet_mut().sync()?;
 
                 let timelock_spend =
@@ -2080,8 +2079,8 @@ impl Taker {
                 };
                 std::thread::sleep(block_wait_time);
             }
-            log::info!("Recovery completed.");
         }
+        log::info!("Recovery completed.");
         Ok(())
     }
 

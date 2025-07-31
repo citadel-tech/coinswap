@@ -692,7 +692,7 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
     for (_, (state, _)) in lock_on_state.iter_mut() {
         let mut outgoings = Vec::new();
         let mut incomings = Vec::new();
-        // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
+        // Extract Incoming and Outgoing contracts, creates hashlock and timelock spends of the contract transactions.
         // fully signed.
         let mut is_hashpreimage_known = false;
 
@@ -701,7 +701,7 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
             .iter()
             .zip(state.incoming_swapcoins.iter_mut())
         {
-            let contract_timelock = og_sc.get_timelock()?;
+            let outgoing_contract_timelock = og_sc.get_timelock()?;
             let contract = match og_sc.get_fully_signed_contract_tx() {
                 Ok(tx) => tx,
                 Err(e) => {
@@ -726,10 +726,11 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
 
             outgoings.push((
                 (og_sc.get_multisig_redeemscript(), contract),
-                (contract_timelock, time_lock_spend),
+                (outgoing_contract_timelock, time_lock_spend),
             ));
             is_hashpreimage_known = ic_sc.hash_preimage.is_some();
 
+            let incoming_contract_timelock = ic_sc.get_timelock()?;
             let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
                 ic_sc,
                 next_internal_address,
@@ -739,10 +740,10 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
             let incoming_contract = ic_sc.get_fully_signed_contract_tx()?;
             incomings.push((
                 (ic_sc.get_multisig_redeemscript(), incoming_contract),
-                hash_lock_spend,
+                (incoming_contract_timelock, hash_lock_spend),
             ));
         }
-        // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
+        // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
         let maker_clone = maker.clone();
         let handle = std::thread::Builder::new()
             .name("Swap Recovery Thread".to_string())
