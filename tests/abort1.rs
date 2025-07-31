@@ -140,7 +140,7 @@ fn test_stop_taker_after_setup() {
 
     //Run Recovery script
     warn!("🔧 Starting Taker recovery process");
-    taker.recover_from_swap().unwrap();
+    taker.recover_from_swap(false).unwrap();
 
     // ## Fee Tracking and Workflow:
     //

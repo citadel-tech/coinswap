@@ -910,7 +910,7 @@ pub(crate) fn recover_from_swap(
     is_hashpreimage_known: bool,
 ) -> Result<(), MakerError> {
     // Broadcast all the incoming contracts and remove them from the wallet.
-    for ((incoming_reedemscript, tx), _) in incomings.iter() {
+    for ((ic_rs, tx), _) in incomings.iter() {
         let check_tx_result = maker
             .wallet
             .read()?
@@ -940,21 +940,18 @@ pub(crate) fn recover_from_swap(
                             tx.compute_txid(),
                             e
                         );
+                        if format!("{e:?}").contains("bad-txns-inputs-missingorspent") {
+                            // This means the funding utxo doesn't exist anymore. Just remove this coin.
+                            maker
+                                .get_wallet()
+                                .write()?
+                                .remove_incoming_swapcoin(ic_rs)?;
+                            log::info!("Removed outgoing swapcoin: {}", tx.compute_txid());
+                        }
                     }
                 }
             }
         };
-
-        let removed_incoming = maker
-            .wallet
-            .write()?
-            .remove_incoming_swapcoin(incoming_reedemscript)?
-            .expect("Incoming swapcoin expected");
-        log::info!(
-            "[{}] Removed Incoming Swapcoin From Wallet, Contract Txid : {}",
-            maker.config.network_port,
-            removed_incoming.contract_tx.compute_txid()
-        );
     }
 
     // Broadcast all the outgoing contracts

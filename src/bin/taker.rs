@@ -248,7 +248,7 @@ fn main() -> Result<(), TakerError> {
         }
 
         Commands::Recover => {
-            taker.recover_from_swap()?;
+            taker.recover_from_swap(false)?;
         }
     }
 

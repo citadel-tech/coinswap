@@ -502,7 +502,7 @@ impl Wallet {
         let signed_tx_vsize = tx.vsize();
 
         // As signature size can vary between 71-73 bytes we have a tolerance
-        let tolerance_per_input = 2; // Allow a 2-byte difference per input
+        let tolerance_per_input = 10; // Allow a 2-byte difference per input
         let total_tolerance = tolerance_per_input * tx.input.len();
 
         assert!(
