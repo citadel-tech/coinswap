@@ -19,7 +19,7 @@
 </div>
 
 ### ⚠️ Important
-Coinswap v0.1.0 marketplace is now live on Custom Signet. Follow [The Demo Doc](./docs/demo.md) **TO JOIN THE MARKET**.
+Coinswap v0.1.0 marketplace is now live on Custom Signet. [Check it out here](http://xbj5ena6e3mpxk7zxy6bkgxm4uxhy62tbsmda7ibqto6etu6imc4toid.onion) (Tor Browser required).
 
 ### ⚠️ Warning
 This library is currently under beta development and is in an experimental stage. There are known and unknown bugs. **Mainnet use is strictly NOT recommended.** 
@@ -28,7 +28,7 @@ This library is currently under beta development and is in an experimental stage
 
 Coinswap is a decentralized [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol that enables trustless swaps of Bitcoin UTXOs through a decentralized, Sybil-resistant marketplace.
 
-Existing atomic swap solutions are centralized, rely on large swap servers, and have service providers as [single points of failure](https://en.wikipedia.org/wiki/Single_point_of_failure) for censorship and privacy attacks. This project implements atomic swaps via a decentralized market-based protocol.
+Existing atomic swap solutions are centralized, rely on large swap servers, and have service providers as single points of failure for censorship and privacy attacks. This project implements atomic swaps via a decentralized market-based protocol.
 
 The project builds on Chris Belcher's [teleport-transactions](https://github.com/bitcoin-teleport/teleport-transactions) and has significantly matured with complete protocol handling, functional testing, Sybil resistance, and command-line applications.
 
@@ -88,8 +88,6 @@ taker fetch-offers
 ### ❗ Important
 
 Always stop `makerd` with `maker-cli stop` to ensure wallet data integrity. Avoid using `ctrl+c`.
-
-Currently three makers are running on Custom Signet. Check status on [marketd](http://xbj5ena6e3mpxk7zxy6bkgxm4uxhy62tbsmda7ibqto6etu6imc4toid.onion) (Tor Browser required).
 
 # Development
 
