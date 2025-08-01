@@ -692,14 +692,16 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
     for (_, (state, _)) in lock_on_state.iter_mut() {
         let mut outgoings = Vec::new();
         let mut incomings = Vec::new();
-        // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
+        // Extract Incoming and Outgoing contracts, creates hashlock and timelock spends of the contract transactions.
         // fully signed.
+        let mut is_hashpreimage_known = false;
+
         for (og_sc, ic_sc) in state
             .outgoing_swapcoins
             .iter()
-            .zip(state.incoming_swapcoins.iter())
+            .zip(state.incoming_swapcoins.iter_mut())
         {
-            let contract_timelock = og_sc.get_timelock()?;
+            let outgoing_contract_timelock = og_sc.get_timelock()?;
             let contract = match og_sc.get_fully_signed_contract_tx() {
                 Ok(tx) => tx,
                 Err(e) => {
@@ -721,19 +723,34 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
                 next_internal_address,
                 MIN_FEE_RATE,
             )?;
+
             outgoings.push((
                 (og_sc.get_multisig_redeemscript(), contract),
-                (contract_timelock, time_lock_spend),
+                (outgoing_contract_timelock, time_lock_spend),
             ));
+            is_hashpreimage_known = ic_sc.hash_preimage.is_some();
+
+            let incoming_contract_timelock = ic_sc.get_timelock()?;
+            let hash_lock_spend = maker.wallet.read()?.create_hashlock_spend(
+                ic_sc,
+                next_internal_address,
+                MIN_FEE_RATE,
+            )?;
+
             let incoming_contract = ic_sc.get_fully_signed_contract_tx()?;
-            incomings.push((ic_sc.get_multisig_redeemscript(), incoming_contract));
+            incomings.push((
+                (ic_sc.get_multisig_redeemscript(), incoming_contract),
+                (incoming_contract_timelock, hash_lock_spend),
+            ));
         }
-        // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
+        // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
         let maker_clone = maker.clone();
         let handle = std::thread::Builder::new()
             .name("Swap Recovery Thread".to_string())
             .spawn(move || {
-                if let Err(e) = recover_from_swap(maker_clone, outgoings, incomings) {
+                if let Err(e) =
+                    recover_from_swap(maker_clone, outgoings, incomings, is_hashpreimage_known)
+                {
                     log::error!("Failed to recover from swap due to: {e:?}");
                 }
             })?;

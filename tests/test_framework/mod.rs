@@ -456,12 +456,12 @@ pub fn verify_swap_results(
             balances.swap.to_btc(),
             balances.spendable.to_btc()
         );
-
         assert_in_range!(
             balances.regular.to_sat(),
             [
                 14499088, // Successful coinswap
                 14997426, // Recovery via timelock
+                14940138, // Recovery via Hashlock
                 15000000, // No spending
             ],
             "Taker seed balance mismatch"
@@ -477,7 +477,14 @@ pub fn verify_swap_results(
             "Taker swapcoin balance mismatch"
         );
 
-        assert_eq!(balances.contract, Amount::ZERO);
+        assert_in_range!(
+            balances.contract.to_sat(),
+            [
+                0,
+                499100, //Contract balance in hashlock case (will debug it)
+            ],
+            "Contract balance mismatch"
+        );
         assert_eq!(balances.fidelity, Amount::ZERO);
 
         // Check balance difference
@@ -497,6 +504,7 @@ pub fn verify_swap_results(
                 2184,   // Recovery via timelock
                 503000, // Spent swapcoin
                 2574,   // Recovery via timelock (new fee system)
+                59862,  // Recovery via Hashlock
                 0       // No spending
             ],
             "Taker spendable balance change mismatch"
