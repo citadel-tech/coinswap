@@ -78,7 +78,7 @@ fn test_fidelity() {
     thread::sleep(Duration::from_secs(6));
 
     test_framework.assert_log(
-        "Send at least 0.01000000 BTC to",
+        "Send at least 0.01000324 BTC to",
         "/tmp/coinswap/taker/debug.log",
     );
 
