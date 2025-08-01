@@ -230,7 +230,12 @@ fn test_maker() {
 
     // Panic if test logic failed or panicked
     if let Err(err) = result {
-        panic!("Test panicked or failed: {:?}", err);
+        let message = err
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| err.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| format!("unknown type: {:?}", err));
+        panic!("Test panicked or failed: {}", message);
     }
 
     info!("🎉 All maker tests completed successfully");
