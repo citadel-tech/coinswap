@@ -6,7 +6,11 @@ use coinswap::{
     utill::{ConnectionType, MIN_FEE_RATE},
 };
 use log::{info, warn};
-use std::{sync::atomic::Ordering::Relaxed, sync::Arc, time::Duration};
+use std::{
+    sync::{atomic::Ordering::Relaxed, Arc},
+    time::Duration,
+};
+
 mod test_framework;
 use test_framework::*;
 
@@ -57,13 +61,13 @@ const TEST_CASES: &[(f64, &[f64], &str, &str)] = &[
 fn run_all_utxo_tests() {
     println!("=== Running All UTXO Tests ===");
 
-    println!("\n🔧 Starting Address Grouping Test");
+    println!("\n🔧 Starting Separated UTXO Test");
     test_separated_utxo_coin_selection();
 
     println!("\n⏳ Waiting for cleanup...");
     std::thread::sleep(Duration::from_secs(10));
 
-    println!("\n🔧 Starting Separated UTXO Test");
+    println!("\n🔧 Starting Address Grouping Test");
     test_address_grouping_behavior();
 
     println!("\n✅ All UTXO Tests Completed Successfully");
