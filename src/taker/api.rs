@@ -359,7 +359,7 @@ impl Taker {
         // Try first hop. Abort if error happens.
         if let Err(e) = self.init_first_hop() {
             log::error!("Could not initiate first hop: {e:?}");
-            self.recover_from_swap(false)?;
+            self.recover_from_swap()?;
             return Err(e);
         }
 
@@ -407,7 +407,7 @@ impl Taker {
                     Err(e) => {
                         log::error!("Could not initiate next hop. Error : {e:?}");
                         log::warn!("Starting recovery from existing swap");
-                        self.recover_from_swap(false)?;
+                        self.recover_from_swap()?;
                         return Ok(());
                     }
                 };
@@ -427,7 +427,7 @@ impl Taker {
                         let bad_maker = &self.ongoing_swap_state.peer_infos[maker_index].peer;
                         self.offerbook.add_bad_maker(bad_maker);
                     }
-                    self.recover_from_swap(false)?;
+                    self.recover_from_swap()?;
                     return Ok(());
                 }
             }
@@ -443,7 +443,7 @@ impl Taker {
                     Err(e) => {
                         log::error!("Incoming SwapCoin Generation failed : {e:?}");
                         log::warn!("Starting recovery from existing swap");
-                        self.recover_from_swap(false)?;
+                        self.recover_from_swap()?;
                         return Ok(());
                     }
                 }
@@ -457,7 +457,7 @@ impl Taker {
 
         if self.behavior == TakerBehavior::BroadcastContractAfterFullSetup {
             log::error!("Special Behavior BroadcastContractAfterFullSetup");
-            self.recover_from_swap(true)?;
+            self.recover_from_swap()?;
             return Ok(());
         }
 
@@ -481,7 +481,7 @@ impl Taker {
             Err(e) => {
                 log::error!("Swap Settlement Failed : {e:?}");
                 log::warn!("Starting recovery from existing swap");
-                self.recover_from_swap(true)?;
+                self.recover_from_swap()?;
                 return Ok(());
             }
         }
@@ -1848,7 +1848,7 @@ impl Taker {
     }
 
     /// Recover from a bad swap
-    pub fn recover_from_swap(&mut self, is_hash_preimage_known: bool) -> Result<(), TakerError> {
+    pub fn recover_from_swap(&mut self) -> Result<(), TakerError> {
         let (incomings, outgoings) = self.wallet.find_unfinished_swapcoins();
 
         //data structure for broadcasting timelocked,hashlocked transaction
@@ -1856,7 +1856,7 @@ impl Taker {
         let mut hashlock_boardcasted = Vec::new();
 
         //If contract are already established and their is need for recovery then start the loop to keep checking for hashlock maturity else loop to keep checking for timelock maturity,and spend from the contract asap.
-        if is_hash_preimage_known {
+        if !self.ongoing_swap_state.active_preimage.is_empty() {
             let mut incoming_infos = Vec::new();
 
             // Broadcast incoming contracts
