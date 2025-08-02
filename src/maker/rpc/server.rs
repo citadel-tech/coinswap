@@ -125,10 +125,12 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
         }
         RpcMsgReq::SyncWallet => {
             log::info!("Initializing wallet sync");
-            if let Err(e) = maker.get_wallet().write()?.sync() {
+            let mut wallet = maker.get_wallet().write()?;
+            if let Err(e) = wallet.sync() {
                 RpcMsgResp::ServerError(format!("{e:?}"))
             } else {
                 log::info!("Completed wallet sync");
+                wallet.save_to_disk()?;
                 RpcMsgResp::Pong
             }
         }
