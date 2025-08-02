@@ -404,6 +404,7 @@ impl Maker {
                 hashvalue,
                 message.refund_locktime,
                 message.contract_feerate,
+                None,
             )?
         };
 

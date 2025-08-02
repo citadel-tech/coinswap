@@ -285,7 +285,7 @@ impl Wallet {
 
             // Delta_c finds the threshold, which is used for a second coinselection
             let delta_c = target - target_change;
-            let delta_inputs = match self.coin_select(Amount::from_sat(delta_c), fee_rate) {
+            let delta_inputs = match self.coin_select(Amount::from_sat(delta_c), fee_rate, None) {
                 Ok(inputs) => inputs,
                 Err(e) => {
                     log::info!("Error other than insufficient amount during second coin selection in dynamic splitting logic: {e:?}, backtracking and returning previous state");

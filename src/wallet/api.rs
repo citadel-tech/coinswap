@@ -1221,6 +1221,7 @@ impl Wallet {
         &self,
         amount: Amount,
         feerate: f64,
+        manual_utxo_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
         // P2WPKH Breaks down as:
         // Non-witness data (multiplied by 4):
@@ -1261,7 +1262,7 @@ impl Wallet {
         const TX_BASE_WEIGHT: u64 = 43;
 
         // P2WPKH input weight: OutPoint(32) + sequence(4) + vout(4) + empty_scriptsig(1) = 41 bytes
-        const INPUT_BASE_WEIGHT: u64 = 32 + 4 + 4 + 1;
+        const INPUT_BASE_WEIGHT: u64 = 41;
 
         // P2WPKH output weight: Amount(8) + VarInt(1) + script_pubkey(22) = 31 bytes
         const TARGET_OUTPUT_WEIGHT: u64 = Amount::SIZE as u64 + 1 + P2WPKH_SPK_SIZE as u64; // ~31 bytes
@@ -1273,7 +1274,7 @@ impl Wallet {
 
         // Filter out locked UTXOs
         let locked_utxos = self.list_lock_unspent()?;
-        let unspents = unspents
+        let mut unspents = unspents
             .into_iter()
             .filter(|(utxo, _)| {
                 let outpoint = OutPoint::new(utxo.txid, utxo.vout);
@@ -1317,7 +1318,22 @@ impl Wallet {
             .sum::<u64>()
             / unspents.len() as u64;
 
-        let target_amount = amount.to_sat();
+        log::info!("CS Manual Utxo Outpoints: {manual_utxo_outpoints:?}");
+
+        // Segregate manually selected UTXOs from the unspents list
+        let (manual_unspents, non_manual_unspents): (Vec<_>, Vec<_>) =
+            unspents.into_iter().partition(|(utxo, _)| {
+                let outpoint = OutPoint::new(utxo.txid, utxo.vout);
+                manual_utxo_outpoints
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|manual_utxo| {
+                        OutPoint::new(manual_utxo.txid, manual_utxo.vout) == outpoint
+                    })
+            });
+
+        unspents = non_manual_unspents;
 
         // Group UTXOs by address
         let mut address_groups: HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
@@ -1343,6 +1359,41 @@ impl Wallet {
         grouped_addresses
             .sort_by_key(|group| group.iter().map(|(u, _)| u.amount.to_sat()).sum::<u64>());
 
+        // Insert manual UTXOs at the front if they exist
+        if !manual_unspents.is_empty() {
+            grouped_addresses.insert(0, manual_unspents);
+
+            // Assert that if manual_unspents is not empty, the first group in grouped_addresses
+            // contains exactly the same outpoints as manual_unspents (order doesn't matter).
+            let first_group_outpoints = grouped_addresses
+                .first()
+                .expect("grouped_addresses should have at least one group")
+                .iter()
+                .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                .collect::<Vec<_>>();
+
+            // Verify all manual outpoints are present in the first group
+            assert!(
+                manual_utxo_outpoints
+                    .as_deref()
+                    .unwrap()
+                    .iter()
+                    .all(|outpoint| {
+                        first_group_outpoints
+                            .iter()
+                            .any(|first_outpoint| first_outpoint == outpoint)
+                    }),
+                "First group must contain all manual_unspents outpoints"
+            );
+
+            // Verify the first group contains only manual outpoints
+            assert_eq!(
+                manual_utxo_outpoints.as_deref().unwrap().len(),
+                first_group_outpoints.len(),
+                "First group should contain exactly the manual UTXOs, no more, no less"
+            );
+        }
+
         // Single loop for address group selection
         let (selected_utxos, selected_total, selected_weight) = {
             let mut result_utxos = Vec::new();
@@ -1359,8 +1410,10 @@ impl Wallet {
                     .sum();
 
                 // Calculate transaction fees for current selection including this group
-                let tx_weight =
-                    TX_BASE_WEIGHT + result_weight + group_weight + target_weight.to_wu();
+                let tx_weight = TX_BASE_WEIGHT
+                    + result_weight
+                    + group_weight
+                    + MAX_SPLITS as u64 * (target_weight.to_wu() + change_weight.to_wu());
                 let estimated_fee = calculate_fee(tx_weight / 4, feerate as f32)?;
 
                 // Add the reused address group to selection
@@ -1370,12 +1423,12 @@ impl Wallet {
                 result_utxos.extend(group);
 
                 // Check if reused addresses now cover target + fees
-                if result_total >= target_amount + estimated_fee {
+                if result_total >= amount.to_sat() + estimated_fee {
                     log::info!(
                         "Address grouping: Selected {} UTXOs (total: {} sats, target+fee: {} sats)",
                         result_utxos.len(),
                         result_total,
-                        target_amount + estimated_fee
+                        amount.to_sat() + estimated_fee
                     );
                     return Ok(result_utxos);
                 }
@@ -1498,6 +1551,7 @@ impl Wallet {
 
     /// Initialize a Coinswap with the Other party.
     /// Returns, the Funding Transactions, [`OutgoingSwapCoin`]s and the Total Miner fees.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn initalize_coinswap(
         &mut self,
         total_coinswap_amount: Amount,
@@ -1506,6 +1560,7 @@ impl Wallet {
         hashvalue: Hash160,
         locktime: u16,
         fee_rate: f64,
+        manual_utxo_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, Amount), WalletError> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
             .iter()
@@ -1514,8 +1569,12 @@ impl Wallet {
             .into_iter()
             .unzip();
 
-        let create_funding_txes_result =
-            self.create_funding_txes(total_coinswap_amount, &coinswap_addresses, fee_rate)?;
+        let create_funding_txes_result = self.create_funding_txes(
+            total_coinswap_amount,
+            &coinswap_addresses,
+            fee_rate,
+            manual_utxo_outpoints,
+        )?;
 
         let mut outgoing_swapcoins = Vec::<OutgoingSwapCoin>::new();
         for (

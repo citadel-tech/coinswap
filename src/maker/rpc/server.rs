@@ -86,7 +86,10 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 op_return_data: None,
             };
 
-            let coins_to_send = maker.get_wallet().read()?.coin_select(amount, feerate)?;
+            let coins_to_send = maker
+                .get_wallet()
+                .read()?
+                .coin_select(amount, feerate, None)?;
             let tx = maker.get_wallet().write()?.spend_from_wallet(
                 feerate,
                 destination,

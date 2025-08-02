@@ -1,4 +1,4 @@
-use bitcoin::{Address, Amount};
+use bitcoin::{Address, Amount, OutPoint};
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
@@ -102,6 +102,9 @@ enum Commands {
         // /// Increasing this number also increases the total swap fee.
         // #[clap(long, short = 'u', default_value = "1")]
         // utxos: u32,
+        /// Manual UTXOs to be always selected
+        #[clap(long, short = 'a', default_value = "")]
+        manual_utxo_outpoints: Option<Vec<OutPoint>>,
     },
     /// Recover from all failed swaps
     Recover,
@@ -195,9 +198,11 @@ fn main() -> Result<(), TakerError> {
         } => {
             let amount = Amount::from_sat(amount);
 
-            let coins_to_spend = taker
-                .get_wallet_mut()
-                .coin_select(amount, feerate.unwrap_or(MIN_FEE_RATE))?;
+            let coins_to_spend = taker.get_wallet_mut().coin_select(
+                amount,
+                feerate.unwrap_or(MIN_FEE_RATE),
+                None,
+            )?;
 
             let outputs = vec![(Address::from_str(&address)?.assume_checked(), amount)];
             let destination = Destination::Multi {
@@ -238,11 +243,16 @@ fn main() -> Result<(), TakerError> {
                 })?;
             }
         }
-        Commands::Coinswap { makers, amount } => {
+        Commands::Coinswap {
+            makers,
+            amount,
+            manual_utxo_outpoints,
+        } => {
             let swap_params = SwapParams {
                 send_amount: Amount::from_sat(amount),
                 maker_count: makers,
                 tx_count: 1,
+                manual_utxo_outpoints,
             };
             taker.do_coinswap(swap_params)?;
         }
