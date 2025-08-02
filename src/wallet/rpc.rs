@@ -70,8 +70,10 @@ impl Wallet {
     /// This method first synchronizes the wallet with the Bitcoin Core node,
     /// then persists the state using [`Self::save_to_disk`].
     pub fn sync_and_save(&mut self) -> Result<(), WalletError> {
+        log::info!("Initializing wallet sync and save");
         self.sync()?;
         self.save_to_disk()?;
+        log::info!("Completed wallet sync and save");
         Ok(())
     }
 

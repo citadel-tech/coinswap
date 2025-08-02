@@ -264,9 +264,7 @@ impl Taker {
             empty_book
         };
 
-        log::info!("Initializing wallet sync");
         wallet.sync_and_save()?;
-        log::info!("Completed wallet sync");
 
         Ok(Self {
             wallet,
@@ -1930,7 +1928,6 @@ impl Taker {
 
         // Save the wallet file here before going into the expensive loop.
         self.wallet.sync_and_save()?;
-        log::info!("Wallet file synced and saved.");
 
         // Start the loop to keep checking for timelock maturity, and spend from the contract asap.
         loop {
@@ -1980,9 +1977,7 @@ impl Taker {
                                 "Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
                                 outgoing_removed.contract_tx.compute_txid()
                             );
-                            log::info!("Initializing Wallet sync and save");
                             self.wallet.sync_and_save()?;
-                            log::info!("Completed wallet sync and save");
                         }
                     }
                 }
