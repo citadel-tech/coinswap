@@ -365,11 +365,6 @@ impl Wallet {
         Ok(wallet)
     }
 
-    /// Update external index.
-    pub(crate) fn update_external_index(&mut self, new_external_index: u32) {
-        self.store.external_index = new_external_index;
-    }
-
     /// Update the existing file. Error if path does not exist.
     pub(crate) fn save_to_disk(&self) -> Result<(), WalletError> {
         self.store
@@ -995,7 +990,7 @@ impl Wallet {
             Some([self.store.external_index, self.store.external_index]),
         )?[0]
             .clone();
-        self.update_external_index(self.store.external_index + 1);
+        self.store.external_index += 1;
         self.save_to_disk()?;
         Ok(receive_address.assume_checked())
     }
