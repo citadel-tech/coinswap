@@ -753,7 +753,7 @@ impl Wallet {
             .collect();
         Ok(filtered_utxos)
     }
-
+    /// Lists all live hashlock contract UTXOs along with their [UTXOSpendInfo].
     pub fn list_live_hashlock_contract_spend_info(
         &self,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
@@ -1599,7 +1599,7 @@ impl Wallet {
     pub fn send_tx(&self, tx: &Transaction) -> Result<Txid, WalletError> {
         Ok(self.rpc.send_raw_transaction(tx)?)
     }
-
+    /// Sweeps all completed incoming swapcoins to an internal wallet address, broadcasting transactions and recording their [`Txid`]s.
     pub fn sweep_incoming_swapcoins(&mut self, feerate: f64) -> Result<Vec<Txid>, WalletError> {
         let mut swept_txids = Vec::new();
 
