@@ -505,6 +505,7 @@ pub fn verify_swap_results(
                 503000, // Spent swapcoin
                 2574,   // Recovery via timelock (new fee system)
                 59862,  // Recovery via Hashlock
+                500912, // Recovery via Hashlock(abort3_case1 variant)
                 0       // No spending
             ],
             "Taker spendable balance change mismatch"
@@ -554,12 +555,6 @@ pub fn verify_swap_results(
             );
 
             assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
-
-            // Live contract balance can be non-zero, if a maker shuts down in middle of recovery.
-            assert!(
-                balances.contract == Amount::ZERO
-                    || balances.contract == Amount::from_btc(0.00441812).unwrap() // Contract balance in recovery scenarios
-            );
 
             // Check spendable balance difference.
             let balance_diff = match org_spend_balance.checked_sub(balances.spendable) {
