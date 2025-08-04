@@ -1524,9 +1524,27 @@ impl Taker {
             .ok_or_else(|| TakerError::General("No receiver nonce stored for first maker".to_string()))?;
         let maker_pub_nonce: secp256k1::musig::PublicNonce = maker_receiver_nonce.clone().into();
         
-        // Create aggregated nonce from taker and maker nonces
-        let nonces = vec![&taker_pub_nonce, &maker_pub_nonce];
+        // DETAILED LOGGING FOR TAKER SIGNATURE GENERATION
+        log::info!("=== TAKER GENERATING PARTIAL SIG FOR FIRST MAKER ===");
+        log::info!("Contract txid being spent: {:?}", contract_txid);
+        log::info!("Message (sighash): {:?}", message);
+        log::info!("Taker pubkey: {:?}", taker_keypair.public_key().serialize());
+        log::info!("First maker pubkey: {:?}", first_maker_pubkey.inner.serialize()); 
+        log::info!("Ordered pubkeys: {:?}", ordered_pubkeys.iter().map(|p| p.serialize()).collect::<Vec<_>>());
+        log::info!("Tap tweak: {:?}", tap_tweak);
+        log::info!("Internal key: {:?}", internal_key);
+        log::info!("Taker NEW nonce: {:?}", taker_pub_nonce.serialize());
+        log::info!("Maker receiver nonce (from storage): {:?}", maker_pub_nonce.serialize());
+        // Use the same pubkey-based nonce ordering as the maker
+        let nonces = if ordered_pubkeys[0] == taker_keypair.public_key() {
+            log::info!("Nonce ordering: [taker_nonce, maker_nonce] (taker is first in pubkey order)");
+            vec![&taker_pub_nonce, &maker_pub_nonce]
+        } else {
+            log::info!("Nonce ordering: [maker_nonce, taker_nonce] (maker is first in pubkey order)");
+            vec![&maker_pub_nonce, &taker_pub_nonce]
+        };
         let aggregated_nonce = crate::protocol::musig_interface::get_aggregated_nonce_i(&nonces);
+        log::info!("Aggregated nonce: {:?}", aggregated_nonce.serialize());
 
         // Generate taker's partial signature for the Taker→Maker0 contract
         let taker_partial_sig = generate_partial_signature_i(
@@ -1538,6 +1556,11 @@ impl Taker {
             ordered_pubkeys[0], // lexicographically first pubkey
             ordered_pubkeys[1], // lexicographically second pubkey
         );
+        
+        log::info!("Generated taker partial signature: {:?}", taker_partial_sig.serialize());
+        log::info!("Sending to maker: partial_sig={:?}, sender_nonce={:?}", 
+                   taker_partial_sig.serialize(), taker_pub_nonce.serialize());
+        log::info!("=== END TAKER SIGNATURE GENERATION ===");
 
         Ok(crate::protocol::messages2::PartialSigAndSendersNonce {
             partial_signatures: vec![taker_partial_sig.into()],
