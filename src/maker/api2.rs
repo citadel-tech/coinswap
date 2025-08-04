@@ -1225,6 +1225,11 @@ impl Maker {
         let sender_nonce: secp256k1::musig::PublicNonce = 
             partial_sig_and_senders_nonce.sender_nonce.clone().into();
 
+        // DETAILED LOGGING FOR MAKER SIGNATURE VERIFICATION
+        log::info!("[{}] === MAKER COMPLETING SWEEP WITH RECEIVED PARTIAL SIG ===", self.config.network_port);
+        log::info!("[{}] Received sender_nonce from taker: {:?}", self.config.network_port, sender_nonce.serialize());
+        log::info!("[{}] Received partial_sig from taker: {:?}", self.config.network_port, other_partial_sig.serialize());
+
         // Get the spending transaction we created for our incoming contract
         let spending_tx = connection_state
             .incoming_contract_spending_tx
@@ -1243,6 +1248,8 @@ impl Maker {
             .incoming_contract_my_pub_nonce
             .as_ref()
             .ok_or_else(|| MakerError::General("No stored public nonce for incoming contract"))?;
+
+        log::info!("[{}] My stored nonce (incoming_contract_my_pub_nonce): {:?}", self.config.network_port, incoming_contract_my_pub_nonce.serialize());
 
         // Get incoming contract details
         let incoming_contract_txid = connection_state.incoming_contract_tx_hash
@@ -1293,11 +1300,22 @@ impl Maker {
 
         // Create aggregated nonce with sender nonce and our public nonce
         let incoming_nonce_refs = if incoming_ordered_pubkeys[0] == incoming_my_keypair.public_key() {
+            log::info!("[{}] Nonce ordering: [my_nonce, sender_nonce] (I am first in pubkey order)", self.config.network_port);
             vec![incoming_contract_my_pub_nonce, &sender_nonce]
         } else {
+            log::info!("[{}] Nonce ordering: [sender_nonce, my_nonce] (sender is first in pubkey order)", self.config.network_port);
             vec![&sender_nonce, incoming_contract_my_pub_nonce]
         };
         let incoming_aggregated_nonce = get_aggregated_nonce_i(&incoming_nonce_refs);
+        
+        log::info!("[{}] Contract txid being spent: {:?}", self.config.network_port, incoming_contract_txid);
+        log::info!("[{}] Message (sighash): {:?}", self.config.network_port, incoming_message);
+        log::info!("[{}] My pubkey: {:?}", self.config.network_port, incoming_my_keypair.public_key().serialize());
+        log::info!("[{}] Other pubkey: {:?}", self.config.network_port, incoming_other_pubkey.inner.serialize());
+        log::info!("[{}] Ordered pubkeys: {:?}", self.config.network_port, incoming_ordered_pubkeys.iter().map(|p| p.serialize()).collect::<Vec<_>>());
+        log::info!("[{}] Tap tweak: {:?}", self.config.network_port, incoming_tap_tweak);
+        log::info!("[{}] Internal key: {:?}", self.config.network_port, incoming_internal_key);
+        log::info!("[{}] Aggregated nonce: {:?}", self.config.network_port, incoming_aggregated_nonce.serialize());
 
         // Generate our partial signature for the incoming contract
         let our_incoming_partial_sig = generate_partial_signature_i(
