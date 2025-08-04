@@ -20,6 +20,11 @@ pub enum WalletError {
     /// This is used for encoding/decoding data structures.
     Cbor(serde_cbor::Error),
 
+    /// Represents an error during JSON serialization or deserialization.
+    ///
+    /// This is used for encoding/decoding the wallet backup.
+    Json(serde_json::Error),
+
     /// Represents an error returned by the Bitcoin Core RPC client.
     ///
     /// Typically occurs during communication with a Bitcoin node.
@@ -113,6 +118,12 @@ impl From<ProtocolError> for WalletError {
 impl From<serde_cbor::Error> for WalletError {
     fn from(value: serde_cbor::Error) -> Self {
         Self::Cbor(value)
+    }
+}
+
+impl From<serde_json::Error> for WalletError {
+    fn from(value: serde_json::Error) -> Self {
+        Self::Json(value)
     }
 }
 
