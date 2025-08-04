@@ -54,12 +54,48 @@ const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
 #[derive(Debug)]
 pub struct Wallet {
     pub(crate) rpc: Client,
-    wallet_file_path: PathBuf,
+    pub(crate) wallet_file_path: PathBuf,
     pub(crate) store: WalletStore,
     /// Optional encryption material derived from the user’s passphrase.
     /// If present, wallet data will be encrypted/decrypted using AES-GCM.
     /// The original passphrase is never stored—only the derived key is kept in memory.
-    store_enc_material: Option<KeyMaterial>,
+    pub(crate) store_enc_material: Option<KeyMaterial>,
+}
+/// Compares two wallets for cryptographic equivalence.
+///
+/// This comparison checks fields relevant to the cryptographic and functional
+/// state of the wallet, intentionally excluding fields that are:
+/// - related to file metadata (like `file_name`),
+/// - transient or runtime-only (e.g., swap coins, sync height),
+/// - dynamic (e.g., `prevout_to_contract_map`).
+///
+/// The fields checked include:
+/// - `network`
+/// - `master_key`
+/// - `external_index`
+/// - `offer_maxsize`
+/// - `fidelity_bond`
+/// - `wallet_birthday`
+/// - `utxo_cache`
+///
+/// This allows comparing whether two wallets represent the same core cryptographic
+/// identity and logic state, regardless of runtime or file system differences.
+impl PartialEq for Wallet {
+    fn eq(&self, other: &Self) -> bool {
+        //self.store == other.store
+        //avoided filename
+        self.store.network == other.store.network &&
+        self.store.master_key == other.store.master_key &&
+        self.store.external_index == other.store.external_index &&
+        self.store.offer_maxsize == other.store.offer_maxsize &&
+        //avoided incoming_swapcoins
+        //avoided outgoing_swapcoins
+        //avoided prevout_to_contract_map
+        self.store.fidelity_bond == other.store.fidelity_bond &&
+        //avoided last_synced_height
+        self.store.wallet_birthday == other.store.wallet_birthday &&
+        self.store.utxo_cache == other.store.utxo_cache
+    }
 }
 
 /// Specify the keychain derivation path from [`HARDENDED_DERIVATION`]
@@ -214,6 +250,10 @@ impl Wallet {
             store,
             store_enc_material,
         })
+    }
+    /// Get the wallet name
+    pub fn get_name(&self) -> &str {
+        &self.store.file_name
     }
 
     /// Load wallet data from file and connect to a core RPC.
