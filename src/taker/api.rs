@@ -1849,10 +1849,6 @@ impl Taker {
     pub fn recover_from_swap(&mut self) -> Result<(), TakerError> {
         let (incomings, outgoings) = self.wallet.find_unfinished_swapcoins();
 
-        //data structure for broadcasting timelocked,hashlocked transaction
-        let mut timelock_boardcasted = Vec::new();
-        let mut hashlock_boardcasted = Vec::new();
-
         //If contract are already established and their is need for recovery then start the loop to keep checking for hashlock maturity else loop to keep checking for timelock maturity,and spend from the contract asap.
         if !self.ongoing_swap_state.active_preimage.is_empty() {
             let mut incoming_infos = Vec::new();
@@ -1890,6 +1886,8 @@ impl Taker {
             // Save the wallet file here before going into the expensive loop.
             self.wallet.sync_and_save()?;
             log::info!("Wallet file synced and saved.");
+
+            let mut hashlock_boardcasted = Vec::new();
 
             // Start the loop to keep checking for hashlock maturity, and spend from the contract asap.
             loop {
@@ -2001,6 +1999,8 @@ impl Taker {
             // Save the wallet file here before going into the expensive loop.
             self.wallet.sync_and_save()?;
             log::info!("Wallet file synced and saved.");
+
+            let mut timelock_boardcasted = Vec::new();
 
             // Start the loop to keep checking for timelock maturity, and spend from the contract asap.
             loop {
