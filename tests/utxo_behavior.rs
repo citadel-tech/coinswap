@@ -127,7 +127,9 @@ fn test_address_grouping_behavior() {
         let target_amount = Amount::from_btc(target_btc).unwrap();
 
         // Call the coin selection algorithm we're testing
-        let selected_utxos = wallet.coin_select(target_amount, MIN_FEE_RATE).unwrap();
+        let selected_utxos = wallet
+            .coin_select(target_amount, MIN_FEE_RATE, None)
+            .unwrap();
 
         let selected_amounts: Vec<f64> = selected_utxos
             .iter()

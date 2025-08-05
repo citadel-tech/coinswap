@@ -107,6 +107,7 @@ fn test_stop_taker_after_setup() {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
         tx_count: 3,
+        manual_utxo_outpoints: None,
     };
     taker.do_coinswap(swap_params).unwrap();
 
