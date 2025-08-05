@@ -206,6 +206,7 @@ impl Wallet {
         Err(WalletError::General("Contract Does not exist".to_string()))
     }
 
+    /// Creates a [Transaction] spending given UTXOs to a [Destination] with fee calculated from `feerate`.
     pub fn spend_coins(
         &self,
         coins: &[(ListUnspentResultEntry, UTXOSpendInfo)],
