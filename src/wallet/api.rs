@@ -1274,22 +1274,40 @@ impl Wallet {
         let regular_utxos = self.list_descriptor_utxo_spend_info()?;
         let swap_utxos = self.list_swept_incoming_swap_utxos()?;
 
-        // Filter out locked UTXOs
+        // Assert that no non-spendable UTXOs are included before processing
+        let mut all_utxos = regular_utxos.iter().chain(swap_utxos.iter());
+
+        assert!(
+        all_utxos.all(|(_, spend_info)| !matches!(
+            spend_info,
+            UTXOSpendInfo::FidelityBondCoin { .. }
+                | UTXOSpendInfo::OutgoingSwapCoin { .. }
+                | UTXOSpendInfo::TimelockContract { .. }
+                | UTXOSpendInfo::HashlockContract { .. }
+        )),
+        "Fidelity, Outgoing Swapcoins, Hashlock and Timelock coins are not included in coin selection"
+    );
+
+        // Filter out locked UTXOs for both types
         let locked_utxos = self.list_lock_unspent()?;
-        let available_regular_utxos: Vec<_> = regular_utxos
-            .into_iter()
-            .filter(|(utxo, _)| {
-                let outpoint = OutPoint::new(utxo.txid, utxo.vout);
-                !locked_utxos.contains(&outpoint)
-            })
-            .collect();
-        let available_swap_utxos: Vec<_> = swap_utxos
-            .into_iter()
-            .filter(|(utxo, _)| {
-                let outpoint = OutPoint::new(utxo.txid, utxo.vout);
-                !locked_utxos.contains(&outpoint)
-            })
-            .collect();
+        let filter_locked = |utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>| {
+            utxos
+                .into_iter()
+                .filter(|(utxo, _)| {
+                    let outpoint = OutPoint::new(utxo.txid, utxo.vout);
+                    !locked_utxos.contains(&outpoint)
+                })
+                .collect()
+        };
+
+        let available_regular_utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)> =
+            filter_locked(regular_utxos);
+        let available_swap_utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)> =
+            filter_locked(swap_utxos);
+        if available_regular_utxos.is_empty() && available_swap_utxos.is_empty() {
+            log::warn!("No spendable UTXOs available, returning empty selection with 0 sats");
+            return Ok(Vec::new());
+        }
 
         // Calculate totals for each type
         let regular_total: u64 = available_regular_utxos
@@ -1302,12 +1320,24 @@ impl Wallet {
             .sum();
         let target_sats = amount.to_sat();
 
-        log::info!(
-            "Separated coin selection: target={} sats, regular_total={} sats, swap_total={} sats",
-            target_sats,
-            regular_total,
-            swap_total
-        );
+        // Early exit: Only proceed if at least one type can satisfy the target
+        if target_sats > regular_total && target_sats > swap_total {
+            return Err(WalletError::General(format!(
+            "Coin selection failed: target={} sats exceeds both regular_total={} sats and swap_total={} sats",
+            target_sats, regular_total, swap_total
+        )));
+        }
+
+        let change_weight = Weight::from_vb_unwrap(CHANGE_OUTPUT_WEIGHT);
+
+        let cost_of_change = {
+            let creation_cost = calculate_fee(change_weight.to_vbytes_ceil(), feerate as f32)?;
+            let future_spending_cost = calculate_fee(P2WPKH_INPUT_WEIGHT / 4, LONG_TERM_FEERATE)?;
+            creation_cost + future_spending_cost
+        };
+
+        let target_weight = Weight::from_vb_unwrap(TARGET_OUTPUT_WEIGHT);
+        let avg_output_weight = (change_weight.to_wu() + target_weight.to_wu()) / 2;
 
         // Try regular UTXOs first, then swap UTXOs
         for (utxo_type, unspents) in [
@@ -1318,29 +1348,8 @@ impl Wallet {
                 continue;
             }
 
-            // Assert: fidelity, outgoing swapcoins, hashlock and timelock coins are not included
-            assert!(
-                unspents.iter().all(|(_, spend_info)| !matches!(
-                    spend_info,
-                    UTXOSpendInfo::FidelityBondCoin { .. }
-                        | UTXOSpendInfo::OutgoingSwapCoin { .. }
-                        | UTXOSpendInfo::TimelockContract { .. }
-                        | UTXOSpendInfo::HashlockContract { .. }
-                )),
-                "Fidelity, Outgoing Swapcoins, Hashlock and Timelock coins are not included in coin selection"
-            );
+            log::info!("Attempting coin selection with {} UTXOs", utxo_type);
 
-            let change_weight = Weight::from_vb_unwrap(CHANGE_OUTPUT_WEIGHT);
-
-            let cost_of_change = {
-                let creation_cost = calculate_fee(change_weight.to_vbytes_ceil(), feerate as f32)?;
-                let future_spending_cost =
-                    calculate_fee(P2WPKH_INPUT_WEIGHT / 4, LONG_TERM_FEERATE)?;
-                creation_cost + future_spending_cost
-            };
-
-            let target_weight = Weight::from_vb_unwrap(TARGET_OUTPUT_WEIGHT);
-            let avg_output_weight = (change_weight.to_wu() + target_weight.to_wu()) / 2;
             let avg_input_weight = unspents
                 .iter()
                 .map(|(_, spend_info)| {
@@ -1350,12 +1359,10 @@ impl Wallet {
                 .sum::<u64>()
                 / unspents.len() as u64;
 
-            let target_amount = amount.to_sat();
-
             // Group UTXOs by address
             let mut address_groups: HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
                 HashMap::new();
-            for (utxo, spend_info) in unspents.iter().cloned() {
+            for (utxo, spend_info) in unspents {
                 let address_str = utxo
                     .address
                     .as_ref()
@@ -1364,8 +1371,9 @@ impl Wallet {
                 address_groups
                     .entry(address_str)
                     .or_default()
-                    .push((utxo, spend_info));
+                    .push((utxo.clone(), spend_info.clone()));
             }
+
             // Separate addresses with multiple UTXOs from addresses with a single UTXO
             let (mut grouped_addresses, single_addresses): (Vec<_>, Vec<_>) = address_groups
                 .into_values()
@@ -1403,12 +1411,12 @@ impl Wallet {
                     result_utxos.extend(group);
 
                     // Check if reused addresses now cover target + fees
-                    if result_total >= target_amount + estimated_fee {
+                    if result_total >= target_sats + estimated_fee {
                         log::info!(
                         "Address grouping: Selected {} UTXOs (total: {} sats, target+fee: {} sats)",
                         result_utxos.len(),
                         result_total,
-                        target_amount + estimated_fee
+                        target_sats + estimated_fee
                     );
                         return Ok(result_utxos);
                     }
@@ -1422,9 +1430,7 @@ impl Wallet {
                 .map(|single_address_utxos| {
                     let total_value: u64 = single_address_utxos
                         .iter()
-                        .map(|(utxo, _): &(ListUnspentResultEntry, UTXOSpendInfo)| {
-                            utxo.amount.to_sat()
-                        })
+                        .map(|(utxo, _)| utxo.amount.to_sat())
                         .sum();
                     let total_weight: u64 = single_address_utxos
                         .iter()
@@ -1476,32 +1482,21 @@ impl Wallet {
                     log::info!("Selected {} {} UTXOs", final_selection.len(), utxo_type);
                     return Ok(final_selection);
                 }
-                Err(_) => {
-                    // Continue to next UTXO type
+                Err(e) => {
+                    log::info!(
+                        "Coin selection of {} UTXOs failed, because {}",
+                        utxo_type,
+                        e
+                    );
                     continue;
                 }
             }
         }
 
-        // Both failed
-        if target_sats > regular_total && target_sats > swap_total {
-            let total_available = regular_total + swap_total;
-            if total_available < target_sats {
-                Err(WalletError::InsufficientFund {
-                    available: total_available,
-                    required: target_sats,
-                })
-            } else {
-                Err(WalletError::General(format!(
-                    "Coin selection failed with separated UTXO types: regular_total={} sats, swap_total={} sats, target={} sats. Neither type alone can satisfy the target.",
-                    regular_total, swap_total, target_sats
-                )))
-            }
-        } else {
-            Err(WalletError::General(
-                "Coin selection failed for unknown reason".to_string(),
-            ))
-        }
+        // If we reach here, both regular and swap failed (should not happen due to early check)
+        Err(WalletError::General(
+            "Coin selection failed for unknown reason".to_string(),
+        ))
     }
 
     pub(crate) fn get_utxo(
