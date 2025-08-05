@@ -4,7 +4,7 @@ use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
     utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, MIN_FEE_RATE, UTXO},
-    wallet::{Destination, RPCConfig},
+    wallet::{Destination, RPCConfig, Wallet},
 };
 use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
@@ -105,6 +105,38 @@ enum Commands {
     },
     /// Recover from all failed swaps
     Recover,
+
+    /// Backup the selected wallet.
+    ///
+    /// You can specify a custom wallet using the default `-w, --WALLET` parameter:
+    ///
+    /// -w, --wallet_name <WALLET>
+    ///
+    /// The backup will be created in the current working directory with the filename:
+    /// `<wallet_name>-backup.json`.
+    ///
+    /// Use the `-e, --encrypt` flag to encrypt the backup. If enabled, you will be prompted
+    /// interactively to enter a passphrase.
+    ///
+    ///
+    #[clap(verbatim_doc_comment)]
+    Backup {
+        #[clap(long, short = 'e')]
+        encrypt: bool,
+    },
+
+    /// Restore a wallet from a backup file.
+    ///
+    /// The `-f, --backup-file <FILE>` parameter specifies the backup file to restore from.
+    ///
+    /// You can optionally specify a wallet name using the default `-w, --WALLET` parameter.
+    /// If no wallet name is provided, the wallet will be restored with its original name
+    /// stored in the backup. If a wallet name is provided, the backup will be restored
+    /// under that name instead.
+    Restore {
+        #[clap(long, short = 'f')]
+        backup_file: String,
+    },
 }
 
 fn main() -> Result<(), TakerError> {
@@ -113,7 +145,11 @@ fn main() -> Result<(), TakerError> {
         LevelFilter::from_str(&args.verbosity).unwrap(),
         matches!(
             args.command,
-            Commands::Recover | Commands::FetchOffers | Commands::Coinswap { .. }
+            Commands::Recover
+                | Commands::FetchOffers
+                | Commands::Backup { .. }
+                | Commands::Restore { .. }
+                | Commands::Coinswap { .. }
         ),
         args.data_directory.clone(), // default path handled inside the function.
     );
@@ -130,125 +166,143 @@ fn main() -> Result<(), TakerError> {
     #[cfg(feature = "integration-test")]
     let connection_type = ConnectionType::CLEARNET;
 
-    let mut taker = Taker::init(
-        args.data_directory.clone(),
-        args.wallet_name.clone(),
-        Some(rpc_config.clone()),
-        TakerBehavior::Normal,
-        None,
-        Some(args.tor_auth),
-        Some(connection_type),
-    )?;
-
-    match args.command {
-        Commands::ListUtxo => {
-            let utxos = taker.get_wallet().list_all_utxo_spend_info()?;
-            for utxo in utxos {
-                let utxo = UTXO::from_utxo_data(utxo);
-                println!("{}", serde_json::to_string_pretty(&utxo)?);
-            }
-        }
-        Commands::ListUtxoRegular => {
-            let utxos = taker.get_wallet().list_descriptor_utxo_spend_info()?;
-            for utxo in utxos {
-                let utxo = UTXO::from_utxo_data(utxo);
-                println!("{}", serde_json::to_string_pretty(&utxo)?);
-            }
-        }
-        Commands::ListUtxoSwap => {
-            let utxos = taker.get_wallet().list_swept_incoming_swap_utxos()?;
-            for utxo in utxos {
-                let utxo = UTXO::from_utxo_data(utxo);
-                println!("{}", serde_json::to_string_pretty(&utxo)?);
-            }
-        }
-        Commands::ListUtxoContract => {
-            let utxos = taker
-                .get_wallet()
-                .list_live_timelock_contract_spend_info()?;
-            for utxo in utxos {
-                let utxo = UTXO::from_utxo_data(utxo);
-                println!("{}", serde_json::to_string_pretty(&utxo)?);
-            }
-        }
-        Commands::GetBalances => {
-            let balances = taker.get_wallet().get_balances()?;
-            println!(
-                "{}",
-                to_string_pretty(&json!({
-                    "regular": balances.regular.to_sat(),
-                    "contract": balances.contract.to_sat(),
-                    "swap": balances.swap.to_sat(),
-                    "spendable": balances.spendable.to_sat(),
-                }))
-                .unwrap()
+    match &args.command {
+        Commands::Restore { backup_file } => {
+            Taker::restore_wallet(
+                args.data_directory,
+                args.wallet_name,
+                Some(rpc_config.clone()),
+                backup_file,
             );
         }
-        Commands::GetNewAddress => {
-            let address = taker.get_wallet_mut().get_next_external_address()?;
-            println!("{address:?}");
-        }
-        Commands::SendToAddress {
-            address,
-            amount,
-            feerate,
-        } => {
-            let amount = Amount::from_sat(amount);
-
-            let coins_to_spend = taker
-                .get_wallet_mut()
-                .coin_select(amount, feerate.unwrap_or(MIN_FEE_RATE))?;
-
-            let outputs = vec![(Address::from_str(&address)?.assume_checked(), amount)];
-            let destination = Destination::Multi {
-                outputs,
-                op_return_data: None,
-            };
-
-            let tx = taker.get_wallet_mut().spend_from_wallet(
-                feerate.unwrap_or(MIN_FEE_RATE),
-                destination,
-                &coins_to_spend,
+        _ => {
+            // Only initialize Taker if the command is NOT WalletRestore.
+            // For Restore, we don't initialize Taker because it tries to load the wallet,
+            // which may not exist yet before restoring from the backup.
+            let mut taker = Taker::init(
+                args.data_directory.clone(),
+                args.wallet_name.clone(),
+                Some(rpc_config.clone()),
+                TakerBehavior::Normal,
+                None,
+                Some(args.tor_auth),
+                Some(connection_type),
             )?;
+            match &args.command {
+                Commands::ListUtxo => {
+                    let utxos = taker.get_wallet().list_all_utxo_spend_info()?;
+                    for utxo in utxos {
+                        let utxo = UTXO::from_utxo_data(utxo);
+                        println!("{}", serde_json::to_string_pretty(&utxo)?);
+                    }
+                }
+                Commands::ListUtxoRegular => {
+                    let utxos = taker.get_wallet().list_descriptor_utxo_spend_info()?;
+                    for utxo in utxos {
+                        let utxo = UTXO::from_utxo_data(utxo);
+                        println!("{}", serde_json::to_string_pretty(&utxo)?);
+                    }
+                }
+                Commands::ListUtxoSwap => {
+                    let utxos = taker
+                        .get_wallet()
+                        .list_incoming_swap_coin_utxo_spend_info()?;
+                    for utxo in utxos {
+                        let utxo = UTXO::from_utxo_data(utxo);
+                        println!("{}", serde_json::to_string_pretty(&utxo)?);
+                    }
+                }
+                Commands::ListUtxoContract => {
+                    let utxos = taker
+                        .get_wallet()
+                        .list_live_timelock_contract_spend_info()?;
+                    for utxo in utxos {
+                        let utxo = UTXO::from_utxo_data(utxo);
+                        println!("{}", serde_json::to_string_pretty(&utxo)?);
+                    }
+                }
+                Commands::GetBalances => {
+                    let balances = taker.get_wallet().get_balances()?;
+                    println!(
+                        "{}",
+                        to_string_pretty(&json!({
+                            "regular": balances.regular.to_sat(),
+                            "contract": balances.contract.to_sat(),
+                            "swap": balances.swap.to_sat(),
+                            "spendable": balances.spendable.to_sat(),
+                        }))
+                        .unwrap()
+                    );
+                }
+                Commands::GetNewAddress => {
+                    let address = taker.get_wallet_mut().get_next_external_address()?;
+                    println!("{address:?}");
+                }
+                Commands::SendToAddress {
+                    address,
+                    amount,
+                    feerate,
+                } => {
+                    let amount = Amount::from_sat(*amount);
 
-            let txid = taker.get_wallet().send_tx(&tx).unwrap();
+                    let coins_to_spend = taker
+                        .get_wallet_mut()
+                        .coin_select(amount, feerate.unwrap_or(MIN_FEE_RATE))?;
 
-            println!("{txid}");
+                    let outputs = vec![(Address::from_str(address)?.assume_checked(), amount)];
+                    let destination = Destination::Multi {
+                        outputs,
+                        op_return_data: None,
+                    };
 
-            taker.get_wallet_mut().sync_no_fail();
-        }
+                    let tx = taker.get_wallet_mut().spend_from_wallet(
+                        feerate.unwrap_or(MIN_FEE_RATE),
+                        destination,
+                        &coins_to_spend,
+                    )?;
 
-        Commands::FetchOffers => {
-            let all_offers = {
-                let offerbook = taker.fetch_offers()?;
-                offerbook
-                    .all_makers()
-                    .iter()
-                    .cloned()
-                    .cloned()
-                    .collect::<Vec<_>>()
-            };
-            if all_offers.is_empty() {
-                println!("NO LIVE OFFERS FOUND!! You should run a maker!!");
-                return Ok(());
-            } else {
-                all_offers.iter().try_for_each(|offer| {
-                    println!("{}", taker.display_offer(offer)?);
-                    Ok::<_, TakerError>(())
-                })?;
+                    let txid = taker.get_wallet().send_tx(&tx).unwrap();
+
+                    println!("{txid}");
+
+                    taker.get_wallet_mut().sync_no_fail();
+                }
+                Commands::FetchOffers => {
+                    let all_offers = {
+                        let offerbook = taker.fetch_offers()?;
+                        offerbook
+                            .all_makers()
+                            .iter()
+                            .cloned()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    };
+                    if all_offers.is_empty() {
+                        println!("NO LIVE OFFERS FOUND!! You should run a maker!!");
+                        return Ok(());
+                    } else {
+                        all_offers.iter().try_for_each(|offer| {
+                            println!("{}", taker.display_offer(offer)?);
+                            Ok::<_, TakerError>(())
+                        })?;
+                    }
+                }
+                Commands::Coinswap { makers, amount } => {
+                    let swap_params = SwapParams {
+                        send_amount: Amount::from_sat(*amount),
+                        maker_count: *makers,
+                        tx_count: 1,
+                    };
+                    taker.do_coinswap(swap_params)?;
+                }
+                Commands::Recover => {
+                    taker.recover_from_swap()?;
+                }
+                Commands::Backup { encrypt } => {
+                    Wallet::backup_interactive(taker.get_wallet(), *encrypt);
+                }
+                _ => {}
             }
-        }
-        Commands::Coinswap { makers, amount } => {
-            let swap_params = SwapParams {
-                send_amount: Amount::from_sat(amount),
-                maker_count: makers,
-                tx_count: 1,
-            };
-            taker.do_coinswap(swap_params)?;
-        }
-
-        Commands::Recover => {
-            taker.recover_from_swap()?;
         }
     }
 
