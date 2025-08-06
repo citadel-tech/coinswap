@@ -133,7 +133,7 @@ impl MakerCli {
         );
 
         // Confirm swap liquidity availability
-        await_message(&rx, "Swap Liquidity: 999646 sats");
+        await_message(&rx, "Swap Liquidity: 999864 sats");
 
         await_message(&rx, "Server Setup completed!!");
 
@@ -326,11 +326,11 @@ fn test_maker_cli(maker_cli: &MakerCli, rx: &Receiver<String>) {
     assert_eq!(
         serde_json::from_str::<Value>(&balances).unwrap(),
         json!({
-            "regular": 998934,
+            "regular": 999152,
             "swap": 0,
             "contract": 0,
             "fidelity": 5000000,
-            "spendable": 998934
+            "spendable": 999152
         })
     );
 
@@ -374,11 +374,11 @@ fn test_maker_cli(maker_cli: &MakerCli, rx: &Receiver<String>) {
     assert_eq!(
         serde_json::from_str::<Value>(&balances).unwrap(),
         json!({
-            "regular": 998654,
+            "regular": 998872,
             "swap": 0,
             "contract": 0,
             "fidelity": 5000000,
-            "spendable": 998654
+            "spendable": 998872
         })
     );
 
