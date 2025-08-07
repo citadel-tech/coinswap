@@ -156,9 +156,9 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     // |----------------|------------------------|-------------------------|------------|----------------------------|-------------------|
     // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
     //
-    // - Taker sends [ProofOfFunding] to Maker16102.
-    // - Maker16102 responds with [ReqContractSigsAsRecvrAndSender] to the Taker.
-    // - Taker forwards [ReqContractSigsForSender] to Maker6102, but Maker6102 does not respond, and the Taker recovers from the swap.
+    // - Taker sends [`ProofOfFunding`] to Maker16102.
+    // - Maker16102 responds with [`ReqContractSigsAsRecvrAndSender`] to the Taker.
+    // - Taker forwards [`ReqContractSigsForSender`] to Maker6102, but Maker6102 does not respond, and the Taker recovers from the swap.
     //
     // Final Outcome for Taker (Recover from Swap):
     //
@@ -171,7 +171,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     // Case 2: Maker6102 is the first maker.
     // Workflow: Taker -> Maker6102 (CloseAtReqContractSigsForSender)
     //
-    // - Taker creates unbroadcasted funding transactions and sends [ReqContractSigsForSender] to Maker6102.
+    // - Taker creates unbroadcasted funding transactions and sends [`ReqContractSigsForSender`] to Maker6102.
     // - Maker6102 does not respond, and the swap fails.
     //
     // Final Outcome for Taker:

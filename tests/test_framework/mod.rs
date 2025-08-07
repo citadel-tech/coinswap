@@ -612,11 +612,11 @@ impl TestFramework {
     /// This object holds the reference to backend bitcoind process and RPC.
     /// It takes:
     /// - bitcoind conf.
-    /// - a map of [port, [MakerBehavior]]
+    /// - a vector of mappings from (port, optional port) tuples to [`MakerBehavior`]
     /// - optional taker behavior.
     /// - connection type
     ///
-    /// Returns ([TestFramework], [Taker], [`Vec<Maker>`]).
+    /// Returns ([`TestFramework`], [`Taker`], [`Vec<Maker>`]).
     /// Maker's config will follow the pattern given the input HashMap.
     /// If no bitcoind conf is provided, a default value will be used.
     #[allow(clippy::type_complexity)]
@@ -764,7 +764,7 @@ impl TestFramework {
     }
 }
 
-/// Initializes a [TestFramework] given a [RPCConfig].
+/// Initializes a [`TestFramework`] given a [`RPCConfig`].
 impl From<&TestFramework> for RPCConfig {
     fn from(value: &TestFramework) -> Self {
         let url = value.bitcoind.rpc_url().split_at(7).1.to_string();
