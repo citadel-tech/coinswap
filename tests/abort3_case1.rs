@@ -132,12 +132,12 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
 
     ///////////////////
     let taker_wallet = taker.get_wallet_mut();
-    taker_wallet.sync().unwrap();
+    taker_wallet.sync_and_save().unwrap();
 
     // Synchronize each maker's wallet.
     for maker in makers.iter() {
         let mut wallet = maker.get_wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
     }
     ///////////////
 

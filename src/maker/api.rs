@@ -309,9 +309,7 @@ impl Maker {
 
         config.write_to_file(&data_dir.join("config.toml"))?;
 
-        log::info!("Initializing wallet sync");
-        wallet.sync()?;
-        log::info!("Completed wallet sync");
+        wallet.sync_and_save()?;
 
         let network_port = config.network_port;
 
@@ -969,13 +967,10 @@ pub(crate) fn recover_from_swap(
                             outgoing_removed.contract_tx.compute_txid()
                         );
 
-                        log::info!("initializing Wallet Sync.");
                         {
                             let mut wallet_write = maker.wallet.write()?;
-                            wallet_write.sync()?;
-                            wallet_write.save_to_disk()?;
+                            wallet_write.sync_and_save()?;
                         }
-                        log::info!("Completed Wallet Sync.");
                     }
                 }
             }
