@@ -83,7 +83,7 @@ impl Default for MakerConfig {
 }
 
 impl MakerConfig {
-    /// Constructs a [MakerConfig] from a specified data directory. Or creates default configs and load them.
+    /// Constructs a [`MakerConfig`] from a specified data directory. Or creates default configs and load them.
     ///
     /// The maker(/taker).toml file should exist at the provided data-dir location.
     /// Or else, a new default-config will be loaded and created at the given data-dir location.

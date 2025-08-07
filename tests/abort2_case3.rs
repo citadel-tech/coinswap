@@ -144,8 +144,8 @@ fn maker_drops_after_sending_senders_sigs() {
     // |----------------|------------------------|-------------------------|------------|----------------------------|-------------------|
     // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
 
-    // - Taker sends [ReqContractSigsForSender] to Maker6102, Maker6102 responds with signatures.
-    // - Taker forwards [ProofOfFunding], but Maker6102 doesn't respond, leading to swap recovery.
+    // - Taker sends [`ReqContractSigsForSender`] to Maker6102, Maker6102 responds with signatures.
+    // - Taker forwards [`ProofOfFunding`], but Maker6102 doesn't respond, leading to swap recovery.
 
     //
     // Final Outcome for Taker (Recover from Swap):

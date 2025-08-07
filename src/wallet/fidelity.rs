@@ -226,7 +226,7 @@ impl Wallet {
             .map(|(i, _)| *i))
     }
 
-    /// Get the [Keypair] for the fidelity bond at given index.
+    /// Get the [`Keypair`] for the fidelity bond at given index.
     pub(crate) fn get_fidelity_keypair(&self, index: u32) -> Result<Keypair, WalletError> {
         let secp = Secp256k1::new();
 
@@ -252,7 +252,7 @@ impl Wallet {
     }
 
     /// Get the next fidelity bond address. If no fidelity bond is created
-    /// returned address will be derived from index 0, of the [FIDELITY_DERIVATION_PATH]
+    /// returned address will be derived from index 0, of the [`FIDELITY_DERIVATION_PATH`]
     pub(crate) fn get_next_fidelity_address(
         &self,
         locktime: LockTime,
@@ -414,7 +414,7 @@ impl Wallet {
         })
     }
 
-    /// Generate a [FidelityProof] for bond at a given index and a specific onion address.
+    /// Generate a [`FidelityProof`] for bond at a given index and a specific onion address.
     pub(crate) fn generate_fidelity_proof(
         &self,
         index: u32,
@@ -449,7 +449,7 @@ impl Wallet {
         })
     }
 
-    /// Verify a [FidelityProof] received from the directory servers.
+    /// Verify a [`FidelityProof`] received from the directory servers.
     pub(crate) fn verify_fidelity_proof(
         &self,
         proof: &FidelityProof,
