@@ -45,7 +45,7 @@ impl Default for TakerConfig {
 }
 
 impl TakerConfig {
-    /// Constructs a [TakerConfig] from a specified data directory. Or create default configs and load them.
+    /// Constructs a [`TakerConfig`] from a specified data directory. Or create default configs and load them.
     ///
     /// The maker(/taker).toml file should exist at the provided data-dir location.
     /// Or else, a new default-config will be loaded and created at the given data-dir location.

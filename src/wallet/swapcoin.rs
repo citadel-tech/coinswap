@@ -3,9 +3,9 @@
 //! and made in the process of a CoinSwap.
 //!
 //! There are three types of SwapCoins:
-//! [IncomingSwapCoin]: The contract data defining an **incoming** swap.
-//! [OutgoingSwapCoin]: The contract data defining an **outgoing** swap.
-//! [WatchOnlySwapCoin]: The contract data defining a **watch-only** swap. This is only applicable for Takers,
+//! [`IncomingSwapCoin`]: The contract data defining an **incoming** swap.
+//! [`OutgoingSwapCoin`]: The contract data defining an **outgoing** swap.
+//! [`WatchOnlySwapCoin`]: The contract data defining a **watch-only** swap. This is only applicable for Takers,
 //! for monitoring the swaps happening between two Makers.
 
 use bitcoin::{

@@ -150,7 +150,7 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
     // |----------------|------------------------|-------------------------|------------|----------------------------|-------------------|
     // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
     //
-    // - Taker forwards [ProofOfFunding] to Maker6102, receives [ReqContractSigsAsRecvrAndSender].
+    // - Taker forwards [`ProofOfFunding`] to Maker6102, receives [`ReqContractSigsAsRecvrAndSender`].
     // - Maker6102 reaches CloseAtContractSigsForRecvrAndSender and doesn't broadcast funding tx.
     // - Taker recovers from the swap.
     //
@@ -177,7 +177,7 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
     // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
     // | **Maker16102** | 500,000                | 463,500                 | 33,500     | 3,000                      | 36,500            |
     //
-    // - Maker6102 receives [ProofOfFunding] of Maker16102, sends [ReqContractSigsAsRecvrAndSender].
+    // - Maker6102 receives [`ProofOfFunding`] of Maker16102, sends [`ReqContractSigsAsRecvrAndSender`].
     // - Maker6102 reaches CloseAtContractSigsForRecvrAndSender and doesn't broadcast funding tx.
     //
     // - After timeout, Taker and Maker16102 recover funds but lose **6,768 sats** each in fees.
