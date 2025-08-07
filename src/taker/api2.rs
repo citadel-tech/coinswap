@@ -711,16 +711,7 @@ impl Taker {
                 .clone()
                 .ok_or_else(|| TakerError::General("No timelock script found".to_string()))?;
 
-            let first_maker_x_only = first_maker
-                .offer
-                .tweakable_point
-                .inner
-                .x_only_public_key()
-                .0;
-            let first_maker_pubkey = bitcoin::secp256k1::PublicKey::from_x_only_public_key(
-                first_maker_x_only,
-                bitcoin::secp256k1::Parity::Even,
-            );
+            let first_maker_pubkey = first_maker.offer.tweakable_point.inner;
             let outgoing_contract_my_pubkey = self.ongoing_swap_state.outgoing_contract_my_pubkey
                 .ok_or_else(|| TakerError::General("No taker pubkey found".to_string()))?;
             let outgoing_contract_internal_key =
@@ -1241,7 +1232,7 @@ impl Taker {
 
                 log::info!("Pubkeys: {:?}", pubkeys);
 
-                let nonce_refs = if pubkeys[0] == incoming_contract_my_keypair.public_key() {
+                let nonce_refs = if pubkeys[0].serialize() == incoming_contract_my_keypair.public_key().serialize() {
                     vec![&incoming_contract_my_pub_nonce, &incoming_contract_other_nonce]
                 } else {
                     vec![&incoming_contract_other_nonce, &incoming_contract_my_pub_nonce]
@@ -1265,7 +1256,7 @@ impl Taker {
                     pubkeys[1]
                 );
 
-                let partial_sigs = if pubkeys[0] == incoming_contract_my_keypair.public_key() {
+                let partial_sigs = if pubkeys[0].serialize() == incoming_contract_my_keypair.public_key().serialize() {
                     vec![&incoming_contract_my_partial_sig, &incoming_contract_other_partial_sig]
                 } else {
                     vec![&incoming_contract_other_partial_sig, &incoming_contract_my_partial_sig]
@@ -1536,7 +1527,13 @@ impl Taker {
         log::info!("Taker NEW nonce: {:?}", taker_pub_nonce.serialize());
         log::info!("Maker receiver nonce (from storage): {:?}", maker_pub_nonce.serialize());
         // Use the same pubkey-based nonce ordering as the maker
-        let nonces = if ordered_pubkeys[0] == taker_keypair.public_key() {
+        log::info!("PUBKEY COMPARISON DEBUG:");
+        log::info!("  ordered_pubkeys[0]: {:?}", ordered_pubkeys[0].serialize());
+        log::info!("  taker_keypair.public_key(): {:?}", taker_keypair.public_key().serialize());
+        log::info!("  Are they equal (==)? {}", ordered_pubkeys[0] == taker_keypair.public_key());
+        log::info!("  Are they equal (serialize)? {}", ordered_pubkeys[0].serialize() == taker_keypair.public_key().serialize());
+        
+        let nonces = if ordered_pubkeys[0].serialize() == taker_keypair.public_key().serialize() {
             log::info!("Nonce ordering: [taker_nonce, maker_nonce] (taker is first in pubkey order)");
             vec![&taker_pub_nonce, &maker_pub_nonce]
         } else {
