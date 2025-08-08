@@ -4,8 +4,10 @@ use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
     utill::{ConnectionType, MIN_FEE_RATE},
+    wallet::WalletError,
 };
 use log::{info, warn};
+use rust_coinselect::types::SelectionError;
 use std::{
     sync::{atomic::Ordering::Relaxed, Arc},
     time::Duration,
@@ -207,7 +209,7 @@ fn test_separated_utxo_coin_selection() {
             ConnectionType::CLEARNET,
         );
 
-    warn!("🧪 Running Test: Separated UTXO Coin Selection");
+    warn!("🔧 Running Test: Separated UTXO Coin Selection");
     let bitcoind = &test_framework.bitcoind;
 
     // Fund the Taker and Makers
@@ -282,14 +284,18 @@ fn test_separated_utxo_coin_selection() {
         println!("\n--- Test Case 1: Regular UTXOs Only ---");
         println!("Target: {} sats (< regular)", target_1.to_sat());
 
-        match wallet.coin_select(target_1, MIN_FEE_RATE) {
-            Ok(selection) => {
-                println!("✅ Selected {} UTXOs", selection.len());
-            }
-            Err(e) => {
-                println!("❌ Failed: {:?}", e);
-            }
-        }
+        let result_1 = wallet.coin_select(target_1, MIN_FEE_RATE);
+        assert!(
+            result_1.is_ok(),
+            "Test Case 1 failed: Expected success but got error: {:?}",
+            result_1.err()
+        );
+        let selection_1 = result_1.unwrap();
+        println!("✅ Selected {} UTXOs", selection_1.len());
+        assert!(
+            !selection_1.is_empty(),
+            "Test Case 1: Expected non-empty selection"
+        );
 
         // Test Case 2: regular < target < swap (should use only swap UTXOs)
         let target_2 = Amount::from_sat(28000000); // 28M sats
@@ -299,14 +305,18 @@ fn test_separated_utxo_coin_selection() {
             target_2.to_sat()
         );
 
-        match wallet.coin_select(target_2, MIN_FEE_RATE) {
-            Ok(selection) => {
-                println!("✅ Selected {} UTXOs", selection.len());
-            }
-            Err(e) => {
-                println!("❌ Failed: {:?}", e);
-            }
-        }
+        let result_2 = wallet.coin_select(target_2, MIN_FEE_RATE);
+        assert!(
+            result_2.is_ok(),
+            "Test Case 2 failed: Expected success but got error: {:?}",
+            result_2.err()
+        );
+        let selection_2 = result_2.unwrap();
+        println!("✅ Selected {} UTXOs", selection_2.len());
+        assert!(
+            !selection_2.is_empty(),
+            "Test Case 2: Expected non-empty selection"
+        );
 
         // Test Case 3: target > max(regular, swap) but < (regular + swap) (should fail - no mixing)
         let target_3 = Amount::from_sat(46000000); // 46M sats
@@ -316,16 +326,24 @@ fn test_separated_utxo_coin_selection() {
             target_3.to_sat()
         );
 
-        match wallet.coin_select(target_3, MIN_FEE_RATE) {
-            Ok(_) => {
-                println!("❌ UNEXPECTED: Selection succeeded (mixing occurred!)");
+        let result_3 = wallet.coin_select(target_3, MIN_FEE_RATE);
+        assert!(
+            result_3.is_err(),
+            "Test Case 3 failed: Expected error but got success with {} UTXOs",
+            result_3.as_ref().unwrap().len()
+        );
+
+        let error = result_3.unwrap_err();
+        match &error {
+            WalletError::Selection(SelectionError::NoSolutionFound) => {
+                println!("✅ Correctly failed with NoSolutionFound");
             }
-            Err(e) => {
-                println!("✅ Correctly failed: {:?}", e);
-            }
+            _ => panic!(
+                "Test Case 3: Expected WalletError::Selection(NoSolutionFound), got: {:?}",
+                error
+            ),
         }
     }
-
     println!("\n=== Test Completed Successfully ===");
 
     // Clean shutdown
