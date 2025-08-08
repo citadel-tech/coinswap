@@ -12,7 +12,7 @@ use aes_gcm::{
     Aes256Gcm,
 };
 
-use crate::wallet::Destination;
+use crate::{utill::ContractTxn, wallet::Destination};
 
 use bip39::Mnemonic;
 use bitcoin::{
@@ -1764,5 +1764,87 @@ impl Wallet {
         };
 
         Ok(ht)
+    }
+
+    ///Broadcasts all incoming contracts
+    pub(crate) fn broadcast_incoming_contracts(
+        &mut self,
+        incomings: Vec<IncomingSwapCoin>,
+    ) -> Result<ContractTxn, WalletError> {
+        let mut incoming_infos = Vec::new();
+
+        for incoming in incomings {
+            let contract_tx = incoming.get_fully_signed_contract_tx()?;
+            if self
+                .rpc
+                .get_raw_transaction_info(&contract_tx.compute_txid(), None)
+                .is_ok()
+            {
+                log::info!(
+                    "Incoming Contract already broadacsted. Txid : {}",
+                    contract_tx.compute_txid()
+                );
+            } else {
+                self.send_tx(&contract_tx)?;
+                log::info!(
+                    "Broadcasting Incoming Contract. Removing from wallet. Txid : {}",
+                    contract_tx.compute_txid()
+                );
+            }
+            let reedemscript = incoming.get_multisig_redeemscript();
+            let timelock = incoming.get_timelock()?;
+            let next_internal = &self.get_next_internal_addresses(1)?[0];
+            self.sync()?;
+
+            let hashlock_spend =
+                self.create_hashlock_spend(&incoming, next_internal, MIN_FEE_RATE)?;
+            incoming_infos.push(((reedemscript, contract_tx), (timelock, hashlock_spend)));
+        }
+        self.sync()?;
+        self.save_to_disk()?;
+        log::info!("Wallet file synced and saved.");
+
+        Ok(incoming_infos)
+    }
+
+    ///Broadcasts all outgoing contracts
+    pub(crate) fn broadcast_outgoing_contracts(
+        &mut self,
+        outgoings: Vec<OutgoingSwapCoin>,
+    ) -> Result<ContractTxn, WalletError> {
+        let mut outgoing_infos = Vec::new();
+
+        for outgoing in outgoings {
+            let contract_tx = outgoing.get_fully_signed_contract_tx()?;
+            if self
+                .rpc
+                .get_raw_transaction_info(&contract_tx.compute_txid(), None)
+                .is_ok()
+            {
+                log::info!(
+                    "Outgoing Contract already broadcasted | Txid: {}",
+                    contract_tx.compute_txid()
+                );
+            } else {
+                self.send_tx(&contract_tx)?;
+                log::info!(
+                    "Broadcasted Outgoing Contract | txid : {}",
+                    contract_tx.compute_txid()
+                );
+            }
+            let reedemscript = outgoing.get_multisig_redeemscript();
+            let timelock = outgoing.get_timelock()?;
+            let next_internal = &self.get_next_internal_addresses(1)?[0];
+            self.sync()?;
+
+            let timelock_spend =
+                self.create_timelock_spend(&outgoing, next_internal, MIN_FEE_RATE)?;
+            outgoing_infos.push(((reedemscript, contract_tx), (timelock, timelock_spend)));
+        }
+        self.sync()?;
+        self.save_to_disk()?;
+        log::info!("Wallet file synced and saved.");
+
+        Ok(outgoing_infos)
     }
 }

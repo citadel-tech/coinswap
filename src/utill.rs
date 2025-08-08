@@ -47,6 +47,9 @@ const MASK_LOW_35_BITS: u64 = 0x7ffffffff;
 const SHIFT_FOR_C0: u64 = 35;
 const CHECKSUM_FINAL_XOR_VALUE: u64 = 1;
 
+///Contract transaction type
+pub type ContractTxn = Vec<((ScriptBuf, Transaction), (u16, Transaction))>;
+
 /// Global timeout for all network connections.
 pub(crate) const NET_TIMEOUT: Duration = Duration::from_secs(60);
 
