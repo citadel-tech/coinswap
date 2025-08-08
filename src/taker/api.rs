@@ -50,7 +50,7 @@ use crate::{
     utill::*,
     wallet::{
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
-        WalletSwapCoin, WatchOnlySwapCoin,
+        WatchOnlySwapCoin,
     },
 };
 
@@ -59,7 +59,6 @@ use crate::taker::offers::fetch_addresses_from_dns;
 
 #[cfg(feature = "tracker")]
 use crate::taker::offers::fetch_addresses_from_tracker;
-
 // Default values for Taker configurations
 pub(crate) const REFUND_LOCKTIME: u16 = 20;
 pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
@@ -1853,43 +1852,9 @@ impl Taker {
 
         //If contract are already established and their is need for recovery then start the loop to keep checking for hashlock maturity else loop to keep checking for timelock maturity,and spend from the contract asap.
         if !self.ongoing_swap_state.active_preimage.is_empty() {
-            let mut incoming_infos = Vec::new();
-
-            // Broadcast incoming contracts
-            for incoming in incomings {
-                let contract_tx = incoming.get_fully_signed_contract_tx()?;
-                if self
-                    .wallet
-                    .rpc
-                    .get_raw_transaction_info(&contract_tx.compute_txid(), None)
-                    .is_ok()
-                {
-                    log::info!(
-                        "Incoming Contract already broadacsted. Txid : {}",
-                        contract_tx.compute_txid()
-                    );
-                } else {
-                    self.wallet.send_tx(&contract_tx)?;
-                    log::info!(
-                        "Broadcasting Incoming Contract. Removing from wallet. Txid : {}",
-                        contract_tx.compute_txid()
-                    );
-                }
-                let reedemscript = incoming.get_multisig_redeemscript();
-                let timelock = incoming.get_timelock()?;
-                let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
-                self.get_wallet_mut().sync()?;
-
-                let hashlock_spend =
-                    self.wallet
-                        .create_hashlock_spend(&incoming, next_internal, MIN_FEE_RATE)?;
-                incoming_infos.push(((reedemscript, contract_tx), (timelock, hashlock_spend)));
-            }
-            // Save the wallet file here before going into the expensive loop.
-            self.wallet.sync()?;
-            self.wallet.save_to_disk()?;
-            log::info!("Wallet file synced and saved.");
-
+            let incoming_infos = self
+                .get_wallet_mut()
+                .broadcast_incoming_contracts(incomings)?;
             let mut hashlock_boardcasted = Vec::new();
 
             // Start the loop to keep checking for hashlock maturity, and spend from the contract asap.
@@ -1963,44 +1928,9 @@ impl Taker {
                 std::thread::sleep(block_wait_time);
             }
         } else {
-            let mut outgoing_infos = Vec::new();
-
-            // Broadcast the Outgoing Contracts
-
-            for outgoing in outgoings {
-                let contract_tx = outgoing.get_fully_signed_contract_tx()?;
-                if self
-                    .wallet
-                    .rpc
-                    .get_raw_transaction_info(&contract_tx.compute_txid(), None)
-                    .is_ok()
-                {
-                    log::info!(
-                        "Outgoing Contract already broadcasted | Txid: {}",
-                        contract_tx.compute_txid()
-                    );
-                } else {
-                    self.wallet.send_tx(&contract_tx)?;
-                    log::info!(
-                        "Broadcasted Outgoing Contract | txid : {}",
-                        contract_tx.compute_txid()
-                    );
-                }
-                let reedemscript = outgoing.get_multisig_redeemscript();
-                let timelock = outgoing.get_timelock()?;
-                let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
-                self.get_wallet_mut().sync()?;
-
-                let timelock_spend =
-                    self.wallet
-                        .create_timelock_spend(&outgoing, next_internal, MIN_FEE_RATE)?;
-                outgoing_infos.push(((reedemscript, contract_tx), (timelock, timelock_spend)));
-            }
-            // Save the wallet file here before going into the expensive loop.
-            self.wallet.sync()?;
-            self.wallet.save_to_disk()?;
-            log::info!("Wallet file synced and saved.");
-
+            let outgoing_infos = self
+                .get_wallet_mut()
+                .broadcast_outgoing_contracts(outgoings)?;
             let mut timelock_boardcasted = Vec::new();
 
             // Start the loop to keep checking for timelock maturity, and spend from the contract asap.

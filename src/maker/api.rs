@@ -14,9 +14,9 @@ use crate::{
     },
     utill::{
         check_tor_status, get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType,
-        HEART_BEAT_INTERVAL, MIN_FEE_RATE, REQUIRED_CONFIRMS,
+        HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
     },
-    wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
+    wallet::{RPCConfig, WalletSwapCoin},
 };
 use bitcoin::{
     ecdsa::Signature,
@@ -690,48 +690,10 @@ pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
     };
 
     if is_hash_preimage_known {
-        let mut incoming_infos = Vec::new();
-
-        //Broadcast all incoming contracts
-        for incoming in incomings.iter() {
-            let contract_tx = incoming.get_fully_signed_contract_tx()?;
-            if maker
-                .wallet
-                .read()?
-                .rpc
-                .get_raw_transaction_info(&contract_tx.compute_txid(), None)
-                .is_ok()
-            {
-                log::info!(
-                    "[{}] Incoming Contract already broadcasted. Txid: {}",
-                    maker.config.network_port,
-                    contract_tx.compute_txid(),
-                );
-            } else {
-                maker.wallet.read()?.send_tx(&contract_tx)?;
-                log::info!(
-                    "[{}] Broadcasting Incoming Contract. Removing from wallet. Txid : {}",
-                    maker.config.network_port,
-                    contract_tx.compute_txid(),
-                );
-            }
-            let ic_rs = incoming.get_multisig_redeemscript();
-            let incoming_timelock = incoming.get_timelock()?;
-            let next_internal = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
-            maker.wallet.write()?.sync()?;
-
-            let hashlock_spend = maker.wallet.read()?.create_hashlock_spend(
-                incoming,
-                next_internal,
-                MIN_FEE_RATE,
-            )?;
-            incoming_infos.push(((ic_rs, contract_tx), (incoming_timelock, hashlock_spend)));
-        }
-
-        // Save the wallet here before going into the expensive loop.
-        maker.get_wallet().write()?.sync_no_fail();
-        maker.get_wallet().read()?.save_to_disk()?;
-        log::info!("Wallet file synced and saved to disk.");
+        let incoming_infos = maker
+            .wallet
+            .write()?
+            .broadcast_incoming_contracts(incomings.clone())?;
 
         //check for contract transactions and broadcast hashlocked transaction
         let mut hashlocked_broadcasted = Vec::new();
@@ -806,7 +768,7 @@ pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
                         }
                     }
                     log::info!(
-                        "[{}] -> {} incoming contracts detected | {} hashlock txs broadcasted.",
+                        "[{}]-> {} incoming contracts detected | {} hashlock txs broadcasted.",
                         maker.config.network_port,
                         incomings.len(),
                         hashlocked_broadcasted.len()
@@ -826,48 +788,10 @@ pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
             }
         }
     } else {
-        let mut outgoing_infos = Vec::new();
-
-        // Broadcast all the outgoing contracts
-        for outgoing in outgoings.iter() {
-            let contract_tx = outgoing.get_fully_signed_contract_tx()?;
-            if maker
-                .wallet
-                .read()?
-                .rpc
-                .get_raw_transaction_info(&contract_tx.compute_txid(), None)
-                .is_ok()
-            {
-                log::info!(
-                    "[{}] Outgoing Contract already broadcasted. Txid: {}",
-                    maker.config.network_port,
-                    contract_tx.compute_txid(),
-                );
-            } else {
-                maker.wallet.read()?.send_tx(&contract_tx)?;
-                log::info!(
-                    "[{}] Broadcasting Outgoing Contract. Removing from wallet. Txid : {}",
-                    maker.config.network_port,
-                    contract_tx.compute_txid(),
-                );
-            }
-            let og_rs = outgoing.get_multisig_redeemscript();
-            let outgoing_timelock = outgoing.get_timelock()?;
-            let next_internal = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
-            maker.wallet.write()?.sync()?;
-
-            let timelock_spend = maker.wallet.read()?.create_timelock_spend(
-                outgoing,
-                next_internal,
-                MIN_FEE_RATE,
-            )?;
-            outgoing_infos.push(((og_rs, contract_tx), (outgoing_timelock, timelock_spend)));
-        }
-
-        // Save the wallet here before going into the expensive loop.
-        maker.get_wallet().write()?.sync_no_fail();
-        maker.get_wallet().read()?.save_to_disk()?;
-        log::info!("Wallet file synced and saved to disk.");
+        let outgoing_infos = maker
+            .wallet
+            .write()?
+            .broadcast_outgoing_contracts(outgoings.clone())?;
 
         // Check for contract confirmations and broadcast timelocked transaction
         let mut timelock_broadcasted = Vec::new();
