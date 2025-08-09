@@ -50,7 +50,7 @@ use crate::{
     utill::*,
     wallet::{
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
-        WalletSwapCoin, WatchOnlySwapCoin,
+        WatchOnlySwapCoin,
     },
 };
 
@@ -59,7 +59,6 @@ use crate::taker::offers::fetch_addresses_from_dns;
 
 #[cfg(feature = "tracker")]
 use crate::taker::offers::fetch_addresses_from_tracker;
-
 // Default values for Taker configurations
 pub(crate) const REFUND_LOCKTIME: u16 = 20;
 pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
@@ -1851,165 +1850,168 @@ impl Taker {
     pub fn recover_from_swap(&mut self) -> Result<(), TakerError> {
         let (incomings, outgoings) = self.wallet.find_unfinished_swapcoins();
 
-        let incoming_contracts = incomings
-            .iter()
-            .map(|incoming| {
-                Ok((
-                    incoming.get_fully_signed_contract_tx()?,
-                    incoming.get_multisig_redeemscript(),
-                ))
-            })
-            .collect::<Result<Vec<_>, TakerError>>()?;
+        //If contract are already established and their is need for recovery then start the loop to keep checking for hashlock maturity else loop to keep checking for timelock maturity,and spend from the contract asap.
+        if !self.ongoing_swap_state.active_preimage.is_empty() {
+            let incoming_infos = self
+                .get_wallet_mut()
+                .broadcast_incoming_contracts(incomings)?;
+            let mut hashlock_boardcasted = Vec::new();
 
-        // Broadcasted incoming contracts and remove them from the wallet.
-        for (contract_tx, redeemscript) in &incoming_contracts {
-            if self
-                .wallet
-                .rpc
-                .get_raw_transaction_info(&contract_tx.compute_txid(), None)
-                .is_ok()
-            {
-                log::info!(
-                    "Incoming Contract already broadacsted. Txid : {}",
-                    contract_tx.compute_txid()
-                );
-            } else {
-                self.wallet.send_tx(contract_tx)?;
-                log::info!(
-                    "Broadcasting Incoming Contract. Removing from wallet. Txid : {}",
-                    contract_tx.compute_txid()
-                );
-            }
-            log::info!(
-                "Incoming Swapcoin removed from wallet, Txid: {}",
-                contract_tx.compute_txid()
-            );
-            self.wallet.remove_incoming_swapcoin(redeemscript)?;
-        }
-
-        let mut outgoing_infos = Vec::new();
-
-        // Broadcast the Outgoing Contracts
-        self.get_wallet_mut().sync()?;
-
-        for outgoing in outgoings {
-            let contract_tx = outgoing.get_fully_signed_contract_tx()?;
-            if self
-                .wallet
-                .rpc
-                .get_raw_transaction_info(&contract_tx.compute_txid(), None)
-                .is_ok()
-            {
-                log::info!(
-                    "Outgoing Contract already broadcasted | Txid: {}",
-                    contract_tx.compute_txid()
-                );
-            } else {
-                self.wallet.send_tx(&contract_tx)?;
-                log::info!(
-                    "Broadcasted Outgoing Contract | txid : {}",
-                    contract_tx.compute_txid()
-                );
-            }
-            let reedemscript = outgoing.get_multisig_redeemscript();
-            let timelock = outgoing.get_timelock()?;
-            let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
-
-            self.get_wallet_mut().sync()?;
-
-            let timelock_spend =
-                self.wallet
-                    .create_timelock_spend(&outgoing, next_internal, MIN_FEE_RATE)?;
-            outgoing_infos.push(((reedemscript, contract_tx), (timelock, timelock_spend)));
-        }
-
-        // Check for contract confirmations and broadcast timelocked transaction
-        let mut timelock_boardcasted = Vec::new();
-
-        // Save the wallet file here before going into the expensive loop.
-        self.wallet.sync()?;
-        self.wallet.save_to_disk()?;
-        log::info!("Wallet file synced and saved.");
-
-        // Start the loop to keep checking for timelock maturity, and spend from the contract asap.
-        loop {
-            // Break early if nothing to broadcast.
-            // This happens only when init_first_hop() fails at `NotEnoughMakersInOfferBook`
-            if outgoing_infos.is_empty() {
-                break;
-            }
-            for ((reedemscript, contract), (timelock, timelocked_tx)) in outgoing_infos.iter() {
-                // We have already broadcasted this tx, so skip
-                if timelock_boardcasted.contains(&timelocked_tx) {
-                    continue;
+            // Start the loop to keep checking for hashlock maturity, and spend from the contract asap.
+            loop {
+                if incoming_infos.is_empty() {
+                    break;
                 }
-                // Check if the contract tx has reached required maturity
-                // Failure here means the transaction hasn't been broadcasted yet. So do nothing and try again.
-                if let Ok(result) = self
-                    .wallet
-                    .rpc
-                    .get_raw_transaction_info(&contract.compute_txid(), None)
-                {
-                    log::info!(
-                        "Contract Tx : {}, reached confirmation : {:?}, required : {}",
-                        contract.compute_txid(),
-                        result.confirmations,
-                        timelock
-                    );
-                    if let Some(confirmation) = result.confirmations {
-                        // Now the transaction is confirmed in a block, check for required maturity
-                        if confirmation > (*timelock as u32) {
-                            log::info!(
+                for ((reedemscript, contract), (timelock, hashlock_tx)) in incoming_infos.iter() {
+                    //We have already broadcasted this tx,so skip
+                    if hashlock_boardcasted.contains(&hashlock_tx) {
+                        continue;
+                    }
+                    // Check if the contract tx has reached required maturity
+                    // Failure here means the transaction hasn't been broadcasted yet. So do nothing and try again.
+                    if let Ok(result) = self
+                        .wallet
+                        .rpc
+                        .get_raw_transaction_info(&contract.compute_txid(), None)
+                    {
+                        log::info!(
+                            "Contract Tx : {}, reached confirmation : {:?}",
+                            contract.compute_txid(),
+                            result.confirmations,
+                        );
+                        if let Some(confirmations) = result.confirmations {
+                            if confirmations > (*timelock as u32) {
+                                log::info!(
+                                    "Hashlock maturity of blocks for Contract Tx is reached : {}",
+                                    contract.compute_txid()
+                                );
+                                log::info!(
+                                    "Broadcasting hashlocked tx: {}",
+                                    hashlock_tx.compute_txid()
+                                );
+                                self.wallet.send_tx(hashlock_tx)?;
+                                hashlock_boardcasted.push(hashlock_tx);
+
+                                let incoming_contract = self
+                                    .wallet
+                                    .remove_incoming_swapcoin(reedemscript)?
+                                    .expect("incoming swapcoin expected");
+                                log::info!(
+                                    "Removed Incoming Swapcoin from Wallet, Contract Txid: {}",
+                                    incoming_contract.contract_tx.compute_txid()
+                                );
+                                log::info!("Initializing Wallet sync and save");
+                                self.wallet.sync()?;
+                                self.wallet.save_to_disk()?;
+                                log::info!("Completed wallet sync and save");
+                            }
+                        }
+                    }
+                }
+                // Everything is broadcasted. Clear the connectionstate and break the loop
+                log::info!(
+                    "{} incoming contracts detected | {} hashlock txs broadcasted.",
+                    incoming_infos.len(),
+                    hashlock_boardcasted.len()
+                );
+                if hashlock_boardcasted.len() == incoming_infos.len() {
+                    log::info!("All incoming contracts redeemed. Cleared ongoing swap state");
+                    self.clear_ongoing_swaps();
+                    break;
+                }
+                // Block wait time is varied between prod. and test builds.
+                let block_wait_time = if cfg!(feature = "integration-test") {
+                    Duration::from_secs(10)
+                } else {
+                    Duration::from_secs(10 * 60)
+                };
+                std::thread::sleep(block_wait_time);
+            }
+        } else {
+            let outgoing_infos = self
+                .get_wallet_mut()
+                .broadcast_outgoing_contracts(outgoings)?;
+            let mut timelock_boardcasted = Vec::new();
+
+            // Start the loop to keep checking for timelock maturity, and spend from the contract asap.
+            loop {
+                // Break early if nothing to broadcast.
+                // This happens only when init_first_hop() fails at `NotEnoughMakersInOfferBook`
+                if outgoing_infos.is_empty() {
+                    break;
+                }
+                for ((reedemscript, contract), (timelock, timelocked_tx)) in outgoing_infos.iter() {
+                    // We have already broadcasted this tx, so skip
+                    if timelock_boardcasted.contains(&timelocked_tx) {
+                        continue;
+                    }
+                    // Check if the contract tx has reached required maturity
+                    // Failure here means the transaction hasn't been broadcasted yet. So do nothing and try again.
+                    if let Ok(result) = self
+                        .wallet
+                        .rpc
+                        .get_raw_transaction_info(&contract.compute_txid(), None)
+                    {
+                        log::info!(
+                            "Contract Tx : {}, reached confirmation : {:?}, required : {}",
+                            contract.compute_txid(),
+                            result.confirmations,
+                            timelock
+                        );
+                        if let Some(confirmation) = result.confirmations {
+                            // Now the transaction is confirmed in a block, check for required maturity
+                            if confirmation > (*timelock as u32) {
+                                log::info!(
                                 "Timelock maturity of {} blocks for Contract Tx is reached : {}",
                                 timelock,
                                 contract.compute_txid()
                             );
-                            log::info!(
-                                "Broadcasting timelocked tx: {}",
-                                timelocked_tx.compute_txid()
-                            );
-                            self.wallet.send_tx(timelocked_tx)?;
-                            timelock_boardcasted.push(timelocked_tx);
+                                log::info!(
+                                    "Broadcasting timelocked tx: {}",
+                                    timelocked_tx.compute_txid()
+                                );
+                                self.wallet.send_tx(timelocked_tx)?;
+                                timelock_boardcasted.push(timelocked_tx);
 
-                            let outgoing_removed = self
-                                .wallet
-                                .remove_outgoing_swapcoin(reedemscript)?
-                                .expect("outgoing swapcoin expected");
-                            log::info!(
-                                "Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
-                                outgoing_removed.contract_tx.compute_txid()
-                            );
-                            log::info!("Initializing Wallet sync and save");
-                            self.wallet.sync()?;
-                            self.wallet.save_to_disk()?;
-                            log::info!("Completed wallet sync and save");
+                                let outgoing_removed = self
+                                    .wallet
+                                    .remove_outgoing_swapcoin(reedemscript)?
+                                    .expect("outgoing swapcoin expected");
+                                log::info!(
+                                    "Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
+                                    outgoing_removed.contract_tx.compute_txid()
+                                );
+                                log::info!("Initializing Wallet sync and save");
+                                self.wallet.sync()?;
+                                self.wallet.save_to_disk()?;
+                                log::info!("Completed wallet sync and save");
+                            }
                         }
                     }
                 }
-            }
 
-            // Everything is broadcasted. Clear the connectionstate and break the loop
-            log::info!(
-                "{} outgoing contracts detected | {} timelock txs broadcasted.",
-                outgoing_infos.len(),
-                timelock_boardcasted.len()
-            );
-            if timelock_boardcasted.len() == outgoing_infos.len() {
-                log::info!("All outgoing contracts redeemed. Cleared ongoing swap state");
-                self.clear_ongoing_swaps();
-                break;
-            }
+                // Everything is broadcasted. Clear the connectionstate and break the loop
+                log::info!(
+                    "{} outgoing contracts detected | {} timelock txs broadcasted.",
+                    outgoing_infos.len(),
+                    timelock_boardcasted.len()
+                );
+                if timelock_boardcasted.len() == outgoing_infos.len() {
+                    log::info!("All outgoing contracts redeemed. Cleared ongoing swap state");
+                    self.clear_ongoing_swaps();
+                    break;
+                }
 
-            // Block wait time is varied between prod. and test builds.
-            let block_wait_time = if cfg!(feature = "integration-test") {
-                Duration::from_secs(10)
-            } else {
-                Duration::from_secs(10 * 60)
-            };
-            std::thread::sleep(block_wait_time);
+                // Block wait time is varied between prod. and test builds.
+                let block_wait_time = if cfg!(feature = "integration-test") {
+                    Duration::from_secs(10)
+                } else {
+                    Duration::from_secs(10 * 60)
+                };
+                std::thread::sleep(block_wait_time);
+            }
         }
         log::info!("Recovery completed.");
-
         Ok(())
     }
 
