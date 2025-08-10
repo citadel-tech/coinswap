@@ -10,6 +10,7 @@ use aes_gcm::{
     aead::{Aead, OsRng},
     AeadCore, Aes256Gcm, Key, KeyInit,
 };
+use bip39::rand::random;
 use pbkdf2::pbkdf2_hmac_array;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::Sha256;
@@ -57,9 +58,23 @@ impl SerdeFormat for SerdeCbor {
         utill::deserialize_from_cbor::<T, Box<dyn std::error::Error>>(input.to_vec())
     }
 }
+/// A 16-byte (128-bit) salt used with PBKDF2 to derive encryption keys.
+///
+/// This salt is randomly generated each time new encryption is performed, ensuring that
+/// even if two users choose the same password, their derived keys will be unique.
+/// The combination of the user’s password and this salt produces a unique encryption key.
+///
+/// 16 bytes (128 bits) is recommended to provide sufficient entropy to prevent precomputation attacks.
+/// See:
+/// - https://datatracker.ietf.org/doc/html/rfc2898#section-5.2
+/// - https://docs.rs/password-hash/0.5.0/password_hash/struct.Salt.html#associatedconstant.RECOMMENDED_LENGTH
+type PBKDF2Salt = [u8; 16];
+/// A 12-byte (96-bit) nonce used as the Initialization Vector (IV) for AES-GCM encryption.
+type EncryptionNonce = [u8; 12];
+/// A 32-byte (256-bit) key derived from a passphrase via PBKDF2,
+/// used as the symmetric encryption key with AES-GCM.
+type EncryptionKey = [u8; 32];
 
-/// Salt used for key derivation from a user-provided passphrase.
-const PBKDF2_SALT: &[u8; 8] = b"coinswap";
 /// Number of PBKDF2 iterations to strengthen passphrase-derived keys.
 ///
 /// In production, this is set to **600,000 iterations**, following
@@ -79,79 +94,66 @@ const PBKDF2_ITERATIONS: u32 = if cfg!(feature = "integration-test") || cfg!(tes
 pub struct KeyMaterial {
     /// A 256-bit key derived from the user’s passphrase via PBKDF2.
     /// This key is used with AES-GCM for encryption/decryption.
-    pub key: [u8; 32],
+    pub key: EncryptionKey,
     /// Nonce used for AES-GCM encryption, generated when a new wallet is created.
-    /// When loading an existing wallet, this is initially `None`.
-    /// It is populated after reading the stored nonce from disk.
-    pub nonce: Option<[u8; 12]>,
+    pub nonce: EncryptionNonce,
+    /// Key derivation salt, randomly generated to ensure unique keys per password.
+    pub pbkdf2_salt: PBKDF2Salt,
 }
 impl KeyMaterial {
-    /// Creates new key material from a password, with a freshly random generated nonce.
+    /// Creates new key material from a password, with a freshly random generated nonce and salt.
     pub fn new_from_password(password: String) -> Self {
+        let pbkdf2_salt = random::<PBKDF2Salt>();
         KeyMaterial {
             key: pbkdf2_hmac_array::<Sha256, 32>(
                 password.as_bytes(),
-                PBKDF2_SALT,
+                &pbkdf2_salt,
                 PBKDF2_ITERATIONS,
             ),
-            nonce: Some(Aes256Gcm::generate_nonce(&mut OsRng).into()),
+            nonce: Aes256Gcm::generate_nonce(&mut OsRng).into(),
+            pbkdf2_salt,
         }
     }
     /// Prompts the user interactively for a new encryption passphrase.
     ///
     /// If the user enters an empty string, returns `None`, indicating no encryption.
-    /// Otherwise, returns `Some(KeyMaterial)` with a newly generated nonce.
+    /// Otherwise, returns `Some(KeyMaterial)` with a newly generated nonce and salt.
     pub fn new_interactive(prompt: Option<String>) -> Option<Self> {
-        let wallet_enc_password =
+        let enc_password =
             utill::prompt_password(prompt.unwrap_or(
                 "Enter new encryption passphrase (empty for no encryption): ".to_string(),
             ))
             .unwrap();
 
-        if wallet_enc_password.is_empty() {
+        if enc_password.is_empty() {
             None
         } else {
+            let pbkdf2_salt = random::<PBKDF2Salt>();
             Some(KeyMaterial {
                 key: pbkdf2_hmac_array::<Sha256, 32>(
-                    wallet_enc_password.as_bytes(),
-                    PBKDF2_SALT,
+                    enc_password.as_bytes(),
+                    &pbkdf2_salt,
                     PBKDF2_ITERATIONS,
                 ),
-                nonce: Some(Aes256Gcm::generate_nonce(&mut OsRng).into()),
+                nonce: Aes256Gcm::generate_nonce(&mut OsRng).into(),
+                pbkdf2_salt,
             })
         }
     }
 
-    /// Creates a `KeyMaterial` from a password, without a nonce.
-    ///
-    /// This is intended for **intermediate/transitory use**, typically when
-    /// decrypting a wallet file. The nonce is expected to be retrieved later
-    /// from the file itself and attached later.
-    ///
-    /// This struct is not valid for use until the nonce is set.
-    pub fn existing_from_password(password: String) -> Self {
-        KeyMaterial {
-            key: pbkdf2_hmac_array::<Sha256, 32>(
-                password.as_bytes(),
-                PBKDF2_SALT,
-                PBKDF2_ITERATIONS,
-            ),
-            nonce: None,
-        }
-    }
-
-    /// Creates a complete `KeyMaterial` from a password and a known nonce.
+    /// Creates a complete `KeyMaterial` from a password, a known nonce and a known salt.
     ///
     /// This is used when decrypting existing wallet data, where the nonce
-    /// has already been read from disk and is available.
-    pub fn existing_with_nonce(password: String, nonce: [u8; 12]) -> Self {
+    /// and the salt have already been read from disk and are available.
+    pub fn existing(password: String, nonce: EncryptionNonce, pbkdf2_salt: PBKDF2Salt) -> Self {
         KeyMaterial {
             key: pbkdf2_hmac_array::<Sha256, 32>(
                 password.as_bytes(),
-                PBKDF2_SALT,
+                &pbkdf2_salt,
                 PBKDF2_ITERATIONS,
             ),
-            nonce: Some(nonce),
+            nonce,
+            pbkdf2_salt,
         }
     }
 }
@@ -171,9 +173,11 @@ impl KeyMaterial {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct EncryptedData {
     /// Nonce used for AES-GCM encryption (must match during decryption).
-    nonce: [u8; 12],
+    nonce: EncryptionNonce,
     /// AES-GCM-encrypted CBOR-serialized plaintext struct data.
     encrypted_payload: Vec<u8>,
+    /// Salt for the PBKDF2 key generation
+    pbkdf2_salt: PBKDF2Salt,
 }
 
 /// Encrypts a serializable struct using AES-256-GCM encryption and CBOR serialization.
@@ -197,20 +201,22 @@ pub fn encrypt_struct<T: Serialize>(
     let packed_store = serde_cbor::ser::to_vec(&plain_struct)?;
 
     // Extract nonce and key for AES-GCM.
-    let material_nonce = enc_material.nonce.as_ref().unwrap();
-    let nonce = aes_gcm::Nonce::from_slice(material_nonce);
+    let material_nonce = enc_material.nonce;
+    let pbkdf2_salt = enc_material.pbkdf2_salt;
+    let nonce = aes_gcm::Nonce::from_slice(&material_nonce);
     let key = Key::<Aes256Gcm>::from_slice(&enc_material.key);
 
     // Create AES-GCM cipher instance.
     let cipher = Aes256Gcm::new(key);
 
     // Encrypt the serialized wallet bytes.
-    let ciphertext = cipher.encrypt(nonce, packed_store.as_ref()).unwrap();
+    let encrypted_payload = cipher.encrypt(nonce, packed_store.as_ref()).unwrap();
 
     // Package encrypted data with nonce for storage.
     Ok(EncryptedData {
-        nonce: *material_nonce,
-        encrypted_payload: ciphertext,
+        nonce: material_nonce,
+        encrypted_payload,
+        pbkdf2_salt,
     })
 }
 
@@ -273,8 +279,11 @@ pub fn load_sensitive_struct_interactive<
                 let encryption_password =
                     utill::prompt_password("Enter encryption passphrase: ".to_string())
                         .expect("Failed to read password");
-                let enc_material =
-                    KeyMaterial::existing_with_nonce(encryption_password, encrypted_struct.nonce);
+                let enc_material = KeyMaterial::existing(
+                    encryption_password,
+                    encrypted_struct.nonce,
+                    encrypted_struct.pbkdf2_salt,
+                );
 
                 let decrypted = decrypt_struct::<T, E>(encrypted_struct, &enc_material)
                     .unwrap_or_else(|err| panic!("Failed to decrypt file {:?}: {:?}", path, err));
