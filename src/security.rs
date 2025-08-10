@@ -83,7 +83,7 @@ pub struct KeyMaterial {
     /// Nonce used for AES-GCM encryption, generated when a new wallet is created.
     /// When loading an existing wallet, this is initially `None`.
     /// It is populated after reading the stored nonce from disk.
-    pub nonce: Option<Vec<u8>>,
+    pub nonce: Option<[u8; 12]>,
 }
 impl KeyMaterial {
     /// Creates new key material from a password, with a freshly random generated nonce.
@@ -94,7 +94,7 @@ impl KeyMaterial {
                 PBKDF2_SALT,
                 PBKDF2_ITERATIONS,
             ),
-            nonce: Some(Aes256Gcm::generate_nonce(&mut OsRng).as_slice().to_vec()),
+            nonce: Some(Aes256Gcm::generate_nonce(&mut OsRng).into()),
         }
     }
     /// Prompts the user interactively for a new encryption passphrase.
@@ -117,7 +117,7 @@ impl KeyMaterial {
                     PBKDF2_SALT,
                     PBKDF2_ITERATIONS,
                 ),
-                nonce: Some(Aes256Gcm::generate_nonce(&mut OsRng).as_slice().to_vec()),
+                nonce: Some(Aes256Gcm::generate_nonce(&mut OsRng).into()),
             })
         }
     }
@@ -144,7 +144,7 @@ impl KeyMaterial {
     ///
     /// This is used when decrypting existing wallet data, where the nonce
     /// has already been read from disk and is available.
-    pub fn existing_with_nonce(password: String, nonce: Vec<u8>) -> Self {
+    pub fn existing_with_nonce(password: String, nonce: [u8; 12]) -> Self {
         KeyMaterial {
             key: pbkdf2_hmac_array::<Sha256, 32>(
                 password.as_bytes(),
@@ -171,7 +171,7 @@ impl KeyMaterial {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct EncryptedData {
     /// Nonce used for AES-GCM encryption (must match during decryption).
-    nonce: Vec<u8>,
+    nonce: [u8; 12],
     /// AES-GCM-encrypted CBOR-serialized plaintext struct data.
     encrypted_payload: Vec<u8>,
 }
@@ -209,7 +209,7 @@ pub fn encrypt_struct<T: Serialize>(
 
     // Package encrypted data with nonce for storage.
     Ok(EncryptedData {
-        nonce: material_nonce.clone(),
+        nonce: *material_nonce,
         encrypted_payload: ciphertext,
     })
 }
@@ -227,7 +227,7 @@ pub fn decrypt_struct<T: DeserializeOwned, E: From<serde_cbor::Error> + std::fmt
 ) -> Result<T, E> {
     // Deserialize the outer EncryptedWalletStore wrapper.
 
-    let nonce_vec = encrypted_struct.nonce.clone();
+    let nonce_vec = encrypted_struct.nonce;
 
     // Reconstruct AES-GCM cipher from the provided key and stored nonce.
     let key = Key::<Aes256Gcm>::from_slice(&enc_material.key);
@@ -273,10 +273,8 @@ pub fn load_sensitive_struct_interactive<
                 let encryption_password =
                     utill::prompt_password("Enter encryption passphrase: ".to_string())
                         .expect("Failed to read password");
-                let enc_material = KeyMaterial::existing_with_nonce(
-                    encryption_password,
-                    encrypted_struct.nonce.clone(),
-                );
+                let enc_material =
+                    KeyMaterial::existing_with_nonce(encryption_password, encrypted_struct.nonce);
 
                 let decrypted = decrypt_struct::<T, E>(encrypted_struct, &enc_material)
                     .unwrap_or_else(|err| panic!("Failed to decrypt file {:?}: {:?}", path, err));
