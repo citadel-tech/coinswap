@@ -158,15 +158,16 @@ impl UTXOSpendInfo {
         const P2PWPKH_WITNESS_SIZE: usize = 107;
         const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 222;
         const FIDELITY_BOND_WITNESS_SIZE: usize = 115;
-        const CONTRACT_TX_WITNESS_SIZE: usize = 179;
+        const TIME_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 179;
+        const HASH_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 211;
+
         match *self {
             Self::SeedCoin { .. } | Self::SweptCoin { .. } => P2PWPKH_WITNESS_SIZE,
             Self::IncomingSwapCoin { .. } | Self::OutgoingSwapCoin { .. } => {
                 P2WSH_MULTISIG_2OF2_WITNESS_SIZE
             }
-            Self::TimelockContract { .. } | Self::HashlockContract { .. } => {
-                CONTRACT_TX_WITNESS_SIZE
-            }
+            Self::TimelockContract { .. } => TIME_LOCK_CONTRACT_TX_WITNESS_SIZE,
+            Self::HashlockContract { .. } => HASH_LOCK_CONTRACT_TX_WITNESS_SIZE,
             Self::FidelityBondCoin { .. } => FIDELITY_BOND_WITNESS_SIZE,
         }
     }
@@ -1800,8 +1801,7 @@ impl Wallet {
                 self.create_hashlock_spend(&incoming, next_internal, MIN_FEE_RATE)?;
             incoming_infos.push(((reedemscript, contract_tx), (timelock, hashlock_spend)));
         }
-        self.sync()?;
-        self.save_to_disk()?;
+        self.sync_and_save()?;
         log::info!("Wallet file synced and saved.");
 
         Ok(incoming_infos)
@@ -1841,8 +1841,7 @@ impl Wallet {
                 self.create_timelock_spend(&outgoing, next_internal, MIN_FEE_RATE)?;
             outgoing_infos.push(((reedemscript, contract_tx), (timelock, timelock_spend)));
         }
-        self.sync()?;
-        self.save_to_disk()?;
+        self.sync_and_save()?;
         log::info!("Wallet file synced and saved.");
 
         Ok(outgoing_infos)

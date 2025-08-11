@@ -758,9 +758,7 @@ pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
 
                             log::info!("initializing Wallet Sync.");
                             {
-                                let mut wallet_write = maker.wallet.write()?;
-                                wallet_write.sync()?;
-                                wallet_write.save_to_disk()?;
+                                maker.wallet.write()?.sync_and_save()?;
                             }
                             log::info!("Completed Wallet Sync.");
                         }

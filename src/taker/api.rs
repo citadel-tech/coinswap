@@ -1925,44 +1925,9 @@ impl Taker {
                 std::thread::sleep(block_wait_time);
             }
         } else {
-            let mut outgoing_infos = Vec::new();
-
-            // Broadcast the Outgoing Contracts
-
-            for outgoing in outgoings {
-                let contract_tx = outgoing.get_fully_signed_contract_tx()?;
-                if self
-                    .wallet
-                    .rpc
-                    .get_raw_transaction_info(&contract_tx.compute_txid(), None)
-                    .is_ok()
-                {
-                    log::info!(
-                        "Outgoing Contract already broadcasted | Txid: {}",
-                        contract_tx.compute_txid()
-                    );
-                } else {
-                    self.wallet.send_tx(&contract_tx)?;
-                    log::info!(
-                        "Broadcasted Outgoing Contract | txid : {}",
-                        contract_tx.compute_txid()
-                    );
-                }
-                let reedemscript = outgoing.get_multisig_redeemscript();
-                let timelock = outgoing.get_timelock()?;
-                let next_internal = &self.wallet.get_next_internal_addresses(1)?[0];
-                self.get_wallet_mut().sync()?;
-
-                let timelock_spend =
-                    self.wallet
-                        .create_timelock_spend(&outgoing, next_internal, MIN_FEE_RATE)?;
-                outgoing_infos.push(((reedemscript, contract_tx), (timelock, timelock_spend)));
-            }
-            // Save the wallet file here before going into the expensive loop.
-            self.wallet.sync()?;
-            self.wallet.save_to_disk()?;
-            log::info!("Wallet file synced and saved.");
-
+            let outgoing_infos = self
+                .get_wallet_mut()
+                .broadcast_outgoing_contracts(outgoings)?;
             let mut timelock_boardcasted = Vec::new();
 
             // Start the loop to keep checking for timelock maturity, and spend from the contract asap.

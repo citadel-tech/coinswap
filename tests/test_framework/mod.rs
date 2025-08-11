@@ -461,7 +461,7 @@ pub fn verify_swap_results(
             [
                 14499088, // Successful coinswap
                 14997426, // Recovery via timelock
-                14940138, // Recovery via Hashlock
+                14940090, // Recovery via Hashlock
                 15000000, // No spending
             ],
             "Taker seed balance mismatch"
@@ -504,7 +504,7 @@ pub fn verify_swap_results(
                 2184,   // Recovery via timelock
                 503000, // Spent swapcoin
                 2574,   // Recovery via timelock (new fee system)
-                59862,  // Recovery via Hashlock
+                59910,  // Recovery via Hashlock
                 500912, // Recovery via Hashlock(abort3_case1 variant)
                 0       // No spending
             ],
