@@ -1324,13 +1324,16 @@ impl Wallet {
 
         // Early exit: Only proceed if at least one type can satisfy the target
         if !can_use_regular && !can_use_swap {
-            log::error!(
-           "Coin selection failed: target={} sats exceeds both regular_total={} sats and swap_total={} sats",
-           target_sats, regular_total, swap_total
-       );
-            return Err(WalletError::Selection(
-                rust_coinselect::types::SelectionError::NoSolutionFound,
-            ));
+            if regular_total + swap_total < target_sats {
+                return Err(WalletError::InsufficientFund {
+                    available: regular_total + swap_total,
+                    required: target_sats,
+                });
+            } else {
+                return Err(WalletError::Selection(
+                    rust_coinselect::types::SelectionError::NoSolutionFound,
+                ));
+            }
         }
 
         let change_weight = Weight::from_vb_unwrap(CHANGE_OUTPUT_WEIGHT);

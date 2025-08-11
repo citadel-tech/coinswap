@@ -343,6 +343,42 @@ fn test_separated_utxo_coin_selection() {
                 error
             ),
         }
+
+        // Insufficient total funds (should return InsufficientFund, not separation error)
+        let target_4 = Amount::from_sat(70000000); // 70M sats (exceeds total balance)
+        println!("\n--- Test Case 4: Insufficient Funds ---");
+        println!(
+            "Target: {} sats (exceeds total {} sats)",
+            target_4.to_sat(),
+            balances.spendable.to_sat()
+        );
+
+        let result_4 = wallet.coin_select(target_4, MIN_FEE_RATE);
+        assert!(
+            result_4.is_err(),
+            "Test Case 4 failed: Expected error but got success with {} UTXOs",
+            result_4.as_ref().unwrap().len()
+        );
+
+        let error = result_4.unwrap_err();
+        match &error {
+            WalletError::InsufficientFund {
+                available,
+                required,
+            } => {
+                println!("✅ Correctly failed with InsufficientFund");
+                println!(
+                    "   Available: {} sats, Required: {} sats",
+                    available, required
+                );
+                assert_eq!(*required, target_4.to_sat());
+                assert_eq!(*available, balances.spendable.to_sat());
+            }
+            _ => panic!(
+                "Test Case 4: Expected WalletError::InsufficientFund, got: {:?}",
+                error
+            ),
+        }
     }
     println!("\n=== Test Completed Successfully ===");
 
