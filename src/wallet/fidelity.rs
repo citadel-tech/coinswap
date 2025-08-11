@@ -386,7 +386,7 @@ impl Wallet {
         bond.cert_expiry = Some(cert_expiry);
         bond.conf_height = Some(conf_height);
 
-        self.sync()?;
+        self.sync_and_save()?;
 
         Ok(())
     }
