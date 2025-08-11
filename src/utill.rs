@@ -882,10 +882,9 @@ pub(crate) fn get_tor_hostname(
 }
 
 /// Deserialize any generic type from a CBOR file. The type should impl [serde::de::Deserialize].
-pub fn deserialize_from_cbor<T, E>(mut reader: Vec<u8>) -> Result<T, E>
+pub fn deserialize_from_cbor<T>(mut reader: Vec<u8>) -> Result<T, serde_cbor::Error>
 where
     T: serde::de::DeserializeOwned,
-    E: From<serde_cbor::Error> + std::fmt::Debug,
 {
     match serde_cbor::from_slice::<T>(&reader) {
         Ok(store) => Ok(store),
@@ -902,7 +901,7 @@ where
                     }
                 }
             } else {
-                Err(e.into())
+                Err(e)
             }
         }
     }

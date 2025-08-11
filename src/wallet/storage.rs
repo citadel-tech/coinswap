@@ -122,7 +122,7 @@ impl WalletStore {
     /// provided key. Returns the deserialized `WalletStore` and the nonce.
     pub(crate) fn read_from_disk(path: &Path) -> Result<(Self, Option<KeyMaterial>), WalletError> {
         let (wallet_store, store_enc_material) =
-            load_sensitive_struct_interactive::<Self, WalletError, SerdeCbor>(path)?;
+            load_sensitive_struct_interactive::<Self, SerdeCbor>(path);
 
         Ok((wallet_store, store_enc_material))
     }

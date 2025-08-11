@@ -16,7 +16,34 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::Sha256;
 
 use crate::utill;
-use std::{error::Error, fs, path::Path};
+use std::{fs, path::Path};
+
+/// Errors that can occur during the encryption process.
+///
+/// This enum covers serialization errors from CBOR encoding as well as
+/// encryption failures.
+#[derive(Debug)]
+pub enum EncryptError {
+    /// Error occurred during CBOR serialization of the input struct.
+    Serialization(serde_cbor::Error),
+    /// Error occurred during AES-GCM encryption.
+    ///
+    /// Note: This error type carries no additional information because
+    /// the underlying AES-GCM error is a zero-sized marker.
+    Encryption,
+}
+
+impl From<serde_cbor::Error> for EncryptError {
+    fn from(err: serde_cbor::Error) -> Self {
+        EncryptError::Serialization(err)
+    }
+}
+
+impl From<aes_gcm::Error> for EncryptError {
+    fn from(_: aes_gcm::Error) -> Self {
+        EncryptError::Encryption
+    }
+}
 
 /// Represents a deserialization format used for loading wallet files from disk.
 ///
@@ -32,8 +59,15 @@ use std::{error::Error, fs, path::Path};
 ///
 /// This trait is **not** intended for general-purpose serialization or format negotiation.
 pub trait SerdeFormat {
+    /// Errors that can occur while parsing or deserializing data
+    /// using this serialization format.
+    ///
+    /// Implementors should use a concrete error type that describes
+    /// failures specific to their format (e.g., `serde_json::Error`).
+    type Error: std::error::Error + Send + Sync + 'static;
+
     #[allow(missing_docs)]
-    fn from_slice<T: DeserializeOwned>(input: &[u8]) -> Result<T, Box<dyn std::error::Error>>;
+    fn from_slice<T: DeserializeOwned>(input: &[u8]) -> Result<T, Self::Error>;
 }
 /// JSON implementation of `SerdeFormat`, using `serde_json`.
 ///
@@ -41,8 +75,9 @@ pub trait SerdeFormat {
 pub struct SerdeJson;
 
 impl SerdeFormat for SerdeJson {
-    fn from_slice<T: DeserializeOwned>(input: &[u8]) -> Result<T, Box<dyn std::error::Error>> {
-        Ok(serde_json::from_slice(input)?)
+    type Error = serde_json::Error;
+    fn from_slice<T: DeserializeOwned>(input: &[u8]) -> Result<T, Self::Error> {
+        serde_json::from_slice(input)
     }
 }
 /// CBOR implementation of `SerdeFormat`, using a utility wrapper
@@ -54,8 +89,9 @@ impl SerdeFormat for SerdeJson {
 pub struct SerdeCbor;
 
 impl SerdeFormat for SerdeCbor {
-    fn from_slice<T: DeserializeOwned>(input: &[u8]) -> Result<T, Box<dyn std::error::Error>> {
-        utill::deserialize_from_cbor::<T, Box<dyn std::error::Error>>(input.to_vec())
+    type Error = serde_cbor::Error;
+    fn from_slice<T: DeserializeOwned>(input: &[u8]) -> Result<T, Self::Error> {
+        utill::deserialize_from_cbor::<T>(input.to_vec())
     }
 }
 /// A 16-byte (128-bit) salt used with PBKDF2 to derive encryption keys.
@@ -192,11 +228,10 @@ pub struct EncryptedData {
 ///
 /// The resulting `EncryptedData` can be serialized and stored to disk. To decrypt it later,
 /// use [`decrypt_struct`].
-/// TODO: Better error type
 pub fn encrypt_struct<T: Serialize>(
     plain_struct: T,
     enc_material: &KeyMaterial,
-) -> Result<EncryptedData, Box<dyn Error>> {
+) -> Result<EncryptedData, EncryptError> {
     // Serialize wallet data to bytes.
     let packed_store = serde_cbor::ser::to_vec(&plain_struct)?;
 
@@ -210,7 +245,7 @@ pub fn encrypt_struct<T: Serialize>(
     let cipher = Aes256Gcm::new(key);
 
     // Encrypt the serialized wallet bytes.
-    let encrypted_payload = cipher.encrypt(nonce, packed_store.as_ref()).unwrap();
+    let encrypted_payload = cipher.encrypt(nonce, packed_store.as_ref())?;
 
     // Package encrypted data with nonce for storage.
     Ok(EncryptedData {
@@ -227,10 +262,10 @@ pub fn encrypt_struct<T: Serialize>(
 ///
 /// It uses the AES-256-GCM key and nonce in [`KeyMaterial`] to decrypt the
 /// encrypted CBOR payload, then deserializes it into the original struct.
-pub fn decrypt_struct<T: DeserializeOwned, E: From<serde_cbor::Error> + std::fmt::Debug>(
+pub fn decrypt_struct<T: DeserializeOwned>(
     encrypted_struct: EncryptedData,
     enc_material: &KeyMaterial,
-) -> Result<T, E> {
+) -> Result<T, serde_cbor::Error> {
     // Deserialize the outer EncryptedWalletStore wrapper.
 
     let nonce_vec = encrypted_struct.nonce;
@@ -246,7 +281,7 @@ pub fn decrypt_struct<T: DeserializeOwned, E: From<serde_cbor::Error> + std::fmt
         .expect("Error decrypting wallet, wrong passphrase?");
 
     // Deserialize the inner CBOR into the original type
-    utill::deserialize_from_cbor::<T, E>(plaintext_cbor)
+    utill::deserialize_from_cbor::<T>(plaintext_cbor)
 }
 /// Loads a sensitive struct from a file, supporting both encrypted and plaintext formats.
 ///
@@ -261,15 +296,10 @@ pub fn decrypt_struct<T: DeserializeOwned, E: From<serde_cbor::Error> + std::fmt
 ///
 /// # Type Parameters
 /// - `T`: The struct type to load.
-/// - `E`: The error type, must support conversion from `serde_cbor::Error` and .
 /// - `F`: A type implementing [`SerdeFormat`] (`SerdeCbor` or `SerdeJson`).
-pub fn load_sensitive_struct_interactive<
-    T: DeserializeOwned,
-    E: From<serde_cbor::Error> + std::fmt::Debug,
-    F: SerdeFormat,
->(
+pub fn load_sensitive_struct_interactive<T: DeserializeOwned, F: SerdeFormat>(
     path: &Path,
-) -> Result<(T, Option<KeyMaterial>), E> {
+) -> (T, Option<KeyMaterial>) {
     let content = fs::read(path).unwrap_or_else(|_| panic!("Failed to read the file: {:?}", path));
 
     let (sensitive_struct, encryption_material) = match F::from_slice::<T>(&content) {
@@ -285,7 +315,7 @@ pub fn load_sensitive_struct_interactive<
                     encrypted_struct.pbkdf2_salt,
                 );
 
-                let decrypted = decrypt_struct::<T, E>(encrypted_struct, &enc_material)
+                let decrypted = decrypt_struct::<T>(encrypted_struct, &enc_material)
                     .unwrap_or_else(|err| panic!("Failed to decrypt file {:?}: {:?}", path, err));
 
                 (decrypted, Some(enc_material))
@@ -299,5 +329,5 @@ pub fn load_sensitive_struct_interactive<
         },
     };
 
-    Ok((sensitive_struct, encryption_material))
+    (sensitive_struct, encryption_material)
 }
