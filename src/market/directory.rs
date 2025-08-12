@@ -161,7 +161,7 @@ impl Default for DirectoryServer {
 }
 
 impl DirectoryServer {
-    /// Constructs a [DirectoryServer] from a specified data directory. Or creates default configs and load them.
+    /// Constructs a [`DirectoryServer`] from a specified data directory. Or creates default configs and load them.
     ///
     /// The directory.toml file should exist at the provided data-dir location.
     /// Or else, a new default-config will be loaded and created at the given data-dir location.

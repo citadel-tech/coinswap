@@ -143,8 +143,8 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
     // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
     // | **Maker6102**  | 500,000                | 463,500                 | 33,500     | 3,000                      | 36,500            |
     //
-    // - Taker sends [ProofOfFunding] of Maker6102 to Maker16102, who replies with [ReqContractSigsForRecvrAndSender].
-    // - Taker forwards [ReqContractSigsForRecvr] to Maker6102, but Maker6102 doesn't respond.
+    // - Taker sends [`ProofOfFunding`] of Maker6102 to Maker16102, who replies with [`ReqContractSigsForRecvrAndSender`].
+    // - Taker forwards [`ReqContractSigsForRecvr`] to Maker6102, but Maker6102 doesn't respond.
     // - After a timeout, both Taker and Maker6102 recover from the swap, incurring losses.
     //
     // Final Outcome for Taker & Maker6102 (Recover from Swap):
@@ -167,7 +167,7 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
     // Case 2: Maker6102 is the Second Maker.
     // Workflow: Taker -> Maker16102 -> Maker6102 (CloseAtContractSigsForRecvr)
     //
-    // In this case, the Coinswap completes successfully since Maker6102, being the last maker, does not receive [ReqContractSigsForRecvr] from the Taker.
+    // In this case, the Coinswap completes successfully since Maker6102, being the last maker, does not receive [`ReqContractSigsForRecvr`] from the Taker.
     //
     // The Fee balance would look like `standard_swap` IT for this case.
 

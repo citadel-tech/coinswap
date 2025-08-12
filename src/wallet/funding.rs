@@ -123,8 +123,8 @@ impl Wallet {
         Ok(output_values)
     }
 
-    // This function creates a single funding transaction with random, distrubuted, bounded amounts
-    // Which are distributed among the destinations in different outputs.
+    /// This function creates a single funding transaction with random, distrubuted, bounded amounts
+    /// Which are distributed among the destinations in different outputs.
     pub fn create_funding_txes_regular_swaps(
         &mut self,
         normie_flag: bool,

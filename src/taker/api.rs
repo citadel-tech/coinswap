@@ -1,6 +1,6 @@
 //! The Taker API.
 //!
-//! This module describes the main [Taker] structure and all other associated data sets related to a coinswap round.
+//! This module describes the main [`Taker`] structure and all other associated data sets related to a coinswap round.
 //! This includes the main protocol workflow and all the subroutines that are called sequentially.
 //!
 //! [Taker::do_coinswap] is the main routine running all other subroutines. Follow the white rabbit from here.
@@ -291,9 +291,9 @@ impl Taker {
         self.send_coinswap(swap_params)
     }
 
-    /// Perform a coinswap round with given [SwapParams]. The Taker will try to perform swap with makers
-    /// in it's [OfferBook] sequentially as per the maker_count given in swap params.
-    /// If [SwapParams] doesn't fit suitably with any available offers, or not enough makers
+    /// Perform a coinswap round with given [`SwapParams`]. The Taker will try to perform swap with makers
+    /// in it's [`OfferBook`] sequentially as per the maker_count given in swap params.
+    /// If [`SwapParams`] doesn't fit suitably with any available offers, or not enough makers
     /// respond back, the swap round will fail.
     ///
     /// Depending upon the failure situation, Taker will automatically try to recover from failed swaps
@@ -489,9 +489,9 @@ impl Taker {
 
     // ######## PROTOCOL SUBROUTINES ############
 
-    /// Initiate the first coinswap hop. Makers are selected from the [OfferBook], and round will
+    /// Initiate the first coinswap hop. Makers are selected from the [`OfferBook`], and round will
     /// fail if no suitable makers are found.
-    /// Creates and stores the [OutgoingSwapCoin] into [OngoingSwapState], and also saves it into the [Wallet] file.
+    /// Creates and stores the [`OutgoingSwapCoin`] into [`OngoingSwapState`], and also saves it into the [`Wallet`] file.
     fn init_first_hop(&mut self) -> Result<(), TakerError> {
         log::info!("Initializing First Hop.");
         // Set the Taker Position state
@@ -623,7 +623,7 @@ impl Taker {
 
     /// Return a list of confirmed funding txs with their corresponding merkle proofs.
     /// Errors if any watching contract txs have been broadcasted during the time too.
-    /// The error contanis the list of broadcasted contract [Txid]s.
+    /// The error contanis the list of broadcasted contract [`Txid`]s.
     fn watch_for_txs(
         &self,
         funding_txids: &Vec<Txid>,
@@ -762,8 +762,8 @@ impl Taker {
         }
     }
 
-    /// Create [FundingTxInfo] for the "next_maker". Next maker is the last stored [NextPeerInfo] in the swp state.
-    /// All other data from the swap state's last entries are collected and a [FundingTxInfo] protocol message data is generated.
+    /// Create [`FundingTxInfo`] for the "next_maker". Next maker is the last stored [`NextPeerInfo`] in the swp state.
+    /// All other data from the swap state's last entries are collected and a [`FundingTxInfo`] protocol message data is generated.
     fn funding_info_for_next_maker(&self) -> Vec<FundingTxInfo> {
         // Get the redeemscripts.
         let (this_maker_multisig_redeemscripts, this_maker_contract_redeemscripts) =
@@ -859,7 +859,7 @@ impl Taker {
     }
 
     /// Send signatures to a maker, and initiate the next hop of the swap by finding a new maker.
-    /// If no suitable makers are found in [OfferBook], next swap will not initiate and the swap round will fail.
+    /// If no suitable makers are found in [`OfferBook`], next swap will not initiate and the swap round will fail.
     fn send_sigs_init_next_hop(
         &mut self,
         maker_refund_locktime: u16,
@@ -1114,7 +1114,7 @@ impl Taker {
         // If This Maker is the Reciver, and We (The Taker) are the Sender (First Hop), Sign the Contract Tx.
         let receivers_sigs = if self.ongoing_swap_state.taker_position == TakerPosition::FirstPeer {
             log::info!("Taker is previous peer. Signing Receivers Contract Txs");
-            // Sign the receiver's contract using our [OutgoingSwapCoin].
+            // Sign the receiver's contract using our `OutgoingSwapCoin`.
             contract_sigs_as_recvr_sender
                 .receivers_contract_txs
                 .iter()
@@ -1179,7 +1179,7 @@ impl Taker {
         Ok((next_swap_info, contract_sigs_as_recvr_sender))
     }
 
-    /// Create [WatchOnlySwapCoin] for the current Maker.
+    /// Create [`WatchOnlySwapCoin`] for the current Maker.
     pub(crate) fn create_watch_only_swapcoins(
         &self,
         contract_sigs_as_recvr_and_sender: &ContractSigsAsRecvrAndSender,
@@ -1210,7 +1210,7 @@ impl Taker {
         Ok(next_swapcoins)
     }
 
-    /// Create the [IncomingSwapCoin] for this round. The Taker is always the "next_peer" here
+    /// Create the [`IncomingSwapCoin`] for this round. The Taker is always the "next_peer" here
     /// and the sender side is the laste Maker in the route.
     fn create_incoming_swapcoins(
         &mut self,
@@ -1337,7 +1337,7 @@ impl Taker {
         Ok(incoming_swapcoins)
     }
 
-    /// Request signatures for the [IncomingSwapCoin] from the last maker of the swap round.
+    /// Request signatures for the [`IncomingSwapCoin`] from the last maker of the swap round.
     fn request_sigs_for_incoming_swap(&mut self) -> Result<(), TakerError> {
         // Intermediate hops completed. Perform the last receiving hop.
         let last_maker = self
@@ -1765,17 +1765,17 @@ impl Taker {
             .ok_or(TakerError::NotEnoughMakersInOfferBook)
     }
 
-    /// Get the [Preimage] of the ongoing swap. If no swap is in progress will return a `[0u8; 32]`.
+    /// Get the [`Preimage`] of the ongoing swap. If no swap is in progress will return a `[0u8; 32]`.
     fn get_preimage(&self) -> &Preimage {
         &self.ongoing_swap_state.active_preimage
     }
 
-    /// Get the [Preimage] hash for the ongoing swap. If no swap is in progress will return `hash160([0u8; 32])`.
+    /// Get the [`Preimage`] hash for the ongoing swap. If no swap is in progress will return `hash160([0u8; 32])`.
     fn get_preimage_hash(&self) -> Hash160 {
         Hash160::hash(self.get_preimage())
     }
 
-    /// Clear the [OngoingSwapState].
+    /// Clear the [`OngoingSwapState`].
     fn clear_ongoing_swaps(&mut self) {
         self.ongoing_swap_state = OngoingSwapState::default();
     }
@@ -1785,7 +1785,7 @@ impl Taker {
         self.offerbook.get_bad_makers()
     }
 
-    /// Save all the finalized swap data and reset the [OngoingSwapState].
+    /// Save all the finalized swap data and reset the [`OngoingSwapState`].
     fn save_and_reset_swap_round(&mut self) -> Result<(), TakerError> {
         // Mark incoiming swapcoins as done
         for incoming_swapcoin in &self.ongoing_swap_state.incoming_swapcoins {

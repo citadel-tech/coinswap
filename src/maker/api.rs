@@ -135,7 +135,7 @@ pub enum MakerBehavior {
     BroadcastContractAfterSetup,
 }
 
-/// Expected messages for the taker in the context of [ConnectionState] structure.
+/// Expected messages for the taker in the context of [`ConnectionState`] structure.
 ///
 /// If the received message doesn't match the expected message,
 /// a protocol error will be returned.
@@ -369,7 +369,7 @@ impl Maker {
         Ok(())
     }
 
-    /// Checks consistency of the [ProofOfFunding] message and return the Hashvalue
+    /// Checks consistency of the [`ProofOfFunding`] message and return the Hashvalue
     /// used in hashlock transaction.
     pub(crate) fn verify_proof_of_funding(
         &self,
