@@ -8,6 +8,7 @@ pub mod fee_estimation;
 pub mod maker;
 pub mod market;
 pub mod protocol;
+pub mod security;
 pub mod taker;
 pub mod utill;
 pub mod wallet;

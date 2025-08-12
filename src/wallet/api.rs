@@ -7,12 +7,7 @@ use std::{convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr, thread, t
 
 use std::collections::HashMap;
 
-use aes_gcm::{
-    aead::{AeadCore, OsRng},
-    Aes256Gcm,
-};
-
-use crate::wallet::Destination;
+use crate::{security::KeyMaterial, wallet::Destination};
 
 use bip39::Mnemonic;
 use bitcoin::{
@@ -24,15 +19,13 @@ use bitcoin::{
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, Weight,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
-use pbkdf2::pbkdf2_hmac_array;
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use std::path::Path;
 
 use crate::{
     protocol::contract,
     utill::{
-        compute_checksum, generate_keypair, get_hd_path_from_descriptor, prompt_password,
+        compute_checksum, generate_keypair, get_hd_path_from_descriptor,
         redeemscript_to_scriptpubkey, MIN_FEE_RATE,
     },
     wallet::split_utxos::MAX_SPLITS,
@@ -56,34 +49,6 @@ use super::{
 // for example which privkey corresponds to a scriptpubkey is stored in hd paths
 
 const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
-
-/// Salt used for key derivation from a user-provided passphrase.
-const PBKDF2_SALT: &[u8; 8] = b"coinswap";
-/// Number of PBKDF2 iterations to strengthen passphrase-derived keys.
-///
-/// In production, this is set to **600,000 iterations**, following
-/// modern password security guidance from the
-/// [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
-///
-/// During testing or integration tests, the iteration count is reduced to 1
-/// for performance.
-const PBKDF2_ITERATIONS: u32 = if cfg!(feature = "integration-test") || cfg!(test) {
-    1
-} else {
-    600_000
-};
-
-/// Holds derived cryptographic key material used for encrypting and decrypting wallet data.
-#[derive(Debug, Clone)]
-pub struct KeyMaterial {
-    /// A 256-bit key derived from the user’s passphrase via PBKDF2.
-    /// This key is used with AES-GCM for encryption/decryption.
-    pub key: [u8; 32],
-    /// Nonce used for AES-GCM encryption, generated when a new wallet is created.
-    /// When loading an existing wallet, this is initially `None`.
-    /// It is populated after reading the stored nonce from disk.
-    pub nonce: Option<Vec<u8>>,
-}
 
 /// Represents a Bitcoin wallet with associated functionality and data.
 #[derive(Debug)]
@@ -254,12 +219,8 @@ impl Wallet {
     /// Load wallet data from file and connect to a core RPC.
     /// The core rpc wallet name, and wallet_id field in the file should match.
     /// If encryption material is provided, decrypt the wallet store using it.
-    pub(crate) fn load(
-        path: &Path,
-        rpc_config: &RPCConfig,
-        store_enc_material: &Option<KeyMaterial>,
-    ) -> Result<Wallet, WalletError> {
-        let (store, nonce) = WalletStore::read_from_disk(path, store_enc_material)?;
+    pub(crate) fn load(path: &Path, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
+        let (store, store_enc_material) = WalletStore::read_from_disk(path)?;
 
         if rpc_config.wallet_name != store.file_name {
             return Err(WalletError::General(format!(
@@ -287,22 +248,11 @@ impl Wallet {
             store.outgoing_swapcoins.len()
         );
 
-        // The input `store_enc_material` has a key but no nonce before reading from disk.
-        // After reading, combine the key with the stored nonce to create a complete KeyMaterial
-        // used for subsequent encryption/decryption operations.
-        let updated_enc_material = match (store_enc_material, nonce) {
-            (Some(material), Some(nonce)) => Some(KeyMaterial {
-                key: material.key,
-                nonce: Some(nonce),
-            }),
-            _ => None,
-        };
-
         Ok(Self {
             rpc,
             wallet_file_path: path.to_path_buf(),
             store,
-            store_enc_material: updated_enc_material,
+            store_enc_material,
         })
     }
 
@@ -315,47 +265,17 @@ impl Wallet {
         path: &Path,
         rpc_config: &RPCConfig,
     ) -> Result<Wallet, WalletError> {
-        // For tests or integration tests, use a fixed password. Otherwise prompt user.
-        let wallet_enc_password = if cfg!(feature = "integration-test") || cfg!(test) {
-            "integration-test".to_string()
-        } else {
-            prompt_password("Enter wallet encryption passphrase (empty for no encryption): ")?
-        };
-
-        // If user entered empty password, no encryption key material is created.
-        let key = if wallet_enc_password.is_empty() {
-            None
-        } else {
-            // Derive a 256-bit encryption key from the passphrase using PBKDF2.
-            let derived_key = pbkdf2_hmac_array::<Sha256, 32>(
-                wallet_enc_password.as_bytes(),
-                PBKDF2_SALT,
-                PBKDF2_ITERATIONS,
-            );
-            // Generate a nonce only if creating a new wallet, else defer nonce reading.
-            let nonce = if path.exists() {
-                //Will be filled after loading, by the Wallet::load method
-                None
-            } else {
-                // Generate a fresh nonce for encrypting a new wallet.
-                let generated_nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-                Some(generated_nonce.as_slice().to_vec())
-            };
-
-            Some(KeyMaterial {
-                key: derived_key,
-                nonce,
-            })
-        };
-
         let wallet = if path.exists() {
             // wallet already exists, load the wallet
-            let wallet = Wallet::load(path, rpc_config, &key)?;
+            let wallet = Wallet::load(path, rpc_config)?;
             log::info!("Wallet file at {path:?} successfully loaded.");
             wallet
         } else {
             // wallet doesn't exists at the given path, create a new one
-            let wallet = Wallet::init(path, rpc_config, key)?;
+
+            let store_enc_material = KeyMaterial::new_interactive(None);
+
+            let wallet = Wallet::init(path, rpc_config, store_enc_material)?;
 
             log::info!("New Wallet created at : {path:?}");
             wallet
