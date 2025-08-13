@@ -674,18 +674,12 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
     Ok(())
 }
 
-/// Broadcast Incoming and Outgoing Contract transactions & timelock or hashlock transactions after maturity.
+/// Broadcast Incoming and Outgoing Contract transactions & timelock contract after maturity or hashlock contract.
 /// Remove contract transactions from the wallet.
 pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
     // Broadcast all the incoming contracts.
     let (incomings, outgoings) = maker.wallet.read()?.find_unfinished_swapcoins();
     let is_hash_preimage_known = incomings.iter().any(|ic_sc| ic_sc.is_hash_preimage_known());
-
-    let trigger_count = if cfg!(feature = "integration-test") {
-        10 / HEART_BEAT_INTERVAL.as_secs() // triggers every 10 secs for tests
-    } else {
-        60 / HEART_BEAT_INTERVAL.as_secs() // triggers every 60 secs for prod
-    };
 
     if is_hash_preimage_known {
         let incoming_infos = maker
@@ -694,94 +688,33 @@ pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
             .broadcast_incoming_contracts(incomings.clone())?;
 
         //check for contract transactions and broadcast hashlocked transaction
-        let mut hashlocked_broadcasted = Vec::new();
-
-        //counter
-        let mut i = 0;
         while !maker.shutdown.load(Relaxed) {
-            if i >= trigger_count || i == 0 {
-                for ((ic_rs, contract), (timelock, hashlock_tx)) in incoming_infos.iter() {
-                    // We have already broadcasted this tx, so skip
-                    if hashlocked_broadcasted.contains(&hashlock_tx) {
-                        continue;
-                    }
-                    // Check if the contract tx has reached the required maturity
-                    // Failure here means the transaction hasn't been broadcasted yet. So do nothing and try again.
-                    let tx_from_chain = if let Ok(result) = maker
-                        .wallet
-                        .read()?
-                        .rpc
-                        .get_raw_transaction_info(&contract.compute_txid(), None)
-                    {
-                        log::info!(
-                            "[{}] Contract Txid : {} reached confirmation : {:?}",
-                            maker.config.network_port,
-                            contract.compute_txid(),
-                            result.confirmations,
-                        );
-                        result
-                    } else {
-                        continue;
-                    };
-                    if let Some(confirmations) = tx_from_chain.confirmations {
-                        if confirmations > (*timelock as u32) {
-                            log::info!(
-                    "[{}] Incoming Contract Confirmed for Contract Txid: {} with confirmations:{}",
-                    maker.config.network_port,
-                    contract.compute_txid(),
-                    confirmations
+            let hashlocked_broadcasted = maker
+                .wallet
+                .write()?
+                .spend_from_hashlock_contract(&incoming_infos)?;
+
+            log::info!(
+                "[{}]-> {} incoming contracts detected | {} hashlock txs broadcasted.",
+                maker.config.network_port,
+                incomings.len(),
+                hashlocked_broadcasted.len()
+            );
+
+            if hashlocked_broadcasted.len() == incomings.len() {
+                log::info!(
+                    "[{}] All incomings transactions claimed via hashlock. Recovery loop exiting.",
+                    maker.config.network_port
                 );
-                            log::info!(
-                                "[{}] Broadcasting Hashlocked tx:{}",
-                                maker.config.network_port,
-                                hashlock_tx.compute_txid(),
-                            );
-                            maker
-                                .wallet
-                                .read()?
-                                .rpc
-                                .send_raw_transaction(hashlock_tx)
-                                .map_err(WalletError::Rpc)?;
-                            hashlocked_broadcasted.push(hashlock_tx);
-
-                            let incoming_removed = maker
-                                .wallet
-                                .write()?
-                                .remove_incoming_swapcoin(ic_rs)?
-                                .expect("incoming swapcoins expected");
-
-                            log::info!(
-                                "[{}] Removed Incoming Swapcoin from Wallet,Contract Txid:{}",
-                                maker.config.network_port,
-                                incoming_removed.contract_tx.compute_txid()
-                            );
-
-                            log::info!("initializing Wallet Sync.");
-                            {
-                                maker.wallet.write()?.sync_and_save()?;
-                            }
-                            log::info!("Completed Wallet Sync.");
-                        }
-                    }
-                    log::info!(
-                        "[{}]-> {} incoming contracts detected | {} hashlock txs broadcasted.",
-                        maker.config.network_port,
-                        incomings.len(),
-                        hashlocked_broadcasted.len()
-                    );
-
-                    if hashlocked_broadcasted.len() == incomings.len() {
-                        log::info!(
-                        "[{}] All incomings transactions claimed via hashlock. Recovery loop exiting.",maker.config.network_port
-                    );
-                        break;
-                    }
-                    //reset-counter
-                    i = 0;
-                }
-                i += 1;
-                std::thread::sleep(HEART_BEAT_INTERVAL);
+                break;
             }
+            // Block wait time is varied between prod. and test builds.
+            let block_wait_time = if cfg!(feature = "integration-test") {
+                Duration::from_secs(10)
+            } else {
+                Duration::from_secs(10 * 60)
+            };
+            std::thread::sleep(block_wait_time);
         }
     } else {
         let outgoing_infos = maker
@@ -790,102 +723,36 @@ pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
             .broadcast_outgoing_contracts(outgoings.clone())?;
 
         // Check for contract confirmations and broadcast timelocked transaction
-        let mut timelock_broadcasted = Vec::new();
-
-        let mut i = 0;
-
         while !maker.shutdown.load(Relaxed) {
-            if i >= trigger_count || i == 0 {
-                for ((outgoing_reedemscript, contract), (timelock, timelocked_tx)) in
-                    outgoing_infos.iter()
-                {
-                    // We have already broadcasted this tx, so skip
-                    if timelock_broadcasted.contains(&timelocked_tx) {
-                        continue;
-                    }
-                    // Check if the contract tx has reached the required maturity
-                    // Failure here means the transaction hasn't been broadcasted yet. So do nothing and try again.
-                    let tx_from_chain = if let Ok(result) = maker
-                        .wallet
-                        .read()?
-                        .rpc
-                        .get_raw_transaction_info(&contract.compute_txid(), None)
-                    {
-                        log::info!(
-                        "[{}] Contract Txid : {} reached confirmation : {:?}, Required Confirmation : {}",
-                        maker.config.network_port,
-                        contract.compute_txid(),
-                        result.confirmations,
-                        timelock
-                    );
-                        result
-                    } else {
-                        continue;
-                    };
+            let timelock_broadcasted = maker
+                .wallet
+                .write()?
+                .spend_from_timelock_contract(&outgoing_infos)?;
 
-                    if let Some(confirmation) = tx_from_chain.confirmations {
-                        // Now the transaction is confirmed in a block, check for required maturity
-                        if confirmation > (*timelock as u32) {
-                            log::info!(
-                            "[{}] Timelock maturity of {} blocks reached for Contract Txid : {}",
-                            maker.config.network_port,
-                            timelock,
-                            contract.compute_txid()
-                        );
-                            log::info!(
-                                "[{}] Broadcasting timelocked tx: {}",
-                                maker.config.network_port,
-                                timelocked_tx.compute_txid()
-                            );
-                            maker
-                                .wallet
-                                .read()?
-                                .rpc
-                                .send_raw_transaction(timelocked_tx)
-                                .map_err(WalletError::Rpc)?;
-                            timelock_broadcasted.push(timelocked_tx);
+            log::info!(
+                "[{}] -> {} outgoing contracts detected | {} timelock txs broadcasted.",
+                maker.config.network_port,
+                outgoings.len(),
+                timelock_broadcasted.len()
+            );
 
-                            let outgoing_removed = maker
-                                .wallet
-                                .write()?
-                                .remove_outgoing_swapcoin(outgoing_reedemscript)?
-                                .expect("outgoing swapcoin expected");
+            if timelock_broadcasted.len() == outgoings.len() {
+                // For tests, terminate the maker at this stage.
+                #[cfg(feature = "integration-test")]
+                maker.shutdown.store(true, Relaxed);
 
-                            log::info!(
-                                "[{}] Removed Outgoing Swapcoin from Wallet, Contract Txid: {}",
-                                maker.config.network_port,
-                                outgoing_removed.contract_tx.compute_txid()
-                            );
-
-                            {
-                                let mut wallet_write = maker.wallet.write()?;
-                                wallet_write.sync_and_save()?;
-                            }
-                        }
-                    }
-                }
                 log::info!(
-                    "[{}] -> {} outgoing contracts detected | {} timelock txs broadcasted.",
-                    maker.config.network_port,
-                    outgoings.len(),
-                    timelock_broadcasted.len()
-                );
-
-                if timelock_broadcasted.len() == outgoings.len() {
-                    // For tests, terminate the maker at this stage.
-                    #[cfg(feature = "integration-test")]
-                    maker.shutdown.store(true, Relaxed);
-
-                    log::info!(
                     "[{}] All outgoing transactions claimed back via timelock. Recovery loop exiting.", maker.config.network_port
                 );
-                    break;
-                }
-                // Reset counter
-                i = 0;
+                break;
             }
-            i += 1;
-            std::thread::sleep(HEART_BEAT_INTERVAL);
+            // Block wait time is varied between prod. and test builds.
+            let block_wait_time = if cfg!(feature = "integration-test") {
+                Duration::from_secs(10)
+            } else {
+                Duration::from_secs(10 * 60)
+            };
+            std::thread::sleep(block_wait_time);
         }
     }
     Ok(())
