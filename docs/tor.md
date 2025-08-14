@@ -36,7 +36,7 @@ nano /opt/homebrew/etc/tor/torrc
 
 ---
 
-## **4. Configuring the SOCKS Proxy**
+## **3. Configuring the SOCKS Proxy**
 Tor acts as a **SOCKS5 Proxy** for anonymous traffic.
 
 Add this to `torrc`:
@@ -52,7 +52,7 @@ curl --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/
 ```
 ---
 
-## **3. Configuring Control Port**
+## **4. Configuring Control Port**
 The **Control Port** allows applications to talk to Tor.
 ```ini
 ControlPort 9051
