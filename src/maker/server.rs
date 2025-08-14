@@ -4,13 +4,12 @@
 //! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend, and RPC Client Request.
 //! The server listens at two ports: 6102 for P2P, and 6103 for RPC Client requests.
 
-use crate::protocol::messages::{FidelityProof, MessageToMaker};
-#[cfg(feature = "tracker")]
-use crate::protocol::messages::{TrackerClientToServer, TrackerServerToClient};
+use crate::protocol::messages::{
+    FidelityProof, MessageToMaker, TrackerClientToServer, TrackerServerToClient,
+};
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
-#[cfg(not(feature = "tracker"))]
-use socks::Socks5Stream;
+
 use std::{
     io::ErrorKind,
     net::{Ipv4Addr, TcpListener, TcpStream},
@@ -38,9 +37,6 @@ use crate::{
     utill::{read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::WalletError,
 };
-
-#[cfg(not(feature = "tracker"))]
-use crate::protocol::messages::{DnsMetadata, DnsRequest, DnsResponse};
 
 use crate::maker::error::MakerError;
 
@@ -99,78 +95,9 @@ fn manage_fidelity_bonds_and_update_dns(
 
     let _proof = setup_fidelity_bond(maker, maker_addr)?;
 
-    #[cfg(not(feature = "tracker"))]
-    let dns_metadata = DnsMetadata {
-        url: maker_addr.to_string(),
-        proof: _proof,
-    };
-
-    #[cfg(not(feature = "tracker"))]
-    let request = DnsRequest::Post {
-        metadata: dns_metadata,
-    };
-
     let network_port = maker.config.network_port;
 
     log::info!("[{network_port}] Connecting to DNS: {dns_addr}");
-
-    #[cfg(not(feature = "tracker"))]
-    while !maker.shutdown.load(Relaxed) {
-        let stream = match maker.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(dns_addr),
-            ConnectionType::TOR => {
-                Socks5Stream::connect(format!("127.0.0.1:{}", maker.config.socks_port), dns_addr)
-                    .map(|s| s.into_inner())
-            }
-        };
-
-        match stream {
-            Ok(mut stream) => match send_message(&mut stream, &request) {
-                Ok(_) => match read_message(&mut stream) {
-                    Ok(dns_msg_bytes) => {
-                        match serde_cbor::from_slice::<DnsResponse>(&dns_msg_bytes) {
-                            Ok(dns_msg) => match dns_msg {
-                                DnsResponse::Ack => {
-                                    log::info!("[{network_port}] <=== {dns_msg}");
-                                    log::info!( "[{network_port}] Successfully sent our address and fidelity proof to DNS at {dns_addr}");
-                                    break;
-                                }
-                                DnsResponse::Nack(reason) => {
-                                    log::error!("<=== DNS Nack: {reason}")
-                                }
-                            },
-                            Err(e) => {
-                                log::warn!("CBOR deserialization failed: {e} | Reattempting...")
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        if let NetError::IO(e) = e {
-                            if e.kind() == ErrorKind::UnexpectedEof {
-                                log::info!("[{}] Connection ended.", maker.config.network_port);
-                                break;
-                            } else {
-                                // For any other errors, report them
-                                log::error!(
-                                    "[{}] DNS Connection Error: {}",
-                                    maker.config.network_port,
-                                    e
-                                );
-                            }
-                        }
-                    }
-                },
-                Err(e) => log::warn!(
-                    "[{network_port}] Failed to send request to DNS : {e} | reattempting..."
-                ),
-            },
-            Err(e) => log::warn!(
-                "[{network_port}] Failed to establish TCP connection with DNS : {e} | reattempting..."
-            ),
-        }
-
-        thread::sleep(HEART_BEAT_INTERVAL);
-    }
 
     Ok(())
 }
@@ -373,7 +300,6 @@ fn decode_unified_message(data: &[u8]) -> Result<MessageToMaker, MakerError> {
             let msg = serde_cbor::from_slice::<TakerToMakerMessage>(body)?;
             Ok(MessageToMaker::TakerToMaker(msg))
         }
-        #[cfg(feature = "tracker")]
         0x02 => {
             let msg = serde_cbor::from_slice::<TrackerServerToClient>(body)?;
             Ok(MessageToMaker::TrackerMessage(msg))
@@ -449,7 +375,6 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
                     }
                 }
             }
-            #[cfg(feature = "tracker")]
             MessageToMaker::TrackerMessage(tracker_msg) => match tracker_msg {
                 TrackerServerToClient::Ping { address, port } => {
                     log::info!("Received a ping from tracker");

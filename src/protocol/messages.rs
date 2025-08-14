@@ -373,7 +373,6 @@ pub enum DnsRequest {
 }
 
 /// Tracker response
-#[cfg(feature = "tracker")]
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TrackerServerToClient {
     /// Address of all makers, tracker currently have.
@@ -396,7 +395,6 @@ pub enum TrackerServerToClient {
 }
 
 /// Mempool transaction
-#[cfg(feature = "tracker")]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MempoolTx {
     /// Txid of the transaction spending the utxo
@@ -408,7 +406,6 @@ pub struct MempoolTx {
 /// Enum representing DNS request message types.
 ///
 /// These requests and responses are structured using Serde for serialization and deserialization.
-#[cfg(feature = "tracker")]
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum TrackerClientToServer {
@@ -438,7 +435,6 @@ pub enum TrackerClientToServer {
 pub(crate) enum MessageToMaker {
     /// taker to maker variant
     TakerToMaker(TakerToMakerMessage),
-    #[cfg(feature = "tracker")]
     /// tracker request variant
     TrackerMessage(TrackerServerToClient),
 }

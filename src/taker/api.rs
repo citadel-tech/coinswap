@@ -54,10 +54,6 @@ use crate::{
     },
 };
 
-#[cfg(not(feature = "tracker"))]
-use crate::taker::offers::fetch_addresses_from_dns;
-
-#[cfg(feature = "tracker")]
 use crate::taker::offers::fetch_addresses_from_tracker;
 
 // Default values for Taker configurations
@@ -2028,17 +2024,6 @@ impl Taker {
 
         log::info!("Fetching addresses from DNS: {dns_addr}");
 
-        #[cfg(not(feature = "tracker"))]
-        let addresses_from_dns =
-            match fetch_addresses_from_dns(socks_port, dns_addr, self.config.connection_type) {
-                Ok(dns_addrs) => dns_addrs,
-                Err(e) => {
-                    log::error!("Could not connect to DNS Server: {e:?}");
-                    return Err(e);
-                }
-            };
-
-        #[cfg(feature = "tracker")]
         let addresses_from_dns =
             match fetch_addresses_from_tracker(socks_port, dns_addr, self.config.connection_type) {
                 Ok(dns_addrs) => dns_addrs,
