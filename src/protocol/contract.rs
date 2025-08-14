@@ -236,7 +236,7 @@ pub(crate) fn create_contract_redeemscript(
     OP_IF                    |
         pub_hashlock         | <sig> <size> <pub>
         32                   | <sig> <size> <pub> 32
-        1                    | <sig> <size> <pub> 32 1
+        0                   | <sig> <size> <pub> 32 0
     OP_ELSE                  |
         pub_timelock         | <sig> <size> <pub>
         0                    | <sig> <size> <pub> 0
@@ -264,7 +264,7 @@ pub(crate) fn create_contract_redeemscript(
         .push_opcode(opcodes::all::OP_IF)
             .push_key(pub_hashlock)
             .push_int(32)
-            .push_int(1)
+            .push_int(0)
         .push_opcode(opcodes::all::OP_ELSE)
             .push_key(pub_timelock)
             .push_int(0)

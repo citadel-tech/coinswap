@@ -39,7 +39,7 @@ use crate::{
         Hash160,
     },
     utill::{calculate_fee_sats, MIN_FEE_RATE, REQUIRED_CONFIRMS},
-    wallet::{IncomingSwapCoin, SwapCoin, WalletError, WalletSwapCoin},
+    wallet::{IncomingSwapCoin, SwapCoin, WalletError},
 };
 
 /// The Global Handle Message function. Takes in a [`Arc<Maker>`] and handles messages
@@ -684,56 +684,16 @@ impl Maker {
 }
 
 fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
-    let mut lock_on_state = maker.ongoing_swap_state.lock()?;
-    for (_, (state, _)) in lock_on_state.iter_mut() {
-        let mut outgoings = Vec::new();
-        let mut incomings = Vec::new();
-        // Extract Incoming and Outgoing contracts, and timelock spends of the contract transactions.
-        // fully signed.
-        for (og_sc, ic_sc) in state
-            .outgoing_swapcoins
-            .iter()
-            .zip(state.incoming_swapcoins.iter())
-        {
-            let contract_timelock = og_sc.get_timelock()?;
-            let contract = match og_sc.get_fully_signed_contract_tx() {
-                Ok(tx) => tx,
-                Err(e) => {
-                    log::error!(
-                        "Error: {e:?} \
-                        This was not supposed to happen. \
-                        Kindly open an issue at https://github.com/citadel-tech/coinswap/issues."
-                    );
-                    maker
-                        .wallet
-                        .write()?
-                        .remove_outgoing_swapcoin(&og_sc.get_multisig_redeemscript())?;
-                    continue;
-                }
-            };
-            let next_internal_address = &maker.wallet.read()?.get_next_internal_addresses(1)?[0];
-            let time_lock_spend = maker.wallet.read()?.create_timelock_spend(
-                og_sc,
-                next_internal_address,
-                MIN_FEE_RATE,
-            )?;
-            outgoings.push((
-                (og_sc.get_multisig_redeemscript(), contract),
-                (contract_timelock, time_lock_spend),
-            ));
-            let incoming_contract = ic_sc.get_fully_signed_contract_tx()?;
-            incomings.push((ic_sc.get_multisig_redeemscript(), incoming_contract));
-        }
-        // Spawn a separate thread to wait for contract maturity and broadcasting timelocked.
-        let maker_clone = maker.clone();
-        let handle = std::thread::Builder::new()
-            .name("Swap Recovery Thread".to_string())
-            .spawn(move || {
-                if let Err(e) = recover_from_swap(maker_clone, outgoings, incomings) {
-                    log::error!("Failed to recover from swap due to: {e:?}");
-                }
-            })?;
-        maker.thread_pool.add_thread(handle);
-    }
+    // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
+    let maker_clone = maker.clone();
+    let handle = std::thread::Builder::new()
+        .name("Swap Recovery Thread".to_string())
+        .spawn(move || {
+            if let Err(e) = recover_from_swap(maker_clone) {
+                log::error!("Failed to recover from swap due to: {e:?}");
+            }
+        })?;
+    maker.thread_pool.add_thread(handle);
+
     Ok(())
 }
