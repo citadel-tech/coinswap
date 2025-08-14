@@ -33,12 +33,11 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
-        TestFramework::init(
-            makers_config_map.into(),
-            taker_behavior,
-            ConnectionType::CLEARNET,
-        );
+    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
+        makers_config_map.into(),
+        taker_behavior,
+        ConnectionType::CLEARNET,
+    );
 
     warn!("🧪 Running Test: Maker closes connection at hash preimage handling");
 
@@ -121,9 +120,6 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     // Assert logs to check that it has recovered from its own swap.
 
     info!("🎯 All coinswaps processed successfully. Transaction complete.");
-
-    // Shutdown Directory Server
-    directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
 

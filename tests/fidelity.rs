@@ -32,12 +32,11 @@ fn test_fidelity() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, directory_server_instance, block_generation_handle) =
-        TestFramework::init(
-            makers_config_map.into(),
-            taker_behavior,
-            ConnectionType::CLEARNET,
-        );
+    let (test_framework, _, makers, block_generation_handle) = TestFramework::init(
+        makers_config_map.into(),
+        taker_behavior,
+        ConnectionType::CLEARNET,
+    );
 
     log::info!("🧪 Running Test: Fidelity Bond Creation and Redemption");
 
@@ -255,9 +254,6 @@ fn test_fidelity() {
         assert_eq!(balances.regular.to_sat(), 103998762);
     }
 
-    // Stop the directory server.
-    directory_server_instance.shutdown.store(true, Relaxed);
-
     thread::sleep(Duration::from_secs(10));
 
     test_framework.stop();
@@ -280,12 +276,11 @@ fn test_fidelity_spending() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, directory_server_instance, block_generation_handle) =
-        TestFramework::init(
-            makers_config_map.into(),
-            taker_behavior,
-            ConnectionType::CLEARNET,
-        );
+    let (test_framework, _, makers, block_generation_handle) = TestFramework::init(
+        makers_config_map.into(),
+        taker_behavior,
+        ConnectionType::CLEARNET,
+    );
 
     log::info!("🧪 Running Test: Assert Fidelity Spending Behavior");
 
@@ -514,8 +509,6 @@ fn test_fidelity_spending() {
     }
 
     log::info!("🎉 SUCCESS: All requirements from issue #525 verified!");
-
-    directory_server_instance.shutdown.store(true, Relaxed);
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }
