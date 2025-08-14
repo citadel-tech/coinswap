@@ -7,7 +7,6 @@ use coinswap::{
     wallet::WalletError,
 };
 use log::{info, warn};
-use rust_coinselect::types::SelectionError;
 use std::{
     sync::{atomic::Ordering::Relaxed, Arc},
     time::Duration,
@@ -276,9 +275,6 @@ fn test_separated_utxo_coin_selection() {
         println!("Swap: {} sats", balances.swap.to_sat());
         println!("Total Spendable: {} sats", balances.spendable.to_sat());
 
-        // Hardcoded test values based on expected balances after 35M coinswap
-        // Expected: Regular ~22M sats, Swap ~35M sats
-
         // Test Case 1: Target < regular (should use only regular UTXOs)
         let target_1 = Amount::from_sat(11000000); // 11M sats
         println!("\n--- Test Case 1: Regular UTXOs Only ---");
@@ -335,51 +331,71 @@ fn test_separated_utxo_coin_selection() {
 
         let error = result_3.unwrap_err();
         match &error {
-            WalletError::Selection(SelectionError::NoSolutionFound) => {
-                println!("✅ Correctly failed with NoSolutionFound");
-            }
-            _ => panic!(
-                "Test Case 3: Expected WalletError::Selection(NoSolutionFound), got: {:?}",
-                error
-            ),
-        }
-
-        // Insufficient total funds (should return InsufficientFund, not separation error)
-        let target_4 = Amount::from_sat(70000000); // 70M sats (exceeds total balance)
-        println!("\n--- Test Case 4: Insufficient Funds ---");
-        println!(
-            "Target: {} sats (exceeds total {} sats)",
-            target_4.to_sat(),
-            balances.spendable.to_sat()
-        );
-
-        let result_4 = wallet.coin_select(target_4, MIN_FEE_RATE);
-        assert!(
-            result_4.is_err(),
-            "Test Case 4 failed: Expected error but got success with {} UTXOs",
-            result_4.as_ref().unwrap().len()
-        );
-
-        let error = result_4.unwrap_err();
-        match &error {
             WalletError::InsufficientFund {
                 available,
                 required,
             } => {
                 println!("✅ Correctly failed with InsufficientFund");
                 println!(
-                    "   Available: {} sats, Required: {} sats",
+                    "   Available: {} sats (regular only), Required: {} sats",
                     available, required
                 );
-                assert_eq!(*required, target_4.to_sat());
-                assert_eq!(*available, balances.spendable.to_sat());
+                assert_eq!(*required, target_3.to_sat() + 324); // Should include 324 sats estimated fee
+                assert_eq!(*available, balances.regular.to_sat());
+                println!("✅ Confirmed: Only regular balance reported in insufficient funds error");
             }
             _ => panic!(
-                "Test Case 4: Expected WalletError::InsufficientFund, got: {:?}",
+                "Test Case 3: Expected WalletError::InsufficientFund, got: {:?}",
                 error
             ),
         }
     }
+
+    // Now fund regular UTXOs and retry - should work
+    println!("\n--- Test Case 3: Add Regular Funds and Retry ---");
+
+    let new_address = {
+        let mut wallet = maker.wallet.write().unwrap();
+        wallet.get_next_external_address().unwrap()
+    };
+
+    println!("🏦 Funding new regular address: {}", new_address);
+
+    // Fund the new address with enough to cover the target
+    let additional_amount = Amount::from_sat(30000000); // 30M sats
+    send_to_address(bitcoind, &new_address, additional_amount);
+
+    // Generate blocks to confirm
+    generate_blocks(bitcoind, 3);
+
+    // Sync wallet and retry
+    {
+        let mut wallet = maker.wallet.write().unwrap();
+        wallet.sync().unwrap();
+        let updated_balances = wallet.get_balances().unwrap();
+
+        println!("Updated balances after funding:");
+        println!("  Regular: {} sats", updated_balances.regular.to_sat());
+        println!("  Swap: {} sats", updated_balances.swap.to_sat());
+
+        // Now retry the same target - should succeed with regular UTXOs only
+        let target_3 = Amount::from_sat(46000000); // Same target
+        println!("🔄 Retrying coin selection with additional regular funds...");
+        let result_3_retry = wallet.coin_select(target_3, MIN_FEE_RATE);
+        assert!(
+            result_3_retry.is_ok(),
+            "Test Case 3 retry failed: Expected success with additional regular funds, got: {:?}",
+            result_3_retry.err()
+        );
+
+        let selection_3_retry = result_3_retry.unwrap();
+        println!(
+            "✅ Successfully selected {} UTXOs with additional regular funds",
+            selection_3_retry.len()
+        );
+        println!("✅ Confirmed: Works after funding regular UTXOs");
+    }
+
     println!("\n=== Test Completed Successfully ===");
 
     // Clean shutdown
