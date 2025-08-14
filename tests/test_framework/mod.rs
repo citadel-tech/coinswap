@@ -53,7 +53,6 @@ use bitcoind::{
 
 use coinswap::{
     maker::{Maker, MakerBehavior},
-    market::directory::{start_directory_server, DirectoryServer},
     taker::{Taker, TakerBehavior},
     utill::{setup_logger, ConnectionType},
     wallet::{Balances, RPCConfig},
@@ -628,15 +627,10 @@ impl TestFramework {
         makers_config_map: Vec<((u16, Option<u16>), MakerBehavior)>,
         taker_behavior: Vec<TakerBehavior>,
         connection_type: ConnectionType,
-    ) -> (
-        Arc<Self>,
-        Vec<Taker>,
-        Vec<Arc<Maker>>,
-        Arc<DirectoryServer>,
-        JoinHandle<()>,
-    ) {
+    ) -> (Arc<Self>, Vec<Taker>, Vec<Arc<Maker>>, JoinHandle<()>) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
+        let temp_dir_clone = temp_dir.clone();
         // Remove if previously existing
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
@@ -658,16 +652,22 @@ impl TestFramework {
         // Translate a RpcConfig from the test framework.
         // a modification of this will be used for taker and makers rpc connections.
         let rpc_config = RPCConfig::from(test_framework.as_ref());
+        let rpc_config_clone = rpc_config.clone();
 
-        let directory_rpc_config = rpc_config.clone();
+        std::thread::spawn(move || {
+            let tracker_rt =
+                tokio::runtime::Runtime::new().expect("Failed to create tracker runtime");
 
-        let directory_server_instance = Arc::new(
-            DirectoryServer::new(Some(temp_dir.join("dns")), Some(connection_type)).unwrap(),
-        );
-        let directory_server_instance_clone = directory_server_instance.clone();
-        thread::spawn(move || {
-            start_directory_server(directory_server_instance_clone, Some(directory_rpc_config))
-                .unwrap();
+            let tracker_config = tracker::Config {
+                rpc_url: rpc_config_clone.url,
+                rpc_auth: rpc_config_clone.auth,
+                address: "127.0.0.1:8080".to_string(),
+                datadir: temp_dir_clone.to_string_lossy().to_string(),
+            };
+
+            tracker_rt.block_on(async {
+                tracker::start(tracker_config).await;
+            });
         });
 
         // Create the Taker.
@@ -731,13 +731,7 @@ impl TestFramework {
 
         log::info!("✅ Test Framework initialization complete");
 
-        (
-            test_framework,
-            takers,
-            makers,
-            directory_server_instance,
-            generate_blocks_handle,
-        )
+        (test_framework, takers, makers, generate_blocks_handle)
     }
 
     /// Assert that a log message exists in the debug.log file

@@ -49,7 +49,7 @@ fn test_create_funding_txn_with_varied_distributions() {
     );
 
     // Initialize the test framework with a single taker with Normal behavior
-    let (test_framework, mut takers, _, _, _) = TestFramework::init(
+    let (test_framework, mut takers, _, _) = TestFramework::init(
         vec![],
         vec![TakerBehavior::Normal],
         ConnectionType::CLEARNET,

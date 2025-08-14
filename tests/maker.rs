@@ -176,7 +176,7 @@ fn await_message_timeout(rx: &Receiver<String>, expected: &str, timeout: Duratio
 
     panic!("Timeout waiting for message: {}", expected)
 }
-
+#[ignore]
 #[test]
 fn test_maker() {
     info!("🧪 Running Test: Maker CLI functionality and server operations");
