@@ -392,7 +392,7 @@ impl Wallet {
         (
             selected_inputs,
             self.vary_amounts(target, MIN_TARGET_CHUNKS),
-            vec![total_selected.to_sat() - target],
+            vec![total_selected.to_sat().saturating_sub(target)],
         )
     }
 }
