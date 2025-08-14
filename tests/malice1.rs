@@ -29,12 +29,11 @@ fn malice1_taker_broadcast_contract_prematurely() {
     let taker_behavior = vec![TakerBehavior::BroadcastContractAfterFullSetup];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
-        TestFramework::init(
-            makers_config_map.into(),
-            taker_behavior,
-            ConnectionType::CLEARNET,
-        );
+    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
+        makers_config_map.into(),
+        taker_behavior,
+        ConnectionType::CLEARNET,
+    );
 
     warn!("🧪 Running Test: Malice 1 - Taker broadcasts contract transaction prematurely");
 
@@ -113,9 +112,6 @@ fn malice1_taker_broadcast_contract_prematurely() {
         .for_each(|thread| thread.join().unwrap());
 
     info!("🎯 All coinswaps processed successfully. Transaction complete.");
-
-    // Shutdown Directory Server
-    directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
 

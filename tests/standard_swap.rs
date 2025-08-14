@@ -32,7 +32,7 @@ fn test_standard_coinswap() {
     let connection_type = ConnectionType::CLEARNET;
 
     // Initiate test framework, Makers and a Taker with default behavior.
-    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
+    let (test_framework, mut takers, makers, block_generation_handle) =
         TestFramework::init(makers_config_map.into(), taker_behavior, connection_type);
 
     warn!("🧪 Running Test: Standard Coinswap Procedure");
@@ -104,9 +104,6 @@ fn test_standard_coinswap() {
         .for_each(|thread| thread.join().unwrap());
 
     info!("🎯 All coinswaps processed successfully. Transaction complete.");
-
-    // Shutdown Directory Server
-    directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
 

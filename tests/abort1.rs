@@ -36,12 +36,11 @@ fn test_stop_taker_after_setup() {
 
     // Initiate test framework, Makers.
     // Taker has a special behavior DropConnectionAfterFullSetup.
-    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
-        TestFramework::init(
-            makers_config_map.into(),
-            taker_behavior,
-            ConnectionType::CLEARNET,
-        );
+    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
+        makers_config_map.into(),
+        taker_behavior,
+        ConnectionType::CLEARNET,
+    );
 
     warn!("🧪 Running Test: Taker cheats on everybody");
     let taker = &mut takers[0];
@@ -121,9 +120,6 @@ fn test_stop_taker_after_setup() {
         .for_each(|thread| thread.join().unwrap());
 
     info!("🎯 All coinswaps processed successfully. Transaction complete.");
-
-    // Shutdown Directory Server
-    directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
 
