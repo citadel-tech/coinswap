@@ -93,7 +93,7 @@ fn manage_fidelity_bonds_and_update_dns(
 ) -> Result<(), MakerError> {
     maker.wallet.write()?.redeem_expired_fidelity_bonds()?;
 
-    let _proof = setup_fidelity_bond(maker, maker_addr)?;
+    setup_fidelity_bond(maker, maker_addr)?;
 
     let network_port = maker.config.network_port;
 

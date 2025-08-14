@@ -177,7 +177,6 @@ pub(crate) fn fetch_offer_from_makers(
     Ok(result)
 }
 
-#[allow(unused_variables)]
 /// Retrieves advertised maker addresses from tracker based on the specified network.
 pub fn fetch_addresses_from_tracker(
     socks_port: Option<u16>,

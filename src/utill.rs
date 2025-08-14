@@ -131,11 +131,6 @@ pub(crate) fn get_taker_dir() -> PathBuf {
     get_data_dir().join("taker")
 }
 
-/// Get the DNS Directory
-pub(crate) fn get_dns_dir() -> PathBuf {
-    get_data_dir().join("dns")
-}
-
 /// Creates a FeeRate from the global MIN_FEE_RATE constant
 /// This provides type-safe fee calculations throughout the codebase
 pub fn get_min_fee_rate() -> Option<FeeRate> {
@@ -223,37 +218,6 @@ pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     });
 }
 
-/// Sets up the logger for the directory component.
-///
-/// This method initializes the logging configuration for the directory, directing logs to both
-/// the console and a file. It sets the `RUST_LOG` environment variable to provide default
-/// log levels and configures log4rs with the specified filter level for fine-grained control
-/// of log verbosity.
-pub fn setup_directory_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
-    LOGGER.get_or_init(|| {
-        let log_dir = data_dir.unwrap_or_else(get_dns_dir).join("debug.log");
-
-        let stdout = ConsoleAppender::builder().build();
-        let file_appender = FileAppender::builder().build(log_dir).unwrap();
-
-        let config = Config::builder()
-            .appender(Appender::builder().build("stdout", Box::new(stdout)))
-            .appender(Appender::builder().build("file", Box::new(file_appender)))
-            .logger(
-                Logger::builder()
-                    .appender("file")
-                    .build("coinswap::market", filter),
-            )
-            .build(Root::builder().appender("stdout").build(filter))
-            .unwrap();
-
-        match log4rs::init_config(config) {
-            Ok(_) => log::info!("✅ Logger initialized successfully"),
-            Err(e) => log::error!("❌ Failed to initialize logger: {e}"),
-        }
-    });
-}
-
 /// Setup function that will only run once, even if called multiple times.
 /// Takes log level to set the desired logging verbosity
 pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
@@ -261,7 +225,6 @@ pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
         env::set_var("RUST_LOG", "coinswap=info");
         setup_taker_logger(filter, true, data_dir.as_ref().map(|d| d.join("taker")));
         setup_maker_logger(filter, data_dir.as_ref().map(|d| d.join("maker")));
-        setup_directory_logger(filter, data_dir.as_ref().map(|d| d.join("directory")));
     });
 }
 
@@ -536,33 +499,6 @@ pub fn parse_proxy_auth(s: &str) -> Result<(String, String), NetError> {
     let passwd = parts[1].to_string();
 
     Ok((user, passwd))
-}
-
-/// Dns request metadata
-#[derive(Serialize, Deserialize, Debug)]
-pub struct DnsMetadata {
-    pub(crate) url: String,
-    pub(crate) proof: FidelityProof,
-}
-
-/// Structured requests and responses used to interact with dns.
-///
-/// Enum representing DNS request messages.
-#[derive(Serialize, Deserialize, Debug)]
-pub enum DnsRequest {
-    /// Sent by the maker to DNS to register itself.
-    Post {
-        /// Metadata associated with the request.
-        metadata: Box<DnsMetadata>,
-    },
-    /// Sent by the taker to retrieve all requests.
-    Get,
-    /// Dummy variant used for testing purposes.
-    #[cfg(feature = "integration-test")]
-    Dummy {
-        /// URL to register with DNS.
-        url: String,
-    },
 }
 
 pub(crate) fn verify_fidelity_checks(
