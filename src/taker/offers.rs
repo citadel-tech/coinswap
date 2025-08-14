@@ -25,13 +25,6 @@ use crate::{
     utill::{read_message, send_message, ConnectionType, GLOBAL_PAUSE, NET_TIMEOUT},
 };
 
-#[cfg(not(feature = "tracker"))]
-use crate::protocol::messages::DnsRequest;
-
-#[cfg(not(feature = "tracker"))]
-use crate::error::NetError;
-
-#[cfg(feature = "tracker")]
 use crate::protocol::messages::{TrackerClientToServer, TrackerServerToClient};
 
 use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
@@ -53,20 +46,6 @@ struct OnionAddress {
 /// Enum representing maker addresses.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 pub struct MakerAddress(OnionAddress);
-
-impl MakerAddress {
-    #[cfg(not(feature = "tracker"))]
-    pub(crate) fn new(address: &str) -> Result<Self, TakerError> {
-        if let Some((onion_addr, port)) = address.split_once(':') {
-            Ok(Self(OnionAddress {
-                port: port.to_string(),
-                onion_addr: onion_addr.to_string(),
-            }))
-        } else {
-            Err(NetError::InvalidNetworkAddress.into())
-        }
-    }
-}
 
 impl fmt::Display for MakerAddress {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -198,76 +177,6 @@ pub(crate) fn fetch_offer_from_makers(
     Ok(result)
 }
 
-#[cfg(not(feature = "tracker"))]
-#[allow(unused_variables)]
-/// Retrieves advertised maker addresses from directory servers based on the specified network.
-pub fn fetch_addresses_from_dns(
-    socks_port: Option<u16>,
-    dns_addr: String,
-    connection_type: ConnectionType,
-) -> Result<Vec<MakerAddress>, TakerError> {
-    loop {
-        let mut stream = match connection_type {
-            ConnectionType::CLEARNET => match TcpStream::connect(dns_addr.as_str()) {
-                Err(e) => {
-                    log::error!("Error connecting to DNS: {e:?}");
-                    thread::sleep(GLOBAL_PAUSE);
-                    continue;
-                }
-                Ok(s) => s,
-            },
-            ConnectionType::TOR => {
-                let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
-                match Socks5Stream::connect(socket_addrs, dns_addr.as_str()) {
-                    Err(e) => {
-                        log::error!("Error connecting to DNS: {e:?}");
-                        thread::sleep(GLOBAL_PAUSE);
-                        continue;
-                    }
-                    Ok(s) => s.into_inner(),
-                }
-            }
-        };
-
-        stream.set_read_timeout(Some(NET_TIMEOUT))?;
-        stream.set_write_timeout(Some(NET_TIMEOUT))?;
-        stream.set_nonblocking(false)?;
-
-        if let Err(e) = send_message(&mut stream, &DnsRequest::Get) {
-            log::error!("Failed to send request. Retrying...{e}");
-            thread::sleep(GLOBAL_PAUSE);
-            continue;
-        }
-
-        // Read the response
-        let response: String = match read_message(&mut stream) {
-            Ok(resp) => serde_cbor::de::from_slice(&resp[..])?,
-            Err(e) => {
-                log::error!("Error reading DNS response: {e}. Retrying...");
-                thread::sleep(GLOBAL_PAUSE);
-                continue;
-            }
-        };
-
-        // Parse and validate the response
-        match response
-            .lines()
-            .map(MakerAddress::new)
-            .collect::<Result<Vec<MakerAddress>, _>>()
-        {
-            Ok(addresses) => {
-                return Ok(addresses);
-            }
-            Err(e) => {
-                log::error!("Error decoding DNS response: {e:?}. Retrying...");
-                thread::sleep(GLOBAL_PAUSE);
-                continue;
-            }
-        }
-    }
-}
-
-#[cfg(feature = "tracker")]
 #[allow(unused_variables)]
 /// Retrieves advertised maker addresses from tracker based on the specified network.
 pub fn fetch_addresses_from_tracker(

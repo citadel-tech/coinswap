@@ -53,6 +53,7 @@ fn verify_addresses(addresses: &[(&str, u32)]) {
     }
 }
 
+#[ignore]
 #[test]
 fn test_dns() {
     info!("🧪 Running Test: DNS server address registration and management");
