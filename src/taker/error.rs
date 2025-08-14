@@ -1,7 +1,6 @@
 //! All Taker-related errors.
 use crate::{
-    error::NetError, market::directory::DirectoryServerError, protocol::error::ProtocolError,
-    utill::TorError, wallet::WalletError,
+    error::NetError, protocol::error::ProtocolError, utill::TorError, wallet::WalletError,
 };
 use bitcoin::address::ParseError;
 
@@ -20,8 +19,6 @@ pub enum TakerError {
     NotEnoughMakersInOfferBook,
     /// Error related to wallet operations.
     Wallet(WalletError),
-    /// Error encountered during interaction with the directory server.
-    Directory(DirectoryServerError),
     /// Error related to network operations.
     Net(NetError),
     /// Error indicating the send amount was not set for a transaction.
@@ -61,12 +58,6 @@ impl From<serde_json::Error> for TakerError {
 impl From<WalletError> for TakerError {
     fn from(value: WalletError) -> Self {
         Self::Wallet(value)
-    }
-}
-
-impl From<DirectoryServerError> for TakerError {
-    fn from(value: DirectoryServerError) -> Self {
-        Self::Directory(value)
     }
 }
 

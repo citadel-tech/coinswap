@@ -31,12 +31,10 @@ use bitcoin::Amount;
 use std::{
     env,
     fs::{self, create_dir_all, File},
-    io::{BufRead, BufReader, Read},
+    io::{BufReader, Read},
     path::{Path, PathBuf},
-    process,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        mpsc::{self, Receiver, Sender},
         Arc,
     },
     thread::{self, JoinHandle},
@@ -223,77 +221,6 @@ pub(crate) fn send_to_address(
         .client
         .send_to_address(addrs, amount, None, None, None, None, None, None)
         .unwrap()
-}
-
-// Waits until the mpsc::Receiver<String> receives the expected message.
-pub(crate) fn await_message(rx: &Receiver<String>, expected_message: &str) {
-    loop {
-        let log_message = rx.recv().expect("Failure from Sender side");
-        if log_message.contains(expected_message) {
-            break;
-        }
-    }
-}
-
-// Start the DNS server based on given connection type and considers data directory for the server.
-#[allow(dead_code)]
-pub(crate) fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> process::Child {
-    let (stdout_sender, stdout_recv): (Sender<String>, Receiver<String>) = mpsc::channel();
-
-    let (stderr_sender, stderr_recv): (Sender<String>, Receiver<String>) = mpsc::channel();
-
-    let mut args = vec!["--data-directory", data_dir.to_str().unwrap()];
-
-    // RPC authentication (user:password) from the cookie file
-    let cookie_file_path = Path::new(&bitcoind.params.cookie_file);
-    let rpc_auth = fs::read_to_string(cookie_file_path).expect("failed to read from file");
-    args.push("--USER:PASSWORD");
-    args.push(&rpc_auth);
-
-    // Full node address for RPC connection
-    let rpc_address = bitcoind.params.rpc_socket.to_string();
-    args.push("--ADDRESS:PORT");
-    args.push(&rpc_address);
-
-    let mut directoryd_process = process::Command::new(env!("CARGO_BIN_EXE_directoryd"))
-        .args(args) // THINK: Passing network to avoid mitosis problem..
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn directoryd process");
-    let stderr = directoryd_process.stderr.take().unwrap();
-    let stdout = directoryd_process.stdout.take().unwrap();
-
-    // stderr thread
-    thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        if let Some(line) = reader.lines().map_while(Result::ok).next() {
-            println!("{line}");
-            let _ = stderr_sender.send(line);
-        }
-    });
-
-    // stdout thread
-    thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-
-        for line in reader.lines().map_while(Result::ok) {
-            println!("{line}");
-            if stdout_sender.send(line).is_err() {
-                break;
-            }
-        }
-    });
-
-    // wait for some time to check for any stderr
-    if let Ok(stderr) = stderr_recv.recv_timeout(std::time::Duration::from_secs(10)) {
-        panic!("Error: {:?}", stderr)
-    }
-
-    await_message(&stdout_recv, "RPC socket binding successful");
-    log::info!("🌐 DNS Server Started");
-
-    directoryd_process
 }
 
 #[allow(dead_code)]
