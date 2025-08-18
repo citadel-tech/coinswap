@@ -116,8 +116,9 @@ impl Wallet {
         //a' <-- a + (t - (a+b+c+...))   | assign new first output value
         //a' <-- a + (t -a-b-c-...)      | rearrange
         //a' <-- t - b - c -...          |
-        *output_values.first_mut().expect("value expected") =
-            total_amount.to_sat().saturating_sub(output_values.iter().skip(1).sum::<u64>());
+        *output_values.first_mut().expect("value expected") = total_amount
+            .to_sat()
+            .saturating_sub(output_values.iter().skip(1).sum::<u64>());
         assert_eq!(output_values.iter().sum::<u64>(), total_amount.to_sat());
 
         Ok(output_values)

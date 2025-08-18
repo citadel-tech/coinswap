@@ -897,7 +897,10 @@ mod tests {
             output: vec![TxOut {
                 script_pubkey: destination_address.script_pubkey(),
                 value: Amount::from_sat(
-                    incoming_swapcoin.contract_tx.output[0].value.to_sat().saturating_sub(miner_fee),
+                    incoming_swapcoin.contract_tx.output[0]
+                        .value
+                        .to_sat()
+                        .saturating_sub(miner_fee),
                 ),
             }],
             lock_time: LockTime::from_height(TEST_CURRENT_HEIGHT).unwrap(),
@@ -978,7 +981,10 @@ mod tests {
             output: vec![TxOut {
                 script_pubkey: destination_address.script_pubkey(),
                 value: Amount::from_sat(
-                    incoming_swapcoin.contract_tx.output[0].value.to_sat().saturating_sub(miner_fee),
+                    incoming_swapcoin.contract_tx.output[0]
+                        .value
+                        .to_sat()
+                        .saturating_sub(miner_fee),
                 ),
             }],
             lock_time: LockTime::from_height(TEST_CURRENT_HEIGHT).unwrap(),
