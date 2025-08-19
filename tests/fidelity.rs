@@ -106,10 +106,7 @@ fn test_fidelity() {
     let _ = maker_thread.join().unwrap();
 
     // Assert that successful fidelity bond creation is logged
-    test_framework.assert_log(
-        "Successfully created fidelity bond",
-        "maker/debug.log",
-    );
+    test_framework.assert_log("Successfully created fidelity bond", "maker/debug.log");
 
     log::info!("🔗 Verifying first fidelity bond creation");
     // Verify that the fidelity bond is created correctly.

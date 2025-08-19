@@ -15,7 +15,7 @@
 // Temporary custom assert macro to check for balances ranging +-2 Sats owing to variability in Transaction Size by 1 vbyte(low-s).
 // Test framework constants for balance validation
 #[allow(dead_code)]
-pub const BALANCE_TOLERANCE_SATS: u64 = 2;  
+pub const BALANCE_TOLERANCE_SATS: u64 = 2;
 #[allow(dead_code)]
 pub const EXPECTED_CONTRACT_RECOVERY_SATS: u64 = 441812;
 
@@ -756,7 +756,7 @@ impl TestFramework {
         } else {
             self.temp_dir.join(log_path)
         };
-        
+
         match std::fs::read_to_string(&full_path) {
             Ok(log_contents) => {
                 assert!(

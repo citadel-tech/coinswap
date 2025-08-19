@@ -251,13 +251,13 @@ pub fn setup_directory_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
 pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     LOGGER.get_or_init(|| {
         env::set_var("RUST_LOG", "coinswap=info");
-        
+
         let base_dir = data_dir.unwrap_or_else(|| std::env::temp_dir().join("coinswap"));
-        
+
         let taker_log = base_dir.join("taker").join("debug.log");
         let maker_log = base_dir.join("maker").join("debug.log");
         let directory_log = base_dir.join("directory").join("debug.log");
-        
+
         let stdout = ConsoleAppender::builder().build();
         let taker_file = FileAppender::builder().build(taker_log).unwrap();
         let maker_file = FileAppender::builder().build(maker_log).unwrap();
