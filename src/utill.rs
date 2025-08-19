@@ -23,7 +23,7 @@ use std::{
     os::unix::io::AsRawFd,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Once, OnceLock},
+    sync::OnceLock,
     time::Duration,
 };
 
@@ -249,11 +249,47 @@ pub fn setup_directory_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
 /// Setup function that will only run once, even if called multiple times.
 /// Takes log level to set the desired logging verbosity
 pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
-    Once::new().call_once(|| {
+    LOGGER.get_or_init(|| {
         env::set_var("RUST_LOG", "coinswap=info");
-        setup_taker_logger(filter, true, data_dir.as_ref().map(|d| d.join("taker")));
-        setup_maker_logger(filter, data_dir.as_ref().map(|d| d.join("maker")));
-        setup_directory_logger(filter, data_dir.as_ref().map(|d| d.join("directory")));
+        
+        let base_dir = data_dir.unwrap_or_else(|| std::env::temp_dir().join("coinswap"));
+        
+        let taker_log = base_dir.join("taker").join("debug.log");
+        let maker_log = base_dir.join("maker").join("debug.log");
+        let directory_log = base_dir.join("directory").join("debug.log");
+        
+        let stdout = ConsoleAppender::builder().build();
+        let taker_file = FileAppender::builder().build(taker_log).unwrap();
+        let maker_file = FileAppender::builder().build(maker_log).unwrap();
+        let directory_file = FileAppender::builder().build(directory_log).unwrap();
+
+        let config = Config::builder()
+            .appender(Appender::builder().build("stdout", Box::new(stdout)))
+            .appender(Appender::builder().build("taker_file", Box::new(taker_file)))
+            .appender(Appender::builder().build("maker_file", Box::new(maker_file)))
+            .appender(Appender::builder().build("directory_file", Box::new(directory_file)))
+            .logger(
+                Logger::builder()
+                    .appender("taker_file")
+                    .build("coinswap::taker", filter),
+            )
+            .logger(
+                Logger::builder()
+                    .appender("maker_file")
+                    .build("coinswap::maker", filter),
+            )
+            .logger(
+                Logger::builder()
+                    .appender("directory_file")
+                    .build("coinswap::market", filter),
+            )
+            .build(Root::builder().appender("stdout").build(filter))
+            .unwrap();
+
+        match log4rs::init_config(config) {
+            Ok(_) => log::info!("✅ Test framework logger initialized successfully"),
+            Err(e) => log::error!("❌ Failed to initialize test framework logger: {e}"),
+        }
     });
 }
 

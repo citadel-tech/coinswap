@@ -77,9 +77,10 @@ fn test_fidelity() {
 
     thread::sleep(Duration::from_secs(6));
 
+    // check for funding request in maker logs
     test_framework.assert_log(
-        "Send at least 0.01000000 BTC to",
-        "/tmp/coinswap/taker/debug.log",
+        "Insufficient fund to create fidelity bond",
+        "maker/debug.log",
     );
 
     log::info!("💰 Adding sufficient funds for fidelity bond creation");
@@ -107,7 +108,7 @@ fn test_fidelity() {
     // Assert that successful fidelity bond creation is logged
     test_framework.assert_log(
         "Successfully created fidelity bond",
-        "/tmp/coinswap/taker/debug.log",
+        "maker/debug.log",
     );
 
     log::info!("🔗 Verifying first fidelity bond creation");

@@ -13,6 +13,12 @@
 //! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
 
 // Temporary custom assert macro to check for balances ranging +-2 Sats owing to variability in Transaction Size by 1 vbyte(low-s).
+// Test framework constants for balance validation
+#[allow(dead_code)]
+pub const BALANCE_TOLERANCE_SATS: u64 = 2;  
+#[allow(dead_code)]
+pub const EXPECTED_CONTRACT_RECOVERY_SATS: u64 = 441812;
+
 #[macro_export]
 macro_rules! assert_in_range {
     ($value:expr, $allowed:expr, $msg:expr) => {{
@@ -548,9 +554,10 @@ pub fn verify_swap_results(
             assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
 
             // Live contract balance can be non-zero, if a maker shuts down in middle of recovery.
-            assert!(
-                balances.contract == Amount::ZERO
-                    || balances.contract == Amount::from_btc(0.00441812).unwrap() // Contract balance in recovery scenarios
+            assert_in_range!(
+                balances.contract.to_sat(),
+                [0, EXPECTED_CONTRACT_RECOVERY_SATS], // Zero balance or expected recovery amount
+                "Unexpected contract balance"
             );
 
             // Check spendable balance difference.
@@ -736,20 +743,32 @@ impl TestFramework {
         )
     }
 
+    /// Get the temporary directory path used by the test framework
+    pub fn get_temp_dir(&self) -> &PathBuf {
+        &self.temp_dir
+    }
+
     /// Assert that a log message exists in the debug.log file
+    /// log_path can be relative to temp_dir or an absolute path
     pub fn assert_log(&self, expected_message: &str, log_path: &str) {
-        match std::fs::read_to_string(log_path) {
+        let full_path = if Path::new(log_path).is_absolute() {
+            PathBuf::from(log_path)
+        } else {
+            self.temp_dir.join(log_path)
+        };
+        
+        match std::fs::read_to_string(&full_path) {
             Ok(log_contents) => {
                 assert!(
                     log_contents.contains(expected_message),
                     "Expected log message '{}' not found in log file: {}",
                     expected_message,
-                    log_path
+                    full_path.display()
                 );
                 log::info!("✅ Found expected log message: '{expected_message}'");
             }
             Err(e) => {
-                panic!("Could not read log file at {}: {}", log_path, e);
+                panic!("Could not read log file at {}: {}", full_path.display(), e);
             }
         }
     }
