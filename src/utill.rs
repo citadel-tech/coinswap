@@ -722,55 +722,59 @@ fn set_terminal_mode(fd: i32, echo: bool) {
 /// Prompts the user for a password using the given prompt string.
 /// Temporarily disables canonical mode and echo to mask each typed
 /// character with `*` as feedback.
-pub fn prompt_password(message: &'static str) -> std::io::Result<String> {
-    let stdin = io::stdin();
-    let fd = stdin.as_raw_fd();
+pub fn prompt_password(message: String) -> std::io::Result<String> {
+    if cfg!(feature = "integration-test") || cfg!(test) {
+        Ok("integration-test".to_string())
+    } else {
+        let stdin = io::stdin();
+        let fd = stdin.as_raw_fd();
 
-    print!("{message}");
-    io::stdout().flush()?; // Ensure the prompt is printed
+        print!("{message}");
+        io::stdout().flush()?; // Ensure the prompt is printed
 
-    set_terminal_mode(fd, false); // disable echo & canonical mode
+        set_terminal_mode(fd, false); // disable echo & canonical mode
 
-    let mut password = String::new();
-    // Buffer to read one byte at a time from stdin.
-    // We read input character-by-character because we disabled canonical mode (ICANON),
-    // which normally buffers input until Enter is pressed.
-    let mut buf = [0u8; 1];
+        let mut password = String::new();
+        // Buffer to read one byte at a time from stdin.
+        // We read input character-by-character because we disabled canonical mode (ICANON),
+        // which normally buffers input until Enter is pressed.
+        let mut buf = [0u8; 1];
 
-    while stdin.lock().read(&mut buf).unwrap() == 1 {
-        let c = buf[0] as char;
-        match c {
-            '\n' | '\r' => {
-                // - If the byte is newline (`\n`, ASCII 0x0A) or carriage return (`\r`, ASCII 0x0D),
-                //   it signals the end of input, so we break the loop.
-                println!();
-                break;
-            }
-            '\x08' | '\x7f' => {
-                // - If the byte is Backspace (ASCII 0x08 or 0x7f),
-                //   we remove the last character from the password (if any),
-                //   and erase the asterisk from the terminal by moving the cursor back,
-                //   writing a space to overwrite, then moving the cursor back again.
-                if !password.is_empty() {
-                    password.pop();
-                    print!("\x08 \x08");
+        while stdin.lock().read(&mut buf).unwrap() == 1 {
+            let c = buf[0] as char;
+            match c {
+                '\n' | '\r' => {
+                    // - If the byte is newline (`\n`, ASCII 0x0A) or carriage return (`\r`, ASCII 0x0D),
+                    //   it signals the end of input, so we break the loop.
+                    println!();
+                    break;
+                }
+                '\x08' | '\x7f' => {
+                    // - If the byte is Backspace (ASCII 0x08 or 0x7f),
+                    //   we remove the last character from the password (if any),
+                    //   and erase the asterisk from the terminal by moving the cursor back,
+                    //   writing a space to overwrite, then moving the cursor back again.
+                    if !password.is_empty() {
+                        password.pop();
+                        print!("\x08 \x08");
+                        io::stdout().flush().unwrap();
+                    }
+                }
+                _ => {
+                    // - Otherwise, for any other character, we append it to the password string
+                    //   and print an asterisk '*' as a visual placeholder for the typed character.
+                    password.push(c);
+                    print!("*");
                     io::stdout().flush().unwrap();
                 }
             }
-            _ => {
-                // - Otherwise, for any other character, we append it to the password string
-                //   and print an asterisk '*' as a visual placeholder for the typed character.
-                password.push(c);
-                print!("*");
-                io::stdout().flush().unwrap();
-            }
         }
+
+        set_terminal_mode(fd, true); // restore terminal settings
+
+        println!(); // move to next line after input
+        Ok(password.trim_end().to_string())
     }
-
-    set_terminal_mode(fd, true); // restore terminal settings
-
-    println!(); // move to next line after input
-    Ok(password.trim_end().to_string())
 }
 
 pub(crate) fn get_emphemeral_address(
@@ -878,10 +882,9 @@ pub(crate) fn get_tor_hostname(
 }
 
 /// Deserialize any generic type from a CBOR file. The type should impl [serde::de::Deserialize].
-pub fn deserialize_from_cbor<T, E>(mut reader: Vec<u8>) -> Result<T, E>
+pub fn deserialize_from_cbor<T>(mut reader: Vec<u8>) -> Result<T, serde_cbor::Error>
 where
     T: serde::de::DeserializeOwned,
-    E: From<serde_cbor::Error> + std::fmt::Debug,
 {
     match serde_cbor::from_slice::<T>(&reader) {
         Ok(store) => Ok(store),
@@ -898,7 +901,7 @@ where
                     }
                 }
             } else {
-                Err(e.into())
+                Err(e)
             }
         }
     }
