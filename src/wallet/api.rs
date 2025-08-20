@@ -7,12 +7,7 @@ use std::{convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr, thread, t
 
 use std::collections::HashMap;
 
-use aes_gcm::{
-    aead::{AeadCore, OsRng},
-    Aes256Gcm,
-};
-
-use crate::wallet::Destination;
+use crate::{security::KeyMaterial, wallet::Destination};
 
 use bip39::Mnemonic;
 use bitcoin::{
@@ -24,15 +19,13 @@ use bitcoin::{
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, Weight,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
-use pbkdf2::pbkdf2_hmac_array;
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use std::path::Path;
 
 use crate::{
     protocol::contract,
     utill::{
-        compute_checksum, generate_keypair, get_hd_path_from_descriptor, prompt_password,
+        compute_checksum, generate_keypair, get_hd_path_from_descriptor,
         redeemscript_to_scriptpubkey, MIN_FEE_RATE,
     },
     wallet::split_utxos::MAX_SPLITS,
@@ -56,34 +49,6 @@ use super::{
 // for example which privkey corresponds to a scriptpubkey is stored in hd paths
 
 const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
-
-/// Salt used for key derivation from a user-provided passphrase.
-const PBKDF2_SALT: &[u8; 8] = b"coinswap";
-/// Number of PBKDF2 iterations to strengthen passphrase-derived keys.
-///
-/// In production, this is set to **600,000 iterations**, following
-/// modern password security guidance from the
-/// [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
-///
-/// During testing or integration tests, the iteration count is reduced to 1
-/// for performance.
-const PBKDF2_ITERATIONS: u32 = if cfg!(feature = "integration-test") || cfg!(test) {
-    1
-} else {
-    600_000
-};
-
-/// Holds derived cryptographic key material used for encrypting and decrypting wallet data.
-#[derive(Debug, Clone)]
-pub struct KeyMaterial {
-    /// A 256-bit key derived from the user’s passphrase via PBKDF2.
-    /// This key is used with AES-GCM for encryption/decryption.
-    pub key: [u8; 32],
-    /// Nonce used for AES-GCM encryption, generated when a new wallet is created.
-    /// When loading an existing wallet, this is initially `None`.
-    /// It is populated after reading the stored nonce from disk.
-    pub nonce: Option<Vec<u8>>,
-}
 
 /// Represents a Bitcoin wallet with associated functionality and data.
 #[derive(Debug)]
@@ -254,12 +219,8 @@ impl Wallet {
     /// Load wallet data from file and connect to a core RPC.
     /// The core rpc wallet name, and wallet_id field in the file should match.
     /// If encryption material is provided, decrypt the wallet store using it.
-    pub(crate) fn load(
-        path: &Path,
-        rpc_config: &RPCConfig,
-        store_enc_material: &Option<KeyMaterial>,
-    ) -> Result<Wallet, WalletError> {
-        let (store, nonce) = WalletStore::read_from_disk(path, store_enc_material)?;
+    pub(crate) fn load(path: &Path, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
+        let (store, store_enc_material) = WalletStore::read_from_disk(path)?;
 
         if rpc_config.wallet_name != store.file_name {
             return Err(WalletError::General(format!(
@@ -287,22 +248,11 @@ impl Wallet {
             store.outgoing_swapcoins.len()
         );
 
-        // The input `store_enc_material` has a key but no nonce before reading from disk.
-        // After reading, combine the key with the stored nonce to create a complete KeyMaterial
-        // used for subsequent encryption/decryption operations.
-        let updated_enc_material = match (store_enc_material, nonce) {
-            (Some(material), Some(nonce)) => Some(KeyMaterial {
-                key: material.key,
-                nonce: Some(nonce),
-            }),
-            _ => None,
-        };
-
         Ok(Self {
             rpc,
             wallet_file_path: path.to_path_buf(),
             store,
-            store_enc_material: updated_enc_material,
+            store_enc_material,
         })
     }
 
@@ -315,47 +265,17 @@ impl Wallet {
         path: &Path,
         rpc_config: &RPCConfig,
     ) -> Result<Wallet, WalletError> {
-        // For tests or integration tests, use a fixed password. Otherwise prompt user.
-        let wallet_enc_password = if cfg!(feature = "integration-test") || cfg!(test) {
-            "integration-test".to_string()
-        } else {
-            prompt_password("Enter wallet encryption passphrase (empty for no encryption): ")?
-        };
-
-        // If user entered empty password, no encryption key material is created.
-        let key = if wallet_enc_password.is_empty() {
-            None
-        } else {
-            // Derive a 256-bit encryption key from the passphrase using PBKDF2.
-            let derived_key = pbkdf2_hmac_array::<Sha256, 32>(
-                wallet_enc_password.as_bytes(),
-                PBKDF2_SALT,
-                PBKDF2_ITERATIONS,
-            );
-            // Generate a nonce only if creating a new wallet, else defer nonce reading.
-            let nonce = if path.exists() {
-                //Will be filled after loading, by the Wallet::load method
-                None
-            } else {
-                // Generate a fresh nonce for encrypting a new wallet.
-                let generated_nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-                Some(generated_nonce.as_slice().to_vec())
-            };
-
-            Some(KeyMaterial {
-                key: derived_key,
-                nonce,
-            })
-        };
-
         let wallet = if path.exists() {
             // wallet already exists, load the wallet
-            let wallet = Wallet::load(path, rpc_config, &key)?;
+            let wallet = Wallet::load(path, rpc_config)?;
             log::info!("Wallet file at {path:?} successfully loaded.");
             wallet
         } else {
             // wallet doesn't exists at the given path, create a new one
-            let wallet = Wallet::init(path, rpc_config, key)?;
+
+            let store_enc_material = KeyMaterial::new_interactive(None);
+
+            let wallet = Wallet::init(path, rpc_config, store_enc_material)?;
 
             log::info!("New Wallet created at : {path:?}");
             wallet
@@ -1203,6 +1123,9 @@ impl Wallet {
     /// Always prefers to spend reused addresses first to preserve privacy.
     /// Selects more UTXOs if total reused addresses amount isn't adequate.
     ///
+    /// Seperates regular and swap UTXOs, and always chooses regular UTXOs first.
+    /// Mixing regular and swap UTXOs is not allowed.
+    ///
     /// # Arguments
     /// * `amount` - The target amount to select coins for
     /// * `feerate` - Fee rate in sats/vbyte
@@ -1259,6 +1182,15 @@ impl Wallet {
         // Source: https://docs.rs/bitcoin/latest/src/bitcoin/blockdata/transaction.rs.html#599-602
         const TX_BASE_WEIGHT: u64 = 43;
 
+        // Estimated transaction weight for basic fee calculation
+        // Assumes a typical transaction with 2 inputs and 2 outputs (target + change)
+        // This is used for early fee estimation before actual coin selection
+        const ESTIMATED_TX_WEIGHT: u64 =
+            TX_BASE_WEIGHT + (2 * P2WPKH_INPUT_WEIGHT) + (2 * TARGET_OUTPUT_WEIGHT);
+
+        // Convert weight units to virtual bytes for fee calculation
+        // Weight is divided by 4 to get vbytes (BIP 141 standard)
+        const ESTIMATED_FEE_VBYTES: u64 = ESTIMATED_TX_WEIGHT / 4;
         // P2WPKH input weight: OutPoint(32) + sequence(4) + vout(4) + empty_scriptsig(1) = 41 bytes
         const INPUT_BASE_WEIGHT: u64 = 32 + 4 + 4 + 1;
 
@@ -1266,39 +1198,58 @@ impl Wallet {
         const TARGET_OUTPUT_WEIGHT: u64 = Amount::SIZE as u64 + 1 + P2WPKH_SPK_SIZE as u64; // ~31 bytes
         const CHANGE_OUTPUT_WEIGHT: u64 = Amount::SIZE as u64 + 1 + P2WPKH_SPK_SIZE as u64; // ~31 bytes
 
-        // Get spendable UTXOs (regular coins and incoming swap coins)
-        let mut unspents = self.list_descriptor_utxo_spend_info()?;
-        unspents.extend(self.list_incoming_swap_coin_utxo_spend_info()?);
-
-        // Filter out locked UTXOs
         let locked_utxos = self.list_lock_unspent()?;
-        let unspents = unspents
-            .into_iter()
-            .filter(|(utxo, _)| {
-                let outpoint = OutPoint::new(utxo.txid, utxo.vout);
-                !locked_utxos.contains(&outpoint)
-            })
-            .collect::<Vec<_>>();
+        let filter_locked = |utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>| {
+            utxos
+                .into_iter()
+                .filter(|(utxo, _)| {
+                    let outpoint = OutPoint::new(utxo.txid, utxo.vout);
+                    !locked_utxos.contains(&outpoint)
+                })
+                .collect::<Vec<_>>()
+        };
 
-        if unspents.is_empty() {
-            log::warn!("No spendable UTXOs available, returning empty selection with 0 sats");
-            return Ok(Vec::new());
+        // Get regular and swap UTXOs separately
+        let available_regular_utxos = filter_locked(self.list_descriptor_utxo_spend_info()?);
+        let available_swap_utxos = filter_locked(self.list_swept_incoming_swap_utxos()?);
+
+        // Assert that no non-spendable UTXOs are included after filtering
+        assert!(
+        available_regular_utxos.iter().chain(available_swap_utxos.iter()).all(|(_, spend_info)| !matches!(
+            spend_info,
+            UTXOSpendInfo::FidelityBondCoin { .. }
+                | UTXOSpendInfo::OutgoingSwapCoin { .. }
+                | UTXOSpendInfo::TimelockContract { .. }
+                | UTXOSpendInfo::HashlockContract { .. }
+        )),
+        "Fidelity, Outgoing Swapcoins, Hashlock and Timelock coins are not included in coin selection"
+    );
+
+        if available_regular_utxos.is_empty() && available_swap_utxos.is_empty() {
+            log::error!("No spendable UTXOs available");
+            let estimated_fee = calculate_fee(ESTIMATED_FEE_VBYTES, feerate as f32)?;
+            return Err(WalletError::InsufficientFund {
+                available: 0,
+                required: amount.to_sat() + estimated_fee,
+            });
         }
 
-        // Assert: fidelity, outgoing swapcoins, hashlock and timelock coins are not included
-        assert!(
-            unspents.iter().all(|(_, spend_info)| !matches!(
-                spend_info,
-                UTXOSpendInfo::FidelityBondCoin { .. }
-                    | UTXOSpendInfo::OutgoingSwapCoin { .. }
-                    | UTXOSpendInfo::TimelockContract { .. }
-                    | UTXOSpendInfo::HashlockContract { .. }
-            )),
-            "Fidelity, Outgoing Swapcoins, Hashlock and Timelock coins are not included in coin selection"
-        );
+        // Calculate totals for each type
+        let regular_total: u64 = available_regular_utxos
+            .iter()
+            .map(|(utxo, _)| utxo.amount.to_sat())
+            .sum();
+        let swap_total: u64 = available_swap_utxos
+            .iter()
+            .map(|(utxo, _)| utxo.amount.to_sat())
+            .sum();
+        let target_sats = amount.to_sat();
+
+        // Determine which UTXO types can satisfy the target
+        let can_use_regular = target_sats <= regular_total;
+        let can_use_swap = target_sats <= swap_total;
 
         let change_weight = Weight::from_vb_unwrap(CHANGE_OUTPUT_WEIGHT);
-
         let cost_of_change = {
             let creation_cost = calculate_fee(change_weight.to_vbytes_ceil(), feerate as f32)?;
             let future_spending_cost = calculate_fee(P2WPKH_INPUT_WEIGHT / 4, LONG_TERM_FEERATE)?;
@@ -1307,6 +1258,21 @@ impl Wallet {
 
         let target_weight = Weight::from_vb_unwrap(TARGET_OUTPUT_WEIGHT);
         let avg_output_weight = (change_weight.to_wu() + target_weight.to_wu()) / 2;
+
+        // Choose UTXO type
+        let (utxo_type, unspents) = if can_use_regular {
+            ("regular", &available_regular_utxos)
+        } else if can_use_swap {
+            ("swap", &available_swap_utxos)
+        } else {
+            let estimated_fee = calculate_fee(ESTIMATED_FEE_VBYTES, feerate as f32)?;
+
+            return Err(WalletError::InsufficientFund {
+                available: regular_total,
+                required: target_sats + estimated_fee,
+            });
+        };
+
         let avg_input_weight = unspents
             .iter()
             .map(|(_, spend_info)| {
@@ -1315,8 +1281,6 @@ impl Wallet {
             })
             .sum::<u64>()
             / unspents.len() as u64;
-
-        let target_amount = amount.to_sat();
 
         // Group UTXOs by address
         let mut address_groups: HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
@@ -1330,15 +1294,15 @@ impl Wallet {
             address_groups
                 .entry(address_str)
                 .or_default()
-                .push((utxo, spend_info));
+                .push((utxo.clone(), spend_info.clone()));
         }
+
         // Separate addresses with multiple UTXOs from addresses with a single UTXO
         let (mut grouped_addresses, single_addresses): (Vec<_>, Vec<_>) = address_groups
             .into_values()
             .partition(|group| group.len() > 1);
 
         // Sort reused addresses by total value
-        // This enables optimal selection: find the smallest group that covers target+fees
         grouped_addresses
             .sort_by_key(|group| group.iter().map(|(u, _)| u.amount.to_sat()).sum::<u64>());
 
@@ -1357,25 +1321,22 @@ impl Wallet {
                     })
                     .sum();
 
-                // Calculate transaction fees for current selection including this group
-                let tx_weight =
-                    TX_BASE_WEIGHT + result_weight + group_weight + target_weight.to_wu();
-                let estimated_fee = calculate_fee(tx_weight / 4, feerate as f32)?;
+                let estimated_fee = calculate_fee(ESTIMATED_FEE_VBYTES, feerate as f32)?;
 
                 // Add the reused address group to selection
-                // Always take entire groups to maintain address privacy - never partial groups
                 result_total += group_total;
                 result_weight += group_weight;
                 result_utxos.extend(group);
 
                 // Check if reused addresses now cover target + fees
-                if result_total >= target_amount + estimated_fee {
+                if result_total >= target_sats + estimated_fee {
                     log::info!(
-                        "Address grouping: Selected {} UTXOs (total: {} sats, target+fee: {} sats)",
-                        result_utxos.len(),
-                        result_total,
-                        target_amount + estimated_fee
-                    );
+                    "Address grouping: Selected {} {} UTXOs (total: {} sats, target+fee: {} sats)",
+                    result_utxos.len(),
+                    utxo_type,
+                    result_total,
+                    target_sats + estimated_fee
+                );
                     return Ok(result_utxos);
                 }
             }
@@ -1388,7 +1349,7 @@ impl Wallet {
             .map(|single_address_utxos| {
                 let total_value: u64 = single_address_utxos
                     .iter()
-                    .map(|(utxo, _): &(ListUnspentResultEntry, UTXOSpendInfo)| utxo.amount.to_sat())
+                    .map(|(utxo, _)| utxo.amount.to_sat())
                     .sum();
                 let total_weight: u64 = single_address_utxos
                     .iter()
@@ -1437,22 +1398,16 @@ impl Wallet {
                 let mut final_selection = selected_utxos;
                 final_selection.extend(additional_utxos);
 
-                log::info!("Coin selection concluded with {:?}", selection.waste);
+                log::info!("Selected {} {} UTXOs", final_selection.len(), utxo_type);
                 Ok(final_selection)
             }
-            Err(e) if e.to_string().contains("The Inputs funds are insufficient") => {
-                let total_available = selected_total
-                    + single_addresses
-                        .iter()
-                        .flatten()
-                        .map(|(u, _)| u.amount.to_sat())
-                        .sum::<u64>();
-                Err(WalletError::InsufficientFund {
-                    available: total_available,
-                    required: amount.to_sat(),
-                })
+            Err(e) => {
+                log::error!("Coin selection of {} UTXOs failed: {:?}", utxo_type, e);
+                Err(WalletError::General(format!(
+                    "Coin selection failed: {}",
+                    e
+                )))
             }
-            Err(e) => Err(WalletError::General(format!("Coin selection failed: {e}"))),
         }
     }
 
