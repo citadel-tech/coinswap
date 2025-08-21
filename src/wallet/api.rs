@@ -1146,6 +1146,8 @@ impl Wallet {
         feerate: f64,
         manual_utxo_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+        log::debug!("CoinSelect TARGET : {} Sats with No. of Manually Selected Utxos: {}", amount.to_sat(), manual_utxo_outpoints.iter().len());
+
         // P2WPKH Breaks down as:
         // Non-witness data (multiplied by 4):
         // - Previous txid (32 bytes) * 4     = 128 WU
