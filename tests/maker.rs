@@ -105,7 +105,7 @@ impl MakerCli {
 
         let (amount, addrs) = loop {
             let log_message = rx.recv().unwrap();
-            if log_message.contains("Send at least 0.05000218 BTC") {
+            if log_message.contains("Send at least 0.05000324 BTC") {
                 let parts: Vec<&str> = log_message.split_whitespace().collect();
                 let amount = Amount::from_str_in(parts[7], bitcoin::Denomination::Bitcoin).unwrap();
                 let addr = Address::from_str(parts[10]).unwrap().assume_checked();
@@ -133,7 +133,7 @@ impl MakerCli {
         );
 
         // Confirm swap liquidity availability
-        await_message(&rx, "Swap Liquidity: 999864 sats");
+        await_message(&rx, "Swap Liquidity: 999970 sats");
 
         await_message(&rx, "Server Setup completed!!");
 
@@ -331,11 +331,11 @@ fn test_maker_cli(maker_cli: &MakerCli, rx: &Receiver<String>) {
     assert_eq!(
         serde_json::from_str::<Value>(&balances).unwrap(),
         json!({
-            "regular": 999152,
+            "regular": 999258,
             "swap": 0,
             "contract": 0,
             "fidelity": 5000000,
-            "spendable": 999152
+            "spendable": 999258
         })
     );
 
@@ -379,11 +379,11 @@ fn test_maker_cli(maker_cli: &MakerCli, rx: &Receiver<String>) {
     assert_eq!(
         serde_json::from_str::<Value>(&balances).unwrap(),
         json!({
-            "regular": 998872,
+            "regular": 998978,
             "swap": 0,
             "contract": 0,
             "fidelity": 5000000,
-            "spendable": 998872
+            "spendable": 998978
         })
     );
 

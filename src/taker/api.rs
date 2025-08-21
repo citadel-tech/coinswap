@@ -301,20 +301,29 @@ impl Taker {
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub(crate) fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         self.ongoing_swap_state.swap_params = swap_params;
-        // Check if we have enough balance.
-        let available = self.wallet.get_balances()?.spendable;
-        let estimated_fee = Amount::from_sat(calculate_fee_sats(200));
 
+        // Check if we have enough balance - try regular first, then swap
+        let balances = self.wallet.get_balances()?;
+        let estimated_fee = Amount::from_sat(calculate_fee_sats(200));
         let required = swap_params.send_amount + estimated_fee;
-        if available < required {
+
+        // Try regular balance first
+        if balances.regular >= required {
+            log::info!("Using regular UTXOs for coinswap");
+        }
+        // If regular insufficient, try swap balance
+        else if balances.swap >= required {
+            log::info!("Using swap UTXOs for coinswap");
+        }
+        // If both insufficient, error with regular balance (consistent with wallet)
+        else {
             let err = WalletError::InsufficientFund {
-                available: available.to_sat(),
+                available: balances.regular.to_sat(),
                 required: required.to_sat(),
             };
             log::error!("Not enough balance to do swap : {err:?}");
             return Err(err.into());
         }
-
         log::info!("Syncing Offerbook");
         self.sync_offerbook()?;
 
