@@ -2103,6 +2103,7 @@ impl Taker {
                 let min_size_with_fee = bitcoin::Amount::from_sat(
                     oa.offer.min_size + maker_fee + 500, /* Estimated mining fee */
                 );
+                log::debug!("Maker Filtering : Target Amount: {swap_amount}, Minimum Amount: {min_size_with_fee}, Maximum Amount: {}", bitcoin::Amount::from_sat(oa.offer.max_size));
                 swap_amount >= min_size_with_fee
                     && swap_amount <= bitcoin::Amount::from_sat(oa.offer.max_size)
             })
