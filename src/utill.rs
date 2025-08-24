@@ -47,6 +47,14 @@ const MASK_LOW_35_BITS: u64 = 0x7ffffffff;
 const SHIFT_FOR_C0: u64 = 35;
 const CHECKSUM_FINAL_XOR_VALUE: u64 = 1;
 
+///Contract Metadata type
+/// Purpose of each fields-:
+///    1- ScriptBuf- It contains incoming or outgoing swapcoins redeemscript.
+///    2- Transaction- It contains either hashlock or timelock contract txn
+///    3- u16 - It contains timelock value for timelock contract
+///    4- Transaction- It contains timelock_spend/hashlock_spend transaction
+pub type ContractMetadata = Vec<((ScriptBuf, Transaction), (u16, Transaction))>;
+
 /// Global timeout for all network connections.
 pub(crate) const NET_TIMEOUT: Duration = Duration::from_secs(60);
 

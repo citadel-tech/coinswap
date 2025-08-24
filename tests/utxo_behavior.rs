@@ -337,8 +337,7 @@ fn test_separated_utxo_coin_selection() {
             } => {
                 println!("✅ Correctly failed with InsufficientFund");
                 println!(
-                    "   Available: {} sats (regular only), Required: {} sats",
-                    available, required
+                    "   Available: {available} sats (regular only), Required: {required} sats"
                 );
                 assert_eq!(*required, target_3.to_sat() + 324); // Should include 324 sats estimated fee
                 assert_eq!(*available, balances.regular.to_sat());
@@ -359,7 +358,7 @@ fn test_separated_utxo_coin_selection() {
         wallet.get_next_external_address().unwrap()
     };
 
-    println!("🏦 Funding new regular address: {}", new_address);
+    println!("🏦 Funding new regular address: {new_address}");
 
     // Fund the new address with enough to cover the target
     let additional_amount = Amount::from_sat(30000000); // 30M sats
