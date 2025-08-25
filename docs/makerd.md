@@ -2,7 +2,7 @@
 
 The **Maker** is the party that provides liquidity for a coin swap initiated by a **Taker**. In return, the Maker earns a fee for facilitating the swap.
 
-The Maker component is based on the `makerd/maker-cli` architecture, which is similar to `bitcoind/bitcoin-cli`. The `makerd` is a background daemon that handles the heavy tasks in the **Coinswap** protocol, such as interacting with the **DNS** system, maintaining fidelity bonds, and processing Taker requests.
+The Maker component is based on the `makerd/maker-cli` architecture, which is similar to `bitcoind/bitcoin-cli`. The `makerd` is a background daemon that handles the heavy tasks in the **Coinswap** protocol, such as maintaining fidelity bonds, and processing Taker requests.
 
 The `makerd` server should run 24/7 to ensure it can process Taker requests and facilitate coin swaps at any time.
 
@@ -27,7 +27,6 @@ min_swap_amount = 10000
 fidelity_amount = 50000
 fidelity_timelock = 13104
 connection_type = TOR
-directory_server_address = ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080
 base_fee = 100,
 amount_relative_fee_pct = 0.1,
 ```
@@ -40,7 +39,6 @@ amount_relative_fee_pct = 0.1,
 - `fidelity_amount`: Amount (in satoshis) locked as a fidelity bond to deter Sybil attacks.
 - `fidelity_timelock`: Lock duration in block heights for the fidelity bond.
 - `connection_type`: Specifies the network mode; set to "TOR" in production for privacy, or "CLEARNET" during testing.
-- `directory_server_address`: The Tor address of the DNS Server. This value is set to a fixed default for now.
 - `base_fee`: A fixed fee charged by the Maker for providing its services (in satoshis).
 - `amount_relative_fee_pct`: A percentage fee based on the swap amount.
 
@@ -80,9 +78,6 @@ This section focuses on `Makerd`, walking you through the process of starting an
 
 `Makerd` requires a **Bitcoin Core** RPC connection running on **signet** for its operation (check [demo doc](./demo.md)). To get started, you need to start `bitcoind`:
 
-> **Important:**  
-> All apps are designed to run on our **custom signet** for testing purposes. The DNS server that Maker connects to will also be on signet. While you can run these apps on other networks, there won't be any DNS available, so Maker won't be able to connect to the DNS server or other Coinswap networks.
-
 To start `bitcoind`:
 
 ```bash
@@ -111,7 +106,7 @@ Coinswap Maker Server
 The server requires a Bitcoin Core RPC connection running in Testnet4. It requires some starting
 balance, around 50,000 sats for Fidelity + Swap Liquidity (suggested 50,000 sats). So topup with at
 least 0.001 BTC to start all the node processses. Suggested [faucet
-here]<https://mempool.space/testnet4/faucet>
+here] https://mempool.space/testnet4/faucet
 
 All server processes will start after the fidelity bond transaction is confirmed. This may take some
 time. Approx: 10 mins. Once the bond is confirmed, the server starts listening for incoming swap
@@ -120,10 +115,10 @@ requests. As it performs swaps for clients, it keeps earning fees.
 The server is operated with the maker-cli app, for all basic wallet related operations.
 
 For more detailed usage information, please refer the [Maker
-Doc]<https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/makerd.md>
+Doc] https://github.com/citadel-tech/coinswap/blob/master/docs/makerd.md
 
 This is early beta, and there are known and unknown bugs. Please report issues in the [Project Issue
-Board]<https://github.com/citadel-tech/coinswap/issues>
+Board] https://github.com/citadel-tech/coinswap/issues
 
 USAGE:
     makerd [OPTIONS]
@@ -135,7 +130,7 @@ OPTIONS:
             [default: user:password]
 
     -d, --data-directory <DATA_DIRECTORY>
-            Optional DNS data directory. Default value: "~/.coinswap/maker"
+            Optional data directory. Default value: "~/.coinswap/maker"
 
     -h, --help
             Print help information
@@ -260,11 +255,6 @@ This will launch `makerd` and connect it to the Bitcoin RPC core running on its 
   INFO coinswap::maker::server - [6102] Successfully created fidelity bond
   ```
 
-- **DNS Registration**: After the fidelity bond is ready, `makerd` will send its address and fidelity proof to the DNS address book:
-
-  ```bash
-  INFO coinswap::maker::server - [6102] Successfully sent our address and fidelity proof to DNS at 127.0.0.1:8080
-  ```
 
 - **Thread Spawning**: Several threads will be spawned to handle specific tasks:
 

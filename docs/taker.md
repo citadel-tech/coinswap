@@ -1,6 +1,6 @@
 # Taker Tutorial
 
-The **Taker** is the party that initiates the coinswap. It queries the directory server for a list of makers, requests offers from them and selects suitable makers for the swap. It then conducts the swap with the selected makers.
+The **Taker** is the party that initiates the coinswap. It discovers makers, requests offers from them and selects suitable makers for the swap.
 
 In this tutorial, we will guide you through the process of setting up and running the taker, and conducting a coinswap.
 
@@ -16,9 +16,6 @@ The taker CLI is an application that allows you to perform coinswaps as a taker.
 ### Start Bitcoin Core (Pre-requisite)
 
 `Taker` requires a **Bitcoin Core** RPC connection running on a **custom signet** for its operation(check [demo doc](./demo.md)). To get started, you need to start `bitcoind`:
-
-> **Important:**  
-> All apps are designed to run on our **custom signet** for testing purposes. The DNS server that Taker connects to will also be on signet. While you can run these apps on other networks, there won't be any DNS available, so Taker won't be able to connect to the DNS server for getting maker's offers and can't do coinswap with makers. Alternatively, you can run your own DNS server on the network of your choice.
 
 To start `bitcoind`:
 
@@ -282,7 +279,7 @@ $ taker -r 127.0.0.1:38332 -a user:password fetch-offers
 }
 ```
 
-This will fetch the list of available makers from the directory server and display their offers.
+This will fetch the list of available makers and display their offers.
 
 ### Initiate a Coinswap
 
@@ -339,14 +336,12 @@ The data directory contains the following files:
 control_port = 9051
 socks_port = 9050
 tor_auth_password = ""
-directory_server_address = "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080"
 connection_type = "TOR"
 ```
  
 - `control_port`: The Tor Control Port. Check the [tor doc](tor.md) for more details.
 - `socks_port`: The Tor Socks Port. Check the [tor doc](tor.md) for more details.
 - `tor_auth_password`: Optional password for Tor control authentication; empty by default.
-- `directory_server_address`: Address of the Directory Server (an onion address in production) for discovering Maker nodes.
 - `connection_type`: The connection type to use for the directory server. Possible values are `CLEARNET` and `TOR`.
 
 ### Wallets

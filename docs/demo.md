@@ -190,8 +190,7 @@ Suggested amount: **0.01 BTC** (provides fidelity bond + swap liquidity)
 Once funded, the server will automatically:
 1. Create and broadcast the fidelity bond transaction
 2. Wait for confirmation (approximately 2-4 minutes on custom signet)
-3. Register with the DNS server
-4. Start listening for incoming swap requests
+3. Start listening for incoming swap requests
 
 Final success log:
 ```bash
