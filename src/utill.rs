@@ -18,13 +18,21 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     env, fmt, fs,
-    io::{self, BufReader, BufWriter, ErrorKind, Read, Write},
+    io::{self, stdout, BufReader, BufWriter, ErrorKind, Read, Write},
     net::TcpStream,
     os::unix::io::AsRawFd,
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Once, OnceLock},
     time::Duration,
+};
+
+use crossterm::{
+    cursor::MoveTo,
+    event::{read, DisableMouseCapture, EnableMouseCapture, Event, MouseButton, MouseEventKind},
+    execute, queue,
+    style::Print,
+    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
 
 static LOGGER: OnceLock<()> = OnceLock::new();
@@ -913,6 +921,106 @@ where
             }
         }
     }
+}
+
+/// Interactive Selection by User for Utxos andd other toggles
+pub fn interactive_select(
+    choices: Vec<ListUnspentResultEntry>,
+) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
+    let mut selected = vec![false; choices.len()];
+    let mut box_positions = Vec::new(); // Stores (start_line, height, checkbox_line) for each UTXO
+    let mut stdout = stdout();
+
+    enable_raw_mode()?;
+    execute!(
+        stdout,
+        Clear(ClearType::All),
+        EnableMouseCapture,
+        MoveTo(0, 0)
+    )?;
+    println!("CLICK on any UTXO to select/deselect, Press any key to exit\n");
+
+    // Initial render of all UTXO boxes
+    let mut line_offset = 3;
+    box_positions.clear();
+    for (i, choice) in choices.iter().enumerate() {
+        let box_start_line = line_offset;
+        let width = 70;
+        let marker = if selected[i] { "✓" } else { " " };
+        let address = choice
+            .address
+            .as_ref()
+            .map(|a| a.assume_checked_ref().to_string())
+            .unwrap_or_else(|| "<no address>".to_string());
+        let label = choice.label.as_deref().unwrap_or("<no label>");
+        let box_lines = [
+            format!("┌{}┐", "─".repeat(width - 2)),
+            format!("│ txid: {:<64} │", choice.txid),
+            format!("│ vout: {:<4} │", choice.vout),
+            format!("│ amount: {:>12} │", choice.amount.to_sat()),
+            format!("│ address: {address:<44} │"),
+            format!("│ label: {label:<20} │"),
+            format!("│ confirmations: {:<8} │", choice.confirmations),
+            format!("│ spendable: {:<5} │", choice.spendable),
+            format!("│ [{marker}] Select/Deselect │"),
+            format!("└{}┘", "─".repeat(width - 2)),
+        ];
+        let box_height = box_lines.len() as u16;
+        let checkbox_line = box_start_line + 8; // Checkbox is on the 9th line (index 8) of the box
+
+        for line in box_lines.iter() {
+            queue!(stdout, MoveTo(0, line_offset), Print(line))?;
+            line_offset += 1;
+        }
+        line_offset += 1; // Extra line between boxes
+        box_positions.push((box_start_line, box_height, checkbox_line));
+    }
+    stdout.flush()?;
+
+    // Event loop
+    loop {
+        match read()? {
+            Event::Mouse(mouse_event) => {
+                if mouse_event.kind == MouseEventKind::Down(MouseButton::Left) {
+                    let click_row = mouse_event.row;
+                    for (i, (box_start, box_height, checkbox_line)) in
+                        box_positions.iter().enumerate()
+                    {
+                        if click_row >= *box_start && click_row < *box_start + *box_height {
+                            // Toggle selection
+                            selected[i] = !selected[i];
+                            // Update only the checkbox line
+                            let marker = if selected[i] { "✓" } else { " " };
+                            let width = choices[i].txid.to_string().len() + 10;
+                            let line = format!(
+                                "│ amount: {} sats{:<width$}{} ",
+                                choices[i].amount,
+                                "",
+                                marker,
+                                width = width - 18 - choices[i].amount.to_string().len()
+                            );
+                            queue!(stdout, MoveTo(0, *checkbox_line), Print(line))?;
+                            stdout.flush()?;
+                            break;
+                        }
+                    }
+                }
+            }
+            Event::Key(_) => break,
+            _ => {}
+        }
+    }
+
+    // Cleanup
+    execute!(stdout, DisableMouseCapture, Clear(ClearType::All))?;
+    disable_raw_mode()?;
+
+    Ok(choices
+        .into_iter()
+        .zip(selected)
+        .filter(|(_, sel)| *sel)
+        .map(|(choice, _)| choice)
+        .collect())
 }
 
 #[cfg(test)]
