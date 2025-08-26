@@ -52,7 +52,7 @@ impl Wallet {
     // reference :- (ε, δ)-indistinguishable Mixing for Cryptocurrencies
     // https://eprint.iacr.org/2021/1197.pdf
     // Returns [total] with warning if num_chunks > 5
-    fn vary_amounts(&self, total: u64, num_chunks: usize) -> Vec<u64> {
+    pub fn vary_amounts(&self, total: u64, num_chunks: usize) -> Vec<u64> {
         let mut rng = thread_rng();
 
         match num_chunks {
@@ -285,7 +285,7 @@ impl Wallet {
 
             // Delta_c finds the threshold, which is used for a second coinselection
             let delta_c = target - target_change;
-            let delta_inputs = match self.coin_select(Amount::from_sat(delta_c), fee_rate) {
+            let delta_inputs = match self.coin_select(Amount::from_sat(delta_c), fee_rate, None) {
                 Ok(inputs) => inputs,
                 Err(e) => {
                     log::info!("Error other than insufficient amount during second coin selection in dynamic splitting logic: {e:?}, backtracking and returning previous state");

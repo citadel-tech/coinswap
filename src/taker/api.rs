@@ -76,7 +76,7 @@ pub(crate) const TCP_TIMEOUT_SECONDS: u64 = 300;
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
 ///
 /// If no maker matches with a given SwapParam, that coinswap round will fail.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 pub struct SwapParams {
     /// Total Amount to Swap.
     pub send_amount: Amount,
@@ -84,6 +84,8 @@ pub struct SwapParams {
     pub maker_count: usize,
     /// How many splits
     pub tx_count: u32,
+    /// Manually Selected UTXOs
+    pub manually_selected_outpoints: Option<Vec<OutPoint>>,
 }
 
 // Defines the Taker's position in the current ongoing swap.
@@ -296,7 +298,7 @@ impl Taker {
     ///
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub(crate) fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
-        self.ongoing_swap_state.swap_params = swap_params;
+        self.ongoing_swap_state.swap_params = swap_params.clone();
 
         // Check if we have enough balance - try regular first, then swap
         let balances = self.wallet.get_balances()?;
@@ -320,6 +322,7 @@ impl Taker {
             log::error!("Not enough balance to do swap : {err:?}");
             return Err(err.into());
         }
+
         log::info!("Syncing Offerbook");
         self.sync_offerbook()?;
 
@@ -522,6 +525,10 @@ impl Taker {
                     self.get_preimage_hash(),
                     swap_locktime,
                     MIN_FEE_RATE,
+                    self.ongoing_swap_state
+                        .swap_params
+                        .manually_selected_outpoints
+                        .clone(),
                 )?;
 
             let contract_reedemscripts = outgoing_swapcoins

@@ -1144,6 +1144,7 @@ impl Wallet {
         &self,
         amount: Amount,
         feerate: f64,
+        manual_utxo_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
         // P2WPKH Breaks down as:
         // Non-witness data (multiplied by 4):
@@ -1250,6 +1251,43 @@ impl Wallet {
         let can_use_regular = target_sats <= regular_total;
         let can_use_swap = target_sats <= swap_total;
 
+        // Check manual UTXO selection constraints
+        let (manual_regular_selected, manual_swap_selected) =
+            if let Some(ref manual_outpoints) = manual_utxo_outpoints {
+                let manual_regular = available_regular_utxos.iter().any(|(utxo, _)| {
+                    let outpoint = OutPoint::new(utxo.txid, utxo.vout);
+                    manual_outpoints.contains(&outpoint)
+                });
+
+                let manual_swap = available_swap_utxos.iter().any(|(utxo, _)| {
+                    let outpoint = OutPoint::new(utxo.txid, utxo.vout);
+                    manual_outpoints.contains(&outpoint)
+                });
+
+                // Hard error if manual selection mixes regular and swap coins
+                if manual_regular && manual_swap {
+                    return Err(WalletError::General(
+                        "Cannot mix regular and swap UTXOs in manual selection".to_string(),
+                    ));
+                }
+
+                (manual_regular, manual_swap)
+            } else {
+                (false, false)
+            };
+
+        // Assert manual selection compatibility with available funds
+        if (manual_regular_selected && !can_use_regular) || (manual_swap_selected && !can_use_swap)
+        {
+            let error_msg = if manual_regular_selected && !can_use_regular {
+                "Manual regular UTXOs selected but insufficient regular funds available"
+            } else {
+                "Manual swap UTXOs selected but insufficient swap funds available"
+            };
+
+            return Err(WalletError::General(error_msg.to_string()));
+        }
+
         let change_weight = Weight::from_vb_unwrap(CHANGE_OUTPUT_WEIGHT);
         let cost_of_change = {
             let creation_cost = calculate_fee(change_weight.to_vbytes_ceil(), feerate as f32)?;
@@ -1260,8 +1298,15 @@ impl Wallet {
         let target_weight = Weight::from_vb_unwrap(TARGET_OUTPUT_WEIGHT);
         let avg_output_weight = (change_weight.to_wu() + target_weight.to_wu()) / 2;
 
-        // Choose UTXO type
-        let (utxo_type, unspents) = if can_use_regular {
+        // Choose UTXO type based on manual selection or default preference
+        let (utxo_type, unspents) = if manual_swap_selected && can_use_swap {
+            // If manual swaps are selected and can_use_swap is true, use only swap utxos
+            ("swap", &available_swap_utxos)
+        } else if manual_regular_selected && can_use_regular {
+            // If manual regulars are selected and can_use_regular is true, use only regular utxos
+            ("regular", &available_regular_utxos)
+        } else if can_use_regular {
+            // Default behavior: prefer regular UTXOs first
             ("regular", &available_regular_utxos)
         } else if can_use_swap {
             ("swap", &available_swap_utxos)
@@ -1282,6 +1327,21 @@ impl Wallet {
             })
             .sum::<u64>()
             / unspents.len() as u64;
+
+        // Segregate manually selected UTXOs from the unspents list
+        let (manual_unspents, non_manual_unspents): (Vec<&_>, Vec<&_>) =
+            unspents.iter().partition(|(utxo, _)| {
+                let outpoint = OutPoint::new(utxo.txid, utxo.vout);
+                manual_utxo_outpoints
+                    .as_ref()
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .any(|manual_utxo| {
+                        OutPoint::new(manual_utxo.txid, manual_utxo.vout) == outpoint
+                    })
+            });
+
+        let unspents = non_manual_unspents.into_iter().cloned().collect::<Vec<_>>();
 
         // Group UTXOs by address
         let mut address_groups: HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
@@ -1307,6 +1367,41 @@ impl Wallet {
         grouped_addresses
             .sort_by_key(|group| group.iter().map(|(u, _)| u.amount.to_sat()).sum::<u64>());
 
+        // Insert manual UTXOs at the front if they exist
+        if !manual_unspents.is_empty() {
+            grouped_addresses.insert(0, manual_unspents.into_iter().cloned().collect::<Vec<_>>());
+
+            // Assert that if manual_unspents is not empty, the first group in grouped_addresses
+            // contains exactly the same outpoints as manual_unspents (order doesn't matter).
+            let first_group_outpoints = grouped_addresses
+                .first()
+                .expect("grouped_addresses should have at least one group")
+                .iter()
+                .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                .collect::<Vec<_>>();
+
+            // Verify all manual outpoints are present in the first group
+            assert!(
+                manual_utxo_outpoints
+                    .as_deref()
+                    .unwrap()
+                    .iter()
+                    .all(|outpoint| {
+                        first_group_outpoints
+                            .iter()
+                            .any(|first_outpoint| first_outpoint == outpoint)
+                    }),
+                "First group must contain all manual_unspents outpoints"
+            );
+
+            // Verify the first group contains only manual outpoints
+            assert_eq!(
+                manual_utxo_outpoints.as_deref().unwrap().len(),
+                first_group_outpoints.len(),
+                "First group should contain exactly the manual UTXOs, no more, no less"
+            );
+        }
+
         // Single loop for address group selection
         let (selected_utxos, selected_total, selected_weight) = {
             let mut result_utxos = Vec::new();
@@ -1322,7 +1417,14 @@ impl Wallet {
                     })
                     .sum();
 
-                let estimated_fee = calculate_fee(ESTIMATED_FEE_VBYTES, feerate as f32)?;
+                // let estimated_fee = calculate_fee(ESTIMATED_FEE_VBYTES, feerate as f32)?;
+
+                // Calculate transaction fees for current selection including this group
+                let tx_weight = TX_BASE_WEIGHT
+                    + result_weight
+                    + group_weight
+                    + MAX_SPLITS as u64 * (target_weight.to_wu() + change_weight.to_wu());
+                let estimated_fee = calculate_fee(tx_weight / 4, feerate as f32)?;
 
                 // Add the reused address group to selection
                 result_total += group_total;
@@ -1452,6 +1554,7 @@ impl Wallet {
 
     /// Initialize a Coinswap with the Other party.
     /// Returns, the Funding Transactions, [`OutgoingSwapCoin`]s and the Total Miner fees.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn initalize_coinswap(
         &mut self,
         total_coinswap_amount: Amount,
@@ -1460,6 +1563,7 @@ impl Wallet {
         hashvalue: Hash160,
         locktime: u16,
         fee_rate: f64,
+        manually_selected_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, Amount), WalletError> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
             .iter()
@@ -1468,8 +1572,12 @@ impl Wallet {
             .into_iter()
             .unzip();
 
-        let create_funding_txes_result =
-            self.create_funding_txes(total_coinswap_amount, &coinswap_addresses, fee_rate)?;
+        let create_funding_txes_result = self.create_funding_txes(
+            total_coinswap_amount,
+            &coinswap_addresses,
+            fee_rate,
+            manually_selected_outpoints,
+        )?;
 
         let mut outgoing_swapcoins = Vec::<OutgoingSwapCoin>::new();
         for (

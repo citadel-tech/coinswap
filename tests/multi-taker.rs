@@ -110,6 +110,7 @@ fn multi_taker_single_maker_swap() {
                 send_amount: Amount::from_sat(500000),
                 maker_count: 2,
                 tx_count: 3,
+                manually_selected_outpoints: None,
             };
             s.spawn(move || {
                 taker.do_coinswap(swap_params).unwrap();
