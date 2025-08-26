@@ -1144,9 +1144,13 @@ impl Wallet {
         &self,
         amount: Amount,
         feerate: f64,
-        manual_utxo_outpoints: Option<Vec<OutPoint>>,
+        manually_selected_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        log::debug!("CoinSelect TARGET : {} Sats with No. of Manually Selected Utxos: {}", amount.to_sat(), manual_utxo_outpoints.iter().len());
+        log::debug!(
+            "CoinSelect TARGET : {} Sats with No. of Manually Selected Utxos: {}",
+            amount.to_sat(),
+            manually_selected_outpoints.iter().len()
+        );
 
         // P2WPKH Breaks down as:
         // Non-witness data (multiplied by 4):
@@ -1255,7 +1259,7 @@ impl Wallet {
 
         // Check manual UTXO selection constraints
         let (manual_regular_selected, manual_swap_selected) =
-            if let Some(ref manual_outpoints) = manual_utxo_outpoints {
+            if let Some(ref manual_outpoints) = manually_selected_outpoints {
                 let manual_regular = available_regular_utxos.iter().any(|(utxo, _)| {
                     let outpoint = OutPoint::new(utxo.txid, utxo.vout);
                     manual_outpoints.contains(&outpoint)
@@ -1334,7 +1338,7 @@ impl Wallet {
         let (manual_unspents, non_manual_unspents): (Vec<&_>, Vec<&_>) =
             unspents.iter().partition(|(utxo, _)| {
                 let outpoint = OutPoint::new(utxo.txid, utxo.vout);
-                manual_utxo_outpoints
+                manually_selected_outpoints
                     .as_ref()
                     .unwrap_or(&vec![])
                     .iter()
@@ -1384,7 +1388,7 @@ impl Wallet {
 
             // Verify all manual outpoints are present in the first group
             assert!(
-                manual_utxo_outpoints
+                manually_selected_outpoints
                     .as_deref()
                     .unwrap()
                     .iter()
@@ -1398,7 +1402,7 @@ impl Wallet {
 
             // Verify the first group contains only manual outpoints
             assert_eq!(
-                manual_utxo_outpoints.as_deref().unwrap().len(),
+                manually_selected_outpoints.as_deref().unwrap().len(),
                 first_group_outpoints.len(),
                 "First group should contain exactly the manual UTXOs, no more, no less"
             );
