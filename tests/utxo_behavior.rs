@@ -4,12 +4,13 @@ use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
     utill::{ConnectionType, MIN_FEE_RATE},
-    wallet::{WalletError, Destination},
+    wallet::{Destination, WalletError},
 };
 use log::{info, warn};
 use std::{
     sync::{atomic::Ordering::Relaxed, Arc},
-    time::Duration, thread
+    thread,
+    time::Duration,
 };
 
 mod test_framework;
@@ -242,8 +243,7 @@ fn test_separated_utxo_coin_selection() {
         send_amount: Amount::from_sat(35000000), // 35M sats (0.35 BTC)
         maker_count: 2,
         tx_count: 3,
-                manually_selected_outpoints: None
-
+        manually_selected_outpoints: None,
     };
     taker.do_coinswap(swap_params).unwrap();
 
@@ -429,15 +429,15 @@ fn test_manual_coinswap() {
 
     // Deterministic amounts in the range of 0.05 to 0.1 BTC (5,000,000 to 10,000,000 sats)
     let amounts: Vec<u64> = vec![
-        5_000_000, // 0.05 BTC
-        5_500_000, // 0.055 BTC
-        6_000_000, // 0.06 BTC
-        6_500_000, // 0.065 BTC
-        7_000_000, // 0.07 BTC
-        7_500_000, // 0.075 BTC
-        8_000_000, // 0.08 BTC
-        8_500_000, // 0.085 BTC
-        9_000_000, // 0.09 BTC
+        5_000_000,  // 0.05 BTC
+        5_500_000,  // 0.055 BTC
+        6_000_000,  // 0.06 BTC
+        6_500_000,  // 0.065 BTC
+        7_000_000,  // 0.07 BTC
+        7_500_000,  // 0.075 BTC
+        8_000_000,  // 0.08 BTC
+        8_500_000,  // 0.085 BTC
+        9_000_000,  // 0.09 BTC
         10_000_000, // 0.1 BTC
     ];
 
@@ -589,4 +589,3 @@ fn test_manual_coinswap() {
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }
-
