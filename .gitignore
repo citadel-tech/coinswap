@@ -7,3 +7,5 @@ Cargo.lock
 .ra-target
 bin
 /coverage/reports
+/examples/taker_basic/target
+/examples/wallet_basic/target
