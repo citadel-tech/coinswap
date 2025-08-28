@@ -85,6 +85,7 @@ fn test_create_funding_txn_with_varied_distributions() {
                 target,
                 destinations.clone(),
                 Amount::from_sat(MIN_FEE_RATE as u64),
+                None,
             )
             .unwrap();
 
