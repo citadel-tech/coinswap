@@ -38,12 +38,11 @@ fn multi_taker_single_maker_swap() {
     ];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
-        TestFramework::init(
-            makers_config_map.into(),
-            taker_behavior,
-            ConnectionType::CLEARNET,
-        );
+    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
+        makers_config_map.into(),
+        taker_behavior,
+        ConnectionType::CLEARNET,
+    );
 
     warn!("🧪 Running Test: Multiple Takers with Different Behaviors");
 
@@ -130,8 +129,6 @@ fn multi_taker_single_maker_swap() {
 
     info!("🎯 All coinswaps processed. Transactions complete.");
 
-    // Shutdown Directory Server
-    directory_server_instance.shutdown.store(true, Relaxed);
     thread::sleep(Duration::from_secs(10));
 
     info!("📊 Verifying Maker balances");

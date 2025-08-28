@@ -373,25 +373,42 @@ pub enum DnsRequest {
 }
 
 /// Tracker response
-#[cfg(feature = "tracker")]
 #[derive(Serialize, Deserialize, Debug)]
-pub(crate) enum TrackerResponse {
-    /// Address response
+pub enum TrackerServerToClient {
+    /// Address of all makers, tracker currently have.
     Address {
-        /// Address response
+        /// list of addresses
         addresses: Vec<String>,
     },
-    /// Ping response
-    Ping,
+    /// Just to let server know tracker existence and later on for indexing request.
+    Ping {
+        /// Address of tracker
+        address: String,
+        /// Port of tracker
+        port: u16,
+    },
+    /// To watch for particular utxo.
+    WatchResponse {
+        /// Set of mempool transaction with list of transaction spending it.
+        mempool_tx: Vec<MempoolTx>,
+    },
+}
+
+/// Mempool transaction
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MempoolTx {
+    /// Txid of the transaction spending the utxo
+    pub txid: String,
+    /// when its seen on mempool
+    pub seen_at: chrono::NaiveDateTime,
 }
 
 /// Enum representing DNS request message types.
 ///
 /// These requests and responses are structured using Serde for serialization and deserialization.
-#[cfg(feature = "tracker")]
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
-pub(crate) enum TrackerRequest {
+pub enum TrackerClientToServer {
     /// A request sent by the maker to register itself with the DNS server and authenticate.
     Post {
         /// Metadata containing the maker's URL and fidelity proof.
@@ -401,8 +418,14 @@ pub(crate) enum TrackerRequest {
     Get,
     /// To gauge server activity
     Pong {
-        /// address
+        /// Address of the current server
         address: String,
+    },
+    /// Request tracker to track any UTXO which is spending the
+    /// UTXO
+    Watch {
+        /// Outpoint to watch
+        outpoint: bitcoin::OutPoint,
     },
 }
 
@@ -412,7 +435,6 @@ pub(crate) enum TrackerRequest {
 pub(crate) enum MessageToMaker {
     /// taker to maker variant
     TakerToMaker(TakerToMakerMessage),
-    #[cfg(feature = "tracker")]
     /// tracker request variant
-    TrackerRequest(TrackerResponse),
+    TrackerMessage(TrackerServerToClient),
 }

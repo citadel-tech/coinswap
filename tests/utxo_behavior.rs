@@ -79,12 +79,11 @@ fn test_address_grouping_behavior() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, directory_server_instance, block_generation_handle) =
-        TestFramework::init(
-            makers_config_map.into(),
-            taker_behavior,
-            ConnectionType::CLEARNET,
-        );
+    let (test_framework, _, makers, block_generation_handle) = TestFramework::init(
+        makers_config_map.into(),
+        taker_behavior,
+        ConnectionType::CLEARNET,
+    );
 
     println!("=== Testing Smart Address Grouping Behavior ===");
 
@@ -188,7 +187,6 @@ fn test_address_grouping_behavior() {
     println!("✅ All address grouping scenarios work correctly");
 
     // Clean shutdown
-    directory_server_instance.shutdown.store(true, Relaxed);
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }
@@ -201,12 +199,11 @@ fn test_separated_utxo_coin_selection() {
     ];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
-        TestFramework::init(
-            makers_config_map.into(),
-            taker_behavior,
-            ConnectionType::CLEARNET,
-        );
+    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
+        makers_config_map.into(),
+        taker_behavior,
+        ConnectionType::CLEARNET,
+    );
 
     warn!("🔧 Running Test: Separated UTXO Coin Selection");
     let bitcoind = &test_framework.bitcoind;
@@ -398,7 +395,6 @@ fn test_separated_utxo_coin_selection() {
     println!("\n=== Test Completed Successfully ===");
 
     // Clean shutdown
-    directory_server_instance.shutdown.store(true, Relaxed);
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

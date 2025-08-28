@@ -1399,7 +1399,7 @@ impl Wallet {
                 let mut final_selection = selected_utxos;
                 final_selection.extend(additional_utxos);
 
-                log::info!("Selected {} {} UTXOs", final_selection.len(), utxo_type);
+                log::info!("Selected {} {utxo_type} UTXOs", final_selection.len());
                 Ok(final_selection)
             }
             Err(e) => {

@@ -38,12 +38,11 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
     let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
-        TestFramework::init(
-            makers_config_map.into(),
-            taker_behavior,
-            ConnectionType::CLEARNET,
-        );
+    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
+        makers_config_map.into(),
+        taker_behavior,
+        ConnectionType::CLEARNET,
+    );
 
     warn!(
         "🧪 Running Test: Maker closes connection after receiving a ContractSigsForRecvrAndSender"
@@ -124,9 +123,6 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
         .for_each(|thread| thread.join().unwrap());
 
     info!("🎯 All coinswaps processed successfully. Transaction complete.");
-
-    // Shutdown Directory Server
-    directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
 

@@ -31,12 +31,10 @@ use bitcoin::Amount;
 use std::{
     env,
     fs::{self, create_dir_all, File},
-    io::{BufRead, BufReader, Read},
+    io::{BufReader, Read},
     path::{Path, PathBuf},
-    process,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        mpsc::{self, Receiver, Sender},
         Arc,
     },
     thread::{self, JoinHandle},
@@ -53,7 +51,6 @@ use bitcoind::{
 
 use coinswap::{
     maker::{Maker, MakerBehavior},
-    market::directory::{start_directory_server, DirectoryServer},
     taker::{Taker, TakerBehavior},
     utill::{setup_logger, ConnectionType},
     wallet::{Balances, RPCConfig},
@@ -224,77 +221,6 @@ pub(crate) fn send_to_address(
         .client
         .send_to_address(addrs, amount, None, None, None, None, None, None)
         .unwrap()
-}
-
-// Waits until the mpsc::Receiver<String> receives the expected message.
-pub(crate) fn await_message(rx: &Receiver<String>, expected_message: &str) {
-    loop {
-        let log_message = rx.recv().expect("Failure from Sender side");
-        if log_message.contains(expected_message) {
-            break;
-        }
-    }
-}
-
-// Start the DNS server based on given connection type and considers data directory for the server.
-#[allow(dead_code)]
-pub(crate) fn start_dns(data_dir: &std::path::Path, bitcoind: &BitcoinD) -> process::Child {
-    let (stdout_sender, stdout_recv): (Sender<String>, Receiver<String>) = mpsc::channel();
-
-    let (stderr_sender, stderr_recv): (Sender<String>, Receiver<String>) = mpsc::channel();
-
-    let mut args = vec!["--data-directory", data_dir.to_str().unwrap()];
-
-    // RPC authentication (user:password) from the cookie file
-    let cookie_file_path = Path::new(&bitcoind.params.cookie_file);
-    let rpc_auth = fs::read_to_string(cookie_file_path).expect("failed to read from file");
-    args.push("--USER:PASSWORD");
-    args.push(&rpc_auth);
-
-    // Full node address for RPC connection
-    let rpc_address = bitcoind.params.rpc_socket.to_string();
-    args.push("--ADDRESS:PORT");
-    args.push(&rpc_address);
-
-    let mut directoryd_process = process::Command::new(env!("CARGO_BIN_EXE_directoryd"))
-        .args(args) // THINK: Passing network to avoid mitosis problem..
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn directoryd process");
-    let stderr = directoryd_process.stderr.take().unwrap();
-    let stdout = directoryd_process.stdout.take().unwrap();
-
-    // stderr thread
-    thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        if let Some(line) = reader.lines().map_while(Result::ok).next() {
-            println!("{line}");
-            let _ = stderr_sender.send(line);
-        }
-    });
-
-    // stdout thread
-    thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-
-        for line in reader.lines().map_while(Result::ok) {
-            println!("{line}");
-            if stdout_sender.send(line).is_err() {
-                break;
-            }
-        }
-    });
-
-    // wait for some time to check for any stderr
-    if let Ok(stderr) = stderr_recv.recv_timeout(std::time::Duration::from_secs(10)) {
-        panic!("Error: {:?}", stderr)
-    }
-
-    await_message(&stdout_recv, "RPC socket binding successful");
-    log::info!("🌐 DNS Server Started");
-
-    directoryd_process
 }
 
 #[allow(dead_code)]
@@ -628,15 +554,10 @@ impl TestFramework {
         makers_config_map: Vec<((u16, Option<u16>), MakerBehavior)>,
         taker_behavior: Vec<TakerBehavior>,
         connection_type: ConnectionType,
-    ) -> (
-        Arc<Self>,
-        Vec<Taker>,
-        Vec<Arc<Maker>>,
-        Arc<DirectoryServer>,
-        JoinHandle<()>,
-    ) {
+    ) -> (Arc<Self>, Vec<Taker>, Vec<Arc<Maker>>, JoinHandle<()>) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
+        let temp_dir_clone = temp_dir.clone();
         // Remove if previously existing
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
@@ -658,16 +579,22 @@ impl TestFramework {
         // Translate a RpcConfig from the test framework.
         // a modification of this will be used for taker and makers rpc connections.
         let rpc_config = RPCConfig::from(test_framework.as_ref());
+        let rpc_config_clone = rpc_config.clone();
 
-        let directory_rpc_config = rpc_config.clone();
+        std::thread::spawn(move || {
+            let tracker_rt =
+                tokio::runtime::Runtime::new().expect("Failed to create tracker runtime");
 
-        let directory_server_instance = Arc::new(
-            DirectoryServer::new(Some(temp_dir.join("dns")), Some(connection_type)).unwrap(),
-        );
-        let directory_server_instance_clone = directory_server_instance.clone();
-        thread::spawn(move || {
-            start_directory_server(directory_server_instance_clone, Some(directory_rpc_config))
-                .unwrap();
+            let tracker_config = tracker::Config {
+                rpc_url: rpc_config_clone.url,
+                rpc_auth: rpc_config_clone.auth,
+                address: "127.0.0.1:8080".to_string(),
+                datadir: temp_dir_clone.to_string_lossy().to_string(),
+            };
+
+            tracker_rt.block_on(async {
+                tracker::start(tracker_config).await;
+            });
         });
 
         // Create the Taker.
@@ -731,13 +658,7 @@ impl TestFramework {
 
         log::info!("✅ Test Framework initialization complete");
 
-        (
-            test_framework,
-            takers,
-            makers,
-            directory_server_instance,
-            generate_blocks_handle,
-        )
+        (test_framework, takers, makers, generate_blocks_handle)
     }
 
     /// Assert that a log message exists in the debug.log file
