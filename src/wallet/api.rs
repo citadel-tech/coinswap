@@ -1349,6 +1349,18 @@ impl Wallet {
 
         let unspents = non_manual_unspents.into_iter().cloned().collect::<Vec<_>>();
 
+        log::debug!(
+            "manual_unspents: {:?}, unspents: {:?}",
+            manual_unspents
+                .iter()
+                .map(|(utxo, _)| utxo.amount.to_sat())
+                .collect::<Vec<_>>(),
+            unspents
+                .iter()
+                .map(|(utxo, _)| utxo.amount.to_sat())
+                .collect::<Vec<_>>()
+        );
+
         // Group UTXOs by address
         let mut address_groups: HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
             HashMap::new();
@@ -1375,16 +1387,34 @@ impl Wallet {
 
         // Insert manual UTXOs at the front if they exist
         if !manual_unspents.is_empty() {
-            grouped_addresses.insert(0, manual_unspents.into_iter().cloned().collect::<Vec<_>>());
+            grouped_addresses.insert(
+                0,
+                manual_unspents
+                    .clone()
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            );
 
             // Assert that if manual_unspents is not empty, the first group in grouped_addresses
             // contains exactly the same outpoints as manual_unspents (order doesn't matter).
-            let first_group_outpoints = grouped_addresses
-                .first()
-                .expect("grouped_addresses should have at least one group")
+            let first_group_outpoints = grouped_addresses[0]
+                // .expect("grouped_addresses should have at least one group")
                 .iter()
                 .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
                 .collect::<Vec<_>>();
+
+            log::info!(
+                "OG selected amount: {:?} and grouped amounts in CS: {:?}",
+                manual_unspents
+                    .into_iter()
+                    .map(|(utxo, _)| utxo.amount.to_sat())
+                    .collect::<Vec<_>>(),
+                grouped_addresses[0]
+                    .iter()
+                    .map(|(utxo, _)| utxo.amount.to_sat())
+                    .collect::<Vec<_>>()
+            );
 
             // Verify all manual outpoints are present in the first group
             assert!(
