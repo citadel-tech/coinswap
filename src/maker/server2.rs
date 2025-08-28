@@ -23,7 +23,7 @@ pub(crate) use super::api2::{Maker, RPC_PING_INTERVAL};
 use crate::{
     error::NetError,
     maker::{
-        api2::{check_for_broadcasted_contracts, check_for_idle_states, ConnectionState},
+        api2::{ check_for_idle_states, ConnectionState},
         handlers2::handle_message_taproot,
         rpc2::start_rpc_server_taproot,
     },
@@ -489,9 +489,8 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         // Send response if we have one
         if let Some(response_msg) = response {
             log::info!(
-                "[{}] Sending response: {:?}",
+                "[{}] Sending response",
                 maker.config.network_port,
-                response_msg
             );
 
             if let Err(e) = send_message(stream, &response_msg) {
@@ -528,9 +527,6 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                 MakerToTakerMessage::NoncesPartialSigsAndSpendingTx(_) => {
                     // Keep connection open for PartialSigAndSendersNonce
                 }
-                _ => {
-                    // For other responses, keep connection open
-                }
             }
         }
 
@@ -565,17 +561,6 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
         maker_address,
         dns_address
     );
-
-    // Start monitoring threads
-    let maker_clone_watchtower = maker.clone();
-    let watchtower_handle = thread::Builder::new()
-        .name("watchtower-taproot".to_string())
-        .spawn(move || {
-            if let Err(e) = check_for_broadcasted_contracts(maker_clone_watchtower) {
-                log::error!("Taproot watchtower thread error: {:?}", e);
-            }
-        })?;
-    maker.thread_pool.add_thread(watchtower_handle);
 
     let maker_clone_idle = maker.clone();
     let idle_checker_handle = thread::Builder::new()
