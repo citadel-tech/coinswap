@@ -198,7 +198,6 @@ pub(crate) struct SenderContractFromMaker {
     pub(crate) pubkeys_a: Vec<PublicKey>,
     pub(crate) hashlock_scripts: Vec<ScriptBuf>,
     pub(crate) timelock_scripts: Vec<ScriptBuf>,
-    pub(crate) receiver_nonces: Vec<SerializablePublicNonce>,
     // MuSig2 data for cooperative spending
     pub(crate) internal_key: Option<bitcoin::secp256k1::XOnlyPublicKey>,
     pub(crate) tap_tweak: Option<SerializableScalar>,

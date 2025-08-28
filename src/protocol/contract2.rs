@@ -3,14 +3,13 @@
 use super::error2::ProtocolError;
 use bitcoin::blockdata::transaction::{OutPoint, Transaction, TxIn, TxOut};
 use bitcoin::hashes::{sha256, Hash as HashTrait};
-use bitcoin::key::rand;
 use bitcoin::locktime::absolute::LockTime;
 use bitcoin::opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256};
 use bitcoin::secp256k1::{
     rand::{rngs::OsRng, RngCore},
-    All, Keypair, Message, Scalar, Secp256k1, SecretKey, XOnlyPublicKey,
+    Keypair, Message, Scalar, Secp256k1, SecretKey, XOnlyPublicKey,
 };
-use bitcoin::sighash::SighashCache;
+use bitcoin::sighash::{Prevouts, SighashCache};
 use bitcoin::taproot::{self, LeafVersion, TapLeaf, TapLeafHash, TaprootBuilder, TaprootSpendInfo};
 use bitcoin::transaction::Version;
 use bitcoin::EcdsaSighashType;
@@ -83,7 +82,6 @@ pub(crate) fn create_taproot_script(
     let timelock_control_block =
         taproot_spendinfo.control_block(&(timelock_script, LeafVersion::TapScript));
     // println!("Timelock control block: {:?}", timelock_control_block.as_slice());
-    println!("TWEAK: {:?}", taproot_spendinfo.tap_tweak());
     (
         ScriptBuf::new_p2tr(
             &secp,
@@ -92,6 +90,39 @@ pub(crate) fn create_taproot_script(
         ),
         taproot_spendinfo,
     )
+}
+
+/// Calculate Taproot sighash for contract spending
+pub(crate) fn calculate_contract_sighash(
+    spending_tx: &Transaction,
+    contract_amount: Amount,
+    hashlock_script: &ScriptBuf,
+    timelock_script: &ScriptBuf,
+    internal_key: bitcoin::secp256k1::XOnlyPublicKey,
+) -> Result<bitcoin::secp256k1::Message, ProtocolError> {
+    // Reconstruct the Taproot script
+    let (contract_script, _) = create_taproot_script(
+        hashlock_script.clone(),
+        timelock_script.clone(),
+        internal_key,
+    );
+    
+    // Create prevout for sighash calculation
+    let prevout = TxOut {
+        value: contract_amount,
+        script_pubkey: contract_script,
+    };
+    let prevouts = vec![prevout];
+    let prevouts_ref = Prevouts::All(&prevouts);
+    
+    // Calculate sighash
+    let mut spending_tx_copy = spending_tx.clone();
+    let mut sighasher = SighashCache::new(&mut spending_tx_copy);
+    let sighash = sighasher
+        .taproot_key_spend_signature_hash(0, &prevouts_ref, bitcoin::TapSighashType::Default)
+        .map_err(|_| ProtocolError::General("Failed to compute sighash"))?;
+    
+    Ok(bitcoin::secp256k1::Message::from(sighash))
 }
 
 fn generate_partial_pubkey() -> Result<Keypair, ProtocolError> {

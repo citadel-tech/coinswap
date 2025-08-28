@@ -30,12 +30,6 @@ pub(crate) fn handle_message_taproot(
         message
     );
 
-    // Check if maker should accept this swap based on behavior settings
-    if !maker.should_accept_swap(connection_state) {
-        log::info!("Maker configured to reject swap at this stage");
-        return Err(MakerError::General("Swap rejected due to maker behavior"));
-    }
-
     // Handle messages based on their type, not on expected state
     match message {
         TakerToMakerMessage::GetOffer(get_offer_msg) => {
@@ -146,7 +140,6 @@ fn handle_senders_contract(
     // Process the sender's contract and create our response
     let receiver_contract =
         maker.verify_and_process_senders_contract(&senders_contract, connection_state)?;
-    log::info!("SenderContractFromMaker contract: {:?}", receiver_contract);
 
     log::info!(
         "[{}] Sending SenderContractFromMaker with {} contracts",
