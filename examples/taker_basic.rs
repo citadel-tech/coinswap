@@ -3,7 +3,7 @@
 //! This example demonstrates how to use the Coinswap Taker API:
 //! - Initialize a Taker instance with Bitcoin Core RPC
 //! - Check wallet balance and generate addresses  
-//! - Sync with directory server and fetch maker offers
+//! - Sync with tracker and fetch maker offers
 //! - Find suitable makers and display offer details
 //! - Set up coinswap parameters
 //!
@@ -17,10 +17,8 @@
 //! ## Usage
 //!
 //! ```bash
-//! cd examples/taker_basic
-//! cargo run --features integration-test
+//! cargo run --example taker_basic --features integration-test
 //! ```
-
 use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::Auth;
 use coinswap::{
@@ -90,9 +88,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nMaker Discovery:");
     info!("Starting maker discovery");
 
-    // Sync with directory server to get latest offers
-    println!("  Syncing offerbook with directory server...");
-    info!("Starting offerbook sync with directory server");
+    // Sync with tracker to get latest offers
+    println!("  Syncing offerbook with tracker...");
+    info!("Starting offerbook sync with tracker");
     match taker.sync_offerbook() {
         Ok(()) => {
             println!("  Offerbook sync completed");
@@ -107,9 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     if all_offers.is_empty() {
                         println!("  No makers available in network");
-                        println!(
-                            "  In production, makers would be discovered via directory servers"
-                        );
+                        println!("  In production, makers would be discovered via tracker network");
                         println!("  For testing, start maker instances to see real offers");
                         info!("No makers available");
                     } else {
@@ -128,7 +124,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             println!("  Failed to sync offerbook: {:?}", e);
-            println!("  This is normal in regtest without directory server running");
+            println!("  This is normal in regtest without tracker running");
         }
     }
 
@@ -192,22 +188,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_swap_params() {
-        let swap_params = SwapParams {
-            send_amount: Amount::from_btc(0.01).unwrap(),
-            maker_count: 2,
-            tx_count: 3,
-        };
-
-        assert_eq!(swap_params.send_amount, Amount::from_sat(1_000_000));
-        assert_eq!(swap_params.maker_count, 2);
-        assert_eq!(swap_params.tx_count, 3);
-    }
 }

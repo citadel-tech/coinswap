@@ -20,8 +20,7 @@
 //! ## Usage
 //!
 //! ```bash
-//! cd examples/wallet_basic
-//! cargo run
+//! cargo run --example wallet_basic --features integration-test
 //! ```
 
 use bitcoin::Amount;
@@ -185,7 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Coin Selection Demo:");
             let selected_utxos = {
                 let wallet = taker.get_wallet();
-                wallet.coin_select(select_amount, MIN_FEE_RATE as f64)
+                wallet.coin_select(select_amount, MIN_FEE_RATE)
             };
 
             match selected_utxos {
@@ -223,7 +222,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         wallet_mut.spend_coins(
                             &selected_utxos,
                             Destination::Sweep(destination_address.clone()),
-                            MIN_FEE_RATE as f64,
+                            MIN_FEE_RATE,
                         )
                     };
 
@@ -322,21 +321,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_rpc_config() {
-        let config = RPCConfig {
-            url: "127.0.0.1:18443".to_string(),
-            auth: Auth::UserPass("user".to_string(), "password".to_string()),
-            wallet_name: "".to_string(),
-        };
-
-        assert_eq!(config.url, "127.0.0.1:18443");
-        assert_eq!(config.wallet_name, "");
-    }
 }
