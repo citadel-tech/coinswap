@@ -33,7 +33,7 @@ impl Default for TakerConfig {
             control_port: 9051,
             socks_port: 9050,
             tor_auth_password: "".to_string(),
-            dns_address: "kizqnaslcb2r3mbk2vm77bdff3madcvddntmaaz2htmkyuw7sgh4ddqd.onion:8080"
+            dns_address: "lp75qh3del4qot6fmkqq4taqm33pidvk63lncvhlwsllbwrl2f4g4qqd.onion:8080"
                 .to_string(),
             connection_type: if cfg!(feature = "integration-test") {
                 ConnectionType::CLEARNET
