@@ -8,7 +8,7 @@ use std::{io, path::Path};
 
 use std::io::Write;
 
-use crate::utill::{get_maker_dir, parse_field, ConnectionType};
+use crate::utill::{get_maker_dir, parse_field};
 
 use super::api::MIN_SWAP_AMOUNT;
 
@@ -17,7 +17,7 @@ use super::api::MIN_SWAP_AMOUNT;
 /// This struct defines all configurable parameters for the Maker module, including:
 /// - All the networking ports
 /// - Swap amount limits
-/// - Market settings, like DNS and Fidelity Bonds
+/// - Market settings, like Fidelity Bonds, Fidelity amount, etc.
 /// - Connection preferences
 #[derive(Debug, Clone, PartialEq)]
 pub struct MakerConfig {
@@ -31,20 +31,12 @@ pub struct MakerConfig {
     pub socks_port: u16,
     /// Authentication password for Tor interface
     pub tor_auth_password: String,
-    /// DNS Tor address. Change this to connect to a different DNS server
-    pub dns_address: String,
     /// Minimum amount in satoshis that can be swapped
     pub min_swap_amount: u64,
     /// Fidelity Bond amount in satoshis
     pub fidelity_amount: u64,
     /// Fidelity Bond relative timelock in number of blocks
     pub fidelity_timelock: u32,
-    /// Connection type (TOR or CLEARNET)
-    ///
-    /// # Deprecated
-    /// This field will be removed in a future version as the application will be Tor-only.
-    /// Clearnet support is being phased out for security reasons.
-    pub connection_type: ConnectionType,
     /// A fixed base fee charged by the Maker for providing its services
     pub base_fee: u64,
     /// A percentage fee based on the swap amount.
@@ -67,15 +59,8 @@ impl Default for MakerConfig {
             control_port: 9051,
             socks_port: 9050,
             tor_auth_password: "".to_string(),
-            dns_address: "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080"
-                .to_string(),
             fidelity_amount,
             fidelity_timelock,
-            connection_type: if cfg!(feature = "integration-test") {
-                ConnectionType::CLEARNET
-            } else {
-                ConnectionType::TOR
-            },
             base_fee,
             amount_relative_fee_pct,
         }
@@ -129,7 +114,6 @@ impl MakerConfig {
                 config_map.get("tor_auth_password"),
                 default_config.tor_auth_password,
             ),
-            dns_address: parse_field(config_map.get("dns_address"), default_config.dns_address),
             fidelity_amount: parse_field(
                 config_map.get("fidelity_amount"),
                 default_config.fidelity_amount,
@@ -137,10 +121,6 @@ impl MakerConfig {
             fidelity_timelock: parse_field(
                 config_map.get("fidelity_timelock"),
                 default_config.fidelity_timelock,
-            ),
-            connection_type: parse_field(
-                config_map.get("connection_type"),
-                default_config.connection_type,
             ),
             base_fee: parse_field(config_map.get("base_fee"), default_config.base_fee),
             amount_relative_fee_pct: parse_field(
@@ -171,10 +151,6 @@ min_swap_amount = {}
 fidelity_amount = {}
 # Fidelity Bond relative timelock in number of blocks 
 fidelity_timelock = {}
-# Connection type (TOR or CLEARNET)
-connection_type = {:?}
-# DNS Tor address. Change this to connect to a different DNS server 
-dns_address = {}
 # A fixed base fee charged by the Maker for providing its services (in satoshis)
 base_fee = {}
 # A percentage fee based on the swap amount
@@ -188,8 +164,6 @@ amount_relative_fee_pct = {}
             self.min_swap_amount,
             self.fidelity_amount,
             self.fidelity_timelock,
-            self.connection_type,
-            self.dns_address,
             self.base_fee,
             self.amount_relative_fee_pct,
         );

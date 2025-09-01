@@ -100,17 +100,16 @@ pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
 pub const MIN_SWAP_AMOUNT: u64 = 10_000;
 
 /// Interval for redeeming expired bonds, creating new ones if needed,
-/// and updating the DNS server with the latest bond proof and maker address.
 #[cfg(feature = "integration-test")]
-pub(crate) const FIDELITY_BOND_DNS_UPDATE_INTERVAL: u32 = 30;
+pub(crate) const FIDELITY_BOND_UPDATE_INTERVAL: u32 = 30;
 #[cfg(not(feature = "integration-test"))]
-pub(crate) const FIDELITY_BOND_DNS_UPDATE_INTERVAL: u32 = 600; // 1 Block Interval
+pub(crate) const FIDELITY_BOND_UPDATE_INTERVAL: u32 = 600; // 1 Block Interval
 /// Interval to check if there is enough liquidity for swaps.
 /// If the available balance is below the minimum, maker server won't listen for any swap requests until funds are added.
 #[cfg(feature = "integration-test")]
 pub(crate) const SWAP_LIQUIDITY_CHECK_INTERVAL: u32 = 30;
 #[cfg(not(feature = "integration-test"))]
-pub(crate) const SWAP_LIQUIDITY_CHECK_INTERVAL: u32 = 600; // Equals to FIDELITY_BOND_DNS_UPDATE_INTERVAL
+pub(crate) const SWAP_LIQUIDITY_CHECK_INTERVAL: u32 = 600; // Equals to FIDELITY_BOND_UPDATE_INTERVAL
 
 /// Used to configure the maker for testing purposes.
 ///
@@ -291,10 +290,6 @@ impl Maker {
 
         if let Some(socks_port) = socks_port {
             config.socks_port = socks_port;
-        }
-
-        if let Some(connection_type) = connection_type {
-            config.connection_type = connection_type;
         }
 
         if let Some(control_port) = control_port {

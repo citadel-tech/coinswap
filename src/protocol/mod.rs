@@ -6,4 +6,4 @@ pub mod messages;
 
 pub(crate) use contract::Hash160;
 
-pub use messages::{DnsMetadata, DnsRequest};
+pub use messages::TrackerMetadata;
