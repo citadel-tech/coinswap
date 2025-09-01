@@ -89,15 +89,11 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> 
 fn manage_fidelity_bonds_and_update_dns(
     maker: &Maker,
     maker_addr: &str,
-    dns_addr: &str,
+    _dns_addr: &str,
 ) -> Result<(), MakerError> {
     maker.wallet.write()?.redeem_expired_fidelity_bonds()?;
 
     setup_fidelity_bond(maker, maker_addr)?;
-
-    let network_port = maker.config.network_port;
-
-    log::info!("[{network_port}] Connecting to DNS: {dns_addr}");
 
     Ok(())
 }
