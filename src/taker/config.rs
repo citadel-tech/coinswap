@@ -17,10 +17,9 @@ pub struct TakerConfig {
     pub socks_port: u16,
     /// Authentication password for Tor interface
     pub tor_auth_password: String,
-    /// Tracker address (can be clearnet or onion) for maker discovery
+    /// Tracker address for maker discovery
     pub tracker_address: String,
     /// Connection type (TOR or CLEARNET)
-    ///
     /// # Deprecated
     /// This field will be removed in a future version as the application will be Tor-only.
     /// Clearnet support is being phased out for security reasons.
@@ -106,7 +105,7 @@ control_port = {}
 socks_port = {}
 # Authentication password for Tor control interface
 tor_auth_password = {}
-# Tracker address (can be clearnet or onion)
+# Tracker address
 tracker_address = {}
 connection_type = {:?}",
             self.control_port,
