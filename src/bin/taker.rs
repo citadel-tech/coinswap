@@ -145,7 +145,11 @@ fn main() -> Result<(), TakerError> {
         LevelFilter::from_str(&args.verbosity).unwrap(),
         matches!(
             args.command,
-            Commands::Recover | Commands::FetchOffers | Commands::Coinswap { .. }
+            Commands::Recover
+                | Commands::FetchOffers
+                | Commands::Backup { .. }
+                | Commands::Restore { .. }
+                | Commands::Coinswap { .. }
         ),
         args.data_directory.clone(), // default path handled inside the function.
     );

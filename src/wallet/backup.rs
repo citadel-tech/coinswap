@@ -57,7 +57,7 @@ impl Wallet {
         let mut backup_path = path.join("");
         backup_path.set_extension("json");
 
-        println!("Backing up to {backup_path:?}");
+        log::info!("Backing up to {backup_path:?}");
 
         let backup = WalletBackup::from(self);
 
@@ -67,7 +67,7 @@ impl Wallet {
                 serde_json::to_string_pretty(&encrypted)?
             }
             None => {
-                println!("Warning! The wallet backup file will be saved unencrypted!");
+                log::info!("Warning! The wallet backup file will be saved unencrypted!");
                 serde_json::to_string_pretty(&backup)?
             }
         };
@@ -150,7 +150,7 @@ impl Wallet {
         rpc_config: &RPCConfig,
         restored_path: &Path,
     ) {
-        println!(
+        log::info!(
             "Initiating wallet restore, from backup: {backup_file_path:?} to wallet {:?}",
             restored_path.file_name()
         );
@@ -165,7 +165,7 @@ impl Wallet {
         // Since this is an interactive, one-shot restore, the program will exit after this,
         // so these messages are the last feedback the user will see.
         if let Err(e) = Wallet::restore(&backup, restored_path, rpc_config, restore_enc_material) {
-            eprintln!("Wallet restore failed: {:?}", e);
+            log::error!("Wallet restore failed: {e:?}");
         } else {
             println!("Wallet restore succeeded!");
         }
@@ -182,9 +182,9 @@ impl Wallet {
     /// - Names the backup file as `{wallet_name}-backup.json`.
     /// - Writes the backup to the current working directory.
     pub fn backup_interactive(wallet: &Self, encrypt: bool) {
-        println!("Initiating wallet backup.");
+        log::info!("Initiating wallet backup!");
         let backup_name = format!("{}-backup", wallet.get_name());
-        println!(
+        log::info!(
             "Backing up wallet: {} to {}",
             wallet.get_name(),
             backup_name
@@ -204,9 +204,9 @@ impl Wallet {
         // Since this is a one-shot operation, the program will exit after this,
         // so these messages are the last feedback the user will see.
         if let Err(e) = wallet.backup(&backup_path, backup_enc_material) {
-            eprintln!("Wallet backup failed: {:?}", e);
+            log::error!("Wallet backup failed: {e:?}");
         } else {
-            println!("Wallet backup succeeded: {:?}", backup_path);
+            log::info!("Wallet backup succeeded: {backup_path:?}");
         }
     }
 }
