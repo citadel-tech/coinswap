@@ -6,4 +6,4 @@ pub mod messages;
 
 pub(crate) use contract::Hash160;
 
-pub use messages::TackerMetadata;
+pub use messages::TrackerMetadata;

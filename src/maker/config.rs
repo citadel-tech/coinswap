@@ -37,7 +37,6 @@ pub struct MakerConfig {
     pub fidelity_amount: u64,
     /// Fidelity Bond relative timelock in number of blocks
     pub fidelity_timelock: u32,
-    /// Connection type (TOR or CLEARNET)
     /// # Deprecated
     /// This field will be removed in a future version as the application will be Tor-only.
     /// Clearnet support is being phased out for security reasons.
@@ -165,8 +164,6 @@ min_swap_amount = {}
 fidelity_amount = {}
 # Fidelity Bond relative timelock in number of blocks 
 fidelity_timelock = {}
-# Connection type (TOR or CLEARNET)
-connection_type = {:?}
 # A fixed base fee charged by the Maker for providing its services (in satoshis)
 base_fee = {}
 # A percentage fee based on the swap amount
@@ -180,7 +177,6 @@ amount_relative_fee_pct = {}
             self.min_swap_amount,
             self.fidelity_amount,
             self.fidelity_timelock,
-            self.connection_type,
             self.base_fee,
             self.amount_relative_fee_pct,
         );
