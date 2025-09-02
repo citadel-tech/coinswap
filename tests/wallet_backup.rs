@@ -80,7 +80,7 @@ fn plainwallet_plainbackup_plainrestore() {
     let addr = wallet.get_next_external_address().unwrap();
     send_and_mine(&mut bitcoind, &addr, 0.05, 1).unwrap();
 
-    wallet.backup(&wallet_backup_file, None);
+    let _ = wallet.backup(&wallet_backup_file, None);
 
     let addr = wallet.get_next_external_address().unwrap();
     send_and_mine(&mut bitcoind, &addr, 0.05, 1).unwrap();
@@ -90,7 +90,8 @@ fn plainwallet_plainbackup_plainrestore() {
     let (backup, _) =
         load_sensitive_struct_interactive::<WalletBackup, SerdeJson>(&wallet_backup_file);
 
-    let restored_wallet = Wallet::restore(&backup, &restored_wallet_file, &rpc_config, None);
+    let restored_wallet =
+        Wallet::restore(&backup, &restored_wallet_file, &rpc_config, None).unwrap();
 
     assert_eq!(wallet, restored_wallet); // only compares .store!
 
@@ -113,7 +114,7 @@ fn encwallet_encbackup_encrestore() {
     let addr = wallet.get_next_external_address().unwrap();
     send_and_mine(&mut bitcoind, &addr, 0.05, 1).unwrap();
 
-    wallet.backup(&wallet_backup_file, km.clone());
+    let _ = wallet.backup(&wallet_backup_file, km.clone());
 
     let addr = wallet.get_next_external_address().unwrap();
     send_and_mine(&mut bitcoind, &addr, 0.05, 1).unwrap();
@@ -123,7 +124,8 @@ fn encwallet_encbackup_encrestore() {
     let (backup, _) =
         load_sensitive_struct_interactive::<WalletBackup, SerdeJson>(&wallet_backup_file);
 
-    let restored_wallet = Wallet::restore(&backup, &restored_wallet_file, &rpc_config, km.clone());
+    let restored_wallet =
+        Wallet::restore(&backup, &restored_wallet_file, &rpc_config, km.clone()).unwrap();
 
     assert_eq!(wallet, restored_wallet); // only compares .store!
 

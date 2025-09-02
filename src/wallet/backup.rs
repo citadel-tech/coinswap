@@ -2,7 +2,7 @@ use std::{convert::TryFrom, env, ffi::OsStr, fs, io::Write, path::PathBuf};
 
 use crate::{
     security::{encrypt_struct, load_sensitive_struct_interactive, KeyMaterial, SerdeJson},
-    wallet::Wallet,
+    wallet::{Wallet, WalletError},
 };
 
 use super::{rpc::RPCConfig, storage::WalletStore};
@@ -49,7 +49,11 @@ impl Wallet {
     /// - If encryption is used, the backup content is encrypted and serialized.
     /// - If not, a warning is printed, and the backup is stored unencrypted.
     /// - The final backup file will have a `.json` extension.
-    pub fn backup(&self, path: &Path, backup_enc_material: Option<KeyMaterial>) {
+    pub fn backup(
+        &self,
+        path: &Path,
+        backup_enc_material: Option<KeyMaterial>,
+    ) -> Result<(), WalletError> {
         let mut backup_path = path.join("");
         backup_path.set_extension("json");
 
@@ -60,15 +64,17 @@ impl Wallet {
         let backup_file_content = match backup_enc_material {
             Some(key_material) => {
                 let encrypted = encrypt_struct(backup, &key_material).unwrap();
-                serde_json::to_string_pretty(&encrypted).unwrap()
+                serde_json::to_string_pretty(&encrypted)?
             }
             None => {
                 println!("Warning! The wallet backup file will be saved unencrypted!");
-                serde_json::to_string_pretty(&backup).unwrap()
+                serde_json::to_string_pretty(&backup)?
             }
         };
-        let mut file = fs::File::create(backup_path).unwrap();
-        file.write_all(backup_file_content.as_bytes()).unwrap();
+        let mut file = fs::File::create(backup_path)?;
+        file.write_all(backup_file_content.as_bytes())?;
+
+        Ok(())
     }
 
     /// Restores a `Wallet` from this backup to a specified path.
@@ -90,7 +96,7 @@ impl Wallet {
         wallet_path: &Path,
         rpc_config: &RPCConfig,
         restored_enc_material: Option<KeyMaterial>,
-    ) -> Wallet {
+    ) -> Result<Wallet, WalletError> {
         let wallet_file_name = wallet_path
             .file_name()
             .unwrap_or(OsStr::new(&wallet_backup.file_name)) // If no name filename for the restored one is provided use the previous one
@@ -101,7 +107,7 @@ impl Wallet {
         let mut rpc_config_test = rpc_config.clone();
         rpc_config_test.wallet_name = wallet_file_name.clone();
 
-        let rpc = Client::try_from(&rpc_config_test).unwrap();
+        let rpc = Client::try_from(&rpc_config_test)?;
 
         // Initialise wallet
         let store = WalletStore::init(
@@ -111,8 +117,7 @@ impl Wallet {
             wallet_backup.master_key,
             wallet_backup.wallet_birthday,
             &restored_enc_material,
-        )
-        .unwrap();
+        )?;
 
         let mut tmp_wallet = Wallet {
             rpc,
@@ -120,11 +125,10 @@ impl Wallet {
             store,
             store_enc_material: restored_enc_material,
         };
-        tmp_wallet.sync().unwrap();
-        tmp_wallet.save_to_disk().unwrap(); //Need to save after sync. due to offer_max_size not saving.
-                                            //TODO check this final statements later
-                                            //tmp_wallet.refresh_offer_maxsize_cache().unwrap();
-        tmp_wallet
+        tmp_wallet.sync()?;
+        tmp_wallet.save_to_disk()?;
+
+        Ok(tmp_wallet)
     }
 
     /// Interactively restores a wallet from a backup file.
@@ -157,9 +161,14 @@ impl Wallet {
             "Enter restored walled encryption passphrase(empty for no encryption): ".to_string(),
         ));
 
-        Wallet::restore(&backup, restored_path, rpc_config, restore_enc_material);
-
-        println!("Wallet Restore Ended!!");
+        // Attempt to restore the wallet.
+        // Since this is an interactive, one-shot restore, the program will exit after this,
+        // so these messages are the last feedback the user will see.
+        if let Err(e) = Wallet::restore(&backup, restored_path, rpc_config, restore_enc_material) {
+            eprintln!("Wallet restore failed: {:?}", e);
+        } else {
+            println!("Wallet restore succeeded!");
+        }
     }
     /// Interactively creates a wallet backup, optionally encrypted.
     ///
@@ -190,7 +199,14 @@ impl Wallet {
             None
         };
 
-        wallet.backup(&working_directory.join(backup_name), backup_enc_material);
-        println!("Wallet Backup Ended");
+        let backup_path = working_directory.join(backup_name);
+        // Attempt to back up the wallet.
+        // Since this is a one-shot operation, the program will exit after this,
+        // so these messages are the last feedback the user will see.
+        if let Err(e) = wallet.backup(&backup_path, backup_enc_material) {
+            eprintln!("Wallet backup failed: {:?}", e);
+        } else {
+            println!("Wallet backup succeeded: {:?}", backup_path);
+        }
     }
 }
