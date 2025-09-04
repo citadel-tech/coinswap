@@ -17,10 +17,9 @@ pub struct TakerConfig {
     pub socks_port: u16,
     /// Authentication password for Tor interface
     pub tor_auth_password: String,
-    /// DNS address (can be clearnet or onion) for maker discovery
-    pub dns_address: String,
+    /// Tracker address for maker discovery
+    pub tracker_address: String,
     /// Connection type (TOR or CLEARNET)
-    ///
     /// # Deprecated
     /// This field will be removed in a future version as the application will be Tor-only.
     /// Clearnet support is being phased out for security reasons.
@@ -33,7 +32,7 @@ impl Default for TakerConfig {
             control_port: 9051,
             socks_port: 9050,
             tor_auth_password: "".to_string(),
-            dns_address: "lp75qh3del4qot6fmkqq4taqm33pidvk63lncvhlwsllbwrl2f4g4qqd.onion:8080"
+            tracker_address: "lp75qh3del4qot6fmkqq4taqm33pidvk63lncvhlwsllbwrl2f4g4qqd.onion:8080"
                 .to_string(),
             connection_type: if cfg!(feature = "integration-test") {
                 ConnectionType::CLEARNET
@@ -84,7 +83,10 @@ impl TakerConfig {
                 config_map.get("tor_auth_password"),
                 default_config.tor_auth_password,
             ),
-            dns_address: parse_field(config_map.get("dns_address"), default_config.dns_address),
+            tracker_address: parse_field(
+                config_map.get("tracker_address"),
+                default_config.tracker_address,
+            ),
             connection_type: parse_field(
                 config_map.get("connection_type"),
                 default_config.connection_type,
@@ -103,13 +105,13 @@ control_port = {}
 socks_port = {}
 # Authentication password for Tor control interface
 tor_auth_password = {}
-# DNS address (can be clearnet or onion)
-dns_address = {}
+# Tracker address
+tracker_address = {}
 connection_type = {:?}",
             self.control_port,
             self.socks_port,
             self.tor_auth_password,
-            self.dns_address,
+            self.tracker_address,
             self.connection_type
         );
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;

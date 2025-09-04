@@ -180,14 +180,14 @@ pub(crate) fn fetch_offer_from_makers(
 /// Retrieves advertised maker addresses from tracker based on the specified network.
 pub fn fetch_addresses_from_tracker(
     socks_port: Option<u16>,
-    dns_addr: String,
+    tracker_addr: String,
     connection_type: ConnectionType,
 ) -> Result<Vec<MakerAddress>, TakerError> {
     loop {
         let mut stream = match connection_type {
-            ConnectionType::CLEARNET => match TcpStream::connect(dns_addr.as_str()) {
+            ConnectionType::CLEARNET => match TcpStream::connect(tracker_addr.as_str()) {
                 Err(e) => {
-                    log::error!("Error connecting to DNS: {e:?}");
+                    log::error!("Error connecting to Tracker: {e:?}");
                     thread::sleep(GLOBAL_PAUSE);
                     continue;
                 }
@@ -195,9 +195,9 @@ pub fn fetch_addresses_from_tracker(
             },
             ConnectionType::TOR => {
                 let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
-                match Socks5Stream::connect(socket_addrs, dns_addr.as_str()) {
+                match Socks5Stream::connect(socket_addrs, tracker_addr.as_str()) {
                     Err(e) => {
-                        log::error!("Error connecting to DNS: {e:?}");
+                        log::error!("Error connecting to Tracker: {e:?}");
                         thread::sleep(GLOBAL_PAUSE);
                         continue;
                     }
@@ -219,7 +219,7 @@ pub fn fetch_addresses_from_tracker(
         let response: TrackerServerToClient = match read_message(&mut stream) {
             Ok(resp) => serde_cbor::de::from_slice(&resp[..])?,
             Err(e) => {
-                log::error!("Error reading DNS response: {e}. Retrying...");
+                log::error!("Error reading Tracker response: {e}. Retrying...");
                 thread::sleep(GLOBAL_PAUSE);
                 continue;
             }

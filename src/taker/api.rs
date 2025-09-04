@@ -1930,15 +1930,15 @@ impl Taker {
 
     /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
     pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        let dns_addr = match self.config.connection_type {
+        let tracker_addr = match self.config.connection_type {
             ConnectionType::CLEARNET => {
                 if cfg!(feature = "integration-test") {
                     format!("127.0.0.1:{}", 8080)
                 } else {
-                    self.config.dns_address.clone()
+                    self.config.tracker_address.clone()
                 }
             }
-            ConnectionType::TOR => self.config.dns_address.clone(),
+            ConnectionType::TOR => self.config.tracker_address.clone(),
         };
 
         #[cfg(not(feature = "integration-test"))]
@@ -1947,16 +1947,19 @@ impl Taker {
         #[cfg(feature = "integration-test")]
         let socks_port = None;
 
-        log::info!("Fetching addresses from DNS: {dns_addr}");
+        log::info!("Fetching addresses from Tracker: {tracker_addr}");
 
-        let addresses_from_dns =
-            match fetch_addresses_from_tracker(socks_port, dns_addr, self.config.connection_type) {
-                Ok(dns_addrs) => dns_addrs,
-                Err(e) => {
-                    log::error!("Could not connect to DNS Server: {e:?}");
-                    return Err(e);
-                }
-            };
+        let addresses_from_tracker = match fetch_addresses_from_tracker(
+            socks_port,
+            tracker_addr,
+            self.config.connection_type,
+        ) {
+            Ok(tracker_addrs) => tracker_addrs,
+            Err(e) => {
+                log::error!("Could not connect to Tracker Server: {e:?}");
+                return Err(e);
+            }
+        };
 
         // Find out addresses that was last updated 30 mins ago.
         let fresh_addrs = self
@@ -1967,9 +1970,9 @@ impl Taker {
             .collect::<HashSet<_>>();
 
         // Fetch only those addresses which are new, or last updated more than 30 mins ago
-        let addrs_to_fetch = addresses_from_dns
+        let addrs_to_fetch = addresses_from_tracker
             .iter()
-            .filter(|dns_addr| !fresh_addrs.contains(dns_addr))
+            .filter(|tracker_addr| !fresh_addrs.contains(tracker_addr))
             .cloned()
             .collect::<Vec<_>>();
 
@@ -2003,7 +2006,7 @@ impl Taker {
         Ok(())
     }
 
-    /// fetches only the offer data from DNS and returns the updated Offerbook.
+    /// fetches only the offer data from Tracker and returns the updated Offerbook.
     /// Used for taker cli app, in `fetch-offers` command.
     pub fn fetch_offers(&mut self) -> Result<&OfferBook, TakerError> {
         self.sync_offerbook()?;
