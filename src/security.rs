@@ -102,8 +102,8 @@ impl SerdeFormat for SerdeCbor {
 ///
 /// 16 bytes (128 bits) is recommended to provide sufficient entropy to prevent precomputation attacks.
 /// See:
-/// - https://datatracker.ietf.org/doc/html/rfc2898#section-5.2
-/// - https://docs.rs/password-hash/0.5.0/password_hash/struct.Salt.html#associatedconstant.RECOMMENDED_LENGTH
+/// - <https://datatracker.ietf.org/doc/html/rfc2898#section-5.2>
+/// - <https://docs.rs/password-hash/0.5.0/password_hash/struct.Salt.html#associatedconstant.RECOMMENDED_LENGTH>
 type PBKDF2Salt = [u8; 16];
 /// A 12-byte (96-bit) nonce used as the Initialization Vector (IV) for AES-GCM encryption.
 type EncryptionNonce = [u8; 12];
