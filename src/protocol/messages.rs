@@ -320,56 +320,14 @@ impl Display for MakerToTakerMessage {
     }
 }
 
-/// All messages sent from DNS to Maker
-#[derive(Debug, Serialize, Deserialize)]
-pub enum DnsResponse {
-    /// Posting request by Maker was accepted by DNS.
-    Ack,
-    /// Posting request by Maker was rejected by DNS.
-    Nack(String),
-}
-
-impl Display for DnsResponse {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Ack => write!(f, "DNS Ack"),
-            Self::Nack(s) => write!(f, "DNS Nack {}", s.as_str()),
-        }
-    }
-}
-
 /// Metadata shared by the maker with the Directory Server for verifying authenticity.
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(private_interfaces)]
-pub struct DnsMetadata {
+pub struct TrackerMetadata {
     /// The maker's URL.
     pub url: String,
     /// Proof of the maker's fidelity bond funding.
     pub proof: FidelityProof,
-}
-
-/// Enum representing DNS request message types.
-///
-/// These requests and responses are structured using Serde for serialization and deserialization.
-#[derive(Serialize, Deserialize, Debug)]
-#[allow(clippy::large_enum_variant)]
-pub enum DnsRequest {
-    /// A request sent by the maker to register itself with the DNS server and authenticate.
-    Post {
-        /// Metadata containing the maker's URL and fidelity proof.
-        metadata: DnsMetadata,
-    },
-    /// A request sent by the taker to fetch all valid maker addresses from the DNS server.
-    Get,
-    /// Dummy data used for integration tests.
-    #[cfg(feature = "integration-test")]
-    /// Send a dummy request, only used in integration tests
-    Dummy {
-        /// A dummy URL for testing.
-        url: String,
-        /// A dummy `vout` value, representing a specific output index of an OutPoint.
-        vout: u32,
-    },
 }
 
 /// Tracker response
@@ -403,18 +361,16 @@ pub struct MempoolTx {
     pub seen_at: chrono::NaiveDateTime,
 }
 
-/// Enum representing DNS request message types.
-///
 /// These requests and responses are structured using Serde for serialization and deserialization.
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum TrackerClientToServer {
-    /// A request sent by the maker to register itself with the DNS server and authenticate.
+    /// A request sent by the maker to register itself with the server and authenticate.
     Post {
         /// Metadata containing the maker's URL and fidelity proof.
-        metadata: DnsMetadata,
+        metadata: TrackerMetadata,
     },
-    /// A request sent by the taker to fetch all valid maker addresses from the DNS server.
+    /// A request sent by the taker to fetch all valid maker addresses from the Tracker server.
     Get,
     /// To gauge server activity
     Pong {
