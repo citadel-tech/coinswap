@@ -2268,7 +2268,13 @@ impl Taker {
         }
 
         let bond = offer_and_address.offer.fidelity.bond.clone();
-        let bond_value = self.get_wallet().calculate_bond_value(&bond).unwrap();
+        let bond_value = match self.get_wallet().calculate_bond_value(&bond) {
+            Ok(value) => value,
+            Err(_) => {
+                // For expired bonds, we can either skip displaying them or show a default value
+                Amount::ZERO // or return an error, or skip this offer
+            }
+        };
 
         let offer = Offer {
             base_fee: offer_and_address.offer.base_fee,
