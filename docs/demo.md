@@ -18,12 +18,12 @@ This guide will help you prepare your system for participating in the Coinswap L
 
 2. **Bitcoin Core**
    ```bash
-   # Download Bitcoin Core 28.1(Or whatever is the newest version at this point)
+   # Download Bitcoin Core (latest stable version)
    wget https://bitcoincore.org/bin/bitcoin-core-28.1/bitcoin-28.1-x86_64-linux-gnu.tar.gz
    
    # Download and verify signatures
-   wget https://bitcoincore.org/bin/bitcoin-core-28.1//SHA256SUMS
-   wget https://bitcoincore.org/bin/bitcoin-core-28.1//SHA256SUMS.asc
+   wget https://bitcoincore.org/bin/bitcoin-core-28.1/SHA256SUMS
+   wget https://bitcoincore.org/bin/bitcoin-core-28.1/SHA256SUMS.asc
    
    # Verify download
    sha256sum --check SHA256SUMS --ignore-missing
@@ -49,11 +49,11 @@ This guide will help you prepare your system for participating in the Coinswap L
 4. **Setup Tor**
    
    Coinswap requires Tor exclusively for all communication. You will need to have Tor running locally to run the apps.
-   For Tor setup instructions follow the [Tor Doc](tor.md). 
+   For comprehensive Tor setup instructions, follow the [Tor Documentation](tor.md). 
    
-   Use the below sample `torrc` config for quick setup.
+   Use the below sample `torrc` config for quick setup:
    
-   ```shell
+   ```ini
    ControlPort 9051
    CookieAuthentication 0
    SOCKSPort 9050
@@ -67,7 +67,7 @@ mkdir -p ~/.bitcoin
 ```
 
 Add to `~/.bitcoin/bitcoin.conf`:
-```bash
+```ini
 signet=1
 
 [signet]
@@ -80,13 +80,14 @@ blockfilterindex=1
 addnode=172.81.178.3:38333
 signetchallenge=0014c9e9f8875a25c3cc6d99ad3e5fd54254d00fed44
 ```
-> **NOTE**: Change `signet=1` to `testnet4=1` if you want to run the apps on testnet, or other networks.
 
-This will connect the node with our custom signet. The custom signet is designed specifically for coinswap testing, and has a block interval of 2 mins.
-The signet data can be accessed using the Tor-Browser only at the below links.
+> **Note**: Change `signet=1` to `testnet4=1` if you want to run the apps on testnet4, or other networks.
 
-[Custom Signet Explorer](http://4imwp7kgajusoslqa7lnjq7phpt3gocm55tlekg5fp5xqy4ipoy5f6ad.onion/)   
-[Custom Signet Faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/)
+This configuration connects your node to our custom signet. The custom signet is designed specifically for coinswap testing and has a block interval of 2 minutes.
+
+**Custom Signet Resources** (accessible via Tor browser only):
+- [Custom Signet Explorer](http://4imwp7kgajusoslqa7lnjq7phpt3gocm55tlekg5fp5xqy4ipoy5f6ad.onion/)   
+- [Custom Signet Faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/)
 
 ### 2. Start Bitcoin Core
 ```bash
@@ -101,14 +102,17 @@ bitcoin-cli getblockchaininfo
 ```
 
 ## Compile The Apps
+
+### Clone and Build
 ```bash
 git clone https://github.com/citadel-tech/coinswap.git
 cd coinswap
 cargo build --release
 ```
 
-After compilation you will get the binaries in the `./target/release` folder. 
+After compilation, you will get the binaries in the `` folder.
 
+### Install Binaries (Optional)
 Install the necessary binaries on your system:
 ```bash
 sudo install ./target/release/taker /usr/local/bin/
@@ -116,102 +120,249 @@ sudo install ./target/release/makerd /usr/local/bin/
 sudo install ./target/release/maker-cli /usr/local/bin/  
 ```
 
-## Running the Swap Server
+> **Note**: For this tutorial, we'll use the binaries directly from `./target/release/` or `./target/debug/` for development builds.
 
-The swap server is run using two apps `makerd` and `maker-cli`. The `makerd` app runs a server, and `maker-cli` is used to operate the server using RPC commands.
+### Key Points About Command Arguments
 
-Check the available `makerd` commands with
+All coinswap applications connect to Bitcoin Core via RPC. Understanding these parameters is essential:
+
+- The `-r` or `--ADDRESS:PORT` option specifies the Bitcoin Core RPC address and port. By default, this is set to **`127.0.0.1:38332`**.
+
+- The `-a` or `--USER:PASSWORD` option specifies the Bitcoin Core RPC authentication. By default, this is set to **`user:password`**.
+
+- #### If you're using the **default configuration**:
+  - You don't need to include these arguments when using default settings.
+
+- #### If you're using a **custom configuration**:
+  - Pass your custom values using the `-r` and `-a` options.
+
+## For this tutorial, we'll use the default configuration. All commands will work without additional parameters if your `bitcoin.conf` matches the setup above.
+
+---
+
+## Running the Swap Server (Maker)
+
+The swap server runs using two apps: `makerd` and `maker-cli`. The `makerd` app runs a background server, and `maker-cli` is used to operate the server using RPC commands.
+
+### 1. Check Available Commands
 ```bash
-makerd --help
+$ makerd --help
 ```
 
-Start the `makerd` daemon with all default parameters:
+This will display detailed information about `makerd` options and usage.
+
+### 2. Start the Maker Server
 ```bash
-makerd
+$ makerd
 ```
 
-This will spawn the maker server and you will start seeing the logs. The server is operated with the `maker-cli` app. Follow the log, and it will show you the next instructions.
+This will spawn the maker server and you will start seeing logs. The server is operated with the `maker-cli` app.
 
-To successfully set up the swap server, it needs to have a fidelity bond and enough balance (minimum 50,000 sats+ + 1,000 sats for tx fee) to start providing swap services.
+### 3. Server Setup Process
 
-In the log you will see the server is asking for some BTC at a given address. Fund that address with the given minimum amount or more. Use [this faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/)(open in Tor browser) to get some signet coins.
+To successfully set up the swap server, it needs:
+- A fidelity bond (minimum 50,000 sats)
+- Additional balance for swap liquidity
+So a total initial balance of 75000 sats would be sufficient.
 
-Once the funds are sent, the server will automatically create a fidelity bond transaction, wait for its confirmation, and when confirmed, send its offers and details to the DNS server and start listening for incoming swap requests.
+**What happens during startup:**
 
-At this stage you can start using the `maker-cli` app to query the server and get all relevant details.
+- **Wallet Creation/Loading**: If no wallet exists, `makerd` will create a new one and display the mnemonic for backup.
 
-On a new terminal, try out a few operations like:
+- **Fidelity Bond Check**: The server checks for existing fidelity bonds or creates a new one.
+
+- **Funding Required**: If the wallet is empty, the server will log the funding address and required amount.
+
+Example log output:
 ```bash
-maker-cli --help
-maker-cli get-balances
-maker-cli list-utxo
+INFO coinswap::maker::server - No active Fidelity Bonds found. Creating one.
+INFO coinswap::maker::server - Fund the wallet with at least 0.00051000 BTC at address: bcrt1q...
 ```
 
-If everything goes all right you will be able to see balances and utxos in the `maker-cli` outputs.
+### 4. Fund the Wallet
 
-All relevant files and wallets used by the server will be located in `~/.coinswap/maker/` data directory. It's recommended to take a backup of the wallet file `~/.coinswap/maker/wallets/maker-wallet`, to avoid loss of funds.
+Use the [Custom Signet Faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/) (open in Tor browser) to send coins to the address shown in the logs.
 
+Suggested amount: **0.01 BTC** (provides fidelity bond + swap liquidity)
 
-## Run The Swap Client
+### 5. Monitor Server Progress
 
-The swap client is run with the `taker` app. 
+Once funded, the server will automatically:
+1. Create and broadcast the fidelity bond transaction
+2. Wait for confirmation (approximately 2-4 minutes on custom signet)
+3. Start listening for incoming swap requests
 
-From a new terminal, go to the project root directory and perform basic client operations:
-
-### Get Some Money
+Final success log:
 ```bash
-taker get-new-address
+INFO coinswap::maker::server - [6102] Server Setup completed!! Use maker-cli to operate the server and the internal wallet.
 ```
 
-Use [this faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/)(open in Tor browser) to send some funds at the above address. Then check the client wallet balance with
+### 6. Operate the Server with maker-cli
+
+Open a new terminal and try these operations:
+
+#### Check Server Status
 ```bash
-taker get-balances
+$ maker-cli send-ping
 ```
 
-### Fetch Market Offers
-Fetch all the current existing market offers with 
+#### View Balances
 ```bash
-taker fetch-offers
+$ maker-cli get-balances
 ```
 
-### Perform a Coinswap
-Attempt a coinswap process with
+#### List UTXOs
 ```bash
-taker coinswap
+$ maker-cli list-utxo
 ```
 
-If all goes well, you will see the coinswap process starting in the logs.
+#### View Fidelity Bond Details
+```bash
+$ maker-cli show-fidelity
+```
 
+#### Get Server's Tor Address
+```bash
+$ maker-cli show-tor-address
+```
+
+All relevant files and wallets used by the server are located in the `~/.coinswap/maker/` data directory. **Important**: Back up the wallet file `~/.coinswap/maker/wallets/maker-wallet` to avoid loss of funds.
+
+---
+
+## Run The Swap Client (Taker)
+
+The swap client is operated with the `taker` app.
+
+### 1. Check Available Commands
+```bash
+$ taker --help
+```
+
+### 2. Get a Receiving Address
+```bash
+$ taker get-new-address
+```
+
+### 3. Fund the Taker Wallet
+
+Use the [Custom Signet Faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/) (open in Tor browser) to send some funds to the address above.
+
+Suggested amount: **0.001 BTC** (sufficient for testing swaps)
+
+### 4. Check Wallet Balance
+```bash
+$ taker get-balances
+```
+
+**Output:**
+```json
+{
+  "contract": 0,
+  "regular": 100000,
+  "spendable": 100000,
+  "swap": 0
+}
+```
+
+### 5. Fetch Market Offers
+```bash
+$ taker fetch-offers
+```
+
+This command fetches all current market offers from available makers. You should see offer details including fees, minimum amounts, and maker addresses.
+
+### 6. Perform a Coinswap
+```bash
+$ taker coinswap
+```
+
+This initiates the coinswap process with default parameters. The process will:
+1. Select suitable makers from the offer book
+2. Negotiate swap terms
+3. Execute the multi-party coinswap protocol
+4. Complete the swap transactions
+
+Monitor the logs for swap progress. The process typically takes several minutes to complete.
+
+### 7. Monitor Swap Progress
+
+You can monitor detailed swap progress in the debug log:
+```bash
+tail -f ~/.coinswap/taker/debug.log
+```
+
+---
 
 ## Basic Troubleshooting
 
 ### Bitcoin Core Issues
-- Verify bitcoind is running: `bitcoin-cli getblockchaininfo`
-- Check rpcuser/rpcpassword attempted by the apps are matching with the bitcoin.conf file values
-- Ensure correct network (signet)
+- **Verify bitcoind is running**: 
+  ```bash
+  bitcoin-cli getblockchaininfo
+  ```
+- **Check RPC authentication**: Ensure `rpcuser` and `rpcpassword` in `bitcoin.conf` match what the apps expect
+- **Verify correct network**: Confirm you're on the intended network (signet/testnet4)
+- **Check IBD status**: Ensure Initial Block Download is complete
 
 ### Maker Server Issues
-- Check debug.log for errors
-- Verify fidelity bond creation
-- Ensure sufficient funds for operations
-- Check TOR connection status
+- **Check debug logs**: 
+  ```bash
+  tail -f ~/.coinswap/maker/debug.log
+  ```
+- **Verify fidelity bond creation**: Use `maker-cli show-fidelity` to check bond status
+- **Ensure sufficient funds**: Check balances with `maker-cli get-balances`
+- **Check Tor connection**: Verify Tor is running and properly configured
 
 ### Taker Client Issues
-- Verify wallet funding
-- Check network connectivity
-- Monitor debug.log for detailed errors
+- **Verify wallet funding**: Use `taker get-balances` to check funds
+- **Check network connectivity**: Ensure connection to makers via Tor
+- **Monitor debug logs**: 
+  ```bash
+  tail -f ~/.coinswap/taker/debug.log
+  ```
+- **Offer book issues**: Try `taker fetch-offers` to verify maker connectivity
 
-### Asking for further help
-If you are still stuck and couldn't get the apps running, drop in our [Discord](https://discord.gg/gs5R6pmAbR) and ask help from the developers directly.
+### Common Solutions
+- **Restart Tor**: 
+  ```bash
+  sudo systemctl restart tor
+  ```
+- **Check firewall settings**: Ensure required ports are accessible
+- **Verify Bitcoin Core sync**: Ensure node is fully synchronized
+- **Check disk space**: Ensure sufficient space for blockchain data
+
+### Getting Help
+
+If you're still stuck and couldn't get the apps running:
+- Join our [Discord](https://discord.gg/gs5R6pmAbR) and ask for help from developers directly
+- Check the [GitHub Issues](https://github.com/citadel-tech/coinswap/issues) for known problems
+- Review the detailed component guides listed below
+
+---
 
 ## Additional Resources
 
+### Documentation
 - [Bitcoin Core Documentation](https://bitcoin.org/en/developer-reference)
 - [Coinswap Protocol Specification](https://github.com/citadel-tech/Coinswap-Protocol-Specification)
 - [Project Repository](https://github.com/citadel-tech/coinswap)
 
+### Component Guides
 For more detailed information about specific components:
-- [Bitcoin Core Setup](./bitcoind.md)
+- [Bitcoin Core Setup Guide](./bitcoind.md)
 - [Maker Server Guide](./makerd.md)
 - [Maker CLI Reference](./maker-cli.md)
 - [Taker Client Guide](./taker.md)
+- [Tor Setup & Configuration](./tor.md)
+
+### Networks
+- **Custom Signet**: Recommended for testing, 2-minute blocks
+- **Testnet4**: Alternative testing network with longer block times
+- **Regtest**: Local development only (not connected to other nodes)
+
+### Security Notes
+- **Backup wallet files**: Always backup mnemonic phrases and wallet files
+- **Secure your server**: Use proper authentication for production deployments
+- **Monitor logs**: Keep an eye on debug logs for any suspicious activity
+- **Test thoroughly**: Start with small amounts when testing
