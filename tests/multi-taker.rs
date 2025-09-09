@@ -109,7 +109,6 @@ fn multi_taker_single_maker_swap() {
             let swap_params = SwapParams {
                 send_amount: Amount::from_sat(500000),
                 maker_count: 2,
-                tx_count: 3,
             };
             s.spawn(move || {
                 taker.do_coinswap(swap_params).unwrap();
@@ -146,8 +145,8 @@ fn multi_taker_single_maker_swap() {
                 let balance_diff = balances.spendable.to_sat() - org_spend_balance.to_sat();
                 println!("🔍 DEBUG: Multi-taker balance diff: {balance_diff} sats");
                 assert!(
-                    (30000..=60000).contains(&balance_diff),
-                    "Expected balance diff between 30000-60000 sats, got {}",
+                    (40000..=70000).contains(&balance_diff),
+                    "Expected balance diff between 40000-70000 sats, got {}",
                     balance_diff
                 );
             },

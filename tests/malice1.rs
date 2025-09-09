@@ -98,7 +98,6 @@ fn malice1_taker_broadcast_contract_prematurely() {
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
-        tx_count: 3,
     };
     taker.do_coinswap(swap_params).unwrap();
 

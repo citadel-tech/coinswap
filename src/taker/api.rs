@@ -82,8 +82,6 @@ pub struct SwapParams {
     pub send_amount: Amount,
     /// How many hops.
     pub maker_count: usize,
-    /// How many splits
-    pub tx_count: u32,
 }
 
 // Defines the Taker's position in the current ongoing swap.
@@ -544,10 +542,7 @@ impl Taker {
             let maker = self.choose_next_maker()?.clone();
             log::info!("Choosing next maker: {}", maker.address);
             let (multisig_pubkeys, multisig_nonces, hashlock_pubkeys, hashlock_nonces) =
-                generate_maker_keys(
-                    &maker.offer.tweakable_point,
-                    self.ongoing_swap_state.swap_params.tx_count,
-                )?;
+                generate_maker_keys(&maker.offer.tweakable_point, 1)?;
             let (funding_txs, mut outgoing_swapcoins, funding_fee) =
                 self.wallet.initalize_coinswap(
                     self.ongoing_swap_state.swap_params.send_amount,
@@ -1010,28 +1005,19 @@ impl Taker {
                 next_peer_hashlock_pubkeys,
                 next_peer_hashlock_keys_or_nonces,
             ) = if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
-                let (my_recv_ms_pubkeys, my_recv_ms_nonce): (Vec<_>, Vec<_>) =
-                    (0..self.ongoing_swap_state.swap_params.tx_count)
-                        .map(|_| generate_keypair())
-                        .unzip();
-                let (my_recv_hashlock_pubkeys, my_recv_hashlock_nonce): (Vec<_>, Vec<_>) = (0
-                    ..self.ongoing_swap_state.swap_params.tx_count)
-                    .map(|_| generate_keypair())
-                    .unzip();
+                let (my_recv_ms_pubkey, my_recv_ms_nonce) = generate_keypair();
+                let (my_recv_hashlock_pubkey, my_recv_hashlock_nonce) = generate_keypair();
                 (
-                    my_recv_ms_pubkeys,
-                    my_recv_ms_nonce,
-                    my_recv_hashlock_pubkeys,
-                    my_recv_hashlock_nonce,
+                    vec![my_recv_ms_pubkey],
+                    vec![my_recv_ms_nonce],
+                    vec![my_recv_hashlock_pubkey],
+                    vec![my_recv_hashlock_nonce],
                 )
             } else {
                 next_maker = self.choose_next_maker()?.clone();
                 //next_maker is only ever accessed when the next peer is a maker, not a taker
                 //i.e. if its ever used when is_taker_next_peer == true, then thats a bug
-                generate_maker_keys(
-                    &next_maker.offer.tweakable_point,
-                    self.ongoing_swap_state.swap_params.tx_count,
-                )?
+                generate_maker_keys(&next_maker.offer.tweakable_point, 1)?
             };
 
             let this_maker_contract_txs =
@@ -2112,7 +2098,7 @@ impl Taker {
 
     /// Gets all good makers that can handle a specific amount.
     /// Filters makers based on their min_size and max_size limits.
-    pub fn find_suitable_makers(&self) -> Vec<OfferAndAddress> {
+    fn find_suitable_makers(&self) -> Vec<OfferAndAddress> {
         let swap_amount = self.ongoing_swap_state.swap_params.send_amount;
         let max_refund_locktime =
             REFUND_LOCKTIME * (self.ongoing_swap_state.swap_params.maker_count + 1) as u16;

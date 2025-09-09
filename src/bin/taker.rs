@@ -291,7 +291,6 @@ fn main() -> Result<(), TakerError> {
                     let swap_params = SwapParams {
                         send_amount: Amount::from_sat(*amount),
                         maker_count: *makers,
-                        tx_count: 1,
                     };
                     taker.do_coinswap(swap_params)?;
                 }
