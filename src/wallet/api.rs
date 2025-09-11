@@ -1673,7 +1673,7 @@ impl Wallet {
                     internal_address
                 );
                 let sweep_tx = self.spend_coins(
-                    &vec![(utxo.clone(), spend_info)],
+                    &[(utxo.clone(), spend_info)],
                     Destination::Sweep(internal_address.clone()),
                     feerate,
                 )?;

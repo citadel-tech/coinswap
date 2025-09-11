@@ -28,45 +28,36 @@ use crate::{
         api::{
             check_for_broadcasted_contracts, check_for_idle_states,
             restore_broadcasted_contracts_on_reboot, ConnectionState,
-            FIDELITY_BOND_DNS_UPDATE_INTERVAL, SWAP_LIQUIDITY_CHECK_INTERVAL,
+            FIDELITY_BOND_UPDATE_INTERVAL, SWAP_LIQUIDITY_CHECK_INTERVAL,
         },
         handlers::handle_message,
         rpc::start_rpc_server,
     },
     protocol::messages::TakerToMakerMessage,
-    utill::{read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
+    utill::{read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::WalletError,
 };
 
 use crate::maker::error::MakerError;
 
-/// Fetches the Maker and DNS address, and sends maker address to the DNS server.
-/// Depending upon ConnectionType and test/prod environment, different maker address and DNS address are returned.
-/// Return the Maker address and the DNS address.
-fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> {
+/// Fetches the Maker
+/// Depending upon ConnectionType and test/prod environment, different maker address are returned.
+/// Return the Maker address
+fn network_bootstrap(maker: Arc<Maker>) -> Result<String, MakerError> {
     let maker_port = maker.config.network_port;
-    let (maker_address, dns_address) = match maker.config.connection_type {
-        ConnectionType::CLEARNET => {
-            let maker_address = format!("127.0.0.1:{maker_port}");
-            let dns_address = if cfg!(feature = "integration-test") {
-                format!("127.0.0.1:{}", 8080)
-            } else {
-                maker.config.dns_address.clone()
-            };
-
-            (maker_address, dns_address)
-        }
-        ConnectionType::TOR => {
+    let maker_address = {
+        if cfg!(feature = "integration-test") {
+            // Always clearnet in integration tests
+            format!("127.0.0.1:{maker_port}")
+        } else {
+            // Always Tor otherwise
             let maker_hostname = get_tor_hostname(
                 maker.get_data_dir(),
                 maker.config.control_port,
-                maker.config.network_port,
+                maker_port,
                 &maker.config.tor_auth_password,
             )?;
-            let maker_address = format!("{}:{}", maker_hostname, maker.config.network_port);
-
-            let dns_address = maker.config.dns_address.clone();
-            (maker_address, dns_address)
+            format!("{}:{}", maker_hostname, maker_port)
         }
     };
 
@@ -74,27 +65,19 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> 
         .as_ref()
         .track_and_update_unconfirmed_fidelity_bonds()?;
 
-    manage_fidelity_bonds_and_update_dns(maker.as_ref(), &maker_address, &dns_address)?;
+    manage_fidelity_bonds(maker.as_ref(), &maker_address)?;
 
-    Ok((maker_address, dns_address))
+    Ok(maker_address)
 }
 
-/// Manages the maker's fidelity bonds and ensures the DNS server is updated with the latest bond proof and maker address.
+/// Manages the maker's fidelity bonds and ensures the server is updated with the latest bond proof and maker address.
 ///
 /// It performs the following operations:
 /// 1. Redeems all expired fidelity bonds in the maker's wallet, if any are found.
 /// 2. Creates a new fidelity bond if no valid bonds remain after redemption.
-/// 3. Sends a POST request to the DNS server containing the maker's address and the proof of the fidelity bond
-///    with the highest value.
-fn manage_fidelity_bonds_and_update_dns(
-    maker: &Maker,
-    maker_addr: &str,
-    _dns_addr: &str,
-) -> Result<(), MakerError> {
+fn manage_fidelity_bonds(maker: &Maker, maker_addr: &str) -> Result<(), MakerError> {
     maker.wallet.write()?.redeem_expired_fidelity_bonds()?;
-
     setup_fidelity_bond(maker, maker_addr)?;
-
     Ok(())
 }
 
@@ -423,7 +406,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Starting Maker Server");
 
     // Setup the wallet with fidelity bond.
-    let (maker_addr, dns_addr) = network_bootstrap(maker.clone())?;
+    let maker_addr = network_bootstrap(maker.clone())?;
 
     // Tracks the elapsed time in heartbeat intervals to schedule periodic checks and avoid redundant executions.
     let mut interval_tracker = 0;
@@ -528,12 +511,12 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         // Running these checks during an active swap might cause the maker to stop responding,
         // potentially aborting the swap.
         if maker.ongoing_swap_state.lock()?.is_empty() {
-            if interval_tracker.is_multiple_of(FIDELITY_BOND_DNS_UPDATE_INTERVAL) {
-                manage_fidelity_bonds_and_update_dns(maker.as_ref(), &maker_addr, &dns_addr)?;
+            if interval_tracker.is_multiple_of(FIDELITY_BOND_UPDATE_INTERVAL) {
+                manage_fidelity_bonds(maker.as_ref(), &maker_addr)?;
                 interval_tracker = 0;
             }
 
-            if interval_tracker.is_multiple_of(FIDELITY_BOND_DNS_UPDATE_INTERVAL) {
+            if interval_tracker.is_multiple_of(FIDELITY_BOND_UPDATE_INTERVAL) {
                 check_swap_liquidity(maker.as_ref())?;
             }
         }
@@ -558,7 +541,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         // not skipped due to an ongoing coinswap and are performed once it completes.
         if maker.ongoing_swap_state.lock()?.is_empty()
             || !interval_tracker.is_multiple_of(SWAP_LIQUIDITY_CHECK_INTERVAL)
-            || !interval_tracker.is_multiple_of(FIDELITY_BOND_DNS_UPDATE_INTERVAL)
+            || !interval_tracker.is_multiple_of(FIDELITY_BOND_UPDATE_INTERVAL)
         {
             interval_tracker += HEART_BEAT_INTERVAL.as_secs() as u32;
         }
