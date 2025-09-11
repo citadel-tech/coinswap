@@ -126,11 +126,7 @@ impl Wallet {
         }
         .clone();
 
-        let tx = self.spend_coins(
-            &vec![(utxo, expired_fidelity_spend_info)],
-            destination,
-            feerate,
-        )?;
+        let tx = self.spend_coins(&[(utxo, expired_fidelity_spend_info)], destination, feerate)?;
         let txid = self.send_tx(&tx)?;
 
         log::info!("Fidelity redeem transaction broadcasted. txid: {txid}");
