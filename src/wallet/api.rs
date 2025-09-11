@@ -1149,9 +1149,12 @@ impl Wallet {
         manually_selected_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
         log::info!(
-            "CoinSelect TARGET : {} Sats with No. of Manually Selected Utxos: {}",
+            "Coinselect Target : {} Sats with No. of Manually Selected Utxos: {}",
             amount.to_sat(),
-            manually_selected_outpoints.iter().len()
+            manually_selected_outpoints
+                .as_deref()
+                .unwrap_or_default()
+                .len()
         );
 
         // P2WPKH Breaks down as:
@@ -1204,9 +1207,6 @@ impl Wallet {
             (2 * P2WPKH_INPUT_WEIGHT) + TX_BASE_WEIGHT + CHANGE_OUTPUT_WEIGHT + TARGET_OUTPUT_WEIGHT
         };
 
-        // Convert weight units to virtual bytes for fee calculation
-        // Weight is divided by 4 to get vbytes (BIP 141 standard)
-        let estimated_fee_vbytes: u64 = estimated_total_tx_weight / 4;
         // P2WPKH input weight: OutPoint(32) + sequence(4) + vout(4) + empty_scriptsig(1) = 41 bytes
         const INPUT_BASE_WEIGHT: u64 = 32 + 4 + 4 + 1;
 
@@ -1243,7 +1243,7 @@ impl Wallet {
 
         if available_regular_utxos.is_empty() && available_swap_utxos.is_empty() {
             log::error!("No spendable UTXOs available");
-            let estimated_fee = calculate_fee(estimated_fee_vbytes, feerate as f32)?;
+            let estimated_fee = calculate_fee(estimated_total_tx_weight / 4, feerate as f32)?;
             return Err(WalletError::InsufficientFund {
                 available: 0,
                 required: amount.to_sat() + estimated_fee,
@@ -1325,7 +1325,7 @@ impl Wallet {
         } else if can_use_swap {
             ("swap", &available_swap_utxos)
         } else {
-            let estimated_fee = calculate_fee(estimated_fee_vbytes, feerate as f32)?;
+            let estimated_fee = calculate_fee(estimated_total_tx_weight / 4, feerate as f32)?;
 
             return Err(WalletError::InsufficientFund {
                 available: regular_total,
@@ -1413,7 +1413,7 @@ impl Wallet {
                 .collect::<Vec<_>>();
 
             log::info!(
-                "OG selected amount: {:?} and grouped amounts in CS: {:?}",
+                "Manually Selected UTXOs: {:?} and 1st Group in Array: {:?}",
                 manual_unspents
                     .into_iter()
                     .map(|(utxo, _)| utxo.amount.to_sat())
@@ -1461,7 +1461,7 @@ impl Wallet {
                     })
                     .sum();
 
-                // let estimated_fee = calculate_fee(ESTIMATED_FEE_VBYTES, feerate as f32)?;
+                // let estimated_fee = calculate_fee((estimated_total_tx_weight / 4), feerate as f32)?;
 
                 // Calculate transaction fees for current selection including this group
                 let tx_weight = TX_BASE_WEIGHT
