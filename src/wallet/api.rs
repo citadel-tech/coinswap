@@ -30,7 +30,7 @@ use crate::{
         compute_checksum, generate_keypair, get_hd_path_from_descriptor,
         redeemscript_to_scriptpubkey, MIN_FEE_RATE,
     },
-    // wallet::split_utxos::MAX_SPLITS,
+    wallet::split_utxos::MAX_SPLITS,
 };
 
 use rust_coinselect::{
@@ -1461,14 +1461,13 @@ impl Wallet {
                     })
                     .sum();
 
-                // let estimated_fee = calculate_fee(estimated_fee_vbytes, feerate as f32)?;
+                // let estimated_fee = calculate_fee(ESTIMATED_FEE_VBYTES, feerate as f32)?;
 
                 // Calculate transaction fees for current selection including this group
                 let tx_weight = TX_BASE_WEIGHT
                     + result_weight
                     + group_weight
-                    + target_weight.to_wu()
-                    + change_weight.to_wu();
+                    + MAX_SPLITS as u64 * (target_weight.to_wu() + change_weight.to_wu());
                 let estimated_fee = calculate_fee(tx_weight / 4, feerate as f32)?;
 
                 // Add the reused address group to selection
@@ -1514,8 +1513,9 @@ impl Wallet {
             .collect::<Vec<_>>();
 
         // Calculate base weight
-        let tx_base_weight =
-            TX_BASE_WEIGHT + selected_weight + target_weight.to_wu() + change_weight.to_wu();
+        let tx_base_weight = TX_BASE_WEIGHT
+            + selected_weight
+            + MAX_SPLITS as u64 * (target_weight.to_wu() + change_weight.to_wu());
 
         // Create coin selection options with adjusted target
         let coin_selection_option = CoinSelectionOpt {
