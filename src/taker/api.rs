@@ -298,6 +298,8 @@ impl Taker {
     ///
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub(crate) fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
+        self.ongoing_swap_state.swap_params = swap_params.clone();
+
         // Check if we have enough balance - try regular first, then swap
         let balances = self.wallet.get_balances()?;
         let estimated_fee = Amount::from_sat(calculate_fee_sats(200));
@@ -355,7 +357,6 @@ impl Taker {
         log::info!("Initiating coinswap with id : {unique_id}");
 
         self.ongoing_swap_state.active_preimage = preimage;
-        self.ongoing_swap_state.swap_params = swap_params;
         self.ongoing_swap_state.id = unique_id;
 
         // Try first hop. Abort if error happens.
