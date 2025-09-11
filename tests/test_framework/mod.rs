@@ -264,37 +264,41 @@ pub fn fund_and_verify_taker(
     // Check if utxo list looks good.
     let utxos = wallet.get_all_utxo().unwrap();
 
-    let balances = wallet.get_balances().unwrap();
+    // Assert UTXO count
+    assert_eq!(
+        utxos.len(),
+        initial_utxo_count + utxo_count as usize,
+        "Expected {} UTXOs, but found {}",
+        initial_utxo_count + utxo_count as usize,
+        utxos.len()
+    );
 
-    log::debug!(
-        "Utxo Value: {:?} and utxo_value: {}",
+    log::info!(
+        "Total Wallet Amount : {:?} and Current UTXO Value : {}",
         utxos.iter().map(|utxo| utxo.amount).collect::<Vec<_>>(),
         utxo_value.to_sat()
     );
 
-    if utxo_count > 1 {
-        // Assert each UTXO value
-        for (i, utxo) in utxos.iter().skip(initial_utxo_count).enumerate() {
-            assert_eq!(
-                utxo.amount,
-                utxo_value,
-                "New UTXO at index {} has amount {} but expected {}",
-                i,
-                utxo.amount,
-                utxo_value.to_sat()
-            );
-        }
-
-        // Calculate expected total balance, previously was 0.05*3 = 0.15 btc
-        let expected_total = utxo_value * u64::from(utxo_count);
-
-        // Assert total balance matches expected
+    // Assert each UTXO value
+    for (i, utxo) in utxos.iter().skip(initial_utxo_count).enumerate() {
         assert_eq!(
-            balances.regular, expected_total,
-            "Expected regular balance {} but got {}",
-            expected_total, balances.regular
+            utxo.amount, utxo_value,
+            "New UTXO at index {} has amount {} but expected {}",
+            i, utxo.amount, utxo_value
         );
     }
+
+    // Calculate expected total balance, previously was 0.05*3 = 0.15 btc
+    let expected_total = utxo_value * u64::from(utxo_count);
+
+    let balances = wallet.get_balances().unwrap();
+
+    // Assert total balance matches expected
+    assert_eq!(
+        balances.regular, expected_total,
+        "Expected regular balance {} but got {}",
+        expected_total, balances.regular
+    );
 
     assert_eq!(balances.fidelity, Amount::ZERO);
     assert_eq!(balances.swap, Amount::ZERO);

@@ -7,7 +7,9 @@ use std::{convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr, thread, t
 
 use std::collections::HashMap;
 
-use crate::{security::KeyMaterial, utill::ContractMetadata, wallet::Destination};
+use crate::{
+    security::KeyMaterial, taker::SwapParams, utill::ContractMetadata, wallet::Destination,
+};
 
 use bip39::Mnemonic;
 use bitcoin::{
@@ -28,7 +30,7 @@ use crate::{
         compute_checksum, generate_keypair, get_hd_path_from_descriptor,
         redeemscript_to_scriptpubkey, MIN_FEE_RATE,
     },
-    wallet::split_utxos::MAX_SPLITS,
+    // wallet::split_utxos::MAX_SPLITS,
 };
 
 use rust_coinselect::{
@@ -1146,7 +1148,7 @@ impl Wallet {
         feerate: f64,
         manually_selected_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        log::debug!(
+        log::info!(
             "CoinSelect TARGET : {} Sats with No. of Manually Selected Utxos: {}",
             amount.to_sat(),
             manually_selected_outpoints.iter().len()
@@ -1191,14 +1193,20 @@ impl Wallet {
         const TX_BASE_WEIGHT: u64 = 43;
 
         // Estimated transaction weight for basic fee calculation
-        // Assumes a typical transaction with 2 inputs and 2 outputs (target + change)
+        // Assumes a typical transaction with 2 inputs(or manually selected inputs) and 2 outputs (target + change)
         // This is used for early fee estimation before actual coin selection
-        const ESTIMATED_TX_WEIGHT: u64 =
-            TX_BASE_WEIGHT + (2 * P2WPKH_INPUT_WEIGHT) + (2 * TARGET_OUTPUT_WEIGHT);
+        let estimated_total_tx_weight = if manually_selected_outpoints.is_some() {
+            (manually_selected_outpoints.iter().len() as u64 * P2WPKH_INPUT_WEIGHT)
+                + TX_BASE_WEIGHT
+                + CHANGE_OUTPUT_WEIGHT
+                + TARGET_OUTPUT_WEIGHT
+        } else {
+            (2 * P2WPKH_INPUT_WEIGHT) + TX_BASE_WEIGHT + CHANGE_OUTPUT_WEIGHT + TARGET_OUTPUT_WEIGHT
+        };
 
         // Convert weight units to virtual bytes for fee calculation
         // Weight is divided by 4 to get vbytes (BIP 141 standard)
-        const ESTIMATED_FEE_VBYTES: u64 = ESTIMATED_TX_WEIGHT / 4;
+        let estimated_fee_vbytes: u64 = estimated_total_tx_weight / 4;
         // P2WPKH input weight: OutPoint(32) + sequence(4) + vout(4) + empty_scriptsig(1) = 41 bytes
         const INPUT_BASE_WEIGHT: u64 = 32 + 4 + 4 + 1;
 
@@ -1235,7 +1243,7 @@ impl Wallet {
 
         if available_regular_utxos.is_empty() && available_swap_utxos.is_empty() {
             log::error!("No spendable UTXOs available");
-            let estimated_fee = calculate_fee(ESTIMATED_FEE_VBYTES, feerate as f32)?;
+            let estimated_fee = calculate_fee(estimated_fee_vbytes, feerate as f32)?;
             return Err(WalletError::InsufficientFund {
                 available: 0,
                 required: amount.to_sat() + estimated_fee,
@@ -1317,7 +1325,7 @@ impl Wallet {
         } else if can_use_swap {
             ("swap", &available_swap_utxos)
         } else {
-            let estimated_fee = calculate_fee(ESTIMATED_FEE_VBYTES, feerate as f32)?;
+            let estimated_fee = calculate_fee(estimated_fee_vbytes, feerate as f32)?;
 
             return Err(WalletError::InsufficientFund {
                 available: regular_total,
@@ -1453,13 +1461,14 @@ impl Wallet {
                     })
                     .sum();
 
-                // let estimated_fee = calculate_fee(ESTIMATED_FEE_VBYTES, feerate as f32)?;
+                // let estimated_fee = calculate_fee(estimated_fee_vbytes, feerate as f32)?;
 
                 // Calculate transaction fees for current selection including this group
                 let tx_weight = TX_BASE_WEIGHT
                     + result_weight
                     + group_weight
-                    + MAX_SPLITS as u64 * (target_weight.to_wu() + change_weight.to_wu());
+                    + target_weight.to_wu()
+                    + change_weight.to_wu();
                 let estimated_fee = calculate_fee(tx_weight / 4, feerate as f32)?;
 
                 // Add the reused address group to selection
@@ -1505,9 +1514,8 @@ impl Wallet {
             .collect::<Vec<_>>();
 
         // Calculate base weight
-        let tx_base_weight = TX_BASE_WEIGHT
-            + selected_weight
-            + MAX_SPLITS as u64 * (target_weight.to_wu() + change_weight.to_wu());
+        let tx_base_weight =
+            TX_BASE_WEIGHT + selected_weight + target_weight.to_wu() + change_weight.to_wu();
 
         // Create coin selection options with adjusted target
         let coin_selection_option = CoinSelectionOpt {
@@ -1590,16 +1598,14 @@ impl Wallet {
 
     /// Initialize a Coinswap with the Other party.
     /// Returns, the Funding Transactions, [`OutgoingSwapCoin`]s and the Total Miner fees.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn initalize_coinswap(
         &mut self,
-        total_coinswap_amount: Amount,
+        swap_params: &SwapParams, // Only using amount and manually selected outpoints. None else.
         other_multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
         hashvalue: Hash160,
         locktime: u16,
         fee_rate: f64,
-        manually_selected_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, Amount), WalletError> {
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = other_multisig_pubkeys
             .iter()
@@ -1609,10 +1615,10 @@ impl Wallet {
             .unzip();
 
         let create_funding_txes_result = self.create_funding_txes(
-            total_coinswap_amount,
+            swap_params.send_amount,
             &coinswap_addresses,
             fee_rate,
-            manually_selected_outpoints,
+            swap_params.manually_selected_outpoints.clone(),
         )?;
 
         let mut outgoing_swapcoins = Vec::<OutgoingSwapCoin>::new();

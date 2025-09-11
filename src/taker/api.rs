@@ -298,8 +298,6 @@ impl Taker {
     ///
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub(crate) fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
-        self.ongoing_swap_state.swap_params = swap_params.clone();
-
         // Check if we have enough balance - try regular first, then swap
         let balances = self.wallet.get_balances()?;
         let estimated_fee = Amount::from_sat(calculate_fee_sats(200));
@@ -322,7 +320,6 @@ impl Taker {
             log::error!("Not enough balance to do swap : {err:?}");
             return Err(err.into());
         }
-
         log::info!("Syncing Offerbook");
         self.sync_offerbook()?;
 
@@ -519,16 +516,12 @@ impl Taker {
                 )?;
             let (funding_txs, mut outgoing_swapcoins, funding_fee) =
                 self.wallet.initalize_coinswap(
-                    self.ongoing_swap_state.swap_params.send_amount,
+                    &self.ongoing_swap_state.swap_params,
                     &multisig_pubkeys,
                     &hashlock_pubkeys,
                     self.get_preimage_hash(),
                     swap_locktime,
                     MIN_FEE_RATE,
-                    self.ongoing_swap_state
-                        .swap_params
-                        .manually_selected_outpoints
-                        .clone(),
                 )?;
 
             let contract_reedemscripts = outgoing_swapcoins
@@ -2103,7 +2096,7 @@ impl Taker {
                 let min_size_with_fee = bitcoin::Amount::from_sat(
                     oa.offer.min_size + maker_fee + 500, /* Estimated mining fee */
                 );
-                log::debug!("Maker Filtering : Target Amount: {swap_amount}, Minimum Amount: {min_size_with_fee}, Maximum Amount: {}", bitcoin::Amount::from_sat(oa.offer.max_size));
+                log::info!("Maker Filtering : Target Amount: {swap_amount}, Minimum Amount: {min_size_with_fee}, Maximum Amount: {}", bitcoin::Amount::from_sat(oa.offer.max_size));
                 swap_amount >= min_size_with_fee
                     && swap_amount <= bitcoin::Amount::from_sat(oa.offer.max_size)
             })

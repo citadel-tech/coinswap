@@ -52,7 +52,7 @@ impl Wallet {
     // reference :- (ε, δ)-indistinguishable Mixing for Cryptocurrencies
     // https://eprint.iacr.org/2021/1197.pdf
     // Returns [total] with warning if num_chunks > 5
-    pub fn vary_amounts(&self, total: u64, num_chunks: usize) -> Vec<u64> {
+    fn vary_amounts(&self, total: u64, num_chunks: usize) -> Vec<u64> {
         let mut rng = thread_rng();
 
         match num_chunks {
