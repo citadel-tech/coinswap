@@ -119,10 +119,13 @@ impl Display for RpcMsgResp {
             Self::UtxoResp { utxos }
             | Self::SwapUtxoResp { utxos }
             | Self::FidelityUtxoResp { utxos }
-            | Self::ContractUtxoResp { utxos } => match serde_json::to_string_pretty(utxos) {
-                Ok(utxos_str) => write!(f, "{}", utxos_str),
-                Err(_) => write!(f, "Error formatting UTXOs"),
-            },
+            | Self::ContractUtxoResp { utxos } => {
+                write!(
+                    f,
+                    "{}",
+                    serde_json::to_string_pretty(utxos).expect("UTXO JSON serialization failed")
+                )
+            }
             Self::SendToAddressResp(tx_hex) => write!(f, "{tx_hex}"),
             Self::GetTorAddressResp(addr) => write!(f, "{addr}"),
             Self::GetDataDirResp(path) => write!(f, "{}", path.display()),
