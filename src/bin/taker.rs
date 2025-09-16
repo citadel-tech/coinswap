@@ -13,7 +13,7 @@ use std::{path::PathBuf, str::FromStr};
 ///
 /// The app works as a regular Bitcoin wallet with the added capability to perform coinswaps. The app
 /// requires a running Bitcoin Core node with RPC access. It currently only runs on Testnet4.
-/// Suggested faucet for getting Testnet4 coins: <https://mempool.space/testnet4/faucet>
+/// Suggested faucet for getting Signet coins (tor browser required): <http://a4ovtjlwiclzy37bjaurcbb6wpl6dtckmlqwrywq7uoajeaz6kth4uyd.onion/>
 ///
 /// For more detailed usage information, please refer: <https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker.md>
 ///
@@ -110,7 +110,7 @@ enum Commands {
     ///
     /// You can specify a custom wallet using the default `-w, --WALLET` parameter:
     ///
-    /// -w, --wallet_name <WALLET>
+    /// -w, --wallet_name WALLET-NAME
     ///
     /// The backup will be created in the current working directory with the filename:
     /// `<wallet_name>-backup.json`.

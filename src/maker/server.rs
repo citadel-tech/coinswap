@@ -57,7 +57,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<String, MakerError> {
                 maker_port,
                 &maker.config.tor_auth_password,
             )?;
-            format!("{}:{}", maker_hostname, maker_port)
+            format!("{maker_hostname}:{maker_port}")
         }
     };
 

@@ -201,7 +201,7 @@ This will launch `makerd` and connect it to the Bitcoin RPC core running on its 
 
   > **Note**: Currently the transaction fee for the fidelity bond is hardcoded at `1000 sats`. This approach of directly considering `fee` not `fee rate` will be improved in v0.1.1 milestones.
 
-- Since the maker wallet is empty, we'll need to fund it with at least `0.00051000 BTC` to cover the fidelity amount and transaction fee. To fund the wallet, we can use [this faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/)(open in Tor browser).
+- Since the maker wallet is empty, we'll need to fund it with at least `0.00051000 BTC` to cover the fidelity amount and transaction fee. To fund the wallet, we can use [this faucet](http://a4ovtjlwiclzy37bjaurcbb6wpl6dtckmlqwrywq7uoajeaz6kth4uyd.onion/)(open in Tor browser).
   Let's just take `0.01 BTC` testcoins as extra amount will be used in doing wallet related operations in [maker-cli demo](./maker-cli.md)
 
 - The server will regularly sync the wallet every 10 seconds, increasing the interval in the pattern 10,20,30,40..., to detect any incoming funds.

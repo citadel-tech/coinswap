@@ -757,7 +757,7 @@ impl Wallet {
         Ok(processed_utxos)
     }
 
-    /// Lists live contract UTXOs along with their [`UTXOSpendInfo`].
+    /// Lists live contract UTXOs along with their Spend info.
     pub fn list_live_contract_spend_info(
         &self,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
@@ -773,7 +773,7 @@ impl Wallet {
         Ok(filtered_utxos)
     }
 
-    /// Lists live timelock contract UTXOs along with their [`UTXOSpendInfo`].
+    /// Lists live timelock contract UTXOs along with their Spend info.
     pub fn list_live_timelock_contract_spend_info(
         &self,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
@@ -785,7 +785,7 @@ impl Wallet {
             .collect();
         Ok(filtered_utxos)
     }
-    /// Lists all live hashlock contract UTXOs along with their [`UTXOSpendInfo`].
+    /// Lists all live hashlock contract UTXOs along with their Spend info.
     pub fn list_live_hashlock_contract_spend_info(
         &self,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
@@ -798,7 +798,7 @@ impl Wallet {
         Ok(filtered_utxos)
     }
 
-    /// Lists fidelity UTXOs along with their [`UTXOSpendInfo`].
+    /// Lists fidelity UTXOs along with their Spend info.
     pub fn list_fidelity_spend_info(
         &self,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
@@ -811,7 +811,7 @@ impl Wallet {
         Ok(filtered_utxos)
     }
 
-    /// Lists descriptor UTXOs along with their [`UTXOSpendInfo`].
+    /// Lists descriptor UTXOs along with their Spend info.
     pub fn list_descriptor_utxo_spend_info(
         &self,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
@@ -824,7 +824,7 @@ impl Wallet {
         Ok(filtered_utxos)
     }
 
-    /// Lists swap coin UTXOs along with their [`UTXOSpendInfo`].
+    /// Lists swap coin UTXOs along with their Spend info.
     pub fn list_swap_coin_utxo_spend_info(
         &self,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
@@ -842,7 +842,7 @@ impl Wallet {
         Ok(filtered_utxos)
     }
 
-    /// Lists all incoming swapcoin UTXOs along with their [`UTXOSpendInfo`].
+    /// Lists all incoming swapcoin UTXOs along with their Spend info.
     pub fn list_incoming_swap_coin_utxo_spend_info(
         &self,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
@@ -854,7 +854,7 @@ impl Wallet {
             .collect();
         Ok(filtered_utxos)
     }
-    /// Lists all swept incoming swapcoin UTXOs along with their [`UTXOSpendInfo`].
+    /// Lists all swept incoming swapcoin UTXOs along with their Spend info.
     pub fn list_swept_incoming_swap_utxos(
         &self,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {

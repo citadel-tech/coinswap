@@ -1,3 +1,4 @@
+#![cfg(feature = "integration-test")]
 mod test_framework;
 
 use std::{fs, path::PathBuf};

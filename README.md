@@ -19,7 +19,11 @@
 </div>
 
 ### ⚠️ Important
-Coinswap v0.1.0 marketplace is now live on Custom Signet. [Check it out here](http://xbj5ena6e3mpxk7zxy6bkgxm4uxhy62tbsmda7ibqto6etu6imc4toid.onion) (Tor Browser required).
+Coinswap v0.1.0 marketplace is now live on Custom Signet. [Check it out here](http://a4ovtjlwiclzy37bjaurcbb6wpl6dtckmlqwrywq7uoajeaz6kth4uyd.onion/) (Tor Browser required).
+
+A Block Explorer is available to check signet blocks and transactions. [Check it out here](http://xlrj7ilheypw67premos73gxlcl7ha77kbhrqys7mydp7jve25olsxyd.onion/)
+
+A Faucet is available for getting test coins for the custom signet. [Check it out here](http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/)
 
 ### ⚠️ Warning
 This library is currently under beta development and is in an experimental stage. There are known and unknown bugs. **Mainnet use is strictly NOT recommended.** 

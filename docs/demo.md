@@ -86,8 +86,8 @@ signetchallenge=0014c9e9f8875a25c3cc6d99ad3e5fd54254d00fed44
 This configuration connects your node to our custom signet. The custom signet is designed specifically for coinswap testing and has a block interval of 2 minutes.
 
 **Custom Signet Resources** (accessible via Tor browser only):
-- [Custom Signet Explorer](http://4imwp7kgajusoslqa7lnjq7phpt3gocm55tlekg5fp5xqy4ipoy5f6ad.onion/)   
-- [Custom Signet Faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/)
+- [Custom Signet Explorer](http://xlrj7ilheypw67premos73gxlcl7ha77kbhrqys7mydp7jve25olsxyd.onion/)   
+- [Custom Signet Faucet](http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/)
 
 ### 2. Start Bitcoin Core
 ```bash
@@ -181,7 +181,7 @@ INFO coinswap::maker::server - Fund the wallet with at least 0.00051000 BTC at a
 
 ### 4. Fund the Wallet
 
-Use the [Custom Signet Faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/) (open in Tor browser) to send coins to the address shown in the logs.
+Use the [Custom Signet Faucet](http://a4ovtjlwiclzy37bjaurcbb6wpl6dtckmlqwrywq7uoajeaz6kth4uyd.onion/) (open in Tor browser) to send coins to the address shown in the logs.
 
 Suggested amount: **0.01 BTC** (provides fidelity bond + swap liquidity)
 
@@ -246,7 +246,7 @@ $ taker get-new-address
 
 ### 3. Fund the Taker Wallet
 
-Use the [Custom Signet Faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/) (open in Tor browser) to send some funds to the address above.
+Use the [Custom Signet Faucet](http://a4ovtjlwiclzy37bjaurcbb6wpl6dtckmlqwrywq7uoajeaz6kth4uyd.onion/) (open in Tor browser) to send some funds to the address above.
 
 Suggested amount: **0.001 BTC** (sufficient for testing swaps)
 

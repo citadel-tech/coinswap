@@ -40,9 +40,8 @@ jobs:
         
       # - name: cargo hack
       #   run: cargo hack --feature-powerset check
-
-      - name: Install cargo-docs-rs
-        uses: dtolnay/install@cargo-docs-rs
         
-      - name: cargo docs-rs
-        run: cargo +nightly docs-rs
+      - name: Check docs
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --all-features --document-private-items --no-deps
