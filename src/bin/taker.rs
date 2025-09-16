@@ -110,7 +110,7 @@ enum Commands {
     ///
     /// You can specify a custom wallet using the default `-w, --WALLET` parameter:
     ///
-    /// -w, --wallet_name <WALLET>
+    /// -w, --wallet_name WALLET-NAME
     ///
     /// The backup will be created in the current working directory with the filename:
     /// `<wallet_name>-backup.json`.

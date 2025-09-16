@@ -172,7 +172,7 @@ impl Wallet {
     }
     /// Interactively creates a wallet backup, optionally encrypted.
     ///
-    /// This is a user-friendly version of the [`backup`] method, which:
+    /// This is a user-friendly version of the [`Wallet::backup`] method, which:
     /// - Uses the current working directory as the backup location.
     /// - Prompts the user to input encryption material (if `encrypt` is `true`).
     ///
