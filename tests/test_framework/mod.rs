@@ -457,6 +457,7 @@ pub fn verify_swap_results(
                 [
                     14555297, // First maker on successful coinswap
                     14533010, // Second maker on successful coinswap
+                    14533012, // Malice2 case variant
                     14999508, // No spending
                     24999510, // Multi-taker scenario
                 ],
@@ -506,6 +507,7 @@ pub fn verify_swap_results(
                     444213, // Taker abort after setup - first maker recovery cost (abort1 test case)
                     443624, // Taker abort after setup - second maker recovery cost (abort1 test case)
                     466496, // Maker abort after setup(abort3_case3)
+                    466498, // Maker prematurely broadcast contract txn (malice2)
                     410176, // Multi-taker first maker (previous run)
                     410118, // Multi-taker first maker (current run)
                 ],
