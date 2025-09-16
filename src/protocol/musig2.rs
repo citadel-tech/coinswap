@@ -1,7 +1,6 @@
 //! The musig2 APIs
 //!
 //! This module includes most of the fundamental functions needed for Taproot and MuSig2.
-use std::str::FromStr;
 
 use secp256k1::musig::{
     AggregatedNonce, AggregatedSignature, KeyAggCache, PartialSignature, PublicNonce, SecretNonce,
@@ -17,17 +16,6 @@ pub fn get_aggregated_pubkey(pubkey1: &PublicKey, pubkey2: &PublicKey) -> XOnlyP
     pubkeys.sort_by(|a, b| a.serialize().cmp(&b.serialize()));
     let agg_cache = KeyAggCache::new(&secp, pubkeys.as_slice());
     agg_cache.agg_pk()
-}
-
-/// get key aggregation cache from a vector of public keys
-pub fn get_musig_key_agg_cache(pubkeys: &Vec<&String>) -> KeyAggCache {
-    let pubkey1 = PublicKey::from_str(pubkeys[0]).unwrap();
-    let pubkey2 = PublicKey::from_str(pubkeys[1]).unwrap();
-    let mut pubkeys = vec![&pubkey1, &pubkey2];
-    let secp = Secp256k1::new();
-    // Sort pubkeys lexicographically (manual implementation)
-    pubkeys.sort_by(|a, b| a.serialize().cmp(&b.serialize()));
-    KeyAggCache::new(&secp, pubkeys.as_slice())
 }
 
 /// Generates a new nonce pair
