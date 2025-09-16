@@ -694,7 +694,7 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
     let handle = std::thread::Builder::new()
         .name("Swap Recovery Thread".to_string())
         .spawn(move || {
-            if let Err(e) = recover_from_swap(maker_clone) {
+            if let Err(e) = recover_from_swap(maker_clone, None) {
                 log::error!("Failed to recover from swap due to: {e:?}");
             }
         })?;

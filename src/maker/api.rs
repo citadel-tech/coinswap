@@ -28,6 +28,7 @@ use bitcoin::{
     OutPoint, PublicKey, Transaction, Txid,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
+use socks::Socks5Stream;
 use std::{
     collections::HashMap,
     convert::TryInto,
@@ -543,6 +544,16 @@ impl MakerRpc for Maker {
 /// If any one of them is ever observed, run the recovery routine.
 pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut failed_swap_ip = Vec::new();
+    let mut tracker_stream = if cfg!(feature = "integration-test") {
+        // Always clearnet in integration tests
+        TcpStream::connect("127.0.0.1:8080")?
+    } else {
+        let stream = Socks5Stream::connect(
+            format!("127.0.0.1:{}", maker.config.socks_port),
+            maker.tracker.read()?.clone().unwrap().as_str(),
+        )?;
+        stream.into_inner()
+    };
     loop {
         if maker.shutdown.load(Relaxed) {
             break;
@@ -550,8 +561,6 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
         // An extra scope to release all locks when done.
         {
             let (incomings, outgoings) = maker.wallet.read()?.find_unfinished_swapcoins();
-            let is_hash_preimage_known =
-                incomings.iter().any(|ic_sc| ic_sc.is_hash_preimage_known());
             let mut lock_onstate = maker.ongoing_swap_state.lock()?;
             for (ip, (connection_state, _)) in lock_onstate.iter_mut() {
                 let txids_to_watch = connection_state
@@ -584,7 +593,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                         );
                         failed_swap_ip.push(ip.clone());
 
-                        if !is_hash_preimage_known {
+                        loop {
                             for outgoing in outgoings.iter() {
                                 for (vout, txout) in outgoing.contract_tx.output.iter().enumerate()
                                 {
@@ -595,32 +604,26 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                                         };
                                         let request = TrackerClientToServer::Watch { outpoint };
 
-                                        // Fetching tracker address from maker (set earlier on Ping) and sending a watch request to tracker.
-                                        if let Some(tracker_addr) = maker.tracker.read()?.clone() {
-                                            match TcpStream::connect(&tracker_addr) {
-                                                Ok(mut tracker_stream) => {
-                                                    if let Err(e) =
-                                                        send_message(&mut tracker_stream, &request)
-                                                    {
-                                                        log::error!(
-                                                        "Failed to send Watch request to tracker {tracker_addr}: {e:?}" 
-                                                        );
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    log::error!("Could not connect to tracker at {tracker_addr}: {e:?}");
-                                                }
-                                            }
-                                        } else {
-                                            log::warn!("No tracker address known yet, cannot forward Watch request");
+                                        if let Err(e) = send_message(&mut tracker_stream, &request)
+                                        {
+                                            log::error!(
+                                                "Failed to send Watch request to tracker {e:?}"
+                                            );
                                         }
+                                        log::info!("Sended Watch Request to tracker");
                                     }
                                 }
                             }
-                        }
 
+                            let is_hash_preimage_known =
+                                incomings.iter().any(|ic_sc| ic_sc.is_hash_preimage_known());
+                            if is_hash_preimage_known {
+                                break;
+                            }
+                        }
                         // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
                         let maker_clone = maker.clone();
+                        let read_stream = Arc::new(tracker_stream.try_clone()?);
                         log::info!(
                             "[{}] Spawning recovery thread after seeing contracts in mempool",
                             maker.config.network_port
@@ -628,7 +631,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                         let handle = std::thread::Builder::new()
                             .name("Swap recovery thread".to_string())
                             .spawn(move || {
-                                if let Err(e) = recover_from_swap(maker_clone) {
+                                if let Err(e) = recover_from_swap(maker_clone, Some(read_stream)) {
                                     log::error!("Failed to recover from swap due to: {e:?}");
                                 }
                             })?;
@@ -662,7 +665,7 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
     let handle = std::thread::Builder::new()
         .name("Swap recovery thread".to_string())
         .spawn(move || {
-            if let Err(e) = recover_from_swap(maker_clone) {
+            if let Err(e) = recover_from_swap(maker_clone, None) {
                 log::error!("Failed to recover from swap due to: {e:?}");
             }
         })?;
@@ -707,7 +710,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                     let handle = std::thread::Builder::new()
                         .name("Swap Recovery Thread".to_string())
                         .spawn(move || {
-                            if let Err(e) = recover_from_swap(maker_clone) {
+                            if let Err(e) = recover_from_swap(maker_clone, None) {
                                 log::error!("Failed to recover from swap due to: {e:?}");
                             }
                         })?;
@@ -732,7 +735,10 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
 
 /// Broadcast Incoming and Outgoing Contract transactions & timelock contract after maturity or hashlock contract.
 /// Remove contract transactions from the wallet.
-pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
+pub(crate) fn recover_from_swap(
+    maker: Arc<Maker>,
+    mut tracker_stream: Option<Arc<TcpStream>>,
+) -> Result<(), MakerError> {
     // Broadcast all the incoming contracts.
     let (incomings, outgoings) = maker.wallet.read()?.find_unfinished_swapcoins();
     let is_hash_preimage_known = incomings.iter().any(|ic_sc| ic_sc.is_hash_preimage_known());
@@ -751,8 +757,11 @@ pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
     let time_till_timelock_expires =
         Duration::from_secs(timelock as u64 * block_wait_time.as_secs());
     let start_time = Instant::now();
-    while !is_hash_preimage_known && start_time.elapsed() < time_till_timelock_expires {
-        check_for_tracker_watch_response(&maker)?;
+    while start_time.elapsed() < time_till_timelock_expires {
+        if incomings.iter().any(|ic_sc| ic_sc.is_hash_preimage_known()) {
+            break;
+        }
+        check_for_tracker_watch_response(&maker, tracker_stream.as_mut().unwrap())?;
         sleep(Duration::from_secs(10));
     }
 
@@ -822,77 +831,67 @@ pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
 }
 
 /// Check for Tracker's WatchResponse and extract and apply hashpreimage to maker.
-fn check_for_tracker_watch_response(maker: &Maker) -> Result<(), MakerError> {
-    let tracker_addr = match maker.tracker.read()?.clone() {
-        Some(addr) => addr,
-        None => {
-            log::warn!("No tracker address known yet");
-            return Ok(());
-        }
-    };
+fn check_for_tracker_watch_response(
+    maker: &Maker,
+    tracker_stream: &mut Arc<TcpStream>,
+) -> Result<(), MakerError> {
+    while !maker.shutdown.load(Relaxed) {
+        let bytes = match read_message(&mut tracker_stream.try_clone().unwrap()) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::error!(
+                    "[{}] Failed to read message from tracker: {:?}",
+                    maker.config.network_port,
+                    e
+                );
+                return Ok(());
+            }
+        };
 
-    let mut tracker_stream = match TcpStream::connect(&tracker_addr) {
-        Ok(stream) => stream,
-        Err(e) => {
-            log::error!("Could not connect to tracker at {tracker_addr}: {e:?}");
-            return Ok(());
-        }
-    };
+        let message = match decode_unified_message(&bytes) {
+            Ok(msg) => msg,
+            Err(e) => {
+                log::error!(
+                    "[{}] Failed to decode message from tracker: {:?}",
+                    maker.config.network_port,
+                    e
+                );
+                return Ok(());
+            }
+        };
 
-    let bytes = match read_message(&mut tracker_stream) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            log::error!(
-                "[{}] Failed to read message from tracker: {:?}",
+        if let MessageToMaker::TrackerMessage(TrackerServerToClient::WatchResponse { mempool_tx }) =
+            message
+        {
+            log::info!(
+                "[{}] Received WatchResponse with mempool txns: {:?}",
                 maker.config.network_port,
-                e
+                mempool_tx
             );
-            return Ok(());
-        }
-    };
 
-    let message = match decode_unified_message(&bytes) {
-        Ok(msg) => msg,
-        Err(e) => {
-            log::error!(
-                "[{}] Failed to decode message from tracker: {:?}",
-                maker.config.network_port,
-                e
-            );
-            return Ok(());
-        }
-    };
-
-    if let MessageToMaker::TrackerMessage(TrackerServerToClient::WatchResponse { mempool_tx }) =
-        message
-    {
-        log::info!(
-            "[{}] Received WatchResponse with mempool txns: {:?}",
-            maker.config.network_port,
-            mempool_tx
-        );
-
-        let wallet = maker.wallet.read()?;
-        for tx in mempool_tx {
-            let txid = Txid::from_str(&tx.txid).unwrap();
-            if let Ok(raw_tx) = wallet.rpc.get_raw_transaction(&txid, None) {
-                for input in raw_tx.input.iter() {
-                    if input.witness.len() >= 2 && input.witness[1].len() == 32 {
-                        let preimage: [u8; 32] = input.witness[1].try_into().unwrap();
-                        let wallet_write = maker.wallet.write()?;
-                        let (mut incomings, _) = wallet_write.find_unfinished_swapcoins();
-                        for incoming in incomings.iter_mut() {
-                            incoming.hash_preimage = Some(preimage);
+            let wallet = maker.wallet.read()?;
+            for tx in mempool_tx {
+                let txid = Txid::from_str(&tx.txid).unwrap();
+                if let Ok(raw_tx) = wallet.rpc.get_raw_transaction(&txid, None) {
+                    for input in raw_tx.input.iter() {
+                        if input.witness.len() >= 2 && input.witness[1].len() == 32 {
+                            let preimage: [u8; 32] = input.witness[1].try_into().unwrap();
+                            let wallet_write = maker.wallet.write()?;
+                            let (mut incomings, _) = wallet_write.find_unfinished_swapcoins();
+                            for incoming in incomings.iter_mut() {
+                                incoming.hash_preimage = Some(preimage);
+                            }
                         }
                     }
                 }
+                log::info!("Successfully extracted hashpreimage from Tracker's Watch Response");
             }
+        } else {
+            log::info!(
+                "[{}] Received non-WatchResponse or non-tracker message",
+                maker.config.network_port
+            );
         }
-    } else {
-        log::info!(
-            "[{}] Received non-WatchResponse or non-tracker message",
-            maker.config.network_port
-        );
     }
 
     Ok(())
