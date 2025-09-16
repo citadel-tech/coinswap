@@ -219,25 +219,12 @@ $ ./maker-cli list-utxo-fidelity
 
 ```bash
 [
-    ListUnspentResultEntry {
-        txid: be886c157672f45b4944ee46e973f73adfb1e3a48c1aa62f368daf77e861d064,
-        vout: 0,
-        address: Some(
-            Address<NetworkUnchecked>(TB1QTTUTR6NUUM6E5NEYDDUKXRZVNX87EKSTEU9VZX6XFMRFC30CPPQSPA6UT2),
-        ),
-        label: Some(
-            "f4589480",
-        ),
-        redeem_script: None,
-        witness_script: None,
-        script_pub_key: Script(OP_0 OP_PUSHBYTES_32 5af8b1ea7ce6f59a4f246b79630c4c998fecda0bcf0ac11b464ec69c45f80841),
-        amount: 50000 SAT,
-        confirmations: 1,
-        spendable: true,
-        solvable: false,
-        descriptor: None,
-        safe: true,
-    },
+  {
+    "addr": "tb1qttutr6nuum6e5neyddukxrzvnx87eksteu9vzx6xfmrfc30cppqspa6ut2",
+    "amount": 50000,
+    "confirmations": 1,
+    "utxo_type": "fidelity-bond"
+  }
 ]
 ```
 
@@ -326,63 +313,30 @@ Let's find them out:
 ```bash
 $ ./maker-cli list-utxo
 [
-    ListUnspentResultEntry {
-        txid: 76f45829d684b6595b274cc24a82eccf3e0a83aabd2336fc7cf64000fa59719f,
-        vout: 0,
-        address: Some(
-            Address<NetworkUnchecked>(TB1QM28C8M0Q7772Z9MEV5K70XMRLTG9YEH4MEF0V6),
-        ),
-        label: None,
-        redeem_script: None,
-        witness_script: None,
-        script_pub_key: Script(OP_0 OP_PUSHBYTES_20 da8f83ede0f7bca11779652de79b63fad05266f5),
-        amount: 100000 SAT,
-        confirmations: 0,
-        spendable: true,
-        solvable: true,
-        descriptor: Some(
-            "wpkh([a763e8fa/0/0]031d1735eac4ddaabd324754d333fb47bc27a5c87c31cb202db37f49f905817a84)#gg9t02d7",
-        ),
-        safe: false,
-    },
-    ListUnspentResultEntry {
-        txid: be886c157672f45b4944ee46e973f73adfb1e3a48c1aa62f368daf77e861d064,
-        vout: 2,
-        address: Some(
-            Address<NetworkUnchecked>(TB1QZELEPMZA0C0GKKVM3AAERR95QJQ8EYSMKCW76Z),
-        ),
-        label: None,
-        redeem_script: None,
-        witness_script: None,
-        script_pub_key: Script(OP_0 OP_PUSHBYTES_20 167f90ec5d7e1e8b599b8f7b918cb404807c921b),
-        amount: 9540 SAT,
-        confirmations: 1,
-        spendable: true,
-        solvable: true,
-        descriptor: Some(
-            "wpkh([a763e8fa/1/0]02730201ef50ea27fcebf8ffc077fe90fcf96a338536d9c5cc1b9118a57d6b9193)#779xnfnq",
-        ),
-        safe: true,
-    },
-    ListUnspentResultEntry {
-        txid: be886c157672f45b4944ee46e973f73adfb1e3a48c1aa62f368daf77e861d064,
-        vout: 0,
-        address: Some(
-            Address<NetworkUnchecked>(TB1QTTUTR6NUUM6E5NEYDDUKXRZVNX87EKSTEU9VZX6XFMRFC30CPPQSPA6UT2),
-        ),
-        label: Some(
-            "f4589480",
-        ),
-        redeem_script: None,
-        witness_script: None,
-        script_pub_key: Script(OP_0 OP_PUSHBYTES_32 5af8b1ea7ce6f59a4f246b79630c4c998fecda0bcf0ac11b464ec69c45f80841),
-        amount: 50000 SAT,
-        confirmations: 1,
-        spendable: true,
-        solvable: false,
-        descriptor: None,
-        safe: true,
-    },
+  {
+    "addr": "tb1qttutr6nuum6e5neyddukxrzvnx87eksteu9vzx6xfmrfc30cppqspa6ut2",
+    "amount": 50000,
+    "confirmations": 1,
+    "utxo_type": "fidelity-bond"
+  },
+  {
+    "addr": "tb1qu332pjytwdu0z73f5xzftkk06hpgdyvjvef9kn",
+    "amount": 80741,
+    "confirmations": 1,
+    "utxo_type": "regular"
+  },
+  {
+    "addr": "tb1qzelepmza0c0gkkvm3aaerr95qjq8eysmkcw76z",
+    "amount": 9540,
+    "confirmations": 1,
+    "utxo_type": "regular"
+  },
+  {
+    "addr": "tb1qrjefrm0puwnl2exjpl73devd7czjqd8rl37wze",
+    "amount": 19124,
+    "confirmations": 1,
+    "utxo_type": "swept-incoming-swap"
+  }
 ]
 ```
 
@@ -498,25 +452,12 @@ Finally, we can check the wallet's updated balances and the list of UTXOs as don
 $ ./maker-cli list-utxo-fidelity
 
 [
-    ListUnspentResultEntry {
-        txid: 6c06a925066b0cf8adb400e53001b20587729407bce7dcb95dcacd038950b0e4,
-        vout: 0,
-        address: Some(
-            Address<NetworkUnchecked>(BCRT1QKP92002WJPU5WFLU0YNTU3YXRVDR52N98STWFZJ7MF3F88RJ5PLQKDEUQY),
-        ),
-        label: Some(
-            "ae28aba4",
-        ),
-        redeem_script: None,
-        witness_script: None,
-        script_pub_key: Script(OP_0 OP_PUSHBYTES_32 b04aa7bd4e90794727fc7926be44861b1a3a2a653c16e48a5eda62939c72a07e),
-        amount: 50000 SAT,
-        confirmations: 2,
-        spendable: true,
-        solvable: false,
-        descriptor: None,
-        safe: true,
-    },
+  {
+    "addr": "tb1qttutr6nuum6e5neyddukxrzvnx87eksteu9vzx6xfmrfc30cppqspa6ut2",
+    "amount": 50000,
+    "confirmations": 1,
+    "utxo_type": "fidelity-bond"
+  }
 ]
 
 $ ./maker-cli get-balances
@@ -576,44 +517,30 @@ $ ./maker-cli get-balances
 $ ./maker-cli list-utxo
 
 [
-    ListUnspentResultEntry {
-        txid: 21de4b89c37e495d05161ed81690079b257ff5776150171740bf34e8b9163cd1,
-        vout: 1,
-        address: Some(
-            Address<NetworkUnchecked>(BCRT1QVCRZ5QPGJCX25WASWSA4Z8MZS8WUZYX6FNQ60L),
-        ),
-        label: None,
-        redeem_script: None,
-        witness_script: None,
-        script_pub_key: Script(OP_0 OP_PUSHBYTES_20 66062a0028960caa3bb0743b511f6281ddc110da),
-        amount: 938000 SAT,
-        confirmations: 1,
-        spendable: true,
-        solvable: true,
-        descriptor: Some(
-            "wpkh([bd63c57a/1/1]03aa76bd9dd512adbfea796d65d1bda2e7ed691b6c28cfa630991c8cb99db16fa9)#8e495hwg",
-        ),
-        safe: true,
-    },
-    ListUnspentResultEntry {
-        txid: 6c06a925066b0cf8adb400e53001b20587729407bce7dcb95dcacd038950b0e4,
-        vout: 0,
-        address: Some(
-            Address<NetworkUnchecked>(BCRT1QKP92002WJPU5WFLU0YNTU3YXRVDR52N98STWFZJ7MF3F88RJ5PLQKDEUQY),
-        ),
-        label: Some(
-            "ae28aba4",
-        ),
-        redeem_script: None,
-        witness_script: None,
-        script_pub_key: Script(OP_0 OP_PUSHBYTES_32 b04aa7bd4e90794727fc7926be44861b1a3a2a653c16e48a5eda62939c72a07e),
-        amount: 50000 SAT,
-        confirmations: 2,
-        spendable: true,
-        solvable: false,
-        descriptor: None,
-        safe: true,
-    },
+  {
+    "addr": "tb1qttutr6nuum6e5neyddukxrzvnx87eksteu9vzx6xfmrfc30cppqspa6ut2",
+    "amount": 50000,
+    "confirmations": 1,
+    "utxo_type": "fidelity-bond"
+  },
+  {
+    "addr": "tb1qu332pjytwdu0z73f5xzftkk06hpgdyvjvef9kn",
+    "amount": 80741,
+    "confirmations": 1,
+    "utxo_type": "regular"
+  },
+  {
+    "addr": "tb1qzelepmza0c0gkkvm3aaerr95qjq8eysmkcw76z",
+    "amount": 9540,
+    "confirmations": 1,
+    "utxo_type": "regular"
+  },
+  {
+    "addr": "tb1qrjefrm0puwnl2exjpl73devd7czjqd8rl37wze",
+    "amount": 19124,
+    "confirmations": 1,
+    "utxo_type": "swept-incoming-swap"
+  }
 ]
 
 $ ./maker-cli get-balances
