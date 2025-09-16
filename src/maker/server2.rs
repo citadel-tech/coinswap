@@ -361,6 +361,9 @@ fn check_connection_with_core_taproot(maker: &Maker) -> Result<(), MakerError> {
 
 /// Handles a taproot client connection
 fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerError> {
+    // Set socket to blocking mode for reliable message reading
+    stream.set_nonblocking(false).map_err(NetError::IO)?;
+    
     let peer_addr = stream.peer_addr().map_err(NetError::IO)?;
     let ip = peer_addr.ip().to_string();
 

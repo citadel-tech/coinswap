@@ -77,6 +77,7 @@ struct OngoingSwapState {
 
 pub(crate) const TCP_TIMEOUT_SECONDS: u64 = 300;
 pub(crate) const REFUND_LOCKTIME: u16 = 20;
+pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
 
 /// Helper function to establish a connection to a maker
 fn connect_to_maker(
@@ -363,12 +364,24 @@ impl Taker {
 
         // Send SwapDetails message to all the makers
         // Receive the Ack or Nack message from the maker
-        for suitable_maker in suitable_makers {
-            log::info!("Maker: {:?}", suitable_maker.address);
+        for (maker_index, suitable_maker) in suitable_makers.iter().enumerate() {
+            log::info!("Maker {}: {:?}", maker_index, suitable_maker.address);
+            
+            // Calculate staggered timelock for this maker
+            // Taker has the longest, each maker gets progressively shorter
+            // With 2 makers: Taker=60, Maker0=40, Maker1=20
+            let maker_timelock = REFUND_LOCKTIME 
+                + REFUND_LOCKTIME_STEP * (self.ongoing_swap_state.swap_params.maker_count - maker_index - 1) as u16;
+            
+            log::info!(
+                "Assigning timelock {} blocks to maker {} (index {}/{})",
+                maker_timelock, suitable_maker.address, maker_index, self.ongoing_swap_state.swap_params.maker_count - 1
+            );
+            
             let swap_details = SwapDetails {
                 amount: self.ongoing_swap_state.swap_params.send_amount,
                 no_of_tx: self.ongoing_swap_state.swap_params.tx_count as u8,
-                timelock: 144 * self.ongoing_swap_state.swap_params.maker_count as u16, // Use 144 blocks (~24 hours)
+                timelock: maker_timelock,
             };
 
             let msg = TakerToMakerMessage::SwapDetails(swap_details);
@@ -609,9 +622,10 @@ impl Taker {
         self.ongoing_swap_state.outgoing_contract_hashlock_script =
             Some(hashlock_script.clone());
 
-        let timelock =
-            LockTime::from_height(self.ongoing_swap_state.swap_params.maker_count as u32 * 48)
-                .unwrap();
+        // Taker gets the longest timelock (higher than all makers)
+        let taker_timelock = REFUND_LOCKTIME 
+            + REFUND_LOCKTIME_STEP * self.ongoing_swap_state.swap_params.maker_count as u16;
+        let timelock = LockTime::from_height(taker_timelock as u32).unwrap();
         let timelock_script = create_timelock_script(timelock, &outgoing_contract_my_x_only);
         self.ongoing_swap_state.outgoing_contract_timelock_script =
             Some(timelock_script.clone());
@@ -676,9 +690,13 @@ impl Taker {
                     .get_utxo((funding_utxo.txid, funding_utxo.vout))?
                     .ok_or_else(|| TakerError::General("Funding UTXO not found".to_string()))?;
 
+                // Use Destination::Multi to send exact amount and get change back
                 let signed_tx = self.wallet.spend_from_wallet(
                     DEFAULT_TX_FEE_RATE,
-                    Destination::Sweep(outgoing_contract_taproot_address),
+                    Destination::Multi {
+                        outputs: vec![(outgoing_contract_taproot_address, self.ongoing_swap_state.swap_params.send_amount)],
+                        op_return_data: None,
+                    },
                     &[(funding_utxo.clone(), funding_utxo_info)],
                 )?;
 
