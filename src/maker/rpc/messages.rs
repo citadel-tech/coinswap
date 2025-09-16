@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
+use crate::utill::UTXO;
 use bitcoin::Txid;
-use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string_pretty};
 use std::path::PathBuf;
@@ -60,22 +60,22 @@ pub enum RpcMsgResp {
     /// Response containing all spendable UTXOs
     UtxoResp {
         /// List of spendable UTXOs in the wallet.
-        utxos: Vec<ListUnspentResultEntry>,
+        utxos: Vec<UTXO>,
     },
     /// Response containing UTXOs in the swap pool.
     SwapUtxoResp {
         /// List of UTXOs in the swap pool.
-        utxos: Vec<ListUnspentResultEntry>,
+        utxos: Vec<UTXO>,
     },
     /// Response containing UTXOs in the fidelity pool.
     FidelityUtxoResp {
         /// List of UTXOs in the fidelity pool.
-        utxos: Vec<ListUnspentResultEntry>,
+        utxos: Vec<UTXO>,
     },
     /// Response containing UTXOs in the contract pool.
     ContractUtxoResp {
         /// List of UTXOs in the contract pool.
-        utxos: Vec<ListUnspentResultEntry>,
+        utxos: Vec<UTXO>,
     },
     /// Response containing the total wallet balances of different categories.
     TotalBalanceResp(Balances),
@@ -116,10 +116,16 @@ impl Display for RpcMsgResp {
                     .unwrap()
                 )
             }
-            Self::UtxoResp { utxos } => write!(f, "{utxos:#?}"),
-            Self::SwapUtxoResp { utxos } => write!(f, "{utxos:#?}"),
-            Self::FidelityUtxoResp { utxos } => write!(f, "{utxos:#?}"),
-            Self::ContractUtxoResp { utxos } => write!(f, "{utxos:#?}"),
+            Self::UtxoResp { utxos }
+            | Self::SwapUtxoResp { utxos }
+            | Self::FidelityUtxoResp { utxos }
+            | Self::ContractUtxoResp { utxos } => {
+                write!(
+                    f,
+                    "{}",
+                    serde_json::to_string_pretty(utxos).expect("UTXO JSON serialization failed")
+                )
+            }
             Self::SendToAddressResp(tx_hex) => write!(f, "{tx_hex}"),
             Self::GetTorAddressResp(addr) => write!(f, "{addr}"),
             Self::GetDataDirResp(path) => write!(f, "{}", path.display()),

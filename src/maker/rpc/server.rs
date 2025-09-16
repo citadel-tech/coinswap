@@ -11,7 +11,7 @@ use bitcoin::{Address, Amount};
 use super::messages::RpcMsgReq;
 use crate::{
     maker::{error::MakerError, rpc::messages::RpcMsgResp, Maker},
-    utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL},
+    utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, UTXO},
     wallet::Destination,
 };
 use std::str::FromStr;
@@ -28,9 +28,9 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 .get_wallet()
                 .read()?
                 .list_live_timelock_contract_spend_info()?
-                .iter()
-                .map(|(l, _)| l.clone())
-                .collect::<Vec<_>>();
+                .into_iter()
+                .map(UTXO::from_utxo_data)
+                .collect();
             RpcMsgResp::ContractUtxoResp { utxos }
         }
         RpcMsgReq::FidelityUtxo => {
@@ -38,9 +38,9 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 .get_wallet()
                 .read()?
                 .list_fidelity_spend_info()?
-                .iter()
-                .map(|(l, _)| l.clone())
-                .collect::<Vec<_>>();
+                .into_iter()
+                .map(UTXO::from_utxo_data)
+                .collect();
             RpcMsgResp::FidelityUtxoResp { utxos }
         }
         RpcMsgReq::Utxo => {
@@ -48,9 +48,9 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 .get_wallet()
                 .read()?
                 .list_all_utxo_spend_info()?
-                .iter()
-                .map(|(l, _)| l.clone())
-                .collect::<Vec<_>>();
+                .into_iter()
+                .map(UTXO::from_utxo_data)
+                .collect();
             RpcMsgResp::UtxoResp { utxos }
         }
         RpcMsgReq::SwapUtxo => {
@@ -58,9 +58,9 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 .get_wallet()
                 .read()?
                 .list_incoming_swap_coin_utxo_spend_info()?
-                .iter()
-                .map(|(l, _)| l.clone())
-                .collect::<Vec<_>>();
+                .into_iter()
+                .map(UTXO::from_utxo_data)
+                .collect();
             RpcMsgResp::SwapUtxoResp { utxos }
         }
         RpcMsgReq::Balances => {
