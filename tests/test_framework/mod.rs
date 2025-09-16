@@ -18,6 +18,7 @@ macro_rules! assert_in_range {
     ($value:expr, $allowed:expr, $msg:expr) => {{
         let (value, allowed) = ($value, $allowed);
         const RANGE: u64 = 2;
+        println!("{}: actual value = {}", $msg, value);
         if !allowed
             .iter()
             .any(|x| x + RANGE == value || x.saturating_sub(RANGE) == value || *x == value)
@@ -385,8 +386,8 @@ pub fn verify_swap_results(
         assert_in_range!(
             balances.regular.to_sat(),
             [
-                14499088, // Successful coinswap
-                14997426, // Recovery via timelock
+                14499696, // Successful coinswap
+                14943035, // Recovery via timelock
                 14940090, // Recovery via Hashlock
                 15000000, // No spending
             ],
@@ -396,7 +397,7 @@ pub fn verify_swap_results(
         assert_in_range!(
             balances.swap.to_sat(),
             [
-                441886, // Successful coinswap
+                443633, // Successful coinswap
                 442714, // Recovery via timelock
                 0,      // Unsuccessful coinswap
             ],
@@ -419,9 +420,9 @@ pub fn verify_swap_results(
         assert_in_range!(
             balance_diff.to_sat(),
             [
-                59028,  // Successful coinswap
-                2184,   // Recovery via timelock
-                503000, // Spent swapcoin
+                56671,  // Successful coinswap
+                56965,  // Recovery via timelock
+                500304, // Spent swapcoin
                 2574,   // Recovery via timelock (new fee system)
                 59910,  // Recovery via Hashlock (abort3_case3)
                 500912, // Recovery via Hashlock(abort3_case1)
@@ -454,8 +455,8 @@ pub fn verify_swap_results(
             assert_in_range!(
                 balances.regular.to_sat(),
                 [
-                    14555884, // First maker on successful coinswap
-                    14533014, // Second maker on successful coinswap
+                    14555297, // First maker on successful coinswap
+                    14533010, // Second maker on successful coinswap
                     14999508, // No spending
                     24999510, // Multi-taker scenario
                 ],
@@ -465,8 +466,8 @@ pub fn verify_swap_results(
             assert_in_range!(
                 balances.swap.to_sat(),
                 [
-                    499172, // First maker
-                    464754, // Second maker
+                    465918, // First maker
+                    499724, // Second maker
                     442712, // Taker swap amount
                     0,      // No swap or funding tx missing
                 ],
@@ -498,11 +499,11 @@ pub fn verify_swap_results(
             assert_in_range!(
                 balance_diff.to_sat(),
                 [
-                    21130,  // First maker fee
-                    32678,  // Second maker fee
+                    21705,  // First maker fee
+                    33226,  // Second maker fee
                     0,      // No spending
                     2574,   // Recovery via timelock
-                    466494, // Taker abort after setup - first maker recovery cost (abort1 test case)
+                    444213, // Taker abort after setup - first maker recovery cost (abort1 test case)
                     443624, // Taker abort after setup - second maker recovery cost (abort1 test case)
                     466496, // Maker abort after setup(abort3_case3)
                     410176, // Multi-taker first maker (previous run)

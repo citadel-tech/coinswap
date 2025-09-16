@@ -14,7 +14,7 @@ mod test_framework;
 use test_framework::*;
 
 use log::{info, warn};
-use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
+use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// This test demonstrates a standard coinswap round between a Taker and 2 Makers. Nothing goes wrong
 /// and the coinswap completes successfully.
@@ -90,7 +90,6 @@ fn test_standard_coinswap() {
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
-        tx_count: 3,
     };
     taker.do_coinswap(swap_params).unwrap();
 
@@ -162,7 +161,7 @@ fn test_standard_coinswap() {
 
     assert_eq!(
         tx.input.len(),
-        3,
+        1,
         "Not all swap coin utxos got included in the spend transaction"
     );
 
@@ -173,10 +172,10 @@ fn test_standard_coinswap() {
 
     let balances = taker_wallet_mut.get_balances().unwrap();
 
-    assert_in_range!(balances.swap.to_sat(), [441394], "Swap Balance Mismatch");
+    assert_in_range!(balances.swap.to_sat(), [443415], "Swap Balance Mismatch");
     assert_in_range!(
         balances.regular.to_sat(),
-        [14499088],
+        [14499696],
         "Taker regular balance mismatch"
     );
 

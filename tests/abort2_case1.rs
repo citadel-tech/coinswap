@@ -104,7 +104,6 @@ fn test_abort_case_2_move_on_with_other_makers() {
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
-        tx_count: 3,
     };
     taker.do_coinswap(swap_params).unwrap();
 
@@ -210,7 +209,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
 
     assert_eq!(
         tx.input.len(),
-        3,
+        1,
         "Not all swap coin utxos got included in the spend transaction"
     );
 
@@ -223,12 +222,12 @@ fn test_abort_case_2_move_on_with_other_makers() {
 
     assert!(
         balances.swap == Amount::ZERO // unsuccessful coinswap(abort case)
-         || balances.swap == Amount::from_sat(441394), //successful coinswap
+         || balances.swap == Amount::from_sat(443415), //successful coinswap
         "swap balance mismatch",
     );
     assert_eq!(
         balances.regular,
-        Amount::from_btc(0.14499088).unwrap(),
+        Amount::from_btc(0.14499696).unwrap(),
         "Taker regular balance mismatch",
     );
 

@@ -239,7 +239,6 @@ fn test_separated_utxo_coin_selection() {
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(35000000), // 35M sats (0.35 BTC)
         maker_count: 2,
-        tx_count: 3,
     };
     taker.do_coinswap(swap_params).unwrap();
 

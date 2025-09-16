@@ -287,6 +287,7 @@ pub(crate) fn check_and_apply_maker_private_keys<S: SwapCoin>(
 ///
 /// the Maker's advertised Pubkey with these two nonces.
 #[allow(clippy::type_complexity)]
+/// Generate maker keys from the Maker's advertised Pubkey with nonces.
 pub(crate) fn generate_maker_keys(
     tweakable_point: &PublicKey,
     count: u32,
