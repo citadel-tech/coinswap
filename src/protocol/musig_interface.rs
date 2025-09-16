@@ -1,11 +1,8 @@
 //! This module provides an interface for the musig2 protocol.
-use std::convert::TryInto;
-
 use super::{
     musig2::{aggregate_partial_signatures, generate_partial_signature},
     *,
 };
-use bitcoin::hex::FromHex;
 use musig2::{generate_new_nonce_pair, get_aggregated_pubkey};
 
 //TODOS

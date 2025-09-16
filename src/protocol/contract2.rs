@@ -6,16 +6,15 @@ use bitcoin::hashes::{sha256, Hash as HashTrait};
 use bitcoin::locktime::absolute::LockTime;
 use bitcoin::opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256};
 use bitcoin::secp256k1::{
-    rand::{rngs::OsRng, RngCore},
+    rand::{rngs::OsRng},
     Keypair, Message, Scalar, Secp256k1, SecretKey, XOnlyPublicKey,
 };
 use bitcoin::sighash::{Prevouts, SighashCache};
-use bitcoin::taproot::{self, LeafVersion, TapLeaf, TapLeafHash, TaprootBuilder, TaprootSpendInfo};
+use bitcoin::taproot::{ LeafVersion, TapLeafHash, TaprootBuilder, TaprootSpendInfo};
 use bitcoin::transaction::Version;
-use bitcoin::EcdsaSighashType;
 use bitcoin::{script, Amount, PublicKey, Script, ScriptBuf, Sequence, Witness};
 use secp256k1::musig::{
-    AggregatedNonce, AggregatedSignature, PartialSignature, PublicNonce, SecretNonce,
+    AggregatedNonce, PartialSignature, PublicNonce,
 };
 
 // create_hashlock_script
@@ -39,29 +38,6 @@ pub(crate) fn create_timelock_script(locktime: LockTime, pubkey: &XOnlyPublicKey
         .into_script()
 }
 
-fn derive_maker_pubkey_and_salt(
-    tweakable_point: &PublicKey,
-) -> Result<(PublicKey, SecretKey), ProtocolError> {
-    let mut salt_bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut salt_bytes);
-    let salt = SecretKey::from_slice(&salt_bytes)?;
-    let maker_pubkey = calculate_pubkey_from_salt(tweakable_point, &salt)?;
-    Ok((maker_pubkey, salt))
-}
-
-fn calculate_pubkey_from_salt(
-    tweakable_point: &PublicKey,
-    salt: &SecretKey,
-) -> Result<PublicKey, ProtocolError> {
-    let secp = Secp256k1::new();
-
-    let salt_point = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, salt);
-    Ok(PublicKey {
-        compressed: true,
-        inner: tweakable_point.inner.combine(&salt_point)?,
-    })
-}
-
 pub(crate) fn create_taproot_script(
     hashlock_script: ScriptBuf,
     timelock_script: ScriptBuf,
@@ -76,11 +52,11 @@ pub(crate) fn create_taproot_script(
         .finalize(&secp, internal_pubkey)
         .expect("taproot info finalized");
     // println!("Taproot spend info: {:?}", taproot_spendinfo);
-    let hashlock_control_block =
-        taproot_spendinfo.control_block(&(hashlock_script, LeafVersion::TapScript));
+    // let hashlock_control_block =
+    //     taproot_spendinfo.control_block(&(hashlock_script, LeafVersion::TapScript));
     // println!("Hashlock control block: {:?}", hashlock_control_block.as_slice());
-    let timelock_control_block =
-        taproot_spendinfo.control_block(&(timelock_script, LeafVersion::TapScript));
+    // let timelock_control_block =
+    //     taproot_spendinfo.control_block(&(timelock_script, LeafVersion::TapScript));
     // println!("Timelock control block: {:?}", timelock_control_block.as_slice());
     (
         ScriptBuf::new_p2tr(
@@ -125,36 +101,6 @@ pub(crate) fn calculate_contract_sighash(
     Ok(bitcoin::secp256k1::Message::from(sighash))
 }
 
-fn generate_partial_pubkey() -> Result<Keypair, ProtocolError> {
-    let secp = Secp256k1::new();
-    let mut rng = OsRng;
-    Ok(Keypair::new(&secp, &mut rng))
-}
-
-// 1. Select UTXO(s)
-// 2. Get change address
-// 3. Get Script Pubkey and amount
-pub(crate) fn create_unsigned_contract_tx(
-    input: OutPoint,
-    input_value: Amount,
-    script_pubkey: ScriptBuf,
-    fee: Amount,
-) -> Result<Transaction, ProtocolError> {
-    Ok(Transaction {
-        input: vec![TxIn {
-            previous_output: input,
-            script_sig: ScriptBuf::new(),
-            sequence: Sequence::ZERO,
-            witness: Witness::new(),
-        }],
-        output: vec![TxOut {
-            script_pubkey: script_pubkey,
-            value: input_value - fee,
-        }],
-        lock_time: LockTime::ZERO,
-        version: Version::TWO,
-    })
-}
 
 pub(crate) fn calculate_coinswap_fee(
     swap_amount: u64,
@@ -172,16 +118,8 @@ pub(crate) fn calculate_coinswap_fee(
 }
 
 fn verify_partial_signature(
-    msg: Message,
-    partial_sig: &secp256k1::musig::PartialSignature,
-    nonce: &secp256k1::musig::PublicNonce,
-    pubkey: PublicKey,
-    agg_nonce: &secp256k1::musig::AggregatedNonce,
-    tap_tweak: Scalar,
-    pubkey1: PublicKey,
-    pubkey2: PublicKey,
 ) -> Result<bool, ProtocolError> {
-    Ok(true)
+    unimplemented!()
 }
 
 fn verify_hashlock_path(
@@ -210,17 +148,6 @@ fn verify_timelock_path(privkey: &SecretKey, locktime: LockTime) -> Result<bool,
     // Verify that the script contains the correct locktime and pubkey
     let expected_script = create_timelock_script(locktime, &x_only_pubkey);
     Ok(script == expected_script)
-}
-
-/// Verify partial signatures for a MuSig2 transaction
-pub fn verify_partial_signatures(
-    msg: Message,
-    partial_sigs: &[PartialSignature],
-    pub_nonces: &[PublicNonce],
-    agg_nonce: &AggregatedNonce,
-    tap_tweak: Scalar,
-) -> Result<bool, ProtocolError> {
-    Ok(true)
 }
 
 fn verify_transaction_data(
@@ -252,27 +179,44 @@ fn verify_transaction_data(
 #[cfg(test)]
 mod tests {
 
+    fn create_unsigned_contract_tx(
+        input: OutPoint,
+        input_value: Amount,
+        script_pubkey: ScriptBuf,
+        fee: Amount,
+    ) -> Result<Transaction, ProtocolError> {
+        Ok(Transaction {
+            input: vec![TxIn {
+                previous_output: input,
+                script_sig: ScriptBuf::new(),
+                sequence: Sequence::ZERO,
+                witness: Witness::new(),
+            }],
+            output: vec![TxOut {
+                script_pubkey: script_pubkey,
+                value: input_value - fee,
+            }],
+            lock_time: LockTime::ZERO,
+            version: Version::TWO,
+        })
+    }
+
     use crate::protocol::musig_interface::{
         aggregate_partial_signatures_i, generate_new_nonce_pair_i, generate_partial_signature_i,
         get_aggregated_nonce_i, get_aggregated_pubkey_i,
     };
-    use bitcoin::hex::FromHex;
-    use bitcoin::key::{Parity, TapTweak};
     use bitcoin::secp256k1::Scalar;
     use bitcoin::sighash::Prevouts;
-    use bitcoin::taproot::{ControlBlock, TaprootMerkleBranch, TaprootSpendInfo};
-    use bitcoin::{Address, TapNodeHash, TapSighashType};
+    use bitcoin::taproot::{ControlBlock, TaprootSpendInfo};
+    use bitcoin::{Address, TapSighashType};
     use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
     use bitcoind::bitcoincore_rpc::RawTx;
     use bitcoind::bitcoincore_rpc::{Auth::UserPass, Client, RpcApi};
     use secp256k1::musig::{AggregatedNonce, AggregatedSignature, PublicNonce, SecretNonce};
-    use std::convert::TryInto;
     use std::str::FromStr;
 
     use super::*;
     use bitcoin::{
-        bech32::{self, hrp, Bech32m},
-        hashes::sha256d::Hash as Sha256d,
         Txid,
     };
 

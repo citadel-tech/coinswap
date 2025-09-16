@@ -533,6 +533,37 @@ impl Maker {
         connection_state.outgoing_contract_tap_tweak =
             Some(taproot_spendinfo.tap_tweak().to_scalar());
 
+        // Get the actual amount we received from the incoming contract
+        let incoming_contract_txid = connection_state
+            .incoming_contract_txid
+            .ok_or_else(|| MakerError::General("No taker contract transaction hash found"))?;
+        
+        let received_amount = {
+            let wallet = self.wallet.read()?;
+            let incoming_contract_tx = wallet
+                .rpc
+                .get_raw_transaction(&incoming_contract_txid, None)
+                .map_err(|_| MakerError::General("Failed to get incoming contract transaction"))?;
+            incoming_contract_tx.output[0].value
+        };
+
+        // Calculate our fee for this swap based on received amount
+        let our_fee = self.calculate_swap_fee(received_amount, connection_state.timelock);
+        log::info!(
+            "Calculated coinswap fee: {} sats for received amount: {} sats",
+            our_fee.to_sat(),
+            received_amount.to_sat()
+        );
+        
+        // Calculate the amount for our outgoing contract (received amount minus our fee)
+        // The taker will pay mining fees when sweeping
+        let outgoing_contract_amount = received_amount - our_fee;
+        log::info!(
+            "Creating outgoing contract with amount: {} sats (after deducting {} sats coinswap fee)",
+            outgoing_contract_amount.to_sat(),
+            our_fee.to_sat()
+        );
+
         // Sign and broadcast our contract transaction using the wallet
         log::info!("Signing and broadcasting maker's contract transaction");
         let outgoing_contract_txid = {
@@ -547,13 +578,18 @@ impl Maker {
                 .get_utxo((funding_utxo.txid, funding_utxo.vout))?
                 .ok_or_else(|| MakerError::General("Funding UTXO not found"))?;
 
-            // Create a proper signed transaction using the wallet
+            // Use Destination::Multi to send exact amount to contract and keep the fee as change
+            let contract_address = bitcoin::Address::from_script(&taproot_script, bitcoin::Network::Regtest)
+                .map_err(|_| MakerError::General("Failed to create address"))?;
+            
+            // Create a proper signed transaction using the wallet with Multi destination
+            // This sends exactly outgoing_contract_amount to the contract and returns change to maker
             let signed_tx = wallet.spend_from_wallet(
                 DEFAULT_TX_FEE_RATE,
-                Destination::Sweep(
-                    bitcoin::Address::from_script(&taproot_script, bitcoin::Network::Regtest)
-                        .map_err(|_| MakerError::General("Failed to create address"))?,
-                ),
+                Destination::Multi {
+                    outputs: vec![(contract_address, outgoing_contract_amount)],
+                    op_return_data: None,
+                },
                 &[(funding_utxo.clone(), funding_utxo_info)],
             )?;
 
@@ -578,7 +614,6 @@ impl Maker {
             .ok_or_else(|| MakerError::General("No internal key found in message"))?;
 
 
-        use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
         use bitcoin::{OutPoint, Sequence, TxIn, TxOut, Witness};
 
         let incoming_contract_tx = {
@@ -664,9 +699,7 @@ impl Maker {
         connection_state: &mut ConnectionState,
     ) -> Result<crate::protocol::messages2::NoncesPartialSigsAndSpendingTx, MakerError> {
         use crate::protocol::musig_interface::generate_new_nonce_pair_i;
-        use bitcoin::secp256k1::{Message, Secp256k1};
-        use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
-        use bitcoin::TxOut;
+        use bitcoin::secp256k1::{Secp256k1};
 
         log::info!("Processing SpendingTxAndReceiverNonce message");
 
@@ -741,7 +774,6 @@ impl Maker {
         );
         let outgoing_contract_hashlock_script = connection_state.outgoing_contract_hashlock_script.clone().unwrap();
         let outgoing_contract_timelock_script = connection_state.outgoing_contract_timelock_script.clone().unwrap();
-        use crate::protocol::contract2::create_taproot_script;
         // Use helper to calculate sighash
         let message = calculate_contract_sighash(
             outgoing_contract_spending_tx,
@@ -841,9 +873,9 @@ impl Maker {
         connection_state: &mut ConnectionState,
     ) -> Result<(), MakerError> {
         use crate::protocol::musig_interface::{aggregate_partial_signatures_i, generate_partial_signature_i, get_aggregated_nonce_i};
-        use bitcoin::secp256k1::{Message, Secp256k1};
-        use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
-        use bitcoin::{TxOut, Witness};
+        use bitcoin::secp256k1::{Secp256k1};
+        use bitcoin::sighash::{SighashCache};
+        use bitcoin::{Witness};
         use bitcoind::bitcoincore_rpc::RpcApi;
 
         log::info!("[{}] Completing maker sweep with received partial signature", self.config.network_port);
