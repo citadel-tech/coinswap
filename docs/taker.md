@@ -46,7 +46,7 @@ A simple command line app to operate as coinswap client.
 
 The app works as a regular Bitcoin wallet with the added capability to perform coinswaps. The app
 requires a running Bitcoin Core node with RPC access. It currently only runs on Testnet4. Suggested
-faucet for getting Testnet4 coins: http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/
+faucet for getting Signet coins (tor browser required): http://a4ovtjlwiclzy37bjaurcbb6wpl6dtckmlqwrywq7uoajeaz6kth4uyd.onion/
 
 For more detailed usage information, please refer:
 https://github.com/citadel-tech/coinswap/blob/master/docs/taker.md
@@ -159,7 +159,7 @@ bcrt1qyywgd4we5y7u05lnrgs8runc3j7sspwqhekrdd
 
 This returns a new Bitcoin receiving address from the taker's wallet.
 
-Now we can use the signet faucet to send some coins to this address. Use [this faucet](http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/)(open in Tor browser) to get some signet coins.
+Now we can use the signet faucet to send some coins to this address. Use [this faucet](http://a4ovtjlwiclzy37bjaurcbb6wpl6dtckmlqwrywq7uoajeaz6kth4uyd.onion/)(open in Tor browser) to get some signet coins.
 
 ### Check Wallet Balances
 
