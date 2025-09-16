@@ -159,6 +159,12 @@ fn test_standard_coinswap() {
         .spend_from_wallet(MIN_FEE_RATE, Destination::Sweep(addr), &swap_coins)
         .unwrap();
 
+    assert_eq!(
+        tx.input.len(),
+        1,
+        "Not all swap coin utxos got included in the spend transaction"
+    );
+
     bitcoind.client.send_raw_transaction(&tx).unwrap();
     generate_blocks(bitcoind, 1);
 
