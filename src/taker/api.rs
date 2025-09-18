@@ -193,10 +193,10 @@ impl Taker {
         data_dir: Option<PathBuf>,
         wallet_file_name: Option<String>,
         rpc_config: Option<RPCConfig>,
-        behavior: TakerBehavior,
+        #[cfg(feature = "integration-test")] behavior: TakerBehavior,
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
-        connection_type: Option<ConnectionType>,
+        #[cfg(feature = "integration-test")] connection_type: Option<ConnectionType>,
     ) -> Result<Taker, TakerError> {
         // Get provided data directory or the default data directory.
         let data_dir = data_dir.unwrap_or(get_taker_dir());
@@ -214,6 +214,7 @@ impl Taker {
         // If config file doesn't exist, default config will be loaded.
         let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
+        #[cfg(feature = "integration-test")]
         if let Some(connection_type) = connection_type {
             config.connection_type = connection_type;
         }
@@ -226,6 +227,7 @@ impl Taker {
             config.tor_auth_password = tor_auth_password;
         }
 
+        #[cfg(feature = "integration-test")]
         if matches!(connection_type, Some(ConnectionType::TOR)) {
             check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
@@ -264,7 +266,10 @@ impl Taker {
             config,
             offerbook,
             ongoing_swap_state: OngoingSwapState::default(),
+            #[cfg(feature = "integration-test")]
             behavior,
+            #[cfg(not(feature = "integration-test"))]
+            behavior: TakerBehavior::Normal,
             data_dir,
         })
     }
