@@ -363,12 +363,16 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
                             *guard = Some(tracker_address);
                         }
                     }
-                    let hostname = get_tor_hostname(
-                        maker.get_data_dir(),
-                        maker.config.control_port,
-                        maker.config.network_port,
-                        &maker.config.tor_auth_password,
-                    )?;
+                    let hostname = if cfg!(feature = "integration-test") {
+                        "127.0.0.1".to_string()
+                    } else {
+                        get_tor_hostname(
+                            maker.get_data_dir(),
+                            maker.config.control_port,
+                            maker.config.network_port,
+                            &maker.config.tor_auth_password,
+                        )?
+                    };
                     let address = format!("{}:{}", hostname, maker.config.network_port);
                     let response = TrackerClientToServer::Pong { address };
                     if let Err(e) = send_message(stream, &response) {
