@@ -555,10 +555,6 @@ $ ./maker-cli get-balances
 
 ---
 
-### **Redeem Fidelity**:
-
-[TODO]
-
 ### **Shutting Down Maker Server**:
 
 After performing all functionalities, we can stop the maker server using the `stop` command.
