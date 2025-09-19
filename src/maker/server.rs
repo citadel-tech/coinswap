@@ -1,13 +1,15 @@
 //! The Coinswap Maker Server.
 //!
 //! This module includes all server side code for the coinswap maker.
-//! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend and RPC Client Request.
-//! The server listens at two port 6102 for P2P, and 6103 for RPC Client request.
+//! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend, and RPC Client Request.
+//! The server listens at two ports: 6102 for P2P, and 6103 for RPC Client requests.
 
-use crate::protocol::messages::FidelityProof;
+use crate::protocol::messages::{
+    FidelityProof, MessageToMaker, TrackerClientToServer, TrackerServerToClient,
+};
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
-use socks::Socks5Stream;
+
 use std::{
     io::ErrorKind,
     net::{Ipv4Addr, TcpListener, TcpStream},
@@ -26,45 +28,36 @@ use crate::{
         api::{
             check_for_broadcasted_contracts, check_for_idle_states,
             restore_broadcasted_contracts_on_reboot, ConnectionState,
-            FIDELITY_BOND_DNS_UPDATE_INTERVAL, SWAP_LIQUIDITY_CHECK_INTERVAL,
+            FIDELITY_BOND_UPDATE_INTERVAL, SWAP_LIQUIDITY_CHECK_INTERVAL,
         },
         handlers::handle_message,
         rpc::start_rpc_server,
     },
-    protocol::messages::{DnsMetadata, DnsRequest, DnsResponse, TakerToMakerMessage},
-    utill::{read_message, send_message, ConnectionType, DEFAULT_TX_FEE_RATE, HEART_BEAT_INTERVAL},
+    protocol::messages::TakerToMakerMessage,
+    utill::{read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::WalletError,
 };
 
 use crate::maker::error::MakerError;
 
-/// Fetches the Maker and DNS address, and sends maker address to the DNS server.
-/// Depending upon ConnectionType and test/prod environment, different maker address and DNS addresses are returned.
-/// Return the Maker address and the DNS address.
-fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> {
+/// Fetches the Maker
+/// Depending upon ConnectionType and test/prod environment, different maker address are returned.
+/// Return the Maker address
+fn network_bootstrap(maker: Arc<Maker>) -> Result<String, MakerError> {
     let maker_port = maker.config.network_port;
-    let (maker_address, dns_address) = match maker.config.connection_type {
-        ConnectionType::CLEARNET => {
-            let maker_address = format!("127.0.0.1:{}", maker_port);
-            let dns_address = if cfg!(feature = "integration-test") {
-                format!("127.0.0.1:{}", 8080)
-            } else {
-                maker.config.directory_server_address.clone()
-            };
-
-            (maker_address, dns_address)
-        }
-        ConnectionType::TOR => {
+    let maker_address = {
+        if cfg!(feature = "integration-test") {
+            // Always clearnet in integration tests
+            format!("127.0.0.1:{maker_port}")
+        } else {
+            // Always Tor otherwise
             let maker_hostname = get_tor_hostname(
                 maker.get_data_dir(),
                 maker.config.control_port,
-                maker.config.network_port,
+                maker_port,
                 &maker.config.tor_auth_password,
             )?;
-            let maker_address = format!("{}:{}", maker_hostname, maker.config.network_port);
-
-            let dns_address = maker.config.directory_server_address.clone();
-            (maker_address, dns_address)
+            format!("{maker_hostname}:{maker_port}")
         }
     };
 
@@ -72,101 +65,19 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<(String, String), MakerError> 
         .as_ref()
         .track_and_update_unconfirmed_fidelity_bonds()?;
 
-    manage_fidelity_bonds_and_update_dns(maker.as_ref(), &maker_address, &dns_address)?;
+    manage_fidelity_bonds(maker.as_ref(), &maker_address)?;
 
-    Ok((maker_address, dns_address))
+    Ok(maker_address)
 }
 
-/// Manages the maker's fidelity bonds and ensures the DNS server is updated with the latest bond proof and maker address.
+/// Manages the maker's fidelity bonds and ensures the server is updated with the latest bond proof and maker address.
 ///
 /// It performs the following operations:
 /// 1. Redeems all expired fidelity bonds in the maker's wallet, if any are found.
 /// 2. Creates a new fidelity bond if no valid bonds remain after redemption.
-/// 3. Sends a POST request to the DNS server containing the maker's address and the proof of the fidelity bond
-///    with the highest value.
-fn manage_fidelity_bonds_and_update_dns(
-    maker: &Maker,
-    maker_addr: &str,
-    dns_addr: &str,
-) -> Result<(), MakerError> {
+fn manage_fidelity_bonds(maker: &Maker, maker_addr: &str) -> Result<(), MakerError> {
     maker.wallet.write()?.redeem_expired_fidelity_bonds()?;
-
-    let proof = setup_fidelity_bond(maker, maker_addr)?;
-
-    let dns_metadata = DnsMetadata {
-        url: maker_addr.to_string(),
-        proof,
-    };
-
-    let request = DnsRequest::Post {
-        metadata: dns_metadata,
-    };
-
-    let network_port = maker.config.network_port;
-
-    log::info!("[{}] Connecting to DNS: {}", network_port, dns_addr);
-
-    while !maker.shutdown.load(Relaxed) {
-        let stream = match maker.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(dns_addr),
-            ConnectionType::TOR => {
-                Socks5Stream::connect(format!("127.0.0.1:{}", maker.config.socks_port), dns_addr)
-                    .map(|s| s.into_inner())
-            }
-        };
-
-        match stream {
-            Ok(mut stream) => match send_message(&mut stream, &request) {
-                Ok(_) => match read_message(&mut stream) {
-                    Ok(dns_msg_bytes) => {
-                        match serde_cbor::from_slice::<DnsResponse>(&dns_msg_bytes) {
-                            Ok(dns_msg) => match dns_msg {
-                                DnsResponse::Ack => {
-                                    log::info!("[{}] <=== {}", network_port, dns_msg);
-                                    log::info!( "[{}] Successfully sent our address and fidelity proof to DNS at {}",network_port, dns_addr);
-                                    break;
-                                }
-                                DnsResponse::Nack(reason) => {
-                                    log::error!("<=== DNS Nack: {}", reason)
-                                }
-                            },
-                            Err(e) => {
-                                log::warn!("CBOR deserialization failed: {} | Reattempting...", e)
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        if let NetError::IO(e) = e {
-                            if e.kind() == ErrorKind::UnexpectedEof {
-                                log::info!("[{}] Connection ended.", maker.config.network_port);
-                                break;
-                            } else {
-                                // For any other errors, report them
-                                log::error!(
-                                    "[{}] DNS Connection Error: {}",
-                                    maker.config.network_port,
-                                    e
-                                );
-                            }
-                        }
-                    }
-                },
-                Err(e) => log::warn!(
-                    "[{}] Failed to send request to DNS : {} | reattempting...",
-                    network_port,
-                    e
-                ),
-            },
-            Err(e) => log::warn!(
-                "[{}] Failed to establish TCP connection with DNS : {} | reattempting...",
-                network_port,
-                e
-            ),
-        }
-
-        thread::sleep(HEART_BEAT_INTERVAL);
-    }
-
+    setup_fidelity_bond(maker, maker_addr)?;
     Ok(())
 }
 
@@ -183,7 +94,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
 
     if let Some(i) = highest_index {
         let wallet_read = maker.get_wallet().read()?;
-        let (bond, _) = wallet_read.store.fidelity_bond.get(&i).unwrap();
+        let bond = wallet_read.store.fidelity_bond.get(&i).unwrap();
 
         let current_height = wallet_read
             .rpc
@@ -240,14 +151,15 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
             // sync the wallet
             maker.get_wallet().write()?.sync_no_fail();
 
-            let fidelity_result =
-                maker
-                    .get_wallet()
-                    .write()?
-                    .create_fidelity(amount, locktime, DEFAULT_TX_FEE_RATE);
+            let fidelity_result = maker.get_wallet().write()?.create_fidelity(
+                amount,
+                locktime,
+                Some(maker_address.as_bytes()),
+                MIN_FEE_RATE,
+            );
 
             match fidelity_result {
-                // Wait for sufficient fund to create fidelity bond.
+                // Wait for sufficient funds to create fidelity bond.
                 // Hard error if fidelity still can't be created.
                 Err(e) => {
                     if let WalletError::InsufficientFund {
@@ -262,7 +174,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
                         log::info!("Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", Amount::from_sat(amount).to_btc(), addr);
 
                         let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60);
-                        log::info!("Next sync in {:?} secs", total_sleep);
+                        log::info!("Next sync in {total_sleep:?} secs");
                         thread::sleep(Duration::from_secs(total_sleep));
                     } else {
                         log::error!(
@@ -313,20 +225,15 @@ fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
         let min_required = maker.config.min_swap_amount;
         if offer_max_size < min_required {
             log::warn!(
-                "Low Swap Liquidity | Min: {} sats | Available: {} sats. Add funds to {:?}",
-                min_required,
-                offer_max_size,
-                addr
+                "Low Swap Liquidity | Min: {min_required} sats | Available: {offer_max_size} sats. Add funds to {addr:?}"
             );
 
             sleep_duration = (sleep_duration + sleep_incremental).min(10 * 60); // Capped at 1 Block interval
-            log::info!("Next sync in {:?} secs", sleep_duration);
+            log::info!("Next sync in {sleep_duration:?} secs");
             thread::sleep(Duration::from_secs(sleep_duration));
         } else {
             log::info!(
-                "Swap Liquidity: {} sats | Min: {} sats | Listening for requests.",
-                offer_max_size,
-                min_required
+                "Swap Liquidity: {offer_max_size} sats | Min: {min_required} sats | Listening for requests."
             );
             break;
         }
@@ -363,6 +270,23 @@ fn check_connection_with_core(maker: &Maker) -> Result<(), MakerError> {
     Ok(())
 }
 
+fn decode_unified_message(data: &[u8]) -> Result<MessageToMaker, MakerError> {
+    let (prefix, body) = data
+        .split_first()
+        .ok_or_else(|| MakerError::General("Parsing error during decoding"))?;
+    match *prefix {
+        0x01 => {
+            let msg = serde_cbor::from_slice::<TakerToMakerMessage>(body)?;
+            Ok(MessageToMaker::TakerToMaker(msg))
+        }
+        0x02 => {
+            let msg = serde_cbor::from_slice::<TrackerServerToClient>(body)?;
+            Ok(MessageToMaker::TrackerMessage(msg))
+        }
+        _ => Err(MakerError::General("Parsing error during decoding")),
+    }
+}
+
 /// Handle a single client connection.
 fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerError> {
     stream.set_nonblocking(false)?; // Block this thread until message is read.
@@ -370,9 +294,9 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
     let mut connection_state = ConnectionState::default();
 
     while !maker.shutdown.load(Relaxed) {
-        let mut taker_msg_bytes = Vec::new();
+        let mut bytes = Vec::new();
         match read_message(stream) {
-            Ok(b) => taker_msg_bytes = b,
+            Ok(b) => bytes = b,
             Err(e) => {
                 if let NetError::IO(e) = e {
                     if e.kind() == ErrorKind::UnexpectedEof {
@@ -387,44 +311,81 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
             }
         }
 
-        let taker_msg: TakerToMakerMessage = serde_cbor::from_slice(&taker_msg_bytes)?;
-        log::info!("[{}] <=== {}", maker.config.network_port, taker_msg);
+        let unified = decode_unified_message(&bytes)?;
 
-        let reply = handle_message(maker, &mut connection_state, taker_msg);
+        match unified {
+            MessageToMaker::TakerToMaker(taker_msg) => {
+                log::info!("[{}] <=== {}", maker.config.network_port, taker_msg);
 
-        match reply {
-            Ok(reply) => {
-                if let Some(message) = reply {
-                    log::info!("[{}] ===> {} ", maker.config.network_port, message);
-                    if let Err(e) = send_message(stream, &message) {
-                        log::error!("Closing due to IO error in sending message: {:?}", e);
+                let reply = handle_message(maker, &mut connection_state, taker_msg);
+
+                match reply {
+                    Ok(reply) => {
+                        if let Some(message) = reply {
+                            log::info!("[{}] ===> {} ", maker.config.network_port, message);
+                            if let Err(e) = send_message(stream, &message) {
+                                log::error!("Closing due to IO error in sending message: {e:?}");
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                    }
+                    Err(err) => {
+                        match &err {
+                            // Shutdown server if special behavior is set
+                            MakerError::SpecialBehaviour(sp) => {
+                                log::error!(
+                                    "[{}] Maker Special Behavior : {:?}",
+                                    maker.config.network_port,
+                                    sp
+                                );
+                                maker.shutdown.store(true, Relaxed);
+                            }
+                            e => {
+                                log::error!(
+                                    "[{}] Internal message handling error occurred: {:?}",
+                                    maker.config.network_port,
+                                    e
+                                );
+                            }
+                        }
+                        return Err(err);
+                    }
+                }
+            }
+            MessageToMaker::TrackerMessage(tracker_msg) => match tracker_msg {
+                TrackerServerToClient::Ping { address, port } => {
+                    log::info!("Received a ping from tracker");
+                    if let Ok(mut guard) = maker.tracker.write() {
+                        if guard.is_none() {
+                            let tracker_address = format!("{address}:{port}");
+                            *guard = Some(tracker_address);
+                        }
+                    }
+                    let hostname = if cfg!(feature = "integration-test") {
+                        "127.0.0.1".to_string()
+                    } else {
+                        get_tor_hostname(
+                            maker.get_data_dir(),
+                            maker.config.control_port,
+                            maker.config.network_port,
+                            &maker.config.tor_auth_password,
+                        )?
+                    };
+                    let address = format!("{}:{}", hostname, maker.config.network_port);
+                    let response = TrackerClientToServer::Pong { address };
+                    if let Err(e) = send_message(stream, &response) {
+                        log::error!("Failed to send Pong to tracker: {e:?}. Closing connection.");
                         continue;
                     }
-                } else {
-                    continue;
                 }
-            }
-            Err(err) => {
-                match &err {
-                    // Shutdown server if special behavior is set
-                    MakerError::SpecialBehaviour(sp) => {
-                        log::error!(
-                            "[{}] Maker Special Behavior : {:?}",
-                            maker.config.network_port,
-                            sp
-                        );
-                        maker.shutdown.store(true, Relaxed);
-                    }
-                    e => {
-                        log::error!(
-                            "[{}] Internal message handling error occurred: {:?}",
-                            maker.config.network_port,
-                            e
-                        );
-                    }
+                _ => {
+                    unimplemented!(
+                        "We gonna handle other messages considering tracker as the server"
+                    );
                 }
-                return Err(err);
-            }
+            },
         }
     }
 
@@ -449,7 +410,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Starting Maker Server");
 
     // Setup the wallet with fidelity bond.
-    let (maker_addr, dns_addr) = network_bootstrap(maker.clone())?;
+    let maker_addr = network_bootstrap(maker.clone())?;
 
     // Tracks the elapsed time in heartbeat intervals to schedule periodic checks and avoid redundant executions.
     let mut interval_tracker = 0;
@@ -482,35 +443,32 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     if !maker.shutdown.load(Relaxed) {
         // 1. Idle Client connection checker thread.
-        // This threads check idelness of peer in live swaps.
-        // And takes recovery measure if the peer seems to have disappeared in middlle of a swap.
+        // This threads check idleness of peer in live swaps.
+        // And takes recovery measures if the peer seems to have disappeared in middle of a swap.
         let maker_clone = maker.clone();
         let idle_conn_check_thread = thread::Builder::new()
             .name("Idle Client Checker Thread".to_string())
             .spawn(move || {
-                log::info!(
-                    "[{}] Spawning Client connection status checker thread",
-                    network_port
-                );
+                log::info!("[{network_port}] Spawning Client connection status checker thread");
                 if let Err(e) = check_for_idle_states(maker_clone.clone()) {
-                    log::error!("Failed checking client's idle state {:?}", e);
+                    log::error!("Failed checking client's idle state {e:?}");
                     maker_clone.shutdown.store(true, Relaxed);
                 }
             })?;
         maker.thread_pool.add_thread(idle_conn_check_thread);
 
         // 2. Watchtower thread.
-        // This thread checks for broadcasted contract transactions, which usually means violation of the protocol.
-        // When contract transaction detected in mempool it will attempt recovery.
+        // This thread checks for broadcasted contract transactions, which usually means a violation of the protocol.
+        // When a contract transaction is detected in mempool it will attempt recovery.
         // This can get triggered even when contracts of adjacent hops are published. Implying the whole swap route is disrupted.
         let maker_clone = maker.clone();
         let contract_watcher_thread = thread::Builder::new()
             .name("Contract Watcher Thread".to_string())
             .spawn(move || {
-                log::info!("[{}] Spawning contract-watcher thread", network_port);
+                log::info!("[{network_port}] Spawning contract-watcher thread");
                 if let Err(e) = check_for_broadcasted_contracts(maker_clone.clone()) {
                     maker_clone.shutdown.store(true, Relaxed);
-                    log::error!("Failed checking broadcasted contracts {:?}", e);
+                    log::error!("Failed checking broadcasted contracts {e:?}");
                 }
             })?;
         maker.thread_pool.add_thread(contract_watcher_thread);
@@ -521,11 +479,11 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         let rpc_thread = thread::Builder::new()
             .name("RPC Thread".to_string())
             .spawn(move || {
-                log::info!("[{}] Spawning RPC server thread", network_port);
+                log::info!("[{network_port}] Spawning RPC server thread");
                 match start_rpc_server(maker_clone.clone()) {
                     Ok(_) => (),
                     Err(e) => {
-                        log::error!("Failed starting rpc server {:?}", e);
+                        log::error!("Failed starting rpc server {e:?}");
                         maker_clone.shutdown.store(true, Relaxed);
                     }
                 }
@@ -547,7 +505,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     }
 
     while !maker.shutdown.load(Relaxed) {
-        if interval_tracker % RPC_PING_INTERVAL == 0 {
+        if interval_tracker.is_multiple_of(RPC_PING_INTERVAL) {
             check_connection_with_core(maker.as_ref())?;
         }
 
@@ -557,31 +515,27 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         // Running these checks during an active swap might cause the maker to stop responding,
         // potentially aborting the swap.
         if maker.ongoing_swap_state.lock()?.is_empty() {
-            if interval_tracker % FIDELITY_BOND_DNS_UPDATE_INTERVAL == 0 {
-                manage_fidelity_bonds_and_update_dns(maker.as_ref(), &maker_addr, &dns_addr)?;
+            if interval_tracker.is_multiple_of(FIDELITY_BOND_UPDATE_INTERVAL) {
+                manage_fidelity_bonds(maker.as_ref(), &maker_addr)?;
                 interval_tracker = 0;
             }
 
-            if interval_tracker % SWAP_LIQUIDITY_CHECK_INTERVAL == 0 {
+            if interval_tracker.is_multiple_of(FIDELITY_BOND_UPDATE_INTERVAL) {
                 check_swap_liquidity(maker.as_ref())?;
             }
         }
         match listener.accept() {
             Ok((mut stream, _)) => {
-                log::info!("[{}] Received incoming connection", network_port);
+                log::info!("[{network_port}] Received incoming connection");
 
                 if let Err(e) = handle_client(&maker, &mut stream) {
-                    log::error!("[{}] Error Handling client request {:?}", network_port, e);
+                    log::error!("[{network_port}] Error Handling client request {e:?}");
                 }
             }
 
             Err(e) => {
                 if e.kind() != ErrorKind::WouldBlock {
-                    log::error!(
-                        "[{}] Error accepting incoming connection: {:?}",
-                        network_port,
-                        e
-                    );
+                    log::error!("[{network_port}] Error accepting incoming connection: {e:?}");
                 }
             }
         };
@@ -590,8 +544,8 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         // swap liquidity and fidelity bond checks are due. This ensures these checks are
         // not skipped due to an ongoing coinswap and are performed once it completes.
         if maker.ongoing_swap_state.lock()?.is_empty()
-            || interval_tracker % SWAP_LIQUIDITY_CHECK_INTERVAL != 0
-            || interval_tracker % FIDELITY_BOND_DNS_UPDATE_INTERVAL != 0
+            || !interval_tracker.is_multiple_of(SWAP_LIQUIDITY_CHECK_INTERVAL)
+            || !interval_tracker.is_multiple_of(FIDELITY_BOND_UPDATE_INTERVAL)
         {
             interval_tracker += HEART_BEAT_INTERVAL.as_secs() as u32;
         }
@@ -599,7 +553,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         sleep(HEART_BEAT_INTERVAL);
     }
 
-    log::info!("[{}] Maker is shutting down.", network_port);
+    log::info!("[{network_port}] Maker is shutting down.");
     maker.thread_pool.join_all_threads()?;
 
     log::info!("Shutdown wallet sync initiated.");
@@ -607,6 +561,6 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Shutdown wallet syncing completed.");
     maker.get_wallet().read()?.save_to_disk()?;
     log::info!("Wallet file saved to disk.");
-    log::info!("Maker Server is shut down successfully");
+    log::info!("Maker Server is shut down successfully.");
     Ok(())
 }

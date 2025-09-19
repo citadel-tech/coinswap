@@ -2,19 +2,24 @@
 //!
 //! Wallet data is currently written in unencrypted CBOR files which are not directly human readable.
 
-use bitcoin::{bip32::Xpriv, Network, OutPoint, ScriptBuf};
-use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    fs::{self, read, File},
-    io::BufWriter,
-    path::Path,
+use crate::{
+    security::{encrypt_struct, load_sensitive_struct_interactive, KeyMaterial, SerdeCbor},
+    wallet::UTXOSpendInfo,
 };
 
 use super::{error::WalletError, fidelity::FidelityBond};
 
+use bitcoin::{bip32::Xpriv, Network, OutPoint, ScriptBuf};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    fs::{self, File},
+    io::BufWriter,
+    path::Path,
+};
+
 use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
-use crate::wallet::UTXOSpendInfo;
+
 use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 
 /// Represents the internal data store for a Bitcoin wallet.
@@ -36,8 +41,11 @@ pub(crate) struct WalletStore {
     pub(super) outgoing_swapcoins: HashMap<ScriptBuf, OutgoingSwapCoin>,
     /// Map of prevout to contract redeemscript.
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
-    /// Map for all the fidelity bond information. (index, (Bond, redeemed)).
-    pub(crate) fidelity_bond: HashMap<u32, (FidelityBond, bool)>,
+    /// Map of swept incoming swap coins to prevent mixing with regular UTXOs
+    /// Key: ScriptPubKey of swept UTXO, Value: Original multisig redeemscript
+    pub(super) swept_incoming_swapcoins: HashMap<ScriptBuf, ScriptBuf>,
+    /// Map for all the fidelity bond information.
+    pub(crate) fidelity_bond: HashMap<u32, FidelityBond>,
     pub(super) last_synced_height: Option<u64>,
 
     pub(super) wallet_birthday: Option<u64>,
@@ -55,6 +63,7 @@ impl WalletStore {
         network: Network,
         master_key: Xpriv,
         wallet_birthday: Option<u64>,
+        store_enc_material: &Option<KeyMaterial>,
     ) -> Result<Self, WalletError> {
         let store = Self {
             file_name,
@@ -65,6 +74,7 @@ impl WalletStore {
             incoming_swapcoins: HashMap::new(),
             outgoing_swapcoins: HashMap::new(),
             prevout_to_contract_map: HashMap::new(),
+            swept_incoming_swapcoins: HashMap::new(),
             fidelity_bond: HashMap::new(),
             last_synced_height: None,
             wallet_birthday,
@@ -74,44 +84,47 @@ impl WalletStore {
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         // write: overwrites existing file.
         // create: creates new file if doesn't exist.
-        let file = File::create(path)?;
-        let writer = BufWriter::new(file);
-        serde_cbor::to_writer(writer, &store)?;
+        File::create(path)?;
+
+        store.write_to_disk(path, store_enc_material)?;
 
         Ok(store)
     }
 
     /// Load existing file, updates it, writes it back (errors if path doesn't exist).
-    pub(crate) fn write_to_disk(&self, path: &Path) -> Result<(), WalletError> {
+    pub(crate) fn write_to_disk(
+        &self,
+        path: &Path,
+        store_enc_material: &Option<KeyMaterial>,
+    ) -> Result<(), WalletError> {
         let wallet_file = fs::OpenOptions::new().write(true).open(path)?;
         let writer = BufWriter::new(wallet_file);
-        Ok(serde_cbor::to_writer(writer, &self)?)
+
+        match store_enc_material {
+            Some(material) => {
+                // Encryption branch: encrypt the serialized wallet before writing.
+
+                let encrypted = encrypt_struct(self, material).unwrap();
+
+                // Write encrypted wallet data to disk.
+                serde_cbor::to_writer(writer, &encrypted)?;
+            }
+            None => {
+                // No encryption: serialize and write the wallet directly.
+                serde_cbor::to_writer(writer, &self)?;
+            }
+        }
+        Ok(())
     }
 
     /// Reads from a path (errors if path doesn't exist).
-    pub(crate) fn read_from_disk(path: &Path) -> Result<Self, WalletError> {
-        //let wallet_file = File::open(path)?;
-        let mut reader = read(path)?;
-        let store = match serde_cbor::from_slice::<Self>(&reader) {
-            Ok(store) => store,
-            Err(e) => {
-                let err_string = format!("{:?}", e);
-                if err_string.contains("code: TrailingData") {
-                    log::info!("Wallet file has trailing data, trying to restore");
-                    loop {
-                        // pop the last byte and try again.
-                        reader.pop();
-                        match serde_cbor::from_slice::<Self>(&reader) {
-                            Ok(store) => break store,
-                            Err(_) => continue,
-                        }
-                    }
-                } else {
-                    return Err(e.into());
-                }
-            }
-        };
-        Ok(store)
+    /// If `store_enc_material` is provided, attempts to decrypt the file using the
+    /// provided key. Returns the deserialized `WalletStore` and the nonce.
+    pub(crate) fn read_from_disk(path: &Path) -> Result<(Self, Option<KeyMaterial>), WalletError> {
+        let (wallet_store, store_enc_material) =
+            load_sensitive_struct_interactive::<Self, SerdeCbor>(path);
+
+        Ok((wallet_store, store_enc_material))
     }
 }
 
@@ -137,12 +150,15 @@ mod tests {
             Network::Bitcoin,
             master_key,
             None,
+            &None,
         )
         .unwrap();
 
-        original_wallet_store.write_to_disk(&file_path).unwrap();
+        original_wallet_store
+            .write_to_disk(&file_path, &None)
+            .unwrap();
 
-        let read_wallet = WalletStore::read_from_disk(&file_path).unwrap();
+        let (read_wallet, _nonce) = WalletStore::read_from_disk(&file_path).unwrap();
         assert_eq!(original_wallet_store, read_wallet);
     }
 }

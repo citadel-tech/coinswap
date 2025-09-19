@@ -4,5 +4,6 @@
 Cargo.lock
 .vscode
 .idea
+.ra-target
 bin
 /coverage/reports

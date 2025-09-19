@@ -3,7 +3,7 @@ use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
-    utill::{ConnectionType, DEFAULT_TX_FEE_RATE},
+    utill::{ConnectionType, MIN_FEE_RATE},
     wallet::Destination,
 };
 use std::sync::Arc;
@@ -14,7 +14,7 @@ mod test_framework;
 use test_framework::*;
 
 use log::{info, warn};
-use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
+use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// This test demonstrates a standard coinswap round between a Taker and 2 Makers. Nothing goes wrong
 /// and the coinswap completes successfully.
@@ -32,12 +32,13 @@ fn test_standard_coinswap() {
     let connection_type = ConnectionType::CLEARNET;
 
     // Initiate test framework, Makers and a Taker with default behavior.
-    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
+    let (test_framework, mut takers, makers, block_generation_handle) =
         TestFramework::init(makers_config_map.into(), taker_behavior, connection_type);
 
-    warn!("Running Test: Standard Coinswap Procedure");
+    warn!("🧪 Running Test: Standard Coinswap Procedure");
     let bitcoind = &test_framework.bitcoind;
 
+    info!("💰 Funding taker and makers");
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
     let taker = &mut takers[0];
     let org_taker_spend_balance =
@@ -48,7 +49,7 @@ fn test_standard_coinswap() {
     fund_and_verify_maker(makers_ref, bitcoind, 4, Amount::from_btc(0.05).unwrap());
 
     //  Start the Maker Server threads
-    log::info!("Initiating Maker...");
+    info!("🚀 Initiating Maker servers");
 
     let maker_threads = makers
         .iter()
@@ -65,7 +66,7 @@ fn test_standard_coinswap() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                log::info!("Waiting for maker setup completion");
+                info!("⏳ Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -76,28 +77,23 @@ fn test_standard_coinswap() {
 
             let balances = wallet.get_balances().unwrap();
 
-            assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
-            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
-            assert_eq!(balances.swap, Amount::ZERO);
-            assert_eq!(balances.contract, Amount::ZERO);
+            verify_maker_pre_swap_balances(&balances, 14999508);
 
             balances.spendable
         })
         .collect::<Vec<_>>();
 
     // Initiate Coinswap
-    log::info!("Initiating coinswap protocol");
+    info!("🔄 Initiating coinswap protocol");
 
     // Swap params for coinswap.
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
-        tx_count: 3,
-        required_confirms: 1,
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -106,10 +102,7 @@ fn test_standard_coinswap() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    log::info!("All coinswaps processed successfully. Transaction complete.");
-
-    // Shutdown Directory Server
-    directory_server_instance.shutdown.store(true, Relaxed);
+    info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
     thread::sleep(Duration::from_secs(10));
 
@@ -135,13 +128,15 @@ fn test_standard_coinswap() {
     // | **Maker6102**  | 465,384 - 438,642 - 3,000 = +21,858                               |
 
     let taker_wallet = taker.get_wallet_mut();
-    taker_wallet.sync().unwrap();
+    taker_wallet.sync_and_save().unwrap();
 
     // Synchronize each maker's wallet.
     for maker in makers.iter() {
         let mut wallet = maker.get_wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
     }
+
+    info!("📊 Verifying swap results");
     //  After Swap Asserts
     verify_swap_results(
         taker,
@@ -150,38 +145,41 @@ fn test_standard_coinswap() {
         org_maker_spend_balances,
     );
 
-    info!("Balance check successful.");
+    info!("✅ Balance check successful");
 
     // Check spending from swapcoins.
-    info!("Checking Spend from Swapcoin");
+    info!("💸 Checking spend from swapcoins");
 
     let taker_wallet_mut = taker.get_wallet_mut();
-    let swap_coins = taker_wallet_mut
-        .list_incoming_swap_coin_utxo_spend_info()
-        .unwrap();
+    let swap_coins = taker_wallet_mut.list_swept_incoming_swap_utxos().unwrap();
 
     let addr = taker_wallet_mut.get_next_internal_addresses(1).unwrap()[0].to_owned();
 
     let tx = taker_wallet_mut
-        .spend_from_wallet(DEFAULT_TX_FEE_RATE, Destination::Sweep(addr), &swap_coins)
+        .spend_from_wallet(MIN_FEE_RATE, Destination::Sweep(addr), &swap_coins)
         .unwrap();
 
     assert_eq!(
         tx.input.len(),
-        3,
+        1,
         "Not all swap coin utxos got included in the spend transaction"
     );
 
     bitcoind.client.send_raw_transaction(&tx).unwrap();
     generate_blocks(bitcoind, 1);
 
-    taker_wallet_mut.sync().unwrap();
+    taker_wallet_mut.sync_and_save().unwrap();
+
     let balances = taker_wallet_mut.get_balances().unwrap();
 
-    assert_eq!(balances.swap, Amount::ZERO);
-    assert_eq!(balances.regular, Amount::from_btc(0.14934642).unwrap());
+    assert_in_range!(balances.swap.to_sat(), [443415], "Swap Balance Mismatch");
+    assert_in_range!(
+        balances.regular.to_sat(),
+        [14499696],
+        "Taker regular balance mismatch"
+    );
 
-    info!("All checks successful. Terminating integration test case");
+    info!("🎉 All checks successful. Terminating integration test case");
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

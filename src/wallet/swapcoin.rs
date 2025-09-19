@@ -3,9 +3,9 @@
 //! and made in the process of a CoinSwap.
 //!
 //! There are three types of SwapCoins:
-//! [IncomingSwapCoin]: The contract data defining an **incoming** swap.
-//! [OutgoingSwapCoin]: The contract data defining an **outgoing** swap.
-//! [WatchOnlySwapCoin]: The contract data defining a **watch-only** swap. This is only applicable for Takers,
+//! [`IncomingSwapCoin`]: The contract data defining an **incoming** swap.
+//! [`OutgoingSwapCoin`]: The contract data defining an **outgoing** swap.
+//! [`WatchOnlySwapCoin`]: The contract data defining a **watch-only** swap. This is only applicable for Takers,
 //! for monitoring the swaps happening between two Makers.
 
 use bitcoin::{
@@ -177,7 +177,7 @@ macro_rules! impl_walletswapcoin {
                     &sig_mine,
                     &self
                         .others_contract_sig
-                        .expect("others contract sig expeccted"),
+                        .expect("others contract sig expected"),
                     &mut signed_contract_tx.input[index],
                     &multisig_redeemscript,
                 );
@@ -459,7 +459,7 @@ impl WatchOnlySwapCoin {
         let (pubkey1, pubkey2) = read_pubkeys_from_multisig_redeemscript(multisig_redeemscript)?;
         if pubkey1 != receiver_pubkey && pubkey2 != receiver_pubkey {
             return Err(ProtocolError::General(
-                "given sender_pubkey not included in redeemscript",
+                "Given sender_pubkey not included in redeemscript",
             ));
         }
         let sender_pubkey = if pubkey1 == receiver_pubkey {
@@ -509,7 +509,7 @@ impl SwapCoin for IncomingSwapCoin {
             inner: secp256k1::PublicKey::from_secret_key(&secp, &privkey),
         };
         if pubkey != self.other_pubkey {
-            return Err(ProtocolError::General("not correct privkey"));
+            return Err(ProtocolError::General("Incorrect privkey"));
         }
         self.other_privkey = Some(privkey);
         Ok(())
@@ -547,7 +547,7 @@ impl SwapCoin for OutgoingSwapCoin {
         if pubkey == self.other_pubkey {
             Ok(())
         } else {
-            Err(ProtocolError::General("not correct privkey"))
+            Err(ProtocolError::General("Incorrect privkey"))
         }
     }
 }
@@ -564,7 +564,7 @@ impl SwapCoin for WatchOnlySwapCoin {
         if pubkey == self.sender_pubkey || pubkey == self.receiver_pubkey {
             Ok(())
         } else {
-            Err(ProtocolError::General("not correct privkey"))
+            Err(ProtocolError::General("Incorrect privkey"))
         }
     }
 
@@ -611,6 +611,8 @@ mod tests {
         Address, Amount, NetworkKind, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence,
         Transaction, TxIn, TxOut, Witness,
     };
+
+    use crate::utill::calculate_fee_sats;
 
     const TEST_CURRENT_HEIGHT: u32 = 100;
 
@@ -880,7 +882,8 @@ mod tests {
             .require_network(bitcoin::Network::Bitcoin)
             .unwrap();
 
-        let miner_fee = 136 * 10; //126 vbytes x 10 sat/vb, size calculated using testmempoolaccept
+        let miner_fee = calculate_fee_sats(136);
+
         let mut tx = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
@@ -911,7 +914,7 @@ mod tests {
                 &preimage,
             )
             .unwrap();
-        // If the tx is succesful, check some field like:
+        // If the tx is successful, check some field like:
         assert!(tx.input[0].witness.len() == 3);
     }
 
@@ -960,7 +963,8 @@ mod tests {
             .require_network(bitcoin::Network::Bitcoin)
             .unwrap();
 
-        let miner_fee = 136 * 10;
+        let miner_fee = calculate_fee_sats(136);
+
         let mut tx = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {

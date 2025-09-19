@@ -1,8 +1,8 @@
 //! All Taker-related errors.
 use crate::{
-    error::NetError, market::directory::DirectoryServerError, protocol::error::ProtocolError,
-    utill::TorError, wallet::WalletError,
+    error::NetError, protocol::error::ProtocolError, utill::TorError, wallet::WalletError,
 };
+use bitcoin::address::ParseError;
 
 /// Represents errors that can occur during Taker operations.
 ///
@@ -19,8 +19,6 @@ pub enum TakerError {
     NotEnoughMakersInOfferBook,
     /// Error related to wallet operations.
     Wallet(WalletError),
-    /// Error encountered during interaction with the directory server.
-    Directory(DirectoryServerError),
     /// Error related to network operations.
     Net(NetError),
     /// Error indicating the send amount was not set for a transaction.
@@ -35,6 +33,8 @@ pub enum TakerError {
     MPSC(String),
     /// Tor error
     TorError(TorError),
+    /// Error relating to Bitcoin Address Parsing.
+    AddressParseError(ParseError),
 }
 
 impl From<TorError> for TakerError {
@@ -58,12 +58,6 @@ impl From<serde_json::Error> for TakerError {
 impl From<WalletError> for TakerError {
     fn from(value: WalletError) -> Self {
         Self::Wallet(value)
-    }
-}
-
-impl From<DirectoryServerError> for TakerError {
-    fn from(value: DirectoryServerError) -> Self {
-        Self::Directory(value)
     }
 }
 
@@ -94,5 +88,11 @@ impl From<std::sync::mpsc::RecvError> for TakerError {
 impl<T> From<std::sync::mpsc::SendError<T>> for TakerError {
     fn from(value: std::sync::mpsc::SendError<T>) -> Self {
         Self::MPSC(value.to_string())
+    }
+}
+
+impl From<ParseError> for TakerError {
+    fn from(value: ParseError) -> Self {
+        Self::AddressParseError(value)
     }
 }

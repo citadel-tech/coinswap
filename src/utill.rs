@@ -5,7 +5,7 @@ use bitcoin::{
     hashes::Hash,
     key::{rand::thread_rng, Keypair},
     secp256k1::{Message, Secp256k1, SecretKey},
-    Address, Amount, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
+    Address, Amount, FeeRate, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
 };
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use log::LevelFilter;
@@ -16,20 +16,17 @@ use log4rs::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     env, fmt, fs,
-    io::{BufReader, BufWriter, ErrorKind, Read},
+    io::{self, BufReader, BufWriter, ErrorKind, Read, Write},
     net::TcpStream,
+    os::unix::io::AsRawFd,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Once,
-};
-
-use std::{
-    collections::HashMap,
-    io::{self, Write},
-    sync::OnceLock,
+    sync::{Once, OnceLock},
     time::Duration,
 };
+
 static LOGGER: OnceLock<()> = OnceLock::new();
 
 use crate::{
@@ -50,6 +47,14 @@ const MASK_LOW_35_BITS: u64 = 0x7ffffffff;
 const SHIFT_FOR_C0: u64 = 35;
 const CHECKSUM_FINAL_XOR_VALUE: u64 = 1;
 
+///Contract Metadata type
+/// Purpose of each fields-:
+///    1- ScriptBuf- It contains incoming or outgoing swapcoins redeemscript.
+///    2- Transaction- It contains either hashlock or timelock contract txn
+///    3- u16 - It contains timelock value for timelock contract
+///    4- Transaction- It contains timelock_spend/hashlock_spend transaction
+pub type ContractMetadata = Vec<((ScriptBuf, Transaction), (u16, Transaction))>;
+
 /// Global timeout for all network connections.
 pub(crate) const NET_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -62,8 +67,9 @@ pub(crate) const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 /// Number of confirmation required funding transaction.
 pub const REQUIRED_CONFIRMS: u32 = 1;
 
-/// Default Transaction Fees in sats/vByte
-pub const DEFAULT_TX_FEE_RATE: f64 = 2.0;
+/// Minimum fee rate in sats/vb for all transactions
+/// This replaces the hardcoded MINER_FEE constant
+pub const MIN_FEE_RATE: f64 = 2.0;
 
 /// Specifies the type of connection: TOR or Clearnet.
 ///
@@ -104,7 +110,7 @@ impl fmt::Display for ConnectionType {
 /// Uses "/tmp" directory for integration tests
 fn get_home_dir() -> PathBuf {
     if cfg!(test) {
-        "/tmp".into()
+        env::temp_dir()
     } else {
         dirs::home_dir().expect("home directory expected")
     }
@@ -125,9 +131,19 @@ pub(crate) fn get_taker_dir() -> PathBuf {
     get_data_dir().join("taker")
 }
 
-/// Get the DNS Directory
-pub(crate) fn get_dns_dir() -> PathBuf {
-    get_data_dir().join("dns")
+/// Creates a FeeRate from the global MIN_FEE_RATE constant
+/// This provides type-safe fee calculations throughout the codebase
+pub fn get_min_fee_rate() -> Option<FeeRate> {
+    FeeRate::from_sat_per_vb(MIN_FEE_RATE as u64)
+}
+
+/// Calculate fee in satoshis for given virtual bytes using MIN_FEE_RATE
+pub fn calculate_fee_sats(vbytes: u64) -> u64 {
+    let fee_rate = get_min_fee_rate().expect("MIN_FEE_RATE should be valid");
+    fee_rate
+        .fee_vb(vbytes)
+        .expect("fee calculation should not overflow")
+        .to_sat()
 }
 
 /// Sets up the logger for the taker component.
@@ -164,7 +180,10 @@ pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<
         };
 
         let config = config.build(root_logger).unwrap();
-        log4rs::init_config(config).unwrap();
+        match log4rs::init_config(config) {
+            Ok(_) => log::info!("✅ Logger initialized successfully"),
+            Err(e) => log::error!("❌ Failed to initialize logger: {e}"),
+        }
     });
 }
 
@@ -192,35 +211,10 @@ pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
             .build(Root::builder().appender("stdout").build(filter))
             .unwrap();
 
-        log4rs::init_config(config).unwrap();
-    });
-}
-
-/// Sets up the logger for the directory component.
-///
-/// This method initializes the logging configuration for the directory, directing logs to both
-/// the console and a file. It sets the `RUST_LOG` environment variable to provide default
-/// log levels and configures log4rs with the specified filter level for fine-grained control
-/// of log verbosity.
-pub fn setup_directory_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
-    LOGGER.get_or_init(|| {
-        let log_dir = data_dir.unwrap_or_else(get_dns_dir).join("debug.log");
-
-        let stdout = ConsoleAppender::builder().build();
-        let file_appender = FileAppender::builder().build(log_dir).unwrap();
-
-        let config = Config::builder()
-            .appender(Appender::builder().build("stdout", Box::new(stdout)))
-            .appender(Appender::builder().build("file", Box::new(file_appender)))
-            .logger(
-                Logger::builder()
-                    .appender("file")
-                    .build("coinswap::market", filter),
-            )
-            .build(Root::builder().appender("stdout").build(filter))
-            .unwrap();
-
-        log4rs::init_config(config).unwrap();
+        match log4rs::init_config(config) {
+            Ok(_) => log::info!("✅ Logger initialized successfully"),
+            Err(e) => log::error!("❌ Failed to initialize logger: {e}"),
+        }
     });
 }
 
@@ -231,7 +225,6 @@ pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
         env::set_var("RUST_LOG", "coinswap=info");
         setup_taker_logger(filter, true, data_dir.as_ref().map(|d| d.join("taker")));
         setup_maker_logger(filter, data_dir.as_ref().map(|d| d.join("maker")));
-        setup_directory_logger(filter, data_dir.as_ref().map(|d| d.join("directory")));
     });
 }
 
@@ -294,6 +287,7 @@ pub(crate) fn check_and_apply_maker_private_keys<S: SwapCoin>(
 ///
 /// the Maker's advertised Pubkey with these two nonces.
 #[allow(clippy::type_complexity)]
+/// Generate maker keys from the Maker's advertised Pubkey with nonces.
 pub(crate) fn generate_maker_keys(
     tweakable_point: &PublicKey,
     count: u32,
@@ -340,7 +334,7 @@ pub(crate) fn get_hd_path_from_descriptor(descriptor: &str) -> Option<(&str, u32
         &descriptor[open + 1..close]
     } else {
         // Debug log, because if it doesn't have path, its not an error.
-        log::error!("Descriptor doesn't have path = {}", descriptor);
+        log::error!("Descriptor doesn't have path = {descriptor}");
         return None;
     };
 
@@ -508,33 +502,6 @@ pub fn parse_proxy_auth(s: &str) -> Result<(String, String), NetError> {
     Ok((user, passwd))
 }
 
-/// Dns request metadata
-#[derive(Serialize, Deserialize, Debug)]
-pub struct DnsMetadata {
-    pub(crate) url: String,
-    pub(crate) proof: FidelityProof,
-}
-
-/// Structured requests and responses used to interact with dns.
-///
-/// Enum representing DNS request messages.
-#[derive(Serialize, Deserialize, Debug)]
-pub enum DnsRequest {
-    /// Sent by the maker to DNS to register itself.
-    Post {
-        /// Metadata associated with the request.
-        metadata: Box<DnsMetadata>,
-    },
-    /// Sent by the taker to retrieve all requests.
-    Get,
-    /// Dummy variant used for testing purposes.
-    #[cfg(feature = "integration-test")]
-    Dummy {
-        /// URL to register with DNS.
-        url: String,
-    },
-}
-
 pub(crate) fn verify_fidelity_checks(
     proof: &FidelityProof,
     addr: &str,
@@ -620,17 +587,14 @@ impl From<serde_cbor::Error> for TorError {
 
 pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), TorError> {
     use std::io::BufRead;
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", control_port))?;
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{control_port}"))?;
     let mut reader = BufReader::new(stream.try_clone()?);
-    let auth_command = format!("AUTHENTICATE \"{}\"\r\n", password);
+    let auth_command = format!("AUTHENTICATE \"{password}\"\r\n");
     stream.write_all(auth_command.as_bytes())?;
     let mut response = String::new();
     reader.read_line(&mut response)?;
     if !response.starts_with("250") {
-        log::error!(
-            "Tor authentication failed: {}, please provide correct password",
-            response
-        );
+        log::error!("Tor authentication failed: {response}, please provide correct password");
         return Err(TorError::General("Tor authentication failed".to_string()));
     }
     stream.write_all(b"GETINFO status/bootstrap-phase\r\n")?;
@@ -640,9 +604,122 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
     if response.contains("PROGRESS=100") {
         log::info!("Tor is fully started and operational!");
     } else {
-        log::warn!("Tor is still starting, try again later: {}", response);
+        log::warn!("Tor is still starting, try again later: {response}");
     }
     Ok(())
+}
+// Representation of the C `struct termios` from <termios.h>
+// Used for manipulating terminal I/O settings
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct Termios {
+    c_iflag: u32,
+    c_oflag: u32,
+    c_cflag: u32,
+    c_lflag: u32,
+    c_line: u8,
+    c_cc: [u8; 32],
+    c_ispeed: u32,
+    c_ospeed: u32,
+}
+
+// Constants (from <termios.h>)
+// Terminal flag to enable/disable input echo
+const ECHO: u32 = 0x00000008;
+// Action to apply terminal attributes immediately
+const TCSANOW: i32 = 0;
+// ICANON flag: enables canonical (line-buffered) input mode
+const ICANON: u32 = 0o0000002;
+
+// Foreign Function Interface (FFI) declarations
+// Bindings to C library functions from <termios.h>
+extern "C" {
+    fn tcgetattr(fd: i32, termios_p: *mut Termios) -> i32;
+    fn tcsetattr(fd: i32, optional_actions: i32, termios_p: *const Termios) -> i32;
+}
+/// Sets the terminal input mode by enabling or disabling canonical mode and echo.
+///
+/// - When `echo` is `true`, the terminal behaves normally (line-buffered, characters visible).
+/// - When `echo` is `false`, input is read character-by-character and hidden (used for password input).
+///
+/// # Safety
+/// This function uses unsafe FFI calls and directly modifies terminal settings.
+/// Also needed for zeroing [`Termios`] struct.
+fn set_terminal_mode(fd: i32, echo: bool) {
+    unsafe {
+        let mut term: Termios = std::mem::zeroed(); // Create a zeroed termios struct
+        if tcgetattr(fd, &mut term) != 0 {
+            panic!("Failed to get terminal attributes");
+        }
+
+        if echo {
+            term.c_lflag |= ECHO | ICANON; // Enable echo and canonical mode
+        } else {
+            term.c_lflag &= !(ECHO | ICANON); // Disable echo and canonical mode
+        }
+        // Apply modified settings immediately
+        if tcsetattr(fd, TCSANOW, &term) != 0 {
+            panic!("Failed to set terminal attributes");
+        }
+    }
+}
+
+/// Prompts the user for a password using the given prompt string.
+/// Temporarily disables canonical mode and echo to mask each typed
+/// character with `*` as feedback.
+pub fn prompt_password(message: String) -> std::io::Result<String> {
+    if cfg!(feature = "integration-test") || cfg!(test) {
+        Ok("integration-test".to_string())
+    } else {
+        let stdin = io::stdin();
+        let fd = stdin.as_raw_fd();
+
+        print!("{message}");
+        io::stdout().flush()?; // Ensure the prompt is printed
+
+        set_terminal_mode(fd, false); // disable echo & canonical mode
+
+        let mut password = String::new();
+        // Buffer to read one byte at a time from stdin.
+        // We read input character-by-character because we disabled canonical mode (ICANON),
+        // which normally buffers input until Enter is pressed.
+        let mut buf = [0u8; 1];
+
+        while stdin.lock().read(&mut buf).unwrap() == 1 {
+            let c = buf[0] as char;
+            match c {
+                '\n' | '\r' => {
+                    // - If the byte is newline (`\n`, ASCII 0x0A) or carriage return (`\r`, ASCII 0x0D),
+                    //   it signals the end of input, so we break the loop.
+                    println!();
+                    break;
+                }
+                '\x08' | '\x7f' => {
+                    // - If the byte is Backspace (ASCII 0x08 or 0x7f),
+                    //   we remove the last character from the password (if any),
+                    //   and erase the asterisk from the terminal by moving the cursor back,
+                    //   writing a space to overwrite, then moving the cursor back again.
+                    if !password.is_empty() {
+                        password.pop();
+                        print!("\x08 \x08");
+                        io::stdout().flush().unwrap();
+                    }
+                }
+                _ => {
+                    // - Otherwise, for any other character, we append it to the password string
+                    //   and print an asterisk '*' as a visual placeholder for the typed character.
+                    password.push(c);
+                    print!("*");
+                    io::stdout().flush().unwrap();
+                }
+            }
+        }
+
+        set_terminal_mode(fd, true); // restore terminal settings
+
+        println!(); // move to next line after input
+        Ok(password.trim_end().to_string())
+    }
 }
 
 pub(crate) fn get_emphemeral_address(
@@ -653,26 +730,22 @@ pub(crate) fn get_emphemeral_address(
     service_id_data: Option<&str>,
 ) -> Result<(String, String), TorError> {
     use std::io::BufRead;
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", control_port))?;
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{control_port}"))?;
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut response = String::new();
     let mut service_id = String::new();
     let mut private_key = String::new();
-    let auth_command = format!("AUTHENTICATE \"{}\"\r\n", password);
+    let auth_command = format!("AUTHENTICATE \"{password}\"\r\n");
     stream.write_all(auth_command.as_bytes())?;
     if let Some(service_id) = service_id_data {
-        let remove_command = format!("DEL_ONION {}\r\n", service_id);
+        let remove_command = format!("DEL_ONION {service_id}\r\n");
         stream.write_all(remove_command.as_bytes())?;
     }
-    let mut add_onion_command = format!(
-        "ADD_ONION NEW:BEST Flags=Detach Port={},127.0.0.1:{}\r\n",
-        target_port, target_port
-    );
+    let mut add_onion_command =
+        format!("ADD_ONION NEW:BEST Flags=Detach Port={target_port},127.0.0.1:{target_port}\r\n");
     if let Some(pk) = private_key_data {
-        add_onion_command = format!(
-            "ADD_ONION {} Flags=Detach Port={},127.0.0.1:{}\r\n",
-            pk, target_port, target_port
-        );
+        add_onion_command =
+            format!("ADD_ONION {pk} Flags=Detach Port={target_port},127.0.0.1:{target_port}\r\n");
         private_key = pk.to_string();
     }
     stream.write_all(add_onion_command.as_bytes())?;
@@ -701,7 +774,7 @@ pub(crate) fn get_emphemeral_address(
             "Failed to retrieve ephemeral onion service details".to_string(),
         ));
     }
-    Ok((format!("{}.onion", service_id), private_key))
+    Ok((format!("{service_id}.onion"), private_key))
 }
 
 pub(crate) fn get_tor_hostname(
@@ -730,10 +803,7 @@ pub(crate) fn get_tor_hostname(
             assert_eq!(hostname, hostname_data);
             assert_eq!(private_key, private_key_data);
 
-            log::info!(
-                "Generated existing Tor Hidden Service Hostname: {}",
-                hostname
-            );
+            log::info!("Generated existing Tor Hidden Service Hostname: {hostname}");
 
             return Ok(hostname);
         }
@@ -751,9 +821,35 @@ pub(crate) fn get_tor_hostname(
         serde_cbor::ser::to_vec(&[private_key, hostname.clone()])?,
     )?;
 
-    log::info!("Generated new Tor Hidden Service Hostname: {}", hostname);
+    log::info!("Generated new Tor Hidden Service Hostname: {hostname}");
 
     Ok(hostname)
+}
+
+/// Deserialize any generic type from a CBOR file. The type should impl [serde::de::Deserialize].
+pub fn deserialize_from_cbor<T>(mut reader: Vec<u8>) -> Result<T, serde_cbor::Error>
+where
+    T: serde::de::DeserializeOwned,
+{
+    match serde_cbor::from_slice::<T>(&reader) {
+        Ok(store) => Ok(store),
+        Err(e) => {
+            let err_string = format!("{e:?}");
+            if err_string.contains("code: TrailingData") {
+                // Defensive error handling - monitor logs to confirm wallet files stay clean.
+                log::info!("Wallet file has trailing data, trying to restore");
+                loop {
+                    reader.pop();
+                    match serde_cbor::from_slice::<T>(&reader) {
+                        Ok(store) => break Ok(store),
+                        Err(_) => continue,
+                    }
+                }
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 #[cfg(test)]

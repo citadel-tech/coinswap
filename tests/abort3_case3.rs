@@ -16,8 +16,8 @@ use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 /// ABORT 3: Maker Drops After Setup
 /// Case 3: CloseAtHashPreimage
 ///
-/// Maker closes connection at hash preimage handling. Funding txs are already broadcasted.
-/// The Maker will loose contract txs fees in that case, so it's not a malice.
+/// Maker closes the connection at hash preimage handling. Funding txs are already broadcasted.
+/// The Maker will lose contract txs fees in that case, so it's not malice.
 /// Taker waits for the response until timeout. Aborts if the Maker doesn't show up.
 #[test]
 fn abort3_case3_close_at_hash_preimage_handover() {
@@ -32,15 +32,15 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
-        TestFramework::init(
-            makers_config_map.into(),
-            taker_behavior,
-            ConnectionType::CLEARNET,
-        );
+    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
+        makers_config_map.into(),
+        taker_behavior,
+        ConnectionType::CLEARNET,
+    );
 
-    warn!("Running Test: Maker closes conneciton at hash preimage handling");
+    warn!("🧪 Running Test: Maker closes connection at hash preimage handling");
 
+    info!("💰 Funding taker and makers");
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
     let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
@@ -60,7 +60,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     );
 
     //  Start the Maker Server threads
-    info!("Initiating Maker...");
+    info!("🚀 Initiating Maker servers");
 
     let maker_threads = makers
         .iter()
@@ -77,7 +77,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                info!("Waiting for maker setup completion");
+                info!("⏳ Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -88,28 +88,23 @@ fn abort3_case3_close_at_hash_preimage_handover() {
 
             let balances = wallet.get_balances().unwrap();
 
-            assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
-            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
-            assert_eq!(balances.swap, Amount::ZERO);
-            assert_eq!(balances.contract, Amount::ZERO);
+            verify_maker_pre_swap_balances(&balances, 14999508);
 
             balances.spendable
         })
         .collect::<Vec<_>>();
 
     // Initiate Coinswap
-    info!("Initiating coinswap protocol");
+    info!("🔄 Initiating coinswap protocol");
 
     // Swap params for coinswap.
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
-        tx_count: 3,
-        required_confirms: 1,
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -119,22 +114,21 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         .for_each(|thread| thread.join().unwrap());
 
     //TODO: Start the faulty maker again, and validate its recovery.
+    // Start the bad maker again.
+    // Assert logs to check that it has recovered from its own swap.
 
-    info!("All coinswaps processed successfully. Transaction complete.");
-
-    // Shutdown Directory Server
-    directory_server_instance.shutdown.store(true, Relaxed);
+    info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
     thread::sleep(Duration::from_secs(10));
 
     ///////////////////
     let taker_wallet = taker.get_wallet_mut();
-    taker_wallet.sync().unwrap();
+    taker_wallet.sync_and_save().unwrap();
 
     // Synchronize each maker's wallet.
     for maker in makers.iter() {
         let mut wallet = maker.get_wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
     }
     ///////////////
 
@@ -169,6 +163,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     // Same as Case 1.
     //-----------------------------------------------------------------------------------------------------------------------------------------------
 
+    info!("📊 Verifying swap results after connection close");
     // After Swap checks:
     verify_swap_results(
         taker,
@@ -177,7 +172,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         org_maker_spend_balances,
     );
 
-    info!("All checks successful. Terminating integration test case");
+    info!("🎉 All checks successful. Terminating integration test case");
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

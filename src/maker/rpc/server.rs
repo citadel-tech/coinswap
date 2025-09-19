@@ -11,7 +11,7 @@ use bitcoin::{Address, Amount};
 use super::messages::RpcMsgReq;
 use crate::{
     maker::{error::MakerError, rpc::messages::RpcMsgResp, Maker},
-    utill::{get_tor_hostname, read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
+    utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, UTXO},
     wallet::Destination,
 };
 use std::str::FromStr;
@@ -19,7 +19,7 @@ use std::str::FromStr;
 fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), MakerError> {
     let msg_bytes = read_message(socket)?;
     let rpc_request: RpcMsgReq = serde_cbor::from_slice(&msg_bytes)?;
-    log::info!("RPC request received: {:?}", rpc_request);
+    log::info!("RPC request received: {rpc_request:?}");
 
     let resp = match rpc_request {
         RpcMsgReq::Ping => RpcMsgResp::Pong,
@@ -28,9 +28,9 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 .get_wallet()
                 .read()?
                 .list_live_timelock_contract_spend_info()?
-                .iter()
-                .map(|(l, _)| l.clone())
-                .collect::<Vec<_>>();
+                .into_iter()
+                .map(UTXO::from_utxo_data)
+                .collect();
             RpcMsgResp::ContractUtxoResp { utxos }
         }
         RpcMsgReq::FidelityUtxo => {
@@ -38,9 +38,9 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 .get_wallet()
                 .read()?
                 .list_fidelity_spend_info()?
-                .iter()
-                .map(|(l, _)| l.clone())
-                .collect::<Vec<_>>();
+                .into_iter()
+                .map(UTXO::from_utxo_data)
+                .collect();
             RpcMsgResp::FidelityUtxoResp { utxos }
         }
         RpcMsgReq::Utxo => {
@@ -48,9 +48,9 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 .get_wallet()
                 .read()?
                 .list_all_utxo_spend_info()?
-                .iter()
-                .map(|(l, _)| l.clone())
-                .collect::<Vec<_>>();
+                .into_iter()
+                .map(UTXO::from_utxo_data)
+                .collect();
             RpcMsgResp::UtxoResp { utxos }
         }
         RpcMsgReq::SwapUtxo => {
@@ -58,9 +58,9 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
                 .get_wallet()
                 .read()?
                 .list_incoming_swap_coin_utxo_spend_info()?
-                .iter()
-                .map(|(l, _)| l.clone())
-                .collect::<Vec<_>>();
+                .into_iter()
+                .map(UTXO::from_utxo_data)
+                .collect();
             RpcMsgResp::SwapUtxoResp { utxos }
         }
         RpcMsgReq::Balances => {
@@ -77,10 +77,14 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             feerate,
         } => {
             let amount = Amount::from_sat(amount);
-            let destination = Destination::Multi(vec![(
+            let outputs = vec![(
                 Address::from_str(&address).unwrap().assume_checked(),
                 amount,
-            )]);
+            )];
+            let destination = Destination::Multi {
+                outputs,
+                op_return_data: None,
+            };
 
             let coins_to_send = maker.get_wallet().read()?.coin_select(amount, feerate)?;
             let tx = maker.get_wallet().write()?.spend_from_wallet(
@@ -97,7 +101,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
         }
         RpcMsgReq::GetDataDir => RpcMsgResp::GetDataDirResp(maker.get_data_dir().to_path_buf()),
         RpcMsgReq::GetTorAddress => {
-            if maker.config.connection_type == ConnectionType::CLEARNET {
+            if cfg!(feature = "integration-test") {
                 RpcMsgResp::GetTorAddressResp("Maker is not running on TOR".to_string())
             } else {
                 let hostname = get_tor_hostname(
@@ -121,17 +125,19 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
         }
         RpcMsgReq::SyncWallet => {
             log::info!("Initializing wallet sync");
-            if let Err(e) = maker.get_wallet().write()?.sync() {
-                RpcMsgResp::ServerError(format!("{:?}", e))
+            let mut wallet = maker.get_wallet().write()?;
+            if let Err(e) = wallet.sync() {
+                RpcMsgResp::ServerError(format!("{e:?}"))
             } else {
                 log::info!("Completed wallet sync");
+                wallet.save_to_disk()?;
                 RpcMsgResp::Pong
             }
         }
     };
 
     if let Err(e) = send_message(socket, &resp) {
-        log::error!("Error sending RPC response {:?}", e);
+        log::error!("Error sending RPC response {e:?}");
     }
 
     Ok(())
@@ -139,7 +145,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
 
 pub(crate) fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     let rpc_port = maker.config.rpc_port;
-    let rpc_socket = format!("127.0.0.1:{}", rpc_port);
+    let rpc_socket = format!("127.0.0.1:{rpc_port}");
     let listener = Arc::new(TcpListener::bind(&rpc_socket)?);
     log::info!(
         "[{}] RPC socket binding successful at {}",
@@ -152,17 +158,17 @@ pub(crate) fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     while !maker.shutdown.load(Relaxed) {
         match listener.accept() {
             Ok((mut stream, addr)) => {
-                log::info!("Got RPC request from: {}", addr);
+                log::info!("Got RPC request from: {addr}");
                 stream.set_read_timeout(Some(Duration::from_secs(20)))?;
                 stream.set_write_timeout(Some(Duration::from_secs(20)))?;
                 // Do not cause hard error if a rpc request fails
                 if let Err(e) = handle_request(&maker, &mut stream) {
-                    log::error!("Error processing RPC Request: {:?}", e);
+                    log::error!("Error processing RPC Request: {e:?}");
                     // Send the error back to client.
                     if let Err(e) =
-                        send_message(&mut stream, &RpcMsgResp::ServerError(format!("{:?}", e)))
+                        send_message(&mut stream, &RpcMsgResp::ServerError(format!("{e:?}")))
                     {
-                        log::error!("Error sending RPC response {:?}", e);
+                        log::error!("Error sending RPC response {e:?}");
                     };
                 }
             }
@@ -171,7 +177,7 @@ pub(crate) fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 if e.kind() == ErrorKind::WouldBlock {
                     // do nothing
                 } else {
-                    log::error!("Error accepting RPC connection: {:?}", e);
+                    log::error!("Error accepting RPC connection: {e:?}");
                 }
             }
         }

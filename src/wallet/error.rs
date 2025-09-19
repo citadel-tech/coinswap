@@ -20,6 +20,11 @@ pub enum WalletError {
     /// This is used for encoding/decoding data structures.
     Cbor(serde_cbor::Error),
 
+    /// Represents an error during JSON serialization or deserialization.
+    ///
+    /// This is used for encoding/decoding the wallet backup.
+    Json(serde_json::Error),
+
     /// Represents an error returned by the Bitcoin Core RPC client.
     ///
     /// Typically occurs during communication with a Bitcoin node.
@@ -73,6 +78,11 @@ pub enum WalletError {
         /// The amount of funds needed to complete the operation.
         required: u64,
     },
+
+    /// Represents an error from the rust-coinselect library.
+    ///
+    /// Typically occurs during fee calculation or coin selection operations.
+    Selection(rust_coinselect::types::SelectionError),
 }
 
 impl From<std::io::Error> for WalletError {
@@ -108,6 +118,12 @@ impl From<ProtocolError> for WalletError {
 impl From<serde_cbor::Error> for WalletError {
     fn from(value: serde_cbor::Error) -> Self {
         Self::Cbor(value)
+    }
+}
+
+impl From<serde_json::Error> for WalletError {
+    fn from(value: serde_json::Error) -> Self {
+        Self::Json(value)
     }
 }
 
@@ -150,5 +166,11 @@ impl From<bitcoin::transaction::InputsIndexError> for WalletError {
 impl From<bitcoin::consensus::encode::Error> for WalletError {
     fn from(value: bitcoin::consensus::encode::Error) -> Self {
         Self::Consensus(value.to_string())
+    }
+}
+
+impl From<rust_coinselect::types::SelectionError> for WalletError {
+    fn from(value: rust_coinselect::types::SelectionError) -> Self {
+        Self::Selection(value)
     }
 }

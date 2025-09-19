@@ -24,29 +24,33 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     // ---- Setup ----
 
     // 6102 is naughty. And theres not enough makers.
+    let naughty = 6102;
     let makers_config_map = [
-        ((6102, None), MakerBehavior::CloseAtReqContractSigsForSender),
+        (
+            (naughty, None),
+            MakerBehavior::CloseAtReqContractSigsForSender,
+        ),
         ((16102, None), MakerBehavior::Normal),
     ];
 
     let taker_behavior = vec![TakerBehavior::Normal];
 
     warn!(
-        "Running test: Maker 6102 Closes before sending sender's sigs. Taker recovers. Or Swap cancels"
+        "Running test: Maker {naughty} Closes before sending sender's sigs. Taker recovers. Or Swap cancels"
     );
     warn!(
-        "Running test: Maker 6102 Closes before sending sender's sigs. Taker recovers. Or Swap cancels"
+        "Running test: Maker {naughty} Closes before sending sender's sigs. Taker recovers. Or Swap cancels"
     );
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
-        TestFramework::init(
-            makers_config_map.into(),
-            taker_behavior,
-            ConnectionType::CLEARNET,
-        );
+    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
+        makers_config_map.into(),
+        taker_behavior,
+        ConnectionType::CLEARNET,
+    );
 
+    info!("💰 Funding taker and makers");
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
     let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
@@ -66,7 +70,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     );
 
     //  Start the Maker Server threads
-    log::info!("Initiating Maker...");
+    info!("🚀 Initiating Maker servers");
 
     let maker_threads = makers
         .iter()
@@ -83,7 +87,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                log::info!("Waiting for maker setup completion");
+                info!("⏳ Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -94,32 +98,27 @@ fn test_abort_case_2_recover_if_no_makers_found() {
 
             let balances = wallet.get_balances().unwrap();
 
-            assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
-            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
-            assert_eq!(balances.swap, Amount::ZERO);
-            assert_eq!(balances.contract, Amount::ZERO);
+            verify_maker_pre_swap_balances(&balances, 14999508);
 
             balances.spendable
         })
         .collect::<Vec<_>>();
 
     // Initiate Coinswap
-    log::info!("Initiating coinswap protocol");
+    info!("🔄 Initiating coinswap protocol");
 
     // Swap params for coinswap.
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
-        tx_count: 3,
-        required_confirms: 1,
     };
 
     if let Err(e) = taker.do_coinswap(swap_params) {
-        assert_eq!(format!("{:?}", e), "NotEnoughMakersInOfferBook".to_string());
-        info!("Coinswap failed because the first maker rejected for signature");
+        assert_eq!(format!("{e:?}"), "NotEnoughMakersInOfferBook".to_string());
+        info!("❌ Coinswap failed because the first maker rejected for signature");
     }
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -128,21 +127,18 @@ fn test_abort_case_2_recover_if_no_makers_found() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    log::info!("All coinswaps processed successfully. Transaction complete.");
-
-    // Shutdown Directory Server
-    directory_server_instance.shutdown.store(true, Relaxed);
+    info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
     thread::sleep(Duration::from_secs(10));
 
     ///////////////////
     let taker_wallet = taker.get_wallet_mut();
-    taker_wallet.sync().unwrap();
+    taker_wallet.sync_and_save().unwrap();
 
     // Synchronize each maker's wallet.
     for maker in makers.iter() {
         let mut wallet = maker.get_wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
     }
     ///////////////
 
@@ -155,9 +151,9 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     // |----------------|------------------------|-------------------------|------------|----------------------------|-------------------|
     // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
     //
-    // - Taker sends [ProofOfFunding] to Maker16102.
-    // - Maker16102 responds with [ReqContractSigsAsRecvrAndSender] to the Taker.
-    // - Taker forwards [ReqContractSigsForSender] to Maker6102, but Maker6102 does not respond, and the Taker recovers from the swap.
+    // - Taker sends [`ProofOfFunding`] to Maker16102.
+    // - Maker16102 responds with [`ReqContractSigsAsRecvrAndSender`] to the Taker.
+    // - Taker forwards [`ReqContractSigsForSender`] to Maker6102, but Maker6102 does not respond, and the Taker recovers from the swap.
     //
     // Final Outcome for Taker (Recover from Swap):
     //
@@ -170,7 +166,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     // Case 2: Maker6102 is the first maker.
     // Workflow: Taker -> Maker6102 (CloseAtReqContractSigsForSender)
     //
-    // - Taker creates unbroadcasted funding transactions and sends [ReqContractSigsForSender] to Maker6102.
+    // - Taker creates unbroadcasted funding transactions and sends [`ReqContractSigsForSender`] to Maker6102.
     // - Maker6102 does not respond, and the swap fails.
     //
     // Final Outcome for Taker:
@@ -186,12 +182,14 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     // | **Maker6102**  | 0 (Marked as a bad maker by the Taker)   |
     // | **Maker16102** | 0                                        |
 
+    info!("🚫 Verifying naughty maker gets banned");
     // Maker gets banned for being naughty.
     assert_eq!(
-        format!("127.0.0.1:{}", 6102),
+        format!("127.0.0.1:{naughty}"),
         taker.get_bad_makers()[0].address.to_string()
     );
 
+    info!("📊 Verifying swap results after maker drops connection");
     // After Swap checks:
     verify_swap_results(
         taker,
@@ -199,6 +197,9 @@ fn test_abort_case_2_recover_if_no_makers_found() {
         org_taker_spend_balance,
         org_maker_spend_balances,
     );
+
+    info!("🎉 All checks successful. Terminating integration test case");
+
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

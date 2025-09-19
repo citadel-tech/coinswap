@@ -1,6 +1,6 @@
 use crate::{
     protocol::messages::FidelityProof,
-    utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks, DEFAULT_TX_FEE_RATE},
+    utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks, MIN_FEE_RATE},
     wallet::Wallet,
 };
 use bitcoin::{
@@ -10,15 +10,14 @@ use bitcoin::{
     opcodes::all::{OP_CHECKSIGVERIFY, OP_CLTV},
     script::{Builder, Instruction},
     secp256k1::{Keypair, Message, Secp256k1},
-    Address, Amount, OutPoint, PublicKey, ScriptBuf, Txid,
+    Address, Amount, OutPoint, PublicKey, ScriptBuf,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     str::FromStr,
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use super::{Destination, WalletError};
@@ -51,7 +50,7 @@ pub enum FidelityError {
 }
 
 // ------- Fidelity Helper Scripts -------------
-
+#[allow(rustdoc::invalid_html_tags)]
 /// Create a Fidelity Timelocked redeemscript.
 /// Redeem script used
 /// Old script: <locktime> <OP_CLTV> <OP_DROP> <pubkey> <OP_CHECKSIG>
@@ -89,8 +88,7 @@ fn read_pubkey_from_fidelity_script(redeemscript: &ScriptBuf) -> Result<PublicKe
     }
 }
 
-/// Calculates the theoretical fidelity bond value. Bond value calculation is described in the doc below.
-/// https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds
+/// Calculates the theoretical fidelity bond value. Refer [The OG Fidelity Bond Paper by Chris Belcher.]<https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds>
 fn calculate_fidelity_value(
     value: Amount,          // Bond amount in sats
     locktime: u64,          // Bond locktime timestamp
@@ -104,7 +102,6 @@ fn calculate_fidelity_value(
     let locktime_yr = (locktime as f64) / sec_in_a_year;
     let currenttime_yr = (current_time as f64) / sec_in_a_year;
 
-    // TODO: This calculation can be simplified
     let exp_rt_m1 = f64::exp_m1(interest_rate * lock_period_yr);
     let exp_rtl_m1 = f64::exp_m1(interest_rate * f64::max(0.0, currenttime_yr - locktime_yr));
 
@@ -114,7 +111,7 @@ fn calculate_fidelity_value(
 }
 
 /// Structure describing a Fidelity Bond.
-/// Fidelity Bonds are described in https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md
+/// Fidelity Bonds are described here : <https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md>
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Hash)]
 pub struct FidelityBond {
     pub(crate) outpoint: OutPoint,
@@ -127,9 +124,14 @@ pub struct FidelityBond {
     pub(crate) conf_height: Option<u32>,
     // Cert expiry denoted in multiple of difficulty adjustment period (2016 blocks)
     pub(crate) cert_expiry: Option<u32>,
+    /// Whether this bond is spent or not.
+    pub(crate) is_spent: bool,
 }
 
 impl FidelityBond {
+    pub fn is_spent(&self) -> bool {
+        self.is_spent
+    }
     /// get the reedemscript for this bond
     pub(crate) fn redeem_script(&self) -> ScriptBuf {
         fidelity_redeemscript(&self.lock_time, &self.pubkey)
@@ -166,7 +168,7 @@ impl FidelityBond {
 // Wallet APIs related to fidelity bonds.
 impl Wallet {
     /// Get a reference to the fidelity bond store
-    pub fn get_fidelity_bonds(&self) -> &HashMap<u32, (FidelityBond, bool)> {
+    pub fn get_fidelity_bonds(&self) -> &HashMap<u32, FidelityBond> {
         &self.store.fidelity_bond
     }
 
@@ -176,15 +178,15 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
-            .map(|(index, (bond, redeemed))| {
+            .map(|(index, bond)| {
                 let mut bond_info = serde_json::json!({
                         "index": index,
                         "outpoint": bond.outpoint.to_string(),
                         "amount": bond.amount.to_sat(),
-                        "status": if *redeemed {"Redeemed"} else {"Live"}
+                        "status": if bond.is_spent {"Redeemed"} else {"Live"}
                 });
 
-                if !*redeemed {
+                if !bond.is_spent {
                     let bond_value = self
                         .calculate_bond_value(bond)
                         .expect("Bond value calculation must not fail for valid bonds.");
@@ -204,15 +206,15 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
-            .filter_map(|(i, (bond, expired))| {
-                if !expired {
+            .filter_map(|(i, bond)| {
+                if !bond.is_spent {
                     match self.calculate_bond_value(bond) {
                         Ok(v) => {
-                            log::info!("Fidelity Bond found | Index: {} | Bond Value : {}", i, v);
+                            log::info!("Fidelity Bond found | Index: {i} | Bond Value : {v}");
                             Some((i, v))
                         }
                         Err(e) => {
-                            log::error!("Fidelity valuation failed for index {}:  {:?} ", i, e);
+                            log::error!("Fidelity valuation failed for index {i}:  {e:?} ");
                             None
                         }
                     }
@@ -224,7 +226,7 @@ impl Wallet {
             .map(|(i, _)| *i))
     }
 
-    /// Get the [KeyPair] for the fidelity bond at given index.
+    /// Get the [`Keypair`] for the fidelity bond at given index.
     pub(crate) fn get_fidelity_keypair(&self, index: u32) -> Result<Keypair, WalletError> {
         let secp = Secp256k1::new();
 
@@ -239,9 +241,9 @@ impl Wallet {
             .to_keypair(&secp))
     }
 
-    /// Derives the fidelity redeemscript from bond values at given index.
+    /// Derives the fidelity redeemscript from bond values at a given index.
     pub(crate) fn get_fidelity_reedemscript(&self, index: u32) -> Result<ScriptBuf, WalletError> {
-        let (bond, _) = self
+        let bond = self
             .store
             .fidelity_bond
             .get(&index)
@@ -250,7 +252,7 @@ impl Wallet {
     }
 
     /// Get the next fidelity bond address. If no fidelity bond is created
-    /// returned address will be derived from index 0, of the [FIDELITY_DERIVATION_PATH]
+    /// returned address will be derived from index 0, of the [`FIDELITY_DERIVATION_PATH`]
     pub(crate) fn get_next_fidelity_address(
         &self,
         locktime: LockTime,
@@ -282,7 +284,7 @@ impl Wallet {
 
     /// Calculate the theoretical fidelity bond value.
     /// Bond value calculation is described in the document below.
-    /// https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds
+    /// <https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds>
     pub fn calculate_bond_value(&self, bond: &FidelityBond) -> Result<Amount, WalletError> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -322,25 +324,29 @@ impl Wallet {
     }
 
     /// Create a new fidelity bond with given amount and absolute height based locktime.
-    /// This functions creates the fidelity transaction, signs and broadcast it.
+    /// This function creates the fidelity transaction, signs and broadcast it.
     /// Upon confirmation it stores the fidelity information in the wallet data.
     pub fn create_fidelity(
         &mut self,
         amount: Amount,
         locktime: LockTime,
+        maker_address: Option<&[u8]>,
         feerate: f64,
     ) -> Result<u32, WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
 
         let coins = self.coin_select(amount, feerate)?;
-
-        let destination = Destination::Multi(vec![(fidelity_addr, amount)]);
+        let outputs = vec![(fidelity_addr, amount)];
+        let destination = Destination::Multi {
+            outputs,
+            op_return_data: maker_address.map(|addr| addr.to_vec().into_boxed_slice()),
+        };
 
         let tx = self.spend_coins(&coins, destination, feerate)?;
 
         let txid = self.send_tx(&tx)?;
 
-        // Register this bond even it is in mempool and not yet confirmed to avoid the edge case when the maker server
+        // Register this bond even if it is in mempool and not yet confirmed to avoid the edge case when the maker server
         // unexpectedly shutdown while it was waiting for the fidelity transaction confirmation.
         // Otherwise the wallet wouldn't know about this bond in this case and would attempt to create a new bond again.
         {
@@ -352,46 +358,17 @@ impl Wallet {
                 // `Conf_height` & `cert_expiry` are considered None as they can't be known before the confirmation.
                 conf_height: None,
                 cert_expiry: None,
+                is_spent: false,
             };
-            self.store.fidelity_bond.insert(index, (bond, false));
+            self.store.fidelity_bond.insert(index, bond);
             self.save_to_disk()?;
         }
 
-        let conf_height = self.wait_for_fidelity_tx_confirmation(txid)?;
+        let conf_height = self.wait_for_tx_confirmation(txid)?;
 
         self.update_fidelity_bond_conf_details(index, conf_height)?;
 
         Ok(index)
-    }
-
-    /// Waits for the fidelity transaction to confirm and returns its block height.  
-    pub(crate) fn wait_for_fidelity_tx_confirmation(&self, txid: Txid) -> Result<u32, WalletError> {
-        let sleep_increment = 10;
-        let mut sleep_multiplier = 0;
-
-        let ht = loop {
-            sleep_multiplier += 1;
-
-            let get_tx_result = self.rpc.get_transaction(&txid, None)?;
-            if let Some(ht) = get_tx_result.info.blockheight {
-                log::info!(
-                    "Fidelity Transaction {} confirmed at blockheight: {}",
-                    txid,
-                    ht
-                );
-                break ht;
-            } else {
-                log::info!(
-                    "Fidelity Transaction {} seen in mempool, waiting for confirmation.",
-                    txid
-                );
-                let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60); // Caps at 10 minutes
-                log::info!("Next sync in {:?} secs", total_sleep);
-                thread::sleep(Duration::from_secs(total_sleep));
-            }
-        };
-
-        Ok(ht)
     }
 
     pub(crate) fn update_fidelity_bond_conf_details(
@@ -400,7 +377,7 @@ impl Wallet {
         conf_height: u32,
     ) -> Result<(), WalletError> {
         let cert_expiry = FidelityBond::get_fidelity_expiry(conf_height);
-        let (bond, _) = self
+        let bond = self
             .store
             .fidelity_bond
             .get_mut(&index)
@@ -409,7 +386,7 @@ impl Wallet {
         bond.cert_expiry = Some(cert_expiry);
         bond.conf_height = Some(conf_height);
 
-        self.sync()?;
+        self.sync_and_save()?;
 
         Ok(())
     }
@@ -422,8 +399,8 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
-            .filter_map(|(&i, (bond, redeemed))| {
-                if !redeemed && curr_height > bond.lock_time.to_consensus_u32() {
+            .filter_map(|(&i, bond)| {
+                if !bond.is_spent && curr_height > bond.lock_time.to_consensus_u32() {
                     Some(i)
                 } else {
                     None
@@ -432,25 +409,24 @@ impl Wallet {
             .collect::<Vec<_>>();
 
         expired_bond_indices.into_iter().try_for_each(|i| {
-            log::info!("Fidelity Bond at index: {:?} expired | Redeeming it.", i);
-            self.redeem_fidelity(i, DEFAULT_TX_FEE_RATE).map(|_| ())
+            log::info!("Fidelity Bond at index: {i:?} expired | Redeeming it.");
+            self.redeem_fidelity(i, MIN_FEE_RATE).map(|_| ())
         })
     }
 
-    /// Generate a [FidelityProof] for bond at a given index and a specific onion address.
+    /// Generate a [`FidelityProof`] for bond at a given index and a specific onion address.
     pub(crate) fn generate_fidelity_proof(
         &self,
         index: u32,
         maker_addr: &str,
     ) -> Result<FidelityProof, WalletError> {
         // Generate a fidelity bond proof from the fidelity data.
-        let (bond, redeemed) = self
+        let bond = self
             .store
             .fidelity_bond
             .get(&index)
             .ok_or(FidelityError::BondDoesNotExist)?;
-
-        if *redeemed {
+        if bond.is_spent {
             return Err(FidelityError::BondAlreadyRedeemed.into());
         }
 
@@ -473,7 +449,7 @@ impl Wallet {
         })
     }
 
-    /// Verify a [FidelityProof] received from the directory servers.
+    /// Verify a [`FidelityProof`] received from the directory servers.
     pub(crate) fn verify_fidelity_proof(
         &self,
         proof: &FidelityProof,
@@ -582,7 +558,7 @@ mod test {
         let confirmation_time = 50_000;
         let current_time = 60_000;
 
-        // Following is a (locktime, fidelity_value) tupple series to show how fidelity_value increases with locktimes
+        // Following is a (locktime, fidelity_value) tuple series to show how fidelity_value increases with locktimes
         let test_vectors = [
             (55000, 0), // Value is zero for expired timelocks
             (60000, 3020),

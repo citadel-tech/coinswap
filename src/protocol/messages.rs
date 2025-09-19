@@ -128,7 +128,7 @@ pub(crate) struct FundingTxInfo {
     pub(crate) hashlock_nonce: SecretKey,
 }
 
-/// PublickKey information for the next hop of Coinswap.
+/// PublicKey information for the next hop of Coinswap.
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct NextHopInfo {
     pub(crate) next_multisig_pubkey: PublicKey,
@@ -140,10 +140,9 @@ pub(crate) struct NextHopInfo {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ProofOfFunding {
     pub(crate) confirmed_funding_txes: Vec<FundingTxInfo>,
-    // TODO: Directly use Vec of Pubkeys.
     pub(crate) next_coinswap_info: Vec<NextHopInfo>,
     pub(crate) refund_locktime: u16,
-    pub(crate) contract_feerate: u64,
+    pub(crate) contract_feerate: f64,
     pub(crate) id: String,
 }
 
@@ -194,7 +193,7 @@ pub(crate) enum TakerToMakerMessage {
     ReqGiveOffer(GiveOffer),
     /// Request Contract Sigs **for** the Sender side of the hop. The Maker receiving this message is the Receiver of the hop.
     ReqContractSigsForSender(ReqContractSigsForSender),
-    /// Respond with the [ProofOfFunding] message. This is sent when the funding transaction gets confirmed.
+    /// Respond with the [`ProofOfFunding`] message. This is sent when the funding transaction gets confirmed.
     RespProofOfFunding(ProofOfFunding),
     /// Respond with Contract Sigs **for** the Receiver and Sender side of the Hop.
     RespContractSigsForRecvrAndSender(ContractSigsForRecvrAndSender),
@@ -321,54 +320,77 @@ impl Display for MakerToTakerMessage {
     }
 }
 
-/// All messages sent from DNS to Maker
-#[derive(Debug, Serialize, Deserialize)]
-pub enum DnsResponse {
-    /// Posting request by Maker was accepted by DNS.
-    Ack,
-    /// Posting request by Maker was rejected by DNS.
-    Nack(String),
-}
-
-impl Display for DnsResponse {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Ack => write!(f, "DNS Ack"),
-            Self::Nack(s) => write!(f, "DNS Nack {}", s.as_str()),
-        }
-    }
-}
-
 /// Metadata shared by the maker with the Directory Server for verifying authenticity.
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(private_interfaces)]
-pub struct DnsMetadata {
+pub struct TrackerMetadata {
     /// The maker's URL.
     pub url: String,
     /// Proof of the maker's fidelity bond funding.
     pub proof: FidelityProof,
 }
 
-/// Enum representing DNS request message types.
-///
+/// Tracker response
+#[derive(Serialize, Deserialize, Debug)]
+pub enum TrackerServerToClient {
+    /// Address of all makers, tracker currently have.
+    Address {
+        /// list of addresses
+        addresses: Vec<String>,
+    },
+    /// Just to let server know tracker existence and later on for indexing request.
+    Ping {
+        /// Address of tracker
+        address: String,
+        /// Port of tracker
+        port: u16,
+    },
+    /// To watch for particular utxo.
+    WatchResponse {
+        /// Set of mempool transaction with list of transaction spending it.
+        mempool_tx: Vec<MempoolTx>,
+    },
+}
+
+/// Mempool transaction
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MempoolTx {
+    /// Txid of the transaction spending the utxo
+    pub txid: String,
+    /// when its seen on mempool
+    pub seen_at: chrono::NaiveDateTime,
+}
+
 /// These requests and responses are structured using Serde for serialization and deserialization.
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum DnsRequest {
-    /// A request sent by the maker to register itself with the DNS server and authenticate.
+pub enum TrackerClientToServer {
+    /// A request sent by the maker to register itself with the server and authenticate.
     Post {
         /// Metadata containing the maker's URL and fidelity proof.
-        metadata: DnsMetadata,
+        metadata: TrackerMetadata,
     },
-    /// A request sent by the taker to fetch all valid maker addresses from the DNS server.
+    /// A request sent by the taker to fetch all valid maker addresses from the Tracker server.
     Get,
-    /// Dummy data used for integration tests.
-    #[cfg(feature = "integration-test")]
-    /// Send a dummy, request, only used in integration tests
-    Dummy {
-        /// A dummy URL for testing.
-        url: String,
-        /// A dummy `vout` value, representing a specific output index of an OutPoint.
-        vout: u32,
+    /// To gauge server activity
+    Pong {
+        /// Address of the current server
+        address: String,
     },
+    /// Request tracker to track any UTXO which is spending the
+    /// UTXO
+    Watch {
+        /// Outpoint to watch
+        outpoint: bitcoin::OutPoint,
+    },
+}
+
+/// unified message as maker server can receive any
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub(crate) enum MessageToMaker {
+    /// taker to maker variant
+    TakerToMaker(TakerToMakerMessage),
+    /// tracker request variant
+    TrackerMessage(TrackerServerToClient),
 }

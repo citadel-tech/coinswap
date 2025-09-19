@@ -9,14 +9,15 @@ use std::sync::Arc;
 mod test_framework;
 use test_framework::*;
 
+use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// Malice 2: Maker Broadcasts contract transactions prematurely.
 ///
-/// The Taker and other Makers identify the situation and gets their money back via contract txs. This is
-/// a potential DOS on other Makers. But the attacker Maker would loose money too in the process.
+/// The Taker and other Makers identify the situation and get their money back via contract txs. This is
+/// a potential DOS on other Makers. But the attacker Maker would lose money too in the process.
 ///
-/// This case is hard to "blame". As the contract transactions is available to both the Makers, its not identifiable
+/// This case is hard to "blame". As the contract transactions are available to both the Makers, it's not identifiable
 /// which Maker is the culprit. Taker does not ban in this case.
 #[test]
 fn malice2_maker_broadcast_contract_prematurely() {
@@ -30,13 +31,15 @@ fn malice2_maker_broadcast_contract_prematurely() {
     let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
-        TestFramework::init(
-            makers_config_map.into(),
-            taker_behavior,
-            ConnectionType::CLEARNET,
-        );
+    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
+        makers_config_map.into(),
+        taker_behavior,
+        ConnectionType::CLEARNET,
+    );
 
+    warn!("🧪 Running Test: Malice 2 - Maker broadcasts contract transactions prematurely");
+
+    info!("💰 Funding taker and makers");
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
     let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
@@ -56,7 +59,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
     );
 
     //  Start the Maker Server threads
-    log::info!("Initiating Maker...");
+    info!("🚀 Initiating Maker servers");
 
     let maker_threads = makers
         .iter()
@@ -73,7 +76,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
         .iter()
         .map(|maker| {
             while !maker.is_setup_complete.load(Relaxed) {
-                log::info!("Waiting for maker setup completion");
+                info!("⏳ Waiting for maker setup completion");
                 // Introduce a delay of 10 seconds to prevent write lock starvation.
                 thread::sleep(Duration::from_secs(10));
                 continue;
@@ -84,28 +87,23 @@ fn malice2_maker_broadcast_contract_prematurely() {
 
             let balances = wallet.get_balances().unwrap();
 
-            assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
-            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
-            assert_eq!(balances.swap, Amount::ZERO);
-            assert_eq!(balances.contract, Amount::ZERO);
+            verify_maker_pre_swap_balances(&balances, 14999508);
 
             balances.spendable
         })
         .collect::<Vec<_>>();
 
     // Initiate Coinswap
-    log::info!("Initiating coinswap protocol");
+    info!("🔄 Initiating coinswap protocol");
 
     // Swap params for coinswap.
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
-        tx_count: 3,
-        required_confirms: 1,
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -114,21 +112,18 @@ fn malice2_maker_broadcast_contract_prematurely() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    log::info!("All coinswaps processed successfully. Transaction complete.");
-
-    // Shutdown Directory Server
-    directory_server_instance.shutdown.store(true, Relaxed);
+    info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
     thread::sleep(Duration::from_secs(10));
 
     ///////////////////
     let taker_wallet = taker.get_wallet_mut();
-    taker_wallet.sync().unwrap();
+    taker_wallet.sync_and_save().unwrap();
 
     // Synchronize each maker's wallet.
     for maker in makers.iter() {
         let mut wallet = maker.get_wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
     }
     ///////////////
 
@@ -180,6 +175,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
     // | **Maker16102** | 3,000                              | 768                 | 3,000              | 6,768                      |
     // | **Maker6102**  | 3,000                              | 768                 | 3,000              | 6,768                      |
 
+    info!("📊 Verifying malicious scenario recovery results");
     // After Swap checks:
     verify_swap_results(
         taker,
@@ -188,7 +184,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
         org_maker_spend_balances,
     );
 
-    log::info!("All checks successful. Terminating integration test case");
+    info!("🎉 All checks successful. Terminating integration test case");
 
     test_framework.stop();
     block_generation_handle.join().unwrap();
