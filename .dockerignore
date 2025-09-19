@@ -10,8 +10,8 @@ target/
 docs/
 assets/
 
-# Ignore test files
-tests/
+# Keep test files for running tests in container
+# tests/
 
 # Ignore IDE files
 .vscode/

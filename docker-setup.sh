@@ -100,6 +100,27 @@ run_command() {
     docker run --rm -it --network coinswap-network "$IMAGE_NAME" "$cmd" "$@"
 }
 
+# Run tests
+run_tests() {
+    print_info "Running Coinswap tests in Docker..."
+    
+    # Build the test stage
+    print_info "Building test image..."
+    if docker build --target test -t "$IMAGE_NAME:test" .; then
+        print_success "Test image built successfully"
+    else
+        print_error "Failed to build test image"
+        exit 1
+    fi
+    
+    # Run the tests
+    print_info "Executing integration tests..."
+    docker run --rm -it \
+        --network coinswap-network \
+        -v coinswap-test-data:/home/coinswap/.coinswap \
+        "$IMAGE_NAME:test"
+}
+
 # Show help
 show_help() {
     echo "Coinswap Docker Setup Script"
@@ -114,6 +135,7 @@ show_help() {
     echo "  logs [service]  Show logs (optionally for specific service)"
     echo "  status          Show status of running services"
     echo "  shell           Open shell in a new container"
+    echo "  test            Run integration tests"
     echo ""
     echo "Individual application commands:"
     echo "  makerd [args]   Run makerd with arguments"
@@ -127,6 +149,7 @@ show_help() {
     echo "  $0 taker --help"
     echo "  $0 maker-cli ping"
     echo "  $0 logs makerd"
+    echo "  $0 test"
 }
 
 # Main script logic
@@ -155,6 +178,10 @@ case "${1:-}" in
         ;;
     "shell")
         docker run --rm -it --network coinswap-network "$IMAGE_NAME" /bin/sh
+        ;;
+    "test")
+        check_docker
+        run_tests
         ;;
     "makerd"|"maker-cli"|"taker"|"directoryd"|"directory-cli"|"bitcoin-cli")
         run_command "$@"

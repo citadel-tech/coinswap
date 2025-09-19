@@ -24,6 +24,17 @@ The build process uses multi-stage builds and caching for optimal performance:
 - Dependencies are cached separately from source code
 - Rust toolchain and packages are cached
 - Bitcoin Core binary is cached
+- Test dependencies are built for integration testing
+
+### Build Targets
+
+- **Default**: Production runtime image with all binaries
+- **Test**: Development image with test capabilities
+
+```bash
+# Build test image
+docker build --target test -t coinswap:test .
+```
 
 ## Running Applications
 
@@ -88,6 +99,36 @@ docker run -d \
   -p 8080:8080 \
   -v coinswap-directory-data:/home/coinswap/.coinswap \
   coinswap directoryd
+```
+
+## Running Tests
+
+### Integration Tests
+
+Run the complete test suite using Docker:
+
+```bash
+# Using the setup script (recommended)
+./docker-setup.sh test
+
+# Or manually
+docker build --target test -t coinswap:test .
+docker run --rm -it coinswap:test
+```
+
+The test environment includes:
+- All source code and test files
+- Pre-built test dependencies
+- Integration test features enabled
+
+### Test Data Persistence
+
+Test data can be persisted using volumes:
+
+```bash
+docker run --rm -it \
+  -v coinswap-test-data:/home/coinswap/.coinswap \
+  coinswap:test
 ```
 
 ## Configuration

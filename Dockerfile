@@ -31,8 +31,9 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/app/target \
     cargo build --release && rm src/main.rs
 
-# Now copy the actual source code
+# Now copy the actual source code and tests
 COPY src/ ./src/
+COPY tests/ ./tests/
 
 # Build the project with all binaries (source changes won't rebuild deps)
 RUN --mount=type=cache,target=/root/.cargo/registry \
@@ -41,6 +42,19 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     cargo build --release --bins && \
     cp target/release/makerd target/release/maker-cli target/release/taker \
        target/release/directoryd target/release/directory-cli /tmp/
+
+# Optional: Build test binaries (can be used for testing stage)
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/app/target \
+    cargo build --tests --features=integration-test || true
+
+# Test stage - for running integration tests
+FROM builder AS test
+WORKDIR /app
+# All source code and tests are already copied in builder stage
+# Test dependencies are already built
+CMD ["cargo", "test", "--features=integration-test", "--", "--nocapture"]
 
 # Runtime stage - minimal Alpine
 FROM alpine:3.18
