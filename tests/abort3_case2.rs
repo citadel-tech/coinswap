@@ -102,6 +102,7 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
+        manually_selected_outpoints: None,
     };
     taker.do_coinswap(swap_params).unwrap();
 

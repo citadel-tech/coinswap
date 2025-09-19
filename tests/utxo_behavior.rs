@@ -1,5 +1,5 @@
 #![cfg(feature = "integration-test")]
-use bitcoin::Amount;
+use bitcoin::{Amount, OutPoint};
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
@@ -9,6 +9,7 @@ use coinswap::{
 use log::{info, warn};
 use std::{
     sync::{atomic::Ordering::Relaxed, Arc},
+    thread,
     time::Duration,
 };
 
@@ -61,6 +62,11 @@ const TEST_CASES: &[(f64, &[f64], &str, &str)] = &[
 #[test]
 fn run_all_utxo_tests() {
     println!("=== Running All UTXO Tests ===");
+    println!("\n🔧 Starting Manual Swapping in conjunction with Regular-Swapcoin clause Test");
+    test_maunal_coinselection();
+
+    println!("\n⏳ Waiting for cleanup...");
+    std::thread::sleep(Duration::from_secs(10));
 
     println!("\n🔧 Starting Separated UTXO Test");
     test_separated_utxo_coin_selection();
@@ -72,6 +78,9 @@ fn run_all_utxo_tests() {
     test_address_grouping_behavior();
 
     println!("\n✅ All UTXO Tests Completed Successfully");
+
+    println!("\n⏳ Waiting for cleanup...");
+    std::thread::sleep(Duration::from_secs(10));
 }
 
 fn test_address_grouping_behavior() {
@@ -147,7 +156,9 @@ fn test_address_grouping_behavior() {
         let target_amount = Amount::from_btc(target_btc).unwrap();
 
         // Call the coin selection algorithm we're testing
-        let selected_utxos = wallet.coin_select(target_amount, MIN_FEE_RATE).unwrap();
+        let selected_utxos = wallet
+            .coin_select(target_amount, MIN_FEE_RATE, None)
+            .unwrap();
 
         let selected_amounts: Vec<f64> = selected_utxos
             .iter()
@@ -239,6 +250,7 @@ fn test_separated_utxo_coin_selection() {
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(35000000), // 35M sats (0.35 BTC)
         maker_count: 2,
+        manually_selected_outpoints: None,
     };
     taker.do_coinswap(swap_params).unwrap();
 
@@ -276,7 +288,7 @@ fn test_separated_utxo_coin_selection() {
         println!("\n--- Test Case 1: Regular UTXOs Only ---");
         println!("Target: {} sats (< regular)", target_1.to_sat());
 
-        let result_1 = wallet.coin_select(target_1, MIN_FEE_RATE);
+        let result_1 = wallet.coin_select(target_1, MIN_FEE_RATE, None);
         assert!(
             result_1.is_ok(),
             "Test Case 1 failed: Expected success but got error: {:?}",
@@ -297,7 +309,7 @@ fn test_separated_utxo_coin_selection() {
             target_2.to_sat()
         );
 
-        let result_2 = wallet.coin_select(target_2, MIN_FEE_RATE);
+        let result_2 = wallet.coin_select(target_2, MIN_FEE_RATE, None);
         assert!(
             result_2.is_ok(),
             "Test Case 2 failed: Expected success but got error: {:?}",
@@ -318,7 +330,7 @@ fn test_separated_utxo_coin_selection() {
             target_3.to_sat()
         );
 
-        let result_3 = wallet.coin_select(target_3, MIN_FEE_RATE);
+        let result_3 = wallet.coin_select(target_3, MIN_FEE_RATE, None);
         assert!(
             result_3.is_err(),
             "Test Case 3 failed: Expected error but got success with {} UTXOs",
@@ -376,7 +388,7 @@ fn test_separated_utxo_coin_selection() {
         // Now retry the same target - should succeed with regular UTXOs only
         let target_3 = Amount::from_sat(46000000); // Same target
         println!("🔄 Retrying coin selection with additional regular funds...");
-        let result_3_retry = wallet.coin_select(target_3, MIN_FEE_RATE);
+        let result_3_retry = wallet.coin_select(target_3, MIN_FEE_RATE, None);
         assert!(
             result_3_retry.is_ok(),
             "Test Case 3 retry failed: Expected success with additional regular funds, got: {:?}",
@@ -394,6 +406,315 @@ fn test_separated_utxo_coin_selection() {
     println!("\n=== Test Completed Successfully ===");
 
     // Clean shutdown
+    test_framework.stop();
+    block_generation_handle.join().unwrap();
+}
+
+fn test_maunal_coinselection() {
+    let (test_framework, mut takers, maker, block_generation_handle) = TestFramework::init(
+        vec![
+            ((26102, Some(19053)), MakerBehavior::Normal),
+            ((36102, Some(19054)), MakerBehavior::Normal),
+        ],
+        vec![TakerBehavior::Normal],
+        ConnectionType::CLEARNET,
+    );
+
+    let bitcoind = &test_framework.bitcoind;
+    let taker = &mut takers[0];
+
+    let amounts: Vec<u64> = vec![
+        90_283, 150_813, 212_842, 185_372, 478_324, 314_332, 136_414, 23_894, 10_000,
+    ];
+
+    for &amount in &amounts {
+        let taker_address = taker.get_wallet_mut().get_next_external_address().unwrap();
+        send_to_address(bitcoind, &taker_address, Amount::from_sat(amount));
+        generate_blocks(bitcoind, 1);
+    }
+
+    // Fund the Maker with 3 utxos of 0.05 btc each and do basic checks on the balance.
+    let makers_ref = maker.iter().map(Arc::as_ref).collect::<Vec<_>>();
+    fund_and_verify_maker(makers_ref, bitcoind, 3, Amount::from_btc(0.05).unwrap());
+
+    let maker_threads = maker
+        .iter()
+        .map(|maker| {
+            let maker_clone = maker.clone();
+            thread::spawn(move || {
+                start_maker_server(maker_clone).unwrap();
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for maker in maker.iter() {
+        while !maker.is_setup_complete.load(Relaxed) {
+            info!("⏳ Waiting for maker setup completion");
+            thread::sleep(Duration::from_secs(10));
+        }
+    }
+
+    taker.get_wallet_mut().sync_no_fail();
+
+    let all_utxos = taker.get_wallet_mut().get_all_utxo().unwrap();
+
+    let manually_selected_utxos: Vec<OutPoint> = amounts
+        .iter()
+        .take(4)
+        .cloned()
+        .collect::<Vec<u64>>()
+        .iter()
+        .filter_map(|&target_amount| {
+            all_utxos
+                .iter()
+                .find(|utxo| utxo.amount.to_sat() == target_amount)
+                .map(|utxo| OutPoint::new(utxo.txid, utxo.vout))
+        })
+        .collect();
+
+    println!(
+        "📋Test 1 : Selected {} UTXOs manually:",
+        manually_selected_utxos.len()
+    );
+
+    for outpoint in &manually_selected_utxos {
+        println!(" - {outpoint}");
+    }
+
+    let _ = taker.do_coinswap(SwapParams {
+        send_amount: Amount::from_btc(0.01).unwrap(),
+        maker_count: 2,
+        manually_selected_outpoints: Some(manually_selected_utxos.clone()),
+    });
+
+    // After Swap is done, wait for maker threads to conclude.
+    maker
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
+
+    info!("🎯 All coinswaps processed successfully. Transaction complete.");
+
+    thread::sleep(Duration::from_secs(10));
+
+    // Sync taker wallet to get the latest UTXO state after swap
+    taker.get_wallet_mut().sync_and_save().unwrap();
+
+    for maker in maker.iter() {
+        let mut wallet = maker.get_wallet().write().unwrap();
+        wallet.sync_and_save().unwrap();
+    }
+
+    // Check that the originally manually selected UTXOs were spent
+    let remaining_utxos: Vec<OutPoint> = taker
+        .get_wallet_mut()
+        .get_all_utxo()
+        .unwrap()
+        .iter()
+        .map(|utxo| OutPoint::new(utxo.txid, utxo.vout))
+        .collect();
+
+    let manual_utxos_spent = manually_selected_utxos
+        .iter()
+        .all(|manual_utxo| !remaining_utxos.contains(manual_utxo));
+
+    assert!(
+        manual_utxos_spent,
+        "Not all manually selected UTXOs were spent in the coinswap"
+    );
+
+    println!(
+        "\n ✅ Test 1 : All {} originally selected UTXOs were used in the coinswap",
+        manually_selected_utxos.len()
+    );
+
+    for outpoint in &manually_selected_utxos {
+        println!(" ✓ Used: {outpoint}");
+    }
+
+    println!("\n === Post-Swap UTXO Analysis ===");
+
+    // Get regular UTXOs (SeedCoin)
+    let regular_utxos = taker
+        .get_wallet_mut()
+        .list_descriptor_utxo_spend_info()
+        .unwrap();
+    println!("\n 📊 Regular UTXOs: {}", regular_utxos.len());
+
+    for (utxo, spend_info) in &regular_utxos {
+        println!(
+            " - Regular UTXO: {} sats ({})",
+            utxo.amount.to_sat(),
+            spend_info
+        );
+    }
+
+    // Get swept incoming swap UTXOs
+    let swept_utxos = taker
+        .get_wallet_mut()
+        .list_swept_incoming_swap_utxos()
+        .unwrap();
+
+    println!("\n 🧹 Swept Swap UTXOs: {}", swept_utxos.len());
+
+    for (utxo, spend_info) in &swept_utxos {
+        println!(
+            " - Swept UTXO: {} sats ({})",
+            utxo.amount.to_sat(),
+            spend_info
+        );
+    }
+
+    // Summary of UTXO distribution
+    let total_regular = regular_utxos
+        .iter()
+        .map(|(u, _)| u.amount.to_sat())
+        .sum::<u64>();
+    let total_swept = swept_utxos
+        .iter()
+        .map(|(u, _)| u.amount.to_sat())
+        .sum::<u64>();
+
+    println!("\n === UTXO Distribution Summary ===");
+
+    println!(
+        "\n 📊 Regular UTXOs: {} sats ({} UTXOs)",
+        total_regular,
+        regular_utxos.len()
+    );
+
+    println!(
+        "\n 🧹 Swept UTXOs: {} sats ({} UTXOs)",
+        total_swept,
+        swept_utxos.len()
+    );
+
+    println!(
+        "\n Taker Wallet Balances: {:?}",
+        taker.get_wallet().get_balances()
+    );
+
+    println!(
+        "\n 📋 Test 2: Regular and Swap Coin Selection Testing in conjunction with Manual Selection"
+    );
+
+    /*
+    ===========================================================================================================================================
+    📋 UTXO Selection Test Cases -> Swap(900k~) > Regular(600k~) for this test
+    ===========================================================================================================================================
+
+    Index | Test_Case        | Condition                               | Target   | Manual | Expected Behaviour
+    -----------------------------------------------------------------------------------------------------------------------
+    2a    | Enough Regular   | amount < regular total                  | 400,000  | R      | Ok
+    2b    | Enough Swap      | regular total < amount < swap total     | 700,000  | S      | Ok
+    2c    | Both Enough      | amount < regular total < swap total     | 500,000  | None   | Ok -> Chooses R by default
+    2d    | Not Enough Swap  | amount > swap total                     | 1,000,000| S      | Error -> insufficient funds
+    2e    | Not Enough Reg   | amount > regular total                  | 1,000,000  | R      | Error -> insufficient funds
+    2f    | Mixed            | amount < (regular + swap)               | 1,200,000| R + S  | Error -> Cannot be mixed
+    -----------------------------------------------------------------------------------------------------------------------
+
+    Legend:
+    R = Regular UTXOs
+    S = Swap UTXOs
+
+    ===========================================================================================================================================
+    */
+
+    let test_cases = vec![
+        // (test_name, target_amount, manual_selection_type, expected_result)
+        ("2a: Enough Regular", 400_000, "R", "Ok"),
+        ("2b: Enough Swap", 700_000, "S", "Ok"),
+        ("2c: Both Enough (Auto)", 500_000, "None", "Ok"),
+        ("2d: Not Enough Swap", 1_000_000, "S", "Error"),
+        ("2e: Not Enough Regular", 1_000_000, "R", "Error"),
+        ("2f: Mixed Selection", 900_000, "R+S", "Error"),
+    ];
+
+    for (test_name, target_amount, selection_type, expected) in test_cases {
+        println!("\n--- Testing {test_name} ---");
+
+        println!("Amount: {target_amount} sats, Selection: {selection_type}, Expected: {expected}");
+
+        let target_amount = Amount::from_sat(target_amount);
+        let manual_outpoints = match selection_type {
+            "R" => {
+                let regular_outpoints: Vec<OutPoint> = regular_utxos
+                    .iter()
+                    .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                    .collect();
+                Some(regular_outpoints)
+            }
+            "S" => {
+                let swap_outpoints: Vec<OutPoint> = swept_utxos
+                    .iter()
+                    .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                    .collect();
+                Some(swap_outpoints)
+            }
+            "R+S" => {
+                let mixed_outpoints: Vec<OutPoint> = vec![
+                    regular_utxos
+                        .first()
+                        .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                        .unwrap(),
+                    swept_utxos
+                        .first()
+                        .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                        .unwrap(),
+                ];
+                Some(mixed_outpoints)
+            }
+            "None" => None,
+            _ => None,
+        };
+
+        let result =
+            taker
+                .get_wallet_mut()
+                .coin_select(target_amount, MIN_FEE_RATE, manual_outpoints);
+        match (result, expected) {
+            (Ok(selection), "Ok") => {
+                println!(
+                    "✅ {test_name}: SUCCESS - Selected {} UTXOs",
+                    selection.len()
+                );
+                for (utxo, spend_info) in &selection {
+                    println!(" - {} sats ({})", utxo.amount.to_sat(), spend_info);
+                }
+            }
+            (Err(e), "Error") => {
+                let error_msg = format!("{e:?}");
+                if selection_type == "R+S"
+                    && error_msg.contains("Cannot mix regular and swap UTXOs")
+                {
+                    println!("✅ {test_name}: SUCCESS - Correctly rejected mixed UTXO selection");
+                } else if error_msg.contains("InsufficientFund") {
+                    println!("✅ {test_name}: SUCCESS - Correctly failed with insufficient funds");
+                } else {
+                    println!("✅ {test_name}: SUCCESS - {error_msg}");
+                }
+            }
+            (Ok(_), "Error") => {
+                panic!(
+                    "❌ {}: FAILED - Expected error but selection succeeded!",
+                    test_name
+                );
+            }
+            (Err(e), "Ok") => {
+                panic!(
+                    "❌ {}: FAILED - Expected success but got error: {:?}",
+                    test_name, e
+                );
+            }
+            (Err(_), _) | (Ok(_), _) => {
+                panic!("❌ {}: FAILED - Unexpected Behaviour", test_name);
+            }
+        }
+    }
+
+    println!("✅ All test cases completed successfully");
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }
