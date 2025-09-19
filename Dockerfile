@@ -68,8 +68,9 @@ RUN --mount=type=cache,target=/tmp/bitcoin-cache \
 # Create app user
 RUN adduser -D -u 1001 coinswap
 
-# Create directories
-RUN mkdir -p /app/bin /app/data && chown -R coinswap:coinswap /app
+# Create directories with proper structure
+RUN mkdir -p /app/bin /app/data /home/coinswap/.coinswap/maker /home/coinswap/.coinswap/taker /home/coinswap/.bitcoin && \
+    chown -R coinswap:coinswap /app /home/coinswap
 
 # Copy binaries from builder
 COPY --from=builder /tmp/makerd /app/bin/
@@ -88,8 +89,19 @@ WORKDIR /app
 # Add binaries to PATH
 ENV PATH="/app/bin:$PATH"
 
+# Set environment variables for data directories
+ENV COINSWAP_DATA_DIR="/home/coinswap/.coinswap"
+ENV BITCOIN_DATA_DIR="/home/coinswap/.bitcoin"
+
 # Expose ports (adjust as needed for your services)
-EXPOSE 8080 8081 9735
+EXPOSE 6102 6103 8080 9050 18332
+
+# Create volume mount points
+VOLUME ["/home/coinswap/.coinswap", "/home/coinswap/.bitcoin"]
+
+# Health check to ensure binaries are working
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD makerd --help > /dev/null 2>&1 || exit 1
 
 # Default command
-CMD ["makerd", "--help"]
+CMD ["sh", "-c", "echo 'Coinswap Docker Container Ready!' && echo 'Available commands: makerd, maker-cli, taker, directoryd, directory-cli, bitcoind, tor' && echo 'Example: docker run coinswap makerd --help' && /bin/sh"]
