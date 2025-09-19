@@ -1,0 +1,40 @@
+name: Docker CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build Docker images
+      run: ./docker-setup.sh build
+
+    - name: Test makerd
+      run: docker run --rm coinswap-maker makerd --help
+
+    - name: Test taker
+      run: docker run --rm coinswap-taker taker --help
+
+    - name: Run integration tests
+      run: docker run --rm coinswap-test
+
+    - name: Start Coinswap stack
+      run: ./docker-setup.sh start --default
+
+    - name: Wait for services to be healthy
+      run: |
+        echo "Waiting for services to start..."
+        sleep 30
+
+    - name: Check service status
+      run: ./docker-setup.sh status
+
+    - name: Stop Coinswap stack
+      run: ./docker-setup.sh stop

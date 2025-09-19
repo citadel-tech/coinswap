@@ -1,0 +1,20 @@
+# Tor Dockerfile
+FROM alpine:3.20
+
+# Install Tor
+RUN apk add --no-cache tor
+
+# Create data directory and set permissions
+# Tor runs as 'tor' user by default in Alpine package
+RUN mkdir -p /var/lib/tor && \
+    chown -R tor:tor /var/lib/tor && \
+    chmod 700 /var/lib/tor
+
+# Expose ports
+EXPOSE 9050 9051
+
+# Switch to tor user
+USER tor
+
+# Default command
+CMD ["tor", "-f", "/etc/tor/torrc"]
