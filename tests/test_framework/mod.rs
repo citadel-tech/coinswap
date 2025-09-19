@@ -18,7 +18,6 @@ macro_rules! assert_in_range {
     ($value:expr, $allowed:expr, $msg:expr) => {{
         let (value, allowed) = ($value, $allowed);
         const RANGE: u64 = 2;
-        println!("{}: actual value = {}", $msg, value);
         if !allowed
             .iter()
             .any(|x| x + RANGE == value || x.saturating_sub(RANGE) == value || *x == value)
