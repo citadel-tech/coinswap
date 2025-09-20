@@ -157,6 +157,7 @@ pub struct Taker {
     pub config: TakerConfig,
     offerbook: OfferBook,
     ongoing_swap_state: OngoingSwapState,
+    #[cfg(feature = "integration-test")]
     behavior: TakerBehavior,
     data_dir: PathBuf,
 }
@@ -196,7 +197,6 @@ impl Taker {
         #[cfg(feature = "integration-test")] behavior: TakerBehavior,
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
-        #[cfg(feature = "integration-test")] connection_type: Option<ConnectionType>,
     ) -> Result<Taker, TakerError> {
         // Get provided data directory or the default data directory.
         let data_dir = data_dir.unwrap_or(get_taker_dir());
@@ -215,8 +215,13 @@ impl Taker {
         let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
         #[cfg(feature = "integration-test")]
-        if let Some(connection_type) = connection_type {
-            config.connection_type = connection_type;
+        {
+            config.connection_type = ConnectionType::CLEARNET;
+        }
+
+        #[cfg(not(feature = "integration-test"))]
+        {
+            config.connection_type = ConnectionType::TOR;
         }
 
         if let Some(control_port) = control_port {
@@ -227,8 +232,8 @@ impl Taker {
             config.tor_auth_password = tor_auth_password;
         }
 
-        #[cfg(feature = "integration-test")]
-        if matches!(connection_type, Some(ConnectionType::TOR)) {
+        #[cfg(not(feature = "integration-test"))]
+        {
             check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
 
@@ -268,8 +273,6 @@ impl Taker {
             ongoing_swap_state: OngoingSwapState::default(),
             #[cfg(feature = "integration-test")]
             behavior,
-            #[cfg(not(feature = "integration-test"))]
-            behavior: TakerBehavior::Normal,
             data_dir,
         })
     }
@@ -489,15 +492,18 @@ impl Taker {
             }
         } // Contract establishment completed.
 
-        if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
-            log::error!("Dropping Swap Process after full setup");
-            return Ok(());
-        }
+        #[cfg(feature = "integration-test")]
+        {
+            if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
+                log::error!("Dropping Swap Process after full setup");
+                return Ok(());
+            }
 
-        if self.behavior == TakerBehavior::BroadcastContractAfterFullSetup {
-            log::error!("Special Behavior BroadcastContractAfterFullSetup");
-            self.recover_from_swap()?;
-            return Ok(());
+            if self.behavior == TakerBehavior::BroadcastContractAfterFullSetup {
+                log::error!("Special Behavior BroadcastContractAfterFullSetup");
+                self.recover_from_swap()?;
+                return Ok(());
+            }
         }
 
         match self.settle_all_swaps() {

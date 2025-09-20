@@ -11,7 +11,7 @@ use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};
 
 #[cfg(feature = "integration-test")]
-use coinswap::{taker::TakerBehavior, utill::ConnectionType};
+use coinswap::taker::TakerBehavior;
 /// A simple command line app to operate as coinswap client.
 ///
 /// The app works as a regular Bitcoin wallet with the added capability to perform coinswaps. The app
@@ -163,26 +163,15 @@ fn main() -> Result<(), TakerError> {
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
 
-    #[cfg(not(feature = "integration-test"))]
     let mut taker = Taker::init(
         args.data_directory.clone(),
         args.wallet_name.clone(),
         Some(rpc_config.clone()),
+        #[cfg(feature = "integration-test")]
+        TakerBehavior::Normal, // behavior
         None,                        // control_port
         Some(args.tor_auth.clone()), // tor_auth_password
     )?;
-
-    #[cfg(feature = "integration-test")]
-    let mut taker = Taker::init(
-        args.data_directory.clone(),
-        args.wallet_name.clone(),
-        Some(rpc_config.clone()),
-        TakerBehavior::Normal,          // behavior
-        None,                           // control_port
-        Some(args.tor_auth.clone()),    // tor_auth_password
-        Some(ConnectionType::CLEARNET), // connection_type
-    )?;
-
     match args.command {
         Commands::ListUtxo => {
             let utxos = taker.get_wallet().list_all_utxo_spend_info()?;

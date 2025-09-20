@@ -611,7 +611,6 @@ impl TestFramework {
                     behavior,
                     None,
                     None,
-                    Some(connection_type),
                 )
                 .unwrap()
             })
