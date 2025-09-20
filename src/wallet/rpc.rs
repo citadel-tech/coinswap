@@ -149,7 +149,7 @@ impl Wallet {
             }
         }
 
-        self.update_utxo_cache(self.get_all_utxo()?);
+        self.update_utxo_cache(self.get_all_utxo_from_rpc()?);
 
         let max_external_index = self.find_hd_next_index(KeychainKind::External)?;
         self.store.external_index = max_external_index;

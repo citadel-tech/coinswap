@@ -236,7 +236,7 @@ pub fn fund_and_verify_taker(
     // Get initial state before funding
     let wallet = taker.get_wallet_mut();
     wallet.sync_no_fail();
-    let initial_utxos = wallet.get_all_utxo().unwrap();
+    let initial_utxos = wallet.list_all_utxo().unwrap();
     let initial_utxo_count = initial_utxos.len();
     let initial_external_index = *wallet.get_external_index();
 
@@ -263,7 +263,7 @@ pub fn fund_and_verify_taker(
     wallet.sync_no_fail();
 
     // Check if utxo list looks good.
-    let utxos = wallet.get_all_utxo().unwrap();
+    let utxos = wallet.list_all_utxo().unwrap();
 
     // Assert UTXO count
     assert_eq!(
@@ -612,9 +612,10 @@ impl TestFramework {
             .into_iter()
             .enumerate()
             .map(|(i, behavior)| {
+                let taker_id = format!("taker{}", i + 1); // ex: "taker1"
                 Taker::init(
-                    Some(temp_dir.join(format!("taker{}", i + 1))),
-                    None,
+                    Some(temp_dir.join(&taker_id)),
+                    Some(taker_id),
                     Some(taker_rpc_config.clone()),
                     behavior,
                     None,

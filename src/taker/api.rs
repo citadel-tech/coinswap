@@ -331,7 +331,7 @@ impl Taker {
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub(crate) fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         let swap_start_time = std::time::Instant::now();
-        let initial_utxoset = self.wallet.get_all_utxo()?;
+        let initial_utxoset = self.wallet.list_all_utxo()?;
         self.ongoing_swap_state.swap_params = swap_params.clone();
 
         // Check if we have enough balance - try regular first, then swap
