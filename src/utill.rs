@@ -18,13 +18,23 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     env, fmt, fs,
-    io::{self, BufReader, BufWriter, ErrorKind, Read, Write},
+    io::{self, stdout, BufReader, BufWriter, ErrorKind, Read, Write},
     net::TcpStream,
     os::unix::io::AsRawFd,
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Once, OnceLock},
     time::Duration,
+};
+
+use crossterm::{
+    cursor::MoveTo,
+    event::{
+        poll, read, DisableMouseCapture, EnableMouseCapture, Event, MouseButton, MouseEventKind,
+    },
+    execute, queue,
+    style::Print,
+    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
 
 static LOGGER: OnceLock<()> = OnceLock::new();
@@ -850,6 +860,152 @@ where
             }
         }
     }
+}
+
+/// Interactive Selection by User for Utxos
+pub fn interactive_select(
+    mut choices: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
+) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+    // Sort choices: SeedCoin first, then SweptCoin
+    choices.sort_by_key(|(_, spend_info)| match spend_info {
+        UTXOSpendInfo::SeedCoin { .. } => 0,
+        UTXOSpendInfo::SweptCoin { .. } => 1,
+        _ => 2,
+    });
+    let mut selected = vec![false; choices.len()];
+    let mut stdout = stdout();
+
+    enable_raw_mode()?;
+    execute!(
+        stdout,
+        Clear(ClearType::All),
+        EnableMouseCapture,
+        MoveTo(0, 0)
+    )?;
+
+    let cols = 4;
+    let rows = (choices.len() + cols - 1).div_ceil(cols);
+    let box_width = 18;
+    let col_spacing = 20;
+    const LINES_PER_ROW: usize = 7; // 7 lines per row (5 for box + 2 spacing)
+
+    queue!(
+        stdout,
+        MoveTo(0, 0),
+        Print("\x1b[1m👆 CLICK on any UTXO to select/deselect, Press any key to exit\x1b[0m\n"),
+        MoveTo(0, 1),
+        Print("\x1b[1;31m⚠️  WARNING: Pick either Regular Coin OR Swap Coin, or else transaction will fail!\x1b[0m\n\n")
+    )?;
+
+    for row in 0..rows {
+        let row_start = 3 + row * LINES_PER_ROW;
+
+        for col in 0..cols {
+            let i = row * cols + col;
+            if i >= choices.len() {
+                break;
+            }
+
+            let choice = &choices[i];
+            let marker = if selected[i] { "✓" } else { " " };
+            let col_offset = col * col_spacing;
+
+            let lines = [
+                format!("┌{}┐", "─".repeat(box_width - 2)),
+                format!(
+                    "│\x1b[1m[\x1b[32m{marker}\x1b[0m\x1b[1m] UTXO {:<7}\x1b[0m│",
+                    i + 1
+                ),
+                match &choice.1 {
+                    UTXOSpendInfo::SeedCoin { .. } => {
+                        format!("│\x1b[33m Regular Coin \x1b[0m{:<2}│", "")
+                    }
+                    UTXOSpendInfo::SweptCoin { .. } => {
+                        format!("│\x1b[34m Swap Coin \x1b[0m{:<5}│", "")
+                    }
+                    _ => format!("{:<15}", choice.1.to_string()),
+                },
+                format!("│\x1b[31m {:.8} BTC \x1b[0m│", choice.0.amount.to_btc()),
+                format!("│ Conf: {:<9}│", choice.0.confirmations),
+                format!("└{}┘", "─".repeat(box_width - 2)),
+            ];
+
+            for (i, line) in lines.iter().enumerate() {
+                queue!(
+                    stdout,
+                    MoveTo(col_offset as u16, (row_start + i) as u16),
+                    Print(line)
+                )?;
+            }
+        }
+    }
+    stdout.flush()?;
+
+    let timeout_duration = Duration::from_secs(60);
+
+    loop {
+        if poll(timeout_duration)? {
+            match read()? {
+                Event::Mouse(mouse_event) => {
+                    if mouse_event.kind == MouseEventKind::Down(MouseButton::Left) {
+                        let click_row = mouse_event.row;
+                        let click_col = mouse_event.column;
+
+                        if click_row >= 3 {
+                            let box_row = (click_row - 3) / LINES_PER_ROW as u16;
+                            let box_col = click_col / col_spacing as u16;
+                            let i = box_row as usize * cols + box_col as usize;
+
+                            if i < choices.len() {
+                                selected[i] = !selected[i];
+                                let marker = if selected[i] { "✓" } else { " " };
+                                let col_offset = box_col * col_spacing as u16;
+                                let row_start = 3 + box_row * LINES_PER_ROW as u16;
+
+                                queue!(
+                                    stdout,
+                                    MoveTo(col_offset, row_start + 1),
+                                    Print(format!(
+                                        "│\x1b[1m[\x1b[32m{marker}\x1b[0m\x1b[1m] UTXO {:<7}\x1b[0m│",
+                                        i + 1
+                                    ))
+                                )?;
+                                stdout.flush()?;
+                            }
+                        }
+                    }
+                }
+                Event::Key(_) => break,
+                _ => {}
+            }
+        } else {
+            execute!(stdout, DisableMouseCapture, Clear(ClearType::All))?;
+            disable_raw_mode()?;
+            return Err(WalletError::General(
+                "Selection timeout reached".to_string(),
+            ));
+        }
+    }
+
+    execute!(stdout, DisableMouseCapture, Clear(ClearType::All))?;
+    disable_raw_mode()?;
+
+    let selected_utxo = choices
+        .into_iter()
+        .zip(selected)
+        .filter(|(_, sel)| *sel)
+        .map(|(choice, _)| choice)
+        .collect::<Vec<_>>();
+
+    println!("Selected UTXOs:");
+    for utxo in selected_utxo.iter() {
+        println!("  - {} BTC ({})", utxo.0.amount.to_btc(), utxo.0.txid);
+    }
+
+    let total_selected: Amount = selected_utxo.iter().map(|(u, _)| u.amount).sum();
+    println!("Total selected amount: {} BTC", total_selected.to_btc());
+
+    Ok(selected_utxo)
 }
 
 #[cfg(test)]
