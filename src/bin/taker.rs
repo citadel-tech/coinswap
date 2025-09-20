@@ -1,9 +1,12 @@
-use bitcoin::{Address, Amount};
+use bitcoin::{Address, Amount, OutPoint};
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
-    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, MIN_FEE_RATE, UTXO},
+    utill::{
+        interactive_select, parse_proxy_auth, setup_taker_logger, ConnectionType, MIN_FEE_RATE,
+        UTXO,
+    },
     wallet::{Destination, RPCConfig, Wallet},
 };
 use log::LevelFilter;
@@ -245,10 +248,19 @@ fn main() -> Result<(), TakerError> {
                 } => {
                     let amount = Amount::from_sat(*amount);
 
+                    let all_utxos = taker.get_wallet().list_all_utxo_spend_info()?;
+                    let manually_selected_outpoints = Some(
+                        interactive_select(all_utxos)
+                            .unwrap()
+                            .iter()
+                            .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                            .collect::<Vec<_>>(),
+                    );
+
                     let coins_to_spend = taker.get_wallet_mut().coin_select(
                         amount,
                         feerate.unwrap_or(MIN_FEE_RATE),
-                        None,
+                        manually_selected_outpoints,
                     )?;
 
                     let outputs = vec![(Address::from_str(address)?.assume_checked(), amount)];
@@ -290,10 +302,18 @@ fn main() -> Result<(), TakerError> {
                     }
                 }
                 Commands::Coinswap { makers, amount } => {
+                    let all_utxos = taker.get_wallet().list_all_utxo_spend_info()?;
+                    let manually_selected_outpoints = Some(
+                        interactive_select(all_utxos)
+                            .unwrap()
+                            .iter()
+                            .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                            .collect::<Vec<_>>(),
+                    );
                     let swap_params = SwapParams {
                         send_amount: Amount::from_sat(*amount),
                         maker_count: *makers,
-                        manually_selected_outpoints: None,
+                        manually_selected_outpoints,
                     };
                     taker.do_coinswap(swap_params)?;
                 }
