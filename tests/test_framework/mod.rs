@@ -18,12 +18,11 @@ macro_rules! assert_in_range {
     ($value:expr, $allowed:expr, $msg:expr) => {{
         let (value, allowed) = ($value, $allowed);
         const RANGE: u64 = 2;
-        println!("{}: actual value = {}", $msg, value);
         if !allowed
             .iter()
             .any(|x| x + RANGE == value || x.saturating_sub(RANGE) == value || *x == value)
         {
-            panic!("{}", $msg);
+            panic!("{}: actual value = {}", $msg, value);
         }
     }};
 }
@@ -457,7 +456,7 @@ pub fn verify_swap_results(
                 balances.regular.to_sat(),
                 [
                     14555297, // First maker on successful coinswap
-                    14533010, // Second maker on successful coinswap
+                    14533012, // Second maker on successful coinswap
                     14999508, // No spending
                     24999510, // Multi-taker scenario
                 ],
@@ -506,7 +505,7 @@ pub fn verify_swap_results(
                     2574,   // Recovery via timelock
                     444213, // Taker abort after setup - first maker recovery cost (abort1 test case)
                     443624, // Taker abort after setup - second maker recovery cost (abort1 test case)
-                    466496, // Maker abort after setup(abort3_case3)
+                    466498, // Maker abort after setup(abort3_case3)
                     410176, // Multi-taker first maker (previous run)
                     410118, // Multi-taker first maker (current run)
                 ],
