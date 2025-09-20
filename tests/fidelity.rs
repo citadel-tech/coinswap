@@ -392,7 +392,7 @@ fn test_fidelity_spending() {
         let tx_result = {
             let mut wallet = maker.get_wallet().write().unwrap();
             let selected_utxos = wallet
-                .coin_select(Amount::from_sat(REGULAR_TX_AMOUNT), MIN_FEE_RATE)
+                .coin_select(Amount::from_sat(REGULAR_TX_AMOUNT), MIN_FEE_RATE, None)
                 .unwrap();
 
             for (_utxo, spend_info) in &selected_utxos {

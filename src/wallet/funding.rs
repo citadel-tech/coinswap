@@ -39,8 +39,14 @@ impl Wallet {
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: f64,
+        manually_selected_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<CreateFundingTxesResult, WalletError> {
-        let ret = self.create_funding_txes_random_amounts(coinswap_amount, destinations, fee_rate);
+        let ret = self.create_funding_txes_random_amounts(
+            coinswap_amount,
+            destinations,
+            fee_rate,
+            manually_selected_outpoints,
+        );
         if ret.is_ok() {
             log::info!(target: "wallet", "created funding txes random amounts");
             return ret;
@@ -131,6 +137,7 @@ impl Wallet {
         coinswap_amount: Amount,
         destinations: Vec<Address>,
         fee_rate: Amount,
+        manually_selected_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         // Unlock all unspent UTXOs
         self.rpc.unlock_unspent_all()?;
@@ -145,7 +152,11 @@ impl Wallet {
 
         // Here, we are gonna use a closure to ensure proper cleanup on error (since we need a rollback)
         let result = (|| {
-            let selected_utxo = self.coin_select(coinswap_amount, fee_rate.to_btc())?;
+            let selected_utxo = self.coin_select(
+                coinswap_amount,
+                fee_rate.to_btc(),
+                manually_selected_outpoints,
+            )?;
 
             let outpoints: Vec<OutPoint> = selected_utxo
                 .iter()
@@ -204,6 +215,7 @@ impl Wallet {
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: f64,
+        manually_selected_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
@@ -222,7 +234,8 @@ impl Wallet {
         let result = (|| {
             for (address, &output_value) in destinations.iter().zip(output_values.iter()) {
                 let remaining = Amount::from_sat(output_value);
-                let selected_utxo = self.coin_select(remaining, fee_rate)?;
+                let selected_utxo =
+                    self.coin_select(remaining, fee_rate, manually_selected_outpoints.clone())?;
 
                 let outpoints: Vec<OutPoint> = selected_utxo
                     .iter()
@@ -474,7 +487,7 @@ impl Wallet {
         let fee = Amount::from_sat(calculate_fee_sats(150));
         let remaining = coinswap_amount;
 
-        let selected_utxo = self.coin_select(remaining + fee, MIN_FEE_RATE)?;
+        let selected_utxo = self.coin_select(remaining + fee, MIN_FEE_RATE, None)?;
 
         let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
             acc.checked_add(unspet.amount)

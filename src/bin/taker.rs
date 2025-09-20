@@ -245,9 +245,11 @@ fn main() -> Result<(), TakerError> {
                 } => {
                     let amount = Amount::from_sat(*amount);
 
-                    let coins_to_spend = taker
-                        .get_wallet_mut()
-                        .coin_select(amount, feerate.unwrap_or(MIN_FEE_RATE))?;
+                    let coins_to_spend = taker.get_wallet_mut().coin_select(
+                        amount,
+                        feerate.unwrap_or(MIN_FEE_RATE),
+                        None,
+                    )?;
 
                     let outputs = vec![(Address::from_str(address)?.assume_checked(), amount)];
                     let destination = Destination::Multi {
@@ -291,6 +293,7 @@ fn main() -> Result<(), TakerError> {
                     let swap_params = SwapParams {
                         send_amount: Amount::from_sat(*amount),
                         maker_count: *makers,
+                        manually_selected_outpoints: None,
                     };
                     taker.do_coinswap(swap_params)?;
                 }

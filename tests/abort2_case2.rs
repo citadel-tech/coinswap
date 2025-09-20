@@ -111,6 +111,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
+        manually_selected_outpoints: None,
     };
 
     if let Err(e) = taker.do_coinswap(swap_params) {
