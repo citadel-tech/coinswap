@@ -29,7 +29,9 @@ use std::{
 
 use crossterm::{
     cursor::MoveTo,
-    event::{read, DisableMouseCapture, EnableMouseCapture, Event, MouseButton, MouseEventKind},
+    event::{
+        poll, read, DisableMouseCapture, EnableMouseCapture, Event, MouseButton, MouseEventKind,
+    },
     execute, queue,
     style::Print,
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
@@ -939,39 +941,49 @@ pub fn interactive_select(
     }
     stdout.flush()?;
 
+    let timeout_duration = Duration::from_secs(60);
+
     loop {
-        match read()? {
-            Event::Mouse(mouse_event) => {
-                if mouse_event.kind == MouseEventKind::Down(MouseButton::Left) {
-                    let click_row = mouse_event.row;
-                    let click_col = mouse_event.column;
+        if poll(timeout_duration)? {
+            match read()? {
+                Event::Mouse(mouse_event) => {
+                    if mouse_event.kind == MouseEventKind::Down(MouseButton::Left) {
+                        let click_row = mouse_event.row;
+                        let click_col = mouse_event.column;
 
-                    if click_row >= 3 {
-                        let box_row = (click_row - 3) / LINES_PER_ROW as u16;
-                        let box_col = click_col / col_spacing as u16;
-                        let i = box_row as usize * cols + box_col as usize;
+                        if click_row >= 3 {
+                            let box_row = (click_row - 3) / LINES_PER_ROW as u16;
+                            let box_col = click_col / col_spacing as u16;
+                            let i = box_row as usize * cols + box_col as usize;
 
-                        if i < choices.len() {
-                            selected[i] = !selected[i];
-                            let marker = if selected[i] { "✓" } else { " " };
-                            let col_offset = box_col * col_spacing as u16;
-                            let row_start = 3 + box_row * LINES_PER_ROW as u16;
+                            if i < choices.len() {
+                                selected[i] = !selected[i];
+                                let marker = if selected[i] { "✓" } else { " " };
+                                let col_offset = box_col * col_spacing as u16;
+                                let row_start = 3 + box_row * LINES_PER_ROW as u16;
 
-                            queue!(
-                                stdout,
-                                MoveTo(col_offset, row_start + 1),
-                                Print(format!(
-                                    "│\x1b[1m[\x1b[32m{marker}\x1b[0m\x1b[1m] UTXO {:<7}\x1b[0m│",
-                                    i + 1
-                                ))
-                            )?;
-                            stdout.flush()?;
+                                queue!(
+                                    stdout,
+                                    MoveTo(col_offset, row_start + 1),
+                                    Print(format!(
+                                        "│\x1b[1m[\x1b[32m{marker}\x1b[0m\x1b[1m] UTXO {:<7}\x1b[0m│",
+                                        i + 1
+                                    ))
+                                )?;
+                                stdout.flush()?;
+                            }
                         }
                     }
                 }
+                Event::Key(_) => break,
+                _ => {}
             }
-            Event::Key(_) => break,
-            _ => {}
+        } else {
+            execute!(stdout, DisableMouseCapture, Clear(ClearType::All))?;
+            disable_raw_mode()?;
+            return Err(WalletError::General(
+                "Selection timeout reached".to_string(),
+            ));
         }
     }
 

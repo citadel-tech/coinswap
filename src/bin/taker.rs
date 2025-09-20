@@ -249,13 +249,18 @@ fn main() -> Result<(), TakerError> {
                     let amount = Amount::from_sat(*amount);
 
                     let all_utxos = taker.get_wallet().list_all_utxo_spend_info()?;
-                    let manually_selected_outpoints = Some(
-                        interactive_select(all_utxos)
-                            .unwrap()
-                            .iter()
-                            .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
-                            .collect::<Vec<_>>(),
-                    );
+                    let manually_selected_outpoints = match interactive_select(all_utxos) {
+                        Ok(selected_utxos) => Some(
+                            selected_utxos
+                                .iter()
+                                .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                                .collect::<Vec<_>>(),
+                        ),
+                        Err(e) => {
+                            println!("{e:?}");
+                            None
+                        }
+                    };
 
                     let coins_to_spend = taker.get_wallet_mut().coin_select(
                         amount,
@@ -303,13 +308,18 @@ fn main() -> Result<(), TakerError> {
                 }
                 Commands::Coinswap { makers, amount } => {
                     let all_utxos = taker.get_wallet().list_all_utxo_spend_info()?;
-                    let manually_selected_outpoints = Some(
-                        interactive_select(all_utxos)
-                            .unwrap()
-                            .iter()
-                            .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
-                            .collect::<Vec<_>>(),
-                    );
+                    let manually_selected_outpoints = match interactive_select(all_utxos) {
+                        Ok(selected_utxos) => Some(
+                            selected_utxos
+                                .iter()
+                                .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                                .collect::<Vec<_>>(),
+                        ),
+                        Err(e) => {
+                            println!("{e:?}");
+                            None
+                        }
+                    };
                     let swap_params = SwapParams {
                         send_amount: Amount::from_sat(*amount),
                         maker_count: *makers,
