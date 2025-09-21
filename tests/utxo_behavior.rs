@@ -3,7 +3,7 @@ use bitcoin::{Amount, OutPoint};
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
-    utill::{ConnectionType, MIN_FEE_RATE},
+    utill::MIN_FEE_RATE,
     wallet::WalletError,
 };
 use log::{info, warn};
@@ -88,11 +88,8 @@ fn test_address_grouping_behavior() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, block_generation_handle) = TestFramework::init(
-        makers_config_map.into(),
-        taker_behavior,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, _, makers, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     println!("=== Testing Smart Address Grouping Behavior ===");
 
@@ -210,11 +207,8 @@ fn test_separated_utxo_coin_selection() {
     ];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
-        makers_config_map.into(),
-        taker_behavior,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🔧 Running Test: Separated UTXO Coin Selection");
     let bitcoind = &test_framework.bitcoind;
@@ -417,7 +411,6 @@ fn test_maunal_coinselection() {
             ((36102, Some(19054)), MakerBehavior::Normal),
         ],
         vec![TakerBehavior::Normal],
-        ConnectionType::CLEARNET,
     );
 
     let bitcoind = &test_framework.bitcoind;

@@ -4,7 +4,7 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
-    utill::{ConnectionType, MIN_FEE_RATE},
+    utill::MIN_FEE_RATE,
 };
 use std::sync::Arc;
 mod test_framework;
@@ -39,11 +39,8 @@ fn test_abort_case_2_move_on_with_other_makers() {
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
-        makers_config_map.into(),
-        taker_behavior,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!(
         "🧪 Running Test: Maker 6102 closes before sending sender's sigs. Taker moves on with other Makers."

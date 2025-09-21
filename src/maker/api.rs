@@ -12,10 +12,7 @@ use crate::{
         messages::{FidelityProof, ReqContractSigsForSender},
         Hash160,
     },
-    utill::{
-        check_tor_status, get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType,
-        HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
-    },
+    utill::{get_maker_dir, redeemscript_to_scriptpubkey, HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS},
     wallet::{RPCConfig, WalletSwapCoin},
 };
 use bitcoin::{
@@ -260,7 +257,6 @@ impl Maker {
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
         socks_port: Option<u16>,
-        connection_type: Option<ConnectionType>,
         behavior: MakerBehavior,
     ) -> Result<Self, MakerError> {
         // Get the provided data directory or the default data directory.
@@ -298,10 +294,6 @@ impl Maker {
 
         if let Some(tor_auth_password) = tor_auth_password {
             config.tor_auth_password = tor_auth_password;
-        }
-
-        if matches!(connection_type, Some(ConnectionType::TOR)) {
-            check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
 
         config.write_to_file(&data_dir.join("config.toml"))?;

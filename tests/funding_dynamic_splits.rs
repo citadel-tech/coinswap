@@ -1,10 +1,7 @@
 #![cfg(feature = "integration-test")]
 mod test_framework;
 use bitcoin::{Address, Amount};
-use coinswap::{
-    taker::TakerBehavior,
-    utill::{ConnectionType, MIN_FEE_RATE},
-};
+use coinswap::{taker::TakerBehavior, utill::MIN_FEE_RATE};
 use test_framework::*;
 
 const UTXO_SETS: &[&[u64]] = &[
@@ -49,11 +46,8 @@ fn test_create_funding_txn_with_varied_distributions() {
     );
 
     // Initialize the test framework with a single taker with Normal behavior
-    let (test_framework, mut takers, _, _) = TestFramework::init(
-        vec![],
-        vec![TakerBehavior::Normal],
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, mut takers, _, _) =
+        TestFramework::init(vec![], vec![TakerBehavior::Normal]);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = &mut takers[0];

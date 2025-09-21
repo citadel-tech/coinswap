@@ -216,16 +216,6 @@ impl Taker {
         // If config file doesn't exist, default config will be loaded.
         let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
-        #[cfg(feature = "integration-test")]
-        {
-            config.connection_type = ConnectionType::CLEARNET;
-        }
-
-        #[cfg(not(feature = "integration-test"))]
-        {
-            config.connection_type = ConnectionType::TOR;
-        }
-
         if let Some(control_port) = control_port {
             config.control_port = control_port;
         }
@@ -234,8 +224,7 @@ impl Taker {
             config.tor_auth_password = tor_auth_password;
         }
 
-        #[cfg(not(feature = "integration-test"))]
-        {
+        if !cfg!(feature = "integration-test") {
             check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
 
@@ -1179,13 +1168,14 @@ impl Taker {
             this_maker.address
         );
         let address = this_maker.address.to_string();
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(address)?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(address)?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 address.as_str(),
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         let reconnect_timeout = Duration::from_secs(TCP_TIMEOUT_SECONDS);
@@ -1642,13 +1632,14 @@ impl Taker {
 
         let maker_addr_str = maker_address.to_string();
 
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(maker_addr_str.clone())?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         socket.set_read_timeout(Some(reconnect_time_out))?;
@@ -1730,13 +1721,14 @@ impl Taker {
         let mut ii = 0;
 
         let maker_addr_str = maker_address.to_string();
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(maker_addr_str.clone())?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         socket.set_read_timeout(Some(reconnect_time_out))?;
@@ -1907,13 +1899,14 @@ impl Taker {
         receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {
         let maker_addr_str = maker_address.to_string();
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(maker_addr_str.clone())?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         socket.set_read_timeout(Some(Duration::from_secs(TCP_TIMEOUT_SECONDS)))?;
@@ -2156,15 +2149,10 @@ impl Taker {
 
     /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
     pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        let tracker_addr = match self.config.connection_type {
-            ConnectionType::CLEARNET => {
-                if cfg!(feature = "integration-test") {
-                    format!("127.0.0.1:{}", 8080)
-                } else {
-                    self.config.tracker_address.clone()
-                }
-            }
-            ConnectionType::TOR => self.config.tracker_address.clone(),
+        let tracker_addr = if cfg!(feature = "integration-test") {
+            format!("127.0.0.1:{}", 8080)
+        } else {
+            self.config.tracker_address.clone()
         };
 
         #[cfg(not(feature = "integration-test"))]
@@ -2175,11 +2163,7 @@ impl Taker {
 
         log::info!("Fetching addresses from Tracker: {tracker_addr}");
 
-        let addresses_from_tracker = match fetch_addresses_from_tracker(
-            socks_port,
-            tracker_addr,
-            self.config.connection_type,
-        ) {
+        let addresses_from_tracker = match fetch_addresses_from_tracker(socks_port, tracker_addr) {
             Ok(tracker_addrs) => tracker_addrs,
             Err(e) => {
                 log::error!("Could not connect to Tracker Server: {e:?}");
@@ -2247,13 +2231,14 @@ impl Taker {
     ) -> Result<(), TakerError> {
         // Notify the maker that we are waiting for funding confirmation
         let address = maker_addr.to_string();
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(address)?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(address.clone())?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 address.as_str(),
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         let reconnect_timeout = Duration::from_secs(TCP_TIMEOUT_SECONDS);

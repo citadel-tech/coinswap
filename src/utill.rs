@@ -17,16 +17,17 @@ use log4rs::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    env, fmt, fs,
+    env, fs,
     io::{self, BufReader, BufWriter, ErrorKind, Read, Write},
     net::TcpStream,
     os::unix::io::AsRawFd,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::{Once, OnceLock},
     time::Duration,
 };
 
+#[cfg(test)]
+use std::str::FromStr;
 static LOGGER: OnceLock<()> = OnceLock::new();
 
 use crate::{
@@ -70,41 +71,6 @@ pub const REQUIRED_CONFIRMS: u32 = 1;
 /// Minimum fee rate in sats/vb for all transactions
 /// This replaces the hardcoded MINER_FEE constant
 pub const MIN_FEE_RATE: f64 = 2.0;
-
-/// Specifies the type of connection: TOR or Clearnet.
-///
-/// This enum is used to distinguish between different types of network connections
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ConnectionType {
-    /// Represents a TOR connection type.
-    ///
-    /// This variant is only available when the `tor` feature is enabled.
-    TOR,
-
-    /// Represents a Clearnet connection type.
-    CLEARNET,
-}
-
-impl FromStr for ConnectionType {
-    type Err = NetError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "tor" => Ok(ConnectionType::TOR),
-            "clearnet" => Ok(ConnectionType::CLEARNET),
-            _ => Err(NetError::InvalidAppNetwork),
-        }
-    }
-}
-
-impl fmt::Display for ConnectionType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ConnectionType::TOR => write!(f, "tor"),
-            ConnectionType::CLEARNET => write!(f, "clearnet"),
-        }
-    }
-}
 
 /// Get the system specific home directory.
 /// Uses "/tmp" directory for integration tests
