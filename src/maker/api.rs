@@ -12,7 +12,7 @@ use crate::{
         contract::check_hashvalues_are_equal,
         messages::{
             FidelityProof, MessageToMaker, ReqContractSigsForSender, TrackerClientToServer,
-            TrackerServerToClient,
+            TrackerServerToClient, PREIMAGE_LEN,
         },
         Hash160,
     },
@@ -77,6 +77,10 @@ pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60 * 15);
 /// To enhance safety, the default value is set to 20 blocks.
 pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
 
+/// spent with witnesses:
+//  hashlock case:
+//  <hashlock_signature> <preimage len 32>
+pub const MIN_WITNESS_ITEM_FOR_HASHLOCK: u16 = 2;
 /// # Fee Parameters for Coinswap
 ///
 /// These parameters define the fees charged by Makers in a coinswap transaction.
@@ -548,11 +552,20 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
         // Always clearnet in integration tests
         TcpStream::connect("127.0.0.1:8080")?
     } else {
-        let stream = Socks5Stream::connect(
-            format!("127.0.0.1:{}", maker.config.socks_port),
-            maker.tracker.read()?.clone().unwrap().as_str(),
-        )?;
-        stream.into_inner()
+        loop {
+            let tracker_address = maker.tracker.read()?.clone();
+            if let Some(addr) = tracker_address {
+                let stream = Socks5Stream::connect(
+                    format!("127.0.0.1:{}", maker.config.socks_port),
+                    addr.as_str(),
+                )?
+                .into_inner();
+                break stream;
+            } else {
+                log::info!("Still waiting for the tracker address");
+                std::thread::sleep(Duration::from_secs(60));
+            }
+        }
     };
     loop {
         if maker.shutdown.load(Relaxed) {
@@ -598,11 +611,8 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                                 for (vout, txout) in outgoing.contract_tx.output.iter().enumerate()
                                 {
                                     if txout.script_pubkey == outgoing.contract_redeemscript {
-                                        let outpoint = OutPoint {
-                                            txid,
-                                            vout: vout as u32,
-                                        };
-                                        let request = TrackerClientToServer::Watch { outpoint };
+                                        let request: TrackerClientToServer =
+                                            (txid, vout as u32).into();
 
                                         if let Err(e) = send_message(&mut tracker_stream, &request)
                                         {
@@ -874,7 +884,9 @@ fn check_for_tracker_watch_response(
                 let txid = Txid::from_str(&tx.txid).unwrap();
                 if let Ok(raw_tx) = wallet.rpc.get_raw_transaction(&txid, None) {
                     for input in raw_tx.input.iter() {
-                        if input.witness.len() >= 2 && input.witness[1].len() == 32 {
+                        if input.witness.len() >= MIN_WITNESS_ITEM_FOR_HASHLOCK as usize
+                            && input.witness[1].len() == PREIMAGE_LEN
+                        {
                             let preimage: [u8; 32] = input.witness[1].try_into().unwrap();
                             let wallet_write = maker.wallet.write()?;
                             let (mut incomings, _) = wallet_write.find_unfinished_swapcoins();
