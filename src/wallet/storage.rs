@@ -22,26 +22,6 @@ use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
 
 use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 
-/// Wrapper struct for storing an encrypted wallet on disk.
-///
-/// The standard `WalletStore` is first serialized to CBOR, then encrypted using
-/// [AES-GCM](https://en.wikipedia.org/wiki/Galois/Counter_Mode).
-///
-/// The resulting ciphertext is stored in `encrypted_wallet_store`, and the AES-GCM
-/// nonce used for encryption is stored in `nonce`.
-///
-/// Note: The term “IV” (Initialization Vector) used in AES-GCM — including in the linked Wikipedia page —
-/// refers to the same value as the nonce. They are conceptually the same in this context.
-///
-/// This wrapper itself is then serialized to CBOR and written to disk.
-#[derive(Serialize, Deserialize, Debug)]
-struct EncryptedWalletStore {
-    /// Nonce used for AES-GCM encryption (must match during decryption).
-    nonce: Vec<u8>,
-    /// AES-GCM-encrypted CBOR-serialized `WalletStore` data.
-    encrypted_wallet_store: Vec<u8>,
-}
-
 /// Represents the internal data store for a Bitcoin wallet.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct WalletStore {

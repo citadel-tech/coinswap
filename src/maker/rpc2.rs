@@ -16,7 +16,7 @@ use bitcoin::{Address, Amount};
 
 use crate::{
     maker::{api2::Maker, error::MakerError, RpcMsgReq, RpcMsgResp},
-    utill::{get_tor_hostname, read_message, send_message, ConnectionType, HEART_BEAT_INTERVAL},
+    utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL},
     wallet::Destination,
 };
 use std::str::FromStr;
@@ -90,7 +90,10 @@ fn handle_request_taproot(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<
                 op_return_data: None,
             };
 
-            let coins_to_send = maker.get_wallet().read()?.coin_select(amount, feerate, None)?;
+            let coins_to_send = maker
+                .get_wallet()
+                .read()?
+                .coin_select(amount, feerate, None)?;
             let tx = maker.get_wallet().write()?.spend_from_wallet(
                 feerate,
                 destination,

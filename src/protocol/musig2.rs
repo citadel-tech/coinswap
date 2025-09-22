@@ -32,13 +32,7 @@ pub fn generate_new_nonce_pair(
     musig_key_agg_cache
         .pubkey_xonly_tweak_add(&secp, &tap_tweak)
         .unwrap();
-    musig_key_agg_cache.nonce_gen(
-        &secp,
-        musig_session_sec_rand,
-        pubkey,
-        msg,
-        extra_rand,
-    )
+    musig_key_agg_cache.nonce_gen(&secp, musig_session_sec_rand, pubkey, msg, extra_rand)
 }
 
 /// Aggregates the nonces
@@ -61,12 +55,7 @@ pub fn generate_partial_signature(
     musig_key_agg_cache
         .pubkey_xonly_tweak_add(&secp, &tap_tweak)
         .unwrap();
-    let session = Session::new(
-        &secp,
-        &musig_key_agg_cache,
-        agg_nonce.clone(),
-        message,
-    );
+    let session = Session::new(&secp, &musig_key_agg_cache, agg_nonce.clone(), message);
     session.partial_sign(&secp, sec_nonce, &keypair, &musig_key_agg_cache)
 }
 
@@ -83,12 +72,7 @@ pub fn aggregate_partial_signatures(
     musig_key_agg_cache
         .pubkey_xonly_tweak_add(&secp, &tap_tweak)
         .unwrap();
-    let session = Session::new(
-        &secp,
-        &musig_key_agg_cache,
-        agg_nonce.clone(),
-        message,
-    );
+    let session = Session::new(&secp, &musig_key_agg_cache, agg_nonce.clone(), message);
     session.partial_sig_agg(partial_sigs.as_slice())
 }
 
@@ -101,13 +85,7 @@ pub fn verify_partial_signature(
     pubkey: PublicKey,
 ) -> bool {
     let secp = Secp256k1::new();
-    session.partial_verify(
-        &secp,
-        musig_key_agg_cache,
-        partial_sign,
-        pub_nonce,
-        pubkey,
-    )
+    session.partial_verify(&secp, musig_key_agg_cache, partial_sign, pub_nonce, pubkey)
 }
 
 /// Verifies the aggregated signature
