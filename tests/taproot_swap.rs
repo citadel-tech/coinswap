@@ -6,10 +6,10 @@
 
 use bitcoin::Amount;
 use coinswap::{
-    maker::{TaprootMaker, TaprootMakerBehavior, start_maker_server_taproot},
-    taker::{api2::{SwapParams, Taker}},
+    maker::{start_maker_server_taproot, TaprootMaker, TaprootMakerBehavior},
+    taker::api2::{SwapParams, Taker},
     utill::ConnectionType,
-    wallet::{Destination, Wallet, RPCConfig},
+    wallet::{Destination, RPCConfig, Wallet},
 };
 use std::sync::Arc;
 
@@ -36,12 +36,8 @@ fn test_taproot_coinswap() {
     let connection_type = ConnectionType::CLEARNET;
 
     // Initialize test framework (without regular takers, we'll create taproot taker manually)
-    let (
-        test_framework,
-        _regular_takers,
-        _regular_makers,
-        block_generation_handle,
-    ) = TestFramework::init(vec![], vec![], connection_type);
+    let (test_framework, _regular_takers, _regular_makers, block_generation_handle) =
+        TestFramework::init(vec![], vec![], connection_type);
 
     let bitcoind = &test_framework.bitcoind;
 
@@ -99,7 +95,7 @@ fn test_taproot_coinswap() {
 
     // Get the actual spendable balances AFTER fidelity bond creation
     let mut actual_maker_spendable_balances = Vec::new();
-    
+
     // Test taproot maker balance verification
     log::info!("Testing taproot maker balance verification");
     for (i, maker) in taproot_makers.iter().enumerate() {
@@ -131,7 +127,7 @@ fn test_taproot_coinswap() {
             balances.spendable > Amount::ZERO,
             "Maker should have spendable balance"
         );
-        
+
         // Store the actual spendable balance AFTER fidelity bond creation
         actual_maker_spendable_balances.push(balances.spendable);
     }
@@ -177,7 +173,7 @@ fn test_taproot_coinswap() {
 
     // Mine a block to confirm the sweep transactions
     generate_blocks(bitcoind, 1);
-    
+
     // Synchronize each taproot maker's wallet multiple times to ensure all UTXOs are discovered
     for maker in taproot_makers.iter() {
         let mut wallet = maker.get_wallet().write().unwrap();
@@ -189,9 +185,8 @@ fn test_taproot_coinswap() {
         taproot_taker.get_wallet(),
         &taproot_makers,
         taproot_taker_original_balance,
-        actual_maker_spendable_balances,  // Use the actual spendable balances after fidelity bond creation
+        actual_maker_spendable_balances, // Use the actual spendable balances after fidelity bond creation
     );
-
 
     info!("All taproot swap tests completed successfully!");
 
@@ -343,7 +338,8 @@ fn verify_taproot_swap_results(
     assert!(
         taker_total_after < org_taker_spend_balance,
         "Taker should have paid fees for the taproot swap. Original: {}, After: {}",
-        org_taker_spend_balance, taker_total_after
+        org_taker_spend_balance,
+        taker_total_after
     );
 
     // But the taker should still have a reasonable amount left (not all spent on fees)
@@ -351,21 +347,26 @@ fn verify_taproot_swap_results(
     assert!(
         taker_total_after > org_taker_spend_balance - max_expected_fees,
         "Taker fees should be reasonable. Original: {}, After: {}, Max expected fees: {}",
-        org_taker_spend_balance, taker_total_after, max_expected_fees
+        org_taker_spend_balance,
+        taker_total_after,
+        max_expected_fees
     );
 
     info!(
         "Taker balance verification passed. Original: {}, After: {} (fees paid: {})",
-        org_taker_spend_balance, taker_total_after, org_taker_spend_balance - taker_total_after
+        org_taker_spend_balance,
+        taker_total_after,
+        org_taker_spend_balance - taker_total_after
     );
 
     // Verify makers earned fees
-    for (i, (maker, original_spendable)) in makers.iter().zip(org_maker_spend_balances).enumerate() {
+    for (i, (maker, original_spendable)) in makers.iter().zip(org_maker_spend_balances).enumerate()
+    {
         let wallet = maker.get_wallet().read().unwrap();
         let balances = wallet.get_balances().unwrap();
         let current_total = balances.regular + balances.swap + balances.contract;
         let total_with_fidelity = current_total + balances.fidelity;
-        
+
         info!(
             "Taproot Maker {} final balances - Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Total spendable: {}",
             i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable
@@ -380,7 +381,7 @@ fn verify_taproot_swap_results(
         // The balance might be in different categories (regular vs contract vs swap)
         let max_fees = Amount::from_sat(100000); // Maximum expected mining fees
         let min_earned_fees = Amount::from_sat(1000); // Minimum expected earned fees
-        
+
         // The maker's total balance should be at least (original - max_fees + min_earned_fees)
         let expected_minimum = original_spendable - max_fees;
         assert!(

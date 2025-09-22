@@ -7,7 +7,6 @@
 
 use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::RpcApi;
-use socks::Socks5Stream;
 use std::{
     io::ErrorKind,
     net::{Ipv4Addr, TcpListener, TcpStream},
@@ -21,14 +20,17 @@ pub(crate) use super::api2::{Maker, RPC_PING_INTERVAL};
 use crate::{
     error::NetError,
     maker::{
-        api2::{ check_for_idle_states, ConnectionState},
+        api2::{check_for_idle_states, ConnectionState},
         handlers2::handle_message_taproot,
         rpc2::start_rpc_server_taproot,
     },
-    protocol::{
-        messages2::{MakerToTakerMessage, TakerToMakerMessage, TrackerMetadata, TrackerClientToServer, TrackerServerToClient},
+    protocol::messages2::{
+        MakerToTakerMessage, TakerToMakerMessage, TrackerClientToServer,
+        TrackerServerToClient,
     },
-    utill::{get_tor_hostname, read_message, send_message, DEFAULT_TX_FEE_RATE, HEART_BEAT_INTERVAL},
+    utill::{
+        get_tor_hostname, read_message, send_message, MIN_FEE_RATE, HEART_BEAT_INTERVAL,
+    },
     wallet::WalletError,
 };
 
@@ -90,7 +92,11 @@ fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<(String, String), Make
         .track_and_update_unconfirmed_fidelity_bonds()?;
 
     // Register our taproot-capable maker with the Tracker
-    manage_fidelity_bonds_and_update_tracker_taproot(maker.as_ref(), &maker_address, &tracker_address)?;
+    manage_fidelity_bonds_and_update_tracker_taproot(
+        maker.as_ref(),
+        &maker_address,
+        &tracker_address,
+    )?;
 
     Ok((maker_address, tracker_address))
 }
@@ -147,7 +153,9 @@ fn setup_fidelity_bond_taproot(
         // Convert to messages2::FidelityProof
         let highest_proof = crate::protocol::messages2::FidelityProof {
             bond: proof_message.bond.clone(),
-            cert_hash: *bitcoin::hashes::sha256::Hash::from_bytes_ref(proof_message.cert_hash.as_ref()),
+            cert_hash: *bitcoin::hashes::sha256::Hash::from_bytes_ref(
+                proof_message.cert_hash.as_ref(),
+            ),
             cert_sig: proof_message.cert_sig,
         };
 
@@ -207,11 +215,12 @@ fn setup_fidelity_bond_taproot(
         // sync the wallet
         maker.get_wallet().write()?.sync_no_fail();
 
-        let fidelity_result =
-            maker
-                .get_wallet()
-                .write()?
-                .create_fidelity(amount, locktime, Some(maker_address.as_bytes()), DEFAULT_TX_FEE_RATE);
+        let fidelity_result = maker.get_wallet().write()?.create_fidelity(
+            amount,
+            locktime,
+            Some(maker_address.as_bytes()),
+            MIN_FEE_RATE,
+        );
 
         match fidelity_result {
             // Wait for sufficient funds to create fidelity bond.
@@ -259,7 +268,9 @@ fn setup_fidelity_bond_taproot(
                 // Convert to messages2::FidelityProof
                 let highest_proof = crate::protocol::messages2::FidelityProof {
                     bond: proof_message.bond,
-                    cert_hash: *bitcoin::hashes::sha256::Hash::from_bytes_ref(proof_message.cert_hash.as_ref()),
+                    cert_hash: *bitcoin::hashes::sha256::Hash::from_bytes_ref(
+                        proof_message.cert_hash.as_ref(),
+                    ),
                     cert_sig: proof_message.cert_sig,
                 };
 
@@ -329,7 +340,7 @@ fn check_connection_with_core_taproot(maker: &Maker) -> Result<(), MakerError> {
 fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerError> {
     // Set socket to blocking mode for reliable message reading
     stream.set_nonblocking(false).map_err(NetError::IO)?;
-    
+
     let peer_addr = stream.peer_addr().map_err(NetError::IO)?;
     let ip = peer_addr.ip().to_string();
 
@@ -393,7 +404,12 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         };
 
         // Deserialize the message using unified decoding (supports both taker and tracker messages)
-        log::debug!("[{}] Received {} bytes from {}", maker.config.network_port, message_bytes.len(), ip);
+        log::debug!(
+            "[{}] Received {} bytes from {}",
+            maker.config.network_port,
+            message_bytes.len(),
+            ip
+        );
         let unified_message = match decode_unified_message_taproot(&message_bytes) {
             Ok(msg) => {
                 log::debug!(
@@ -423,7 +439,8 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                         // Save connection state immediately after successful message handling
                         {
                             let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-                            ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
+                            ongoing_swaps
+                                .insert(ip.clone(), (connection_state.clone(), Instant::now()));
                             log::debug!(
                                 "[{}] Saved connection state for {} after successful message handling",
                                 maker.config.network_port,
@@ -443,7 +460,8 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                         // Always save connection state even if there was an error
                         {
                             let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-                            ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
+                            ongoing_swaps
+                                .insert(ip.clone(), (connection_state.clone(), Instant::now()));
                         }
 
                         // Check if this is a behavior-triggered error
@@ -464,7 +482,10 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                 // Handle tracker messages (ping-pong protocol)
                 match tracker_msg {
                     TrackerServerToClient::Ping { address, port } => {
-                        log::info!("[{}] Received a ping from tracker", maker.config.network_port);
+                        log::info!(
+                            "[{}] Received a ping from tracker",
+                            maker.config.network_port
+                        );
                         if let Ok(mut guard) = maker.tracker.write() {
                             if guard.is_none() {
                                 let tracker_address = format!("{address}:{port}");
@@ -484,15 +505,24 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                         let address = format!("{}:{}", hostname, maker.config.network_port);
                         let response = TrackerClientToServer::Pong { address };
                         if let Err(e) = send_message(stream, &response) {
-                            log::error!("Failed to send Pong to tracker: {e:?}. Closing connection.");
+                            log::error!(
+                                "Failed to send Pong to tracker: {e:?}. Closing connection."
+                            );
                             break;
                         }
-                        log::info!("[{}] Sent Pong response to tracker", maker.config.network_port);
+                        log::info!(
+                            "[{}] Sent Pong response to tracker",
+                            maker.config.network_port
+                        );
                         // No MakerToTakerMessage response for tracker messages
                         None
                     }
                     _ => {
-                        log::warn!("[{}] Unhandled tracker message: {:?}", maker.config.network_port, tracker_msg);
+                        log::warn!(
+                            "[{}] Unhandled tracker message: {:?}",
+                            maker.config.network_port,
+                            tracker_msg
+                        );
                         None
                     }
                 }
@@ -501,10 +531,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
 
         // Send response if we have one (only applies to taker messages)
         if let Some(response_msg) = response {
-            log::info!(
-                "[{}] Sending response",
-                maker.config.network_port,
-            );
+            log::info!("[{}] Sending response", maker.config.network_port,);
 
             if let Err(e) = send_message(stream, &response_msg) {
                 log::error!(

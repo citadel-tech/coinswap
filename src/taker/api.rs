@@ -2171,16 +2171,6 @@ impl Taker {
             }
         };
 
-        #[cfg(feature = "tracker")]
-        let addresses_from_dns =
-            match fetch_addresses_from_tracker(socks_port, dns_addr, self.config.connection_type) {
-                Ok(dns_addrs) => dns_addrs,
-                Err(e) => {
-                    log::error!("Could not connect to DNS Server: {e:?}");
-                    return Err(e);
-                }
-            };
-
         // Find out addresses that was last updated 30 mins ago.
         let fresh_addrs = self
             .offerbook

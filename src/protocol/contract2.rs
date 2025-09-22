@@ -1,21 +1,18 @@
 //! This module implements the contract protocol for a 2-of-2 multisig transaction
 
 use super::error2::ProtocolError;
-use bitcoin::blockdata::transaction::{OutPoint, Transaction, TxIn, TxOut};
+use bitcoin::blockdata::transaction::{ Transaction, TxIn, TxOut};
 use bitcoin::hashes::{sha256, Hash as HashTrait};
 use bitcoin::locktime::absolute::LockTime;
 use bitcoin::opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256};
 use bitcoin::secp256k1::{
-    rand::{rngs::OsRng},
-    Keypair, Message, Scalar, Secp256k1, SecretKey, XOnlyPublicKey,
+    rand::rngs::OsRng, Keypair, Message, Scalar, Secp256k1, SecretKey, XOnlyPublicKey,
 };
 use bitcoin::sighash::{Prevouts, SighashCache};
-use bitcoin::taproot::{ LeafVersion, TapLeafHash, TaprootBuilder, TaprootSpendInfo};
+use bitcoin::taproot::{LeafVersion, TapLeafHash, TaprootBuilder, TaprootSpendInfo};
 use bitcoin::transaction::Version;
 use bitcoin::{script, Amount, PublicKey, Script, ScriptBuf, Sequence, Witness};
-use secp256k1::musig::{
-    AggregatedNonce, PartialSignature, PublicNonce,
-};
+use secp256k1::musig::{AggregatedNonce, PartialSignature, PublicNonce};
 
 // create_hashlock_script
 pub(crate) fn create_hashlock_script(hash: &[u8; 32], pubkey: &XOnlyPublicKey) -> ScriptBuf {
@@ -82,7 +79,7 @@ pub(crate) fn calculate_contract_sighash(
         timelock_script.clone(),
         internal_key,
     );
-    
+
     // Create prevout for sighash calculation
     let prevout = TxOut {
         value: contract_amount,
@@ -90,17 +87,16 @@ pub(crate) fn calculate_contract_sighash(
     };
     let prevouts = vec![prevout];
     let prevouts_ref = Prevouts::All(&prevouts);
-    
+
     // Calculate sighash
     let mut spending_tx_copy = spending_tx.clone();
     let mut sighasher = SighashCache::new(&mut spending_tx_copy);
     let sighash = sighasher
         .taproot_key_spend_signature_hash(0, &prevouts_ref, bitcoin::TapSighashType::Default)
         .map_err(|_| ProtocolError::General("Failed to compute sighash"))?;
-    
+
     Ok(bitcoin::secp256k1::Message::from(sighash))
 }
-
 
 pub(crate) fn calculate_coinswap_fee(
     swap_amount: u64,
@@ -117,12 +113,7 @@ pub(crate) fn calculate_coinswap_fee(
     total_fee.ceil() as u64
 }
 
-fn verify_partial_signature(
-) -> Result<bool, ProtocolError> {
-    unimplemented!()
-}
-
-fn verify_hashlock_path(
+fn _verify_hashlock_path(
     privkey: &SecretKey,
     hashpreimage: &[u8; 32],
 ) -> Result<bool, ProtocolError> {
@@ -138,7 +129,7 @@ fn verify_hashlock_path(
     Ok(script == expected_script)
 }
 
-fn verify_timelock_path(privkey: &SecretKey, locktime: LockTime) -> Result<bool, ProtocolError> {
+fn _verify_timelock_path(privkey: &SecretKey, locktime: LockTime) -> Result<bool, ProtocolError> {
     let secp = Secp256k1::new();
     let keypair = Keypair::from_secret_key(&secp, privkey);
     let (x_only_pubkey, _) = keypair.x_only_public_key();
@@ -150,7 +141,7 @@ fn verify_timelock_path(privkey: &SecretKey, locktime: LockTime) -> Result<bool,
     Ok(script == expected_script)
 }
 
-fn verify_transaction_data(
+fn _verify_transaction_data(
     tx: &Transaction,
     input_index: usize,
     prevout: &TxOut,
@@ -178,6 +169,8 @@ fn verify_transaction_data(
 
 #[cfg(test)]
 mod tests {
+
+    use bitcoin::blockdata::transaction::OutPoint;
 
     fn create_unsigned_contract_tx(
         input: OutPoint,
@@ -216,9 +209,7 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
-    use bitcoin::{
-        Txid,
-    };
+    use bitcoin::Txid;
 
     fn mine_blocks(num: u64, address: &Address) {
         let client = Client::new(

@@ -6,21 +6,12 @@
 use crate::{
     protocol::{
         contract2::{calculate_coinswap_fee, calculate_contract_sighash},
-        messages2::{
-            Offer,
-            SenderContractFromMaker, SendersContract, SwapDetails,
-        },
+        messages2::{Offer, SenderContractFromMaker, SendersContract, SwapDetails},
     },
-    utill::{
-        check_tor_status, get_maker_dir, ConnectionType, HEART_BEAT_INTERVAL,
-    },
-    wallet::{
-        RPCConfig, Wallet,
-    },
+    utill::{check_tor_status, get_maker_dir, ConnectionType, HEART_BEAT_INTERVAL},
+    wallet::{RPCConfig, Wallet},
 };
-use bitcoin::{
-    hashes::Hash, Amount, ScriptBuf, Transaction,
-};
+use bitcoin::{hashes::Hash, Amount, ScriptBuf, Transaction};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use std::{
     collections::HashMap,
@@ -113,7 +104,7 @@ pub struct ConnectionState {
     pub(crate) incoming_contract_internal_key: Option<bitcoin::secp256k1::XOnlyPublicKey>,
     pub(crate) incoming_contract_spending_tx: Option<Transaction>, // Spending transaction for incoming contract
     // Ordered pubkeys are computed on-the-fly when needed
-    pub(crate) sweep_state: SweepState,    // Current state of the sweeping process
+    pub(crate) sweep_state: SweepState, // Current state of the sweeping process
     // New fields for backwards sweeping protocol
     pub(crate) outgoing_contract_my_privkey: Option<bitcoin::secp256k1::SecretKey>, // Our outgoing contract private key
     pub(crate) outgoing_contract_my_pubkey: Option<bitcoin::PublicKey>, // Our outgoing contract public key
@@ -294,7 +285,6 @@ impl Maker {
             config.socks_port = socks_port;
         }
 
-
         if let Some(control_port) = control_port {
             config.control_port = control_port;
         }
@@ -394,7 +384,7 @@ impl Maker {
         })
     }
 
-        /// Validates incoming swap parameters
+    /// Validates incoming swap parameters
     pub(crate) fn validate_swap_parameters(
         &self,
         swap_details: &SwapDetails,
@@ -424,7 +414,7 @@ impl Maker {
         Ok(())
     }
 
-        /// Calculates the fee for a given swap
+    /// Calculates the fee for a given swap
     pub(crate) fn calculate_swap_fee(&self, amount: Amount, timelock: u16) -> Amount {
         let fee_sats = calculate_coinswap_fee(
             amount.to_sat(),
@@ -459,8 +449,7 @@ impl Maker {
         connection_state.incoming_contract_other_pubkey = Some(message.pubkeys_a[0]);
 
         // Store taker's tweakable pubkey for backwards sweeping protocol
-        connection_state.outgoing_contract_other_pubkey =
-            Some(message.next_party_tweakable_point);
+        connection_state.outgoing_contract_other_pubkey = Some(message.next_party_tweakable_point);
 
         // Verify we have sufficient funds and get necessary data
         let (outgoing_privkey, funding_utxo) = {
@@ -481,7 +470,9 @@ impl Maker {
                 .into_iter()
                 .find(|(utxo, _)| utxo.amount >= connection_state.swap_amount)
                 .map(|(utxo, _)| utxo)
-                .ok_or_else(|| MakerError::General("No single UTXO found with sufficient amount"))?;
+                .ok_or_else(|| {
+                    MakerError::General("No single UTXO found with sufficient amount")
+                })?;
 
             (outgoing_privkey, funding_utxo)
         };
@@ -493,9 +484,7 @@ impl Maker {
             ));
         }
 
-        use crate::protocol::contract2::{
-            create_taproot_script, create_timelock_script
-        };
+        use crate::protocol::contract2::{create_taproot_script, create_timelock_script};
         use bitcoin::locktime::absolute::LockTime;
 
         let secp = bitcoin::secp256k1::Secp256k1::new();
@@ -503,7 +492,10 @@ impl Maker {
             bitcoin::secp256k1::Keypair::from_secret_key(&secp, &outgoing_privkey)
                 .x_only_public_key();
 
-        let hashlock_script = connection_state.incoming_contract_hashlock_script.clone().unwrap();
+        let hashlock_script = connection_state
+            .incoming_contract_hashlock_script
+            .clone()
+            .unwrap();
         connection_state.outgoing_contract_hashlock_script = Some(hashlock_script.clone());
 
         let timelock = LockTime::from_height(connection_state.timelock as u32).unwrap();
@@ -543,7 +535,7 @@ impl Maker {
         let incoming_contract_txid = connection_state
             .incoming_contract_txid
             .ok_or_else(|| MakerError::General("No taker contract transaction hash found"))?;
-        
+
         let received_amount = {
             let wallet = self.wallet.read()?;
             let incoming_contract_tx = wallet
@@ -560,7 +552,7 @@ impl Maker {
             our_fee.to_sat(),
             received_amount.to_sat()
         );
-        
+
         // Calculate the amount for our outgoing contract (received amount minus our fee)
         // The taker will pay mining fees when sweeping
         let outgoing_contract_amount = received_amount - our_fee;
@@ -576,7 +568,7 @@ impl Maker {
             let mut wallet = self.wallet.write()?;
 
             // Use wallet's spend_from_wallet method to properly sign the transaction
-            use crate::utill::DEFAULT_TX_FEE_RATE;
+            use crate::utill::MIN_FEE_RATE;
             use crate::wallet::Destination;
 
             // Get the funding UTXO spend info
@@ -585,13 +577,14 @@ impl Maker {
                 .ok_or_else(|| MakerError::General("Funding UTXO not found"))?;
 
             // Use Destination::Multi to send exact amount to contract and keep the fee as change
-            let contract_address = bitcoin::Address::from_script(&taproot_script, bitcoin::Network::Regtest)
-                .map_err(|_| MakerError::General("Failed to create address"))?;
-            
+            let contract_address =
+                bitcoin::Address::from_script(&taproot_script, bitcoin::Network::Regtest)
+                    .map_err(|_| MakerError::General("Failed to create address"))?;
+
             // Create a proper signed transaction using the wallet with Multi destination
             // This sends exactly outgoing_contract_amount to the contract and returns change to maker
             let signed_tx = wallet.spend_from_wallet(
-                DEFAULT_TX_FEE_RATE,
+                MIN_FEE_RATE,
                 Destination::Multi {
                     outputs: vec![(contract_address, outgoing_contract_amount)],
                     op_return_data: None,
@@ -618,7 +611,6 @@ impl Maker {
         let internal_key = connection_state
             .incoming_contract_internal_key
             .ok_or_else(|| MakerError::General("No internal key found in message"))?;
-
 
         use bitcoin::{OutPoint, Sequence, TxIn, TxOut, Witness};
 
@@ -663,10 +655,17 @@ impl Maker {
         let _message = calculate_contract_sighash(
             &spending_tx,
             incoming_contract_tx_output_value,
-            &connection_state.incoming_contract_hashlock_script.clone().unwrap(),
-            &connection_state.incoming_contract_timelock_script.clone().unwrap(),
+            &connection_state
+                .incoming_contract_hashlock_script
+                .clone()
+                .unwrap(),
+            &connection_state
+                .incoming_contract_timelock_script
+                .clone()
+                .unwrap(),
             internal_key,
-        ).map_err(|_| MakerError::General("Failed to calculate sighash"))?;
+        )
+        .map_err(|_| MakerError::General("Failed to calculate sighash"))?;
 
         // Store taproot contract data directly in connection state instead of using traditional IncomingSwapCoin
         // The taker's contract transaction hash is already stored in connection_state.contract_tx_hash
@@ -705,7 +704,7 @@ impl Maker {
         connection_state: &mut ConnectionState,
     ) -> Result<crate::protocol::messages2::NoncesPartialSigsAndSpendingTx, MakerError> {
         use crate::protocol::musig_interface::generate_new_nonce_pair_i;
-        use bitcoin::secp256k1::{Secp256k1};
+        use bitcoin::secp256k1::Secp256k1;
 
         log::info!("Processing SpendingTxAndReceiverNonce message");
 
@@ -746,20 +745,32 @@ impl Maker {
 
         // Calculate sighash for the spending transaction to use in nonce generation
         let contract_txid = outgoing_contract_spending_tx.input[0].previous_output.txid;
-        
-        log::info!("  Received spending tx trying to spend: {:?}", contract_txid);
-        log::info!("  My outgoing contract txid: {:?}", connection_state.outgoing_contract_txid);
-        
+
+        log::info!(
+            "  Received spending tx trying to spend: {:?}",
+            contract_txid
+        );
+        log::info!(
+            "  My outgoing contract txid: {:?}",
+            connection_state.outgoing_contract_txid
+        );
+
         // Validate that the taker is trying to spend from the correct contract
         if let Some(my_contract_txid) = connection_state.outgoing_contract_txid {
             if contract_txid != my_contract_txid {
-                log::error!("Taker is trying to spend from wrong contract. Expected: {:?}, Got: {:?}", my_contract_txid, contract_txid);
-                return Err(MakerError::General("Taker is trying to spend from wrong contract"));
+                log::error!(
+                    "Taker is trying to spend from wrong contract. Expected: {:?}, Got: {:?}",
+                    my_contract_txid,
+                    contract_txid
+                );
+                return Err(MakerError::General(
+                    "Taker is trying to spend from wrong contract",
+                ));
             }
         } else {
             return Err(MakerError::General("No outgoing contract txid stored"));
         }
-        
+
         let contract_tx = self
             .wallet
             .read()?
@@ -778,8 +789,14 @@ impl Maker {
             internal_key_pubkeys[0].inner,
             internal_key_pubkeys[1].inner,
         );
-        let outgoing_contract_hashlock_script = connection_state.outgoing_contract_hashlock_script.clone().unwrap();
-        let outgoing_contract_timelock_script = connection_state.outgoing_contract_timelock_script.clone().unwrap();
+        let outgoing_contract_hashlock_script = connection_state
+            .outgoing_contract_hashlock_script
+            .clone()
+            .unwrap();
+        let outgoing_contract_timelock_script = connection_state
+            .outgoing_contract_timelock_script
+            .clone()
+            .unwrap();
         // Use helper to calculate sighash
         let message = calculate_contract_sighash(
             outgoing_contract_spending_tx,
@@ -787,7 +804,8 @@ impl Maker {
             &outgoing_contract_hashlock_script,
             &outgoing_contract_timelock_script,
             expected_internal_key,
-        ).map_err(|_| MakerError::General("Failed to calculate sighash"))?;
+        )
+        .map_err(|_| MakerError::General("Failed to calculate sighash"))?;
 
         log::info!(
             "[{}] message (sighash): {:?}",
@@ -798,7 +816,7 @@ impl Maker {
         // Use lexicographic ordering to match how the contract was created
         let mut ordered_pubkeys = vec![pubkey1, pubkey2];
         ordered_pubkeys.sort_by(|a, b| a.inner.serialize().cmp(&b.inner.serialize()));
-        
+
         let (outgoing_contract_my_sec_nonce, outgoing_contract_my_pub_nonce) =
             generate_new_nonce_pair_i(
                 tap_tweak,
@@ -832,11 +850,13 @@ impl Maker {
                 internal_key_pubkeys[0].inner,
                 internal_key_pubkeys[1].inner,
             );
-        
+
         // Save the aggregated nonce, partial signature, and spending transaction for later sweep completion
         connection_state.outgoing_aggregated_nonce = Some(aggregated_nonce);
-        connection_state.outgoing_contract_my_partial_sig = Some(outgoing_contract_my_partial_sig.clone());
-        connection_state.outgoing_contract_spending_tx = Some(outgoing_contract_spending_tx.clone());
+        connection_state.outgoing_contract_my_partial_sig =
+            Some(outgoing_contract_my_partial_sig.clone());
+        connection_state.outgoing_contract_spending_tx =
+            Some(outgoing_contract_spending_tx.clone());
 
         // let next_message = self.get_incoming_contract_sighash_message();
         let unsigned_spending_tx = self.create_unsigned_spending_tx(connection_state)?;
@@ -855,10 +875,11 @@ impl Maker {
         // Store nonces and spending transaction for later use in sweep completion
         connection_state.incoming_contract_my_pub_nonce = Some(incoming_contract_my_pub_nonce);
         connection_state.incoming_contract_spending_tx = Some(unsigned_spending_tx.clone());
-        
+
         // Store secret nonce bytes since SecretNonce can't be cloned
         // We'll regenerate the partial signature later when we have the sender nonce
-        connection_state.incoming_contract_my_sec_nonce_bytes = Some(incoming_contract_my_sec_nonce.dangerous_into_bytes());
+        connection_state.incoming_contract_my_sec_nonce_bytes =
+            Some(incoming_contract_my_sec_nonce.dangerous_into_bytes());
 
         // Create response
         let response = crate::protocol::messages2::NoncesPartialSigsAndSpendingTx {
@@ -878,42 +899,60 @@ impl Maker {
         partial_sig_and_senders_nonce: &crate::protocol::messages2::PartialSigAndSendersNonce,
         connection_state: &mut ConnectionState,
     ) -> Result<(), MakerError> {
-        use crate::protocol::musig_interface::{aggregate_partial_signatures_i, generate_partial_signature_i, get_aggregated_nonce_i};
-        use bitcoin::secp256k1::{Secp256k1};
-        use bitcoin::sighash::{SighashCache};
-        use bitcoin::{Witness};
+        use crate::protocol::musig_interface::{
+            aggregate_partial_signatures_i, generate_partial_signature_i, get_aggregated_nonce_i,
+        };
+        use bitcoin::secp256k1::Secp256k1;
+        use bitcoin::sighash::SighashCache;
+        use bitcoin::Witness;
         use bitcoind::bitcoincore_rpc::RpcApi;
 
-        log::info!("[{}] Completing maker sweep with received partial signature", self.config.network_port);
+        log::info!(
+            "[{}] Completing maker sweep with received partial signature",
+            self.config.network_port
+        );
 
         // Check if we have partial signatures from the other party
         if partial_sig_and_senders_nonce.partial_signatures.is_empty() {
             log::warn!("[{}] No partial signatures received - taker partial signature generation not yet complete", self.config.network_port);
             return Ok(());
         }
-        let other_partial_sig: secp256k1::musig::PartialSignature = 
-            partial_sig_and_senders_nonce.partial_signatures[0].clone().into();
+        let other_partial_sig: secp256k1::musig::PartialSignature = partial_sig_and_senders_nonce
+            .partial_signatures[0]
+            .clone()
+            .into();
 
         // Get the sender nonce that we just received
-        let sender_nonce: secp256k1::musig::PublicNonce = 
+        let sender_nonce: secp256k1::musig::PublicNonce =
             partial_sig_and_senders_nonce.sender_nonce.clone().into();
 
         // DETAILED LOGGING FOR MAKER SIGNATURE VERIFICATION
-        log::info!("[{}] Received sender_nonce from taker", self.config.network_port);
-        log::info!("[{}] Received partial_sig from taker", self.config.network_port);
+        log::info!(
+            "[{}] Received sender_nonce from taker",
+            self.config.network_port
+        );
+        log::info!(
+            "[{}] Received partial_sig from taker",
+            self.config.network_port
+        );
 
         // Get the spending transaction we created for our incoming contract
         let spending_tx = connection_state
             .incoming_contract_spending_tx
             .as_ref()
-            .ok_or_else(|| MakerError::General("No spending transaction found for sweep completion"))?;
+            .ok_or_else(|| {
+                MakerError::General("No spending transaction found for sweep completion")
+            })?;
 
         // Now we can generate our partial signature for the incoming contract sweep
         // Get stored secret nonce bytes and reconstruct the SecretNonce
         let sec_nonce_bytes = connection_state
             .incoming_contract_my_sec_nonce_bytes
-            .ok_or_else(|| MakerError::General("No stored secret nonce bytes for incoming contract"))?;
-        let incoming_contract_my_sec_nonce = secp256k1::musig::SecretNonce::dangerous_from_bytes(sec_nonce_bytes);
+            .ok_or_else(|| {
+                MakerError::General("No stored secret nonce bytes for incoming contract")
+            })?;
+        let incoming_contract_my_sec_nonce =
+            secp256k1::musig::SecretNonce::dangerous_from_bytes(sec_nonce_bytes);
 
         // Get our public nonce
         let incoming_contract_my_pub_nonce = connection_state
@@ -922,23 +961,36 @@ impl Maker {
             .ok_or_else(|| MakerError::General("No stored public nonce for incoming contract"))?;
 
         // Get incoming contract details
-        let incoming_contract_txid = connection_state.incoming_contract_txid
+        let incoming_contract_txid = connection_state
+            .incoming_contract_txid
             .ok_or_else(|| MakerError::General("No incoming contract txid"))?;
-        let incoming_tap_tweak = connection_state.incoming_contract_tap_tweak
+        let incoming_tap_tweak = connection_state
+            .incoming_contract_tap_tweak
             .ok_or_else(|| MakerError::General("No tap tweak for incoming contract"))?;
-        let incoming_internal_key = connection_state.incoming_contract_internal_key
+        let incoming_internal_key = connection_state
+            .incoming_contract_internal_key
             .ok_or_else(|| MakerError::General("No internal key for incoming contract"))?;
 
         // Get contract transaction and reconstruct script
-        let incoming_contract_tx = self.wallet.read()?.rpc.get_raw_transaction(&incoming_contract_txid, None)
+        let incoming_contract_tx = self
+            .wallet
+            .read()?
+            .rpc
+            .get_raw_transaction(&incoming_contract_txid, None)
             .map_err(|_e| MakerError::General("Failed to get incoming contract transaction"))?;
         let incoming_contract_amount = incoming_contract_tx.output[0].value;
 
-        let incoming_hashlock_script = connection_state.incoming_contract_hashlock_script.clone()
-            .ok_or_else(|| MakerError::General("No incoming hashlock script"))?;
-        let incoming_timelock_script = connection_state.incoming_contract_timelock_script.clone()
-            .ok_or_else(|| MakerError::General("No incoming timelock script"))?;
-        
+        let incoming_hashlock_script =
+            connection_state
+                .incoming_contract_hashlock_script
+                .clone()
+                .ok_or_else(|| MakerError::General("No incoming hashlock script"))?;
+        let incoming_timelock_script =
+            connection_state
+                .incoming_contract_timelock_script
+                .clone()
+                .ok_or_else(|| MakerError::General("No incoming timelock script"))?;
+
         // Use helper to calculate sighash
         let incoming_message = calculate_contract_sighash(
             spending_tx,
@@ -946,21 +998,29 @@ impl Maker {
             &incoming_hashlock_script,
             &incoming_timelock_script,
             incoming_internal_key,
-        ).map_err(|_| MakerError::General("Failed to calculate sighash"))?;
+        )
+        .map_err(|_| MakerError::General("Failed to calculate sighash"))?;
 
         // Get keypairs and order them for incoming contract
-        let incoming_my_privkey = connection_state.incoming_contract_my_privkey
+        let incoming_my_privkey = connection_state
+            .incoming_contract_my_privkey
             .ok_or_else(|| MakerError::General("No incoming contract private key"))?;
         let secp = Secp256k1::new();
-        let incoming_my_keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &incoming_my_privkey);
-        let incoming_other_pubkey = connection_state.incoming_contract_other_pubkey
+        let incoming_my_keypair =
+            bitcoin::secp256k1::Keypair::from_secret_key(&secp, &incoming_my_privkey);
+        let incoming_other_pubkey = connection_state
+            .incoming_contract_other_pubkey
             .ok_or_else(|| MakerError::General("No incoming contract other pubkey"))?;
 
-        let mut incoming_ordered_pubkeys = vec![incoming_my_keypair.public_key(), incoming_other_pubkey.inner];
+        let mut incoming_ordered_pubkeys = vec![
+            incoming_my_keypair.public_key(),
+            incoming_other_pubkey.inner,
+        ];
         incoming_ordered_pubkeys.sort_by(|a, b| a.serialize().cmp(&b.serialize()));
 
         // Create aggregated nonce with sender nonce and our public nonce
-        let incoming_nonce_refs = if incoming_ordered_pubkeys[0] == incoming_my_keypair.public_key() {
+        let incoming_nonce_refs = if incoming_ordered_pubkeys[0] == incoming_my_keypair.public_key()
+        {
             vec![incoming_contract_my_pub_nonce, &sender_nonce]
         } else {
             vec![&sender_nonce, incoming_contract_my_pub_nonce]
@@ -994,9 +1054,9 @@ impl Maker {
         );
 
         // Create final signature and add to transaction witness
-        let final_signature = bitcoin::taproot::Signature::from_slice(
-            aggregated_sig.assume_valid().as_byte_array()
-        ).unwrap();
+        let final_signature =
+            bitcoin::taproot::Signature::from_slice(aggregated_sig.assume_valid().as_byte_array())
+                .unwrap();
 
         let mut final_tx = spending_tx.clone();
         let mut final_sighasher = SighashCache::new(&mut final_tx);
@@ -1005,10 +1065,18 @@ impl Maker {
 
         // Broadcast the completed spending transaction
         use crate::bitcoind::bitcoincore_rpc::RawTx;
-        let txid = self.wallet.read()?.rpc.send_raw_transaction(completed_tx.raw_hex())
+        let txid = self
+            .wallet
+            .read()?
+            .rpc
+            .send_raw_transaction(completed_tx.raw_hex())
             .map_err(|e| MakerError::Wallet(crate::wallet::WalletError::Rpc(e)))?;
 
-        log::info!("[{}] Maker sweep transaction broadcasted with txid: {:?}", self.config.network_port, txid);
+        log::info!(
+            "[{}] Maker sweep transaction broadcasted with txid: {:?}",
+            self.config.network_port,
+            txid
+        );
 
         Ok(())
     }
@@ -1025,8 +1093,11 @@ impl Maker {
             .incoming_contract_txid
             .ok_or_else(|| MakerError::General("No incoming contract transaction hash found"))?;
 
-        log::info!("[{}] Creating unsigned spending tx for incoming contract: {}",
-                  self.config.network_port, incoming_contract_txid);
+        log::info!(
+            "[{}] Creating unsigned spending tx for incoming contract: {}",
+            self.config.network_port,
+            incoming_contract_txid
+        );
 
         // Fetch the contract transaction to get the output value
         let incoming_contract_tx = {
@@ -1068,8 +1139,11 @@ impl Maker {
             }],
         };
 
-        log::info!("[{}] Created unsigned spending tx with output value: {}",
-                  self.config.network_port, contract_value - Amount::from_sat(1000));
+        log::info!(
+            "[{}] Created unsigned spending tx with output value: {}",
+            self.config.network_port,
+            contract_value - Amount::from_sat(1000)
+        );
 
         Ok(spending_tx)
     }

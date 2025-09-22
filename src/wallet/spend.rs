@@ -12,7 +12,7 @@ use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RawTx, RpcApi};
 
 use crate::{
     utill::calculate_fee_sats,
-    wallet::{UTXOSpendInfo, FidelityError},
+    wallet::{api::UTXOSpendInfo, FidelityError},
 };
 
 use super::{error::WalletError, swapcoin::SwapCoin, IncomingSwapCoin, OutgoingSwapCoin, Wallet};

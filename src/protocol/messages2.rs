@@ -134,15 +134,6 @@ pub(crate) struct GetOffer {
     pub(crate) number_of_transactions: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct ContractInfo {
-    pub(crate) contract_tx: Transaction,
-    pub(crate) hashlock_script: ScriptBuf,
-    pub(crate) timelock_script: ScriptBuf,
-    pub(crate) sender_nonce: Option<SerializablePublicNonce>,
-    pub(crate) receiver_nonce: Option<SerializablePublicNonce>,
-}
-
 /// An offer from a maker to participate in a coinswap
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Offer {
@@ -201,15 +192,6 @@ pub(crate) struct SenderContractFromMaker {
     // MuSig2 data for cooperative spending
     pub(crate) internal_key: Option<bitcoin::secp256k1::XOnlyPublicKey>,
     pub(crate) tap_tweak: Option<SerializableScalar>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct PartialSignaturesAndNonces {
-    pub(crate) partial_signatures: Vec<SerializablePartialSignature>,
-    pub(crate) sender_nonces: Vec<SerializablePublicNonce>,
-    pub(crate) receiver_nonces: Vec<SerializablePublicNonce>,
-    // Transaction structure for cooperative spending - the sweeping party constructs this
-    pub(crate) spending_transaction: Option<Transaction>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

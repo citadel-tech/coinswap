@@ -52,22 +52,6 @@ use super::{
 
 const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
 
-/// Salt used for key derivation from a user-provided passphrase.
-const PBKDF2_SALT: &[u8; 8] = b"coinswap";
-/// Number of PBKDF2 iterations to strengthen passphrase-derived keys.
-///
-/// In production, this is set to **600,000 iterations**, following
-/// modern password security guidance from the
-/// [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
-///
-/// During testing or integration tests, the iteration count is reduced to 1
-/// for performance.
-const PBKDF2_ITERATIONS: u32 = if cfg!(feature = "integration-test") || cfg!(test) {
-    1
-} else {
-    600_000
-};
-
 /// Represents a Bitcoin wallet with associated functionality and data.
 #[derive(Debug)]
 pub struct Wallet {
