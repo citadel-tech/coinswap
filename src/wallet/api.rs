@@ -21,9 +21,7 @@ use bitcoin::{
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, Weight,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
-use pbkdf2::pbkdf2_hmac_array;
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use std::path::Path;
 
 use crate::{
@@ -69,18 +67,6 @@ const PBKDF2_ITERATIONS: u32 = if cfg!(feature = "integration-test") || cfg!(tes
 } else {
     600_000
 };
-
-/// Holds derived cryptographic key material used for encrypting and decrypting wallet data.
-#[derive(Debug, Clone)]
-pub struct KeyMaterial {
-    /// A 256-bit key derived from the user’s passphrase via PBKDF2.
-    /// This key is used with AES-GCM for encryption/decryption.
-    pub key: [u8; 32],
-    /// Nonce used for AES-GCM encryption, generated when a new wallet is created.
-    /// When loading an existing wallet, this is initially `None`.
-    /// It is populated after reading the stored nonce from disk.
-    pub nonce: Option<Vec<u8>>,
-}
 
 /// Represents a Bitcoin wallet with associated functionality and data.
 #[derive(Debug)]
@@ -320,17 +306,6 @@ impl Wallet {
             store.incoming_swapcoins.len(),
             store.outgoing_swapcoins.len()
         );
-
-        // The input `store_enc_material` has a key but no nonce before reading from disk.
-        // After reading, combine the key with the stored nonce to create a complete KeyMaterial
-        // used for subsequent encryption/decryption operations.
-        let updated_enc_material = match (store_enc_material, nonce) {
-            (Some(material), Some(nonce)) => Some(KeyMaterial {
-                key: material.key,
-                nonce: Some(nonce),
-            }),
-            _ => None,
-        };
 
         Ok(Self {
             rpc,

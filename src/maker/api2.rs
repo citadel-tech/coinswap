@@ -242,6 +242,8 @@ pub struct Maker {
     data_dir: PathBuf,
     /// Thread pool for managing all spawned threads
     pub(crate) thread_pool: Arc<ThreadPool>,
+    /// Tracker address to connect to
+    pub(crate) tracker: RwLock<Option<String>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -256,7 +258,7 @@ impl Maker {
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
         socks_port: Option<u16>,
-        connection_type: Option<ConnectionType>,
+        _connection_type: Option<ConnectionType>,
         behavior: MakerBehavior,
     ) -> Result<Self, MakerError> {
         let data_dir = data_dir.unwrap_or(get_maker_dir());
@@ -269,7 +271,7 @@ impl Maker {
         rpc_config.wallet_name = wallet_file_name;
 
         let mut wallet = if wallet_path.exists() {
-            let wallet = Wallet::load(&wallet_path, &rpc_config, &None)?;
+            let wallet = Wallet::load(&wallet_path, &rpc_config)?;
             log::info!("Wallet file at {wallet_path:?} successfully loaded.");
             wallet
         } else {
@@ -292,9 +294,6 @@ impl Maker {
             config.socks_port = socks_port;
         }
 
-        if let Some(connection_type) = connection_type {
-            config.connection_type = connection_type;
-        }
 
         if let Some(control_port) = control_port {
             config.control_port = control_port;
@@ -304,7 +303,8 @@ impl Maker {
             config.tor_auth_password = tor_auth_password;
         }
 
-        if matches!(connection_type, Some(ConnectionType::TOR)) {
+        // Check Tor status if not in integration test mode
+        if !cfg!(feature = "integration-test") {
             check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
 
@@ -325,6 +325,7 @@ impl Maker {
             is_setup_complete: AtomicBool::new(false),
             data_dir,
             thread_pool: Arc::new(ThreadPool::new(network_port)),
+            tracker: RwLock::new(None),
         })
     }
 
@@ -475,7 +476,12 @@ impl Maker {
             connection_state.outgoing_contract_my_pubkey = Some(outgoing_pubkey);
 
             // Get funding UTXO from our wallet
-            let funding_utxo = wallet.get_utxo_for_amount(connection_state.swap_amount)?;
+            let spendable_utxos = wallet.list_descriptor_utxo_spend_info()?;
+            let funding_utxo = spendable_utxos
+                .into_iter()
+                .find(|(utxo, _)| utxo.amount >= connection_state.swap_amount)
+                .map(|(utxo, _)| utxo)
+                .ok_or_else(|| MakerError::General("No single UTXO found with sufficient amount"))?;
 
             (outgoing_privkey, funding_utxo)
         };
@@ -1081,7 +1087,7 @@ impl Maker {
                 .filter_map(|(i, bond)| {
                     if bond.conf_height.is_none() && bond.cert_expiry.is_none() {
                         let conf_height = wallet_read
-                            .wait_for_fidelity_tx_confirmation(bond.outpoint.txid)
+                            .wait_for_tx_confirmation(bond.outpoint.txid)
                             .unwrap();
                         Some((*i, conf_height))
                     } else {

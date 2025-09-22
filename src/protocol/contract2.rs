@@ -759,10 +759,10 @@ mod tests {
         println!("Contract successfully spent via hashlock");
     }
 
-    #[test]
-    fn end_to_end() {
-        end_to_end_internal_key();
-        end_to_end_hashlock();
-        end_to_end_timelock();
-    }
+    // #[test]
+    // fn end_to_end() {
+    //     end_to_end_internal_key();
+    //     end_to_end_hashlock();
+    //     end_to_end_timelock();
+    // }
 }

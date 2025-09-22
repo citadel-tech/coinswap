@@ -235,8 +235,7 @@ impl Wallet {
                     total_witness_size += spend_info.estimate_witness_size();
                     total_input_value += utxo_data.amount;
                 }
-                UTXOSpendInfo::IncomingSwapCoin { .. } | UTXOSpendInfo::OutgoingSwapCoin { .. } | 
-                UTXOSpendInfo::IncomingSwapCoin2 { .. } | UTXOSpendInfo::OutgoingSwapCoin2 { .. } => {
+                UTXOSpendInfo::IncomingSwapCoin { .. } | UTXOSpendInfo::OutgoingSwapCoin { .. } => {
                     tx.input.push(TxIn {
                         previous_output: OutPoint::new(utxo_data.txid, utxo_data.vout),
                         sequence: Sequence::ZERO,

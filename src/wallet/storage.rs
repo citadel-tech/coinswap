@@ -59,10 +59,6 @@ pub(crate) struct WalletStore {
     pub(super) incoming_swapcoins: HashMap<ScriptBuf, IncomingSwapCoin>,
     /// Map of multisig redeemscript to outgoing swapcoins.
     pub(super) outgoing_swapcoins: HashMap<ScriptBuf, OutgoingSwapCoin>,
-    /// Map of multisig redeemscript to incoming taproot swapcoins.
-    pub(super) incoming_swapcoins2: HashMap<ScriptBuf, IncomingSwapCoin2>,
-    /// Map of multisig redeemscript to outgoing taproot swapcoins.
-    pub(super) outgoing_swapcoins2: HashMap<ScriptBuf, OutgoingSwapCoin2>,
     /// Map of prevout to contract redeemscript.
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
     /// Map of swept incoming swap coins to prevent mixing with regular UTXOs
@@ -97,8 +93,6 @@ impl WalletStore {
             offer_maxsize: 0,
             incoming_swapcoins: HashMap::new(),
             outgoing_swapcoins: HashMap::new(),
-            incoming_swapcoins2: HashMap::new(),
-            outgoing_swapcoins2: HashMap::new(),
             prevout_to_contract_map: HashMap::new(),
             swept_incoming_swapcoins: HashMap::new(),
             fidelity_bond: HashMap::new(),

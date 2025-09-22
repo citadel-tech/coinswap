@@ -1,4 +1,4 @@
-//! This module defines the messages communicated between the parties(Taker, Maker and DNS)
+//! This module defines the messages communicated between the parties(Taker, Maker and Tracker)
 use crate::wallet::FidelityBond;
 use bitcoin::hashes::sha256::Hash;
 use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
@@ -102,7 +102,7 @@ impl From<SerializablePartialSignature> for PartialSignature {
     }
 }
 
-/// Fidelity proof for the maker
+/// Represents a fidelity proof in the Coinswap protocol
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FidelityProof {
     pub(crate) bond: FidelityBond,
@@ -213,40 +213,65 @@ pub(crate) struct PartialSignaturesAndNonces {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-/// Response from DNS server for registration requests
-pub enum DnsResponse {
-    /// Acknowledgment that the registration was successful
-    Ack,
-    /// Negative acknowledgment with a reason for rejection
-    Nack(String),
-}
-
-impl std::fmt::Display for DnsResponse {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DnsResponse::Ack => write!(f, "Ack"),
-            DnsResponse::Nack(reason) => write!(f, "Nack: {}", reason),
-        }
-    }
+/// Metadata shared by the maker with the Tracker for verifying authenticity.
+pub struct TrackerMetadata {
+    /// The maker's URL.
+    pub url: String,
+    /// Proof of the maker's fidelity bond funding.
+    pub proof: FidelityProof,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-/// Metadata for the maker
-pub struct DnsMetadata {
-    pub(crate) url: String,
-    pub(crate) proof: FidelityProof,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-/// Request to DNS server for maker registration
-pub enum DnsRequest {
-    /// Post request to register maker metadata
-    Post {
-        /// Metadata containing maker information and fidelity proof
-        metadata: DnsMetadata,
+/// Tracker response
+pub enum TrackerServerToClient {
+    /// Address of all makers, tracker currently have.
+    Address {
+        /// list of addresses
+        addresses: Vec<String>,
     },
-    /// Get request to retrieve maker list
+    /// Just to let server know tracker existence and later on for indexing request.
+    Ping {
+        /// Address of tracker
+        address: String,
+        /// Port of tracker
+        port: u16,
+    },
+    /// To watch for particular utxo.
+    WatchResponse {
+        /// Set of mempool transaction with list of transaction spending it.
+        mempool_tx: Vec<MempoolTx>,
+    },
+}
+
+/// Mempool transaction
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MempoolTx {
+    /// Txid of the transaction spending the utxo
+    pub txid: String,
+    /// Hex encoded raw transaction
+    pub rawtx: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+/// Tracker client to server messages
+pub enum TrackerClientToServer {
+    /// A request sent by the maker to register itself with the server and authenticate.
+    Post {
+        /// Metadata containing the maker's URL and fidelity proof.
+        metadata: TrackerMetadata,
+    },
+    /// A request sent by the taker to fetch all valid maker addresses from the Tracker server.
     Get,
+    /// To gauge server activity
+    Pong {
+        /// Address of the current server
+        address: String,
+    },
+    /// Request tracker to track any UTXO which is spending the UTXO
+    Watch {
+        /// Outpoint to watch
+        outpoint: bitcoin::OutPoint,
+    },
 }
 
 // New backwards sweeping protocol message types
