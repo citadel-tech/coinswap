@@ -40,7 +40,6 @@ fn test_taproot_coinswap() {
         test_framework,
         _regular_takers,
         _regular_makers,
-        directory_server_instance,
         block_generation_handle,
     ) = TestFramework::init(vec![], vec![], connection_type);
 
@@ -93,6 +92,10 @@ fn test_taproot_coinswap() {
     for maker in &taproot_makers {
         maker.get_wallet().write().unwrap().sync().unwrap();
     }
+
+    // Wait a bit for makers to fully register with the tracker
+    log::info!("Waiting for makers to register with tracker...");
+    thread::sleep(Duration::from_secs(5));
 
     // Get the actual spendable balances AFTER fidelity bond creation
     let mut actual_maker_spendable_balances = Vec::new();
@@ -168,10 +171,6 @@ fn test_taproot_coinswap() {
         .for_each(|thread| thread.join().unwrap());
 
     log::info!("All taproot coinswaps processed successfully. Transaction complete.");
-
-    // Shutdown Directory Server
-    directory_server_instance.shutdown.store(true, Relaxed);
-    thread::sleep(Duration::from_secs(2));
 
     // Sync wallets and verify results
     taproot_taker.get_wallet_mut().sync().unwrap();

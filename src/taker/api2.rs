@@ -11,9 +11,9 @@ use secp256k1::musig;
 
 use super::error::TakerError;
 
-use super::offers::fetch_addresses_from_dns;
+use super::offers::fetch_addresses_from_tracker;
 use crate::protocol::contract2::{calculate_coinswap_fee, calculate_contract_sighash};
-use crate::utill::{check_tor_status, read_message, send_message, ConnectionType};
+use crate::utill::{check_tor_status, read_message, ConnectionType};
 use std::collections::HashSet;
 
 use crate::protocol::messages2::SwapDetails;
@@ -109,6 +109,26 @@ fn connect_to_maker(
     Ok(socket)
 }
 
+/// Send a message with 0x01 prefix for taproot makers
+fn send_message_with_prefix(
+    socket_writer: &mut TcpStream,
+    message: &impl serde::Serialize,
+) -> Result<(), TakerError> {
+    use std::io::{BufWriter, Write};
+
+    let mut writer = BufWriter::new(socket_writer);
+    let mut msg_bytes = Vec::new();
+    msg_bytes.push(0x01);
+    msg_bytes.extend(serde_cbor::to_vec(message)?);
+    let msg_len = (msg_bytes.len() as u32).to_be_bytes();
+    let mut to_send = Vec::with_capacity(msg_bytes.len() + msg_len.len());
+    to_send.extend(msg_len);
+    to_send.extend(msg_bytes);
+    writer.write_all(&to_send)?;
+    writer.flush()?;
+    Ok(())
+}
+
 /// Fetch offers from taproot makers using taproot protocol messages
 fn fetch_taproot_offers(
     maker_addresses: Vec<MakerAddress>,
@@ -150,7 +170,7 @@ fn download_taproot_offer(address: &MakerAddress, config: &TakerConfig) -> Optio
     };
 
     let msg = TakerToMakerMessage::GetOffer(get_offer_msg);
-    if let Err(e) = send_message(&mut socket, &msg) {
+    if let Err(e) = send_message_with_prefix(&mut socket, &msg) {
         log::error!("Failed to send GetOffer message to {}: {:?}", maker_addr, e);
         return None;
     }
@@ -242,7 +262,7 @@ impl Taker {
         rpc_config.wallet_name = wallet_file_name;
 
         let mut wallet = if wallet_path.exists() {
-            let wallet = Wallet::load(&wallet_path, &rpc_config, &None)?;
+            let wallet = Wallet::load(&wallet_path, &rpc_config)?;
             log::info!("Loaded wallet from {}", wallet_path.display());
             wallet
         } else {
@@ -331,7 +351,7 @@ impl Taker {
         self.setup_contract_keys_and_scripts()?;
 
         let outgoing_signed_contract_transactions = self.create_outgoing_contract_transactions()?;
-        self.wallet.broadcast_transaction(outgoing_signed_contract_transactions.first().unwrap())?;
+        self.wallet.send_tx(outgoing_signed_contract_transactions.first().unwrap())?;
         self.wait_for_transaction_confirmations(&outgoing_signed_contract_transactions)?;
         self.negotiate_with_makers_and_coordinate_sweep(&outgoing_signed_contract_transactions)?;
         self.wait_for_transaction_confirmations(&outgoing_signed_contract_transactions)?;
@@ -440,10 +460,10 @@ impl Taker {
                 if cfg!(feature = "integration-test") {
                     format!("127.0.0.1:{}", 8080)
                 } else {
-                    self.config.dns_address.clone()
+                    self.config.tracker_address.clone()
                 }
             }
-            ConnectionType::TOR => self.config.dns_address.clone(),
+            ConnectionType::TOR => self.config.tracker_address.clone(),
         };
 
         #[cfg(not(feature = "integration-test"))]
@@ -455,7 +475,7 @@ impl Taker {
         log::info!("Fetching addresses from DNS: {dns_addr}");
 
         let addresses_from_dns =
-            match fetch_addresses_from_dns(socks_port, dns_addr, self.config.connection_type) {
+            match fetch_addresses_from_tracker(socks_port, dns_addr, self.config.connection_type) {
                 Ok(addresses) => {
                     log::info!("Fetched {} addresses from DNS", addresses.len());
                     addresses
@@ -509,7 +529,7 @@ impl Taker {
         let address = maker_addr.to_string();
         let mut socket = connect_to_maker(&address, &self.config, TCP_TIMEOUT_SECONDS)?;
 
-        send_message(&mut socket, &msg)?;
+        send_message_with_prefix(&mut socket, &msg)?;
         log::info!("===> {msg} | {maker_addr}");
 
         // Read response
@@ -527,9 +547,23 @@ impl Taker {
         msg: TakerToMakerMessage,
     ) -> Result<(), TakerError> {
         let address = maker_addr.to_string();
+        log::debug!("Connecting to maker at {}", address);
         let mut socket = connect_to_maker(&address, &self.config, TCP_TIMEOUT_SECONDS)?;
+        log::debug!("Successfully connected to maker at {}", address);
 
-        send_message(&mut socket, &msg)?;
+        log::debug!("Sending message to {}", address);
+        send_message_with_prefix(&mut socket, &msg)?;
+        log::debug!("Message sent successfully to {}", address);
+
+        // Ensure the message is fully transmitted before closing
+        use std::io::Write;
+        socket.flush()?;
+        log::debug!("Socket flushed for {}", address);
+
+        // Add a small delay to ensure message delivery before closing connection
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        log::debug!("Connection delay completed for {}", address);
+
         log::info!("===> {msg} | {maker_addr} (no response expected)");
 
         // Close connection immediately, no response expected
@@ -730,21 +764,22 @@ impl Taker {
             log::info!("Waiting for contract transaction {} to be confirmed: {}", i, txid);
 
             for attempt in 0..max_attempts {
-                match self.wallet.get_transaction_details(&txid) {
-                    Ok(Some(_)) => {
-                        log::info!("Contract transaction {} found and confirmed", i);
-                        break;
-                    }
-                    Ok(None) => {
-                        if attempt == max_attempts - 1 {
-                            return Err(TakerError::General(format!(
-                                "Contract transaction {} not confirmed after {} attempts",
-                                i, max_attempts
-                            )));
+                match self.wallet.rpc.get_transaction(&txid, Some(true)) {
+                    Ok(tx_info) => {
+                        if tx_info.info.confirmations > 0 {
+                            log::info!("Contract transaction {} found and confirmed", i);
+                            break;
+                        } else {
+                            if attempt == max_attempts - 1 {
+                                return Err(TakerError::General(format!(
+                                    "Contract transaction {} not confirmed after {} attempts",
+                                    i, max_attempts
+                                )));
+                            }
+                            log::debug!("Contract transaction {} not yet confirmed (attempt {})",
+                                      i, attempt + 1);
+                            thread::sleep(Duration::from_secs(1));
                         }
-                        log::debug!("Contract transaction {} not yet confirmed (attempt {})", 
-                                  i, attempt + 1);
-                        thread::sleep(Duration::from_secs(1));
                     }
                     Err(_e) => {
                         log::warn!("Error checking contract transaction {}", i);
@@ -943,7 +978,7 @@ impl Taker {
 
         log::info!("  Spending from contract txid: {:?}", incoming_contract_txid);
         
-        let mut taker_spending_tx = Transaction {
+        let taker_spending_tx = Transaction {
             version: bitcoin::transaction::Version::TWO,
             lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
             input: vec![TxIn {
@@ -1158,22 +1193,14 @@ impl Taker {
             // We only need to send the taker's partial signature
         } else {
             // Multi-maker case: normal flow
-            for maker_index in (0..maker_count).rev() {
+            for maker_index in (0..maker_count - 1).rev() {
             let maker = &self.ongoing_swap_state.chosen_makers[maker_index];
 
             // Send SpendingTxAndReceiverNonce to ALL makers to collect their partial signatures
             log::info!("Sending SpendingTxAndReceiverNonce to maker {} at {}", maker_index, maker.address);
 
             // Get the spending transaction and receiver nonce for this maker
-            let (spending_tx, receiver_nonce) = if maker_index == maker_count - 1 {
-                // Last maker gets the taker's spending transaction (which sweeps the last contract)
-                log::info!("Using taker spending transaction for last maker {}", maker_index);
-                (
-                    self.ongoing_swap_state.my_spending_tx.clone()
-                        .ok_or_else(|| TakerError::General("No taker spending transaction stored".to_string()))?,
-                    incoming_contract_my_pub_nonce.clone().into()
-                )
-            } else {
+            let (spending_tx, receiver_nonce) = {
                 // Other makers get the spending transaction from the next maker in the chain
                 let source_maker_index = maker_index + 1;
                 log::info!("Using spending transaction from maker {} for maker {}", source_maker_index, maker_index);
@@ -1223,41 +1250,23 @@ impl Taker {
                 }
             }
         }
-        } // Close the multi-maker else block
-
-        // Send partial signature to last maker (they need first maker's sig)
-        if maker_count > 1 {
-            let last_maker_index = maker_count - 1;
-            let last_maker = &self.ongoing_swap_state.chosen_makers[last_maker_index];
-            
-            log::info!("Sending partial signature to last maker at {}", last_maker.address);
-            
-            // Send first maker's partial signature to last maker  
-            if let (Some(partial_sigs), Some(sender_nonce)) = (&maker_partial_sigs[0], &maker_sender_nonces[0]) {
-                let msg = TakerToMakerMessage::PartialSigAndSendersNonce(
-                    PartialSigAndSendersNonce {
-                        partial_signatures: partial_sigs.clone(),
-                        sender_nonce: sender_nonce.clone(),
-                    },
-                );
-                self.send_message_to_maker(&last_maker.address, msg)?;
-                log::info!("Successfully sent first maker's partial signature to last maker");
-            } else {
-                log::error!("No partial signature or nonce stored for maker 0");
-            }
         }
         
         // Send taker's partial signature to first maker (for Taker→Maker0 contract)
         if maker_count > 0 {
             let first_maker = &self.ongoing_swap_state.chosen_makers[0];
-            
+
             log::info!("Sending taker's partial signature to first maker at {}", first_maker.address);
-            
+
             // Generate taker's partial signature for the Taker→Maker0 contract
+            log::debug!("Generating taker partial signature for first maker");
             let taker_partial_sig = self.generate_taker_partial_signature_for_first_maker()?;
-            
+            log::debug!("Successfully generated taker partial signature");
+
             let msg = TakerToMakerMessage::PartialSigAndSendersNonce(taker_partial_sig);
+            log::debug!("About to send PartialSigAndSendersNonce to first maker {}", first_maker.address);
             self.send_message_to_maker(&first_maker.address, msg)?;
+            log::debug!("Successfully sent PartialSigAndSendersNonce to first maker {}", first_maker.address);
         }
         
         // Wait for makers to complete their sweeps

@@ -34,7 +34,7 @@ fn handle_request_taproot(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<
                 .read()?
                 .list_live_timelock_contract_spend_info()?
                 .iter()
-                .map(|(l, _)| l.clone())
+                .map(|data| crate::utill::UTXO::from_utxo_data(data.clone()))
                 .collect::<Vec<_>>();
             RpcMsgResp::ContractUtxoResp { utxos }
         }
@@ -44,7 +44,7 @@ fn handle_request_taproot(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<
                 .read()?
                 .list_fidelity_spend_info()?
                 .iter()
-                .map(|(l, _)| l.clone())
+                .map(|data| crate::utill::UTXO::from_utxo_data(data.clone()))
                 .collect::<Vec<_>>();
             RpcMsgResp::FidelityUtxoResp { utxos }
         }
@@ -54,7 +54,7 @@ fn handle_request_taproot(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<
                 .read()?
                 .list_all_utxo_spend_info()?
                 .iter()
-                .map(|(l, _)| l.clone())
+                .map(|data| crate::utill::UTXO::from_utxo_data(data.clone()))
                 .collect::<Vec<_>>();
             RpcMsgResp::UtxoResp { utxos }
         }
@@ -64,7 +64,7 @@ fn handle_request_taproot(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<
                 .read()?
                 .list_incoming_swap_coin_utxo_spend_info()?
                 .iter()
-                .map(|(l, _)| l.clone())
+                .map(|data| crate::utill::UTXO::from_utxo_data(data.clone()))
                 .collect::<Vec<_>>();
             RpcMsgResp::SwapUtxoResp { utxos }
         }
@@ -105,7 +105,7 @@ fn handle_request_taproot(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<
         }
         RpcMsgReq::GetDataDir => RpcMsgResp::GetDataDirResp(maker.get_data_dir().to_path_buf()),
         RpcMsgReq::GetTorAddress => {
-            if maker.config.connection_type == ConnectionType::CLEARNET {
+            if cfg!(feature = "integration-test") {
                 RpcMsgResp::GetTorAddressResp("Maker is not running on TOR".to_string())
             } else {
                 let hostname = get_tor_hostname(
