@@ -2,7 +2,7 @@
 //!
 use std::{convert::TryFrom, thread};
 
-use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
+use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Auth, Client, RpcApi};
 use serde_json::{json, Value};
 
 use crate::{utill::HEART_BEAT_INTERVAL, wallet::api::KeychainKind};
@@ -75,6 +75,15 @@ impl Wallet {
         self.save_to_disk()?;
         log::info!("Completed wallet sync and save");
         Ok(())
+    }
+
+    /// Get all utxos tracked by the core rpc wallet.
+    fn get_all_utxo_from_rpc(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
+        self.rpc.unlock_unspent_all()?;
+        let all_utxos = self
+            .rpc
+            .list_unspent(Some(0), Some(9999999), None, None, None)?;
+        Ok(all_utxos)
     }
 
     /// Sync the wallet with the configured Bitcoin Core RPC.

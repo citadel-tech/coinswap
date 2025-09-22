@@ -735,15 +735,6 @@ impl Wallet {
         Ok(None)
     }
 
-    /// Get all utxos tracked by the core rpc wallet.
-    pub(crate) fn get_all_utxo_from_rpc(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
-        self.rpc.unlock_unspent_all()?;
-        let all_utxos = self
-            .rpc
-            .list_unspent(Some(0), Some(9999999), None, None, None)?;
-        Ok(all_utxos)
-    }
-
     /// Returns a list of all UTXOs tracked by the wallet. Including fidelity, live_contracts and swap coins.
     pub fn list_all_utxo(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
         Ok(self
