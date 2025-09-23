@@ -9,11 +9,9 @@ use coinswap::{
     maker::{start_maker_server_taproot, TaprootMaker, TaprootMakerBehavior},
     taker::api2::{SwapParams, Taker},
     utill::ConnectionType,
-    wallet::{Destination, RPCConfig, Wallet},
+    wallet::{RPCConfig, Wallet},
 };
 use std::sync::Arc;
-
-use bitcoind::bitcoincore_rpc::RpcApi;
 
 mod test_framework;
 use test_framework::*;
@@ -56,7 +54,7 @@ fn test_taproot_coinswap() {
     );
 
     // Fund the Taproot Makers with 4 UTXOs of 0.05 BTC each
-    let org_taproot_maker_spend_balances = fund_taproot_makers(
+    fund_taproot_makers(
         &taproot_makers,
         bitcoind,
         4,
@@ -253,7 +251,6 @@ fn fund_taproot_makers(
         let balances = wallet.get_balances().unwrap();
         let expected_regular = utxo_value * utxo_count.into();
 
-        // For now, just verify the regular balance until fidelity bonds are fully implemented
         assert_eq!(balances.regular, expected_regular);
 
         info!(
@@ -371,16 +368,11 @@ fn verify_taproot_swap_results(
             "Taproot Maker {} final balances - Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Total spendable: {}",
             i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable
         );
-        info!(
-            "Taproot Maker {} balance summary - Current total (excl. fidelity): {}, Total with fidelity: {}, Original spendable: {}",
-            i, current_total, total_with_fidelity, original_spendable
-        );
 
         // In taproot swaps, makers sweep their incoming contracts
         // They should have roughly the same total balance (minus small fees plus earned fees)
         // The balance might be in different categories (regular vs contract vs swap)
         let max_fees = Amount::from_sat(100000); // Maximum expected mining fees
-        let min_earned_fees = Amount::from_sat(1000); // Minimum expected earned fees
 
         // The maker's total balance should be at least (original - max_fees + min_earned_fees)
         let expected_minimum = original_spendable - max_fees;

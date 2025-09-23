@@ -20,8 +20,8 @@ pub fn get_aggregated_pubkey_i(
     let pubkey2 = secp256k1::PublicKey::from_slice(&s_pubkey2).unwrap();
     let agg_pubkey = get_aggregated_pubkey(&pubkey1, &pubkey2);
     let s_agg_pubkey = agg_pubkey.serialize();
-    let agg_pubkey = bitcoin::secp256k1::XOnlyPublicKey::from_slice(&s_agg_pubkey).unwrap();
-    agg_pubkey
+
+    bitcoin::secp256k1::XOnlyPublicKey::from_slice(&s_agg_pubkey).unwrap()
 }
 
 /// Generates a new nonce pair

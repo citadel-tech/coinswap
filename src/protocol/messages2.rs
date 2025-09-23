@@ -236,6 +236,7 @@ pub struct MempoolTx {
 
 #[derive(Debug, Serialize, Deserialize)]
 /// Tracker client to server messages
+#[allow(clippy::large_enum_variant)]
 pub enum TrackerClientToServer {
     /// A request sent by the maker to register itself with the server and authenticate.
     Post {

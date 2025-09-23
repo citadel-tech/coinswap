@@ -13,7 +13,7 @@ pub fn get_aggregated_pubkey(pubkey1: &PublicKey, pubkey2: &PublicKey) -> XOnlyP
     let secp = Secp256k1::new();
     let mut pubkeys = vec![pubkey1, pubkey2];
     // Sort pubkeys lexicographically (manual implementation)
-    pubkeys.sort_by(|a, b| a.serialize().cmp(&b.serialize()));
+    pubkeys.sort_by_key(|a| a.serialize());
     let agg_cache = KeyAggCache::new(&secp, pubkeys.as_slice());
     agg_cache.agg_pk()
 }
@@ -55,7 +55,7 @@ pub fn generate_partial_signature(
     musig_key_agg_cache
         .pubkey_xonly_tweak_add(&secp, &tap_tweak)
         .unwrap();
-    let session = Session::new(&secp, &musig_key_agg_cache, agg_nonce.clone(), message);
+    let session = Session::new(&secp, &musig_key_agg_cache, *agg_nonce, message);
     session.partial_sign(&secp, sec_nonce, &keypair, &musig_key_agg_cache)
 }
 
@@ -72,7 +72,7 @@ pub fn aggregate_partial_signatures(
     musig_key_agg_cache
         .pubkey_xonly_tweak_add(&secp, &tap_tweak)
         .unwrap();
-    let session = Session::new(&secp, &musig_key_agg_cache, agg_nonce.clone(), message);
+    let session = Session::new(&secp, &musig_key_agg_cache, agg_nonce, message);
     session.partial_sig_agg(partial_sigs.as_slice())
 }
 

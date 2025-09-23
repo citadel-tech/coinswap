@@ -35,6 +35,7 @@ use crate::maker::error::MakerError;
 
 /// Unified message type for taproot makers that can handle both taker and tracker messages
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum MessageToMakerTaproot {
     TakerToMaker(TakerToMakerMessage),
     TrackerMessage(TrackerServerToClient),

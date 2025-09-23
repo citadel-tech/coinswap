@@ -120,10 +120,10 @@ impl Clone for ConnectionState {
             incoming_contract_hashlock_script: self.incoming_contract_hashlock_script.clone(),
             incoming_contract_timelock_script: self.incoming_contract_timelock_script.clone(),
             incoming_contract_txid: self.incoming_contract_txid,
-            incoming_contract_my_pub_nonce: self.incoming_contract_my_pub_nonce.clone(),
+            incoming_contract_my_pub_nonce: self.incoming_contract_my_pub_nonce,
             // outgoing_contract_txid is handled below
-            outgoing_aggregated_nonce: self.outgoing_aggregated_nonce.clone(),
-            incoming_aggregated_nonce: self.incoming_aggregated_nonce.clone(),
+            outgoing_aggregated_nonce: self.outgoing_aggregated_nonce,
+            incoming_aggregated_nonce: self.incoming_aggregated_nonce,
             incoming_contract_tap_tweak: self.incoming_contract_tap_tweak,
             incoming_contract_internal_key: self.incoming_contract_internal_key,
             incoming_contract_spending_tx: self.incoming_contract_spending_tx.clone(),
@@ -138,11 +138,11 @@ impl Clone for ConnectionState {
             outgoing_contract_tap_tweak: self.outgoing_contract_tap_tweak,
             outgoing_contract_internal_key: self.outgoing_contract_internal_key,
             outgoing_contract_my_sec_nonce: None,
-            outgoing_contract_my_pub_nonce: self.outgoing_contract_my_pub_nonce.clone(),
-            incoming_contract_my_partial_sig: self.incoming_contract_my_partial_sig.clone(),
+            outgoing_contract_my_pub_nonce: self.outgoing_contract_my_pub_nonce,
+            incoming_contract_my_partial_sig: self.incoming_contract_my_partial_sig,
             incoming_contract_my_sec_nonce_bytes: self.incoming_contract_my_sec_nonce_bytes,
             outgoing_contract_spending_tx: self.outgoing_contract_spending_tx.clone(),
-            outgoing_contract_my_partial_sig: self.outgoing_contract_my_partial_sig.clone(),
+            outgoing_contract_my_partial_sig: self.outgoing_contract_my_partial_sig,
         }
     }
 }
@@ -321,8 +321,8 @@ impl Maker {
         let wallet = self.wallet.read()?;
         let (incoming_contract_my_privkey, incoming_contract_my_pubkey) =
             wallet.get_tweakable_keypair()?;
-        connection_state.incoming_contract_my_privkey = Some(incoming_contract_my_privkey.clone());
-        connection_state.incoming_contract_my_pubkey = Some(incoming_contract_my_pubkey.clone());
+        connection_state.incoming_contract_my_privkey = Some(incoming_contract_my_privkey);
+        connection_state.incoming_contract_my_pubkey = Some(incoming_contract_my_pubkey);
         // Get wallet balances to determine max size
         let balances = wallet.get_balances()?;
         let max_size = balances.spendable;
@@ -357,7 +357,7 @@ impl Maker {
         let max_size = max_size.to_sat();
 
         Ok(Offer {
-            tweakable_point: incoming_contract_my_pubkey.clone(),
+            tweakable_point: incoming_contract_my_pubkey,
             base_fee: BASE_FEE,
             amount_relative_fee: AMOUNT_RELATIVE_FEE_PCT,
             time_relative_fee: TIME_RELATIVE_FEE_PCT,
@@ -487,15 +487,9 @@ impl Maker {
         connection_state.outgoing_contract_timelock_script = Some(timelock_script.clone());
         // Create internal key for cooperative spending between taker and maker
         // Order pubkeys lexicographically to match signing order
-        let mut pubkeys_for_internal_key = vec![
-            connection_state
-                .outgoing_contract_my_pubkey
-                .clone()
-                .unwrap(),
-            connection_state
-                .outgoing_contract_other_pubkey
-                .clone()
-                .unwrap(),
+        let mut pubkeys_for_internal_key = [
+            connection_state.outgoing_contract_my_pubkey.unwrap(),
+            connection_state.outgoing_contract_other_pubkey.unwrap(),
         ];
         pubkeys_for_internal_key.sort_by(|a, b| a.inner.serialize().cmp(&b.inner.serialize()));
         let internal_key = crate::protocol::musig_interface::get_aggregated_pubkey_i(
@@ -630,7 +624,7 @@ impl Maker {
                     .wallet
                     .read()?
                     .get_next_internal_addresses(1)
-                    .map_err(|e| MakerError::Wallet(e))?[0]
+                    .map_err(MakerError::Wallet)?[0]
                     .script_pubkey(),
             }],
         };
@@ -658,26 +652,12 @@ impl Maker {
         // Return our contract transaction details
         Ok(SenderContractFromMaker {
             contract_txs: vec![outgoing_contract_txid], // Our own contract transaction
-            pubkeys_a: vec![connection_state
-                .outgoing_contract_my_pubkey
-                .clone()
-                .unwrap()], // Next party's pubkey
+            pubkeys_a: vec![connection_state.outgoing_contract_my_pubkey.unwrap()], // Next party's pubkey
             hashlock_scripts: vec![hashlock_script],
             timelock_scripts: vec![timelock_script],
             // Include the internal key and tap tweak that were used to create OUR outgoing contract
-            internal_key: Some(
-                connection_state
-                    .outgoing_contract_internal_key
-                    .clone()
-                    .unwrap(),
-            ),
-            tap_tweak: Some(
-                connection_state
-                    .outgoing_contract_tap_tweak
-                    .clone()
-                    .unwrap()
-                    .into(),
-            ),
+            internal_key: Some(connection_state.outgoing_contract_internal_key.unwrap()),
+            tap_tweak: Some(connection_state.outgoing_contract_tap_tweak.unwrap().into()),
         })
     }
 
@@ -697,20 +677,12 @@ impl Maker {
         let outgoing_contract_other_nonce: secp256k1::musig::PublicNonce =
             spending_tx_msg.receiver_nonce.clone().into();
 
-        let outgoing_contract_my_pubkey = connection_state
-            .outgoing_contract_my_pubkey
-            .clone()
-            .unwrap();
-        let outgoing_contract_my_privkey = connection_state
-            .outgoing_contract_my_privkey
-            .clone()
-            .unwrap();
+        let outgoing_contract_my_pubkey = connection_state.outgoing_contract_my_pubkey.unwrap();
+        let outgoing_contract_my_privkey = connection_state.outgoing_contract_my_privkey.unwrap();
 
         // Get taker pubkey from connection state
-        let outgoing_contract_other_pubkey = connection_state
-            .outgoing_contract_other_pubkey
-            .clone()
-            .unwrap();
+        let outgoing_contract_other_pubkey =
+            connection_state.outgoing_contract_other_pubkey.unwrap();
 
         // Use outgoing contract tap_tweak (the one we calculated when creating our outgoing contract)
         // This is the contract that the taker is trying to spend from
@@ -767,7 +739,7 @@ impl Maker {
         // Use the same method as taker: construct script from internal key
         // For the final contract, internal key is aggregated from taker and maker pubkeys
         // We need to use lexicographic ordering for internal key calculation to match contract creation
-        let mut internal_key_pubkeys = vec![pubkey1, pubkey2];
+        let mut internal_key_pubkeys = [pubkey1, pubkey2];
         internal_key_pubkeys.sort_by(|a, b| a.inner.serialize().cmp(&b.inner.serialize()));
         let expected_internal_key = crate::protocol::musig_interface::get_aggregated_pubkey_i(
             internal_key_pubkeys[0].inner,
@@ -798,7 +770,7 @@ impl Maker {
         );
 
         // Use lexicographic ordering to match how the contract was created
-        let mut ordered_pubkeys = vec![pubkey1, pubkey2];
+        let mut ordered_pubkeys = [pubkey1, pubkey2];
         ordered_pubkeys.sort_by(|a, b| a.inner.serialize().cmp(&b.inner.serialize()));
 
         let (outgoing_contract_my_sec_nonce, outgoing_contract_my_pub_nonce) =
@@ -837,8 +809,7 @@ impl Maker {
 
         // Save the aggregated nonce, partial signature, and spending transaction for later sweep completion
         connection_state.outgoing_aggregated_nonce = Some(aggregated_nonce);
-        connection_state.outgoing_contract_my_partial_sig =
-            Some(outgoing_contract_my_partial_sig.clone());
+        connection_state.outgoing_contract_my_partial_sig = Some(outgoing_contract_my_partial_sig);
         connection_state.outgoing_contract_spending_tx =
             Some(outgoing_contract_spending_tx.clone());
 
@@ -996,11 +967,11 @@ impl Maker {
             .incoming_contract_other_pubkey
             .ok_or_else(|| MakerError::General("No incoming contract other pubkey"))?;
 
-        let mut incoming_ordered_pubkeys = vec![
+        let mut incoming_ordered_pubkeys = [
             incoming_my_keypair.public_key(),
             incoming_other_pubkey.inner,
         ];
-        incoming_ordered_pubkeys.sort_by(|a, b| a.serialize().cmp(&b.serialize()));
+        incoming_ordered_pubkeys.sort_by_key(|a| a.serialize());
 
         // Create aggregated nonce with sender nonce and our public nonce
         let incoming_nonce_refs = if incoming_ordered_pubkeys[0] == incoming_my_keypair.public_key()
@@ -1100,7 +1071,7 @@ impl Maker {
             let wallet = self.wallet.read()?;
             wallet
                 .get_next_internal_addresses(1)
-                .map_err(|e| MakerError::Wallet(e))?[0]
+                .map_err(MakerError::Wallet)?[0]
                 .clone()
         };
 

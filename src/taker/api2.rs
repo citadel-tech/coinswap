@@ -379,7 +379,7 @@ impl Taker {
             suitable_makers.len(),
             swap_params.maker_count
         );
-        if swap_params.maker_count > suitable_makers.len() as usize {
+        if swap_params.maker_count > suitable_makers.len() {
             log::error!(
                 "Not enough suitable makers for the requested amount. Required {}, available {}",
                 swap_params.maker_count,
@@ -437,13 +437,13 @@ impl Taker {
                     continue;
                 }
             }
-            if self.ongoing_swap_state.chosen_makers.len() as usize == swap_params.maker_count {
+            if self.ongoing_swap_state.chosen_makers.len() == swap_params.maker_count {
                 break; // we have enough makers
             }
         }
 
         // If we don't get enough ACKs, return an error
-        if (self.ongoing_swap_state.chosen_makers.len() as usize) < swap_params.maker_count {
+        if self.ongoing_swap_state.chosen_makers.len() < swap_params.maker_count {
             log::error!(
                 "Not enough makers accepted the swap request. Required {}, got {}",
                 swap_params.maker_count,
@@ -663,8 +663,7 @@ impl Taker {
         let incoming_contract_my_keypair =
             bitcoin::secp256k1::Keypair::from_secret_key(&secp, &incoming_contract_my_privkey);
         let (incoming_contract_my_x_only, _) = incoming_contract_my_keypair.x_only_public_key();
-        self.ongoing_swap_state.incoming_contract_my_privkey =
-            Some(incoming_contract_my_privkey.clone());
+        self.ongoing_swap_state.incoming_contract_my_privkey = Some(incoming_contract_my_privkey);
         self.ongoing_swap_state.incoming_contract_my_pubkey = Some(bitcoin::PublicKey::from(
             incoming_contract_my_keypair.public_key(),
         ));
@@ -757,7 +756,8 @@ impl Taker {
                     .ok_or_else(|| TakerError::General("Funding UTXO not found".to_string()))?;
 
                 // Use Destination::Multi to send exact amount and get change back
-                let signed_tx = self.wallet.spend_from_wallet(
+
+                self.wallet.spend_from_wallet(
                     MIN_FEE_RATE,
                     Destination::Multi {
                         outputs: vec![(
@@ -767,9 +767,7 @@ impl Taker {
                         op_return_data: None,
                     },
                     &[(funding_utxo.clone(), funding_utxo_info)],
-                )?;
-
-                signed_tx
+                )?
             };
 
             contract_transactions.push(signed_outgoing_contract_tx);
@@ -856,19 +854,12 @@ impl Taker {
             if let Some(second_maker) = self.ongoing_swap_state.chosen_makers.get(1) {
                 second_maker.offer.tweakable_point
             } else {
-                self.ongoing_swap_state
-                    .incoming_contract_my_pubkey
-                    .clone()
-                    .unwrap()
+                self.ongoing_swap_state.incoming_contract_my_pubkey.unwrap()
             };
 
         let senders_contract = SendersContract {
             contract_txs: vec![outgoing_signed_contract_transactions[0].compute_txid()],
-            pubkeys_a: vec![self
-                .ongoing_swap_state
-                .outgoing_contract_my_pubkey
-                .clone()
-                .unwrap()],
+            pubkeys_a: vec![self.ongoing_swap_state.outgoing_contract_my_pubkey.unwrap()],
             hashlock_scripts: vec![self
                 .ongoing_swap_state
                 .outgoing_contract_hashlock_script
@@ -884,7 +875,6 @@ impl Taker {
             internal_key: Some(
                 self.ongoing_swap_state
                     .outgoing_contract_internal_key
-                    .clone()
                     .unwrap(),
             ),
             tap_tweak: self
@@ -936,10 +926,7 @@ impl Taker {
             // Determine the next party in the chain
             let next_party_tweakable_point = if maker_index == maker_count - 1 {
                 // Last maker should point back to taker
-                self.ongoing_swap_state
-                    .incoming_contract_my_pubkey
-                    .clone()
-                    .unwrap()
+                self.ongoing_swap_state.incoming_contract_my_pubkey.unwrap()
             } else {
                 // Intermediate maker should point to next maker
                 self.ongoing_swap_state.chosen_makers[maker_index + 1]
@@ -990,7 +977,7 @@ impl Taker {
         &mut self,
         final_contract: &crate::protocol::messages2::SenderContractFromMaker,
     ) -> Result<(), TakerError> {
-        if let Some(incoming_contract_txid) = final_contract.contract_txs.get(0) {
+        if let Some(incoming_contract_txid) = final_contract.contract_txs.first() {
             self.ongoing_swap_state.incoming_contract_txid = Some(*incoming_contract_txid);
         }
 
@@ -1005,19 +992,19 @@ impl Taker {
             self.ongoing_swap_state.incoming_contract_tap_tweak = Some(tap_tweak_scalar);
         }
 
-        if let Some(incoming_contract_hashlock_script) = final_contract.hashlock_scripts.get(0) {
+        if let Some(incoming_contract_hashlock_script) = final_contract.hashlock_scripts.first() {
             self.ongoing_swap_state.incoming_contract_hashlock_script =
                 Some(incoming_contract_hashlock_script.clone());
         }
 
-        if let Some(incoming_contract_timelock_script) = final_contract.timelock_scripts.get(0) {
+        if let Some(incoming_contract_timelock_script) = final_contract.timelock_scripts.first() {
             self.ongoing_swap_state.incoming_contract_timelock_script =
                 Some(incoming_contract_timelock_script.clone());
         }
 
-        if let Some(incoming_contract_other_pubkey) = final_contract.pubkeys_a.get(0) {
+        if let Some(incoming_contract_other_pubkey) = final_contract.pubkeys_a.first() {
             self.ongoing_swap_state.incoming_contract_other_pubkey =
-                Some(incoming_contract_other_pubkey.clone());
+                Some(*incoming_contract_other_pubkey);
         }
 
         Ok(())
@@ -1082,7 +1069,7 @@ impl Taker {
                 script_pubkey: self
                     .wallet
                     .get_next_internal_addresses(1)
-                    .map_err(|e| TakerError::Wallet(e))?[0]
+                    .map_err(TakerError::Wallet)?[0]
                     .script_pubkey(),
             }],
         };
@@ -1135,8 +1122,8 @@ impl Taker {
         let pubkey1 = incoming_contract_my_keypair.public_key();
         let pubkey2 = last_maker_pubkey;
 
-        let mut ordered_pubkeys = vec![pubkey1, pubkey2.inner];
-        ordered_pubkeys.sort_by(|a, b| a.serialize().cmp(&b.serialize()));
+        let mut ordered_pubkeys = [pubkey1, pubkey2.inner];
+        ordered_pubkeys.sort_by_key(|a| a.serialize());
 
         let (incoming_contract_my_sec_nonce, incoming_contract_my_pub_nonce) =
             generate_new_nonce_pair_i(
@@ -1217,7 +1204,6 @@ impl Taker {
                 let incoming_contract_other_pubkey = self
                     .ongoing_swap_state
                     .incoming_contract_other_pubkey
-                    .clone()
                     .unwrap();
 
                 let internal_key = self
@@ -1280,11 +1266,11 @@ impl Taker {
                 let incoming_contract_other_partial_sig: secp256k1::musig::PartialSignature =
                     maker_response.partial_signatures[0].clone().into();
 
-                let mut pubkeys = vec![
+                let mut pubkeys = [
                     incoming_contract_my_keypair.public_key(),
                     incoming_contract_other_pubkey.inner,
                 ];
-                pubkeys.sort_by(|a, b| a.serialize().cmp(&b.serialize()));
+                pubkeys.sort_by_key(|a| a.serialize());
 
                 let nonce_refs = if pubkeys[0].serialize()
                     == incoming_contract_my_keypair.public_key().serialize()
@@ -1459,7 +1445,7 @@ impl Taker {
                 let msg =
                     TakerToMakerMessage::SpendingTxAndReceiverNonce(SpendingTxAndReceiverNonce {
                         spending_transaction: spending_tx,
-                        receiver_nonce: receiver_nonce.into(),
+                        receiver_nonce,
                     });
 
                 let response = self.send_to_maker_and_get_response(&maker.address, msg)?;
@@ -1625,8 +1611,8 @@ impl Taker {
         .map_err(|e| TakerError::General(format!("Failed to calculate sighash: {:?}", e)))?;
 
         // Use lexicographic ordering for consistency
-        let mut ordered_pubkeys = vec![taker_keypair.public_key(), first_maker_pubkey.inner];
-        ordered_pubkeys.sort_by(|a, b| a.serialize().cmp(&b.serialize()));
+        let mut ordered_pubkeys = [taker_keypair.public_key(), first_maker_pubkey.inner];
+        ordered_pubkeys.sort_by_key(|a| a.serialize());
 
         // Generate taker's nonce for this signature
         let (taker_sec_nonce, taker_pub_nonce) = generate_new_nonce_pair_i(
