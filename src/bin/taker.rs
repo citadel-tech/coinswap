@@ -2,13 +2,17 @@ use bitcoin::{Address, Amount};
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
-    taker::{error::TakerError, SwapParams, Taker, TakerBehavior},
-    utill::{parse_proxy_auth, setup_taker_logger, ConnectionType, MIN_FEE_RATE, UTXO},
+    taker::{error::TakerError, SwapParams, Taker},
+    utill::{parse_proxy_auth, setup_taker_logger, MIN_FEE_RATE, UTXO},
     wallet::{Destination, RPCConfig, Wallet},
 };
 use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};
+
+#[cfg(feature = "integration-test")]
+use coinswap::taker::TakerBehavior;
+
 /// A simple command line app to operate as coinswap client.
 ///
 /// The app works as a regular Bitcoin wallet with the added capability to perform coinswaps. The app
@@ -160,12 +164,6 @@ fn main() -> Result<(), TakerError> {
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
 
-    #[cfg(not(feature = "integration-test"))]
-    let connection_type = ConnectionType::TOR;
-
-    #[cfg(feature = "integration-test")]
-    let connection_type = ConnectionType::CLEARNET;
-
     match &args.command {
         Commands::Restore { backup_file } => {
             Taker::restore_wallet(
@@ -176,17 +174,17 @@ fn main() -> Result<(), TakerError> {
             );
         }
         _ => {
-            // Only initialize Taker if the command is NOT WalletRestore.
+            // Only initialize Taker if the command is NOT Restore.
             // For Restore, we don't initialize Taker because it tries to load the wallet,
             // which may not exist yet before restoring from the backup.
             let mut taker = Taker::init(
                 args.data_directory.clone(),
                 args.wallet_name.clone(),
                 Some(rpc_config.clone()),
+                #[cfg(feature = "integration-test")]
                 TakerBehavior::Normal,
                 None,
                 Some(args.tor_auth),
-                Some(connection_type),
             )?;
             match &args.command {
                 Commands::ListUtxo => {

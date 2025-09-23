@@ -22,7 +22,7 @@ use socks::Socks5Stream;
 
 use crate::{
     protocol::messages::Offer,
-    utill::{read_message, send_message, ConnectionType, GLOBAL_PAUSE, NET_TIMEOUT},
+    utill::{read_message, send_message, GLOBAL_PAUSE, NET_TIMEOUT},
 };
 
 use crate::protocol::messages::{TrackerClientToServer, TrackerServerToClient};
@@ -181,28 +181,26 @@ pub(crate) fn fetch_offer_from_makers(
 pub fn fetch_addresses_from_tracker(
     socks_port: Option<u16>,
     tracker_addr: String,
-    connection_type: ConnectionType,
 ) -> Result<Vec<MakerAddress>, TakerError> {
     loop {
-        let mut stream = match connection_type {
-            ConnectionType::CLEARNET => match TcpStream::connect(tracker_addr.as_str()) {
+        let mut stream = if cfg!(feature = "integration-test") {
+            match TcpStream::connect(tracker_addr.as_str()) {
                 Err(e) => {
                     log::error!("Error connecting to Tracker: {e:?}");
                     thread::sleep(GLOBAL_PAUSE);
                     continue;
                 }
                 Ok(s) => s,
-            },
-            ConnectionType::TOR => {
-                let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
-                match Socks5Stream::connect(socket_addrs, tracker_addr.as_str()) {
-                    Err(e) => {
-                        log::error!("Error connecting to Tracker: {e:?}");
-                        thread::sleep(GLOBAL_PAUSE);
-                        continue;
-                    }
-                    Ok(s) => s.into_inner(),
+            }
+        } else {
+            let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
+            match Socks5Stream::connect(socket_addrs, tracker_addr.as_str()) {
+                Err(e) => {
+                    log::error!("Error connecting to Tracker: {e:?}");
+                    thread::sleep(GLOBAL_PAUSE);
+                    continue;
                 }
+                Ok(s) => s.into_inner(),
             }
         };
 

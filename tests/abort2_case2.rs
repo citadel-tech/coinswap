@@ -3,7 +3,6 @@ use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
-    utill::ConnectionType,
 };
 use std::sync::Arc;
 mod test_framework;
@@ -44,11 +43,8 @@ fn test_abort_case_2_recover_if_no_makers_found() {
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
-        makers_config_map.into(),
-        taker_behavior,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     info!("💰 Funding taker and makers");
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance

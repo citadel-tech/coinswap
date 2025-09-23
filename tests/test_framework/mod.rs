@@ -53,7 +53,7 @@ use bitcoind::{
 use coinswap::{
     maker::{Maker, MakerBehavior},
     taker::{Taker, TakerBehavior},
-    utill::{setup_logger, ConnectionType},
+    utill::setup_logger,
     wallet::{Balances, RPCConfig},
 };
 
@@ -456,7 +456,7 @@ pub fn verify_swap_results(
                 balances.regular.to_sat(),
                 [
                     14555297, // First maker on successful coinswap
-                    14533012, // Second maker on successful coinswap
+                    14533010, // Second maker on successful coinswap
                     14999508, // No spending
                     24999510, // Multi-taker scenario
                 ],
@@ -555,7 +555,6 @@ impl TestFramework {
     pub fn init(
         makers_config_map: Vec<((u16, Option<u16>), MakerBehavior)>,
         taker_behavior: Vec<TakerBehavior>,
-        connection_type: ConnectionType,
     ) -> (Arc<Self>, Vec<Taker>, Vec<Arc<Maker>>, JoinHandle<()>) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
@@ -620,7 +619,6 @@ impl TestFramework {
                     behavior,
                     None,
                     None,
-                    Some(connection_type),
                 )
                 .unwrap()
             })
@@ -644,7 +642,6 @@ impl TestFramework {
                         None,
                         None,
                         port.1,
-                        Some(connection_type),
                         behavior,
                     )
                     .unwrap(),

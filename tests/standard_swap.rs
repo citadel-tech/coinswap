@@ -3,7 +3,7 @@ use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
-    utill::{ConnectionType, MIN_FEE_RATE},
+    utill::MIN_FEE_RATE,
     wallet::Destination,
 };
 use std::sync::Arc;
@@ -29,11 +29,10 @@ fn test_standard_coinswap() {
     ];
 
     let taker_behavior = vec![TakerBehavior::Normal];
-    let connection_type = ConnectionType::CLEARNET;
 
     // Initiate test framework, Makers and a Taker with default behavior.
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map.into(), taker_behavior, connection_type);
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🧪 Running Test: Standard Coinswap Procedure");
     let bitcoind = &test_framework.bitcoind;

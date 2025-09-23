@@ -4,7 +4,7 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::TakerBehavior,
-    utill::{ConnectionType, MIN_FEE_RATE},
+    utill::MIN_FEE_RATE,
 };
 mod test_framework;
 use test_framework::*;
@@ -32,11 +32,8 @@ fn test_fidelity() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, block_generation_handle) = TestFramework::init(
-        makers_config_map.into(),
-        taker_behavior,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, _, makers, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     log::info!("🧪 Running Test: Fidelity Bond Creation and Redemption");
 
@@ -276,11 +273,8 @@ fn test_fidelity_spending() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, block_generation_handle) = TestFramework::init(
-        makers_config_map.into(),
-        taker_behavior,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, _, makers, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     log::info!("🧪 Running Test: Assert Fidelity Spending Behavior");
 

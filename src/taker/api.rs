@@ -159,6 +159,7 @@ pub struct Taker {
     pub config: TakerConfig,
     offerbook: OfferBook,
     ongoing_swap_state: OngoingSwapState,
+    #[cfg(feature = "integration-test")]
     behavior: TakerBehavior,
     data_dir: PathBuf,
 }
@@ -195,10 +196,9 @@ impl Taker {
         data_dir: Option<PathBuf>,
         wallet_file_name: Option<String>,
         rpc_config: Option<RPCConfig>,
-        behavior: TakerBehavior,
+        #[cfg(feature = "integration-test")] behavior: TakerBehavior,
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
-        connection_type: Option<ConnectionType>,
     ) -> Result<Taker, TakerError> {
         // Get provided data directory or the default data directory.
         let data_dir = data_dir.unwrap_or(get_taker_dir());
@@ -216,10 +216,6 @@ impl Taker {
         // If config file doesn't exist, default config will be loaded.
         let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
-        if let Some(connection_type) = connection_type {
-            config.connection_type = connection_type;
-        }
-
         if let Some(control_port) = control_port {
             config.control_port = control_port;
         }
@@ -228,7 +224,7 @@ impl Taker {
             config.tor_auth_password = tor_auth_password;
         }
 
-        if matches!(connection_type, Some(ConnectionType::TOR)) {
+        if !cfg!(feature = "integration-test") {
             check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
 
@@ -266,6 +262,7 @@ impl Taker {
             config,
             offerbook,
             ongoing_swap_state: OngoingSwapState::default(),
+            #[cfg(feature = "integration-test")]
             behavior,
             data_dir,
         })
@@ -487,15 +484,18 @@ impl Taker {
             }
         } // Contract establishment completed.
 
-        if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
-            log::error!("Dropping Swap Process after full setup");
-            return Ok(());
-        }
+        #[cfg(feature = "integration-test")]
+        {
+            if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
+                log::error!("Dropping Swap Process after full setup");
+                return Ok(());
+            }
 
-        if self.behavior == TakerBehavior::BroadcastContractAfterFullSetup {
-            log::error!("Special Behavior BroadcastContractAfterFullSetup");
-            self.recover_from_swap()?;
-            return Ok(());
+            if self.behavior == TakerBehavior::BroadcastContractAfterFullSetup {
+                log::error!("Special Behavior BroadcastContractAfterFullSetup");
+                self.recover_from_swap()?;
+                return Ok(());
+            }
         }
 
         match self.settle_all_swaps() {
@@ -1168,13 +1168,14 @@ impl Taker {
             this_maker.address
         );
         let address = this_maker.address.to_string();
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(address)?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(address)?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 address.as_str(),
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         let reconnect_timeout = Duration::from_secs(TCP_TIMEOUT_SECONDS);
@@ -1631,13 +1632,14 @@ impl Taker {
 
         let maker_addr_str = maker_address.to_string();
 
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(maker_addr_str.clone())?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         socket.set_read_timeout(Some(reconnect_time_out))?;
@@ -1719,13 +1721,14 @@ impl Taker {
         let mut ii = 0;
 
         let maker_addr_str = maker_address.to_string();
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(maker_addr_str.clone())?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         socket.set_read_timeout(Some(reconnect_time_out))?;
@@ -1896,13 +1899,14 @@ impl Taker {
         receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {
         let maker_addr_str = maker_address.to_string();
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(maker_addr_str.clone())?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         socket.set_read_timeout(Some(Duration::from_secs(TCP_TIMEOUT_SECONDS)))?;
@@ -2145,15 +2149,10 @@ impl Taker {
 
     /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
     pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        let tracker_addr = match self.config.connection_type {
-            ConnectionType::CLEARNET => {
-                if cfg!(feature = "integration-test") {
-                    format!("127.0.0.1:{}", 8080)
-                } else {
-                    self.config.tracker_address.clone()
-                }
-            }
-            ConnectionType::TOR => self.config.tracker_address.clone(),
+        let tracker_addr = if cfg!(feature = "integration-test") {
+            format!("127.0.0.1:{}", 8080)
+        } else {
+            self.config.tracker_address.clone()
         };
 
         #[cfg(not(feature = "integration-test"))]
@@ -2164,11 +2163,7 @@ impl Taker {
 
         log::info!("Fetching addresses from Tracker: {tracker_addr}");
 
-        let addresses_from_tracker = match fetch_addresses_from_tracker(
-            socks_port,
-            tracker_addr,
-            self.config.connection_type,
-        ) {
+        let addresses_from_tracker = match fetch_addresses_from_tracker(socks_port, tracker_addr) {
             Ok(tracker_addrs) => tracker_addrs,
             Err(e) => {
                 log::error!("Could not connect to Tracker Server: {e:?}");
@@ -2236,13 +2231,14 @@ impl Taker {
     ) -> Result<(), TakerError> {
         // Notify the maker that we are waiting for funding confirmation
         let address = maker_addr.to_string();
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(address)?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(address.clone())?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 address.as_str(),
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         let reconnect_timeout = Duration::from_secs(TCP_TIMEOUT_SECONDS);
