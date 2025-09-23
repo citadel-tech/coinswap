@@ -561,8 +561,8 @@ impl Wallet {
         //this function will pick the top most valuable UTXOs and use them
         //to create funding transactions
 
-        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info()?;
-        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info()?;
+        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info();
+        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info();
         seed_coin_utxo.append(&mut swap_coin_utxo);
 
         let mut list_unspent_result = seed_coin_utxo;

@@ -27,7 +27,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             let utxos = maker
                 .get_wallet()
                 .read()?
-                .list_live_timelock_contract_spend_info()?
+                .list_live_timelock_contract_spend_info()
                 .into_iter()
                 .map(UTXO::from_utxo_data)
                 .collect();
@@ -37,7 +37,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             let utxos = maker
                 .get_wallet()
                 .read()?
-                .list_fidelity_spend_info()?
+                .list_fidelity_spend_info()
                 .into_iter()
                 .map(UTXO::from_utxo_data)
                 .collect();
@@ -47,7 +47,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             let utxos = maker
                 .get_wallet()
                 .read()?
-                .list_all_utxo_spend_info()?
+                .list_all_utxo_spend_info()
                 .into_iter()
                 .map(UTXO::from_utxo_data)
                 .collect();
@@ -57,7 +57,7 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             let utxos = maker
                 .get_wallet()
                 .read()?
-                .list_incoming_swap_coin_utxo_spend_info()?
+                .list_incoming_swap_coin_utxo_spend_info()
                 .into_iter()
                 .map(UTXO::from_utxo_data)
                 .collect();

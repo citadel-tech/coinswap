@@ -188,14 +188,14 @@ fn main() -> Result<(), TakerError> {
             )?;
             match &args.command {
                 Commands::ListUtxo => {
-                    let utxos = taker.get_wallet().list_all_utxo_spend_info()?;
+                    let utxos = taker.get_wallet().list_all_utxo_spend_info();
                     for utxo in utxos {
                         let utxo = UTXO::from_utxo_data(utxo);
                         println!("{}", serde_json::to_string_pretty(&utxo)?);
                     }
                 }
                 Commands::ListUtxoRegular => {
-                    let utxos = taker.get_wallet().list_descriptor_utxo_spend_info()?;
+                    let utxos = taker.get_wallet().list_descriptor_utxo_spend_info();
                     for utxo in utxos {
                         let utxo = UTXO::from_utxo_data(utxo);
                         println!("{}", serde_json::to_string_pretty(&utxo)?);
@@ -204,7 +204,7 @@ fn main() -> Result<(), TakerError> {
                 Commands::ListUtxoSwap => {
                     let utxos = taker
                         .get_wallet()
-                        .list_incoming_swap_coin_utxo_spend_info()?;
+                        .list_incoming_swap_coin_utxo_spend_info();
                     for utxo in utxos {
                         let utxo = UTXO::from_utxo_data(utxo);
                         println!("{}", serde_json::to_string_pretty(&utxo)?);
@@ -213,7 +213,7 @@ fn main() -> Result<(), TakerError> {
                 Commands::ListUtxoContract => {
                     let utxos = taker
                         .get_wallet()
-                        .list_live_timelock_contract_spend_info()?;
+                        .list_live_timelock_contract_spend_info();
                     for utxo in utxos {
                         let utxo = UTXO::from_utxo_data(utxo);
                         println!("{}", serde_json::to_string_pretty(&utxo)?);
