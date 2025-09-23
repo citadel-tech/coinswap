@@ -8,7 +8,6 @@ use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server_taproot, TaprootMaker, TaprootMakerBehavior},
     taker::api2::{SwapParams, Taker},
-    utill::ConnectionType,
     wallet::{RPCConfig, Wallet},
 };
 use std::sync::Arc;
@@ -31,11 +30,9 @@ fn test_taproot_coinswap() {
         ((17102, Some(19062)), TaprootMakerBehavior::Normal),
     ];
 
-    let connection_type = ConnectionType::CLEARNET;
-
     // Initialize test framework (without regular takers, we'll create taproot taker manually)
     let (test_framework, _regular_takers, _regular_makers, block_generation_handle) =
-        TestFramework::init(vec![], vec![], connection_type);
+        TestFramework::init(vec![], vec![]);
 
     let bitcoind = &test_framework.bitcoind;
 
@@ -217,7 +214,6 @@ fn create_taproot_makers(
                     None, // control_port
                     None, // tor_auth_password
                     None, // socks_port
-                    Some(ConnectionType::CLEARNET),
                     *behavior,
                 )
                 .unwrap(),
@@ -287,7 +283,6 @@ fn create_taproot_taker(test_framework: &TestFramework) -> Taker {
         Some(rpc_config),
         None, // control_port
         None, // tor_auth_password
-        Some(ConnectionType::CLEARNET),
     )
     .unwrap()
 }
@@ -362,7 +357,6 @@ fn verify_taproot_swap_results(
         let wallet = maker.get_wallet().read().unwrap();
         let balances = wallet.get_balances().unwrap();
         let current_total = balances.regular + balances.swap + balances.contract;
-        let total_with_fidelity = current_total + balances.fidelity;
 
         info!(
             "Taproot Maker {} final balances - Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Total spendable: {}",

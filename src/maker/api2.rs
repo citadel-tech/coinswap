@@ -9,7 +9,7 @@ use crate::{
         contract2::{calculate_coinswap_fee, calculate_contract_sighash},
         messages2::{Offer, SenderContractFromMaker, SendersContract, SwapDetails},
     },
-    utill::{check_tor_status, get_maker_dir, ConnectionType, HEART_BEAT_INTERVAL},
+    utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL},
     wallet::{RPCConfig, Wallet},
 };
 use bitcoin::{hashes::Hash, Amount, ScriptBuf, Transaction};
@@ -233,7 +233,6 @@ impl Maker {
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
         socks_port: Option<u16>,
-        _connection_type: Option<ConnectionType>,
         behavior: MakerBehavior,
     ) -> Result<Self, MakerError> {
         let data_dir = data_dir.unwrap_or(get_maker_dir());
