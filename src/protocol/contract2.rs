@@ -5,9 +5,7 @@ use bitcoin::blockdata::transaction::{Transaction, TxOut};
 use bitcoin::hashes::{sha256, Hash as HashTrait};
 use bitcoin::locktime::absolute::LockTime;
 use bitcoin::opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256};
-use bitcoin::secp256k1::{
-    Keypair, Secp256k1, SecretKey, XOnlyPublicKey,
-};
+use bitcoin::secp256k1::{Keypair, Secp256k1, SecretKey, XOnlyPublicKey};
 use bitcoin::sighash::{Prevouts, SighashCache};
 use bitcoin::taproot::{TaprootBuilder, TaprootSpendInfo};
 use bitcoin::{script, Amount, Script, ScriptBuf};
@@ -207,7 +205,7 @@ mod tests {
     use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
     use bitcoind::bitcoincore_rpc::RawTx;
     use bitcoind::bitcoincore_rpc::{Auth::UserPass, Client, RpcApi};
-    use secp256k1::musig::{ AggregatedSignature, SecretNonce};
+    use secp256k1::musig::{AggregatedSignature, SecretNonce};
     use std::str::FromStr;
 
     use super::*;
