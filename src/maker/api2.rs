@@ -72,19 +72,6 @@ pub enum MakerBehavior {
     BroadcastContractAfterSetup,
 }
 
-/// Tracks the current state of the sweeping process
-#[derive(Debug, Clone)]
-pub(crate) enum SweepState {
-    /// Contract creation completed, waiting for sweeping to begin
-    ContractCreated,
-}
-
-impl Default for SweepState {
-    fn default() -> Self {
-        SweepState::ContractCreated
-    }
-}
-
 /// Maintains the state of a connection, including the list of swapcoins.
 #[derive(Debug, Default)]
 pub struct ConnectionState {
@@ -104,9 +91,6 @@ pub struct ConnectionState {
     pub(crate) incoming_contract_tap_tweak: Option<bitcoin::secp256k1::Scalar>,
     pub(crate) incoming_contract_internal_key: Option<bitcoin::secp256k1::XOnlyPublicKey>,
     pub(crate) incoming_contract_spending_tx: Option<Transaction>, // Spending transaction for incoming contract
-    // Ordered pubkeys are computed on-the-fly when needed
-    pub(crate) sweep_state: SweepState, // Current state of the sweeping process
-    // New fields for backwards sweeping protocol
     pub(crate) outgoing_contract_my_privkey: Option<bitcoin::secp256k1::SecretKey>, // Our outgoing contract private key
     pub(crate) outgoing_contract_my_pubkey: Option<bitcoin::PublicKey>, // Our outgoing contract public key
     pub(crate) outgoing_contract_other_pubkey: Option<bitcoin::PublicKey>, // Taker's tweakable pubkey
@@ -144,7 +128,6 @@ impl Clone for ConnectionState {
             incoming_contract_internal_key: self.incoming_contract_internal_key,
             incoming_contract_spending_tx: self.incoming_contract_spending_tx.clone(),
             // Ordered pubkeys are computed on-the-fly
-            sweep_state: self.sweep_state.clone(),
             outgoing_contract_my_privkey: self.outgoing_contract_my_privkey,
             outgoing_contract_my_pubkey: self.outgoing_contract_my_pubkey,
             outgoing_contract_other_pubkey: self.outgoing_contract_other_pubkey,

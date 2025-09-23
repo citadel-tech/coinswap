@@ -1,18 +1,16 @@
 //! This module implements the contract protocol for a 2-of-2 multisig transaction
 
 use super::error2::ProtocolError;
-use bitcoin::blockdata::transaction::{Transaction, TxIn, TxOut};
+use bitcoin::blockdata::transaction::{Transaction, TxOut};
 use bitcoin::hashes::{sha256, Hash as HashTrait};
 use bitcoin::locktime::absolute::LockTime;
 use bitcoin::opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256};
 use bitcoin::secp256k1::{
-    rand::rngs::OsRng, Keypair, Message, Scalar, Secp256k1, SecretKey, XOnlyPublicKey,
+    Keypair, Secp256k1, SecretKey, XOnlyPublicKey,
 };
 use bitcoin::sighash::{Prevouts, SighashCache};
-use bitcoin::taproot::{LeafVersion, TapLeafHash, TaprootBuilder, TaprootSpendInfo};
-use bitcoin::transaction::Version;
-use bitcoin::{script, Amount, PublicKey, Script, ScriptBuf, Sequence, Witness};
-use secp256k1::musig::{AggregatedNonce, PartialSignature, PublicNonce};
+use bitcoin::taproot::{TaprootBuilder, TaprootSpendInfo};
+use bitcoin::{script, Amount, Script, ScriptBuf};
 
 // create_hashlock_script
 pub(crate) fn create_hashlock_script(hash: &[u8; 32], pubkey: &XOnlyPublicKey) -> ScriptBuf {
@@ -170,7 +168,12 @@ fn _verify_transaction_data(
 #[cfg(test)]
 mod tests {
 
-    use bitcoin::blockdata::transaction::OutPoint;
+    use bitcoin::blockdata::transaction::{OutPoint, TxIn};
+    use bitcoin::secp256k1::{Message, Scalar};
+    use bitcoin::taproot::{LeafVersion, TapLeafHash};
+    use bitcoin::transaction::Version;
+    use bitcoin::{Sequence, Witness};
+    use secp256k1::musig::{AggregatedNonce, PublicNonce};
 
     fn create_unsigned_contract_tx(
         input: OutPoint,
@@ -198,14 +201,13 @@ mod tests {
         aggregate_partial_signatures_i, generate_new_nonce_pair_i, generate_partial_signature_i,
         get_aggregated_nonce_i, get_aggregated_pubkey_i,
     };
-    use bitcoin::secp256k1::Scalar;
     use bitcoin::sighash::Prevouts;
     use bitcoin::taproot::{ControlBlock, TaprootSpendInfo};
     use bitcoin::{Address, TapSighashType};
     use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
     use bitcoind::bitcoincore_rpc::RawTx;
     use bitcoind::bitcoincore_rpc::{Auth::UserPass, Client, RpcApi};
-    use secp256k1::musig::{AggregatedNonce, AggregatedSignature, PublicNonce, SecretNonce};
+    use secp256k1::musig::{ AggregatedSignature, SecretNonce};
     use std::str::FromStr;
 
     use super::*;
@@ -316,7 +318,6 @@ mod tests {
         tap_tweak: Scalar,
         output_address: Address,
     ) {
-        let secp = Secp256k1::new();
         let client = Client::new(
             "127.0.0.1:21443/wallet/test_wallet",
             UserPass("user".to_string(), "pass".to_string()),
@@ -594,7 +595,7 @@ mod tests {
         let locktime = LockTime::from_height(1000).unwrap();
 
         let (address, spending_utxo) = create_and_fund_address();
-        let (contract_txid, taproot_spendinfo, hashlock_script, timelock_script) =
+        let (contract_txid, taproot_spendinfo, _hashlock_script, _timelock_script) =
             create_and_broadcast_contract(
                 spending_utxo,
                 internal_key,
@@ -657,7 +658,7 @@ mod tests {
         let locktime = LockTime::from_height(1000).unwrap();
 
         let (address, spending_utxo) = create_and_fund_address();
-        let (contract_txid, taproot_spendinfo, hashlock_script, timelock_script) =
+        let (contract_txid, taproot_spendinfo, hashlock_script, _timelock_script) =
             create_and_broadcast_contract(
                 spending_utxo,
                 internal_key,
@@ -721,7 +722,7 @@ mod tests {
         let locktime = LockTime::from_height(1000).unwrap();
 
         let (address, spending_utxo) = create_and_fund_address();
-        let (contract_txid, taproot_spendinfo, hashlock_script, timelock_script) =
+        let (contract_txid, taproot_spendinfo, _hashlock_script, timelock_script) =
             create_and_broadcast_contract(
                 spending_utxo,
                 internal_key,
@@ -750,10 +751,11 @@ mod tests {
         println!("Contract successfully spent via hashlock");
     }
 
-    // #[test]
-    // fn end_to_end() {
-    //     end_to_end_internal_key();
-    //     end_to_end_hashlock();
-    //     end_to_end_timelock();
-    // }
+    #[test]
+    #[ignore]
+    fn end_to_end() {
+        end_to_end_internal_key();
+        end_to_end_hashlock();
+        end_to_end_timelock();
+    }
 }
