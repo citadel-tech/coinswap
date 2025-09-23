@@ -1,7 +1,7 @@
 //! This module implements the contract protocol for a 2-of-2 multisig transaction
 
 use super::error2::ProtocolError;
-use bitcoin::blockdata::transaction::{ Transaction, TxIn, TxOut};
+use bitcoin::blockdata::transaction::{Transaction, TxIn, TxOut};
 use bitcoin::hashes::{sha256, Hash as HashTrait};
 use bitcoin::locktime::absolute::LockTime;
 use bitcoin::opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256};

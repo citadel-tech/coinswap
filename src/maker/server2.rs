@@ -22,15 +22,12 @@ use crate::{
     maker::{
         api2::{check_for_idle_states, ConnectionState},
         handlers2::handle_message_taproot,
-        rpc2::start_rpc_server_taproot,
+        rpc::start_rpc_server,
     },
     protocol::messages2::{
-        MakerToTakerMessage, TakerToMakerMessage, TrackerClientToServer,
-        TrackerServerToClient,
+        MakerToTakerMessage, TakerToMakerMessage, TrackerClientToServer, TrackerServerToClient,
     },
-    utill::{
-        get_tor_hostname, read_message, send_message, MIN_FEE_RATE, HEART_BEAT_INTERVAL,
-    },
+    utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::WalletError,
 };
 
@@ -667,7 +664,7 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
     let rpc_handle = thread::Builder::new()
         .name("rpc-server-taproot".to_string())
         .spawn(move || {
-            if let Err(e) = start_rpc_server_taproot(maker_clone_rpc) {
+            if let Err(e) = start_rpc_server(maker_clone_rpc) {
                 log::error!("Taproot RPC server error: {:?}", e);
             }
         })?;

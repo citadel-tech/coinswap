@@ -17,7 +17,6 @@ mod error;
 mod handlers;
 mod handlers2;
 mod rpc;
-mod rpc2;
 mod server;
 mod server2;
 

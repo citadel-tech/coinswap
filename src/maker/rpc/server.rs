@@ -1,7 +1,10 @@
 use std::{
     io::ErrorKind,
     net::{TcpListener, TcpStream},
-    sync::{atomic::Ordering::Relaxed, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering::Relaxed},
+        Arc,
+    },
     thread::sleep,
     time::Duration,
 };
@@ -9,14 +12,22 @@ use std::{
 use bitcoin::{Address, Amount};
 
 use super::messages::RpcMsgReq;
+use crate::wallet::Wallet;
 use crate::{
-    maker::{error::MakerError, rpc::messages::RpcMsgResp, Maker},
+    maker::{config::MakerConfig, error::MakerError, rpc::messages::RpcMsgResp},
     utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, UTXO},
     wallet::Destination,
 };
-use std::str::FromStr;
+use std::{path::Path, str::FromStr, sync::RwLock};
 
-fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), MakerError> {
+pub trait MakerRpc {
+    fn get_wallet(&self) -> &RwLock<Wallet>;
+    fn get_data_dir(&self) -> &Path;
+    fn get_config(&self) -> &MakerConfig;
+    fn get_shutdown(&self) -> &AtomicBool;
+}
+
+fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result<(), MakerError> {
     let msg_bytes = read_message(socket)?;
     let rpc_request: RpcMsgReq = serde_cbor::from_slice(&msg_bytes)?;
     log::info!("RPC request received: {rpc_request:?}");
@@ -109,16 +120,16 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
             } else {
                 let hostname = get_tor_hostname(
                     maker.get_data_dir(),
-                    maker.config.control_port,
-                    maker.config.network_port,
-                    &maker.config.tor_auth_password,
+                    maker.get_config().control_port,
+                    maker.get_config().network_port,
+                    &maker.get_config().tor_auth_password,
                 )?;
-                let address = format!("{}:{}", hostname, maker.config.network_port);
+                let address = format!("{}:{}", hostname, maker.get_config().network_port);
                 RpcMsgResp::GetTorAddressResp(address)
             }
         }
         RpcMsgReq::Stop => {
-            maker.shutdown.store(true, Relaxed);
+            maker.get_shutdown().store(true, Relaxed);
             RpcMsgResp::Shutdown
         }
 
@@ -146,19 +157,19 @@ fn handle_request(maker: &Arc<Maker>, socket: &mut TcpStream) -> Result<(), Make
     Ok(())
 }
 
-pub(crate) fn start_rpc_server(maker: Arc<Maker>) -> Result<(), MakerError> {
-    let rpc_port = maker.config.rpc_port;
+pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerError> {
+    let rpc_port = maker.get_config().rpc_port;
     let rpc_socket = format!("127.0.0.1:{rpc_port}");
     let listener = Arc::new(TcpListener::bind(&rpc_socket)?);
     log::info!(
         "[{}] RPC socket binding successful at {}",
-        maker.config.network_port,
+        maker.get_config().network_port,
         rpc_socket
     );
 
     listener.set_nonblocking(true)?;
 
-    while !maker.shutdown.load(Relaxed) {
+    while !maker.get_shutdown().load(Relaxed) {
         match listener.accept() {
             Ok((mut stream, addr)) => {
                 log::info!("Got RPC request from: {addr}");
