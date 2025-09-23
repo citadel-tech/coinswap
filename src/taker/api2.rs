@@ -1393,9 +1393,7 @@ impl Taker {
     }
 
     /// Coordinate sweeps with all makers in the chain
-    fn coordinate_maker_sweeps(
-        &mut self,
-    ) -> Result<(), TakerError> {
+    fn coordinate_maker_sweeps(&mut self) -> Result<(), TakerError> {
         use crate::protocol::messages2::{
             MakerToTakerMessage, PartialSigAndSendersNonce, SpendingTxAndReceiverNonce,
             TakerToMakerMessage,
