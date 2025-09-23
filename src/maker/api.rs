@@ -747,15 +747,16 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
 /// Remove contract transactions from the wallet.
 pub(crate) fn recover_from_swap(
     maker: Arc<Maker>,
-    mut tracker_stream: Option<Arc<TcpStream>>,
+    tracker_stream: Option<Arc<TcpStream>>,
 ) -> Result<(), MakerError> {
-    // Broadcast all the incoming contracts.
     let (incomings, outgoings) = maker.wallet.read()?.find_unfinished_swapcoins();
     let is_hash_preimage_known = incomings.iter().any(|ic_sc| ic_sc.is_hash_preimage_known());
     let timelock = outgoings
         .first()
-        .map(|og_sc| og_sc.get_timelock().unwrap())
-        .unwrap();
+        .map(|outgoing| outgoing.get_timelock())
+        .ok_or(MakerError::General(
+            "No timelock found on Outgoing Swapcoin",
+        ))??;
 
     // Block wait time is varied between prod. and test builds.
     let block_wait_time = if cfg!(feature = "integration-test") {
@@ -764,15 +765,19 @@ pub(crate) fn recover_from_swap(
         Duration::from_secs(10 * 60)
     };
 
-    let time_till_timelock_expires =
-        Duration::from_secs(timelock as u64 * block_wait_time.as_secs());
-    let start_time = Instant::now();
-    while start_time.elapsed() < time_till_timelock_expires {
-        if incomings.iter().any(|ic_sc| ic_sc.is_hash_preimage_known()) {
-            break;
+    if let Some(tracker_stream) = &tracker_stream {
+        let time_till_timelock_expires =
+            Duration::from_secs(timelock as u64 * block_wait_time.as_secs());
+        let start_time = Instant::now();
+
+        while start_time.elapsed() < time_till_timelock_expires {
+            if incomings.iter().any(|ic_sc| ic_sc.is_hash_preimage_known()) {
+                break;
+            }
+
+            check_for_tracker_watch_response(&maker, &mut tracker_stream.clone())?;
+            sleep(Duration::from_secs(10));
         }
-        check_for_tracker_watch_response(&maker, tracker_stream.as_mut().unwrap())?;
-        sleep(Duration::from_secs(10));
     }
 
     if is_hash_preimage_known {
@@ -846,7 +851,7 @@ fn check_for_tracker_watch_response(
     tracker_stream: &mut Arc<TcpStream>,
 ) -> Result<(), MakerError> {
     while !maker.shutdown.load(Relaxed) {
-        let bytes = match read_message(&mut tracker_stream.try_clone().unwrap()) {
+        let bytes = match read_message(&mut tracker_stream.try_clone()?) {
             Ok(bytes) => bytes,
             Err(e) => {
                 log::error!(
@@ -881,7 +886,8 @@ fn check_for_tracker_watch_response(
 
             let wallet = maker.wallet.read()?;
             for tx in mempool_tx {
-                let txid = Txid::from_str(&tx.txid).unwrap();
+                let txid = Txid::from_str(&tx.txid)
+                    .map_err(|_| MakerError::General("Failed to parse txid"))?;
                 if let Ok(raw_tx) = wallet.rpc.get_raw_transaction(&txid, None) {
                     for input in raw_tx.input.iter() {
                         if input.witness.len() >= MIN_WITNESS_ITEM_FOR_HASHLOCK as usize
