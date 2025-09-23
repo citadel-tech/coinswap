@@ -186,7 +186,6 @@ fn main() -> Result<(), TakerError> {
                 None,
                 Some(args.tor_auth),
             )?;
-
             match &args.command {
                 Commands::ListUtxo => {
                     let utxos = taker.get_wallet().list_all_utxo_spend_info()?;
@@ -251,7 +250,6 @@ fn main() -> Result<(), TakerError> {
                     )?;
 
                     let outputs = vec![(Address::from_str(address)?.assume_checked(), amount)];
-
                     let destination = Destination::Multi {
                         outputs,
                         op_return_data: None,

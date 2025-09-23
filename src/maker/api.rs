@@ -12,7 +12,10 @@ use crate::{
         messages::{FidelityProof, ReqContractSigsForSender},
         Hash160,
     },
-    utill::{get_maker_dir, redeemscript_to_scriptpubkey, HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS},
+    utill::{
+        check_tor_status, get_maker_dir, redeemscript_to_scriptpubkey, HEART_BEAT_INTERVAL,
+        REQUIRED_CONFIRMS,
+    },
     wallet::{RPCConfig, WalletSwapCoin},
 };
 use bitcoin::{
@@ -296,6 +299,9 @@ impl Maker {
             config.tor_auth_password = tor_auth_password;
         }
 
+        if !cfg!(feature = "integration-test") {
+            check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
+        }
         config.write_to_file(&data_dir.join("config.toml"))?;
 
         wallet.sync_and_save()?;
