@@ -13,7 +13,7 @@ use super::error::TakerError;
 
 use super::offers::fetch_addresses_from_tracker;
 use crate::protocol::contract2::{calculate_coinswap_fee, calculate_contract_sighash};
-use crate::utill::{check_tor_status, read_message, ConnectionType};
+use crate::utill::{check_tor_status, read_message};
 use std::collections::HashSet;
 
 use crate::protocol::messages2::SwapDetails;
@@ -78,14 +78,15 @@ fn connect_to_maker(
     config: &TakerConfig,
     timeout_secs: u64,
 ) -> Result<TcpStream, TakerError> {
-    let socket = match config.connection_type {
-        ConnectionType::CLEARNET => TcpStream::connect(maker_addr).map_err(|e| {
+    let socket = if cfg!(feature = "integration-test") {
+        TcpStream::connect(maker_addr).map_err(|e| {
             TakerError::General(format!(
                 "Failed to connect to maker {}: {:?}",
                 maker_addr, e
             ))
-        })?,
-        ConnectionType::TOR => Socks5Stream::connect(
+        })?
+    } else {
+        Socks5Stream::connect(
             format!("127.0.0.1:{}", config.socks_port).as_str(),
             maker_addr,
         )
@@ -95,7 +96,7 @@ fn connect_to_maker(
                 maker_addr, e
             ))
         })?
-        .into_inner(),
+        .into_inner()
     };
 
     let timeout = Duration::from_secs(timeout_secs);
@@ -252,7 +253,6 @@ impl Taker {
         rpc_config: Option<RPCConfig>,
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
-        connection_type: Option<ConnectionType>,
     ) -> Result<Taker, TakerError> {
         let data_dir = data_dir.unwrap_or_else(get_taker_dir);
 
@@ -279,15 +279,11 @@ impl Taker {
 
         let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
-        if let Some(connection_type) = connection_type {
-            config.connection_type = connection_type;
-        }
-
         config.control_port = control_port.unwrap_or(config.control_port);
-        config.tor_auth_password =
-            tor_auth_password.unwrap_or_else(|| config.tor_auth_password.clone());
-
-        if matches!(connection_type, Some(ConnectionType::TOR)) {
+        if let Some(tor_auth_password) = tor_auth_password {
+            config.tor_auth_password = tor_auth_password;
+        }
+        if !cfg!(feature = "integration-test") {
             check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
 
@@ -474,15 +470,10 @@ impl Taker {
 
     /// Sync the offer book with directory servers
     pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        let dns_addr = match self.config.connection_type {
-            ConnectionType::CLEARNET => {
-                if cfg!(feature = "integration-test") {
-                    format!("127.0.0.1:{}", 8080)
-                } else {
-                    self.config.tracker_address.clone()
-                }
-            }
-            ConnectionType::TOR => self.config.tracker_address.clone(),
+        let tracker_addr = if cfg!(feature = "integration-test") {
+            format!("127.0.0.1:{}", 8080)
+        } else {
+            self.config.tracker_address.clone()
         };
 
         #[cfg(not(feature = "integration-test"))]
@@ -491,19 +482,15 @@ impl Taker {
         #[cfg(feature = "integration-test")]
         let socks_port = None;
 
-        log::info!("Fetching addresses from DNS: {dns_addr}");
+        log::info!("Fetching addresses from Tracker: {tracker_addr}");
 
-        let addresses_from_dns =
-            match fetch_addresses_from_tracker(socks_port, dns_addr, self.config.connection_type) {
-                Ok(addresses) => {
-                    log::info!("Fetched {} addresses from DNS", addresses.len());
-                    addresses
-                }
-                Err(e) => {
-                    log::error!("Could not connect to DNS Server: {e:?}");
-                    return Err(e);
-                }
-            };
+        let addresses_from_tracker = match fetch_addresses_from_tracker(socks_port, tracker_addr) {
+            Ok(tracker_addrs) => tracker_addrs,
+            Err(e) => {
+                log::error!("Could not connect to Tracker Server: {e:?}");
+                return Err(e);
+            }
+        };
 
         let fresh_addrs = self
             .offerbook
@@ -512,9 +499,9 @@ impl Taker {
             .map(|oa| &oa.address)
             .collect::<HashSet<_>>();
 
-        let addrs_to_fetch = addresses_from_dns
+        let addrs_to_fetch = addresses_from_tracker
             .iter()
-            .filter(|dns_addr| !fresh_addrs.contains(dns_addr))
+            .filter(|tracker_addr| !fresh_addrs.contains(tracker_addr))
             .cloned()
             .collect::<Vec<_>>();
 
