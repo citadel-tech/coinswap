@@ -12,7 +12,7 @@ use crate::{
     utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL},
     wallet::{RPCConfig, Wallet},
 };
-use bitcoin::{hashes::Hash, Amount, ScriptBuf, Transaction};
+use bitcoin::{Amount, ScriptBuf, Transaction};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use std::{
     collections::HashMap,
@@ -774,11 +774,7 @@ impl Maker {
 
         let (outgoing_contract_my_sec_nonce, outgoing_contract_my_pub_nonce) =
             generate_new_nonce_pair_i(
-                tap_tweak,
-                ordered_pubkeys[0].inner, // lexicographically first pubkey
-                ordered_pubkeys[1].inner, // lexicographically second pubkey
                 outgoing_contract_my_pubkey.inner, // Signer is maker
-                message,
             );
 
         connection_state.outgoing_contract_my_sec_nonce = Some(outgoing_contract_my_sec_nonce);
@@ -814,16 +810,9 @@ impl Maker {
 
         // let next_message = self.get_incoming_contract_sighash_message();
         let unsigned_spending_tx = self.create_unsigned_spending_tx(connection_state)?;
-        let next_message = bitcoin::secp256k1::Message::from_digest(
-            unsigned_spending_tx.compute_txid().to_byte_array(),
-        );
         let (incoming_contract_my_sec_nonce, incoming_contract_my_pub_nonce) =
             generate_new_nonce_pair_i(
-                tap_tweak,
-                pubkey1.inner, // Use same consistent order: taker first, maker second
-                pubkey2.inner,
                 outgoing_contract_my_pubkey.inner, // Signer is maker
-                next_message,
             );
 
         // Store nonces and spending transaction for later use in sweep completion

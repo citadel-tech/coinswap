@@ -26,25 +26,12 @@ pub fn get_aggregated_pubkey_i(
 
 /// Generates a new nonce pair
 pub fn generate_new_nonce_pair_i(
-    tap_tweak: bitcoin::secp256k1::Scalar,
-    pubkey1: bitcoin::secp256k1::PublicKey,
-    pubkey2: bitcoin::secp256k1::PublicKey,
     nonce_pubkey: bitcoin::secp256k1::PublicKey,
-    message: bitcoin::secp256k1::Message,
 ) -> (secp256k1::musig::SecretNonce, secp256k1::musig::PublicNonce) {
-    let tap_tweak = tap_tweak.to_be_bytes();
-    let tap_tweak = secp256k1::Scalar::from_be_bytes(tap_tweak).unwrap();
-    let pubkey1 = pubkey1.serialize();
-    let pubkey2 = pubkey2.serialize();
-    let pubkey1 = secp256k1::PublicKey::from_slice(&pubkey1).unwrap();
-    let pubkey2 = secp256k1::PublicKey::from_slice(&pubkey2).unwrap();
-    let pubkeys = vec![&pubkey1, &pubkey2];
     let nonce_pubkey = nonce_pubkey.serialize();
     let nonce_pubkey = secp256k1::PublicKey::from_slice(&nonce_pubkey).unwrap();
     // Convert bitcoin::secp256k1::Message to secp256k1::Message directly from bytes
-    let message_bytes = message.as_ref();
-    let message = secp256k1::Message::from_digest(*message_bytes);
-    generate_new_nonce_pair(tap_tweak, &pubkeys, nonce_pubkey, message, None)
+    generate_new_nonce_pair(nonce_pubkey)
 }
 
 /// get aggregated nonce

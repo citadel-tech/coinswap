@@ -359,10 +359,8 @@ mod tests {
         let pubkey1 = keypair1.public_key();
         let pubkey2 = keypair2.public_key();
         // let signature = secp.sign_schnorr(&msg, &tweaked.to_inner());
-        let nonce_pair_1: (SecretNonce, PublicNonce) =
-            generate_new_nonce_pair_i(tap_tweak, pubkey1, pubkey2, pubkey1, msg);
-        let nonce_pair_2: (SecretNonce, PublicNonce) =
-            generate_new_nonce_pair_i(tap_tweak, pubkey1, pubkey2, pubkey2, msg);
+        let nonce_pair_1: (SecretNonce, PublicNonce) = generate_new_nonce_pair_i(pubkey1);
+        let nonce_pair_2: (SecretNonce, PublicNonce) = generate_new_nonce_pair_i(pubkey2);
         let agg_nonce: AggregatedNonce =
             get_aggregated_nonce_i(&vec![&nonce_pair_1.1, &nonce_pair_2.1]);
 

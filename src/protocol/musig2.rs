@@ -3,8 +3,8 @@
 //! This module includes most of the fundamental functions needed for Taproot and MuSig2.
 
 use secp256k1::musig::{
-    AggregatedNonce, AggregatedSignature, KeyAggCache, PartialSignature, PublicNonce, SecretNonce,
-    Session, SessionSecretRand,
+    new_nonce_pair, AggregatedNonce, AggregatedSignature, KeyAggCache, PartialSignature,
+    PublicNonce, SecretNonce, Session, SessionSecretRand,
 };
 use secp256k1::{rand, Keypair, Message, PublicKey, Scalar, Secp256k1, XOnlyPublicKey};
 
@@ -19,20 +19,18 @@ pub fn get_aggregated_pubkey(pubkey1: &PublicKey, pubkey2: &PublicKey) -> XOnlyP
 }
 
 /// Generates a new nonce pair
-pub fn generate_new_nonce_pair(
-    tap_tweak: Scalar,
-    pubkeys: &[&PublicKey],
-    pubkey: PublicKey,
-    msg: Message,
-    extra_rand: Option<[u8; 32]>,
-) -> (SecretNonce, PublicNonce) {
+pub fn generate_new_nonce_pair(pubkey: PublicKey) -> (SecretNonce, PublicNonce) {
     let secp = Secp256k1::new();
     let musig_session_sec_rand = SessionSecretRand::from_rng(&mut rand::thread_rng());
-    let mut musig_key_agg_cache = KeyAggCache::new(&secp, pubkeys);
-    musig_key_agg_cache
-        .pubkey_xonly_tweak_add(&secp, &tap_tweak)
-        .unwrap();
-    musig_key_agg_cache.nonce_gen(&secp, musig_session_sec_rand, pubkey, msg, extra_rand)
+    new_nonce_pair(
+        &secp,
+        musig_session_sec_rand,
+        None,
+        None,
+        pubkey,
+        None,
+        None,
+    )
 }
 
 /// Aggregates the nonces
@@ -147,10 +145,8 @@ mod tests {
                 .unwrap(),
         );
 
-        let (sec_nonce1, pub_nonce1) =
-            generate_new_nonce_pair(tweak, pubkeys.as_slice(), pubkey1, message, None);
-        let (sec_nonce2, pub_nonce2) =
-            generate_new_nonce_pair(tweak, pubkeys.as_slice(), pubkey2, message, None);
+        let (sec_nonce1, pub_nonce1) = generate_new_nonce_pair(pubkey1);
+        let (sec_nonce2, pub_nonce2) = generate_new_nonce_pair(pubkey2);
         println!("Generated nonce pairs.");
 
         let agg_nonce = get_aggregated_nonce(&vec![&pub_nonce1, &pub_nonce2]);
