@@ -4,8 +4,7 @@
 //! - Initialize a Taker instance with Bitcoin Core RPC
 //! - Check wallet balance and generate addresses  
 //! - Fund the wallet with test coins
-//! - Discover available makers through offer discovery
-//! - Set up coinswap parameters
+//! - Demonstrate swap parameters setup
 //!
 //! ## Usage
 //!
@@ -18,9 +17,10 @@ use bitcoind::{
     bitcoincore_rpc::{Auth, RpcApi},
     BitcoinD,
 };
+#[cfg(feature = "integration-test")]
+use coinswap::taker::TakerBehavior;
 use coinswap::{
-    taker::{SwapParams, Taker, TakerBehavior},
-    utill::ConnectionType,
+    taker::{SwapParams, Taker},
     wallet::RPCConfig,
 };
 
@@ -62,32 +62,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         wallet_name: "taker-example".to_string(), // Use specific wallet name
     };
 
-    // Clean up any existing wallet files to avoid network mismatch
-    let wallet_dir = std::env::temp_dir()
-        .join("coinswap_taker_example")
-        .join("taker-example");
-    if wallet_dir.exists() {
-        std::fs::remove_file(&wallet_dir).ok();
-    }
-
     // Initialize Taker with default data directory and wallet name
+    println!("About to initialize taker...");
+
     let mut taker = Taker::init(
         None,                              // Use default data directory
         Some("taker-example".to_string()), // Wallet file name
-        Some(rpc_config),                  // Bitcoin Core RPC connection
-        TakerBehavior::Normal,             // Normal behavior (TODO: make test-only)
-        None,                              // Default port
-        None,                              // Default connection string
-        Some(ConnectionType::CLEARNET),    // Connection type (TODO: remove)
+        Some(rpc_config),                  // rpc_config
+        #[cfg(feature = "integration-test")]
+        TakerBehavior::Normal, // behavior (only with integration-test feature)
+        None,                              // control_port
+        None,                              // tor_auth_password
     )
     .unwrap();
 
-    println!("Taker initialized successfully");
+    println!("Taker initialized successfully!");
 
     // Check initial wallet balance and UTXOs
     let wallet = taker.get_wallet();
     let balances = wallet.get_balances().unwrap();
-    let utxos = wallet.get_all_utxo().unwrap();
+    let utxos = wallet.get_all_utxo_from_rpc().unwrap();
 
     println!("Initial wallet state:");
     println!("  Spendable: {} BTC", balances.spendable.to_btc());
@@ -159,7 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Contract: {} BTC", final_balances.contract.to_btc());
 
     // Show UTXOs
-    let utxos = wallet_mut.get_all_utxo().unwrap();
+    let utxos = wallet_mut.get_all_utxo_from_rpc().unwrap();
     println!("\nUTXO information:");
     println!("  Total UTXOs: {}", utxos.len());
     if !utxos.is_empty() {
@@ -176,7 +170,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let swap_params = SwapParams {
         send_amount: Amount::from_btc(0.005).unwrap(),
         maker_count: 2,
-        tx_count: 3, // TODO: remove this field
+        manually_selected_outpoints: None,
     };
 
     println!("Swap parameters:");
@@ -186,17 +180,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         swap_params.send_amount.to_sat()
     );
     println!("  Makers needed: {}", swap_params.maker_count);
-    println!("  Transactions per maker: {}", swap_params.tx_count);
 
-    // TODO: Uncomment this when we want to test the actual error
-    // For now, commenting out since it hangs for too long
+    // TODO: Uncomment this when we want to test the actual swap
+    // For now, commenting out since it requires maker connections
     /*
     println!("Attempting coinswap...");
     let result = taker.do_coinswap(swap_params).unwrap();
     println!("Coinswap completed successfully: {:?}", result);
     */
 
-    println!("Coinswap call commented out to avoid long timeout.");
+    println!("Coinswap call commented out for this example.");
     println!("\nIn production, you would call:");
     println!("  let result = taker.do_coinswap(swap_params).unwrap();");
     println!("\nThis would:");

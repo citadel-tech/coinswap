@@ -78,7 +78,7 @@ impl Wallet {
     }
 
     /// Get all utxos tracked by the core rpc wallet.
-    fn get_all_utxo_from_rpc(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
+    pub fn get_all_utxo_from_rpc(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
         self.rpc.unlock_unspent_all()?;
         let all_utxos = self
             .rpc

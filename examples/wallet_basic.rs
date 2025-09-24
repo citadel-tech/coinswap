@@ -21,9 +21,11 @@ use bitcoind::{
     bitcoincore_rpc::{Auth, RpcApi},
     BitcoinD,
 };
+#[cfg(feature = "integration-test")]
+use coinswap::taker::TakerBehavior;
 use coinswap::{
-    taker::{Taker, TakerBehavior},
-    utill::{ConnectionType, MIN_FEE_RATE},
+    taker::Taker,
+    utill::MIN_FEE_RATE,
     wallet::{Destination, RPCConfig},
 };
 
@@ -65,21 +67,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         wallet_name: "wallet-example".to_string(), // Use specific wallet name
     };
 
-    // Clean up any existing wallet files to avoid network mismatch
-    let wallet_file_path = data_dir.join("wallet-example");
-    if wallet_file_path.exists() {
-        std::fs::remove_file(&wallet_file_path).ok();
-    }
-
     // Initialize Taker to access wallet (Wallet API is not publicly exposed)
     let mut taker = Taker::init(
         None,                               // Use default data directory
         Some("wallet-example".to_string()), // Wallet file name
         Some(rpc_config),                   // Bitcoin Core RPC connection
-        TakerBehavior::Normal,              // Normal behavior (TODO: make test-only)
+        #[cfg(feature = "integration-test")]
+        TakerBehavior::Normal, // behavior
         None,                               // Default port
         None,                               // Default connection string
-        Some(ConnectionType::CLEARNET),     // Connection type (TODO: remove)
     )
     .unwrap();
 
@@ -131,7 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let wallet = taker.get_wallet();
         (
             wallet.get_balances().unwrap(),
-            wallet.get_all_utxo().unwrap(),
+            wallet.get_all_utxo_from_rpc().unwrap(),
             wallet.get_swapcoins_count(),
             wallet.list_descriptor_utxo_spend_info().unwrap(),
             wallet.list_swap_coin_utxo_spend_info().unwrap(),
@@ -211,7 +207,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("\nCoin Selection Demo:");
             let selected_utxos = {
                 let wallet = taker.get_wallet();
-                wallet.coin_select(select_amount, MIN_FEE_RATE).unwrap()
+                wallet
+                    .coin_select(select_amount, MIN_FEE_RATE, None)
+                    .unwrap()
             };
 
             let total_selected: u64 = selected_utxos
