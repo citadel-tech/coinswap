@@ -545,8 +545,7 @@ impl Maker {
             let mut wallet = self.wallet.write()?;
 
             // Use wallet's spend_from_wallet method to properly sign the transaction
-            use crate::utill::MIN_FEE_RATE;
-            use crate::wallet::Destination;
+            use crate::{utill::MIN_FEE_RATE, wallet::Destination};
 
             // Get the funding UTXO spend info
             let funding_utxo_info = wallet
@@ -845,9 +844,7 @@ impl Maker {
         use crate::protocol::musig_interface::{
             aggregate_partial_signatures_i, generate_partial_signature_i, get_aggregated_nonce_i,
         };
-        use bitcoin::secp256k1::Secp256k1;
-        use bitcoin::sighash::SighashCache;
-        use bitcoin::Witness;
+        use bitcoin::{secp256k1::Secp256k1, sighash::SighashCache, Witness};
         use bitcoind::bitcoincore_rpc::RpcApi;
 
         log::info!(

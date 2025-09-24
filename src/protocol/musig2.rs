@@ -2,11 +2,13 @@
 //!
 //! This module includes most of the fundamental functions needed for Taproot and MuSig2.
 
-use secp256k1::musig::{
-    new_nonce_pair, AggregatedNonce, AggregatedSignature, KeyAggCache, PartialSignature,
-    PublicNonce, SecretNonce, Session, SessionSecretRand,
+use secp256k1::{
+    musig::{
+        new_nonce_pair, AggregatedNonce, AggregatedSignature, KeyAggCache, PartialSignature,
+        PublicNonce, SecretNonce, Session, SessionSecretRand,
+    },
+    rand, Keypair, Message, PublicKey, Scalar, Secp256k1, XOnlyPublicKey,
 };
-use secp256k1::{rand, Keypair, Message, PublicKey, Scalar, Secp256k1, XOnlyPublicKey};
 
 /// get aggregated public key from two public keys
 pub fn get_aggregated_pubkey(pubkey1: &PublicKey, pubkey2: &PublicKey) -> XOnlyPublicKey {

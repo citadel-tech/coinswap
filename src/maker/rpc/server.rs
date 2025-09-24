@@ -12,11 +12,10 @@ use std::{
 use bitcoin::{Address, Amount};
 
 use super::messages::RpcMsgReq;
-use crate::wallet::Wallet;
 use crate::{
     maker::{config::MakerConfig, error::MakerError, rpc::messages::RpcMsgResp},
     utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, UTXO},
-    wallet::Destination,
+    wallet::{Destination, Wallet},
 };
 use std::{path::Path, str::FromStr, sync::RwLock};
 

@@ -1,11 +1,9 @@
 //! This module defines the messages communicated between the parties(Taker, Maker and Tracker)
 use crate::wallet::FidelityBond;
-use bitcoin::hashes::sha256::Hash;
-use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitcoin::{hashes::sha256::Hash, Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use secp256k1::musig::{PartialSignature, PublicNonce};
 use serde::{Deserialize, Serialize};
-use std::convert::TryInto;
-use std::fmt::Display;
+use std::{convert::TryInto, fmt::Display};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 /// Serializable wrapper for secp256k1 PublicNonce

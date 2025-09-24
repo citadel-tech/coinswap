@@ -1,13 +1,16 @@
 //! This module implements the contract protocol for a 2-of-2 multisig transaction
 
 use super::error::ProtocolError;
-use bitcoin::blockdata::transaction::{Transaction, TxOut};
-use bitcoin::locktime::absolute::LockTime;
-use bitcoin::opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256};
-use bitcoin::secp256k1::{Secp256k1, XOnlyPublicKey};
-use bitcoin::sighash::{Prevouts, SighashCache};
-use bitcoin::taproot::{LeafVersion, TaprootBuilder, TaprootSpendInfo};
-use bitcoin::{script, Amount, ScriptBuf};
+use bitcoin::{
+    blockdata::transaction::{Transaction, TxOut},
+    locktime::absolute::LockTime,
+    opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256},
+    script,
+    secp256k1::{Secp256k1, XOnlyPublicKey},
+    sighash::{Prevouts, SighashCache},
+    taproot::{LeafVersion, TaprootBuilder, TaprootSpendInfo},
+    Amount, ScriptBuf,
+};
 
 // create_hashlock_script
 pub(crate) fn create_hashlock_script(hash: &[u8; 32], pubkey: &XOnlyPublicKey) -> ScriptBuf {
@@ -108,11 +111,13 @@ pub(crate) fn calculate_coinswap_fee(
 #[cfg(test)]
 mod tests {
 
-    use bitcoin::blockdata::transaction::{OutPoint, TxIn};
-    use bitcoin::secp256k1::{Keypair, Message, Scalar};
-    use bitcoin::taproot::{LeafVersion, TapLeafHash};
-    use bitcoin::transaction::Version;
-    use bitcoin::{Sequence, Witness};
+    use bitcoin::{
+        blockdata::transaction::{OutPoint, TxIn},
+        secp256k1::{Keypair, Message, Scalar},
+        taproot::{LeafVersion, TapLeafHash},
+        transaction::Version,
+        Sequence, Witness,
+    };
     use secp256k1::musig::{AggregatedNonce, PublicNonce};
 
     fn create_unsigned_contract_tx(
@@ -141,12 +146,14 @@ mod tests {
         aggregate_partial_signatures_i, generate_new_nonce_pair_i, generate_partial_signature_i,
         get_aggregated_nonce_i, get_aggregated_pubkey_i,
     };
-    use bitcoin::sighash::Prevouts;
-    use bitcoin::taproot::{ControlBlock, TaprootSpendInfo};
-    use bitcoin::{Address, TapSighashType};
-    use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
-    use bitcoind::bitcoincore_rpc::RawTx;
-    use bitcoind::bitcoincore_rpc::{Auth::UserPass, Client, RpcApi};
+    use bitcoin::{
+        sighash::Prevouts,
+        taproot::{ControlBlock, TaprootSpendInfo},
+        Address, TapSighashType,
+    };
+    use bitcoind::bitcoincore_rpc::{
+        json::ListUnspentResultEntry, Auth::UserPass, Client, RawTx, RpcApi,
+    };
     use secp256k1::musig::{AggregatedSignature, SecretNonce};
     use std::str::FromStr;
 
@@ -193,8 +200,7 @@ mod tests {
         (checked_address, utxos.get(0).unwrap().clone())
     }
 
-    use bitcoin::hashes::sha256 as Sha256;
-    use bitcoin::hashes::Hash;
+    use bitcoin::hashes::{sha256 as Sha256, Hash};
     // #[test]
     fn create_and_broadcast_contract(
         spending_utxo: ListUnspentResultEntry,
