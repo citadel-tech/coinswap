@@ -2,13 +2,12 @@
 
 use super::error::ProtocolError;
 use bitcoin::blockdata::transaction::{Transaction, TxOut};
-use bitcoin::hashes::{sha256, Hash as HashTrait};
 use bitcoin::locktime::absolute::LockTime;
 use bitcoin::opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256};
-use bitcoin::secp256k1::{Keypair, Secp256k1, SecretKey, XOnlyPublicKey};
+use bitcoin::secp256k1::{Secp256k1, XOnlyPublicKey};
 use bitcoin::sighash::{Prevouts, SighashCache};
-use bitcoin::taproot::{TaprootBuilder, TaprootSpendInfo};
-use bitcoin::{script, Amount, Script, ScriptBuf};
+use bitcoin::taproot::{LeafVersion, TaprootBuilder, TaprootSpendInfo};
+use bitcoin::{script, Amount, ScriptBuf};
 
 // create_hashlock_script
 pub(crate) fn create_hashlock_script(hash: &[u8; 32], pubkey: &XOnlyPublicKey) -> ScriptBuf {
@@ -44,13 +43,10 @@ pub(crate) fn create_taproot_script(
         .unwrap()
         .finalize(&secp, internal_pubkey)
         .expect("taproot info finalized");
-    // println!("Taproot spend info: {:?}", taproot_spendinfo);
-    // let hashlock_control_block =
-    //     taproot_spendinfo.control_block(&(hashlock_script, LeafVersion::TapScript));
-    // println!("Hashlock control block: {:?}", hashlock_control_block.as_slice());
-    // let timelock_control_block =
-    //     taproot_spendinfo.control_block(&(timelock_script, LeafVersion::TapScript));
-    // println!("Timelock control block: {:?}", timelock_control_block.as_slice());
+    let _hashlock_control_block =
+        taproot_spendinfo.control_block(&(hashlock_script, LeafVersion::TapScript));
+    let _timelock_control_block =
+        taproot_spendinfo.control_block(&(timelock_script, LeafVersion::TapScript));
     (
         ScriptBuf::new_p2tr(
             &secp,
@@ -109,65 +105,11 @@ pub(crate) fn calculate_coinswap_fee(
     total_fee.ceil() as u64
 }
 
-fn _verify_hashlock_path(
-    privkey: &SecretKey,
-    hashpreimage: &[u8; 32],
-) -> Result<bool, ProtocolError> {
-    let secp = Secp256k1::new();
-    let keypair = Keypair::from_secret_key(&secp, privkey);
-    let (x_only_pubkey, _) = keypair.x_only_public_key();
-
-    let hash = sha256::Hash::hash(hashpreimage);
-    let script = create_hashlock_script(&hash.to_byte_array(), &x_only_pubkey);
-
-    // Verify that the script contains the correct hash and pubkey
-    let expected_script = create_hashlock_script(&hash.to_byte_array(), &x_only_pubkey);
-    Ok(script == expected_script)
-}
-
-fn _verify_timelock_path(privkey: &SecretKey, locktime: LockTime) -> Result<bool, ProtocolError> {
-    let secp = Secp256k1::new();
-    let keypair = Keypair::from_secret_key(&secp, privkey);
-    let (x_only_pubkey, _) = keypair.x_only_public_key();
-
-    let script = create_timelock_script(locktime, &x_only_pubkey);
-
-    // Verify that the script contains the correct locktime and pubkey
-    let expected_script = create_timelock_script(locktime, &x_only_pubkey);
-    Ok(script == expected_script)
-}
-
-fn _verify_transaction_data(
-    tx: &Transaction,
-    input_index: usize,
-    prevout: &TxOut,
-    script_pubkey: &Script,
-    amount: Amount,
-) -> Result<bool, ProtocolError> {
-    // Verify input exists
-    if input_index >= tx.input.len() {
-        return Ok(false);
-    }
-
-    // Verify amount
-    if prevout.value != amount {
-        return Ok(false);
-    }
-
-    // Verify script pubkey
-    if prevout.script_pubkey != *script_pubkey {
-        return Ok(false);
-    }
-
-    // All verifications passed
-    Ok(true)
-}
-
 #[cfg(test)]
 mod tests {
 
     use bitcoin::blockdata::transaction::{OutPoint, TxIn};
-    use bitcoin::secp256k1::{Message, Scalar};
+    use bitcoin::secp256k1::{Keypair, Message, Scalar};
     use bitcoin::taproot::{LeafVersion, TapLeafHash};
     use bitcoin::transaction::Version;
     use bitcoin::{Sequence, Witness};

@@ -33,12 +33,6 @@ pub fn generate_new_nonce_pair(pubkey: PublicKey) -> (SecretNonce, PublicNonce) 
     )
 }
 
-/// Aggregates the nonces
-pub fn get_aggregated_nonce(nonces: &Vec<&PublicNonce>) -> AggregatedNonce {
-    let secp = Secp256k1::new();
-    AggregatedNonce::new(&secp, nonces.as_slice())
-}
-
 /// Generates a partial signature
 pub fn generate_partial_signature(
     message: Message,
@@ -72,30 +66,6 @@ pub fn aggregate_partial_signatures(
         .unwrap();
     let session = Session::new(&secp, &musig_key_agg_cache, agg_nonce, message);
     session.partial_sig_agg(partial_sigs.as_slice())
-}
-
-/// Verifies a partial signature
-pub fn verify_partial_signature(
-    session: &Session,
-    musig_key_agg_cache: &KeyAggCache,
-    partial_sign: PartialSignature,
-    pub_nonce: PublicNonce,
-    pubkey: PublicKey,
-) -> bool {
-    let secp = Secp256k1::new();
-    session.partial_verify(&secp, musig_key_agg_cache, partial_sign, pub_nonce, pubkey)
-}
-
-/// Verifies the aggregated signature
-pub fn verify_aggregated_signature(
-    agg_pk: &XOnlyPublicKey,
-    msg_bytes: &[u8],
-    aggregated_signature: &AggregatedSignature,
-) -> bool {
-    let secp = Secp256k1::new();
-    aggregated_signature
-        .verify(&secp, agg_pk, msg_bytes)
-        .is_ok()
 }
 
 #[cfg(test)]
@@ -149,7 +119,7 @@ mod tests {
         let (sec_nonce2, pub_nonce2) = generate_new_nonce_pair(pubkey2);
         println!("Generated nonce pairs.");
 
-        let agg_nonce = get_aggregated_nonce(&vec![&pub_nonce1, &pub_nonce2]);
+        let agg_nonce = AggregatedNonce::new(&secp, &[&pub_nonce1, &pub_nonce2]);
         println!("Aggregated nonce: {:?}", agg_nonce);
 
         println!("Session created.");
