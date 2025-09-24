@@ -134,7 +134,7 @@ mod tests {
                 witness: Witness::new(),
             }],
             output: vec![TxOut {
-                script_pubkey: script_pubkey,
+                script_pubkey,
                 value: input_value - fee,
             }],
             lock_time: LockTime::ZERO,
@@ -197,7 +197,7 @@ mod tests {
             .list_unspent(None, None, Some(&[&checked_address]), None, None)
             .unwrap();
         // println!("UTXOs: {:?}", utxos);
-        (checked_address, utxos.get(0).unwrap().clone())
+        (checked_address, utxos.first().unwrap().clone())
     }
 
     use bitcoin::hashes::{sha256 as Sha256, Hash};
@@ -213,7 +213,7 @@ mod tests {
         println!("Hash Preimage: {:?}", hash_preimage);
         let hash = Sha256::Hash::hash(&hash_preimage);
         println!("Hash: {:?}", hash);
-        let hashlock_script = create_hashlock_script(&hash.as_byte_array(), &hashlock_pubkey);
+        let hashlock_script = create_hashlock_script(hash.as_byte_array(), &hashlock_pubkey);
         println!("Hashlock script: {:?}", hashlock_script);
         let timelock_script = create_timelock_script(locktime, &timelock_pubkey);
         println!("Timelock script: {:?}", timelock_script);
@@ -395,7 +395,7 @@ mod tests {
 
         let (x_only_pubkey, _) = hashlock_keypair.x_only_public_key();
         let hash = Sha256::Hash::hash(&hash_preimage);
-        let hashlock_script = create_hashlock_script(&hash.as_byte_array(), &x_only_pubkey);
+        let hashlock_script = create_hashlock_script(hash.as_byte_array(), &x_only_pubkey);
 
         let sighash_type = TapSighashType::All;
         let prevouts = vec![prev_txout];
@@ -418,7 +418,7 @@ mod tests {
         };
         let mut witness = Witness::new();
         witness.push(signature.to_vec());
-        witness.push(hash_preimage.to_vec());
+        witness.push(hash_preimage);
 
         witness.push(hashlock_script.as_bytes());
         witness.push(control_block.serialize());
