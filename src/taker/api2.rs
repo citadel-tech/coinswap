@@ -1,23 +1,25 @@
-use crate::protocol::messages2::{AckResponse, Preimage};
-use crate::taker::config::TakerConfig;
-use crate::taker::offers::{MakerAddress, OfferAndAddress, OfferBook};
-use crate::utill::get_taker_dir;
-use crate::wallet::{RPCConfig, Wallet, WalletError};
-use bitcoin::hashes::Hash;
-use bitcoin::{Amount, ScriptBuf, Transaction};
+use crate::{
+    protocol::messages2::{AckResponse, Preimage},
+    taker::{
+        config::TakerConfig,
+        offers::{MakerAddress, OfferAndAddress, OfferBook},
+    },
+    utill::get_taker_dir,
+    wallet::{RPCConfig, Wallet, WalletError},
+};
+use bitcoin::{hashes::Hash, Amount, ScriptBuf, Transaction};
 use secp256k1::musig;
 use socks::Socks5Stream;
 use std::{io::BufWriter, net::TcpStream, path::PathBuf, time::Duration};
 
-use super::error::TakerError;
-use super::offers::fetch_addresses_from_tracker;
-use super::send_message_with_prefix;
-use crate::protocol::contract2::{calculate_coinswap_fee, calculate_contract_sighash};
-use crate::utill::{check_tor_status, read_message};
+use super::{error::TakerError, offers::fetch_addresses_from_tracker, send_message_with_prefix};
+use crate::{
+    protocol::contract2::{calculate_coinswap_fee, calculate_contract_sighash},
+    utill::{check_tor_status, read_message},
+};
 use std::collections::HashSet;
 
-use crate::protocol::messages2::SwapDetails;
-use crate::protocol::messages2::{GetOffer, MakerToTakerMessage, TakerToMakerMessage};
+use crate::protocol::messages2::{GetOffer, MakerToTakerMessage, SwapDetails, TakerToMakerMessage};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use chrono::Utc;
 
@@ -345,8 +347,10 @@ impl Taker {
     /// Choose makers for the swap by negotiating with them
     fn choose_makers_for_swap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         use crate::protocol::messages2::{MakerToTakerMessage, TakerToMakerMessage};
-        use bitcoin::hex::DisplayHex;
-        use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
+        use bitcoin::{
+            hex::DisplayHex,
+            secp256k1::rand::{rngs::OsRng, RngCore},
+        };
 
         // Find suitable maker asks for an offer from the makers
         let suitable_makers = self.find_suitable_makers(&swap_params);
@@ -605,8 +609,7 @@ impl Taker {
     /// Setup contract keys and scripts for the swap
     fn setup_contract_keys_and_scripts(&mut self) -> Result<(), TakerError> {
         use crate::protocol::contract2::{create_hashlock_script, create_timelock_script};
-        use bitcoin::hashes::sha256;
-        use bitcoin::locktime::absolute::LockTime;
+        use bitcoin::{hashes::sha256, locktime::absolute::LockTime};
 
         let secp = bitcoin::secp256k1::Secp256k1::new();
 
@@ -714,8 +717,7 @@ impl Taker {
             })?;
 
             let signed_outgoing_contract_tx = {
-                use crate::utill::MIN_FEE_RATE;
-                use crate::wallet::Destination;
+                use crate::{utill::MIN_FEE_RATE, wallet::Destination};
 
                 let funding_utxo_info = self
                     .wallet
@@ -753,8 +755,7 @@ impl Taker {
         &self,
         transactions: &[Transaction],
     ) -> Result<(), TakerError> {
-        use std::thread;
-        use std::time::Duration;
+        use std::{thread, time::Duration};
 
         // Use different max attempts for tests vs production
         #[cfg(feature = "integration-test")]
@@ -979,10 +980,12 @@ impl Taker {
 
     /// Execute taker's sweep and coordinate with all makers
     fn execute_taker_sweep_and_coordinate_makers(&mut self) -> Result<(), TakerError> {
-        use crate::protocol::messages2::SpendingTxAndReceiverNonce;
-        use crate::protocol::musig_interface::generate_new_nonce_pair_i;
-        use bitcoin::secp256k1::Secp256k1;
-        use bitcoin::{Amount, OutPoint, Sequence, Transaction, TxIn, TxOut, Witness};
+        use crate::protocol::{
+            messages2::SpendingTxAndReceiverNonce, musig_interface::generate_new_nonce_pair_i,
+        };
+        use bitcoin::{
+            secp256k1::Secp256k1, Amount, OutPoint, Sequence, Transaction, TxIn, TxOut, Witness,
+        };
 
         let secp = Secp256k1::new();
         let last_maker_address = self
@@ -1091,9 +1094,7 @@ impl Taker {
         incoming_contract_my_pub_nonce: musig::PublicNonce,
     ) -> Result<(), TakerError> {
         use crate::protocol::messages2::MakerToTakerMessage;
-        use bitcoin::secp256k1::Secp256k1;
-        use bitcoin::sighash::SighashCache;
-        use bitcoin::Witness;
+        use bitcoin::{secp256k1::Secp256k1, sighash::SighashCache, Witness};
 
         match response {
             MakerToTakerMessage::NoncesPartialSigsAndSpendingTx(maker_response) => {
@@ -1444,8 +1445,7 @@ impl Taker {
         // Wait for makers to complete their sweeps
         #[cfg(feature = "integration-test")]
         {
-            use std::thread;
-            use std::time::Duration;
+            use std::{thread, time::Duration};
 
             log::info!("Waiting for makers to complete their sweeps...");
             thread::sleep(Duration::from_secs(5));
