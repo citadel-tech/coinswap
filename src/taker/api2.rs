@@ -1068,44 +1068,6 @@ impl Taker {
             .incoming_contract_other_pubkey
             .ok_or_else(|| TakerError::General("No last maker pubkey found".to_string()))?;
 
-        let tap_tweak = self
-            .ongoing_swap_state
-            .incoming_contract_tap_tweak
-            .ok_or_else(|| TakerError::General("No final contract tap tweak found".to_string()))?;
-
-        let internal_key = self
-            .ongoing_swap_state
-            .incoming_contract_internal_key
-            .ok_or_else(|| {
-                TakerError::General("No final contract internal key found".to_string())
-            })?;
-
-        // Get contract scripts and compute sighash
-        let incoming_contract_hashlock_script = self
-            .ongoing_swap_state
-            .incoming_contract_hashlock_script
-            .as_ref()
-            .ok_or_else(|| {
-                TakerError::General("No incoming contract hashlock script found".to_string())
-            })?;
-        let incoming_contract_timelock_script = self
-            .ongoing_swap_state
-            .incoming_contract_timelock_script
-            .as_ref()
-            .ok_or_else(|| {
-                TakerError::General("No incoming contract timelock script found".to_string())
-            })?;
-
-        // Use helper to calculate sighash
-        let message = calculate_contract_sighash(
-            &taker_spending_tx,
-            incoming_contract_amount,
-            incoming_contract_hashlock_script,
-            incoming_contract_timelock_script,
-            internal_key,
-        )
-        .map_err(|e| TakerError::General(format!("Failed to calculate sighash: {:?}", e)))?;
-
         let pubkey1 = incoming_contract_my_keypair.public_key();
         let pubkey2 = last_maker_pubkey;
 
@@ -1114,11 +1076,7 @@ impl Taker {
 
         let (incoming_contract_my_sec_nonce, incoming_contract_my_pub_nonce) =
             generate_new_nonce_pair_i(
-                tap_tweak,
-                ordered_pubkeys[0], // lexicographically first pubkey
-                ordered_pubkeys[1], // lexicographically second pubkey
                 incoming_contract_my_keypair.public_key(), // Signer is taker
-                message,
             );
 
         self.ongoing_swap_state.my_spending_tx = Some(taker_spending_tx.clone());
@@ -1603,11 +1561,7 @@ impl Taker {
 
         // Generate taker's nonce for this signature
         let (taker_sec_nonce, taker_pub_nonce) = generate_new_nonce_pair_i(
-            tap_tweak,
-            ordered_pubkeys[0],         // lexicographically first pubkey
-            ordered_pubkeys[1],         // lexicographically second pubkey
             taker_keypair.public_key(), // Signer is taker
-            message,
         );
 
         // Get the maker's receiver nonce from their earlier response (step 17)
