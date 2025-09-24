@@ -10,8 +10,8 @@ use socks::Socks5Stream;
 use std::{io::BufWriter, net::TcpStream, path::PathBuf, time::Duration};
 
 use super::error::TakerError;
-
 use super::offers::fetch_addresses_from_tracker;
+use super::send_message_with_prefix;
 use crate::protocol::contract2::{calculate_coinswap_fee, calculate_contract_sighash};
 use crate::utill::{check_tor_status, read_message};
 use std::collections::HashSet;
@@ -108,26 +108,6 @@ fn connect_to_maker(
         .map_err(|e| TakerError::General(format!("Failed to set write timeout: {:?}", e)))?;
 
     Ok(socket)
-}
-
-/// Send a message with 0x01 prefix for taproot makers
-fn send_message_with_prefix(
-    socket_writer: &mut TcpStream,
-    message: &impl serde::Serialize,
-) -> Result<(), TakerError> {
-    use std::io::{BufWriter, Write};
-
-    let mut writer = BufWriter::new(socket_writer);
-    let mut msg_bytes = Vec::new();
-    msg_bytes.push(0x01);
-    msg_bytes.extend(serde_cbor::to_vec(message)?);
-    let msg_len = (msg_bytes.len() as u32).to_be_bytes();
-    let mut to_send = Vec::with_capacity(msg_bytes.len() + msg_len.len());
-    to_send.extend(msg_len);
-    to_send.extend(msg_bytes);
-    writer.write_all(&to_send)?;
-    writer.flush()?;
-    Ok(())
 }
 
 /// Fetch offers from taproot makers using taproot protocol messages
