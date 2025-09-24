@@ -337,9 +337,16 @@ impl Taker {
         let outgoing_signed_contract_transactions = self.create_outgoing_contract_transactions()?;
         self.wallet
             .send_tx(outgoing_signed_contract_transactions.first().unwrap())?;
-        self.wait_for_transaction_confirmations(&outgoing_signed_contract_transactions)?;
+
+        for tx in &outgoing_signed_contract_transactions {
+            self.wallet.wait_for_tx_confirmation(tx.compute_txid())?;
+        }
+
         self.negotiate_with_makers_and_coordinate_sweep(&outgoing_signed_contract_transactions)?;
-        self.wait_for_transaction_confirmations(&outgoing_signed_contract_transactions)?;
+
+        for tx in &outgoing_signed_contract_transactions {
+            self.wallet.wait_for_tx_confirmation(tx.compute_txid())?;
+        }
 
         Ok(())
     }
@@ -745,62 +752,6 @@ impl Taker {
         }
 
         Ok(contract_transactions)
-    }
-
-    /// Wait for transactions to be confirmed on the blockchain
-    ///
-    /// This function polls the wallet to check if the given transactions are confirmed.
-    /// It will retry for a maximum number of attempts with a delay between each attempt.
-    fn wait_for_transaction_confirmations(
-        &self,
-        transactions: &[Transaction],
-    ) -> Result<(), TakerError> {
-        use std::{thread, time::Duration};
-
-        // Use different max attempts for tests vs production
-        #[cfg(feature = "integration-test")]
-        let max_attempts = 30;
-        #[cfg(not(feature = "integration-test"))]
-        let max_attempts = 60;
-
-        for (i, tx) in transactions.iter().enumerate() {
-            let txid = tx.compute_txid();
-            log::info!(
-                "Waiting for contract transaction {} to be confirmed: {}",
-                i,
-                txid
-            );
-
-            for attempt in 0..max_attempts {
-                match self.wallet.rpc.get_transaction(&txid, Some(true)) {
-                    Ok(tx_info) => {
-                        if tx_info.info.confirmations > 0 {
-                            log::info!("Contract transaction {} found and confirmed", i);
-                            break;
-                        } else {
-                            if attempt == max_attempts - 1 {
-                                return Err(TakerError::General(format!(
-                                    "Contract transaction {} not confirmed after {} attempts",
-                                    i, max_attempts
-                                )));
-                            }
-                            log::debug!(
-                                "Contract transaction {} not yet confirmed (attempt {})",
-                                i,
-                                attempt + 1
-                            );
-                            thread::sleep(Duration::from_secs(1));
-                        }
-                    }
-                    Err(_e) => {
-                        log::warn!("Error checking contract transaction {}", i);
-                        thread::sleep(Duration::from_secs(1));
-                    }
-                }
-            }
-        }
-
-        Ok(())
     }
 
     /// Negotiate with makers and coordinate the sweep process
