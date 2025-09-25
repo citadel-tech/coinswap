@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Clean up any existing wallet files to ensure fresh start
     let wallet_path = std::env::home_dir()
-        .unwrap_or_else(|| std::env::temp_dir())
+        .unwrap_or_else(std::env::temp_dir)
         .join(".coinswap")
         .join("taker")
         .join("wallets")
@@ -150,7 +150,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let utxos = wallet.list_all_utxo().unwrap();
     let swapcoins_count = wallet.get_swapcoins_count();
     println!("  Total UTXOs: {}", utxos.len());
-    println!("  Swap coins: {}", swapcoins_count);
+    println!("  Swap coins: {swapcoins_count}");
 
     // Categorize UTXOs by type
     println!("\nUTXO Categories:");
@@ -167,7 +167,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nAddress Generation:");
     let external_address = wallet.get_next_external_address().unwrap();
     let internal_addresses = wallet.get_next_internal_addresses(2).unwrap();
-    println!("  External (receiving): {}", external_address);
+    println!("  External (receiving): {external_address}");
     println!(
         "  Internal (change): {} {}",
         internal_addresses[0], internal_addresses[1]
@@ -176,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Show wallet state information
     println!("\nWallet State:");
     let external_index = *wallet.get_external_index();
-    println!("  External address index: {}", external_index);
+    println!("  External address index: {external_index}");
 
     // Demonstrate UTXO management
     println!("\nUTXO Management:");
@@ -229,11 +229,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap();
 
             let txid = transaction.compute_txid();
-            println!("  Created transaction: {}", txid);
+            println!("  Created transaction: {txid}");
             println!("  Inputs: {}", transaction.input.len());
             println!("  Outputs: {}", transaction.output.len());
             println!("  Size: {} bytes", transaction.vsize());
-            println!("  Destination: {}", destination_address);
+            println!("  Destination: {destination_address}");
 
             // This is how this will be broadcasted in production
             println!("  Transaction ready for broadcast with wallet.send_tx()");
@@ -286,7 +286,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nWallet is funded and ready for operations!");
     println!("\nExample completed.");
 
-    // stop bitcoind for cleanup
+    // Stop bitcoind for cleanup
     let _ = bitcoind.client.stop();
     println!("Bitcoin Core stopped.");
     Ok(())
