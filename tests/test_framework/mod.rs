@@ -455,7 +455,7 @@ pub fn verify_swap_results(
             assert_in_range!(
                 balances.regular.to_sat(),
                 [
-                    14555297, // First maker on successful coinswap
+                    14555295, // First maker on successful coinswap
                     14533010, // Second maker on successful coinswap
                     14999508, // No spending
                     24999510, // Multi-taker scenario

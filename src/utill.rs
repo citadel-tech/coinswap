@@ -16,9 +16,10 @@ use log4rs::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    cmp::max,
     collections::HashMap,
     env, fs,
-    io::{self, BufReader, BufWriter, ErrorKind, Read, Write},
+    io::{self, stdout, BufReader, BufWriter, ErrorKind, Read, Write},
     net::TcpStream,
     os::unix::io::AsRawFd,
     path::{Path, PathBuf},
@@ -26,8 +27,18 @@ use std::{
     time::Duration,
 };
 
+use crossterm::{
+    cursor::MoveTo,
+    event::{
+        read, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, MouseButton, MouseEventKind,
+    },
+    execute, queue,
+    style::Print,
+    terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
+};
 #[cfg(test)]
 use std::str::FromStr;
+
 static LOGGER: OnceLock<()> = OnceLock::new();
 
 use crate::{
@@ -816,6 +827,212 @@ where
             }
         }
     }
+}
+
+/// Interactive Selection by User for Utxos
+pub fn interactive_select(
+    mut choices: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
+) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+    choices.sort_by_key(|(_, spend_info)| match spend_info {
+        UTXOSpendInfo::SeedCoin { .. } => 0,
+        UTXOSpendInfo::SweptCoin { .. } => 1,
+        _ => 2,
+    });
+    let mut selected = vec![false; choices.len()];
+    let mut stdout = stdout();
+
+    enable_raw_mode()?;
+    execute!(
+        stdout,
+        Clear(ClearType::All),
+        EnableMouseCapture,
+        MoveTo(0, 0)
+    )?;
+
+    let (terminal_width, terminal_height) = size().unwrap_or((100, 30));
+    const BOX_WIDTH: usize = 18;
+    const COL_SPACING: usize = 20;
+    const MIN_MARGIN: usize = 4; // Minimum margin from terminal edges
+    const HEADER_LINES: usize = 3; // Header + warning + blank line
+    const LINES_PER_ROW: usize = 7; // 7 lines per row (5 for box + 2 spacing)
+
+    let available_width = terminal_width as usize - MIN_MARGIN;
+    let cols = max(1, available_width / COL_SPACING);
+
+    let total_rows = (choices.len() + cols - 1).div_ceil(cols);
+
+    let available_height = terminal_height as usize - HEADER_LINES;
+    let visible_rows = max(1, available_height / LINES_PER_ROW);
+
+    let mut scroll_offset = 0;
+    let max_scroll = total_rows.saturating_sub(visible_rows);
+
+    let render_header = |stdout: &mut io::Stdout| -> Result<(), WalletError> {
+        queue!(
+            stdout,
+            MoveTo(0, 0),
+            Print("\x1b[1m👆 CLICK on any UTXO to select/deselect, ↑↓ to scroll, Press ESC/Enter to exit\x1b[0m"),
+            MoveTo(0, 1),
+            Print("\x1b[1;31m⚠️  WARNING: Pick either Regular Coin OR Swap Coin, or else transaction will fail!\x1b[0m")
+        )?;
+        stdout.flush()?;
+        Ok(())
+    };
+
+    // Render only a singular UTXO box (for selection updates)
+    // Once this box has been rendered, we will only update those grids triggered by keyboard clicks
+    let render_utxo_grid = |stdout: &mut io::Stdout,
+                            choices: &[(ListUnspentResultEntry, UTXOSpendInfo)],
+                            selected: &[bool],
+                            scroll_offset: usize|
+     -> Result<(), WalletError> {
+        if max_scroll > 0 {
+            queue!(
+                stdout,
+                MoveTo(0, 2),
+                Print(format!(
+                    "\x1b[90mScrolling: {} / {} (showing rows {}-{})\x1b[0m",
+                    scroll_offset + 1,
+                    max_scroll + 1,
+                    scroll_offset + 1,
+                    (scroll_offset + visible_rows).min(total_rows)
+                ))
+            )?;
+        }
+        // Clear only the grid area, not the entire screen
+        let grid_start_row = HEADER_LINES;
+        let grid_height = visible_rows * LINES_PER_ROW;
+
+        for row in 0..grid_height {
+            queue!(
+                stdout,
+                MoveTo(0, (grid_start_row + row) as u16),
+                Print(" ".repeat(terminal_width as usize))
+            )?;
+        }
+
+        let end_row = (scroll_offset + visible_rows).min(total_rows);
+
+        for row in scroll_offset..end_row {
+            let display_row = row - scroll_offset;
+            let row_start = HEADER_LINES + display_row * LINES_PER_ROW;
+
+            for col in 0..cols {
+                let i = row * cols + col;
+                if i >= choices.len() {
+                    break;
+                }
+
+                let choice = &choices[i];
+                let marker = if selected[i] { "✓" } else { " " };
+                let col_offset = col * COL_SPACING;
+
+                let lines = [
+                    format!("┌{}┐", "─".repeat(BOX_WIDTH - 2)),
+                    format!(
+                        "│\x1b[1m[\x1b[32m{marker}\x1b[0m\x1b[1m] UTXO {:<7}\x1b[0m│",
+                        i + 1
+                    ),
+                    match &choice.1 {
+                        UTXOSpendInfo::SeedCoin { .. } => {
+                            format!("│\x1b[33m Regular Coin \x1b[0m{:<2}│", "")
+                        }
+                        UTXOSpendInfo::SweptCoin { .. } => {
+                            format!("│\x1b[34m Swap Coin \x1b[0m{:<5}│", "")
+                        }
+                        _ => format!("│{:<15}│", choice.1.to_string()),
+                    },
+                    format!("│\x1b[31m {:.8} BTC \x1b[0m│", choice.0.amount.to_btc()),
+                    format!("│ Conf: {:<9}│", choice.0.confirmations),
+                    format!("└{}┘", "─".repeat(BOX_WIDTH - 2)),
+                ];
+
+                for (line_idx, line) in lines.iter().enumerate() {
+                    queue!(
+                        stdout,
+                        MoveTo(col_offset as u16, (row_start + line_idx) as u16),
+                        Print(line)
+                    )?;
+                }
+            }
+        }
+        stdout.flush()?;
+        Ok(())
+    };
+
+    // Initial render
+    render_header(&mut stdout)?;
+    render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
+
+    loop {
+        match read()? {
+            Event::Mouse(mouse_event) => {
+                if mouse_event.kind == MouseEventKind::Down(MouseButton::Left) {
+                    let click_row = mouse_event.row;
+                    let click_col = mouse_event.column;
+
+                    if click_row >= HEADER_LINES as u16 {
+                        let display_row = (click_row - HEADER_LINES as u16) / LINES_PER_ROW as u16;
+                        let actual_row = scroll_offset + display_row as usize;
+                        let box_col = click_col / COL_SPACING as u16;
+                        let i = actual_row * cols + box_col as usize;
+
+                        if i < choices.len() {
+                            selected[i] = !selected[i];
+
+                            render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
+                        }
+                    }
+                }
+            }
+            Event::Key(key_event) => match key_event.code {
+                KeyCode::PageUp => {
+                    if scroll_offset > 0 {
+                        scroll_offset -= 1;
+                        render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
+                    }
+                }
+                KeyCode::PageDown => {
+                    if scroll_offset < max_scroll {
+                        scroll_offset += 1;
+                        render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
+                    }
+                }
+                // Numlock your keyboard, key 3 is PageDown and key 9 is PageUp
+                KeyCode::Up => {
+                    scroll_offset = scroll_offset.saturating_sub(visible_rows);
+                    render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
+                }
+                KeyCode::Down => {
+                    scroll_offset = (scroll_offset + visible_rows).min(max_scroll);
+                    render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
+                }
+                KeyCode::Esc | KeyCode::Enter => break,
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    execute!(stdout, DisableMouseCapture, Clear(ClearType::All))?;
+    disable_raw_mode()?;
+
+    let selected_utxo = choices
+        .into_iter()
+        .zip(selected)
+        .filter(|(_, sel)| *sel)
+        .map(|(choice, _)| choice)
+        .collect::<Vec<_>>();
+
+    println!("Selected UTXOs:");
+    for utxo in selected_utxo.iter() {
+        println!("  - {} BTC ({})", utxo.0.amount.to_btc(), utxo.0.txid);
+    }
+
+    let total_selected: Amount = selected_utxo.iter().map(|(u, _)| u.amount).sum();
+    println!("Total selected amount: {} BTC", total_selected.to_btc());
+
+    Ok(selected_utxo)
 }
 
 #[cfg(test)]

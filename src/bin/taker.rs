@@ -243,10 +243,24 @@ fn main() -> Result<(), TakerError> {
                 } => {
                     let amount = Amount::from_sat(*amount);
 
+                    let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
+                        Some(
+                            coinswap::utill::interactive_select(
+                                taker.get_wallet().list_all_utxo_spend_info()?,
+                            )
+                            .unwrap()
+                            .iter()
+                            .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
+                            .collect::<Vec<_>>(),
+                        )
+                    } else {
+                        None
+                    };
+
                     let coins_to_spend = taker.get_wallet_mut().coin_select(
                         amount,
                         feerate.unwrap_or(MIN_FEE_RATE),
-                        None,
+                        manually_selected_outpoints,
                     )?;
 
                     let outputs = vec![(Address::from_str(address)?.assume_checked(), amount)];
@@ -288,10 +302,24 @@ fn main() -> Result<(), TakerError> {
                     }
                 }
                 Commands::Coinswap { makers, amount } => {
+                    let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
+                        Some(
+                            coinswap::utill::interactive_select(
+                                taker.get_wallet().list_all_utxo_spend_info()?,
+                            )
+                            .unwrap()
+                            .iter()
+                            .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
+                            .collect::<Vec<_>>(),
+                        )
+                    } else {
+                        None
+                    };
+
                     let swap_params = SwapParams {
                         send_amount: Amount::from_sat(*amount),
                         maker_count: *makers,
-                        manually_selected_outpoints: None,
+                        manually_selected_outpoints,
                     };
                     taker.do_coinswap(swap_params)?;
                 }
