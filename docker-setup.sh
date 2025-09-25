@@ -141,6 +141,7 @@ show_help() {
     echo "  makerd [args]   Run makerd with arguments"
     echo "  maker-cli [args] Run maker-cli with arguments"
     echo "  taker [args]    Run taker with arguments"
+    echo "  tracker [args]  Run tracker with arguments"
     echo "  bitcoin-cli [args] Run bitcoin-cli with arguments"
     echo ""
     echo "Examples:"
@@ -183,7 +184,7 @@ case "${1:-}" in
         check_docker
         run_tests
         ;;
-    "makerd"|"maker-cli"|"taker"|"directoryd"|"directory-cli"|"bitcoin-cli")
+    "makerd"|"maker-cli"|"taker"|"tracker"|"bitcoin-cli")
         run_command "$@"
         ;;
     "help"|"--help"|"-h"|"")

@@ -52,19 +52,19 @@ services:
       - tor-data:/home/coinswap/.tor
     restart: unless-stopped
 
-  # Directory server for maker discovery
-  directory:
+  # Tracker server for maker discovery
+  tracker:
     image: coinswap
-    container_name: coinswap-directory
+    container_name: coinswap-tracker
     command: |
       sh -c "
       sleep 10 &&
-      directoryd
+      tracker
       "
     ports:
       - "8080:8080"
     volumes:
-      - directory-data:/home/coinswap/.coinswap
+      - tracker-data:/home/coinswap/.tracker
     depends_on:
       - bitcoind
       - tor
@@ -88,7 +88,7 @@ services:
       fidelity_amount = 50000
       fidelity_timelock = 13104
       connection_type = \"TOR\"
-      directory_server_address = \"directory:8080\"
+      directory_server_address = \"tracker:8080\"
       base_fee = 100
       amount_relative_fee_pct = 0.1
       EOF
@@ -102,7 +102,7 @@ services:
     depends_on:
       - bitcoind
       - tor
-      - directory
+      - tracker
     restart: unless-stopped
 
 volumes:
@@ -110,7 +110,7 @@ volumes:
     driver: local
   tor-data:
     driver: local
-  directory-data:
+  tracker-data:
     driver: local
   maker-data:
     driver: local

@@ -10,7 +10,7 @@ The Docker image provides a complete environment for running Coinswap applicatio
 - **Rust 1.75.0** for building the applications
 - **Bitcoin Core 26.0** for blockchain operations
 - **Tor** for privacy and networking
-- All Coinswap binaries: `makerd`, `maker-cli`, `taker`, `directoryd`, `directory-cli`
+- All Coinswap binaries: `makerd`, `maker-cli`, `taker`
 
 ## Building the Docker Image
 
@@ -87,18 +87,6 @@ docker run --rm -it \
   coinswap taker send-coinswap \
   --amount 100000 \
   --destination bc1qexample...
-```
-
-### Directory Server
-
-Run the directory server for local testing:
-
-```bash
-docker run -d \
-  --name coinswap-directory \
-  -p 8080:8080 \
-  -v coinswap-directory-data:/home/coinswap/.coinswap \
-  coinswap directoryd
 ```
 
 ## Running Tests

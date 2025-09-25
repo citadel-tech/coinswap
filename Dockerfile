@@ -5,6 +5,7 @@ FROM alpine:3.18 AS builder
 RUN --mount=type=cache,target=/var/cache/apk \
     apk add --no-cache \
     curl \
+    git \
     pkgconfig \
     openssl-dev \
     musl-dev \
@@ -40,8 +41,18 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,target=/app/target \
     cargo build --release --bins && \
-    cp target/release/makerd target/release/maker-cli target/release/taker \
-       target/release/directoryd target/release/directory-cli /tmp/
+    cp target/release/makerd target/release/maker-cli target/release/taker /tmp/
+
+# Clone and build the tracker
+WORKDIR /tmp
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    git clone https://github.com/citadel-tech/tracker.git && \
+    cd tracker && \
+    cargo build --release && \
+    cp target/release/tracker /tmp/
+
+WORKDIR /app
 
 # Optional: Build test binaries (can be used for testing stage)
 RUN --mount=type=cache,target=/root/.cargo/registry \
@@ -90,8 +101,7 @@ RUN mkdir -p /app/bin /app/data /home/coinswap/.coinswap/maker /home/coinswap/.c
 COPY --from=builder /tmp/makerd /app/bin/
 COPY --from=builder /tmp/maker-cli /app/bin/
 COPY --from=builder /tmp/taker /app/bin/
-COPY --from=builder /tmp/directoryd /app/bin/
-COPY --from=builder /tmp/directory-cli /app/bin/
+COPY --from=builder /tmp/tracker /app/bin/
 
 # Set proper permissions
 RUN chmod +x /app/bin/*
@@ -118,4 +128,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD makerd --help > /dev/null 2>&1 || exit 1
 
 # Default command
-CMD ["sh", "-c", "echo 'Coinswap Docker Container Ready!' && echo 'Available commands: makerd, maker-cli, taker, directoryd, directory-cli, bitcoind, tor' && echo 'Example: docker run coinswap makerd --help' && /bin/sh"]
+CMD ["sh", "-c", "echo 'Coinswap Docker Container Ready!' && echo 'Available commands: makerd, maker-cli, taker, tracker, bitcoind, tor' && echo 'Example: docker run coinswap makerd --help' && /bin/sh"]
