@@ -6,10 +6,17 @@
 //! - Fund the wallet with test coins
 //! - Demonstrate swap parameters setup
 //!
+//! ## Prerequisites
+//!
+//! This example requires Tor to be running for coinswap connections.
+//! See [Tor setup documentation](https://github.com/citadel-tech/coinswap/blob/master/docs/tor.md)
+//! for installation and configuration instructions.
+//!
 //! ## Usage
 //!
 //! ```bash
-//! cargo run --example taker_basic --features integration-test
+//! # When prompted for encryption passphrase, press Enter for no encryption
+//! cargo run --example taker_basic
 //! ```
 
 use bitcoin::Amount;
@@ -17,8 +24,6 @@ use bitcoind::{
     bitcoincore_rpc::{Auth, RpcApi},
     BitcoinD,
 };
-#[cfg(feature = "integration-test")]
-use coinswap::taker::TakerBehavior;
 use coinswap::{
     taker::{SwapParams, Taker},
     wallet::RPCConfig,
@@ -26,8 +31,25 @@ use coinswap::{
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Coinswap Taker Basic Example ===");
+    println!("NOTE: When prompted for encryption passphrase, press Enter for no encryption");
+
+    // Clean up any existing wallet files to ensure fresh start
+    let wallet_path = std::env::home_dir()
+        .unwrap_or_else(|| std::env::temp_dir())
+        .join(".coinswap")
+        .join("taker")
+        .join("wallets")
+        .join("taker-example");
+
+    if wallet_path.exists() {
+        std::fs::remove_file(&wallet_path).ok();
+        println!("Cleaned up previous wallet file");
+    }
 
     // Setup bitcoind in regtest mode
+    // NOTE: This example uses regtest for demonstration. In production,
+    // you should run your own bitcoind node. See the bitcoind documentation
+    // at https://github.com/citadel-tech/coinswap/blob/master/docs/bitcoind.md
     let data_dir = std::env::temp_dir().join("coinswap_taker_example");
     std::fs::create_dir_all(&data_dir)?;
 
@@ -69,9 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None,                              // Use default data directory
         Some("taker-example".to_string()), // Wallet file name
         Some(rpc_config),                  // rpc_config
-        #[cfg(feature = "integration-test")]
-        TakerBehavior::Normal, // behavior (only with integration-test feature)
-        None,                              // control_port
+        Some(9051),                        //control port
         None,                              // tor_auth_password
     )
     .unwrap();
@@ -81,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check initial wallet balance and UTXOs
     let wallet = taker.get_wallet();
     let balances = wallet.get_balances().unwrap();
-    let utxos = wallet.get_all_utxo_from_rpc().unwrap();
+    let utxos = wallet.list_all_utxo().unwrap();
 
     println!("Initial wallet state:");
     println!("  Spendable: {} BTC", balances.spendable.to_btc());
@@ -153,7 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Contract: {} BTC", final_balances.contract.to_btc());
 
     // Show UTXOs
-    let utxos = wallet_mut.get_all_utxo_from_rpc().unwrap();
+    let utxos = wallet_mut.list_all_utxo().unwrap();
     println!("\nUTXO information:");
     println!("  Total UTXOs: {}", utxos.len());
     if !utxos.is_empty() {
@@ -200,7 +220,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\nExample completed.");
 
-    // Stop bitcoind for cleanup
+    // stop bitcoind for cleanup
     let _ = bitcoind.client.stop();
     println!("Bitcoin Core stopped.");
     Ok(())

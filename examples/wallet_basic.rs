@@ -1,6 +1,6 @@
 //! Basic Wallet API Example
 //!
-//! This example demonstrates comprehensive wallet operations through the Taker API:
+//! This example demonstrates comprehensive wallet operations using the Wallet API:
 //! - Check all balance types (regular, swap, fidelity, contract)
 //! - Generate external and internal addresses
 //! - UTXO categorization and detailed spend info
@@ -13,7 +13,7 @@
 //! ## Usage
 //!
 //! ```bash
-//! cargo run --example wallet_basic --features integration-test
+//! cargo run --example wallet_basic
 //! ```
 
 use bitcoin::Amount;
@@ -21,18 +21,31 @@ use bitcoind::{
     bitcoincore_rpc::{Auth, RpcApi},
     BitcoinD,
 };
-#[cfg(feature = "integration-test")]
-use coinswap::taker::TakerBehavior;
 use coinswap::{
-    taker::Taker,
     utill::MIN_FEE_RATE,
-    wallet::{Destination, RPCConfig},
+    wallet::{Destination, RPCConfig, Wallet},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Coinswap Wallet Basic Example ===");
 
+    // Clean up any existing wallet files to ensure fresh start
+    let wallet_path = std::env::home_dir()
+        .unwrap_or_else(|| std::env::temp_dir())
+        .join(".coinswap")
+        .join("taker")
+        .join("wallets")
+        .join("wallet-example");
+
+    if wallet_path.exists() {
+        std::fs::remove_file(&wallet_path).ok();
+        println!("Cleaned up previous wallet file");
+    }
+
     // Setup bitcoind in regtest mode
+    // NOTE: This example uses regtest for demonstration. In production,
+    // you should run your own bitcoind node. See the bitcoind documentation
+    // at https://github.com/citadel-tech/coinswap/blob/master/docs/bitcoind.md
     let data_dir = std::env::temp_dir().join("coinswap_wallet_example");
     std::fs::create_dir_all(&data_dir)?;
 
@@ -67,27 +80,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         wallet_name: "wallet-example".to_string(), // Use specific wallet name
     };
 
-    // Initialize Taker to access wallet (Wallet API is not publicly exposed)
-    let mut taker = Taker::init(
-        None,                               // Use default data directory
-        Some("wallet-example".to_string()), // Wallet file name
-        Some(rpc_config),                   // Bitcoin Core RPC connection
-        #[cfg(feature = "integration-test")]
-        TakerBehavior::Normal, // behavior
-        None,                               // Default port
-        None,                               // Default connection string
-    )
-    .unwrap();
+    // Initialize Wallet using Wallet::init()
+    println!("About to initialize wallet...");
 
-    println!("Wallet initialized successfully (via Taker API)");
+    // Ensure wallet directory exists
+    std::fs::create_dir_all(wallet_path.parent().unwrap())?;
+
+    let mut wallet = Wallet::init(&wallet_path, &rpc_config, None).unwrap();
+
+    println!("Wallet initialized successfully!");
 
     // Sync wallet first
-    let wallet_mut = taker.get_wallet_mut();
-    wallet_mut.sync_and_save().unwrap();
+    wallet.sync_and_save().unwrap();
     println!("Wallet synced with blockchain");
 
     // Fund the wallet for demonstration
-    let funding_address = wallet_mut.get_next_external_address().unwrap();
+    let funding_address = wallet.get_next_external_address().unwrap();
     let fund_amount = Amount::from_btc(0.05).unwrap();
     let _txid = bitcoind
         .client
@@ -110,35 +118,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     // Sync wallet to see the new funds
-    wallet_mut.sync_and_save().unwrap();
+    wallet.sync_and_save().unwrap();
     println!("Wallet funded with {} BTC", fund_amount.to_btc());
-
-    // Get all wallet data (in scope to avoid borrow conflicts)
-    let (
-        balances,
-        utxos,
-        swapcoins_count,
-        regular_utxos,
-        swap_utxos,
-        fidelity_utxos,
-        swept_utxos,
-        external_index,
-    ) = {
-        let wallet = taker.get_wallet();
-        (
-            wallet.get_balances().unwrap(),
-            wallet.get_all_utxo_from_rpc().unwrap(),
-            wallet.get_swapcoins_count(),
-            wallet.list_descriptor_utxo_spend_info().unwrap(),
-            wallet.list_swap_coin_utxo_spend_info().unwrap(),
-            wallet.list_fidelity_spend_info().unwrap(),
-            wallet.list_swept_incoming_swap_utxos().unwrap(),
-            *wallet.get_external_index(),
-        )
-    };
 
     // Check balances and explain what each type means
     println!("\nBalance Types:");
+    let balances = wallet.get_balances().unwrap();
     println!(
         "  Spendable: {} BTC (regular + swap coins available for spending)",
         balances.spendable.to_btc()
@@ -162,26 +147,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Show total UTXOs and swap coin count
     println!("\nUTXO Summary:");
+    let utxos = wallet.list_all_utxo().unwrap();
+    let swapcoins_count = wallet.get_swapcoins_count();
     println!("  Total UTXOs: {}", utxos.len());
     println!("  Swap coins: {}", swapcoins_count);
 
     // Categorize UTXOs by type
     println!("\nUTXO Categories:");
+    let regular_utxos = wallet.list_descriptor_utxo_spend_info().unwrap();
+    let swap_utxos = wallet.list_swap_coin_utxo_spend_info().unwrap();
+    let fidelity_utxos = wallet.list_fidelity_spend_info().unwrap();
+    let swept_utxos = wallet.list_swept_incoming_swap_utxos().unwrap();
     println!("  Regular UTXOs: {}", regular_utxos.len());
     println!("  Swap UTXOs: {}", swap_utxos.len());
     println!("  Fidelity UTXOs: {}", fidelity_utxos.len());
     println!("  Swept swap UTXOs: {}", swept_utxos.len());
 
     // Generate addresses
-    let (external_address, internal_addresses) = {
-        let wallet_mut = taker.get_wallet_mut();
-        (
-            wallet_mut.get_next_external_address().unwrap(),
-            wallet_mut.get_next_internal_addresses(2).unwrap(),
-        )
-    };
-
     println!("\nAddress Generation:");
+    let external_address = wallet.get_next_external_address().unwrap();
+    let internal_addresses = wallet.get_next_internal_addresses(2).unwrap();
     println!("  External (receiving): {}", external_address);
     println!(
         "  Internal (change): {} {}",
@@ -190,14 +175,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Show wallet state information
     println!("\nWallet State:");
+    let external_index = *wallet.get_external_index();
     println!("  External address index: {}", external_index);
 
     // Demonstrate UTXO management
     println!("\nUTXO Management:");
-    {
-        let wallet = taker.get_wallet();
-        wallet.lock_unspendable_utxos().unwrap();
-    }
+    wallet.lock_unspendable_utxos().unwrap();
     println!("  Locked unspendable UTXOs (fidelity bonds, contracts)");
 
     // Demonstrate coin selection and transaction operations
@@ -205,12 +188,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let select_amount = Amount::from_btc(0.001).unwrap();
         if balances.spendable >= select_amount {
             println!("\nCoin Selection Demo:");
-            let selected_utxos = {
-                let wallet = taker.get_wallet();
-                wallet
-                    .coin_select(select_amount, MIN_FEE_RATE, None)
-                    .unwrap()
-            };
+            let selected_utxos = wallet
+                .coin_select(select_amount, MIN_FEE_RATE, None)
+                .unwrap();
 
             let total_selected: u64 = selected_utxos
                 .iter()
@@ -240,16 +220,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("\nTransaction Creation Demo:");
             let destination_address = internal_addresses[0].clone();
 
-            let transaction = {
-                let wallet_mut = taker.get_wallet_mut();
-                wallet_mut
-                    .spend_coins(
-                        &selected_utxos,
-                        Destination::Sweep(destination_address.clone()),
-                        MIN_FEE_RATE,
-                    )
-                    .unwrap()
-            };
+            let transaction = wallet
+                .spend_coins(
+                    &selected_utxos,
+                    Destination::Sweep(destination_address.clone()),
+                    MIN_FEE_RATE,
+                )
+                .unwrap();
 
             let txid = transaction.compute_txid();
             println!("  Created transaction: {}", txid);
@@ -283,15 +260,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nAdvanced Wallet Information:");
 
     // Get advanced wallet info
-    let (live_contracts, timelock_contracts, hashlock_contracts, all_utxo_info) = {
-        let wallet = taker.get_wallet();
-        (
-            wallet.list_live_contract_spend_info().unwrap(),
-            wallet.list_live_timelock_contract_spend_info().unwrap(),
-            wallet.list_live_hashlock_contract_spend_info().unwrap(),
-            wallet.list_all_utxo_spend_info().unwrap(),
-        )
-    };
+    let live_contracts = wallet.list_live_contract_spend_info().unwrap();
+    let timelock_contracts = wallet.list_live_timelock_contract_spend_info().unwrap();
+    let hashlock_contracts = wallet.list_live_hashlock_contract_spend_info().unwrap();
+    let all_utxo_info = wallet.list_all_utxo_spend_info().unwrap();
 
     println!("  Live contracts: {}", live_contracts.len());
     println!("  Timelock contracts: {}", timelock_contracts.len());
@@ -314,7 +286,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nWallet is funded and ready for operations!");
     println!("\nExample completed.");
 
-    // Stop bitcoind for  cleanup
+    // stop bitcoind for cleanup
     let _ = bitcoind.client.stop();
     println!("Bitcoin Core stopped.");
     Ok(())
