@@ -83,7 +83,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
 # Download and install Bitcoin Core with cache
 RUN --mount=type=cache,target=/tmp/bitcoin-cache \
     if [ ! -f /tmp/bitcoin-cache/bitcoin-26.0-x86_64-linux-gnu.tar.gz ]; then \
-        wget -q https://bitcoincore.org/bin/bitcoin-core-26.0/bitcoin-26.0-x86_64-linux-gnu.tar.gz \
+        wget -q https://bitcoincore.org/bin/bitcoin-core-30.0/bitcoin-30.0-x86_64-linux-gnu.tar.gz \
         -O /tmp/bitcoin-cache/bitcoin-26.0-x86_64-linux-gnu.tar.gz; \
     fi && \
     tar -xzf /tmp/bitcoin-cache/bitcoin-26.0-x86_64-linux-gnu.tar.gz && \

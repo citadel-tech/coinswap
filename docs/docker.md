@@ -8,7 +8,7 @@ The Docker image provides a complete environment for running Coinswap applicatio
 
 - **Alpine Linux 3.18** base image for minimal size
 - **Rust 1.75.0** for building the applications
-- **Bitcoin Core 26.0** for blockchain operations
+- **Bitcoin Core 30.0** for blockchain operations
 - **Tor** for privacy and networking
 - All Coinswap binaries: `makerd`, `maker-cli`, `taker`
 
