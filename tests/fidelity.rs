@@ -322,7 +322,7 @@ fn test_fidelity_spending() {
     // Assert UTXO shows up in list and track the specific fidelity UTXO
     let fidelity_utxo_info = {
         let wallet = maker.get_wallet().read().unwrap();
-        let all_utxos = wallet.list_all_utxo().unwrap();
+        let all_utxos = wallet.list_all_utxo();
 
         // Find the specific fidelity bond UTXO by amount
         let fidelity_utxo = all_utxos
@@ -344,7 +344,7 @@ fn test_fidelity_spending() {
 
     let check_fidelity_utxo_integrity = |iteration: usize| {
         let wallet = maker.get_wallet().read().unwrap();
-        let all_utxos = wallet.list_all_utxo().unwrap();
+        let all_utxos = wallet.list_all_utxo();
 
         let fidelity_utxo_still_exists = all_utxos.iter().any(|utxo| {
             utxo.txid == fidelity_utxo_info.0
@@ -448,7 +448,7 @@ fn test_fidelity_spending() {
     // Verify the specific UTXO is now consumed and bond is spent
     {
         let wallet = maker.get_wallet().read().unwrap();
-        let all_utxos = wallet.list_all_utxo().unwrap();
+        let all_utxos = wallet.list_all_utxo();
 
         let fidelity_utxo_still_exists = all_utxos.iter().any(|utxo| {
             utxo.txid == fidelity_utxo_info.0

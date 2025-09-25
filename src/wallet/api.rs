@@ -737,8 +737,7 @@ impl Wallet {
 
     /// Returns a list of all UTXOs tracked by the wallet. Including fidelity, live_contracts and swap coins.
     pub fn list_all_utxo(&self) -> Vec<ListUnspentResultEntry> {
-        self
-            .list_all_utxo_spend_info()
+        self.list_all_utxo_spend_info()
             .iter()
             .map(|(utxo, _)| utxo.clone())
             .collect()
@@ -747,9 +746,7 @@ impl Wallet {
     /// Returns a list all utxos with their spend info tracked by the wallet.
     /// Optionally takes in an Utxo list to reduce RPC calls. If None is given, the
     /// full list of utxo is fetched from core rpc.
-    pub fn list_all_utxo_spend_info(
-        &self,
-    ) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    pub fn list_all_utxo_spend_info(&self) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
         let processed_utxos = self
             .store
             .utxo_cache
@@ -760,9 +757,7 @@ impl Wallet {
     }
 
     /// Lists live contract UTXOs along with their Spend info.
-    pub fn list_live_contract_spend_info(
-        &self,
-    ) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    pub fn list_live_contract_spend_info(&self) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
         let all_valid_utxo = self.list_all_utxo_spend_info();
         let filtered_utxos: Vec<_> = all_valid_utxo
             .iter()
@@ -801,9 +796,7 @@ impl Wallet {
     }
 
     /// Lists fidelity UTXOs along with their Spend info.
-    pub fn list_fidelity_spend_info(
-        &self,
-    ) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    pub fn list_fidelity_spend_info(&self) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
         let all_valid_utxo = self.list_all_utxo_spend_info();
         let filtered_utxos: Vec<_> = all_valid_utxo
             .iter()
@@ -814,9 +807,7 @@ impl Wallet {
     }
 
     /// Lists descriptor UTXOs along with their Spend info.
-    pub fn list_descriptor_utxo_spend_info(
-        &self,
-    ) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    pub fn list_descriptor_utxo_spend_info(&self) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
         let all_valid_utxo = self.list_all_utxo_spend_info();
         let filtered_utxos: Vec<_> = all_valid_utxo
             .iter()
@@ -827,9 +818,7 @@ impl Wallet {
     }
 
     /// Lists swap coin UTXOs along with their Spend info.
-    pub fn list_swap_coin_utxo_spend_info(
-        &self,
-    ) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    pub fn list_swap_coin_utxo_spend_info(&self) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
         let all_valid_utxo = self.list_all_utxo_spend_info();
         let filtered_utxos: Vec<_> = all_valid_utxo
             .iter()
@@ -857,9 +846,7 @@ impl Wallet {
         filtered_utxos
     }
     /// Lists all swept incoming swapcoin UTXOs along with their Spend info.
-    pub fn list_swept_incoming_swap_utxos(
-        &self,
-    ) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    pub fn list_swept_incoming_swap_utxos(&self) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
         let all_valid_utxo = self.list_all_utxo_spend_info();
         let filtered_utxos: Vec<_> = all_valid_utxo
             .iter()

@@ -197,7 +197,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
 
     let taker_wallet_mut = taker.get_wallet_mut();
 
-    let swap_coins = taker_wallet_mut.list_swept_incoming_swap_utxos().unwrap();
+    let swap_coins = taker_wallet_mut.list_swept_incoming_swap_utxos();
 
     let addr = taker_wallet_mut.get_next_internal_addresses(1).unwrap()[0].to_owned();
 
