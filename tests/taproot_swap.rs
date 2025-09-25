@@ -6,7 +6,7 @@
 
 use bitcoin::Amount;
 use coinswap::{
-    maker::{start_maker_server_taproot, TaprootMaker, TaprootMakerBehavior},
+    maker::{start_maker_server_taproot, TaprootMaker},
     taker::api2::{SwapParams, Taker},
     wallet::{RPCConfig, Wallet},
 };
@@ -25,10 +25,7 @@ fn test_taproot_coinswap() {
     warn!("Running Test: Taproot Coinswap Basic Functionality");
 
     // Use different ports for taproot makers to avoid conflicts
-    let taproot_makers_config_map = [
-        ((7102, Some(19061)), TaprootMakerBehavior::Normal),
-        ((17102, Some(19062)), TaprootMakerBehavior::Normal),
-    ];
+    let taproot_makers_config_map = [(7102, Some(19061)), (17102, Some(19062))];
 
     // Initialize test framework (without regular takers, we'll create taproot taker manually)
     let (test_framework, _regular_takers, _regular_makers, block_generation_handle) =
@@ -192,12 +189,12 @@ fn test_taproot_coinswap() {
 /// Create taproot makers with the test framework configuration
 fn create_taproot_makers(
     test_framework: &TestFramework,
-    configs: &[((u16, Option<u16>), TaprootMakerBehavior)],
+    configs: &[(u16, Option<u16>)],
 ) -> Vec<Arc<TaprootMaker>> {
     configs
         .iter()
         .enumerate()
-        .map(|(index, ((network_port, rpc_port), behavior))| {
+        .map(|(index, (network_port, rpc_port))| {
             let data_dir = std::env::temp_dir()
                 .join("coinswap")
                 .join(format!("taproot_maker{}", index));
@@ -214,7 +211,6 @@ fn create_taproot_makers(
                     None, // control_port
                     None, // tor_auth_password
                     None, // socks_port
-                    *behavior,
                 )
                 .unwrap(),
             )

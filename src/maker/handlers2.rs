@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use super::{
-    api2::{ConnectionState, Maker, MakerBehavior},
+    api2::{ConnectionState, Maker},
     error::MakerError,
 };
 
@@ -116,26 +116,6 @@ fn handle_senders_contract(
         maker.config.network_port,
         senders_contract.contract_txs.len()
     );
-
-    // Check for specific maker behaviors that should trigger early exit
-    match maker.behavior {
-        MakerBehavior::CloseAtSendersContract => {
-            log::info!(
-                "[{}] Configured to close at SendersContract",
-                maker.config.network_port
-            );
-            return Err(MakerError::General(
-                "Closing connection at SendersContract stage",
-            ));
-        }
-        MakerBehavior::BroadcastContractAfterSetup => {
-            log::warn!(
-                "[{}] Will broadcast contract after setup",
-                maker.config.network_port
-            );
-        }
-        _ => {}
-    }
 
     // Process the sender's contract and create our response
     let receiver_contract =
