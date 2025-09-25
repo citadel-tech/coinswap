@@ -1399,7 +1399,7 @@ impl Taker {
             use std::{thread, time::Duration};
 
             log::info!("Waiting for makers to complete their sweeps...");
-            thread::sleep(Duration::from_secs(5));
+            thread::sleep(Duration::from_secs(10));
         }
 
         Ok(())

@@ -26,5 +26,5 @@ pub use rpc::{RpcMsgReq, RpcMsgResp};
 pub use server::start_maker_server;
 
 // Taproot protocol exports
-pub use api2::{Maker as TaprootMaker, MakerBehavior as TaprootMakerBehavior};
+pub use api2::Maker as TaprootMaker;
 pub use server2::start_maker_server_taproot;

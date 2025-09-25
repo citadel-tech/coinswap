@@ -57,21 +57,6 @@ pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
 /// Minimum Coinswap amount; makers will not accept amounts below this.
 pub const MIN_SWAP_AMOUNT: u64 = 10_000;
 
-/// Used to configure the maker for testing purposes.
-#[derive(Debug, Clone, Copy)]
-pub enum MakerBehavior {
-    /// Represents the normal behavior of the maker.
-    Normal,
-    /// Simulates closure at the "SendersContract" step.
-    CloseAtSendersContract,
-    /// Simulates closure at the "ReceiversContract" step.
-    CloseAtReceiversContract,
-    /// Simulates closure at the "PartialSignatures" step.
-    CloseAtPartialSignatures,
-    /// Simulates broadcasting the contract immediately after setup.
-    BroadcastContractAfterSetup,
-}
-
 /// Maintains the state of a connection, including the list of swapcoins.
 #[derive(Debug, Default)]
 pub struct ConnectionState {
@@ -201,8 +186,6 @@ impl ThreadPool {
 
 /// Represents the maker in the taproot swap protocol.
 pub struct Maker {
-    /// Defines special maker behavior, only applicable for testing
-    pub(crate) behavior: MakerBehavior,
     /// Maker configurations
     pub(crate) config: MakerConfig,
     /// Maker's underlying wallet
@@ -233,7 +216,6 @@ impl Maker {
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
         socks_port: Option<u16>,
-        behavior: MakerBehavior,
     ) -> Result<Self, MakerError> {
         let data_dir = data_dir.unwrap_or(get_maker_dir());
         let wallets_dir = data_dir.join("wallets");
@@ -290,7 +272,6 @@ impl Maker {
         let network_port = config.network_port;
 
         Ok(Self {
-            behavior,
             config,
             wallet: RwLock::new(wallet),
             shutdown: AtomicBool::new(false),
