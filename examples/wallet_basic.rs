@@ -312,8 +312,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\nWallet is funded and ready for operations!");
-    println!("Example completed. Bitcoin Core will shutdown automatically.");
+    println!("\nExample completed.");
 
-    // bitcoind will be automatically stopped when it goes out of scope
+    // Stop bitcoind for  cleanup
+    let _ = bitcoind.client.stop();
+    println!("Bitcoin Core stopped.");
     Ok(())
 }

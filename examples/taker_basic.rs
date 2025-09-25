@@ -193,13 +193,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nIn production, you would call:");
     println!("  let result = taker.do_coinswap(swap_params).unwrap();");
     println!("\nThis would:");
-    println!("- Connect to the directory server to find makers");
+    println!("- Connect to the tracker server to find makers");
     println!("- Negotiate with {} makers", swap_params.maker_count);
     println!("- Execute the coinswap protocol");
     println!("- Return the final transaction details");
 
-    println!("\nExample completed. Bitcoin Core will shutdown automatically.");
+    println!("\nExample completed.");
 
-    // bitcoind will be automatically stopped when it goes out of scope
+    // Stop bitcoind for cleanup
+    let _ = bitcoind.client.stop();
+    println!("Bitcoin Core stopped.");
     Ok(())
 }
