@@ -120,7 +120,7 @@ docker run -it --rm \
 #### Complete Stack with Docker Compose
 
 ```console
-# Start all services (Bitcoin Core, Tor, Directory Server, Makerd)
+# Start all services (Bitcoin Core, Tor, Tracker, Makerd)
 docker-compose up -d
 
 # Check status
@@ -134,7 +134,7 @@ docker-compose logs -f makerd
 - The image includes Bitcoin Core 26.0 and Tor for complete functionality
 - Data is persisted using Docker volumes for wallet and blockchain data
 - Network ports 6102 (Maker network) and 6103 (Maker RPC) are exposed
-- All binaries are available: `makerd`, `maker-cli`, `taker`, `directoryd`, `directory-cli`
+- All binaries are available: `makerd`, `maker-cli`, `taker`
 - Use `./docker-setup.sh` for simplified Docker operations
 - See [Docker documentation](./docs/docker.md) for detailed usage
 
