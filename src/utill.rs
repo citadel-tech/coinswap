@@ -31,11 +31,14 @@ use std::str::FromStr;
 static LOGGER: OnceLock<()> = OnceLock::new();
 
 use crate::{
-    error::NetError, protocol::{
+    error::NetError,
+    protocol::{
         contract::derive_maker_pubkey_and_nonce,
         error::ProtocolError,
         messages::{FidelityProof, MultisigPrivkey},
-    }, taker::error::TakerError, wallet::{fidelity_redeemscript, FidelityError, SwapCoin, UTXOSpendInfo, WalletError}
+    },
+    taker::error::TakerError,
+    wallet::{fidelity_redeemscript, FidelityError, SwapCoin, UTXOSpendInfo, WalletError},
 };
 
 const INPUT_CHARSET: &str =

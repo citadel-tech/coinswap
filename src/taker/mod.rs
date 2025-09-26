@@ -13,4 +13,3 @@ mod routines;
 pub use self::api::TakerBehavior;
 pub use api::{SwapParams, Taker};
 pub use config::TakerConfig;
-

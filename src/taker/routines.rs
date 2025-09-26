@@ -26,7 +26,7 @@ use crate::{
         },
         Hash160,
     },
-    utill::{calculate_fee_sats, read_message, MIN_FEE_RATE,send_message_with_prefix},
+    utill::{calculate_fee_sats, read_message, send_message_with_prefix, MIN_FEE_RATE},
     wallet::WalletError,
 };
 use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
