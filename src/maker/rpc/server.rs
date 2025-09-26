@@ -96,15 +96,12 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
                 op_return_data: None,
             };
 
-            let coins_to_send = maker
-                .wallet()
-                .read()?
-                .coin_select(amount, feerate, None)?;
-            let tx = maker.wallet().write()?.spend_from_wallet(
-                feerate,
-                destination,
-                &coins_to_send,
-            )?;
+            let coins_to_send = maker.wallet().read()?.coin_select(amount, feerate, None)?;
+            let tx =
+                maker
+                    .wallet()
+                    .write()?
+                    .spend_from_wallet(feerate, destination, &coins_to_send)?;
 
             let txid = maker.wallet().read()?.send_tx(&tx)?;
 

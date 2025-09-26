@@ -45,7 +45,7 @@ pub(crate) fn create_taproot_script(
         .add_leaf(1, timelock_script.clone())
         .unwrap()
         .finalize(&secp, internal_pubkey)
-        .expect("taproot info finalized");
+        .expect("Error finalizing taproot info");
     let _hashlock_control_block =
         taproot_spendinfo.control_block(&(hashlock_script, LeafVersion::TapScript));
     let _timelock_control_block =
@@ -310,7 +310,7 @@ mod tests {
         let nonce_pair_1: (SecretNonce, PublicNonce) = generate_new_nonce_pair_i(pubkey1);
         let nonce_pair_2: (SecretNonce, PublicNonce) = generate_new_nonce_pair_i(pubkey2);
         let agg_nonce: AggregatedNonce =
-            get_aggregated_nonce_i(&vec![&nonce_pair_1.1, &nonce_pair_2.1]);
+            get_aggregated_nonce_i(&[&nonce_pair_1.1, &nonce_pair_2.1]);
 
         let partial_signature_1 = generate_partial_signature_i(
             msg,

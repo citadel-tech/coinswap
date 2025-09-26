@@ -107,13 +107,10 @@ fn manage_fidelity_bonds_and_update_tracker_taproot(
     tracker_addr: &str,
 ) -> Result<(), MakerError> {
     // Redeem expired fidelity bonds first
-    maker
-        .wallet()
-        .write()?
-        .redeem_expired_fidelity_bonds()?;
+    maker.wallet().write()?.redeem_expired_fidelity_bonds()?;
 
     // Create or get existing fidelity proof for taproot maker
-    let _proof = setup_fidelity_bond_taproot(maker, maker_addr)?;
+    let _ = setup_fidelity_bond_taproot(maker, maker_addr)?;
 
     let network_port = maker.config.network_port;
     log::info!("[{network_port}] Taproot maker initialized - Address: {maker_addr}, Tracker: {tracker_addr}");

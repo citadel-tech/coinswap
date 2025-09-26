@@ -104,9 +104,7 @@ fn connect_to_maker(
     let timeout = Duration::from_secs(timeout_secs);
     socket
         .set_read_timeout(Some(timeout))
-        .map_err(|e| TakerError::General(format!("Failed to set read timeout: {:?}", e)))?;
-    socket
-        .set_write_timeout(Some(timeout))
+        .and_then(|_| socket.set_write_timeout(Some(timeout)))
         .map_err(|e| TakerError::General(format!("Failed to set write timeout: {:?}", e)))?;
 
     Ok(socket)
@@ -114,13 +112,13 @@ fn connect_to_maker(
 
 /// Fetch offers from taproot makers using taproot protocol messages
 fn fetch_taproot_offers(
-    maker_addresses: Vec<MakerAddress>,
+    maker_addresses: &[MakerAddress],
     config: &TakerConfig,
 ) -> Result<Vec<OfferAndAddress>, TakerError> {
     let mut offers = Vec::new();
 
     for address in maker_addresses {
-        match download_taproot_offer(&address, config) {
+        match download_taproot_offer(address, config) {
             Some(offer) => offers.push(offer),
             None => {
                 log::warn!("Failed to download offer from taproot maker: {}", address);
@@ -496,7 +494,7 @@ impl Taker {
             .cloned()
             .collect::<Vec<_>>();
 
-        let new_offers = fetch_taproot_offers(addrs_to_fetch, &self.config)?;
+        let new_offers = fetch_taproot_offers(&addrs_to_fetch, &self.config)?;
 
         for new_offer in new_offers {
             if let Err(e) = self
@@ -840,7 +838,11 @@ impl Taker {
 
         // Forward contract through all intermediate makers (from index 1 to maker_count-1)
         for maker_index in 1..maker_count {
-            let maker = &self.ongoing_swap_state.chosen_makers[maker_index];
+            let maker = &self
+                .ongoing_swap_state
+                .chosen_makers
+                .get(maker_index)
+                .unwrap();
 
             // Determine the next party in the chain
             let next_party_tweakable_point = if maker_index == maker_count - 1 {
@@ -848,7 +850,10 @@ impl Taker {
                 self.ongoing_swap_state.incoming_contract_my_pubkey.unwrap()
             } else {
                 // Intermediate maker should point to next maker
-                self.ongoing_swap_state.chosen_makers[maker_index + 1]
+                self.ongoing_swap_state
+                    .chosen_makers
+                    .get(maker_index + 1)
+                    .unwrap()
                     .offer
                     .tweakable_point
             };
@@ -966,7 +971,7 @@ impl Taker {
             .rpc
             .get_raw_transaction(&incoming_contract_txid, None)
             .map_err(|e| TakerError::Wallet(crate::wallet::WalletError::Rpc(e)))?;
-        let incoming_contract_amount = final_contract_tx.output[0].value;
+        let incoming_contract_amount = final_contract_tx.output.first().unwrap().value;
 
         log::info!(
             "  Spending from contract txid: {:?}",
@@ -1141,7 +1146,12 @@ impl Taker {
                 let incoming_contract_other_nonce: secp256k1::musig::PublicNonce =
                     maker_response.sender_nonce.clone().into();
                 let incoming_contract_other_partial_sig: secp256k1::musig::PartialSignature =
-                    maker_response.partial_signatures[0].clone().into();
+                    maker_response
+                        .partial_signatures
+                        .first()
+                        .unwrap()
+                        .clone()
+                        .into();
 
                 let mut pubkeys = [
                     incoming_contract_my_keypair.public_key(),
@@ -1190,12 +1200,12 @@ impl Taker {
                 let partial_sigs = if pubkeys[0].serialize()
                     == incoming_contract_my_keypair.public_key().serialize()
                 {
-                    vec![
+                    [
                         &incoming_contract_my_partial_sig,
                         &incoming_contract_other_partial_sig,
                     ]
                 } else {
-                    vec![
+                    [
                         &incoming_contract_other_partial_sig,
                         &incoming_contract_my_partial_sig,
                     ]
@@ -1205,7 +1215,7 @@ impl Taker {
                         message,
                         aggregated_nonce,
                         tap_tweak,
-                        partial_sigs,
+                        partial_sigs.to_vec(),
                         pubkeys[0],
                         pubkeys[1],
                     );
@@ -1280,7 +1290,11 @@ impl Taker {
         } else {
             // Multi-maker case: normal flow
             for maker_index in (0..maker_count - 1).rev() {
-                let maker = &self.ongoing_swap_state.chosen_makers[maker_index];
+                let maker = &self
+                    .ongoing_swap_state
+                    .chosen_makers
+                    .get(maker_index)
+                    .unwrap();
 
                 // Send SpendingTxAndReceiverNonce to ALL makers to collect their partial signatures
                 log::info!(
@@ -1344,8 +1358,11 @@ impl Taker {
                         // Send partial signature to the next maker in the chain
                         if maker_index < maker_count - 1 {
                             let next_maker_index = maker_index + 1;
-                            let next_maker =
-                                &self.ongoing_swap_state.chosen_makers[next_maker_index];
+                            let next_maker = &self
+                                .ongoing_swap_state
+                                .chosen_makers
+                                .get(next_maker_index)
+                                .unwrap();
 
                             let partial_sig_msg = TakerToMakerMessage::PartialSigAndSendersNonce(
                                 PartialSigAndSendersNonce {
@@ -1369,7 +1386,7 @@ impl Taker {
 
         // Send taker's partial signature to first maker (for Taker→Maker0 contract)
         if maker_count > 0 {
-            let first_maker = &self.ongoing_swap_state.chosen_makers[0];
+            let first_maker = &self.ongoing_swap_state.chosen_makers.first().unwrap();
 
             log::info!(
                 "Sending taker's partial signature to first maker at {}",
@@ -1416,7 +1433,11 @@ impl Taker {
         use bitcoin::secp256k1::Secp256k1;
 
         // Get the first maker's spending transaction that sweeps the Taker→Maker0 contract
-        let first_maker_spending_tx = self.ongoing_swap_state.maker_spending_txs[0]
+        let first_maker_spending_tx = self
+            .ongoing_swap_state
+            .maker_spending_txs
+            .first()
+            .unwrap()
             .as_ref()
             .ok_or_else(|| {
                 TakerError::General("No spending transaction stored for first maker".to_string())
@@ -1504,9 +1525,9 @@ impl Taker {
         let maker_pub_nonce: secp256k1::musig::PublicNonce = maker_receiver_nonce.clone().into();
 
         let nonces = if ordered_pubkeys[0].serialize() == taker_keypair.public_key().serialize() {
-            vec![&taker_pub_nonce, &maker_pub_nonce]
+            [&taker_pub_nonce, &maker_pub_nonce]
         } else {
-            vec![&maker_pub_nonce, &taker_pub_nonce]
+            [&maker_pub_nonce, &taker_pub_nonce]
         };
         let aggregated_nonce = crate::protocol::musig_interface::get_aggregated_nonce_i(&nonces);
 
