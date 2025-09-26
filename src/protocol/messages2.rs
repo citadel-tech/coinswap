@@ -27,14 +27,8 @@ impl From<PublicNonce> for SerializablePublicNonce {
 
 impl From<SerializablePublicNonce> for PublicNonce {
     fn from(nonce: SerializablePublicNonce) -> Self {
-        if nonce.0.len() != 66 {
-            panic!(
-                "Invalid nonce byte length: expected 66, got {}",
-                nonce.0.len()
-            );
-        }
-        let bytes: [u8; 66] = nonce.0.try_into().unwrap();
-        PublicNonce::from_byte_array(&bytes).expect("valid nonce bytes")
+        let bytes: [u8; 66] = nonce.0.try_into().expect("invalid nonce value");
+        PublicNonce::from_byte_array(&bytes).expect("invalid nonce value")
     }
 }
 
@@ -46,14 +40,8 @@ impl From<bitcoin::secp256k1::Scalar> for SerializableScalar {
 
 impl From<SerializableScalar> for bitcoin::secp256k1::Scalar {
     fn from(scalar: SerializableScalar) -> Self {
-        if scalar.0.len() != 32 {
-            panic!(
-                "Invalid scalar byte length: expected 32, got {}",
-                scalar.0.len()
-            );
-        }
-        let bytes: [u8; 32] = scalar.0.try_into().unwrap();
-        bitcoin::secp256k1::Scalar::from_be_bytes(bytes).expect("valid scalar bytes")
+        let bytes: [u8; 32] = scalar.0.try_into().expect("invalid scalar length");
+        bitcoin::secp256k1::Scalar::from_be_bytes(bytes).expect("invalid scalar value")
     }
 }
 
@@ -95,8 +83,8 @@ impl From<PartialSignature> for SerializablePartialSignature {
 
 impl From<SerializablePartialSignature> for PartialSignature {
     fn from(sig: SerializablePartialSignature) -> Self {
-        let bytes: [u8; 32] = sig.0.try_into().expect("valid signature bytes");
-        PartialSignature::from_byte_array(&bytes).expect("valid signature bytes")
+        let bytes: [u8; 32] = sig.0.try_into().expect("invalid signature value");
+        PartialSignature::from_byte_array(&bytes).expect("invalid signature value")
     }
 }
 

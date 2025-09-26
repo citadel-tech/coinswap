@@ -13,10 +13,10 @@ use secp256k1::{
 /// get aggregated public key from two public keys
 pub fn get_aggregated_pubkey(pubkey1: &PublicKey, pubkey2: &PublicKey) -> XOnlyPublicKey {
     let secp = Secp256k1::new();
-    let mut pubkeys = vec![pubkey1, pubkey2];
+    let mut pubkeys = [pubkey1, pubkey2];
     // Sort pubkeys lexicographically (manual implementation)
     pubkeys.sort_by_key(|a| a.serialize());
-    let agg_cache = KeyAggCache::new(&secp, pubkeys.as_slice());
+    let agg_cache = KeyAggCache::new(&secp, &pubkeys);
     agg_cache.agg_pk()
 }
 
@@ -58,7 +58,7 @@ pub fn aggregate_partial_signatures(
     message: Message,
     agg_nonce: AggregatedNonce,
     tap_tweak: Scalar,
-    partial_sigs: &Vec<&PartialSignature>,
+    partial_sigs: &[&PartialSignature],
     pubkeys: &[&PublicKey],
 ) -> AggregatedSignature {
     let secp = Secp256k1::new();
@@ -67,9 +67,8 @@ pub fn aggregate_partial_signatures(
         .pubkey_xonly_tweak_add(&secp, &tap_tweak)
         .unwrap();
     let session = Session::new(&secp, &musig_key_agg_cache, agg_nonce, message);
-    session.partial_sig_agg(partial_sigs.as_slice())
+    session.partial_sig_agg(partial_sigs)
 }
-
 #[cfg(test)]
 mod tests {
     use std::convert::TryInto;

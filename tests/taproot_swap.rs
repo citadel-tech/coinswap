@@ -78,7 +78,7 @@ fn test_taproot_coinswap() {
 
     // Sync wallets after setup to ensure fidelity bonds are accounted for
     for maker in &taproot_makers {
-        maker.get_wallet().write().unwrap().sync().unwrap();
+        maker.wallet().write().unwrap().sync().unwrap();
     }
 
     // Wait a bit for makers to fully register with the tracker
@@ -91,7 +91,7 @@ fn test_taproot_coinswap() {
     // Test taproot maker balance verification
     log::info!("Testing taproot maker balance verification");
     for (i, maker) in taproot_makers.iter().enumerate() {
-        let wallet = maker.get_wallet().read().unwrap();
+        let wallet = maker.wallet().read().unwrap();
         let balances = wallet.get_balances().unwrap();
 
         info!(
@@ -168,7 +168,7 @@ fn test_taproot_coinswap() {
 
     // Synchronize each taproot maker's wallet multiple times to ensure all UTXOs are discovered
     for maker in taproot_makers.iter() {
-        let mut wallet = maker.get_wallet().write().unwrap();
+        let mut wallet = maker.wallet().write().unwrap();
         wallet.sync().unwrap();
     }
 
@@ -228,7 +228,7 @@ fn fund_taproot_makers(
     let mut original_balances = Vec::new();
 
     for maker in makers {
-        let mut wallet = maker.get_wallet().write().unwrap();
+        let mut wallet = maker.wallet().write().unwrap();
 
         // Fund with regular UTXOs
         for _ in 0..utxo_count {
@@ -350,7 +350,7 @@ fn verify_taproot_swap_results(
     // Verify makers earned fees
     for (i, (maker, original_spendable)) in makers.iter().zip(org_maker_spend_balances).enumerate()
     {
-        let wallet = maker.get_wallet().read().unwrap();
+        let wallet = maker.wallet().read().unwrap();
         let balances = wallet.get_balances().unwrap();
         let current_total = balances.regular + balances.swap + balances.contract;
 
