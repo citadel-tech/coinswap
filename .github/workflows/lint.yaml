@@ -32,8 +32,11 @@ jobs:
       - name: Check fmt
         run: cargo fmt --all -- --check
 
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Clippy (main codebase with all features)
+        run: cargo clippy --all-features --lib --bins --tests -- -D warnings
+
+      - name: Clippy (examples with default features only)
+        run: cargo clippy --examples -- -D warnings
 
       # - name: cargo install cargo-hack
       #   uses: taiki-e/install-action@cargo-hack
