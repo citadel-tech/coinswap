@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Clean up any existing wallet files to ensure fresh start
     let wallet_path = std::env::home_dir()
-        .unwrap_or_else(|| std::env::temp_dir())
+        .unwrap_or_else(std::env::temp_dir)
         .join(".coinswap")
         .join("taker")
         .join("wallets")
