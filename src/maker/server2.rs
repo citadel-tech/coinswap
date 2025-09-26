@@ -72,7 +72,7 @@ fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<(String, String), Make
     } else {
         // Always Tor in production
         let maker_hostname = get_tor_hostname(
-            maker.get_data_dir(),
+            maker.data_dir(),
             maker.config.control_port,
             maker_port,
             &maker.config.tor_auth_password,
@@ -108,7 +108,7 @@ fn manage_fidelity_bonds_and_update_tracker_taproot(
 ) -> Result<(), MakerError> {
     // Redeem expired fidelity bonds first
     maker
-        .get_wallet()
+        .wallet()
         .write()?
         .redeem_expired_fidelity_bonds()?;
 
@@ -132,10 +132,10 @@ fn setup_fidelity_bond_taproot(
     use bitcoin::absolute::LockTime;
     use std::thread;
 
-    let highest_index = maker.get_wallet().read()?.get_highest_fidelity_index()?;
+    let highest_index = maker.wallet().read()?.get_highest_fidelity_index()?;
 
     if let Some(i) = highest_index {
-        let wallet_read = maker.get_wallet().read()?;
+        let wallet_read = maker.wallet().read()?;
         let bond = wallet_read.store.fidelity_bond.get(&i).unwrap();
 
         let current_height = wallet_read
@@ -144,7 +144,7 @@ fn setup_fidelity_bond_taproot(
             .map_err(WalletError::Rpc)? as u32;
 
         let proof_message = maker
-            .get_wallet()
+            .wallet()
             .read()?
             .generate_fidelity_proof(i, maker_address)?;
 
@@ -185,7 +185,7 @@ fn setup_fidelity_bond_taproot(
     );
 
     let current_height = maker
-        .get_wallet()
+        .wallet()
         .read()?
         .rpc
         .get_block_count()
@@ -211,9 +211,9 @@ fn setup_fidelity_bond_taproot(
     while !maker.shutdown.load(Relaxed) {
         sleep_multiplier += 1;
         // sync the wallet
-        maker.get_wallet().write()?.sync_no_fail();
+        maker.wallet().write()?.sync_no_fail();
 
-        let fidelity_result = maker.get_wallet().write()?.create_fidelity(
+        let fidelity_result = maker.wallet().write()?.create_fidelity(
             amount,
             locktime,
             Some(maker_address.as_bytes()),
@@ -234,7 +234,7 @@ fn setup_fidelity_bond_taproot(
                         maker.config.network_port
                     );
                     let amount = required - available;
-                    let addr = maker.get_wallet().write()?.get_next_external_address()?;
+                    let addr = maker.wallet().write()?.get_next_external_address()?;
 
                     log::info!("[{}] Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", maker.config.network_port, Amount::from_sat(amount).to_btc(), addr);
 
@@ -259,7 +259,7 @@ fn setup_fidelity_bond_taproot(
                     maker.config.network_port
                 );
                 let proof_message = maker
-                    .get_wallet()
+                    .wallet()
                     .read()?
                     .generate_fidelity_proof(i, maker_address)?;
 
@@ -273,8 +273,8 @@ fn setup_fidelity_bond_taproot(
                 };
 
                 // sync and save the wallet data to disk
-                maker.get_wallet().write()?.sync_no_fail();
-                maker.get_wallet().read()?.save_to_disk()?;
+                maker.wallet().write()?.sync_no_fail();
+                maker.wallet().read()?.save_to_disk()?;
 
                 return Ok(highest_proof);
             }
@@ -288,7 +288,7 @@ fn setup_fidelity_bond_taproot(
 
 /// Checks swap liquidity for taproot swaps
 fn check_swap_liquidity_taproot(maker: &Maker) -> Result<(), MakerError> {
-    let wallet_read = maker.get_wallet().read()?;
+    let wallet_read = maker.wallet().read()?;
     let balances = wallet_read.get_balances()?;
 
     let swap_balance = balances.spendable;
@@ -313,7 +313,7 @@ fn check_swap_liquidity_taproot(maker: &Maker) -> Result<(), MakerError> {
 
 /// Checks connection with Bitcoin Core for taproot operations
 fn check_connection_with_core_taproot(maker: &Maker) -> Result<(), MakerError> {
-    let wallet_read = maker.get_wallet().read()?;
+    let wallet_read = maker.wallet().read()?;
     match wallet_read.rpc.get_block_count() {
         Ok(block_count) => {
             log::debug!(
@@ -494,7 +494,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                             "127.0.0.1".to_string()
                         } else {
                             get_tor_hostname(
-                                maker.get_data_dir(),
+                                maker.data_dir(),
                                 maker.config.control_port,
                                 maker.config.network_port,
                                 &maker.config.tor_auth_password,

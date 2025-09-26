@@ -31,8 +31,6 @@ use super::{config::MakerConfig, error::MakerError};
 pub const RPC_PING_INTERVAL: u32 = 9;
 
 /// Maker triggers the recovery mechanism, if Taker is idle for more than 15 mins during a swap.
-#[cfg(feature = "integration-test")]
-pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
 #[cfg(not(feature = "integration-test"))]
 pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60 * 15);
 
@@ -40,13 +38,6 @@ pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60 * 15);
 pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
 
 /// Fee Parameters for Coinswap
-#[cfg(feature = "integration-test")]
-pub const BASE_FEE: u64 = 1000;
-#[cfg(feature = "integration-test")]
-pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 2.50;
-#[cfg(feature = "integration-test")]
-pub const TIME_RELATIVE_FEE_PCT: f64 = 0.10;
-
 #[cfg(not(feature = "integration-test"))]
 pub const BASE_FEE: u64 = 100;
 #[cfg(not(feature = "integration-test"))]
@@ -56,6 +47,16 @@ pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
 
 /// Minimum Coinswap amount; makers will not accept amounts below this.
 pub const MIN_SWAP_AMOUNT: u64 = 10_000;
+
+/// Test Parameters for Coinswap
+#[cfg(feature = "integration-test")]
+pub const BASE_FEE: u64 = 1000;
+#[cfg(feature = "integration-test")]
+pub const AMOUNT_RELATIVE_FEE_PCT: f64 = 2.50;
+#[cfg(feature = "integration-test")]
+pub const TIME_RELATIVE_FEE_PCT: f64 = 0.10;
+#[cfg(feature = "integration-test")]
+pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Maintains the state of a connection, including the list of swapcoins.
 #[derive(Debug, Default)]
@@ -204,8 +205,8 @@ pub struct Maker {
     pub(crate) tracker: RwLock<Option<String>>,
 }
 
-#[allow(clippy::too_many_arguments)]
 impl Maker {
+    #[allow(clippy::too_many_arguments)]
     /// Initializes a Maker structure for taproot swaps.
     pub fn init(
         data_dir: Option<PathBuf>,
@@ -284,12 +285,12 @@ impl Maker {
     }
 
     /// Returns data directory of Maker
-    pub fn get_data_dir(&self) -> &Path {
+    pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }
 
     /// Returns a reference to the Maker's wallet.
-    pub fn get_wallet(&self) -> &RwLock<Wallet> {
+    pub fn wallet(&self) -> &RwLock<Wallet> {
         &self.wallet
     }
 
@@ -1073,7 +1074,7 @@ impl Maker {
     /// Once confirmed, updates their confirmation details in the wallet.
     pub(super) fn track_and_update_unconfirmed_fidelity_bonds(&self) -> Result<(), MakerError> {
         let bond_conf_heights = {
-            let wallet_read = self.get_wallet().read()?;
+            let wallet_read = self.wallet().read()?;
 
             wallet_read
                 .store
@@ -1093,7 +1094,7 @@ impl Maker {
         };
 
         bond_conf_heights.into_iter().try_for_each(|(i, ht)| {
-            self.get_wallet()
+            self.wallet()
                 .write()?
                 .update_fidelity_bond_conf_details(i, ht)?;
             Ok::<(), MakerError>(())
@@ -1104,16 +1105,16 @@ impl Maker {
 }
 
 impl MakerRpc for Maker {
-    fn get_wallet(&self) -> &RwLock<Wallet> {
+    fn wallet(&self) -> &RwLock<Wallet> {
         &self.wallet
     }
-    fn get_data_dir(&self) -> &Path {
+    fn data_dir(&self) -> &Path {
         &self.data_dir
     }
-    fn get_config(&self) -> &MakerConfig {
+    fn config(&self) -> &MakerConfig {
         &self.config
     }
-    fn get_shutdown(&self) -> &AtomicBool {
+    fn shutdown(&self) -> &AtomicBool {
         &self.shutdown
     }
 }
