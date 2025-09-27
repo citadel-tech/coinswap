@@ -650,13 +650,13 @@ impl TestFramework {
             .collect::<Vec<_>>();
 
         // start the block generation thread
-        log::info!("⛏️ spawning block generation thread");
+        log::info!("⛏️ Spawning block generation thread");
         let tf_clone = test_framework.clone();
         let generate_blocks_handle = thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(3));
 
             if tf_clone.shutdown.load(Relaxed) {
-                log::info!("🔚 ending block generation thread");
+                log::info!("🔚 Ending block generation thread");
                 return;
             }
             // tf_clone.generate_blocks(10);

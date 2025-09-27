@@ -127,15 +127,6 @@ fn test_standard_coinswap() {
     // | **Maker16102** | 500,000 - 463,500 - 3,000 = +33,500                               |
     // | **Maker6102**  | 465,384 - 438,642 - 3,000 = +21,858                               |
 
-    let taker_wallet = taker.get_wallet_mut();
-    taker_wallet.sync_and_save().unwrap();
-
-    // Synchronize each maker's wallet.
-    for maker in makers.iter() {
-        let mut wallet = maker.get_wallet().write().unwrap();
-        wallet.sync_and_save().unwrap();
-    }
-
     info!("📊 Verifying swap results");
     //  After Swap Asserts
     verify_swap_results(
