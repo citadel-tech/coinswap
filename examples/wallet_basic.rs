@@ -147,17 +147,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Show total UTXOs and swap coin count
     println!("\nUTXO Summary:");
-    let utxos = wallet.list_all_utxo().unwrap();
+    let utxos = wallet.list_all_utxo();
     let swapcoins_count = wallet.get_swapcoins_count();
     println!("  Total UTXOs: {}", utxos.len());
     println!("  Swap coins: {swapcoins_count}");
 
     // Categorize UTXOs by type
     println!("\nUTXO Categories:");
-    let regular_utxos = wallet.list_descriptor_utxo_spend_info().unwrap();
-    let swap_utxos = wallet.list_swap_coin_utxo_spend_info().unwrap();
-    let fidelity_utxos = wallet.list_fidelity_spend_info().unwrap();
-    let swept_utxos = wallet.list_swept_incoming_swap_utxos().unwrap();
+    let regular_utxos = wallet.list_descriptor_utxo_spend_info();
+    let swap_utxos = wallet.list_swap_coin_utxo_spend_info();
+    let fidelity_utxos = wallet.list_fidelity_spend_info();
+    let swept_utxos = wallet.list_swept_incoming_swap_utxos();
     println!("  Regular UTXOs: {}", regular_utxos.len());
     println!("  Swap UTXOs: {}", swap_utxos.len());
     println!("  Fidelity UTXOs: {}", fidelity_utxos.len());
@@ -260,10 +260,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nAdvanced Wallet Information:");
 
     // Get advanced wallet info
-    let live_contracts = wallet.list_live_contract_spend_info().unwrap();
-    let timelock_contracts = wallet.list_live_timelock_contract_spend_info().unwrap();
-    let hashlock_contracts = wallet.list_live_hashlock_contract_spend_info().unwrap();
-    let all_utxo_info = wallet.list_all_utxo_spend_info().unwrap();
+    let live_contracts = wallet.list_live_contract_spend_info();
+    let timelock_contracts = wallet.list_live_timelock_contract_spend_info();
+    let hashlock_contracts = wallet.list_live_hashlock_contract_spend_info();
+    let all_utxo_info = wallet.list_all_utxo_spend_info();
 
     println!("  Live contracts: {}", live_contracts.len());
     println!("  Timelock contracts: {}", timelock_contracts.len());
