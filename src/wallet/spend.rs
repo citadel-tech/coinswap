@@ -102,7 +102,7 @@ impl Wallet {
 
         // Find utxo corresponding to expired fidelity bond.
         let utxo = match self
-            .list_fidelity_spend_info()?
+            .list_fidelity_spend_info()
             .iter()
             .find(|(_, spend_info)| *spend_info == expired_fidelity_spend_info)
         {
@@ -153,7 +153,7 @@ impl Wallet {
         destination_address: &Address,
         feerate: f64,
     ) -> Result<Transaction, WalletError> {
-        let all_utxo = self.list_live_timelock_contract_spend_info()?;
+        let all_utxo = self.list_live_timelock_contract_spend_info();
 
         for (utxo, spend_info) in all_utxo {
             if let UTXOSpendInfo::TimelockContract {
@@ -180,7 +180,7 @@ impl Wallet {
         destination_address: &Address,
         feerate: f64,
     ) -> Result<Transaction, WalletError> {
-        let all_utxo = self.list_live_hashlock_contract_spend_info()?;
+        let all_utxo = self.list_live_hashlock_contract_spend_info();
         for (utxo, spend_info) in all_utxo {
             if let UTXOSpendInfo::HashlockContract {
                 swapcoin_multisig_redeemscript,

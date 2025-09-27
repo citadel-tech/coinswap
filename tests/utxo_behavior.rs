@@ -449,7 +449,7 @@ fn test_maunal_coinselection() {
 
     taker.get_wallet_mut().sync_no_fail();
 
-    let all_utxos = taker.get_wallet_mut().list_all_utxo().unwrap();
+    let all_utxos = taker.get_wallet_mut().list_all_utxo();
 
     let manually_selected_utxos: Vec<OutPoint> = amounts
         .iter()
@@ -504,7 +504,6 @@ fn test_maunal_coinselection() {
     let remaining_utxos: Vec<OutPoint> = taker
         .get_wallet_mut()
         .list_all_utxo()
-        .unwrap()
         .iter()
         .map(|utxo| OutPoint::new(utxo.txid, utxo.vout))
         .collect();
@@ -530,10 +529,7 @@ fn test_maunal_coinselection() {
     println!("\n === Post-Swap UTXO Analysis ===");
 
     // Get regular UTXOs (SeedCoin)
-    let regular_utxos = taker
-        .get_wallet_mut()
-        .list_descriptor_utxo_spend_info()
-        .unwrap();
+    let regular_utxos = taker.get_wallet_mut().list_descriptor_utxo_spend_info();
     println!("\n 📊 Regular UTXOs: {}", regular_utxos.len());
 
     for (utxo, spend_info) in &regular_utxos {
@@ -545,10 +541,7 @@ fn test_maunal_coinselection() {
     }
 
     // Get swept incoming swap UTXOs
-    let swept_utxos = taker
-        .get_wallet_mut()
-        .list_swept_incoming_swap_utxos()
-        .unwrap();
+    let swept_utxos = taker.get_wallet_mut().list_swept_incoming_swap_utxos();
 
     println!("\n 🧹 Swept Swap UTXOs: {}", swept_utxos.len());
 
