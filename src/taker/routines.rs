@@ -26,7 +26,7 @@ use crate::{
         },
         Hash160,
     },
-    utill::{calculate_fee_sats, read_message, MIN_FEE_RATE},
+    utill::{calculate_fee_sats, read_message, send_message_with_prefix, MIN_FEE_RATE},
     wallet::WalletError,
 };
 use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
@@ -35,7 +35,6 @@ use super::{
     config::TakerConfig,
     error::TakerError,
     offers::{MakerAddress, OfferAndAddress},
-    send_message_with_prefix,
 };
 
 use crate::taker::api::{
