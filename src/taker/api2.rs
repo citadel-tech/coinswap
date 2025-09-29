@@ -695,7 +695,7 @@ impl Taker {
                     .outgoing_contract_my_pubkey
                     .ok_or_else(|| TakerError::General("No taker pubkey found".to_string()))?;
             let outgoing_contract_internal_key =
-                crate::protocol::musig_interface::get_aggregated_pubkey_i(
+                crate::protocol::musig_interface::get_aggregated_pubkey_compat(
                     outgoing_contract_my_pubkey.inner,
                     first_maker_pubkey,
                 );
@@ -937,7 +937,7 @@ impl Taker {
     /// Execute taker's sweep and coordinate with all makers
     fn execute_taker_sweep_and_coordinate_makers(&mut self) -> Result<(), TakerError> {
         use crate::protocol::{
-            messages2::SpendingTxAndReceiverNonce, musig_interface::generate_new_nonce_pair_i,
+            messages2::SpendingTxAndReceiverNonce, musig_interface::generate_new_nonce_pair_compat,
         };
         use bitcoin::{
             secp256k1::Secp256k1, Amount, OutPoint, Sequence, Transaction, TxIn, TxOut, Witness,
@@ -1014,7 +1014,7 @@ impl Taker {
         ordered_pubkeys.sort_by_key(|a| a.serialize());
 
         let (incoming_contract_my_sec_nonce, incoming_contract_my_pub_nonce) =
-            generate_new_nonce_pair_i(
+            generate_new_nonce_pair_compat(
                 incoming_contract_my_keypair.public_key(), // Signer is taker
             );
 
@@ -1173,10 +1173,10 @@ impl Taker {
                     ]
                 };
                 let aggregated_nonce =
-                    crate::protocol::musig_interface::get_aggregated_nonce_i(&nonce_refs);
+                    crate::protocol::musig_interface::get_aggregated_nonce_compat(&nonce_refs);
 
                 let calculated_internal_key =
-                    crate::protocol::musig_interface::get_aggregated_pubkey_i(
+                    crate::protocol::musig_interface::get_aggregated_pubkey_compat(
                         pubkeys[0], pubkeys[1],
                     );
 
@@ -1187,7 +1187,7 @@ impl Taker {
                 }
 
                 let incoming_contract_my_partial_sig =
-                    crate::protocol::musig_interface::generate_partial_signature_i(
+                    crate::protocol::musig_interface::generate_partial_signature_compat(
                         message,
                         &aggregated_nonce,
                         incoming_contract_my_sec_nonce,
@@ -1211,7 +1211,7 @@ impl Taker {
                     ]
                 };
                 let aggregated_sig =
-                    crate::protocol::musig_interface::aggregate_partial_signatures_i(
+                    crate::protocol::musig_interface::aggregate_partial_signatures_compat(
                         message,
                         aggregated_nonce,
                         tap_tweak,
@@ -1428,7 +1428,7 @@ impl Taker {
         &self,
     ) -> Result<crate::protocol::messages2::PartialSigAndSendersNonce, TakerError> {
         use crate::protocol::musig_interface::{
-            generate_new_nonce_pair_i, generate_partial_signature_i,
+            generate_new_nonce_pair_compat, generate_partial_signature_compat,
         };
         use bitcoin::secp256k1::Secp256k1;
 
@@ -1512,7 +1512,7 @@ impl Taker {
         ordered_pubkeys.sort_by_key(|a| a.serialize());
 
         // Generate taker's nonce for this signature
-        let (taker_sec_nonce, taker_pub_nonce) = generate_new_nonce_pair_i(
+        let (taker_sec_nonce, taker_pub_nonce) = generate_new_nonce_pair_compat(
             taker_keypair.public_key(), // Signer is taker
         );
 
@@ -1529,10 +1529,10 @@ impl Taker {
         } else {
             [&maker_pub_nonce, &taker_pub_nonce]
         };
-        let aggregated_nonce = crate::protocol::musig_interface::get_aggregated_nonce_i(&nonces);
+        let aggregated_nonce = crate::protocol::musig_interface::get_aggregated_nonce_compat(&nonces);
 
         // Generate taker's partial signature for the Taker→Maker0 contract
-        let taker_partial_sig = generate_partial_signature_i(
+        let taker_partial_sig = generate_partial_signature_compat(
             message,
             &aggregated_nonce,
             taker_sec_nonce,

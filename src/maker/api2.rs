@@ -473,7 +473,7 @@ impl Maker {
             connection_state.outgoing_contract_other_pubkey.unwrap(),
         ];
         pubkeys_for_internal_key.sort_by(|a, b| a.inner.serialize().cmp(&b.inner.serialize()));
-        let internal_key = crate::protocol::musig_interface::get_aggregated_pubkey_i(
+        let internal_key = crate::protocol::musig_interface::get_aggregated_pubkey_compat(
             pubkeys_for_internal_key[0].inner,
             pubkeys_for_internal_key[1].inner,
         );
@@ -647,7 +647,7 @@ impl Maker {
         spending_tx_msg: &crate::protocol::messages2::SpendingTxAndReceiverNonce,
         connection_state: &mut ConnectionState,
     ) -> Result<crate::protocol::messages2::NoncesPartialSigsAndSpendingTx, MakerError> {
-        use crate::protocol::musig_interface::generate_new_nonce_pair_i;
+        use crate::protocol::musig_interface::generate_new_nonce_pair_compat;
         use bitcoin::secp256k1::Secp256k1;
 
         log::info!("Processing SpendingTxAndReceiverNonce message");
@@ -721,7 +721,7 @@ impl Maker {
         // We need to use lexicographic ordering for internal key calculation to match contract creation
         let mut internal_key_pubkeys = [pubkey1, pubkey2];
         internal_key_pubkeys.sort_by(|a, b| a.inner.serialize().cmp(&b.inner.serialize()));
-        let expected_internal_key = crate::protocol::musig_interface::get_aggregated_pubkey_i(
+        let expected_internal_key = crate::protocol::musig_interface::get_aggregated_pubkey_compat(
             internal_key_pubkeys[0].inner,
             internal_key_pubkeys[1].inner,
         );
@@ -754,7 +754,7 @@ impl Maker {
         ordered_pubkeys.sort_by(|a, b| a.inner.serialize().cmp(&b.inner.serialize()));
 
         let (outgoing_contract_my_sec_nonce, outgoing_contract_my_pub_nonce) =
-            generate_new_nonce_pair_i(
+            generate_new_nonce_pair_compat(
                 outgoing_contract_my_pubkey.inner, // Signer is maker
             );
 
@@ -766,11 +766,11 @@ impl Maker {
             &outgoing_contract_other_nonce,
         ];
         let aggregated_nonce =
-            crate::protocol::musig_interface::get_aggregated_nonce_i(&nonce_refs);
+            crate::protocol::musig_interface::get_aggregated_nonce_compat(&nonce_refs);
         let secp = Secp256k1::new();
 
         let outgoing_contract_my_partial_sig =
-            crate::protocol::musig_interface::generate_partial_signature_i(
+            crate::protocol::musig_interface::generate_partial_signature_compat(
                 message,
                 &aggregated_nonce,
                 connection_state
@@ -792,7 +792,7 @@ impl Maker {
         // let next_message = self.get_incoming_contract_sighash_message();
         let unsigned_spending_tx = self.create_unsigned_spending_tx(connection_state)?;
         let (incoming_contract_my_sec_nonce, incoming_contract_my_pub_nonce) =
-            generate_new_nonce_pair_i(
+            generate_new_nonce_pair_compat(
                 outgoing_contract_my_pubkey.inner, // Signer is maker
             );
 
@@ -824,7 +824,7 @@ impl Maker {
         connection_state: &mut ConnectionState,
     ) -> Result<(), MakerError> {
         use crate::protocol::musig_interface::{
-            aggregate_partial_signatures_i, generate_partial_signature_i, get_aggregated_nonce_i,
+            aggregate_partial_signatures_compat, generate_partial_signature_compat, get_aggregated_nonce_compat,
         };
         use bitcoin::{secp256k1::Secp256k1, sighash::SighashCache, Witness};
         use bitcoind::bitcoincore_rpc::RpcApi;
@@ -947,10 +947,10 @@ impl Maker {
         } else {
             vec![&sender_nonce, incoming_contract_my_pub_nonce]
         };
-        let incoming_aggregated_nonce = get_aggregated_nonce_i(&incoming_nonce_refs);
+        let incoming_aggregated_nonce = get_aggregated_nonce_compat(&incoming_nonce_refs);
 
         // Generate our partial signature for the incoming contract
-        let our_incoming_partial_sig = generate_partial_signature_i(
+        let our_incoming_partial_sig = generate_partial_signature_compat(
             incoming_message,
             &incoming_aggregated_nonce,
             incoming_contract_my_sec_nonce,
@@ -966,7 +966,7 @@ impl Maker {
         } else {
             vec![&other_partial_sig, &our_incoming_partial_sig]
         };
-        let aggregated_sig = aggregate_partial_signatures_i(
+        let aggregated_sig = aggregate_partial_signatures_compat(
             incoming_message,
             incoming_aggregated_nonce,
             incoming_tap_tweak,

@@ -10,7 +10,7 @@ use musig2::{generate_new_nonce_pair, get_aggregated_pubkey};
 //- Use named imports for secp256k1 and bitcoin::secp256k1
 
 /// Aggregates the public keys
-pub fn get_aggregated_pubkey_i(
+pub fn get_aggregated_pubkey_compat(
     pubkey1: bitcoin::secp256k1::PublicKey,
     pubkey2: bitcoin::secp256k1::PublicKey,
 ) -> bitcoin::secp256k1::XOnlyPublicKey {
@@ -25,7 +25,7 @@ pub fn get_aggregated_pubkey_i(
 }
 
 /// Generates a new nonce pair
-pub fn generate_new_nonce_pair_i(
+pub fn generate_new_nonce_pair_compat(
     nonce_pubkey: bitcoin::secp256k1::PublicKey,
 ) -> (secp256k1::musig::SecretNonce, secp256k1::musig::PublicNonce) {
     let nonce_pubkey = nonce_pubkey.serialize();
@@ -35,7 +35,7 @@ pub fn generate_new_nonce_pair_i(
 }
 
 /// get aggregated nonce
-pub fn get_aggregated_nonce_i(
+pub fn get_aggregated_nonce_compat(
     nonces: &[&secp256k1::musig::PublicNonce],
 ) -> secp256k1::musig::AggregatedNonce {
     let secp = secp256k1::Secp256k1::new();
@@ -43,7 +43,7 @@ pub fn get_aggregated_nonce_i(
 }
 
 /// Generates a partial signature
-pub fn generate_partial_signature_i(
+pub fn generate_partial_signature_compat(
     message: bitcoin::secp256k1::Message,
     agg_nonce: &secp256k1::musig::AggregatedNonce,
     sec_nonce: secp256k1::musig::SecretNonce,
@@ -70,7 +70,7 @@ pub fn generate_partial_signature_i(
 }
 
 /// Aggregates the partial signatures
-pub fn aggregate_partial_signatures_i(
+pub fn aggregate_partial_signatures_compat(
     message: bitcoin::secp256k1::Message,
     agg_nonce: secp256k1::musig::AggregatedNonce,
     tap_tweak: bitcoin::secp256k1::Scalar,

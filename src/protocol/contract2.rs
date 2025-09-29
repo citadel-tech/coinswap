@@ -143,8 +143,8 @@ mod tests {
     }
 
     use crate::protocol::musig_interface::{
-        aggregate_partial_signatures_i, generate_new_nonce_pair_i, generate_partial_signature_i,
-        get_aggregated_nonce_i, get_aggregated_pubkey_i,
+        aggregate_partial_signatures_compat, generate_new_nonce_pair_compat, generate_partial_signature_compat,
+        get_aggregated_nonce_compat, get_aggregated_pubkey_compat,
     };
     use bitcoin::{
         sighash::Prevouts,
@@ -307,12 +307,12 @@ mod tests {
         let pubkey1 = keypair1.public_key();
         let pubkey2 = keypair2.public_key();
         // let signature = secp.sign_schnorr(&msg, &tweaked.to_inner());
-        let nonce_pair_1: (SecretNonce, PublicNonce) = generate_new_nonce_pair_i(pubkey1);
-        let nonce_pair_2: (SecretNonce, PublicNonce) = generate_new_nonce_pair_i(pubkey2);
+        let nonce_pair_1: (SecretNonce, PublicNonce) = generate_new_nonce_pair_compat(pubkey1);
+        let nonce_pair_2: (SecretNonce, PublicNonce) = generate_new_nonce_pair_compat(pubkey2);
         let agg_nonce: AggregatedNonce =
-            get_aggregated_nonce_i(&[&nonce_pair_1.1, &nonce_pair_2.1]);
+            get_aggregated_nonce_compat(&[&nonce_pair_1.1, &nonce_pair_2.1]);
 
-        let partial_signature_1 = generate_partial_signature_i(
+        let partial_signature_1 = generate_partial_signature_compat(
             msg,
             &agg_nonce,
             nonce_pair_1.0,
@@ -321,7 +321,7 @@ mod tests {
             pubkey1,
             pubkey2,
         );
-        let partial_signature_2 = generate_partial_signature_i(
+        let partial_signature_2 = generate_partial_signature_compat(
             msg,
             &agg_nonce,
             nonce_pair_2.0,
@@ -331,7 +331,7 @@ mod tests {
             pubkey2,
         );
 
-        let aggregated_signature: AggregatedSignature = aggregate_partial_signatures_i(
+        let aggregated_signature: AggregatedSignature = aggregate_partial_signatures_compat(
             msg,
             agg_nonce,
             tap_tweak,
@@ -519,7 +519,7 @@ mod tests {
         let keypair_2 = Keypair::from_seckey_slice(&secp, &seckey2_bytes).unwrap();
         let pubkey1 = keypair_1.public_key();
         let pubkey2 = keypair_2.public_key();
-        let internal_key = get_aggregated_pubkey_i(pubkey1, pubkey2);
+        let internal_key = get_aggregated_pubkey_compat(pubkey1, pubkey2);
 
         let timelock_keypair_slice = [
             57, 36, 177, 212, 31, 75, 221, 50, 13, 55, 102, 155, 21, 64, 146, 106, 101, 189, 1,
@@ -582,7 +582,7 @@ mod tests {
         let keypair_2 = Keypair::from_seckey_slice(&secp, &seckey2_bytes).unwrap();
         let pubkey1 = keypair_1.public_key();
         let pubkey2 = keypair_2.public_key();
-        let internal_key = get_aggregated_pubkey_i(pubkey1, pubkey2);
+        let internal_key = get_aggregated_pubkey_compat(pubkey1, pubkey2);
 
         let timelock_keypair_slice = [
             57, 36, 177, 212, 31, 75, 221, 50, 13, 55, 102, 155, 21, 64, 146, 106, 101, 189, 1,
@@ -646,7 +646,7 @@ mod tests {
         let keypair_2 = Keypair::from_seckey_slice(&secp, &seckey2_bytes).unwrap();
         let pubkey1 = keypair_1.public_key();
         let pubkey2 = keypair_2.public_key();
-        let internal_key = get_aggregated_pubkey_i(pubkey1, pubkey2);
+        let internal_key = get_aggregated_pubkey_compat(pubkey1, pubkey2);
 
         let timelock_keypair_slice = [
             57, 36, 177, 212, 31, 75, 221, 50, 13, 55, 102, 155, 21, 64, 146, 106, 101, 189, 1,
