@@ -143,8 +143,9 @@ mod tests {
     }
 
     use crate::protocol::musig_interface::{
-        aggregate_partial_signatures_compat, generate_new_nonce_pair_compat, generate_partial_signature_compat,
-        get_aggregated_nonce_compat, get_aggregated_pubkey_compat,
+        aggregate_partial_signatures_compat, generate_new_nonce_pair_compat,
+        generate_partial_signature_compat, get_aggregated_nonce_compat,
+        get_aggregated_pubkey_compat,
     };
     use bitcoin::{
         sighash::Prevouts,

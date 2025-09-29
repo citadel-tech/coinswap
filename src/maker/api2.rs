@@ -824,7 +824,8 @@ impl Maker {
         connection_state: &mut ConnectionState,
     ) -> Result<(), MakerError> {
         use crate::protocol::musig_interface::{
-            aggregate_partial_signatures_compat, generate_partial_signature_compat, get_aggregated_nonce_compat,
+            aggregate_partial_signatures_compat, generate_partial_signature_compat,
+            get_aggregated_nonce_compat,
         };
         use bitcoin::{secp256k1::Secp256k1, sighash::SighashCache, Witness};
         use bitcoind::bitcoincore_rpc::RpcApi;

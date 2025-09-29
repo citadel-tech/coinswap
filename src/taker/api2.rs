@@ -1529,7 +1529,8 @@ impl Taker {
         } else {
             [&maker_pub_nonce, &taker_pub_nonce]
         };
-        let aggregated_nonce = crate::protocol::musig_interface::get_aggregated_nonce_compat(&nonces);
+        let aggregated_nonce =
+            crate::protocol::musig_interface::get_aggregated_nonce_compat(&nonces);
 
         // Generate taker's partial signature for the Taker→Maker0 contract
         let taker_partial_sig = generate_partial_signature_compat(
