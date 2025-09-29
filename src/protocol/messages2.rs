@@ -7,7 +7,7 @@ use std::{convert::TryInto, fmt::Display};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 /// Serializable wrapper for secp256k1 PublicNonce
-pub struct SerializablePublicNonce(#[serde(with = "serde_bytes")] pub Vec<u8>);
+pub struct SerializablePublicNonce(pub Vec<u8>);
 
 /// Defines the length of the Preimage.
 pub(crate) const PREIMAGE_LEN: usize = 32;
@@ -17,7 +17,7 @@ pub(crate) type Preimage = [u8; PREIMAGE_LEN];
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 /// Serializable wrapper for secp256k1 Scalar
-pub struct SerializableScalar(#[serde(with = "serde_bytes")] pub Vec<u8>);
+pub struct SerializableScalar(pub Vec<u8>);
 
 impl From<PublicNonce> for SerializablePublicNonce {
     fn from(nonce: PublicNonce) -> Self {
@@ -73,7 +73,7 @@ impl Display for MakerToTakerMessage {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 /// Serializable wrapper for secp256k1 PartialSignature
-pub struct SerializablePartialSignature(#[serde(with = "serde_bytes")] pub Vec<u8>);
+pub struct SerializablePartialSignature(pub Vec<u8>);
 
 impl From<PartialSignature> for SerializablePartialSignature {
     fn from(sig: PartialSignature) -> Self {
