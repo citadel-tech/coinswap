@@ -35,7 +35,6 @@ use super::{
     config::TakerConfig,
     error::TakerError,
     offers::{MakerAddress, OfferAndAddress},
-    send_message_with_prefix,
 };
 
 use crate::taker::api::{

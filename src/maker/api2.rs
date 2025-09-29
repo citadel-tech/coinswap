@@ -430,7 +430,7 @@ impl Maker {
             connection_state.outgoing_contract_my_pubkey = Some(outgoing_pubkey);
 
             // Get funding UTXO from our wallet
-            let spendable_utxos = wallet.list_descriptor_utxo_spend_info()?;
+            let spendable_utxos = wallet.list_descriptor_utxo_spend_info();
             let funding_utxo = spendable_utxos
                 .into_iter()
                 .find(|(utxo, _)| utxo.amount >= connection_state.swap_amount)

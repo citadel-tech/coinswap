@@ -46,7 +46,7 @@ use crate::{
             TakerToMakerMessage,
         },
     },
-    taker::{config::TakerConfig, offers::OfferBook, send_message_with_prefix},
+    taker::{config::TakerConfig, offers::OfferBook},
     utill::*,
     wallet::{
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,

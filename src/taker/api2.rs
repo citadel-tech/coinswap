@@ -12,10 +12,10 @@ use secp256k1::musig;
 use socks::Socks5Stream;
 use std::{io::BufWriter, net::TcpStream, path::PathBuf, time::Duration};
 
-use super::{error::TakerError, offers::fetch_addresses_from_tracker, send_message_with_prefix};
+use super::{error::TakerError, offers::fetch_addresses_from_tracker};
 use crate::{
     protocol::contract2::{calculate_coinswap_fee, calculate_contract_sighash},
-    utill::{check_tor_status, read_message},
+    utill::{check_tor_status, read_message, send_message_with_prefix},
 };
 use std::collections::HashSet;
 
@@ -664,7 +664,7 @@ impl Taker {
     fn create_outgoing_contract_transactions(&mut self) -> Result<Vec<Transaction>, TakerError> {
         use crate::protocol::contract2::create_taproot_script;
 
-        let available_utxos = self.wallet.list_all_utxo_spend_info()?;
+        let available_utxos = self.wallet.list_all_utxo_spend_info();
         let mut contract_transactions = Vec::new();
 
         if let Some(first_maker) = self.ongoing_swap_state.chosen_makers.first() {
