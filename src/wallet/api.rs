@@ -860,7 +860,7 @@ impl Wallet {
     pub(crate) fn find_unfinished_swapcoins(
         &self,
     ) -> (Vec<IncomingSwapCoin>, Vec<OutgoingSwapCoin>) {
-        let unfinished_incomins = self
+        let unfinished_incomings = self
             .store
             .incoming_swapcoins
             .iter()
@@ -885,7 +885,7 @@ impl Wallet {
             })
             .collect::<Vec<_>>();
 
-        let inc_contract_txid = unfinished_incomins
+        let inc_contract_txid = unfinished_incomings
             .iter()
             .map(|ic| ic.contract_tx.compute_txid())
             .collect::<Vec<_>>();
@@ -894,10 +894,21 @@ impl Wallet {
             .map(|oc| oc.contract_tx.compute_txid())
             .collect::<Vec<_>>();
 
-        log::info!("Unfinished incoming txids: {inc_contract_txid:?}");
-        log::info!("Unfinished outgoing txids: {out_contract_txid:?}");
+        if !inc_contract_txid.is_empty() || !out_contract_txid.is_empty() {
+            log::info!(
+                "Unfinished swap contracts - Incoming: {} transactions, Outgoing: {} transactions",
+                inc_contract_txid.len(),
+                out_contract_txid.len()
+            );
+            if !inc_contract_txid.is_empty() {
+                log::debug!("Unfinished incoming contract TxIDs: {inc_contract_txid:?}");
+            }
+            if !out_contract_txid.is_empty() {
+                log::debug!("Unfinished outgoing contract TxIDs: {out_contract_txid:?}");
+            }
+        }
 
-        (unfinished_incomins, unfinished_outgoings)
+        (unfinished_incomings, unfinished_outgoings)
     }
 
     /// Finds the next unused index in the HD keychain.
@@ -1175,15 +1186,6 @@ impl Wallet {
         feerate: f64,
         manually_selected_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        log::info!(
-            "Coinselect Target : {} Sats with No. of Manually Selected Utxos: {}",
-            amount.to_sat(),
-            manually_selected_outpoints
-                .as_deref()
-                .unwrap_or_default()
-                .len()
-        );
-
         // P2WPKH Breaks down as:
         // Non-witness data (multiplied by 4):
         // - Previous txid (32 bytes) * 4     = 128 WU

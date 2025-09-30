@@ -681,9 +681,7 @@ impl Maker {
                 swept_txids
             );
         }
-        self.wallet.write()?.sync()?;
-        self.wallet.write()?.save_to_disk()?;
-        log::info!("✅ Maker wallet sync and save completed.");
+        self.wallet.write()?.sync_and_save()?;
         Ok(())
     }
 }

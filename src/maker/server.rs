@@ -356,7 +356,10 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
             }
             MessageToMaker::TrackerMessage(tracker_msg) => match tracker_msg {
                 TrackerServerToClient::Ping { address, port } => {
-                    log::info!("Received a ping from tracker");
+                    log::info!(
+                        "[{}] Received a ping from tracker",
+                        maker.config.network_port,
+                    );
                     if let Ok(mut guard) = maker.tracker.write() {
                         if guard.is_none() {
                             let tracker_address = format!("{address}:{port}");
