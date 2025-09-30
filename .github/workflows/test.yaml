@@ -15,17 +15,22 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          override: true
+          components: llvm-tools-preview
 
-      - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Run cargo-tarpaulin
-        run: cargo tarpaulin --timeout 1900 --out Xml --output-dir "./coverage/reports/" --features integration-test -- --nocapture
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
 
+      - name: Run cargo-llvm-cov
+        run: |
+          mkdir -p ./coverage/reports/
+          cargo llvm-cov nextest --lib --bins --tests --fail-fast --features integration-test --no-capture
+          cargo llvm-cov report --cobertura --output-path ./coverage/reports/cobertura.xml
+        
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
