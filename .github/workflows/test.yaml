@@ -7,8 +7,28 @@ on:
 name: test
 
 jobs:
+  nextest:
+    name: Run tests with nextest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest
+
+      - name: Run nextest
+        run: cargo nextest run --fail-fast --features integration-test
+
   test_with_codecov:
     name: Run tests with coverage reporting
+    needs: nextest
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
