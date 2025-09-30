@@ -325,8 +325,6 @@ impl Wallet {
                         required: fee.to_sat(),
                     });
                 }
-
-                log::info!("Fee: {} sats", fee.to_sat());
                 tx.output[0].value = total_input_value - fee;
             }
             Destination::Multi {
@@ -388,11 +386,6 @@ impl Wallet {
                     };
 
                 if remaining_wchange > minimal_nondust {
-                    log::info!(
-                        "Adding change output with {} sats (fee: {} sats)",
-                        remaining_wchange.to_sat(),
-                        fee_wchange.to_sat()
-                    );
                     tx.output.push(TxOut {
                         script_pubkey: internal_spk,
                         value: remaining_wchange,

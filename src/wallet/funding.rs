@@ -47,10 +47,12 @@ impl Wallet {
             fee_rate,
             manually_selected_outpoints,
         );
-        if ret.is_ok() {
-            log::info!(target: "wallet", "created funding txes random amounts");
-            return ret;
+
+        if ret.is_err() {
+            log::error!("Failed to create funding txes {ret:?}");
         }
+
+        ret
 
         // let ret = self.create_funding_txes_utxo_max_sends(coinswap_amount, destinations, fee_rate);
         // if ret.is_ok() {
@@ -64,9 +66,6 @@ impl Wallet {
         //     log::info!(target: "wallet", "created funding txes with using the biggest utxos");
         //     return ret;
         // }
-
-        log::info!("failed to create funding txes with any method {ret:?}");
-        ret
     }
 
     fn generate_amount_fractions_without_correction(
@@ -246,14 +245,6 @@ impl Wallet {
                 // Flow of Lock Step 4. Store the locked UTXOs for later unlocking in case of error
                 locked_utxos.extend(outpoints);
 
-                let total_input_amount =
-                    selected_utxo
-                        .iter()
-                        .fold(Amount::ZERO, |acc, (unspent, _)| {
-                            acc.checked_add(unspent.amount)
-                                .expect("Amount sum overflowed")
-                        });
-
                 // Here, prepare coins for spend_coins API, since this API would require owned data to avoid lifetime issues
                 let coins_to_spend = selected_utxo
                     .iter()
@@ -270,24 +261,7 @@ impl Wallet {
                 // Creates and Signs Transactions via the spend_coins API
                 let funding_tx = self.spend_coins(&coins_to_spend, destination, fee_rate)?;
 
-                // The actual fee is the difference between the sum of output amounts from the total input amount
-                let actual_fee = total_input_amount
-                    - (funding_tx.output.iter().fold(Amount::ZERO, |a, txo| {
-                        a.checked_add(txo.value)
-                            .expect("output amount summation overflowed")
-                    }));
-
                 let tx_size = funding_tx.weight().to_vbytes_ceil();
-                // Note : The feerates are sats/vbyte
-                let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
-
-                log::info!(
-                    "Created Funding tx, txid: {} | Size: {} vB | Fee: {} sats | Feerate: {:.2} sat/vB",
-                    funding_tx.compute_txid(),
-                    tx_size,
-                    actual_fee.to_sat(),
-                    actual_feerate
-                );
 
                 // Record this transaction in our results.
                 let payment_pos = 0; // assuming the payment output position is 0

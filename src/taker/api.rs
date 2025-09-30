@@ -738,15 +738,14 @@ impl Taker {
             log::info!("Choosing next maker: {}", maker.address);
             let (multisig_pubkeys, multisig_nonces, hashlock_pubkeys, hashlock_nonces) =
                 generate_maker_keys(&maker.offer.tweakable_point, 1)?;
-            let (funding_txs, mut outgoing_swapcoins, funding_fee) =
-                self.wallet.initalize_coinswap(
-                    &self.ongoing_swap_state.swap_params,
-                    &multisig_pubkeys,
-                    &hashlock_pubkeys,
-                    self.get_preimage_hash(),
-                    swap_locktime,
-                    MIN_FEE_RATE,
-                )?;
+            let (funding_txs, mut outgoing_swapcoins, _) = self.wallet.initalize_coinswap(
+                &self.ongoing_swap_state.swap_params,
+                &multisig_pubkeys,
+                &hashlock_pubkeys,
+                self.get_preimage_hash(),
+                swap_locktime,
+                MIN_FEE_RATE,
+            )?;
 
             let contract_reedemscripts = outgoing_swapcoins
                 .iter()
@@ -799,8 +798,6 @@ impl Taker {
 
             self.ongoing_swap_state.outgoing_swapcoins = outgoing_swapcoins;
 
-            log::info!("Total Funding Txs Fees: {funding_fee}");
-
             break (maker, funding_txs);
         };
 
@@ -813,14 +810,6 @@ impl Taker {
         let funding_txids = funding_txs
             .iter()
             .map(|tx| {
-                // Calculate the virtual size in bytes (vbytes)
-                let tx_vbytes = tx.weight().to_vbytes_ceil();
-
-                // Convert vbytes to kilovirtual bytes (kvB)
-                let tx_kvb = (tx_vbytes as f32) / 1000.0;
-
-                log::info!("Transaction size: {tx_vbytes} vB ({tx_kvb:.3} kvB)");
-
                 let txid = self.wallet.send_tx(tx)?;
                 log::info!("Broadcasted Funding tx. txid: {txid}");
                 assert_eq!(txid, tx.compute_txid());
