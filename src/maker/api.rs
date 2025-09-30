@@ -573,7 +573,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
         }
         // An extra scope to release all locks when done.
         {
-            let (incomings, outgoings) = maker.wallet.read()?.find_unfinished_swapcoins();
+            let (_, outgoings) = maker.wallet.read()?.find_unfinished_swapcoins();
             let mut lock_onstate = maker.ongoing_swap_state.lock()?;
             for (ip, (connection_state, _)) in lock_onstate.iter_mut() {
                 let txids_to_watch = connection_state
@@ -606,31 +606,21 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                         );
                         failed_swap_ip.push(ip.clone());
 
-                        loop {
-                            for outgoing in outgoings.iter() {
-                                for (vout, txout) in outgoing.contract_tx.output.iter().enumerate()
-                                {
-                                    if txout.script_pubkey == outgoing.contract_redeemscript {
-                                        let request: TrackerClientToServer =
-                                            (txid, vout as u32).into();
+                        for outgoing in outgoings.iter() {
+                            for (vout, txout) in outgoing.contract_tx.output.iter().enumerate() {
+                                if txout.script_pubkey == outgoing.contract_redeemscript {
+                                    let request: TrackerClientToServer = (txid, vout as u32).into();
 
-                                        if let Err(e) = send_message(&mut tracker_stream, &request)
-                                        {
-                                            log::error!(
-                                                "Failed to send Watch request to tracker {e:?}"
-                                            );
-                                        }
-                                        log::info!("Sended Watch Request to tracker");
+                                    if let Err(e) = send_message(&mut tracker_stream, &request) {
+                                        log::error!(
+                                            "Failed to send Watch request to tracker {e:?}"
+                                        );
                                     }
+                                    log::info!("Sended Watch Request to tracker");
                                 }
                             }
-
-                            let is_hash_preimage_known =
-                                incomings.iter().any(|ic_sc| ic_sc.is_hash_preimage_known());
-                            if is_hash_preimage_known {
-                                break;
-                            }
                         }
+
                         // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
                         let maker_clone = maker.clone();
                         let read_stream = Arc::new(tracker_stream.try_clone()?);
