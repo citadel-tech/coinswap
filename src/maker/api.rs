@@ -35,6 +35,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use super::rpc::server::MakerRpc;
+
 use crate::{
     protocol::{
         contract::{
@@ -511,6 +513,21 @@ impl Maker {
             sigs.push(sig);
         }
         Ok(sigs)
+    }
+}
+
+impl MakerRpc for Maker {
+    fn wallet(&self) -> &RwLock<Wallet> {
+        &self.wallet
+    }
+    fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+    fn config(&self) -> &MakerConfig {
+        &self.config
+    }
+    fn shutdown(&self) -> &AtomicBool {
+        &self.shutdown
     }
 }
 
