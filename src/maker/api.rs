@@ -9,7 +9,7 @@
 use crate::{
     maker::server::decode_unified_message,
     protocol::{
-        contract::check_hashvalues_are_equal,
+        contract::{check_hashvalues_are_equal, read_hashvalue_from_contract},
         messages::{
             FidelityProof, MessageToMaker, ReqContractSigsForSender, TrackerClientToServer,
             TrackerServerToClient, PREIMAGE_LEN,
@@ -24,19 +24,20 @@ use crate::{
 };
 use bitcoin::{
     ecdsa::Signature,
+    hashes::Hash,
     secp256k1::{self, Secp256k1},
     OutPoint, PublicKey, Transaction, Txid,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use socks::Socks5Stream;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     convert::TryInto,
     net::TcpStream,
     path::{Path, PathBuf},
     str::FromStr,
     sync::{
-        atomic::{AtomicBool, Ordering::Relaxed},
+        atomic::{AtomicBool, AtomicU32, Ordering::Relaxed},
         Arc, Mutex, RwLock,
     },
     thread::{sleep, JoinHandle},
@@ -248,6 +249,8 @@ pub struct Maker {
     pub(crate) thread_pool: Arc<ThreadPool>,
     /// Indexer address to poll for UTXO
     pub(crate) tracker: RwLock<Option<String>>,
+    /// It keeps the number of outpoints sent to Tracker via Watch request.
+    pub(crate) sent_outpoints: AtomicU32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -332,6 +335,7 @@ impl Maker {
             data_dir,
             thread_pool: Arc::new(ThreadPool::new(network_port)),
             tracker: RwLock::new(None),
+            sent_outpoints: AtomicU32::new(0),
         })
     }
 
@@ -573,7 +577,6 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
         }
         // An extra scope to release all locks when done.
         {
-            let (_, outgoings) = maker.wallet.read()?.find_unfinished_swapcoins();
             let mut lock_onstate = maker.ongoing_swap_state.lock()?;
             for (ip, (connection_state, _)) in lock_onstate.iter_mut() {
                 let txids_to_watch = connection_state
@@ -606,17 +609,32 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                         );
                         failed_swap_ip.push(ip.clone());
 
-                        for outgoing in outgoings.iter() {
+                        for outgoing in &connection_state.outgoing_swapcoins {
                             for (vout, txout) in outgoing.contract_tx.output.iter().enumerate() {
-                                if txout.script_pubkey == outgoing.contract_redeemscript {
+                                if txout.script_pubkey
+                                    == redeemscript_to_scriptpubkey(
+                                        &outgoing.contract_redeemscript,
+                                    )?
+                                {
                                     let request: TrackerClientToServer = (txid, vout as u32).into();
-
-                                    if let Err(e) = send_message(&mut tracker_stream, &request) {
-                                        log::error!(
-                                            "Failed to send Watch request to tracker {e:?}"
-                                        );
+                                    match send_message(&mut tracker_stream, &request) {
+                                        Ok(_) => {
+                                            log::info!(
+                                                "[{}] Sent Watch Request to tracker for outpoint ({}, {})",
+                                                maker.config.network_port,
+                                                txid,
+                                                vout
+                                            );
+                                            maker.sent_outpoints.fetch_add(1, Relaxed);
+                                        }
+                                        Err(e) => {
+                                            log::error!(
+                                                "[{}] Failed to send Watch request to tracker: {:?}",
+                                                maker.config.network_port,
+                                                e
+                                            );
+                                        }
                                     }
-                                    log::info!("Sended Watch Request to tracker");
                                 }
                             }
                         }
@@ -740,7 +758,6 @@ pub(crate) fn recover_from_swap(
     tracker_stream: Option<Arc<TcpStream>>,
 ) -> Result<(), MakerError> {
     let (incomings, outgoings) = maker.wallet.read()?.find_unfinished_swapcoins();
-    let is_hash_preimage_known = incomings.iter().any(|ic_sc| ic_sc.is_hash_preimage_known());
     let timelock = outgoings
         .first()
         .map(|outgoing| outgoing.get_timelock())
@@ -769,7 +786,7 @@ pub(crate) fn recover_from_swap(
             sleep(Duration::from_secs(10));
         }
     }
-
+    let is_hash_preimage_known = incomings.iter().any(|ic_sc| ic_sc.is_hash_preimage_known());
     if is_hash_preimage_known {
         let incoming_infos = maker
             .wallet
@@ -840,6 +857,9 @@ fn check_for_tracker_watch_response(
     maker: &Maker,
     tracker_stream: &mut Arc<TcpStream>,
 ) -> Result<(), MakerError> {
+    let mut received_outpoints: HashSet<(Txid, u32)> = HashSet::new();
+    let mut extracted_preimages: Vec<[u8; 32]> = Vec::new();
+
     while !maker.shutdown.load(Relaxed) {
         let bytes = match read_message(&mut tracker_stream.try_clone()?) {
             Ok(bytes) => bytes,
@@ -875,24 +895,61 @@ fn check_for_tracker_watch_response(
             );
 
             let wallet = maker.wallet.read()?;
+            let sent_outpoints = maker.sent_outpoints.load(Relaxed);
             for tx in mempool_tx {
                 let txid = Txid::from_str(&tx.txid)
                     .map_err(|_| MakerError::General("Failed to parse txid"))?;
                 if let Ok(raw_tx) = wallet.rpc.get_raw_transaction(&txid, None) {
-                    for input in raw_tx.input.iter() {
-                        if input.witness.len() >= MIN_WITNESS_ITEM_FOR_HASHLOCK as usize
+                    for input in &raw_tx.input {
+                        let outpoint = (input.previous_output.txid, input.previous_output.vout);
+                        if received_outpoints.insert(outpoint)
+                            && input.witness.len() >= MIN_WITNESS_ITEM_FOR_HASHLOCK as usize
                             && input.witness[1].len() == PREIMAGE_LEN
                         {
-                            let preimage: [u8; 32] = input.witness[1].try_into().unwrap();
-                            let wallet_write = maker.wallet.write()?;
-                            let (mut incomings, _) = wallet_write.find_unfinished_swapcoins();
-                            for incoming in incomings.iter_mut() {
-                                incoming.hash_preimage = Some(preimage);
+                            if let Ok(preimage) = input.witness[1].try_into() {
+                                extracted_preimages.push(preimage);
                             }
                         }
                     }
                 }
-                log::info!("Successfully extracted hashpreimage from Tracker's Watch Response");
+            }
+
+            // If all expected outpoints have been observed,apply the extracted preimage to maker's incoming swapcoins.
+            if received_outpoints.len() == sent_outpoints as usize {
+                log::info!(
+                    "[{}] All spending txns observed ({} of {})",
+                    maker.config.network_port,
+                    received_outpoints.len(),
+                    sent_outpoints
+                );
+
+                let wallet_write = maker.wallet.write()?;
+                let (mut incomings, _) = wallet_write.find_unfinished_swapcoins();
+
+                for incoming in &mut incomings {
+                    for i in 0..extracted_preimages.len() {
+                        let hashvalue = Hash160::hash(&extracted_preimages[i]);
+                        if read_hashvalue_from_contract(&incoming.contract_redeemscript)?
+                            == hashvalue
+                        {
+                            incoming.hash_preimage = Some(extracted_preimages[i]);
+                            extracted_preimages.remove(i);
+                            break;
+                        }
+                    }
+                }
+                log::info!(
+                    "[{}] Successfully applied preimages. Exiting loop.",
+                    maker.config.network_port
+                );
+                break;
+            } else {
+                log::info!(
+                    "[{}] Received only {}/{} mempool txns so far, still waiting to receive all mempool transactions.",
+                    maker.config.network_port,
+                    received_outpoints.len(),
+                    sent_outpoints
+                );
             }
         } else {
             log::info!(
