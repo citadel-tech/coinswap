@@ -1,0 +1,46 @@
+# Test environment Dockerfile
+ARG BUILDER_IMAGE=coinswap-builder
+FROM ${BUILDER_IMAGE} AS builder
+
+FROM alpine:3.18
+
+# Install runtime dependencies for testing
+RUN --mount=type=cache,target=/var/cache/apk \
+    apk add --no-cache \
+    ca-certificates \
+    openssl \
+    libgcc \
+    curl \
+    git
+
+# Create app user
+RUN adduser -D -u 1001 coinswap
+
+# Create directories
+RUN mkdir -p /app/bin /home/coinswap/.coinswap && \
+    chown -R coinswap:coinswap /app /home/coinswap
+
+# Copy all binaries from builder
+COPY --from=builder /tmp/binaries/* /app/bin/
+
+# Copy source code for tests
+COPY --from=builder /app /app/source
+
+# Set proper permissions
+RUN chmod +x /app/bin/*
+
+# Switch to app user
+USER coinswap
+WORKDIR /app/source
+
+# Add binaries to PATH
+ENV PATH="/app/bin:$PATH"
+
+# Set environment variables for data directories
+ENV COINSWAP_DATA_DIR="/home/coinswap/.coinswap"
+
+# Create volume mount point
+VOLUME ["/home/coinswap/.coinswap"]
+
+# Default command - run integration tests
+CMD ["cargo", "test", "--features=integration-test", "--", "--nocapture"]

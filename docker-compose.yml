@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  # Bitcoin Core node using official image
+  bitcoind:
+    image: bitcoind/bitcoin-core:25.0
+    container_name: coinswap-bitcoind
+    command: |
+      bitcoind
+      -regtest=1
+      -server=1
+      -fallbackfee=0.0001
+      -rpcuser=coinswap
+      -rpcpassword=coinswappass
+      -rpcallowip=0.0.0.0/0
+      -rpcbind=0.0.0.0:18332
+      -txindex=1
+      -datadir=/home/bitcoin/.bitcoin
+    ports:
+      - "18332:18332"
+    volumes:
+      - bitcoin-data:/home/bitcoin/.bitcoin
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bitcoin-cli", "-rpcuser=coinswap", "-rpcpassword=coinswappass", "getblockchaininfo"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Tor proxy using official image
+  tor:
+    image: torproject/tor:latest
+    container_name: coinswap-tor
+    volumes:
+      - tor-data:/var/lib/tor
+      - ./docker/torrc:/etc/tor/torrc:ro
+    ports:
+      - "9050:9050"
+      - "9051:9051"
+    restart: unless-stopped
+
+  # Tracker service
+  tracker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.tracker
+    image: coinswap-tracker
+    container_name: coinswap-tracker
+    ports:
+      - "8080:8080"
+    volumes:
+      - tracker-data:/home/coinswap/.tracker
+    depends_on:
+      - bitcoind
+      - tor
+    restart: unless-stopped
+
+  # Maker daemon
+  makerd:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.maker
+    image: coinswap-maker
+    container_name: coinswap-makerd
+    environment:
+      - MAKERD_NETWORK_PORT=6102
+      - MAKERD_RPC_PORT=6103
+      - TOR_SOCKS_PORT=9050
+      - TOR_CONTROL_PORT=9051
+      - TRACKER_ADDRESS=tracker:8080
+    ports:
+      - "6102:6102"
+      - "6103:6103"
+    volumes:
+      - maker-data:/home/coinswap/.coinswap
+    depends_on:
+      - bitcoind
+      - tor
+      - tracker
+    restart: unless-stopped
+
+volumes:
+  bitcoin-data:
+    driver: local
+  tor-data:
+    driver: local
+  tracker-data:
+    driver: local
+  maker-data:
+    driver: local
+
+networks:
+  default:
+    name: coinswap-network
