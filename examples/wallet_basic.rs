@@ -149,7 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nUTXO Summary:");
     let utxos = wallet.list_all_utxo();
     let swapcoins_count = wallet.get_swapcoins_count();
-    println!("  Total UTXOs: {}", utxos.len());
+    println!("  Total UTXOs: {}", utxos.count());
     println!("  Swap coins: {swapcoins_count}");
 
     // Categorize UTXOs by type
@@ -160,7 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let swept_utxos = wallet.list_swept_incoming_swap_utxos();
     println!("  Regular UTXOs: {}", regular_utxos.len());
     println!("  Swap UTXOs: {}", swap_utxos.len());
-    println!("  Fidelity UTXOs: {}", fidelity_utxos.len());
+    println!("  Fidelity UTXOs: {}", fidelity_utxos.count());
     println!("  Swept swap UTXOs: {}", swept_utxos.len());
 
     // Generate addresses
@@ -265,9 +265,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hashlock_contracts = wallet.list_live_hashlock_contract_spend_info();
     let all_utxo_info = wallet.list_all_utxo_spend_info();
 
-    println!("  Live contracts: {}", live_contracts.len());
-    println!("  Timelock contracts: {}", timelock_contracts.len());
-    println!("  Hashlock contracts: {}", hashlock_contracts.len());
+    println!("  Live contracts: {}", live_contracts.count());
+    println!("  Timelock contracts: {}", timelock_contracts.count());
+    println!("  Hashlock contracts: {}", hashlock_contracts.count());
     println!(
         "  Detailed UTXO info available for {} UTXOs",
         all_utxo_info.len()

@@ -106,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Initial wallet state:");
     println!("  Spendable: {} BTC", balances.spendable.to_btc());
     println!("  Regular: {} BTC", balances.regular.to_btc());
-    println!("  UTXOs: {}", utxos.len());
+    println!("  UTXOs: {}", utxos.count());
 
     // Fund the wallet if empty
     if balances.spendable == Amount::ZERO {
@@ -173,7 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Contract: {} BTC", final_balances.contract.to_btc());
 
     // Show UTXOs
-    let utxos = wallet_mut.list_all_utxo();
+    let utxos: Vec<_> = wallet_mut.list_all_utxo().collect();
     println!("\nUTXO information:");
     println!("  Total UTXOs: {}", utxos.len());
     if !utxos.is_empty() {

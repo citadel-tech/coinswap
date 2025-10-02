@@ -328,7 +328,6 @@ impl Taker {
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub(crate) fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         let swap_start_time = std::time::Instant::now();
-        let initial_utxoset = self.wallet.list_all_utxo();
         self.ongoing_swap_state.swap_params = swap_params.clone();
 
         // Check if we have enough balance - try regular first, then swap
@@ -518,7 +517,11 @@ impl Taker {
 
                 // Generate post-swap report
                 self.wallet.sync_and_save()?;
-                self.print_swap_report(prereset_swapstate, swap_start_time, initial_utxoset)?;
+                self.print_swap_report(
+                    prereset_swapstate,
+                    swap_start_time,
+                    self.wallet.list_all_utxo(),
+                )?;
             }
             Err(e) => {
                 log::error!("Swap Settlement Failed : {e:?}");
@@ -531,11 +534,11 @@ impl Taker {
         Ok(())
     }
 
-    fn print_swap_report(
+    fn print_swap_report<'a>(
         &self,
         prereset_swapstate: &OngoingSwapState,
         start_time: std::time::Instant,
-        initial_utxos: Vec<ListUnspentResultEntry>,
+        initial_utxos: impl Iterator<Item = &'a ListUnspentResultEntry>,
     ) -> Result<(), TakerError> {
         let swap_state = &prereset_swapstate;
 
@@ -549,14 +552,6 @@ impl Taker {
             .map(|(utxo, _)| utxo)
             .collect::<Vec<_>>();
 
-        let initial_outpoints = initial_utxos
-            .iter()
-            .map(|utxo| OutPoint {
-                txid: utxo.txid,
-                vout: utxo.vout,
-            })
-            .collect::<HashSet<_>>();
-
         let current_outpoints = all_regular_utxo
             .iter()
             .map(|utxo| OutPoint {
@@ -566,17 +561,30 @@ impl Taker {
             .collect::<HashSet<_>>();
 
         // Present in initial set but not in current set (destroyed)
-        let input_utxos = initial_utxos
-            .iter()
-            .filter(|utxo| {
-                let initial_outpoint = OutPoint {
+        let (initial_outpoints, input_utxos): (HashSet<_>, Vec<_>) = initial_utxos
+            .into_iter()
+            .map(|utxo| {
+                let outpoint = OutPoint {
                     txid: utxo.txid,
                     vout: utxo.vout,
                 };
-                !current_outpoints.contains(&initial_outpoint)
+                let amount = if !current_outpoints.contains(&outpoint) {
+                    Some(utxo.amount.to_sat())
+                } else {
+                    None
+                };
+                (outpoint, amount)
             })
-            .map(|utxo| utxo.amount.to_sat())
-            .collect::<Vec<u64>>();
+            .fold(
+                (HashSet::new(), Vec::new()),
+                |(mut set, mut vec), (outpoint, amount)| {
+                    set.insert(outpoint);
+                    if let Some(a) = amount {
+                        vec.push(a);
+                    }
+                    (set, vec)
+                },
+            );
 
         // Present in current set but not in initial regular set (created)
         let output_regular_utxos = all_regular_utxo

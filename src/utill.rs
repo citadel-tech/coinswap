@@ -443,6 +443,23 @@ impl UTXO {
     }
 }
 
+impl From<(&ListUnspentResultEntry, &UTXOSpendInfo)> for UTXO {
+    fn from((utxo, spend_info): (&ListUnspentResultEntry, &UTXOSpendInfo)) -> Self {
+        let addr = utxo
+            .address
+            .clone()
+            .expect("address always expected")
+            .assume_checked()
+            .to_string();
+        Self {
+            addr,
+            amount: utxo.amount,
+            confirmations: utxo.confirmations,
+            utxo_type: spend_info.to_string(),
+        }
+    }
+}
+
 /// Compute the checksum of a descriptor
 pub(crate) fn compute_checksum(descriptor: &str) -> Result<String, WalletError> {
     let mut checksum = CHECKSUM_FINAL_XOR_VALUE;
