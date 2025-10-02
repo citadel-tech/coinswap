@@ -230,30 +230,26 @@ EOF
     if [[ "$USE_EXTERNAL_BITCOIND" != "true" ]]; then
         cat >> "$compose_file" << EOF
   bitcoind:
-    image: coinswap
+    image: bitcoind/bitcoin-core:25.0
     container_name: coinswap-bitcoind
     command: |
-      sh -c "
-      mkdir -p $BITCOIN_DATADIR &&
-      cat > $BITCOIN_DATADIR/bitcoin.conf << EOB
-      ${BITCOIN_NETWORK}=1
-      server=1
-      fallbackfee=0.0001
-      rpcuser=coinswap
-      rpcpassword=coinswappass
-      rpcallowip=0.0.0.0/0
-      rpcbind=0.0.0.0:$BITCOIN_RPC_PORT
-      txindex=1
-      EOB
-      bitcoind -datadir=$BITCOIN_DATADIR
-      "
+      bitcoind
+      -${BITCOIN_NETWORK}=1
+      -server=1
+      -fallbackfee=0.0001
+      -rpcuser=coinswap
+      -rpcpassword=coinswappass
+      -rpcallowip=0.0.0.0/0
+      -rpcbind=0.0.0.0:$BITCOIN_RPC_PORT
+      -txindex=1
+      -datadir=/home/bitcoin/.bitcoin
     ports:
       - "$BITCOIN_RPC_PORT:$BITCOIN_RPC_PORT"
     volumes:
-      - bitcoin-data:$BITCOIN_DATADIR
+      - bitcoin-data:/home/bitcoin/.bitcoin
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "bitcoin-cli", "-datadir=$BITCOIN_DATADIR", "getblockchaininfo"]
+      test: ["CMD", "bitcoin-cli", "-rpcuser=coinswap", "-rpcpassword=coinswappass", "getblockchaininfo"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -264,23 +260,14 @@ EOF
     if [[ "$USE_EXTERNAL_TOR" != "true" ]]; then
         cat >> "$compose_file" << EOF
   tor:
-    image: coinswap
+    image: torproject/tor:latest
     container_name: coinswap-tor
-    command: |
-      sh -c "
-      mkdir -p /etc/tor &&
-      cat > /etc/tor/torrc << EOT
-      SOCKSPort 0.0.0.0:$TOR_SOCKS_PORT
-      ControlPort 0.0.0.0:$TOR_CONTROL_PORT
-      DataDirectory /home/coinswap/.tor
-      EOT
-      tor -f /etc/tor/torrc
-      "
-    ports:
-      - "$TOR_SOCKS_PORT:$TOR_SOCKS_PORT"
-      - "$TOR_CONTROL_PORT:$TOR_CONTROL_PORT"
     volumes:
-      - tor-data:/home/coinswap/.tor
+      - tor-data:/var/lib/tor
+      - ./docker/torrc:/etc/tor/torrc:ro
+    ports:
+      - "$TOR_SOCKS_PORT:9050"
+      - "$TOR_CONTROL_PORT:9051"
     restart: unless-stopped
 
 EOF
@@ -288,15 +275,13 @@ EOF
 
     cat >> "$compose_file" << EOF
   tracker:
-    image: coinswap
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.tracker
+    image: coinswap-tracker
     container_name: coinswap-tracker
-    command: |
-      sh -c "
-      sleep 10 &&
-      tracker
-      "
     ports:
-      - "$TRACKER_PORT:$TRACKER_PORT"
+      - "$TRACKER_PORT:8080"
     volumes:
       - tracker-data:/home/coinswap/.tracker
 EOF
@@ -319,7 +304,10 @@ EOF
     restart: unless-stopped
 
   makerd:
-    image: coinswap
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.maker
+    image: coinswap-maker
     container_name: coinswap-makerd
     command: |
       sh -c "
@@ -406,15 +394,32 @@ EOF
 
 # Build the Docker image
 build_image() {
-    print_info "Building Coinswap Docker image..."
+    print_info "Building Coinswap Docker images..."
     cd "$SCRIPT_DIR"
     
-    if docker build -t "$IMAGE_NAME" .; then
-        print_success "Docker image built successfully"
+    # Build the shared builder image first
+    print_info "Building builder image..."
+    if docker build -f docker/Dockerfile.builder -t coinswap-builder .; then
+        print_success "Builder image built successfully"
     else
-        print_error "Failed to build Docker image"
+        print_error "Failed to build builder image"
         exit 1
     fi
+    
+    # Build individual service images
+    local services=("maker" "taker" "tracker" "test")
+    
+    for service in "${services[@]}"; do
+        print_info "Building $service image..."
+        if docker build -f "docker/Dockerfile.$service" --build-arg BUILDER_IMAGE=coinswap-builder -t "coinswap-$service" .; then
+            print_success "$service image built successfully"
+        else
+            print_error "Failed to build $service image"
+            exit 1
+        fi
+    done
+    
+    print_success "All Docker images built successfully"
 }
 
 # Start the full stack using docker-compose
@@ -493,21 +498,30 @@ run_command() {
 run_tests() {
     print_info "Running Coinswap tests in Docker..."
     
-    # build the test stage
+    # Build the builder image first
+    print_info "Building builder image..."
+    if docker build -f docker/Dockerfile.builder -t coinswap-builder .; then
+        print_success "Builder image built successfully"
+    else
+        print_error "Failed to build builder image"
+        exit 1
+    fi
+    
+    # Build the test image
     print_info "Building test image..."
-    if docker build --target test -t "$IMAGE_NAME:test" .; then
+    if docker build -f docker/Dockerfile.test --build-arg BUILDER_IMAGE=coinswap-builder -t coinswap-test .; then
         print_success "Test image built successfully"
     else
         print_error "Failed to build test image"
         exit 1
     fi
     
-    # run the tests
+    # Run the tests
     print_info "Executing integration tests..."
     docker run --rm -it \
         --network coinswap-network \
         -v coinswap-test-data:/home/coinswap/.coinswap \
-        "$IMAGE_NAME:test"
+        coinswap-test
 }
 
 show_help() {
