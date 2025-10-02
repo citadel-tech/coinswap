@@ -80,8 +80,11 @@ sudo install ./target/release/maker-cli /usr/local/bin/
 git clone https://github.com/citadel-tech/coinswap.git
 cd coinswap
 
-# Build and start the complete stack
+# Interactive configuration and build
+./docker-setup.sh configure
 ./docker-setup.sh build
+
+# Start the complete stack
 ./docker-setup.sh start
 
 # Test the applications
@@ -91,50 +94,62 @@ cd coinswap
 
 #### Manual Docker Commands
 
-Build the Docker image:
+Build the Docker images:
 
 ```console
-docker build -t coinswap .
+# Build all service images
+./docker-setup.sh build
+
+# Or build manually
+docker build -f docker/Dockerfile.builder -t coinswap-builder .
+docker build -f docker/Dockerfile.maker --build-arg BUILDER_IMAGE=coinswap-builder -t coinswap-maker .
 ```
 
 Run the applications using Docker:
 
 ```console
-# Run makerd
-docker run -it --rm \
+# Run makerd (or use ./docker-setup.sh start for full stack)
+docker run -d \
+  --name coinswap-makerd \
   -p 6102:6102 -p 6103:6103 \
-  -v coinswap-data:/home/coinswap/.coinswap \
-  coinswap makerd
+  -v coinswap-maker-data:/home/coinswap/.coinswap \
+  coinswap-maker
 
 # Run maker-cli
-docker run -it --rm \
-  --network host \
-  coinswap maker-cli --help
+docker run --rm --network coinswap-network \
+  coinswap-maker maker-cli --help
 
 # Run taker
-docker run -it --rm \
-  -v coinswap-data:/home/coinswap/.coinswap \
-  coinswap taker --help
+docker run --rm \
+  -v coinswap-taker-data:/home/coinswap/.coinswap \
+  --network coinswap-network \
+  coinswap-taker --help
 ```
 
 #### Complete Stack with Docker Compose
 
 ```console
 # Start all services (Bitcoin Core, Tor, Tracker, Makerd)
-docker-compose up -d
+./docker-setup.sh start
+
+# Or use generated compose file directly
+docker-compose -f docker-compose.generated.yml up -d
 
 # Check status
-docker-compose ps
+./docker-setup.sh status
 
 # View logs
-docker-compose logs -f makerd
+./docker-setup.sh logs makerd
 ```
 
-**Docker Notes:**
-- The image includes Bitcoin Core 26.0 and Tor for complete functionality
+**Docker Features:**
+- **Service-specific containers** for optimal efficiency and maintainability
+- **External images** for Bitcoin Core and Tor (bitcoind/bitcoin-core, torproject/tor)
+- **Interactive configuration** with automatic service detection
+- **Flexible deployment** - use existing Bitcoin/Tor or spawn new instances
 - Data is persisted using Docker volumes for wallet and blockchain data
 - Network ports 6102 (Maker network) and 6103 (Maker RPC) are exposed
-- All binaries are available: `makerd`, `maker-cli`, `taker`
+- All binaries are available: `makerd`, `maker-cli`, `taker`, `tracker`
 - Use `./docker-setup.sh` for simplified Docker operations
 - See [Docker documentation](./docs/docker.md) for detailed usage
 
@@ -159,9 +174,9 @@ taker fetch-offers
 ./docker-setup.sh maker-cli --help
 
 # Or manually
-docker run --rm coinswap makerd --help
-docker run --rm coinswap maker-cli --help
-docker run --rm coinswap taker --help
+docker run --rm coinswap-maker makerd --help
+docker run --rm coinswap-maker maker-cli --help
+docker run --rm coinswap-taker taker --help
 
 # Test connection to market (requires running stack)
 ./docker-setup.sh taker fetch-offers
