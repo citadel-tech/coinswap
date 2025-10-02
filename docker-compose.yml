@@ -1,66 +1,51 @@
 version: '3.8'
 
 services:
-  # Bitcoin Core node for blockchain operations
+  # Bitcoin Core node using official image
   bitcoind:
-    image: coinswap
+    image: bitcoind/bitcoin-core:25.0
     container_name: coinswap-bitcoind
     command: |
-      sh -c "
-      mkdir -p /home/coinswap/.bitcoin &&
-      cat > /home/coinswap/.bitcoin/bitcoin.conf << EOF
-      regtest=1
-      server=1
-      fallbackfee=0.0001
-      rpcuser=coinswap
-      rpcpassword=coinswappass
-      rpcallowip=0.0.0.0/0
-      rpcbind=0.0.0.0:18332
-      txindex=1
-      EOF
-      bitcoind -datadir=/home/coinswap/.bitcoin
-      "
+      bitcoind
+      -regtest=1
+      -server=1
+      -fallbackfee=0.0001
+      -rpcuser=coinswap
+      -rpcpassword=coinswappass
+      -rpcallowip=0.0.0.0/0
+      -rpcbind=0.0.0.0:18332
+      -txindex=1
+      -datadir=/home/bitcoin/.bitcoin
     ports:
       - "18332:18332"
     volumes:
-      - bitcoin-data:/home/coinswap/.bitcoin
+      - bitcoin-data:/home/bitcoin/.bitcoin
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "bitcoin-cli", "-datadir=/home/coinswap/.bitcoin", "getblockchaininfo"]
+      test: ["CMD", "bitcoin-cli", "-rpcuser=coinswap", "-rpcpassword=coinswappass", "getblockchaininfo"]
       interval: 30s
       timeout: 10s
       retries: 5
 
-  # Tor proxy for privacy
+  # Tor proxy using official image
   tor:
-    image: coinswap
+    image: torproject/tor:latest
     container_name: coinswap-tor
-    command: |
-      sh -c "
-      mkdir -p /etc/tor &&
-      cat > /etc/tor/torrc << EOF
-      SOCKSPort 0.0.0.0:9050
-      ControlPort 0.0.0.0:9051
-      DataDirectory /home/coinswap/.tor
-      EOF
-      tor -f /etc/tor/torrc
-      "
+    volumes:
+      - tor-data:/var/lib/tor
+      - ./docker/torrc:/etc/tor/torrc:ro
     ports:
       - "9050:9050"
       - "9051:9051"
-    volumes:
-      - tor-data:/home/coinswap/.tor
     restart: unless-stopped
 
-  # Tracker server for maker discovery
+  # Tracker service
   tracker:
-    image: coinswap
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.tracker
+    image: coinswap-tracker
     container_name: coinswap-tracker
-    command: |
-      sh -c "
-      sleep 10 &&
-      tracker
-      "
     ports:
       - "8080:8080"
     volumes:
@@ -72,28 +57,17 @@ services:
 
   # Maker daemon
   makerd:
-    image: coinswap
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.maker
+    image: coinswap-maker
     container_name: coinswap-makerd
-    command: |
-      sh -c "
-      sleep 15 &&
-      mkdir -p /home/coinswap/.coinswap/maker &&
-      cat > /home/coinswap/.coinswap/maker/config.toml << EOF
-      network_port = 6102
-      rpc_port = 6103
-      socks_port = 9050
-      control_port = 9051
-      tor_auth_password = \"\"
-      min_swap_amount = 10000
-      fidelity_amount = 50000
-      fidelity_timelock = 13104
-      connection_type = \"TOR\"
-      directory_server_address = \"tracker:8080\"
-      base_fee = 100
-      amount_relative_fee_pct = 0.1
-      EOF
-      makerd
-      "
+    environment:
+      - MAKERD_NETWORK_PORT=6102
+      - MAKERD_RPC_PORT=6103
+      - TOR_SOCKS_PORT=9050
+      - TOR_CONTROL_PORT=9051
+      - TRACKER_ADDRESS=tracker:8080
     ports:
       - "6102:6102"
       - "6103:6103"
