@@ -2,6 +2,7 @@ on:
   push:
     branches:
       - master
+      - test-branch
   pull_request:
 
 name: test
@@ -20,11 +21,17 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest --locked
 
-      - name: Run cargo-tarpaulin
-        run: cargo tarpaulin --timeout 1900 --out Xml --output-dir "./coverage/reports/" --features integration-test -- --nocapture
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Add llvm-tools component
+        run: rustup component add llvm-tools-preview --toolchain stable
+
+      - name: Run cargo-llvm-cov
+        run: cargo llvm-cov nextest --features integration-test --reporter cobertura --output-path ./coverage/reports/cobertura.xml -- --fail-fast --nocapture
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
