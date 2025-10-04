@@ -270,7 +270,7 @@ fn check_connection_with_core(maker: &Maker) -> Result<(), MakerError> {
     Ok(())
 }
 
-fn decode_unified_message(data: &[u8]) -> Result<MessageToMaker, MakerError> {
+pub fn decode_unified_message(data: &[u8]) -> Result<MessageToMaker, MakerError> {
     let (prefix, body) = data
         .split_first()
         .ok_or_else(|| MakerError::General("Parsing error during decoding"))?;

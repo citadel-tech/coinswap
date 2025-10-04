@@ -58,8 +58,8 @@
 use std::fmt::Display;
 
 use bitcoin::{
-    ecdsa::Signature, hashes::sha256d::Hash, secp256k1::SecretKey, Amount, PublicKey, ScriptBuf,
-    Transaction,
+    ecdsa::Signature, hashes::sha256d::Hash, secp256k1::SecretKey, Amount, OutPoint, PublicKey,
+    ScriptBuf, Transaction, Txid,
 };
 
 use serde::{Deserialize, Serialize};
@@ -385,6 +385,12 @@ pub enum TrackerClientToServer {
     },
 }
 
+impl From<(Txid, u32)> for TrackerClientToServer {
+    fn from((txid, vout): (Txid, u32)) -> Self {
+        let outpoint = OutPoint { txid, vout };
+        TrackerClientToServer::Watch { outpoint }
+    }
+}
 /// unified message as maker server can receive any
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
