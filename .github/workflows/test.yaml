@@ -31,7 +31,10 @@ jobs:
         run: rustup component add llvm-tools-preview --toolchain stable
 
       - name: Run cargo-llvm-cov
-        run: cargo llvm-cov nextest --fail-fast --features integration-test --cobertura --output-path ./coverage/reports/cobertura.xml
+        run: |
+          cargo llvm-cov nextest --lib --bins --tests --fail-fast --features integration-test
+          cargo llvm-cov nextest --examples --fail-fast
+          cargo llvm-cov report --cobertura --output-path ./coverage/reports/cobertura.xml
         
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
