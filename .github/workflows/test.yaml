@@ -32,6 +32,7 @@ jobs:
 
       - name: Run cargo-llvm-cov
         run: |
+          mkdir -p ./coverage/reports/
           cargo llvm-cov nextest --lib --bins --tests --fail-fast --features integration-test --test-threads=1
           cargo llvm-cov nextest --examples --no-tests pass --fail-fast
           cargo llvm-cov report --cobertura --output-path ./coverage/reports/cobertura.xml
