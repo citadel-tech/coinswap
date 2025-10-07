@@ -315,14 +315,6 @@ fn main() -> Result<(), TakerError> {
                         let balances = taker.get_wallet().get_balances()?;
                         let available_utxos = taker.get_wallet().list_all_utxo_spend_info();
                         
-                        if balances.spendable == Amount::ZERO || available_utxos.is_empty() {
-                            println!("Cannot proceed with coinswap: No spendable balance or UTXOs available");
-                            println!("Current balance: {} sats", balances.spendable.to_sat());
-                            println!("Available UTXOs: {}", available_utxos.len());
-                            println!("Minimum required: {} sats", amount);
-                            return Ok(());
-                        }
-
                         let target_amount = Amount::from_sat(*amount);
                         if balances.spendable < target_amount {
                             println!("Insufficient balance for coinswap");
