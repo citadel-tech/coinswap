@@ -210,6 +210,7 @@ mod tests {
 
         let default_config = MakerConfig::default();
         assert_eq!(config, default_config);
+        assert!(false, "intentional failure for fail-fast test");
     }
 
     #[test]
