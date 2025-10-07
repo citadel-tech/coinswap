@@ -240,9 +240,22 @@ fn main() -> Result<(), TakerError> {
                     let amount = Amount::from_sat(*amount);
 
                     let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
+                        let balances = taker.get_wallet().get_balances()?;
+                        let available_utxos = taker.get_wallet().list_all_utxo_spend_info();
+
+                        if balances.spendable == Amount::ZERO || available_utxos.is_empty() {
+                            println!("Cannot proceed: No spendable balance or UTXOs available");
+                            println!("Current balance: {} sats", balances.spendable.to_sat());
+                            println!("Available UTXOs: {}", available_utxos.len());
+                            return Ok(());
+                        }
+
+                        println!("Current spendable balance: {} sats", balances.spendable.to_sat());
+                        println!("Available UTXOs: {}", available_utxos.len());
+
                         Some(
                             coinswap::utill::interactive_select(
-                                taker.get_wallet().list_all_utxo_spend_info(),
+                                available_utxos,
                             )
                             .unwrap()
                             .iter()
@@ -299,9 +312,32 @@ fn main() -> Result<(), TakerError> {
                 }
                 Commands::Coinswap { makers, amount } => {
                     let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
+                        let balances = taker.get_wallet().get_balances()?;
+                        let available_utxos = taker.get_wallet().list_all_utxo_spend_info();
+                        
+                        if balances.spendable == Amount::ZERO || available_utxos.is_empty() {
+                            println!("Cannot proceed with coinswap: No spendable balance or UTXOs available");
+                            println!("Current balance: {} sats", balances.spendable.to_sat());
+                            println!("Available UTXOs: {}", available_utxos.len());
+                            println!("Minimum required: {} sats", amount);
+                            return Ok(());
+                        }
+
+                        let target_amount = Amount::from_sat(*amount);
+                        if balances.spendable < target_amount {
+                            println!("Insufficient balance for coinswap");
+                            println!("Current balance: {} sats", balances.spendable.to_sat());
+                            println!("Required amount: {} sats", target_amount.to_sat());
+                            return Ok(());
+                        }
+                        
+                        println!("Current spendable balance: {} sats", balances.spendable.to_sat());
+                        println!("Available UTXOs: {}", available_utxos.len());
+                        println!("Coinswap amount: {} sats", target_amount.to_sat());
+
                         Some(
                             coinswap::utill::interactive_select(
-                                taker.get_wallet().list_all_utxo_spend_info(),
+                                available_utxos,
                             )
                             .unwrap()
                             .iter()
@@ -332,3 +368,4 @@ fn main() -> Result<(), TakerError> {
 
     Ok(())
 }
+
