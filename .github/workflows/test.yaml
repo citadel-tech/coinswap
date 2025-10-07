@@ -16,19 +16,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          override: true
-
-      - name: Install cargo-nextest
-        run: cargo install cargo-nextest --locked
+          components: llvm-tools-preview
 
       - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
+        uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Add llvm-tools component
-        run: rustup component add llvm-tools-preview --toolchain stable
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
 
       - name: Run cargo-llvm-cov
         run: |
