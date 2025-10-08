@@ -29,7 +29,7 @@ jobs:
       - name: Run cargo-llvm-cov
         run: |
           mkdir -p ./coverage/reports/
-          cargo llvm-cov nextest --lib --bins --tests --fail-fast --features integration-test --no-capture
+          cargo llvm-cov nextest --config-file .github/workflows/nextest.toml --lib --bins --tests --fail-fast --features integration-test
           cargo llvm-cov report --cobertura --output-path ./coverage/reports/cobertura.xml
         
       - name: Upload coverage to Codecov
