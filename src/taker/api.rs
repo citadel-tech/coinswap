@@ -706,7 +706,7 @@ impl Taker {
             })
             .sum::<f64>() as u64;
 
-        let mining_fee = total_fee - total_maker_fees;
+        let mining_fee = total_fee.saturating_sub(total_maker_fees);
         println!("\n\x1b[1;37mMining Fees       :\x1b[0m \x1b[36m{mining_fee} sats\x1b[0m",);
         let fee_percentage = (total_fee as f64 / target_amount as f64) * 100.0;
         println!("\x1b[1;37mTotal Fee Rate    :\x1b[0m \x1b[1;31m{fee_percentage:.2} %\x1b[0m",);
