@@ -38,8 +38,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
                 .wallet()
                 .read()?
                 .list_live_timelock_contract_spend_info()
-                .into_iter()
-                .map(UTXO::from_utxo_data)
+                .map(UTXO::from)
                 .collect();
             RpcMsgResp::ContractUtxoResp { utxos }
         }
@@ -48,8 +47,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
                 .wallet()
                 .read()?
                 .list_fidelity_spend_info()
-                .into_iter()
-                .map(UTXO::from_utxo_data)
+                .map(UTXO::from)
                 .collect();
             RpcMsgResp::FidelityUtxoResp { utxos }
         }
@@ -68,8 +66,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
                 .wallet()
                 .read()?
                 .list_incoming_swap_coin_utxo_spend_info()
-                .into_iter()
-                .map(UTXO::from_utxo_data)
+                .map(UTXO::from)
                 .collect();
             RpcMsgResp::SwapUtxoResp { utxos }
         }

@@ -322,13 +322,13 @@ fn test_fidelity_spending() {
     // Assert UTXO shows up in list and track the specific fidelity UTXO
     let fidelity_utxo_info = {
         let wallet = maker.get_wallet().read().unwrap();
-        let all_utxos = wallet.list_all_utxo();
 
         // Find the specific fidelity bond UTXO by amount
-        let fidelity_utxo = all_utxos
-            .iter()
+        let fidelity_utxo = wallet
+            .list_all_utxo()
             .find(|utxo| utxo.amount == fidelity_amount)
             .expect("Fidelity bond UTXO should be in the list");
+        let total_utxos = wallet.list_all_utxo().count();
 
         log::info!(
             "🔍 Found fidelity bond UTXO: txid={}, vout={}, amount={} sats",
@@ -336,7 +336,7 @@ fn test_fidelity_spending() {
             fidelity_utxo.vout,
             fidelity_utxo.amount.to_sat()
         );
-        log::info!("📊 Total UTXOs in wallet: {}", all_utxos.len());
+        log::info!("📊 Total UTXOs in wallet: {}", total_utxos);
 
         // Store UTXO identifiers for tracking
         (fidelity_utxo.txid, fidelity_utxo.vout, fidelity_utxo.amount)
@@ -344,9 +344,8 @@ fn test_fidelity_spending() {
 
     let check_fidelity_utxo_integrity = |iteration: usize| {
         let wallet = maker.get_wallet().read().unwrap();
-        let all_utxos = wallet.list_all_utxo();
 
-        let fidelity_utxo_still_exists = all_utxos.iter().any(|utxo| {
+        let fidelity_utxo_still_exists = wallet.list_all_utxo().any(|utxo| {
             utxo.txid == fidelity_utxo_info.0
                 && utxo.vout == fidelity_utxo_info.1
                 && utxo.amount == fidelity_utxo_info.2
@@ -448,13 +447,13 @@ fn test_fidelity_spending() {
     // Verify the specific UTXO is now consumed and bond is spent
     {
         let wallet = maker.get_wallet().read().unwrap();
-        let all_utxos = wallet.list_all_utxo();
 
-        let fidelity_utxo_still_exists = all_utxos.iter().any(|utxo| {
+        let fidelity_utxo_still_exists = wallet.list_all_utxo().any(|utxo| {
             utxo.txid == fidelity_utxo_info.0
                 && utxo.vout == fidelity_utxo_info.1
                 && utxo.amount == fidelity_utxo_info.2
         });
+        let total_utxos = wallet.list_all_utxo().count();
 
         if fidelity_utxo_still_exists {
             panic!(
@@ -474,7 +473,7 @@ fn test_fidelity_spending() {
             fidelity_utxo_info.0,
             fidelity_utxo_info.1
         );
-        log::info!("📊 UTXOs after redemption: {}", all_utxos.len());
+        log::info!("📊 UTXOs after redemption: {}", total_utxos);
     }
 
     let new_fidelity_index = {

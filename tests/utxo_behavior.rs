@@ -449,7 +449,7 @@ fn test_maunal_coinselection() {
 
     taker.get_wallet_mut().sync_no_fail();
 
-    let all_utxos = taker.get_wallet_mut().list_all_utxo();
+    let all_utxos = taker.get_wallet_mut().list_all_utxo().collect::<Vec<_>>();
 
     let manually_selected_utxos: Vec<OutPoint> = amounts
         .iter()
@@ -504,7 +504,6 @@ fn test_maunal_coinselection() {
     let remaining_utxos: Vec<OutPoint> = taker
         .get_wallet_mut()
         .list_all_utxo()
-        .iter()
         .map(|utxo| OutPoint::new(utxo.txid, utxo.vout))
         .collect();
 
