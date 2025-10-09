@@ -1,50 +1,40 @@
-# Shared builder stage for coinswap project using Alpine
-FROM alpine:3.18 AS builder
+## Multi-stage build for coinswap project using Alpine
+FROM rust:1.82-alpine3.18 AS builder
 
-# Install system dependencies and rustup
-RUN --mount=type=cache,target=/var/cache/apk \
-    apk add --no-cache \
-    curl \
+# Install system dependencies
+RUN apk add --no-cache \
+    build-base \
+    cmake \
     git \
+    curl \
     pkgconfig \
     openssl-dev \
-    musl-dev \
-    build-base
+    sqlite-dev \
+    zeromq-dev
 
-# Install Rust via rustup to get the correct version
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.75.0
-ENV PATH="/root/.cargo/bin:$PATH"
+# Create non-root user
+RUN addgroup -g 1000 coinswap && \
+    adduser -D -u 1000 -G coinswap coinswap
 
 # Set working directory
-WORKDIR /app
+WORKDIR /tmp
 
-# Copy only dependency manifests first for better caching
-COPY Cargo.toml rust-toolchain.toml rustfmt.toml README.md ./
+# Create directory for compiled binaries
+RUN mkdir -p /tmp/binaries
 
-# Create a dummy src/main.rs to build dependencies
-RUN mkdir src && echo "fn main() {}" > src/main.rs
+# Build coinswap
+COPY . /tmp/coinswap
+WORKDIR /tmp/coinswap
 
-# Build dependencies first (this layer will be cached)
+# Build the main coinswap project
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,target=/app/target \
-    cargo build --release && rm src/main.rs
+    cargo build --release && \
+    cp target/release/makerd /tmp/binaries/ && \
+    cp target/release/taker /tmp/binaries/ && \
+    cp target/release/maker-cli /tmp/binaries/
 
-# Now copy the actual source code and tests
-COPY src/ ./src/
-COPY tests/ ./tests/
-
-# Build the project with all binaries
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,target=/app/target \
-    cargo build --release --bins && \
-    mkdir -p /tmp/binaries && \
-    cp target/release/makerd target/release/maker-cli target/release/taker /tmp/binaries/
-
-# Clone and build the tracker
+# Build tracker from external repository
 WORKDIR /tmp
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
@@ -52,3 +42,31 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     cd tracker && \
     cargo build --release && \
     cp target/release/tracker /tmp/binaries/
+
+# Runtime stage
+FROM alpine:3.18
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    libgcc \
+    openssl \
+    sqlite \
+    zeromq
+
+# Create non-root user
+RUN addgroup -g 1000 coinswap && \
+    adduser -D -u 1000 -G coinswap coinswap
+
+# Copy binaries from builder stage
+COPY --from=builder /tmp/binaries/* /usr/local/bin/
+
+# Create data directories
+RUN mkdir -p /home/coinswap/.coinswap && \
+    chown -R coinswap:coinswap /home/coinswap
+
+# Switch to non-root user
+USER coinswap
+WORKDIR /home/coinswap
+
+# Default command
+CMD ["/bin/sh"]
