@@ -19,7 +19,7 @@ RUN mkdir -p /app/bin /home/coinswap/.coinswap && \
     chown -R coinswap:coinswap /app /home/coinswap
 
 # Copy taker binary from builder
-COPY --from=builder /tmp/binaries/taker /app/bin/
+COPY --from=builder /usr/local/bin/taker /app/bin/
 
 # Set proper permissions
 RUN chmod +x /app/bin/*
