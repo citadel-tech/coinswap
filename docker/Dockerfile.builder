@@ -10,6 +10,7 @@ RUN apk add --no-cache \
     pkgconfig \
     openssl-dev \
     sqlite-dev \
+    sqlite-static \
     zeromq-dev
 
 # Create non-root user
