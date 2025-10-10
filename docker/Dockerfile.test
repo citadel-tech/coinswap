@@ -23,8 +23,8 @@ RUN mkdir -p /app/bin /home/coinswap/.coinswap && \
 # Copy all binaries from builder
 COPY --from=builder /usr/local/bin/* /app/bin/
 
-# Copy source code for tests
-COPY --from=builder /app /app/source
+# Copy source code for tests (from current context)
+COPY . /app/source
 
 # Set proper permissions
 RUN chmod +x /app/bin/*
