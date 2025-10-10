@@ -87,8 +87,8 @@ services:
 ```nswap applications with service-specific containers:
 
 - **Service-specific Dockerfiles** for optimal maintainability and efficiency
-- **Alpine Linux 3.18** base images for minimal size
-- **Rust 1.75.0** for building the applications
+- **Alpine Linux 3.20** base images for minimal size
+- **Rust 1.90.0** for building the applications
 - **External images** for Bitcoin Core and Tor
 - **Interactive configuration** with automatic service detection
 - All Coinswap binaries: `makerd`, `maker-cli`, `taker`, `tracker`

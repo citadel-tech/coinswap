@@ -1,5 +1,5 @@
 ## Multi-stage build for coinswap project using Alpine
-FROM rust:1.82-alpine3.18 AS builder
+FROM rust:1.90-alpine3.20 AS builder
 
 # Install system dependencies
 RUN apk add --no-cache \
@@ -44,7 +44,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     cp target/release/tracker /tmp/binaries/
 
 # Runtime stage
-FROM alpine:3.18
+FROM alpine:3.20
 
 # Install runtime dependencies
 RUN apk add --no-cache \
