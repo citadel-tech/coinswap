@@ -230,7 +230,7 @@ EOF
     if [[ "$USE_EXTERNAL_BITCOIND" != "true" ]]; then
         cat >> "$compose_file" << EOF
   bitcoind:
-    image: bitcoind/bitcoin-core:25.0
+    image: bitcoin/bitcoin:alpine
     container_name: coinswap-bitcoind
     command: |
       bitcoind
@@ -286,18 +286,20 @@ EOF
       - tracker-data:/home/coinswap/.tracker
 EOF
 
-    local tracker_deps=""
-    if [[ "$USE_EXTERNAL_BITCOIND" != "true" ]]; then
-        tracker_deps="$tracker_deps\n      - bitcoind"
-    fi
-    if [[ "$USE_EXTERNAL_TOR" != "true" ]]; then
-        tracker_deps="$tracker_deps\n      - tor"
-    fi
+    # Add tracker dependencies
+    local tracker_deps=()
+    [[ "$USE_EXTERNAL_BITCOIND" != "true" ]] && tracker_deps+=("bitcoind")
+    [[ "$USE_EXTERNAL_TOR" != "true" ]] && tracker_deps+=("tor")
     
-    if [[ -n "$tracker_deps" ]]; then
+    if [[ ${#tracker_deps[@]} -gt 0 ]]; then
         cat >> "$compose_file" << EOF
-    depends_on:$tracker_deps
+    depends_on:
 EOF
+        for dep in "${tracker_deps[@]}"; do
+            cat >> "$compose_file" << EOF
+      - $dep
+EOF
+        done
     fi
 
     cat >> "$compose_file" << EOF
@@ -348,17 +350,22 @@ EOF
       - maker-data:/home/coinswap/.coinswap
 EOF
 
-    local makerd_deps=""
-    if [[ "$USE_EXTERNAL_BITCOIND" != "true" ]]; then
-        makerd_deps="$makerd_deps\n      - bitcoind"
-    fi
-    if [[ "$USE_EXTERNAL_TOR" != "true" ]]; then
-        makerd_deps="$makerd_deps\n      - tor"
-    fi
-    makerd_deps="$makerd_deps\n      - tracker"
+    # Add makerd dependencies  
+    local makerd_deps=()
+    [[ "$USE_EXTERNAL_BITCOIND" != "true" ]] && makerd_deps+=("bitcoind")
+    [[ "$USE_EXTERNAL_TOR" != "true" ]] && makerd_deps+=("tor")
+    makerd_deps+=("tracker")
     
     cat >> "$compose_file" << EOF
-    depends_on:$makerd_deps
+    depends_on:
+EOF
+    for dep in "${makerd_deps[@]}"; do
+        cat >> "$compose_file" << EOF
+      - $dep
+EOF
+    done
+    
+    cat >> "$compose_file" << EOF
     restart: unless-stopped
 
 volumes:
