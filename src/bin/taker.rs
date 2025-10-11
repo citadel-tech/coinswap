@@ -250,17 +250,18 @@ fn main() -> Result<(), TakerError> {
                             return Ok(());
                         }
 
-                        println!("Current spendable balance: {} sats", balances.spendable.to_sat());
+                        println!(
+                            "Current spendable balance: {} sats",
+                            balances.spendable.to_sat()
+                        );
                         println!("Available UTXOs: {}", available_utxos.len());
 
                         Some(
-                            coinswap::utill::interactive_select(
-                                available_utxos,
-                            )
-                            .unwrap()
-                            .iter()
-                            .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
-                            .collect::<Vec<_>>(),
+                            coinswap::utill::interactive_select(available_utxos)
+                                .unwrap()
+                                .iter()
+                                .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
+                                .collect::<Vec<_>>(),
                         )
                     } else {
                         None
@@ -314,7 +315,7 @@ fn main() -> Result<(), TakerError> {
                     let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
                         let balances = taker.get_wallet().get_balances()?;
                         let available_utxos = taker.get_wallet().list_all_utxo_spend_info();
-                        
+
                         let target_amount = Amount::from_sat(*amount);
                         if balances.spendable < target_amount {
                             println!("Insufficient balance for coinswap");
@@ -322,19 +323,20 @@ fn main() -> Result<(), TakerError> {
                             println!("Required amount: {} sats", target_amount.to_sat());
                             return Ok(());
                         }
-                        
-                        println!("Current spendable balance: {} sats", balances.spendable.to_sat());
+
+                        println!(
+                            "Current spendable balance: {} sats",
+                            balances.spendable.to_sat()
+                        );
                         println!("Available UTXOs: {}", available_utxos.len());
                         println!("Coinswap amount: {} sats", target_amount.to_sat());
 
                         Some(
-                            coinswap::utill::interactive_select(
-                                available_utxos,
-                            )
-                            .unwrap()
-                            .iter()
-                            .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
-                            .collect::<Vec<_>>(),
+                            coinswap::utill::interactive_select(available_utxos)
+                                .unwrap()
+                                .iter()
+                                .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
+                                .collect::<Vec<_>>(),
                         )
                     } else {
                         None
@@ -360,4 +362,3 @@ fn main() -> Result<(), TakerError> {
 
     Ok(())
 }
-
