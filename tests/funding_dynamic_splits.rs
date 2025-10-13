@@ -54,9 +54,7 @@ fn test_create_funding_txn_with_varied_distributions() {
 
     // Fund the taker with the UTXO sets
     for individual_utxo in UTXO_SETS.iter().flat_map(|x| x.iter()) {
-        let taker_address = taker.get_wallet_mut().get_next_external_address().unwrap();
-        send_to_address(bitcoind, &taker_address, Amount::from_sat(*individual_utxo));
-        generate_blocks(bitcoind, 1);
+        fund_and_verify_taker(taker, bitcoind, 1, Amount::from_sat(*individual_utxo));
     }
 
     // Generate 5 random addresses from the taker's wallet
@@ -65,8 +63,6 @@ fn test_create_funding_txn_with_varied_distributions() {
         let addr = taker.get_wallet_mut().get_next_external_address().unwrap();
         destinations.push(addr);
     }
-
-    taker.get_wallet_mut().sync_no_fail();
 
     for (i, (target_amount, expected_inputs, expected_outputs)) in TEST_CASES.iter().enumerate() {
         let target = Amount::from_sat(*target_amount);

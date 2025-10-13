@@ -236,14 +236,14 @@ pub fn fund_and_verify_taker(
     // Get initial state before funding
     let wallet = taker.get_wallet_mut();
     wallet.sync_no_fail();
-    let initial_utxos = wallet.list_all_utxo();
-    let initial_utxo_count = initial_utxos.len();
+    let initial_utxo_set = wallet.list_all_utxo();
+    let initial_balances = wallet.get_balances().unwrap();
     let initial_external_index = *wallet.get_external_index();
+    let mut new_txids = Vec::new();
 
-    // Fund the Taker with 3 utxos of 0.05 btc each.
     for _ in 0..utxo_count {
         let taker_address = wallet.get_next_external_address().unwrap();
-        send_to_address(bitcoind, &taker_address, utxo_value);
+        new_txids.push(send_to_address(bitcoind, &taker_address, utxo_value));
     }
 
     // confirm balances
@@ -262,31 +262,33 @@ pub fn fund_and_verify_taker(
 
     wallet.sync_no_fail();
 
-    // Check if utxo list looks good.
-    let utxos = wallet.list_all_utxo();
+    let new_utxo_set = wallet.list_all_utxo();
+    let expected_total = initial_balances.regular + utxo_value * u64::from(utxo_count);
+    let balances = wallet.get_balances().unwrap();
 
     // Assert UTXO count
     assert_eq!(
-        utxos.len(),
-        initial_utxo_count + utxo_count as usize,
+        new_utxo_set.len(),
+        initial_utxo_set.len() + utxo_count as usize,
         "Expected {} UTXOs, but found {}",
-        initial_utxo_count + utxo_count as usize,
-        utxos.len()
+        initial_utxo_set.len() + utxo_count as usize,
+        new_utxo_set.len()
     );
 
-    // Assert each UTXO value
-    for (i, utxo) in utxos.iter().skip(initial_utxo_count).enumerate() {
-        assert_eq!(
-            utxo.amount, utxo_value,
-            "New UTXO at index {} has amount {} but expected {}",
-            i, utxo.amount, utxo_value
-        );
+    // Assert each UTXO value with it's TxId.
+    for (i, &funding_txid) in new_txids.iter().enumerate() {
+        assert!(
+            new_utxo_set
+                .iter()
+                .map(|utxo| (utxo.amount, utxo.txid))
+                .collect::<Vec<(_, _)>>()
+                .contains(&(utxo_value, funding_txid)),
+            "Funding transaction {} (TxID: {}, Amount: {}) not found in Wallet",
+            i + 1,
+            funding_txid,
+            utxo_value
+        )
     }
-
-    // Calculate expected total balance, previously was 0.05*3 = 0.15 btc
-    let expected_total = utxo_value * u64::from(utxo_count);
-
-    let balances = wallet.get_balances().unwrap();
 
     // Assert total balance matches expected
     assert_eq!(
@@ -323,44 +325,69 @@ pub fn fund_and_verify_maker(
     utxo_count: u32,
     utxo_value: Amount,
 ) {
-    // Fund the Maker with 4 utxos of 0.05 btc each.
-
     log::info!("💰 Funding Makers...");
 
-    makers.iter().for_each(|&maker| {
-        // let wallet = maker..write().unwrap();
-        let mut wallet_write = maker.wallet.write().unwrap();
+    makers.iter().enumerate().for_each(|(maker_index, &maker)| {
+        let mut wallet = maker.get_wallet().write().unwrap();
+        let initial_utxo_set = wallet.list_all_utxo();
+        let initial_balances = wallet.get_balances().unwrap();
+        let mut new_txids = Vec::new();
 
         for _ in 0..utxo_count {
-            let maker_addr = wallet_write.get_next_external_address().unwrap();
-            send_to_address(bitcoind, &maker_addr, utxo_value);
+            let maker_addr = wallet.get_next_external_address().unwrap();
+            new_txids.push(send_to_address(bitcoind, &maker_addr, utxo_value));
         }
-    });
 
-    // confirm balances
-    generate_blocks(bitcoind, 1);
+        drop(wallet);
+        generate_blocks(bitcoind, 1);
 
-    // --- Basic Checks ----
-    makers.iter().for_each(|&maker| {
-        let mut wallet = maker.get_wallet().write().unwrap();
-        // Assert external address index reached to 4.
-        assert_eq!(wallet.get_external_index(), &utxo_count);
-
-        //
+        let mut wallet = maker.wallet.write().unwrap();
         wallet.sync_and_save().unwrap();
-
+        let new_utxo_set = wallet.list_all_utxo();
+        let expected_total = initial_balances.regular + utxo_value * u64::from(utxo_count);
         let balances = wallet.get_balances().unwrap();
 
+        // Assert UTXO count
         assert_eq!(
-            balances.regular,
-            Amount::from_sat(utxo_value.to_sat() * utxo_count as u64)
+            new_utxo_set.len(),
+            initial_utxo_set.len() + utxo_count as usize,
+            "Maker {} - Expected {} UTXOs, but found {}",
+            maker_index,
+            initial_utxo_set.len() + utxo_count as usize,
+            new_utxo_set.len()
         );
-        assert_eq!(balances.fidelity, Amount::ZERO);
-        assert_eq!(balances.swap, Amount::ZERO);
-        assert_eq!(balances.contract, Amount::ZERO);
-    });
 
-    log::info!("✅ Maker funding verification complete");
+        // Assert each UTXO value with its TxId
+        for (i, &funding_txid) in new_txids.iter().enumerate() {
+            assert!(
+                new_utxo_set
+                    .iter()
+                    .map(|utxo| (utxo.amount, utxo.txid))
+                    .collect::<Vec<(_, _)>>()
+                    .contains(&(utxo_value, funding_txid)),
+                "Maker {} - Funding transaction {} (TxID: {}, Amount: {}) not found in Wallet",
+                maker_index,
+                i + 1,
+                funding_txid,
+                utxo_value
+            );
+        }
+
+        // Assert total balance matches expected
+        assert_eq!(
+            balances.regular, expected_total,
+            "Maker {} - Expected regular balance {} but got {}",
+            maker_index, expected_total, balances.regular
+        );
+
+        log::info!(
+        "✅ Maker {} funding verification complete | Found {} new UTXOs of value {} each | Total Spendable Balance: {}",
+        maker_index,
+        utxo_count,
+        utxo_value,
+        balances.spendable
+        );
+    });
 }
 
 /// Verifies the results of a coinswap for the taker and makers after performing a swap.
