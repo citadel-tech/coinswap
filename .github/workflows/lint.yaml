@@ -13,37 +13,37 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        
-      - name: Set default toolchain
-        run: rustup override set nightly
 
-      - name: Set profile
-        run: rustup set profile minimal
+      - name: Install nightly toolchain
+        run: rustup toolchain install nightly --profile minimal
+
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
 
       - name: Add rustfmt
-        run: rustup component add rustfmt
+        run: rustup component add rustfmt --toolchain nightly
 
       - name: Add clippy
-        run: rustup component add clippy
+        run: rustup component add clippy --toolchain stable
 
       - name: Update toolchain
         run: rustup update
 
       - name: Check fmt
-        run: cargo fmt --all -- --check
+        run: cargo +nightly fmt --all -- --check
 
       - name: Clippy (main codebase with all features)
-        run: cargo clippy --all-features --lib --bins --tests -- -D warnings
+        run: cargo +stable clippy --all-features --lib --bins --tests -- -D warnings
 
       - name: Clippy (examples with default features only)
-        run: cargo clippy --examples -- -D warnings
+        run: cargo +stable clippy --examples -- -D warnings
 
       # - name: cargo install cargo-hack
       #   uses: taiki-e/install-action@cargo-hack
-        
+
       # - name: cargo hack
       #   run: cargo hack --feature-powerset check
-        
+
       - name: Check docs
         env:
           RUSTDOCFLAGS: "-D warnings"
