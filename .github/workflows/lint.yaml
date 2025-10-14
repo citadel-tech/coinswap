@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
         
       - name: Set default toolchain
-        run: rustup override set satble
+        run: rustup override set stable
 
       - name: Set profile
         run: rustup set profile minimal
