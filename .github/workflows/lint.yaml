@@ -15,8 +15,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install nightly toolchain
-        run: rustup toolchain install nightly --profile minimal
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
 
       - name: Install stable toolchain
         run: rustup toolchain install stable --profile minimal
@@ -31,7 +31,7 @@ jobs:
         run: rustup update
 
       - name: Check fmt
-        run: cargo +nightly fmt --all -- --check
+        run: cargo +stable fmt --all -- --check
 
       - name: Clippy (main codebase with all features)
         run: cargo +stable clippy --all-features --lib --bins --tests -- -D warnings
