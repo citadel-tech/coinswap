@@ -218,7 +218,12 @@ fn test_separated_utxo_coin_selection() {
     fund_and_verify_taker(taker, bitcoind, 6, Amount::from_btc(0.1).unwrap()); // 60M sats total
 
     let makers_ref = makers.iter().map(Arc::as_ref).collect::<Vec<_>>();
-    fund_and_verify_maker(makers_ref, bitcoind, 6, Amount::from_btc(0.1).unwrap()); // 60M sats total
+    fund_and_verify_maker(
+        makers_ref.clone(),
+        bitcoind,
+        6,
+        Amount::from_btc(0.1).unwrap(),
+    ); // 60M sats total
 
     // Start the Maker Servers
     info!("🚀 Starting Maker servers");
@@ -355,16 +360,8 @@ fn test_separated_utxo_coin_selection() {
     // Now fund regular UTXOs and retry - should work
     println!("\n--- Test Case 3: Add Regular Funds and Retry ---");
 
-    let new_address = {
-        let mut wallet = maker.wallet.write().unwrap();
-        wallet.get_next_external_address().unwrap()
-    };
-
-    println!("🏦 Funding new regular address: {new_address}");
-
-    // Fund the new address with enough to cover the target
-    let additional_amount = Amount::from_sat(30000000); // 30M sats
-    send_to_address(bitcoind, &new_address, additional_amount);
+    // Fund the maker with enough to cover the target (30M SATS)
+    fund_and_verify_maker(makers_ref, bitcoind, 1, Amount::from_sat(30000000));
 
     // Generate blocks to confirm
     generate_blocks(bitcoind, 3);
@@ -421,9 +418,7 @@ fn test_maunal_coinselection() {
     ];
 
     for &amount in &amounts {
-        let taker_address = taker.get_wallet_mut().get_next_external_address().unwrap();
-        send_to_address(bitcoind, &taker_address, Amount::from_sat(amount));
-        generate_blocks(bitcoind, 1);
+        fund_and_verify_taker(taker, bitcoind, 1, Amount::from_sat(amount));
     }
 
     // Fund the Maker with 3 utxos of 0.05 btc each and do basic checks on the balance.
