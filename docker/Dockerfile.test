@@ -33,7 +33,8 @@ COPY --from=builder /usr/local/bin/* /app/bin/
 COPY . /app/source
 
 # Set proper permissions
-RUN chmod +x /app/bin/*
+RUN chmod +x /app/bin/* && \
+    chown -R coinswap:coinswap /app/source
 
 # Switch to app user
 USER coinswap
