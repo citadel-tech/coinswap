@@ -4,12 +4,17 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::TakerBehavior,
-    utill::{ConnectionType, MIN_FEE_RATE},
+    utill::MIN_FEE_RATE,
 };
 mod test_framework;
 use test_framework::*;
 
-use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
+use std::{
+    assert_eq,
+    sync::{atomic::Ordering::Relaxed, Arc},
+    thread,
+    time::Duration,
+};
 
 #[test]
 fn test_fidelity_complete() {
@@ -32,11 +37,8 @@ fn test_fidelity() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, block_generation_handle) = TestFramework::init(
-        makers_config_map.into(),
-        taker_behavior,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, _, makers, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     log::info!("🧪 Running Test: Fidelity Bond Creation and Redemption");
 
@@ -49,25 +51,13 @@ fn test_fidelity() {
     log::info!("💰 Providing insufficient funds to trigger funding request");
     // Provide insufficient funds to the maker and start the server.
     // This will continuously log about insufficient funds and request 0.01 BTC to create a fidelity bond.
-    let maker_addrs = maker
-        .get_wallet()
-        .write()
-        .unwrap()
-        .get_next_external_address()
-        .unwrap();
-    send_to_address(bitcoind, &maker_addrs, Amount::from_btc(0.04).unwrap());
-    generate_blocks(bitcoind, 1);
-
-    // Add sync and verification before starting maker server
-    {
-        let mut wallet = maker.get_wallet().write().unwrap();
-        wallet.sync_and_save().unwrap();
-        let balances = wallet.get_balances().unwrap();
-        log::info!(
-            "📊 Initial wallet balance: {} sats",
-            balances.regular.to_sat()
-        );
-    }
+    let makers_ref = makers.iter().map(Arc::as_ref).collect::<Vec<_>>();
+    fund_and_verify_maker(
+        makers_ref.clone(),
+        bitcoind,
+        1,
+        Amount::from_btc(0.04).unwrap(),
+    );
 
     let maker_clone = maker.clone();
 
@@ -83,19 +73,7 @@ fn test_fidelity() {
 
     log::info!("💰 Adding sufficient funds for fidelity bond creation");
     // Provide the maker with more funds.
-    send_to_address(bitcoind, &maker_addrs, Amount::ONE_BTC);
-    generate_blocks(bitcoind, 1);
-
-    // Add sync and verification after adding more funds
-    {
-        let mut wallet = maker.get_wallet().write().unwrap();
-        wallet.sync_no_fail();
-        let balances = wallet.get_balances().unwrap();
-        log::info!(
-            "📊 Updated wallet balance: {} sats",
-            balances.regular.to_sat()
-        );
-    }
+    fund_and_verify_maker(makers_ref, bitcoind, 1, Amount::ONE_BTC);
 
     thread::sleep(Duration::from_secs(6));
     // stop the maker server
@@ -182,7 +160,7 @@ fn test_fidelity() {
         let balances = wallet_read.get_balances().unwrap();
 
         assert_eq!(balances.fidelity.to_sat(), 13000000);
-        assert_eq!(balances.regular.to_sat(), 90999206);
+        assert_eq!(balances.regular.to_sat(), 90999342);
     }
 
     log::info!("⏳ Waiting for fidelity bonds to mature and testing redemption");
@@ -251,7 +229,7 @@ fn test_fidelity() {
         let balances = wallet_read.get_balances().unwrap();
 
         assert_eq!(balances.fidelity.to_sat(), 0);
-        assert_eq!(balances.regular.to_sat(), 103998762);
+        assert_eq!(balances.regular.to_sat(), 103998898);
     }
 
     thread::sleep(Duration::from_secs(10));
@@ -276,27 +254,15 @@ fn test_fidelity_spending() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, block_generation_handle) = TestFramework::init(
-        makers_config_map.into(),
-        taker_behavior,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, _, makers, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     log::info!("🧪 Running Test: Assert Fidelity Spending Behavior");
 
     let bitcoind = &test_framework.bitcoind;
     let maker = makers.first().unwrap();
-
-    // Setup and fund wallet
-    let maker_addrs = maker
-        .get_wallet()
-        .write()
-        .unwrap()
-        .get_next_external_address()
-        .unwrap();
-    send_to_address(bitcoind, &maker_addrs, Amount::from_btc(2.0).unwrap());
-    generate_blocks(bitcoind, 1);
-    maker.get_wallet().write().unwrap().sync_no_fail();
+    let maker_ref = makers.iter().map(Arc::as_ref).collect::<Vec<_>>();
+    fund_and_verify_maker(maker_ref, bitcoind, 1, Amount::from_btc(2.0).unwrap());
 
     // Create fidelity bond
     let short_timelock_height =
@@ -328,7 +294,7 @@ fn test_fidelity_spending() {
     // Assert UTXO shows up in list and track the specific fidelity UTXO
     let fidelity_utxo_info = {
         let wallet = maker.get_wallet().read().unwrap();
-        let all_utxos = wallet.get_all_utxo().unwrap();
+        let all_utxos = wallet.list_all_utxo();
 
         // Find the specific fidelity bond UTXO by amount
         let fidelity_utxo = all_utxos
@@ -350,7 +316,7 @@ fn test_fidelity_spending() {
 
     let check_fidelity_utxo_integrity = |iteration: usize| {
         let wallet = maker.get_wallet().read().unwrap();
-        let all_utxos = wallet.get_all_utxo().unwrap();
+        let all_utxos = wallet.list_all_utxo();
 
         let fidelity_utxo_still_exists = all_utxos.iter().any(|utxo| {
             utxo.txid == fidelity_utxo_info.0
@@ -392,7 +358,7 @@ fn test_fidelity_spending() {
         let tx_result = {
             let mut wallet = maker.get_wallet().write().unwrap();
             let selected_utxos = wallet
-                .coin_select(Amount::from_sat(REGULAR_TX_AMOUNT), MIN_FEE_RATE)
+                .coin_select(Amount::from_sat(REGULAR_TX_AMOUNT), MIN_FEE_RATE, None)
                 .unwrap();
 
             for (_utxo, spend_info) in &selected_utxos {
@@ -454,7 +420,7 @@ fn test_fidelity_spending() {
     // Verify the specific UTXO is now consumed and bond is spent
     {
         let wallet = maker.get_wallet().read().unwrap();
-        let all_utxos = wallet.get_all_utxo().unwrap();
+        let all_utxos = wallet.list_all_utxo();
 
         let fidelity_utxo_still_exists = all_utxos.iter().any(|utxo| {
             utxo.txid == fidelity_utxo_info.0

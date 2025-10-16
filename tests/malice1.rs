@@ -3,7 +3,6 @@ use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
-    utill::ConnectionType,
 };
 use std::sync::Arc;
 
@@ -29,11 +28,8 @@ fn malice1_taker_broadcast_contract_prematurely() {
     let taker_behavior = vec![TakerBehavior::BroadcastContractAfterFullSetup];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
-        makers_config_map.into(),
-        taker_behavior,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🧪 Running Test: Malice 1 - Taker broadcasts contract transaction prematurely");
 
@@ -98,6 +94,7 @@ fn malice1_taker_broadcast_contract_prematurely() {
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
+        manually_selected_outpoints: None,
     };
     taker.do_coinswap(swap_params).unwrap();
 

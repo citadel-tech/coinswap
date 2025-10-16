@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bitcoind::bitcoincore_rpc::RpcApi;
+use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
 
 use serde::{Deserialize, Serialize};
 use socks::Socks5Stream;
@@ -46,7 +46,7 @@ use crate::{
             TakerToMakerMessage,
         },
     },
-    taker::{config::TakerConfig, offers::OfferBook, send_message_with_prefix},
+    taker::{config::TakerConfig, offers::OfferBook},
     utill::*,
     wallet::{
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
@@ -76,16 +76,18 @@ pub(crate) const TCP_TIMEOUT_SECONDS: u64 = 300;
 /// SwapParams govern the criteria to find suitable set of makers from the offerbook.
 ///
 /// If no maker matches with a given SwapParam, that coinswap round will fail.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 pub struct SwapParams {
     /// Total Amount to Swap.
     pub send_amount: Amount,
     /// How many hops.
     pub maker_count: usize,
+    /// User selected UTXOs
+    pub manually_selected_outpoints: Option<Vec<OutPoint>>,
 }
 
 // Defines the Taker's position in the current ongoing swap.
-#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone)]
 enum TakerPosition {
     #[default]
     /// Taker is the First Peer of the swap (Sender Side)
@@ -101,7 +103,7 @@ enum TakerPosition {
 /// swap progresses. This ensures the swap state is always consistent.
 ///
 /// These states can be used to recover from a failed swap round.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct OngoingSwapState {
     /// SwapParams used in current swap round.
     pub(crate) swap_params: SwapParams,
@@ -157,6 +159,7 @@ pub struct Taker {
     pub config: TakerConfig,
     offerbook: OfferBook,
     ongoing_swap_state: OngoingSwapState,
+    #[cfg(feature = "integration-test")]
     behavior: TakerBehavior,
     data_dir: PathBuf,
 }
@@ -193,10 +196,9 @@ impl Taker {
         data_dir: Option<PathBuf>,
         wallet_file_name: Option<String>,
         rpc_config: Option<RPCConfig>,
-        behavior: TakerBehavior,
+        #[cfg(feature = "integration-test")] behavior: TakerBehavior,
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
-        connection_type: Option<ConnectionType>,
     ) -> Result<Taker, TakerError> {
         // Get provided data directory or the default data directory.
         let data_dir = data_dir.unwrap_or(get_taker_dir());
@@ -214,10 +216,6 @@ impl Taker {
         // If config file doesn't exist, default config will be loaded.
         let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
-        if let Some(connection_type) = connection_type {
-            config.connection_type = connection_type;
-        }
-
         if let Some(control_port) = control_port {
             config.control_port = control_port;
         }
@@ -226,7 +224,7 @@ impl Taker {
             config.tor_auth_password = tor_auth_password;
         }
 
-        if matches!(connection_type, Some(ConnectionType::TOR)) {
+        if !cfg!(feature = "integration-test") {
             check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
 
@@ -264,6 +262,7 @@ impl Taker {
             config,
             offerbook,
             ongoing_swap_state: OngoingSwapState::default(),
+            #[cfg(feature = "integration-test")]
             behavior,
             data_dir,
         })
@@ -328,7 +327,9 @@ impl Taker {
     ///
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub(crate) fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
-        self.ongoing_swap_state.swap_params = swap_params;
+        let swap_start_time = std::time::Instant::now();
+        let initial_utxoset = self.wallet.list_all_utxo();
+        self.ongoing_swap_state.swap_params = swap_params.clone();
 
         // Check if we have enough balance - try regular first, then swap
         let balances = self.wallet.get_balances()?;
@@ -387,7 +388,6 @@ impl Taker {
         log::info!("Initiating coinswap with id : {unique_id}");
 
         self.ongoing_swap_state.active_preimage = preimage;
-        self.ongoing_swap_state.swap_params = swap_params;
         self.ongoing_swap_state.id = unique_id;
 
         // Try first hop. Abort if error happens.
@@ -484,15 +484,18 @@ impl Taker {
             }
         } // Contract establishment completed.
 
-        if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
-            log::error!("Dropping Swap Process after full setup");
-            return Ok(());
-        }
+        #[cfg(feature = "integration-test")]
+        {
+            if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
+                log::error!("Dropping Swap Process after full setup");
+                return Ok(());
+            }
 
-        if self.behavior == TakerBehavior::BroadcastContractAfterFullSetup {
-            log::error!("Special Behavior BroadcastContractAfterFullSetup");
-            self.recover_from_swap()?;
-            return Ok(());
+            if self.behavior == TakerBehavior::BroadcastContractAfterFullSetup {
+                log::error!("Special Behavior BroadcastContractAfterFullSetup");
+                self.recover_from_swap()?;
+                return Ok(());
+            }
         }
 
         match self.settle_all_swaps() {
@@ -500,6 +503,7 @@ impl Taker {
                 log::info!(
                     "Swaps settled successfully. Sweeping the coins and reseting everything."
                 );
+                let prereset_swapstate = &self.ongoing_swap_state.clone();
                 self.save_and_reset_swap_round()?;
                 // Sweep incoming swapcoins after successful swap completion
                 log::info!("Sweeping completed incoming swap coins...");
@@ -511,6 +515,10 @@ impl Taker {
                         swept_txids
                     );
                 }
+
+                // Generate post-swap report
+                self.wallet.sync_and_save()?;
+                self.print_swap_report(prereset_swapstate, swap_start_time, initial_utxoset)?;
             }
             Err(e) => {
                 log::error!("Swap Settlement Failed : {e:?}");
@@ -520,6 +528,193 @@ impl Taker {
             }
         }
         log::info!("Successfully Completed Coinswap.");
+        Ok(())
+    }
+
+    fn print_swap_report(
+        &self,
+        prereset_swapstate: &OngoingSwapState,
+        start_time: std::time::Instant,
+        initial_utxos: Vec<ListUnspentResultEntry>,
+    ) -> Result<(), TakerError> {
+        let swap_state = &prereset_swapstate;
+
+        let mut target_amount = swap_state.swap_params.send_amount.to_sat();
+        let swap_duration = start_time.elapsed();
+
+        let all_regular_utxo = self
+            .wallet
+            .list_descriptor_utxo_spend_info()
+            .into_iter()
+            .map(|(utxo, _)| utxo)
+            .collect::<Vec<_>>();
+
+        let initial_outpoints = initial_utxos
+            .iter()
+            .map(|utxo| OutPoint {
+                txid: utxo.txid,
+                vout: utxo.vout,
+            })
+            .collect::<HashSet<_>>();
+
+        let current_outpoints = all_regular_utxo
+            .iter()
+            .map(|utxo| OutPoint {
+                txid: utxo.txid,
+                vout: utxo.vout,
+            })
+            .collect::<HashSet<_>>();
+
+        // Present in initial set but not in current set (destroyed)
+        let input_utxos = initial_utxos
+            .iter()
+            .filter(|utxo| {
+                let initial_outpoint = OutPoint {
+                    txid: utxo.txid,
+                    vout: utxo.vout,
+                };
+                !current_outpoints.contains(&initial_outpoint)
+            })
+            .map(|utxo| utxo.amount.to_sat())
+            .collect::<Vec<u64>>();
+
+        // Present in current set but not in initial regular set (created)
+        let output_regular_utxos = all_regular_utxo
+            .iter()
+            .filter(|utxo| {
+                let final_outpoint = OutPoint {
+                    txid: utxo.txid,
+                    vout: utxo.vout,
+                };
+                !initial_outpoints.contains(&final_outpoint)
+            })
+            .map(|utxo| utxo.amount.to_sat())
+            .collect::<Vec<u64>>();
+
+        let output_swap_utxos = self
+            .wallet
+            .list_swept_incoming_swap_utxos()
+            .into_iter()
+            .map(|(utxo, _)| utxo.amount.to_sat())
+            .collect::<Vec<u64>>();
+
+        let output_utxos = [output_regular_utxos.clone(), output_swap_utxos.clone()].concat();
+
+        let total_input_amount = input_utxos.iter().sum::<u64>();
+        let total_output_amount = output_utxos.iter().sum::<u64>();
+
+        println!("\n\x1b[1;36m════════════════════════════════════════════════════════════════════════════════");
+        println!("                            🪙 COINSWAP REPORT 🪙");
+        println!("════════════════════════════════════════════════════════════════════════════════\x1b[0m\n");
+
+        println!("\x1b[1;37mSwap ID           :\x1b[0m {}", swap_state.id);
+        println!("\x1b[1;37mStatus            :\x1b[0m \x1b[1;32m✅ COMPLETED SUCCESSFULLY\x1b[0m");
+        println!(
+            "\x1b[1;37mDuration          :\x1b[0m {:.2} seconds",
+            swap_duration.as_secs_f64()
+        );
+
+        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
+        println!("                              Swap Parameters");
+        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
+        println!("\x1b[1;37mTarget Amount     :\x1b[0m {target_amount} Sats",);
+        println!("\x1b[1;37mTotal Input       :\x1b[0m {total_input_amount} Sats",);
+        println!("\x1b[1;37mTotal Output      :\x1b[0m {total_output_amount} Sats",);
+        println!(
+            "\x1b[1;37mMakers Involved   :\x1b[0m {}",
+            swap_state.swap_params.maker_count
+        );
+
+        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
+        println!("                                Makers Used");
+        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
+        for (index, peer_info) in swap_state.peer_infos.iter().enumerate() {
+            if index < swap_state.swap_params.maker_count {
+                println!(
+                    "  \x1b[1;33m{}.\x1b[0m {}",
+                    index + 1,
+                    peer_info.peer.address
+                );
+            }
+        }
+
+        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
+        println!("                            Transaction Details");
+        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
+        let total_funding_txs: usize = swap_state
+            .funding_txs
+            .iter()
+            .map(|(txs, _)| txs.len())
+            .sum();
+        println!("\x1b[1;37mTotal Funding Txs :\x1b[0m {total_funding_txs}");
+
+        println!("\x1b[1;37mFunding Transaction IDs:\x1b[0m");
+        for (hop_index, (txs, _)) in swap_state.funding_txs.iter().enumerate() {
+            println!("  \x1b[1;35mHop {}:\x1b[0m", hop_index + 1);
+            for (tx_index, tx) in txs.iter().enumerate() {
+                println!(
+                    "    Tx {} → \x1b[2m{}\x1b[0m",
+                    tx_index + 1,
+                    tx.compute_txid()
+                );
+            }
+        }
+
+        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
+        println!("                              Fee Information");
+        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
+
+        let total_fee = total_input_amount - total_output_amount;
+        println!("\x1b[1;37mTotal Fees        :\x1b[0m \x1b[1;31m{total_fee} sats\x1b[0m",);
+
+        let total_maker_fees = (0..swap_state.swap_params.maker_count)
+            .map(|maker_index| {
+                let maker_refund_locktime = REFUND_LOCKTIME
+                    + REFUND_LOCKTIME_STEP
+                        * (swap_state.swap_params.maker_count - maker_index - 1) as u16;
+
+                let base_fee = swap_state.peer_infos[maker_index].peer.offer.base_fee as f64;
+                let amount_rel_fee = (swap_state.peer_infos[maker_index]
+                    .peer
+                    .offer
+                    .amount_relative_fee_pct
+                    * target_amount as f64)
+                    / 1_00.00;
+                let time_rel_fee = (swap_state.peer_infos[maker_index]
+                    .peer
+                    .offer
+                    .time_relative_fee_pct
+                    * maker_refund_locktime as f64
+                    * target_amount as f64)
+                    / 1_00.00;
+
+                println!("\n\x1b[1;33mMaker {}:\x1b[0m", maker_index + 1);
+                println!("    Base Fee             : {base_fee}");
+                println!("    Amount Relative Fee  : {amount_rel_fee:.2}");
+                println!("    Time Relative Fee    : {time_rel_fee:.2}");
+
+                target_amount -= (base_fee + amount_rel_fee + time_rel_fee) as u64;
+                base_fee + amount_rel_fee + time_rel_fee
+            })
+            .sum::<f64>() as u64;
+
+        let mining_fee = total_fee - total_maker_fees;
+        println!("\n\x1b[1;37mMining Fees       :\x1b[0m \x1b[36m{mining_fee} sats\x1b[0m",);
+        let fee_percentage = (total_fee as f64 / target_amount as f64) * 100.0;
+        println!("\x1b[1;37mTotal Fee Rate    :\x1b[0m \x1b[1;31m{fee_percentage:.2} %\x1b[0m",);
+
+        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
+        println!("                              UTXO Information");
+        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
+        println!("\x1b[1;37mInput UTXOs:\x1b[0m {input_utxos:?}");
+        println!("\x1b[1;37mOutput UTXOs:\x1b[0m");
+        println!("  Seed / Regular : {output_regular_utxos:?}");
+        println!("  Swap Coins     : {output_swap_utxos:?}");
+
+        println!("\n\x1b[1;36m════════════════════════════════════════════════════════════════════════════════");
+        println!("                                END REPORT");
+        println!("════════════════════════════════════════════════════════════════════════════════\x1b[0m\n");
+
         Ok(())
     }
 
@@ -543,15 +738,14 @@ impl Taker {
             log::info!("Choosing next maker: {}", maker.address);
             let (multisig_pubkeys, multisig_nonces, hashlock_pubkeys, hashlock_nonces) =
                 generate_maker_keys(&maker.offer.tweakable_point, 1)?;
-            let (funding_txs, mut outgoing_swapcoins, funding_fee) =
-                self.wallet.initalize_coinswap(
-                    self.ongoing_swap_state.swap_params.send_amount,
-                    &multisig_pubkeys,
-                    &hashlock_pubkeys,
-                    self.get_preimage_hash(),
-                    swap_locktime,
-                    MIN_FEE_RATE,
-                )?;
+            let (funding_txs, mut outgoing_swapcoins, _) = self.wallet.initalize_coinswap(
+                &self.ongoing_swap_state.swap_params,
+                &multisig_pubkeys,
+                &hashlock_pubkeys,
+                self.get_preimage_hash(),
+                swap_locktime,
+                MIN_FEE_RATE,
+            )?;
 
             let contract_reedemscripts = outgoing_swapcoins
                 .iter()
@@ -604,8 +798,6 @@ impl Taker {
 
             self.ongoing_swap_state.outgoing_swapcoins = outgoing_swapcoins;
 
-            log::info!("Total Funding Txs Fees: {funding_fee}");
-
             break (maker, funding_txs);
         };
 
@@ -618,14 +810,6 @@ impl Taker {
         let funding_txids = funding_txs
             .iter()
             .map(|tx| {
-                // Calculate the virtual size in bytes (vbytes)
-                let tx_vbytes = tx.weight().to_vbytes_ceil();
-
-                // Convert vbytes to kilovirtual bytes (kvB)
-                let tx_kvb = (tx_vbytes as f32) / 1000.0;
-
-                log::info!("Transaction size: {tx_vbytes} vB ({tx_kvb:.3} kvB)");
-
                 let txid = self.wallet.send_tx(tx)?;
                 log::info!("Broadcasted Funding tx. txid: {txid}");
                 assert_eq!(txid, tx.compute_txid());
@@ -973,13 +1157,14 @@ impl Taker {
             this_maker.address
         );
         let address = this_maker.address.to_string();
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(address)?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(address)?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 address.as_str(),
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         let reconnect_timeout = Duration::from_secs(TCP_TIMEOUT_SECONDS);
@@ -1436,13 +1621,14 @@ impl Taker {
 
         let maker_addr_str = maker_address.to_string();
 
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(maker_addr_str.clone())?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         socket.set_read_timeout(Some(reconnect_time_out))?;
@@ -1524,13 +1710,14 @@ impl Taker {
         let mut ii = 0;
 
         let maker_addr_str = maker_address.to_string();
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(maker_addr_str.clone())?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         socket.set_read_timeout(Some(reconnect_time_out))?;
@@ -1701,13 +1888,14 @@ impl Taker {
         receivers_multisig_redeemscripts: &[ScriptBuf],
     ) -> Result<(), TakerError> {
         let maker_addr_str = maker_address.to_string();
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(maker_addr_str.clone())?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(maker_addr_str.clone())?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 &*maker_addr_str,
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         socket.set_read_timeout(Some(Duration::from_secs(TCP_TIMEOUT_SECONDS)))?;
@@ -1950,15 +2138,10 @@ impl Taker {
 
     /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
     pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        let tracker_addr = match self.config.connection_type {
-            ConnectionType::CLEARNET => {
-                if cfg!(feature = "integration-test") {
-                    format!("127.0.0.1:{}", 8080)
-                } else {
-                    self.config.tracker_address.clone()
-                }
-            }
-            ConnectionType::TOR => self.config.tracker_address.clone(),
+        let tracker_addr = if cfg!(feature = "integration-test") {
+            format!("127.0.0.1:{}", 8080)
+        } else {
+            self.config.tracker_address.clone()
         };
 
         #[cfg(not(feature = "integration-test"))]
@@ -1969,11 +2152,7 @@ impl Taker {
 
         log::info!("Fetching addresses from Tracker: {tracker_addr}");
 
-        let addresses_from_tracker = match fetch_addresses_from_tracker(
-            socks_port,
-            tracker_addr,
-            self.config.connection_type,
-        ) {
+        let addresses_from_tracker = match fetch_addresses_from_tracker(socks_port, tracker_addr) {
             Ok(tracker_addrs) => tracker_addrs,
             Err(e) => {
                 log::error!("Could not connect to Tracker Server: {e:?}");
@@ -2041,13 +2220,14 @@ impl Taker {
     ) -> Result<(), TakerError> {
         // Notify the maker that we are waiting for funding confirmation
         let address = maker_addr.to_string();
-        let mut socket = match self.config.connection_type {
-            ConnectionType::CLEARNET => TcpStream::connect(address)?,
-            ConnectionType::TOR => Socks5Stream::connect(
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(address.clone())?
+        } else {
+            Socks5Stream::connect(
                 format!("127.0.0.1:{}", self.config.socks_port).as_str(),
                 address.as_str(),
             )?
-            .into_inner(),
+            .into_inner()
         };
 
         let reconnect_timeout = Duration::from_secs(TCP_TIMEOUT_SECONDS);

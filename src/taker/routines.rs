@@ -26,7 +26,7 @@ use crate::{
         },
         Hash160,
     },
-    utill::{calculate_fee_sats, read_message, ConnectionType, MIN_FEE_RATE},
+    utill::{calculate_fee_sats, read_message, send_message_with_prefix, MIN_FEE_RATE},
     wallet::WalletError,
 };
 use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
@@ -35,7 +35,6 @@ use super::{
     config::TakerConfig,
     error::TakerError,
     offers::{MakerAddress, OfferAndAddress},
-    send_message_with_prefix,
 };
 
 use crate::taker::api::{
@@ -425,13 +424,14 @@ fn download_maker_offer_attempt_once(
 ) -> Result<Offer, TakerError> {
     let maker_addr = addr.to_string();
     log::info!("Downloading offer from {maker_addr}");
-    let mut socket = match config.connection_type {
-        ConnectionType::CLEARNET => TcpStream::connect(&maker_addr)?,
-        ConnectionType::TOR => Socks5Stream::connect(
+    let mut socket = if cfg!(feature = "integration-test") {
+        TcpStream::connect(&maker_addr)?
+    } else {
+        Socks5Stream::connect(
             format!("127.0.0.1:{}", config.socks_port).as_str(),
             maker_addr.as_ref(),
         )?
-        .into_inner(),
+        .into_inner()
     };
 
     socket.set_read_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;

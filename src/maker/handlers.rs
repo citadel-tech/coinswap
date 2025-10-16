@@ -38,6 +38,7 @@ use crate::{
         },
         Hash160,
     },
+    taker::SwapParams,
     utill::{calculate_fee_sats, MIN_FEE_RATE, REQUIRED_CONFIRMS},
     wallet::{IncomingSwapCoin, SwapCoin, WalletError},
 };
@@ -390,7 +391,11 @@ impl Maker {
         // Create outgoing coinswap of the next hop
         let (my_funding_txes, outgoing_swapcoins, act_funding_txs_fees) = {
             self.wallet.write()?.initalize_coinswap(
-                Amount::from_sat(outgoing_amount),
+                &SwapParams {
+                    send_amount: Amount::from_sat(outgoing_amount),
+                    maker_count: 0,
+                    manually_selected_outpoints: None,
+                },
                 &message
                     .next_coinswap_info
                     .iter()
@@ -676,9 +681,7 @@ impl Maker {
                 swept_txids
             );
         }
-        self.wallet.write()?.sync()?;
-        self.wallet.write()?.save_to_disk()?;
-        log::info!("✅ Maker wallet sync and save completed.");
+        self.wallet.write()?.sync_and_save()?;
         Ok(())
     }
 }

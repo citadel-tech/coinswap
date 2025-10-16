@@ -39,12 +39,20 @@ impl Wallet {
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: f64,
+        manually_selected_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<CreateFundingTxesResult, WalletError> {
-        let ret = self.create_funding_txes_random_amounts(coinswap_amount, destinations, fee_rate);
-        if ret.is_ok() {
-            log::info!(target: "wallet", "created funding txes random amounts");
-            return ret;
+        let ret = self.create_funding_txes_random_amounts(
+            coinswap_amount,
+            destinations,
+            fee_rate,
+            manually_selected_outpoints,
+        );
+
+        if ret.is_err() {
+            log::error!("Failed to create funding txes {ret:?}");
         }
+
+        ret
 
         // let ret = self.create_funding_txes_utxo_max_sends(coinswap_amount, destinations, fee_rate);
         // if ret.is_ok() {
@@ -58,9 +66,6 @@ impl Wallet {
         //     log::info!(target: "wallet", "created funding txes with using the biggest utxos");
         //     return ret;
         // }
-
-        log::info!("failed to create funding txes with any method {ret:?}");
-        ret
     }
 
     fn generate_amount_fractions_without_correction(
@@ -131,6 +136,7 @@ impl Wallet {
         coinswap_amount: Amount,
         destinations: Vec<Address>,
         fee_rate: Amount,
+        manually_selected_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         // Unlock all unspent UTXOs
         self.rpc.unlock_unspent_all()?;
@@ -145,7 +151,11 @@ impl Wallet {
 
         // Here, we are gonna use a closure to ensure proper cleanup on error (since we need a rollback)
         let result = (|| {
-            let selected_utxo = self.coin_select(coinswap_amount, fee_rate.to_btc())?;
+            let selected_utxo = self.coin_select(
+                coinswap_amount,
+                fee_rate.to_btc(),
+                manually_selected_outpoints,
+            )?;
 
             let outpoints: Vec<OutPoint> = selected_utxo
                 .iter()
@@ -204,6 +214,7 @@ impl Wallet {
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: f64,
+        manually_selected_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
@@ -222,7 +233,8 @@ impl Wallet {
         let result = (|| {
             for (address, &output_value) in destinations.iter().zip(output_values.iter()) {
                 let remaining = Amount::from_sat(output_value);
-                let selected_utxo = self.coin_select(remaining, fee_rate)?;
+                let selected_utxo =
+                    self.coin_select(remaining, fee_rate, manually_selected_outpoints.clone())?;
 
                 let outpoints: Vec<OutPoint> = selected_utxo
                     .iter()
@@ -232,14 +244,6 @@ impl Wallet {
                 self.rpc.lock_unspent(&outpoints)?;
                 // Flow of Lock Step 4. Store the locked UTXOs for later unlocking in case of error
                 locked_utxos.extend(outpoints);
-
-                let total_input_amount =
-                    selected_utxo
-                        .iter()
-                        .fold(Amount::ZERO, |acc, (unspent, _)| {
-                            acc.checked_add(unspent.amount)
-                                .expect("Amount sum overflowed")
-                        });
 
                 // Here, prepare coins for spend_coins API, since this API would require owned data to avoid lifetime issues
                 let coins_to_spend = selected_utxo
@@ -257,24 +261,7 @@ impl Wallet {
                 // Creates and Signs Transactions via the spend_coins API
                 let funding_tx = self.spend_coins(&coins_to_spend, destination, fee_rate)?;
 
-                // The actual fee is the difference between the sum of output amounts from the total input amount
-                let actual_fee = total_input_amount
-                    - (funding_tx.output.iter().fold(Amount::ZERO, |a, txo| {
-                        a.checked_add(txo.value)
-                            .expect("output amount summation overflowed")
-                    }));
-
                 let tx_size = funding_tx.weight().to_vbytes_ceil();
-                // Note : The feerates are sats/vbyte
-                let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
-
-                log::info!(
-                    "Created Funding tx, txid: {} | Size: {} vB | Fee: {} sats | Feerate: {:.2} sat/vB",
-                    funding_tx.compute_txid(),
-                    tx_size,
-                    actual_fee.to_sat(),
-                    actual_feerate
-                );
 
                 // Record this transaction in our results.
                 let payment_pos = 0; // assuming the payment output position is 0
@@ -474,7 +461,7 @@ impl Wallet {
         let fee = Amount::from_sat(calculate_fee_sats(150));
         let remaining = coinswap_amount;
 
-        let selected_utxo = self.coin_select(remaining + fee, MIN_FEE_RATE)?;
+        let selected_utxo = self.coin_select(remaining + fee, MIN_FEE_RATE, None)?;
 
         let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
             acc.checked_add(unspet.amount)
@@ -548,8 +535,8 @@ impl Wallet {
         //this function will pick the top most valuable UTXOs and use them
         //to create funding transactions
 
-        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info()?;
-        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info()?;
+        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info();
+        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info();
         seed_coin_utxo.append(&mut swap_coin_utxo);
 
         let mut list_unspent_result = seed_coin_utxo;

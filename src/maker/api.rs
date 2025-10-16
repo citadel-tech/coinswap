@@ -13,8 +13,8 @@ use crate::{
         Hash160,
     },
     utill::{
-        check_tor_status, get_maker_dir, redeemscript_to_scriptpubkey, ConnectionType,
-        HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
+        check_tor_status, get_maker_dir, redeemscript_to_scriptpubkey, HEART_BEAT_INTERVAL,
+        REQUIRED_CONFIRMS,
     },
     wallet::{RPCConfig, WalletSwapCoin},
 };
@@ -34,6 +34,8 @@ use std::{
     thread::JoinHandle,
     time::{Duration, Instant},
 };
+
+use super::rpc::server::MakerRpc;
 
 use crate::{
     protocol::{
@@ -260,7 +262,6 @@ impl Maker {
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
         socks_port: Option<u16>,
-        connection_type: Option<ConnectionType>,
         behavior: MakerBehavior,
     ) -> Result<Self, MakerError> {
         // Get the provided data directory or the default data directory.
@@ -300,10 +301,9 @@ impl Maker {
             config.tor_auth_password = tor_auth_password;
         }
 
-        if matches!(connection_type, Some(ConnectionType::TOR)) {
+        if !cfg!(feature = "integration-test") {
             check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
-
         config.write_to_file(&data_dir.join("config.toml"))?;
 
         wallet.sync_and_save()?;
@@ -513,6 +513,21 @@ impl Maker {
             sigs.push(sig);
         }
         Ok(sigs)
+    }
+}
+
+impl MakerRpc for Maker {
+    fn wallet(&self) -> &RwLock<Wallet> {
+        &self.wallet
+    }
+    fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+    fn config(&self) -> &MakerConfig {
+        &self.config
+    }
+    fn shutdown(&self) -> &AtomicBool {
+        &self.shutdown
     }
 }
 

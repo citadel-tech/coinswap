@@ -7,10 +7,10 @@ cargo fmt --all -- --check
 
 # Check Clippy lints
 echo "Checking code quality with Clippy..."
-if ! cargo clippy --all-targets --all-features -- -D warnings; then
+if ! cargo clippy --all-features --lib --bins --tests -- -D warnings || ! cargo clippy --examples -- -D warnings; then
     echo "Clippy issues detected."
     echo "Please fix the Clippy issues before committing."
-    exit 1 
+    exit 1
 fi
 # Check if cargo-hack is installed
 if ! command -v cargo-hack >/dev/null 2>&1; then

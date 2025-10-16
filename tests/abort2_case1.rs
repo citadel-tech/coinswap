@@ -4,7 +4,7 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
-    utill::{ConnectionType, MIN_FEE_RATE},
+    utill::MIN_FEE_RATE,
 };
 use std::sync::Arc;
 mod test_framework;
@@ -39,11 +39,8 @@ fn test_abort_case_2_move_on_with_other_makers() {
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
-        makers_config_map.into(),
-        taker_behavior,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!(
         "🧪 Running Test: Maker 6102 closes before sending sender's sigs. Taker moves on with other Makers."
@@ -104,6 +101,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
+        manually_selected_outpoints: None,
     };
     taker.do_coinswap(swap_params).unwrap();
 
@@ -199,7 +197,7 @@ fn test_abort_case_2_move_on_with_other_makers() {
 
     let taker_wallet_mut = taker.get_wallet_mut();
 
-    let swap_coins = taker_wallet_mut.list_swept_incoming_swap_utxos().unwrap();
+    let swap_coins = taker_wallet_mut.list_swept_incoming_swap_utxos();
 
     let addr = taker_wallet_mut.get_next_internal_addresses(1).unwrap()[0].to_owned();
 

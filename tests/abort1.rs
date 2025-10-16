@@ -3,7 +3,6 @@ use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
-    utill::ConnectionType,
 };
 mod test_framework;
 use log::{info, warn};
@@ -36,11 +35,8 @@ fn test_stop_taker_after_setup() {
 
     // Initiate test framework, Makers.
     // Taker has a special behavior DropConnectionAfterFullSetup.
-    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
-        makers_config_map.into(),
-        taker_behavior,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🧪 Running Test: Taker cheats on everybody");
     let taker = &mut takers[0];
@@ -105,6 +101,7 @@ fn test_stop_taker_after_setup() {
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
+        manually_selected_outpoints: None,
     };
     taker.do_coinswap(swap_params).unwrap();
 

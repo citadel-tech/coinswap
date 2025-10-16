@@ -3,7 +3,7 @@
 //! This module defines the configuration options for the Taker module, controlling various aspects
 //! of the taker's behavior including network settings, connection preferences, and security settings.
 
-use crate::utill::{get_taker_dir, parse_field, parse_toml, ConnectionType};
+use crate::utill::{get_taker_dir, parse_field, parse_toml};
 use std::{io, io::Write, path::Path};
 
 /// Taker configuration
@@ -19,11 +19,6 @@ pub struct TakerConfig {
     pub tor_auth_password: String,
     /// Tracker address for maker discovery
     pub tracker_address: String,
-    /// Connection type (TOR or CLEARNET)
-    /// # Deprecated
-    /// This field will be removed in a future version as the application will be Tor-only.
-    /// Clearnet support is being phased out for security reasons.
-    pub connection_type: ConnectionType,
 }
 
 impl Default for TakerConfig {
@@ -34,11 +29,6 @@ impl Default for TakerConfig {
             tor_auth_password: "".to_string(),
             tracker_address: "lp75qh3del4qot6fmkqq4taqm33pidvk63lncvhlwsllbwrl2f4g4qqd.onion:8080"
                 .to_string(),
-            connection_type: if cfg!(feature = "integration-test") {
-                ConnectionType::CLEARNET
-            } else {
-                ConnectionType::TOR
-            },
         }
     }
 }
@@ -87,10 +77,6 @@ impl TakerConfig {
                 config_map.get("tracker_address"),
                 default_config.tracker_address,
             ),
-            connection_type: parse_field(
-                config_map.get("connection_type"),
-                default_config.connection_type,
-            ),
         })
     }
 
@@ -106,14 +92,10 @@ socks_port = {}
 # Authentication password for Tor control interface
 tor_auth_password = {}
 # Tracker address
-tracker_address = {}
-connection_type = {:?}",
-            self.control_port,
-            self.socks_port,
-            self.tor_auth_password,
-            self.tracker_address,
-            self.connection_type
+tracker_address = {}",
+            self.control_port, self.socks_port, self.tor_auth_password, self.tracker_address,
         );
+
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;
         file.write_all(toml_data.as_bytes())?;

@@ -2,7 +2,7 @@ use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
     maker::{start_maker_server, Maker, MakerBehavior, MakerError},
-    utill::{parse_proxy_auth, setup_maker_logger, ConnectionType},
+    utill::{parse_proxy_auth, setup_maker_logger},
     wallet::RPCConfig,
 };
 use std::{path::PathBuf, sync::Arc};
@@ -60,12 +60,6 @@ fn main() -> Result<(), MakerError> {
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
 
-    #[cfg(not(feature = "integration-test"))]
-    let connection_type = ConnectionType::TOR;
-
-    #[cfg(feature = "integration-test")]
-    let connection_type = ConnectionType::CLEARNET;
-
     let maker = Arc::new(Maker::init(
         args.data_directory,
         args.wallet_name,
@@ -75,7 +69,6 @@ fn main() -> Result<(), MakerError> {
         None,
         Some(args.tor_auth),
         None,
-        Some(connection_type),
         MakerBehavior::Normal,
     )?);
 

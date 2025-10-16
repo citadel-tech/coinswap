@@ -238,14 +238,14 @@ pub fn encrypt_struct<T: Serialize>(
     // Extract nonce and key for AES-GCM.
     let material_nonce = enc_material.nonce;
     let pbkdf2_salt = enc_material.pbkdf2_salt;
-    let nonce = aes_gcm::Nonce::from_slice(&material_nonce);
-    let key = Key::<Aes256Gcm>::from_slice(&enc_material.key);
+    let nonce = aes_gcm::Nonce::from(material_nonce);
+    let key = Key::<Aes256Gcm>::from(enc_material.key);
 
     // Create AES-GCM cipher instance.
-    let cipher = Aes256Gcm::new(key);
+    let cipher = Aes256Gcm::new(&key);
 
     // Encrypt the serialized wallet bytes.
-    let encrypted_payload = cipher.encrypt(nonce, packed_store.as_ref())?;
+    let encrypted_payload = cipher.encrypt(&nonce, packed_store.as_ref())?;
 
     // Package encrypted data with nonce for storage.
     Ok(EncryptedData {
@@ -271,13 +271,13 @@ pub fn decrypt_struct<T: DeserializeOwned>(
     let nonce_vec = encrypted_struct.nonce;
 
     // Reconstruct AES-GCM cipher from the provided key and stored nonce.
-    let key = Key::<Aes256Gcm>::from_slice(&enc_material.key);
-    let cipher = Aes256Gcm::new(key);
-    let nonce = aes_gcm::Nonce::from_slice(&nonce_vec);
+    let key = Key::<Aes256Gcm>::from(enc_material.key);
+    let cipher = Aes256Gcm::new(&key);
+    let nonce = aes_gcm::Nonce::from(nonce_vec);
 
     // Decrypt the inner CBOR bytes.
     let plaintext_cbor = cipher
-        .decrypt(nonce, encrypted_struct.encrypted_payload.as_ref())
+        .decrypt(&nonce, encrypted_struct.encrypted_payload.as_ref())
         .expect("Error decrypting wallet, wrong passphrase?");
 
     // Deserialize the inner CBOR into the original type

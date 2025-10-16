@@ -3,7 +3,6 @@ use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
-    utill::ConnectionType,
 };
 use std::sync::Arc;
 
@@ -32,11 +31,8 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
-        makers_config_map.into(),
-        taker_behavior,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🧪 Running Test: Maker closes connection at hash preimage handling");
 
@@ -101,6 +97,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
+        manually_selected_outpoints: None,
     };
     taker.do_coinswap(swap_params).unwrap();
 

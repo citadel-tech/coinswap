@@ -9,7 +9,6 @@ use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
-    utill::ConnectionType,
 };
 
 use log::{info, warn};
@@ -38,11 +37,8 @@ fn multi_taker_single_maker_swap() {
     ];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
-        makers_config_map.into(),
-        taker_behavior,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🧪 Running Test: Multiple Takers with Different Behaviors");
 
@@ -109,6 +105,7 @@ fn multi_taker_single_maker_swap() {
             let swap_params = SwapParams {
                 send_amount: Amount::from_sat(500000),
                 maker_count: 2,
+                manually_selected_outpoints: None,
             };
             s.spawn(move || {
                 taker.do_coinswap(swap_params).unwrap();

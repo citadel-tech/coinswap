@@ -3,7 +3,7 @@ use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
-    utill::{ConnectionType, MIN_FEE_RATE},
+    utill::MIN_FEE_RATE,
     wallet::Destination,
 };
 use std::sync::Arc;
@@ -29,11 +29,10 @@ fn test_standard_coinswap() {
     ];
 
     let taker_behavior = vec![TakerBehavior::Normal];
-    let connection_type = ConnectionType::CLEARNET;
 
     // Initiate test framework, Makers and a Taker with default behavior.
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map.into(), taker_behavior, connection_type);
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🧪 Running Test: Standard Coinswap Procedure");
     let bitcoind = &test_framework.bitcoind;
@@ -90,6 +89,7 @@ fn test_standard_coinswap() {
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
+        manually_selected_outpoints: None,
     };
     taker.do_coinswap(swap_params).unwrap();
 
@@ -127,15 +127,6 @@ fn test_standard_coinswap() {
     // | **Maker16102** | 500,000 - 463,500 - 3,000 = +33,500                               |
     // | **Maker6102**  | 465,384 - 438,642 - 3,000 = +21,858                               |
 
-    let taker_wallet = taker.get_wallet_mut();
-    taker_wallet.sync_and_save().unwrap();
-
-    // Synchronize each maker's wallet.
-    for maker in makers.iter() {
-        let mut wallet = maker.get_wallet().write().unwrap();
-        wallet.sync_and_save().unwrap();
-    }
-
     info!("📊 Verifying swap results");
     //  After Swap Asserts
     verify_swap_results(
@@ -151,7 +142,7 @@ fn test_standard_coinswap() {
     info!("💸 Checking spend from swapcoins");
 
     let taker_wallet_mut = taker.get_wallet_mut();
-    let swap_coins = taker_wallet_mut.list_swept_incoming_swap_utxos().unwrap();
+    let swap_coins = taker_wallet_mut.list_swept_incoming_swap_utxos();
 
     let addr = taker_wallet_mut.get_next_internal_addresses(1).unwrap()[0].to_owned();
 

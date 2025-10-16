@@ -1,10 +1,7 @@
 #![cfg(feature = "integration-test")]
 mod test_framework;
 use bitcoin::{Address, Amount};
-use coinswap::{
-    taker::TakerBehavior,
-    utill::{ConnectionType, MIN_FEE_RATE},
-};
+use coinswap::{taker::TakerBehavior, utill::MIN_FEE_RATE};
 use test_framework::*;
 
 const UTXO_SETS: &[&[u64]] = &[
@@ -49,20 +46,15 @@ fn test_create_funding_txn_with_varied_distributions() {
     );
 
     // Initialize the test framework with a single taker with Normal behavior
-    let (test_framework, mut takers, _, _) = TestFramework::init(
-        vec![],
-        vec![TakerBehavior::Normal],
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, mut takers, _, _) =
+        TestFramework::init(vec![], vec![TakerBehavior::Normal]);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = &mut takers[0];
 
     // Fund the taker with the UTXO sets
     for individual_utxo in UTXO_SETS.iter().flat_map(|x| x.iter()) {
-        let taker_address = taker.get_wallet_mut().get_next_external_address().unwrap();
-        send_to_address(bitcoind, &taker_address, Amount::from_sat(*individual_utxo));
-        generate_blocks(bitcoind, 1);
+        fund_and_verify_taker(taker, bitcoind, 1, Amount::from_sat(*individual_utxo));
     }
 
     // Generate 5 random addresses from the taker's wallet
@@ -71,8 +63,6 @@ fn test_create_funding_txn_with_varied_distributions() {
         let addr = taker.get_wallet_mut().get_next_external_address().unwrap();
         destinations.push(addr);
     }
-
-    taker.get_wallet_mut().sync_no_fail();
 
     for (i, (target_amount, expected_inputs, expected_outputs)) in TEST_CASES.iter().enumerate() {
         let target = Amount::from_sat(*target_amount);
@@ -85,6 +75,7 @@ fn test_create_funding_txn_with_varied_distributions() {
                 target,
                 destinations.clone(),
                 Amount::from_sat(MIN_FEE_RATE as u64),
+                None,
             )
             .unwrap();
 
@@ -96,7 +87,6 @@ fn test_create_funding_txn_with_varied_distributions() {
                 taker
                     .get_wallet()
                     .list_all_utxo_spend_info()
-                    .unwrap()
                     .iter()
                     .find(|(utxo, _)| {
                         txin.previous_output.txid == utxo.txid

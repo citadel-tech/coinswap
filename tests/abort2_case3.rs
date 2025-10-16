@@ -3,7 +3,6 @@ use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::SwapParams,
-    utill::ConnectionType,
 };
 use std::sync::Arc;
 mod test_framework;
@@ -33,11 +32,8 @@ fn maker_drops_after_sending_senders_sigs() {
     let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
-        makers_config_map.into(),
-        taker_behavior,
-        ConnectionType::CLEARNET,
-    );
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!(
         "🧪 Running Test: Maker {naughty} Closes after sending sender's signature. This is really bad. Recovery is the only option."
@@ -104,6 +100,7 @@ fn maker_drops_after_sending_senders_sigs() {
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000),
         maker_count: 2,
+        manually_selected_outpoints: None,
     };
     taker.do_coinswap(swap_params).unwrap();
 
