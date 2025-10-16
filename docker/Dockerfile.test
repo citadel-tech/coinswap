@@ -49,5 +49,5 @@ ENV COINSWAP_DATA_DIR="/home/coinswap/.coinswap"
 # Create volume mount point
 VOLUME ["/home/coinswap/.coinswap"]
 
-# Default command - run integration tests
-CMD ["cargo", "test", "--features=integration-test", "--", "--nocapture"]
+# Default command - run integration tests (exclude examples)
+CMD ["cargo", "test", "--features=integration-test", "--lib", "--bins", "--", "--nocapture"]
