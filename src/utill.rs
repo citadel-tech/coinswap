@@ -854,6 +854,10 @@ where
 pub fn interactive_select(
     mut choices: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
 ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+    if choices.is_empty() {
+        return Err(WalletError::General("No UTXOs available".to_string()));
+    }
+
     choices.sort_by_key(|(_, spend_info)| match spend_info {
         UTXOSpendInfo::SeedCoin { .. } => 0,
         UTXOSpendInfo::SweptCoin { .. } => 1,
