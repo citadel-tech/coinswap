@@ -2,6 +2,7 @@
 //!
 //! This module includes most of the fundamental functions needed for Taproot and MuSig2.
 
+use crate::protocol::error2::TaprootProtocolError;
 use secp256k1::{
     musig::{
         new_nonce_pair, AggregatedNonce, AggregatedSignature, KeyAggCache, PartialSignature,
@@ -43,14 +44,12 @@ pub fn generate_partial_signature(
     keypair: Keypair,
     tap_tweak: Scalar,
     pubkeys: &[&PublicKey],
-) -> PartialSignature {
+) -> Result<PartialSignature, TaprootProtocolError> {
     let secp = Secp256k1::new();
     let mut musig_key_agg_cache = KeyAggCache::new(&secp, pubkeys);
-    musig_key_agg_cache
-        .pubkey_xonly_tweak_add(&secp, &tap_tweak)
-        .unwrap();
+    musig_key_agg_cache.pubkey_xonly_tweak_add(&secp, &tap_tweak)?;
     let session = Session::new(&secp, &musig_key_agg_cache, *agg_nonce, message);
-    session.partial_sign(&secp, sec_nonce, &keypair, &musig_key_agg_cache)
+    Ok(session.partial_sign(&secp, sec_nonce, &keypair, &musig_key_agg_cache))
 }
 
 /// Aggregates the partial signatures
@@ -60,14 +59,12 @@ pub fn aggregate_partial_signatures(
     tap_tweak: Scalar,
     partial_sigs: &[&PartialSignature],
     pubkeys: &[&PublicKey],
-) -> AggregatedSignature {
+) -> Result<AggregatedSignature, TaprootProtocolError> {
     let secp = Secp256k1::new();
     let mut musig_key_agg_cache = KeyAggCache::new(&secp, pubkeys);
-    musig_key_agg_cache
-        .pubkey_xonly_tweak_add(&secp, &tap_tweak)
-        .unwrap();
+    musig_key_agg_cache.pubkey_xonly_tweak_add(&secp, &tap_tweak)?;
     let session = Session::new(&secp, &musig_key_agg_cache, agg_nonce, message);
-    session.partial_sig_agg(partial_sigs)
+    Ok(session.partial_sig_agg(partial_sigs))
 }
 #[cfg(test)]
 mod tests {

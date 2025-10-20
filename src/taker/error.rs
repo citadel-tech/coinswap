@@ -1,6 +1,9 @@
 //! All Taker-related errors.
 use crate::{
-    error::NetError, protocol::error::ProtocolError, utill::TorError, wallet::WalletError,
+    error::NetError,
+    protocol::{error::ProtocolError, error2::TaprootProtocolError},
+    utill::TorError,
+    wallet::WalletError,
 };
 use bitcoin::address::ParseError;
 
@@ -77,6 +80,11 @@ impl From<NetError> for TakerError {
 
 impl From<ProtocolError> for TakerError {
     fn from(value: ProtocolError) -> Self {
+        Self::Wallet(value.into())
+    }
+}
+impl From<TaprootProtocolError> for TakerError {
+    fn from(value: TaprootProtocolError) -> Self {
         Self::Wallet(value.into())
     }
 }

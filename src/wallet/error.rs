@@ -1,6 +1,6 @@
 //! All Wallet-related errors.
 
-use crate::protocol::error::ProtocolError;
+use crate::protocol::{error::ProtocolError, error2::TaprootProtocolError};
 
 use super::fidelity::FidelityError;
 
@@ -47,7 +47,8 @@ pub enum WalletError {
 
     /// Represents an error related to protocol violations or unexpected protocol behavior.
     Protocol(ProtocolError),
-
+    /// Represents a taproot protocol-related error.
+    TaprootProtocol(TaprootProtocolError),
     /// Represents an error related to fidelity operations.
     ///
     /// Typically specific to application-defined fidelity processes.
@@ -112,6 +113,12 @@ impl From<bip39::Error> for WalletError {
 impl From<ProtocolError> for WalletError {
     fn from(value: ProtocolError) -> Self {
         Self::Protocol(value)
+    }
+}
+
+impl From<TaprootProtocolError> for WalletError {
+    fn from(value: TaprootProtocolError) -> Self {
+        Self::TaprootProtocol(value)
     }
 }
 

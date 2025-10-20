@@ -5,7 +5,10 @@ use std::sync::{MutexGuard, PoisonError, RwLockReadGuard, RwLockWriteGuard};
 use bitcoin::secp256k1;
 
 use crate::{
-    error::NetError, protocol::error::ProtocolError, utill::TorError, wallet::WalletError,
+    error::NetError,
+    protocol::{error::ProtocolError, error2::TaprootProtocolError},
+    utill::TorError,
+    wallet::WalletError,
 };
 
 use super::MakerBehavior;
@@ -40,6 +43,8 @@ pub enum MakerError {
     SpecialBehaviour(MakerBehavior),
     /// Represents a protocol-related error.
     Protocol(ProtocolError),
+    /// Represents a taproot protocol-related error.
+    TaprootProtocol(TaprootProtocolError),
     /// Tor Error.
     TorError(TorError),
 }
@@ -89,6 +94,12 @@ impl From<secp256k1::Error> for MakerError {
 impl From<ProtocolError> for MakerError {
     fn from(value: ProtocolError) -> Self {
         Self::Protocol(value)
+    }
+}
+
+impl From<TaprootProtocolError> for MakerError {
+    fn from(value: TaprootProtocolError) -> Self {
+        Self::TaprootProtocol(value)
     }
 }
 
