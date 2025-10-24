@@ -6,7 +6,7 @@ use coinswap::{
     utill::{parse_proxy_auth, setup_taker_logger, MIN_FEE_RATE, UTXO},
     wallet::{Destination, RPCConfig, Wallet},
 };
-use log::{error, LevelFilter};
+use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};
 
@@ -243,6 +243,7 @@ fn main() -> Result<(), TakerError> {
                         Some(
                             coinswap::utill::interactive_select(
                                 taker.get_wallet().list_all_utxo_spend_info(),
+                                None,
                             )?
                             .iter()
                             .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
@@ -298,25 +299,12 @@ fn main() -> Result<(), TakerError> {
                 }
                 Commands::Coinswap { makers, amount } => {
                     let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
-                        let balances = taker.get_wallet().get_balances()?;
                         let target_amount = Amount::from_sat(*amount);
-
-                        if balances.spendable < target_amount {
-                            error!(
-                                "Insufficient balance for coinswap: current balance = {} sats, required amount = {} sats",
-                                balances.spendable.to_sat(),
-                                target_amount.to_sat()
-                            );
-                            return Err(TakerError::General(format!(
-                                "Insufficient balance: {} sats available, {} sats required",
-                                balances.spendable.to_sat(),
-                                target_amount.to_sat()
-                            )));
-                        }
 
                         Some(
                             coinswap::utill::interactive_select(
                                 taker.get_wallet().list_all_utxo_spend_info(),
+                                Some(target_amount),
                             )?
                             .iter()
                             .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
