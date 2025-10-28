@@ -34,6 +34,7 @@ aes-gcm = "0.10.3"
 sha2 = "0.10.9"
 rust-coinselect = "0.1.6"
 crossterm = "0.29.0"
+config-builder= {path= "./config-builder"}
 
 [dev-dependencies]
 tracker = { git = "https://github.com/citadel-tech/tracker", features = ["integration-test"] }

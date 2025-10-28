@@ -279,36 +279,35 @@ impl Maker {
         let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config)?;
 
         // If the config file doesn't exist, the default config will be loaded.
-        let mut config = MakerConfig::new(Some(&data_dir.join("config.toml")))?;
+        let config_path = data_dir.join("config.toml");
+        // Build configuration
+        let mut builder = MakerConfig::builder().from_file(Some(&config_path))?;
 
         if let Some(port) = network_port {
-            config.network_port = port;
+            builder = builder.network_port(port);
         }
-
-        if let Some(rpc_port) = rpc_port {
-            config.rpc_port = rpc_port;
+        if let Some(port) = rpc_port {
+            builder = builder.rpc_port(port);
         }
-
-        if let Some(socks_port) = socks_port {
-            config.socks_port = socks_port;
+        if let Some(port) = socks_port {
+            builder = builder.socks_port(port);
         }
-
-        if let Some(control_port) = control_port {
-            config.control_port = control_port;
+        if let Some(port) = control_port {
+            builder = builder.control_port(port);
         }
-
-        if let Some(tor_auth_password) = tor_auth_password {
-            config.tor_auth_password = tor_auth_password;
+        if let Some(password) = tor_auth_password {
+            builder = builder.tor_auth_password(password);
         }
+        let config = builder.build();
 
         if !cfg!(feature = "integration-test") {
-            check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
+            check_tor_status(config.control_port(), config.tor_auth_password())?;
         }
-        config.write_to_file(&data_dir.join("config.toml"))?;
+        config.write_to_file(&config_path)?;
 
         wallet.sync_and_save()?;
 
-        let network_port = config.network_port;
+        let network_port = config.network_port();
 
         Ok(Self {
             behavior,
@@ -570,7 +569,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                         // Something is broadcasted. Report, Recover and Abort.
                         log::warn!(
                             "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
-                            maker.config.network_port,
+                            maker.config.network_port(),
                             txid
                         );
 
@@ -580,7 +579,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                         let maker_clone = maker.clone();
                         log::info!(
                             "[{}] Spawning recovery thread after seeing contracts in mempool",
-                            maker.config.network_port
+                            maker.config.network_port()
                         );
                         let handle = std::thread::Builder::new()
                             .name("Swap recovery thread".to_string())
@@ -651,7 +650,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                 if no_response_since > IDLE_CONNECTION_TIMEOUT {
                     log::error!(
                         "[{}] Potential Dropped Connection from taker. No response since : {} secs. Recovering from swap",
-                        maker.config.network_port,
+                        maker.config.network_port(),
                         no_response_since.as_secs()
                     );
                     bad_ip.push(ip.clone());
@@ -659,7 +658,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                     let maker_clone = maker.clone();
                     log::info!(
                         "[{}] Spawning recovery thread after Taker dropped",
-                        maker.config.network_port
+                        maker.config.network_port()
                     );
                     let handle = std::thread::Builder::new()
                         .name("Swap Recovery Thread".to_string())
@@ -709,7 +708,7 @@ pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
 
             log::info!(
                 "[{}]-> {} incoming contracts detected | {} hashlock txs broadcasted.",
-                maker.config.network_port,
+                maker.config.network_port(),
                 incomings.len(),
                 hashlocked_broadcasted.len()
             );
@@ -717,7 +716,7 @@ pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
             if hashlocked_broadcasted.len() == incomings.len() {
                 log::info!(
                     "[{}] All incomings transactions claimed via hashlock. Recovery loop exiting.",
-                    maker.config.network_port
+                    maker.config.network_port()
                 );
                 break;
             }
@@ -744,7 +743,7 @@ pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
 
             log::info!(
                 "[{}] -> {} outgoing contracts detected | {} timelock txs broadcasted.",
-                maker.config.network_port,
+                maker.config.network_port(),
                 outgoings.len(),
                 timelock_broadcasted.len()
             );
@@ -755,7 +754,7 @@ pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
                 maker.shutdown.store(true, Relaxed);
 
                 log::info!(
-                    "[{}] All outgoing transactions claimed back via timelock. Recovery loop exiting.", maker.config.network_port
+                    "[{}] All outgoing transactions claimed back via timelock. Recovery loop exiting.", maker.config.network_port()
                 );
                 break;
             }

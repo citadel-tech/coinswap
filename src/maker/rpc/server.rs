@@ -116,11 +116,11 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
             } else {
                 let hostname = get_tor_hostname(
                     maker.data_dir(),
-                    maker.config().control_port,
-                    maker.config().network_port,
-                    &maker.config().tor_auth_password,
+                    maker.config().control_port(),
+                    maker.config().network_port(),
+                    maker.config().tor_auth_password(),
                 )?;
-                let address = format!("{}:{}", hostname, maker.config().network_port);
+                let address = format!("{}:{}", hostname, maker.config().network_port());
                 RpcMsgResp::GetTorAddressResp(address)
             }
         }
@@ -154,12 +154,12 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
 }
 
 pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerError> {
-    let rpc_port = maker.config().rpc_port;
+    let rpc_port = maker.config().rpc_port();
     let rpc_socket = format!("127.0.0.1:{rpc_port}");
     let listener = Arc::new(TcpListener::bind(&rpc_socket)?);
     log::info!(
         "[{}] RPC socket binding successful at {}",
-        maker.config().network_port,
+        maker.config().network_port(),
         rpc_socket
     );
 

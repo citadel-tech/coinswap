@@ -428,7 +428,7 @@ fn download_maker_offer_attempt_once(
         TcpStream::connect(&maker_addr)?
     } else {
         Socks5Stream::connect(
-            format!("127.0.0.1:{}", config.socks_port).as_str(),
+            format!("127.0.0.1:{}", config.socks_port()).as_str(),
             maker_addr.as_ref(),
         )?
         .into_inner()

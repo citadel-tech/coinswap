@@ -214,21 +214,22 @@ impl Taker {
         let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config)?;
 
         // If config file doesn't exist, default config will be loaded.
-        let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
+        let config_path = &data_dir.join("config.toml");
+        let mut builder = TakerConfig::builder().from_file(Some(config_path))?;
 
         if let Some(control_port) = control_port {
-            config.control_port = control_port;
+            builder = builder.control_port(control_port);
         }
 
         if let Some(tor_auth_password) = tor_auth_password {
-            config.tor_auth_password = tor_auth_password;
+            builder = builder.tor_auth_password(tor_auth_password);
         }
-
+        let config = builder.build();
         if !cfg!(feature = "integration-test") {
-            check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
+            check_tor_status(config.control_port(), config.tor_auth_password())?;
         }
 
-        config.write_to_file(&data_dir.join("config.toml"))?;
+        config.write_to_file(config_path)?;
 
         // Load offerbook. If it doesn't exist, creates fresh file.
         let offerbook_path = data_dir.join("offerbook.json");
@@ -1161,7 +1162,7 @@ impl Taker {
             TcpStream::connect(address)?
         } else {
             Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+                format!("127.0.0.1:{}", self.config.socks_port()).as_str(),
                 address.as_str(),
             )?
             .into_inner()
@@ -1625,7 +1626,7 @@ impl Taker {
             TcpStream::connect(maker_addr_str.clone())?
         } else {
             Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+                format!("127.0.0.1:{}", self.config.socks_port()).as_str(),
                 &*maker_addr_str,
             )?
             .into_inner()
@@ -1714,7 +1715,7 @@ impl Taker {
             TcpStream::connect(maker_addr_str.clone())?
         } else {
             Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+                format!("127.0.0.1:{}", self.config.socks_port()).as_str(),
                 &*maker_addr_str,
             )?
             .into_inner()
@@ -1892,7 +1893,7 @@ impl Taker {
             TcpStream::connect(maker_addr_str.clone())?
         } else {
             Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+                format!("127.0.0.1:{}", self.config.socks_port()).as_str(),
                 &*maker_addr_str,
             )?
             .into_inner()
@@ -2141,11 +2142,11 @@ impl Taker {
         let tracker_addr = if cfg!(feature = "integration-test") {
             format!("127.0.0.1:{}", 8080)
         } else {
-            self.config.tracker_address.clone()
+            self.config.tracker_address().to_string()
         };
 
         #[cfg(not(feature = "integration-test"))]
-        let socks_port = Some(self.config.socks_port);
+        let socks_port = Some(self.config.socks_port());
 
         #[cfg(feature = "integration-test")]
         let socks_port = None;
@@ -2224,7 +2225,7 @@ impl Taker {
             TcpStream::connect(address.clone())?
         } else {
             Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
+                format!("127.0.0.1:{}", self.config.socks_port()).as_str(),
                 address.as_str(),
             )?
             .into_inner()

@@ -63,7 +63,7 @@ fn decode_unified_message_taproot(data: &[u8]) -> Result<MessageToMakerTaproot, 
 /// Depending upon ConnectionType and test/prod environment, different maker address and Tracker address are returned.
 /// Return the Maker address and the Tracker address.
 fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<(String, String), MakerError> {
-    let maker_port = maker.config.network_port;
+    let maker_port = maker.config.network_port();
     let (maker_address, tracker_address) = if cfg!(feature = "integration-test") {
         // Always clearnet in integration tests
         let maker_address = format!("127.0.0.1:{maker_port}");
@@ -73,9 +73,9 @@ fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<(String, String), Make
         // Always Tor in production
         let maker_hostname = get_tor_hostname(
             maker.data_dir(),
-            maker.config.control_port,
+            maker.config.control_port(),
             maker_port,
-            &maker.config.tor_auth_password,
+            maker.config.tor_auth_password(),
         )?;
         let maker_address = format!("{maker_hostname}:{maker_port}");
         // In production, get tracker address dynamically from tracker server
@@ -112,7 +112,7 @@ fn manage_fidelity_bonds_and_update_tracker_taproot(
     // Create or get existing fidelity proof for taproot maker
     let _ = setup_fidelity_bond_taproot(maker, maker_addr)?;
 
-    let network_port = maker.config.network_port;
+    let network_port = maker.config.network_port();
     log::info!("[{network_port}] Taproot maker initialized - Address: {maker_addr}, Tracker: {tracker_addr}");
     log::info!("[{network_port}] Connection ended.");
 
@@ -156,7 +156,7 @@ fn setup_fidelity_bond_taproot(
 
         log::info!(
             "[{}] Using existing fidelity bond at outpoint {} | index {} | Amount {:?} sats | Remaining Timelock for expiry : {:?} Blocks | Current Bond Value : {:?} sats",
-            maker.config.network_port,
+            maker.config.network_port(),
             proof_message.bond.outpoint,
             i,
             bond.amount.to_sat(),
@@ -170,14 +170,14 @@ fn setup_fidelity_bond_taproot(
     // No active Fidelity Bonds found. Creating one.
     log::info!(
         "[{}] No active Fidelity Bonds found. Creating one.",
-        maker.config.network_port
+        maker.config.network_port()
     );
 
-    let amount = Amount::from_sat(maker.config.fidelity_amount);
+    let amount = Amount::from_sat(maker.config.fidelity_amount());
 
     log::info!(
         "[{}] Fidelity value chosen = {:?} sats",
-        maker.config.network_port,
+        maker.config.network_port(),
         amount.to_sat()
     );
 
@@ -192,13 +192,13 @@ fn setup_fidelity_bond_taproot(
     let locktime = if cfg!(feature = "integration-test") {
         LockTime::from_height(current_height + 950).map_err(WalletError::Locktime)?
     } else {
-        LockTime::from_height(maker.config.fidelity_timelock + current_height)
+        LockTime::from_height(maker.config.fidelity_timelock() + current_height)
             .map_err(WalletError::Locktime)?
     };
 
     log::info!(
         "[{}] Fidelity timelock {:?} blocks",
-        maker.config.network_port,
+        maker.config.network_port(),
         locktime.to_consensus_u32() - current_height
     );
 
@@ -228,23 +228,23 @@ fn setup_fidelity_bond_taproot(
                 {
                     log::warn!(
                         "[{}] Insufficient fund to create fidelity bond.",
-                        maker.config.network_port
+                        maker.config.network_port()
                     );
                     let amount = required - available;
                     let addr = maker.wallet().write()?.get_next_external_address()?;
 
-                    log::info!("[{}] Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", maker.config.network_port, Amount::from_sat(amount).to_btc(), addr);
+                    log::info!("[{}] Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", maker.config.network_port(), Amount::from_sat(amount).to_btc(), addr);
 
                     let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60);
                     log::info!(
                         "[{}] Next sync in {total_sleep:?} secs",
-                        maker.config.network_port
+                        maker.config.network_port()
                     );
                     thread::sleep(Duration::from_secs(total_sleep));
                 } else {
                     log::error!(
                         "[{}] Fidelity Bond Creation failed: {:?}. Shutting Down Maker server",
-                        maker.config.network_port,
+                        maker.config.network_port(),
                         e
                     );
                     return Err(e.into());
@@ -253,7 +253,7 @@ fn setup_fidelity_bond_taproot(
             Ok(i) => {
                 log::info!(
                     "[{}] Successfully created fidelity bond",
-                    maker.config.network_port
+                    maker.config.network_port()
                 );
                 let proof_message = maker
                     .wallet()
@@ -294,12 +294,12 @@ fn check_swap_liquidity_taproot(maker: &Maker) -> Result<(), MakerError> {
     if swap_balance == Amount::ZERO {
         log::warn!(
             "[{}] No spendable balance available for taproot swaps",
-            maker.config.network_port
+            maker.config.network_port()
         );
     } else {
         log::info!(
             "[{}] Taproot swap liquidity: {} sats, {} ongoing swaps",
-            maker.config.network_port,
+            maker.config.network_port(),
             swap_balance.to_sat(),
             ongoing_swaps_count
         );
@@ -315,14 +315,14 @@ fn check_connection_with_core_taproot(maker: &Maker) -> Result<(), MakerError> {
         Ok(block_count) => {
             log::debug!(
                 "[{}] Bitcoin Core connection OK, block height: {}",
-                maker.config.network_port,
+                maker.config.network_port(),
                 block_count
             );
         }
         Err(e) => {
             log::error!(
                 "[{}] Bitcoin Core connection failed: {}",
-                maker.config.network_port,
+                maker.config.network_port(),
                 e
             );
             return Err(WalletError::Rpc(e).into());
@@ -341,7 +341,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
 
     log::info!(
         "[{}] New taproot client connected: {} (port {})",
-        maker.config.network_port,
+        maker.config.network_port(),
         ip,
         peer_addr.port()
     );
@@ -352,7 +352,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         let (state, _) = ongoing_swaps.entry(ip.clone()).or_insert_with(|| {
             log::info!(
                 "[{}] Creating new connection state for {}",
-                maker.config.network_port,
+                maker.config.network_port(),
                 ip
             );
             (ConnectionState::default(), Instant::now())
@@ -360,7 +360,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
 
         log::info!(
             "[{}] Retrieved connection state for {}: swap_amount={}",
-            maker.config.network_port,
+            maker.config.network_port(),
             ip,
             state.swap_amount
         );
@@ -373,7 +373,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         if maker.shutdown.load(Relaxed) {
             log::info!(
                 "[{}] Shutdown signal received, closing connection",
-                maker.config.network_port
+                maker.config.network_port()
             );
             break;
         }
@@ -384,13 +384,17 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
             Err(e) => {
                 if let NetError::IO(io_err) = &e {
                     if io_err.kind() == ErrorKind::UnexpectedEof {
-                        log::info!("[{}] Client {} disconnected", maker.config.network_port, ip);
+                        log::info!(
+                            "[{}] Client {} disconnected",
+                            maker.config.network_port(),
+                            ip
+                        );
                         break;
                     }
                 }
                 log::error!(
                     "[{}] Failed to read message from {}: {:?}",
-                    maker.config.network_port,
+                    maker.config.network_port(),
                     ip,
                     e
                 );
@@ -401,7 +405,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         // Deserialize the message using unified decoding (supports both taker and tracker messages)
         log::debug!(
             "[{}] Received {} bytes from {}",
-            maker.config.network_port,
+            maker.config.network_port(),
             message_bytes.len(),
             ip
         );
@@ -409,7 +413,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
             Ok(msg) => {
                 log::debug!(
                     "[{}] Successfully decoded message: {:?}",
-                    maker.config.network_port,
+                    maker.config.network_port(),
                     msg
                 );
                 msg
@@ -417,7 +421,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
             Err(e) => {
                 log::error!(
                     "[{}] Failed to deserialize message from {}: {:?}",
-                    maker.config.network_port,
+                    maker.config.network_port(),
                     ip,
                     e
                 );
@@ -438,7 +442,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                                 .insert(ip.clone(), (connection_state.clone(), Instant::now()));
                             log::debug!(
                                 "[{}] Saved connection state for {} after successful message handling",
-                                maker.config.network_port,
+                                maker.config.network_port(),
                                 ip
                             );
                         }
@@ -447,7 +451,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                     Err(e) => {
                         log::error!(
                             "[{}] Error handling message from {}: {:?}",
-                            maker.config.network_port,
+                            maker.config.network_port(),
                             ip,
                             e
                         );
@@ -464,7 +468,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                             MakerError::General(msg) if msg.contains("behavior") => {
                                 log::info!(
                                     "[{}] Behavior-triggered disconnection",
-                                    maker.config.network_port
+                                    maker.config.network_port()
                                 );
                             }
                             _ => {}
@@ -479,7 +483,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                     TrackerServerToClient::Ping { address, port } => {
                         log::info!(
                             "[{}] Received a ping from tracker",
-                            maker.config.network_port
+                            maker.config.network_port()
                         );
                         if let Ok(mut guard) = maker.tracker.write() {
                             if guard.is_none() {
@@ -492,12 +496,12 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                         } else {
                             get_tor_hostname(
                                 maker.data_dir(),
-                                maker.config.control_port,
-                                maker.config.network_port,
-                                &maker.config.tor_auth_password,
+                                maker.config.control_port(),
+                                maker.config.network_port(),
+                                maker.config.tor_auth_password(),
                             )?
                         };
-                        let address = format!("{}:{}", hostname, maker.config.network_port);
+                        let address = format!("{}:{}", hostname, maker.config.network_port());
                         let response = TrackerClientToServer::Pong { address };
                         if let Err(e) = send_message(stream, &response) {
                             log::error!(
@@ -507,7 +511,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                         }
                         log::info!(
                             "[{}] Sent Pong response to tracker",
-                            maker.config.network_port
+                            maker.config.network_port()
                         );
                         // No MakerToTakerMessage response for tracker messages
                         None
@@ -515,7 +519,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                     _ => {
                         log::warn!(
                             "[{}] Unhandled tracker message: {:?}",
-                            maker.config.network_port,
+                            maker.config.network_port(),
                             tracker_msg
                         );
                         None
@@ -526,12 +530,12 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
 
         // Send response if we have one (only applies to taker messages)
         if let Some(response_msg) = response {
-            log::info!("[{}] Sending response", maker.config.network_port,);
+            log::info!("[{}] Sending response", maker.config.network_port(),);
 
             if let Err(e) = send_message(stream, &response_msg) {
                 log::error!(
                     "[{}] Failed to send response to {}: {:?}",
-                    maker.config.network_port,
+                    maker.config.network_port(),
                     ip,
                     e
                 );
@@ -540,7 +544,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
 
             log::info!(
                 "[{}] Successfully sent response to {}",
-                maker.config.network_port,
+                maker.config.network_port(),
                 ip
             );
 
@@ -553,7 +557,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                     // Keep connection open for SendersContract
                     log::debug!(
                         "[{}] Keeping connection open after AckResponse for SendersContract",
-                        maker.config.network_port
+                        maker.config.network_port()
                     );
                 }
                 MakerToTakerMessage::SenderContractFromMaker(_) => {
@@ -574,7 +578,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
 
     log::info!(
         "[{}] Client {} session ended",
-        maker.config.network_port,
+        maker.config.network_port(),
         ip
     );
     Ok(())
@@ -584,7 +588,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
 pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!(
         "[{}] Starting taproot coinswap maker server",
-        maker.config.network_port
+        maker.config.network_port()
     );
 
     // Set up network and Tracker registration
@@ -592,7 +596,7 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     log::info!(
         "[{}] Taproot maker initialized - Address: {}, Tracker: {}",
-        maker.config.network_port,
+        maker.config.network_port(),
         maker_address,
         tracker_address
     );
@@ -672,15 +676,15 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
     maker.is_setup_complete.store(true, Relaxed);
     log::info!(
         "[{}] Taproot maker setup completed",
-        maker.config.network_port
+        maker.config.network_port()
     );
 
     // Start listening for P2P connections
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.network_port))?;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.network_port()))?;
     log::info!(
         "[{}] Taproot maker server listening on port {}",
-        maker.config.network_port,
-        maker.config.network_port
+        maker.config.network_port(),
+        maker.config.network_port()
     );
 
     // Set listener to non-blocking mode to allow periodic shutdown checks
@@ -692,7 +696,7 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
             Ok((mut stream, addr)) => {
                 log::info!(
                     "[{}] New client connection from: {}",
-                    maker.config.network_port,
+                    maker.config.network_port(),
                     addr
                 );
                 let maker_clone = maker.clone();
@@ -711,7 +715,7 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
                 } else {
                     log::error!(
                         "[{}] Failed to accept connection: {:?}",
-                        maker.config.network_port,
+                        maker.config.network_port(),
                         e
                     );
                 }
@@ -724,7 +728,7 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     log::info!(
         "[{}] Taproot maker server shutting down",
-        maker.config.network_port
+        maker.config.network_port()
     );
 
     // Join all threads
@@ -732,7 +736,7 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     log::info!(
         "[{}] Taproot maker server stopped",
-        maker.config.network_port
+        maker.config.network_port()
     );
     Ok(())
 }
