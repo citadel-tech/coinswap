@@ -524,12 +524,27 @@ impl Taker {
         let address = maker_addr.to_string();
         let mut socket = connect_to_maker(&address, &self.config, TCP_TIMEOUT_SECONDS)?;
 
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[MSG_EXCHANGE] Direction: sending | Address: {} | MsgType: {:?}",
+            maker_addr,
+            msg
+        );
+
         send_message_with_prefix(&mut socket, &msg)?;
         log::info!("===> {msg} | {maker_addr}");
 
         // Read response
         let response_bytes = read_message(&mut socket)?;
         let response: MakerToTakerMessage = serde_cbor::from_slice(&response_bytes)?;
+
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[MSG_EXCHANGE] Direction: received | Address: {} | MsgType: {:?}",
+            maker_addr,
+            response
+        );
+
         log::info!("<=== {} | {maker_addr}", response);
 
         Ok(response)
@@ -545,6 +560,13 @@ impl Taker {
         log::debug!("Connecting to maker at {}", address);
         let mut socket = connect_to_maker(&address, &self.config, TCP_TIMEOUT_SECONDS)?;
         log::debug!("Successfully connected to maker at {}", address);
+
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[MSG_EXCHANGE] Direction: sending (no response) | Address: {} | MsgType: {:?}",
+            maker_addr,
+            msg
+        );
 
         log::debug!("Sending message to {}", address);
         send_message_with_prefix(&mut socket, &msg)?;

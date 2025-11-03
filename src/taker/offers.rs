@@ -144,6 +144,12 @@ pub(crate) fn fetch_offer_from_makers(
     maker_addresses: Vec<MakerAddress>,
     config: &TakerConfig,
 ) -> Result<Vec<OfferAndAddress>, TakerError> {
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[OFFER_FETCH] Starting fetch for {} maker addresses",
+        maker_addresses.len()
+    );
+    
     let (offers_writer, offers_reader) = mpsc::channel::<Option<OfferAndAddress>>();
     // Thread pool for all connections to fetch maker offers.
     let mut thread_pool = Vec::new();
@@ -174,6 +180,13 @@ pub(crate) fn fetch_offer_from_makers(
             log::error!("Error while joining thread: {e:?}");
         }
     }
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[OFFER_FETCH] Successfully fetched {} offers out of {} addresses",
+        result.len(),
+        maker_addresses_len
+    );
+    
     Ok(result)
 }
 
