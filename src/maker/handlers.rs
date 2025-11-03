@@ -56,6 +56,12 @@ pub(crate) fn handle_message(
             "[{}] Taker is waiting for funding confirmation. Resetting timer.",
             maker.config.network_port
         );
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] STATE_CHANGE | Action: timer_reset | SwapId: {} | Reason: funding_confirmation_wait",
+            maker.config.network_port,
+            id
+        );
         maker
             .ongoing_swap_state
             .lock()?
@@ -63,6 +69,14 @@ pub(crate) fn handle_message(
             .and_modify(|(_, timer)| *timer = Instant::now());
         return Ok(None);
     }
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] MSG_FLOW | Direction: in | Type: {:?} | ExpectedMsg: {:?}",
+        maker.config.network_port,
+        std::mem::discriminant(&message),
+        connection_state.allowed_message
+    );
 
     let outgoing_message = match connection_state.allowed_message {
         ExpectedMessage::TakerHello => {
@@ -286,6 +300,14 @@ impl Maker {
             self.config.network_port
         );
 
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] WALLET_STATE | Action: adding_incoming_swaps | Count: {} | HashValue: {:.8}",
+            self.config.network_port,
+            message.confirmed_funding_txes.len(),
+            hashvalue
+        );
+
         // Import transactions and addresses into Bitcoin core's wallet.
         // Add IncomingSwapcoin to Maker's Wallet
         for funding_info in &message.confirmed_funding_txes {
@@ -342,6 +364,13 @@ impl Maker {
                 .incoming_swapcoins
                 .contains(&incoming_swapcoin)
             {
+                #[cfg(debug_assertions)]
+                log::debug!(
+                    "[{}] WALLET_STATE | Action: add_incoming_swapcoin | Amount: {} | Txid: {:.8}",
+                    self.config.network_port,
+                    funding_output.value,
+                    funding_info.funding_tx.compute_txid()
+                );
                 connection_state.incoming_swapcoins.push(incoming_swapcoin);
             }
         }
@@ -435,6 +464,14 @@ impl Maker {
             act_funding_txs_fees,
         );
 
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] WALLET_STATE | Action: adding_outgoing_swaps | Count: {} | TotalAmount: {}",
+            self.config.network_port,
+            outgoing_swapcoins.len(),
+            Amount::from_sat(outgoing_amount)
+        );
+
         connection_state.pending_funding_txes = my_funding_txes;
         connection_state.outgoing_swapcoins = outgoing_swapcoins;
 
@@ -476,6 +513,15 @@ impl Maker {
         self.ongoing_swap_state.lock()?.insert(
             message.id.clone(),
             (connection_state.clone(), Instant::now()),
+        );
+
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] STATE_CHANGE | Action: initialize_swap | SwapId: {} | IncomingCount: {} | OutgoingCount: {}",
+            self.config.network_port,
+            message.id,
+            connection_state.incoming_swapcoins.len(),
+            connection_state.outgoing_swapcoins.len()
         );
 
         log::info!("Connection state initialized for swap id: {}", message.id);
@@ -558,6 +604,13 @@ impl Maker {
             (connection_state.clone(), Instant::now()),
         );
 
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] STATE_CHANGE | Action: timer_reset | SwapId: {} | Reason: contract_sigs_received",
+            self.config.network_port,
+            message.id
+        );
+
         log::info!("Connection state timer reset for swap id: {}", message.id);
 
         Ok(())
@@ -612,6 +665,14 @@ impl Maker {
             incoming_swapcoin.hash_preimage = Some(message.preimage);
         }
 
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] CRYPTO_OP | Operation: hash_preimage_received | HashValue: {:.8} | PreimageCount: {}",
+            self.config.network_port,
+            hashvalue,
+            message.senders_multisig_redeemscripts.len()
+        );
+
         log::info!(
             "[{}] received preimage for hashvalue={}",
             self.config.network_port,
@@ -650,6 +711,13 @@ impl Maker {
         &self,
         message: PrivKeyHandover,
     ) -> Result<(), MakerError> {
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] CRYPTO_OP | Operation: privkey_handover_received | KeyCount: {}",
+            self.config.network_port,
+            message.multisig_privkeys.len()
+        );
+
         // Mark the incoming swapcoins as "done", by adding their's privkey
         for swapcoin_private_key in &message.multisig_privkeys {
             self.wallet
@@ -661,6 +729,12 @@ impl Maker {
         // Reset the connection state so watchtowers are not triggered.
         let mut conn_state = self.ongoing_swap_state.lock()?;
         *conn_state = HashMap::default();
+
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] STATE_CHANGE | Action: reset_connection_state | Reason: swap_completed",
+            self.config.network_port
+        );
 
         self.wallet.write()?.sync_and_save()?;
 
@@ -675,6 +749,13 @@ impl Maker {
             .write()?
             .sweep_incoming_swapcoins(MIN_FEE_RATE)?;
         if !swept_txids.is_empty() {
+            #[cfg(debug_assertions)]
+            log::debug!(
+                "[{}] WALLET_STATE | Action: sweep_incoming | Count: {} | Txids: {:?}",
+                self.config.network_port,
+                swept_txids.len(),
+                swept_txids.iter().map(|txid| format!("{:.8}", txid)).collect::<Vec<_>>()
+            );
             log::info!(
                 "✅ Successfully swept {} incoming swap coins: {:?}",
                 swept_txids.len(),
@@ -687,6 +768,12 @@ impl Maker {
 }
 
 fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] RECOVERY | Trigger: unexpected_behavior | Action: spawn_recovery_thread",
+        maker.config.network_port
+    );
+
     // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
     let maker_clone = maker.clone();
     let handle = std::thread::Builder::new()
@@ -696,6 +783,13 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
                 log::error!("Failed to recover from swap due to: {e:?}");
             }
         })?;
+    
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] THREAD_POOL | Action: spawn | Name: Swap Recovery Thread",
+        maker.config.network_port
+    );
+
     maker.thread_pool.add_thread(handle);
 
     Ok(())

@@ -29,6 +29,13 @@ pub trait MakerRpc {
 fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result<(), MakerError> {
     let msg_bytes = read_message(socket)?;
     let rpc_request: RpcMsgReq = serde_cbor::from_slice(&msg_bytes)?;
+    
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "RPC_REQUEST | Type: {:?}",
+        std::mem::discriminant(&rpc_request)
+    );
+    
     log::info!("RPC request received: {rpc_request:?}");
 
     let resp = match rpc_request {
@@ -125,6 +132,8 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
             }
         }
         RpcMsgReq::Stop => {
+            #[cfg(debug_assertions)]
+            log::debug!("RPC_REQUEST | Action: shutdown_initiated");
             maker.shutdown().store(true, Relaxed);
             RpcMsgResp::Shutdown
         }
@@ -135,16 +144,26 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
         }
         RpcMsgReq::SyncWallet => {
             log::info!("Initializing wallet sync");
+            #[cfg(debug_assertions)]
+            log::debug!("WALLET_STATE | Action: sync_initiated");
             let mut wallet = maker.wallet().write()?;
             if let Err(e) = wallet.sync() {
                 RpcMsgResp::ServerError(format!("{e:?}"))
             } else {
                 log::info!("Completed wallet sync");
+                #[cfg(debug_assertions)]
+                log::debug!("WALLET_STATE | Action: sync_completed");
                 wallet.save_to_disk()?;
                 RpcMsgResp::Pong
             }
         }
     };
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "RPC_RESPONSE | Type: {:?}",
+        std::mem::discriminant(&resp)
+    );
 
     if let Err(e) = send_message(socket, &resp) {
         log::error!("Error sending RPC response {e:?}");
