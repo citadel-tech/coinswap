@@ -24,14 +24,17 @@ pub(crate) fn handle_message_taproot(
     connection_state: &mut ConnectionState,
     message: TakerToMakerMessage,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
+    #[cfg(debug_assertions)]
     log::debug!(
-        "[{}] Handling message: {:?}",
+        "[{}] MSG_FLOW | Direction: in | Type: {:?} | StateAmount: {} | Timelock: {}",
         maker.config.network_port,
-        message
+        std::mem::discriminant(&message),
+        connection_state.swap_amount,
+        connection_state.timelock
     );
 
     // Handle messages based on their type, not on expected state
-    match message {
+    let result = match message {
         TakerToMakerMessage::GetOffer(get_offer_msg) => {
             handle_get_offer(maker, connection_state, get_offer_msg)
         }
@@ -48,7 +51,24 @@ pub(crate) fn handle_message_taproot(
         TakerToMakerMessage::PartialSigAndSendersNonce(partial_sig_msg) => {
             handle_partial_sig_and_senders_nonce(maker, connection_state, partial_sig_msg)
         }
+    };
+
+    #[cfg(debug_assertions)]
+    if let Ok(Some(ref response)) = result {
+        log::debug!(
+            "[{}] MSG_FLOW | Direction: out | Type: {:?} | Status: success",
+            maker.config.network_port,
+            std::mem::discriminant(response)
+        );
+    } else if let Err(ref e) = result {
+        log::debug!(
+            "[{}] MSG_FLOW | Direction: out | Status: error | Reason: {:?}",
+            maker.config.network_port,
+            e
+        );
     }
+
+    result
 }
 
 /// Handles GetOffer message and returns an Offer with fidelity proof
@@ -88,6 +108,22 @@ fn handle_swap_details(
 
     // Validate swap parameters using api2
     maker.validate_swap_parameters(&swap_details)?;
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] STATE_CHANGE | Field: swap_amount | Old: {} | New: {}",
+        maker.config.network_port,
+        connection_state.swap_amount,
+        swap_details.amount
+    );
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] STATE_CHANGE | Field: timelock | Old: {} | New: {}",
+        maker.config.network_port,
+        connection_state.timelock,
+        swap_details.timelock
+    );
 
     // Store swap details in connection state
     connection_state.swap_amount = swap_details.amount;
@@ -144,6 +180,13 @@ fn handle_spending_tx_and_receiver_nonce(
         maker.config.network_port
     );
 
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] CRYPTO_OP | Operation: process_receiver_nonce | SpendingTxid: {:.8}",
+        maker.config.network_port,
+        spending_tx_msg.spending_transaction.compute_txid()
+    );
+
     // Generate nonces and partial signature for this sweep
     let response =
         maker.process_spending_tx_and_receiver_nonce(&spending_tx_msg, connection_state)?;
@@ -163,6 +206,13 @@ fn handle_partial_sig_and_senders_nonce(
     log::info!(
         "[{}] Handling PartialSigAndSendersNonce",
         maker.config.network_port
+    );
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] CRYPTO_OP | Operation: complete_sweep_partial_sig | SigCount: {}",
+        maker.config.network_port,
+        partial_sig_and_senders_nonce.partial_signatures.len()
     );
 
     // Complete the maker's sweep transaction with the received partial signature

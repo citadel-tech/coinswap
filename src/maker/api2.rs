@@ -148,6 +148,13 @@ impl ThreadPool {
 
     pub(crate) fn add_thread(&self, handle: JoinHandle<()>) {
         let mut threads = self.threads.lock().unwrap();
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] THREAD_POOL | Action: add | Name: {:?} | ActiveCount: {}",
+            self.port,
+            handle.thread().name(),
+            threads.len() + 1
+        );
         threads.push(handle);
     }
 
@@ -166,10 +173,22 @@ impl ThreadPool {
 
             match thread.join() {
                 Ok(_) => {
+                    #[cfg(debug_assertions)]
+                    log::debug!(
+                        "[{}] THREAD_POOL | Action: join | Name: {} | Status: success",
+                        self.port,
+                        thread_name
+                    );
                     log::info!("[{}] Thread {} joined", self.port, thread_name);
                     joined_count += 1;
                 }
                 Err(e) => {
+                    #[cfg(debug_assertions)]
+                    log::debug!(
+                        "[{}] THREAD_POOL | Action: join | Name: {} | Status: error",
+                        self.port,
+                        thread_name
+                    );
                     log::error!(
                         "[{}] Error {:?} while joining thread {}",
                         self.port,
@@ -302,6 +321,14 @@ impl Maker {
         let wallet = self.wallet.read()?;
         let (incoming_contract_my_privkey, incoming_contract_my_pubkey) =
             wallet.get_tweakable_keypair()?;
+        
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] CRYPTO_OP | Operation: generate_offer_keypair | Pubkey: {:.8}",
+            self.config.network_port,
+            incoming_contract_my_pubkey
+        );
+        
         connection_state.incoming_contract_my_privkey = Some(incoming_contract_my_privkey);
         connection_state.incoming_contract_my_pubkey = Some(incoming_contract_my_pubkey);
         // Get wallet balances to determine max size
@@ -397,6 +424,13 @@ impl Maker {
         message: &SendersContract,
         connection_state: &mut ConnectionState,
     ) -> Result<SenderContractFromMaker, MakerError> {
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] STATE_CHANGE | Action: process_senders_contract | IncomingTxid: {:.8}",
+            self.config.network_port,
+            message.contract_txs[0]
+        );
+        
         // Store relevant data from the message
         connection_state.incoming_contract_hashlock_script =
             Some(message.hashlock_scripts[0].clone());
@@ -556,6 +590,14 @@ impl Maker {
         };
         log::info!("Outgoing contract txid: {:?}", outgoing_contract_txid);
 
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] STATE_CHANGE | Action: store_outgoing_contract | OutgoingTxid: {:.8} | Amount: {}",
+            self.config.network_port,
+            outgoing_contract_txid,
+            outgoing_contract_amount
+        );
+        
         // Store our own contract transaction hash for later use
         connection_state.outgoing_contract_txid = Some(outgoing_contract_txid);
 
@@ -651,6 +693,13 @@ impl Maker {
         use bitcoin::secp256k1::Secp256k1;
 
         log::info!("Processing SpendingTxAndReceiverNonce message");
+        
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] CRYPTO_OP | Operation: process_receiver_nonce | SpendingTxInputs: {}",
+            self.config.network_port,
+            spending_tx_msg.spending_transaction.input.len()
+        );
 
         // Extract the spending transaction and receiver nonce
         let outgoing_contract_spending_tx = &spending_tx_msg.spending_transaction;
@@ -783,6 +832,13 @@ impl Maker {
                 internal_key_pubkeys[1].inner,
             );
 
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] CRYPTO_OP | Operation: generate_partial_sig | ContractTxid: {:.8}",
+            self.config.network_port,
+            contract_txid
+        );
+        
         // Save the aggregated nonce, partial signature, and spending transaction for later sweep completion
         connection_state.outgoing_aggregated_nonce = Some(aggregated_nonce);
         connection_state.outgoing_contract_my_partial_sig = Some(outgoing_contract_my_partial_sig);
@@ -995,6 +1051,13 @@ impl Maker {
             .send_raw_transaction(completed_tx.raw_hex())
             .map_err(|e| MakerError::Wallet(crate::wallet::WalletError::Rpc(e)))?;
 
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] CRYPTO_OP | Operation: broadcast_sweep | SweepTxid: {:.8}",
+            self.config.network_port,
+            txid
+        );
+
         log::info!(
             "[{}] Maker sweep transaction broadcasted with txid: {:?}",
             self.config.network_port,
@@ -1132,11 +1195,26 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
             let mut lock_on_state = maker.ongoing_swap_state.lock()?;
             for (ip, (state, instant)) in lock_on_state.iter_mut() {
                 if instant.elapsed() > IDLE_CONNECTION_TIMEOUT {
+                    #[cfg(debug_assertions)]
+                    log::debug!(
+                        "[{}] RECOVERY | Trigger: idle_timeout | IP: {} | IdleTime: {}s",
+                        maker.config.network_port,
+                        ip,
+                        instant.elapsed().as_secs()
+                    );
+                    
                     log::warn!(
                         "[{}] Idle connection timeout for IP: {}. Removing connection state.",
                         maker.config.network_port,
                         ip
                     );
+                    
+                    #[cfg(debug_assertions)]
+                    log::debug!(
+                        "[{}] STATE_CHANGE | Action: reset_connection_state | Reason: idle_timeout",
+                        maker.config.network_port
+                    );
+                    
                     bad_ip.push(ip.clone());
                     *state = ConnectionState::default();
                     break;
