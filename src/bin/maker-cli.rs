@@ -73,28 +73,55 @@ enum Commands {
 fn main() -> Result<(), MakerError> {
     let cli = App::parse();
 
-    let stream = TcpStream::connect(cli.rpc_port)?;
+    #[cfg(debug_assertions)]
+    log::debug!("[MAKER_CLI] Connecting to RPC at: {}", cli.rpc_port);
+
+    let stream = TcpStream::connect(&cli.rpc_port)?;
+
+    #[cfg(debug_assertions)]
+    log::debug!("[MAKER_CLI] Connected successfully");
 
     match cli.command {
         Commands::SendPing => {
+            #[cfg(debug_assertions)]
+            log::debug!("[MAKER_CLI] Sending Ping command");
+            
             send_rpc_req(stream, RpcMsgReq::Ping)?;
         }
         Commands::ListUtxoContract => {
+            #[cfg(debug_assertions)]
+            log::debug!("[MAKER_CLI] Sending ContractUtxo command");
+            
             send_rpc_req(stream, RpcMsgReq::ContractUtxo)?;
         }
         Commands::ListUtxoFidelity => {
+            #[cfg(debug_assertions)]
+            log::debug!("[MAKER_CLI] Sending FidelityUtxo command");
+            
             send_rpc_req(stream, RpcMsgReq::FidelityUtxo)?;
         }
         Commands::GetBalances => {
+            #[cfg(debug_assertions)]
+            log::debug!("[MAKER_CLI] Sending Balances command");
+            
             send_rpc_req(stream, RpcMsgReq::Balances)?;
         }
         Commands::ListUtxo => {
+            #[cfg(debug_assertions)]
+            log::debug!("[MAKER_CLI] Sending Utxo command");
+            
             send_rpc_req(stream, RpcMsgReq::Utxo)?;
         }
         Commands::ListUtxoSwap => {
+            #[cfg(debug_assertions)]
+            log::debug!("[MAKER_CLI] Sending SwapUtxo command");
+            
             send_rpc_req(stream, RpcMsgReq::SwapUtxo)?;
         }
         Commands::GetNewAddress => {
+            #[cfg(debug_assertions)]
+            log::debug!("[MAKER_CLI] Sending NewAddress command");
+            
             send_rpc_req(stream, RpcMsgReq::NewAddress)?;
         }
         Commands::SendToAddress {
@@ -102,6 +129,10 @@ fn main() -> Result<(), MakerError> {
             amount,
             feerate,
         } => {
+            #[cfg(debug_assertions)]
+            log::debug!("[MAKER_CLI] Sending SendToAddress command | address={} | amount={} | feerate={:?}", 
+                address, amount, feerate);
+            
             send_rpc_req(
                 stream,
                 RpcMsgReq::SendToAddress {
@@ -112,33 +143,59 @@ fn main() -> Result<(), MakerError> {
             )?;
         }
         Commands::ShowTorAddress => {
+            #[cfg(debug_assertions)]
+            log::debug!("[MAKER_CLI] Sending GetTorAddress command");
+            
             send_rpc_req(stream, RpcMsgReq::GetTorAddress)?;
         }
         Commands::ShowDataDir => {
+            #[cfg(debug_assertions)]
+            log::debug!("[MAKER_CLI] Sending GetDataDir command");
+            
             send_rpc_req(stream, RpcMsgReq::GetDataDir)?;
         }
         Commands::Stop => {
+            #[cfg(debug_assertions)]
+            log::debug!("[MAKER_CLI] Sending Stop command");
+            
             send_rpc_req(stream, RpcMsgReq::Stop)?;
         }
         Commands::ShowFidelity => {
+            #[cfg(debug_assertions)]
+            log::debug!("[MAKER_CLI] Sending ListFidelity command");
+            
             send_rpc_req(stream, RpcMsgReq::ListFidelity)?;
         }
         Commands::SyncWallet => {
+            #[cfg(debug_assertions)]
+            log::debug!("[MAKER_CLI] Sending SyncWallet command");
+            
             send_rpc_req(stream, RpcMsgReq::SyncWallet)?;
         }
     }
+
+    #[cfg(debug_assertions)]
+    log::debug!("[MAKER_CLI] Command execution completed");
 
     Ok(())
 }
 
 fn send_rpc_req(mut stream: TcpStream, req: RpcMsgReq) -> Result<(), MakerError> {
-    // stream.set_read_timeout(Some(Duration::from_secs(20)))?;
     stream.set_write_timeout(Some(Duration::from_secs(20)))?;
+
+    #[cfg(debug_assertions)]
+    log::debug!("[MAKER_CLI_RPC] Sending request: {:?}", req);
 
     send_message(&mut stream, &req)?;
 
+    #[cfg(debug_assertions)]
+    log::debug!("[MAKER_CLI_RPC] Request sent, waiting for response");
+
     let response_bytes = read_message(&mut stream)?;
     let response: RpcMsgResp = serde_cbor::from_slice(&response_bytes)?;
+
+    #[cfg(debug_assertions)]
+    log::debug!("[MAKER_CLI_RPC] Received response: {:?}", response);
 
     if matches!(response, RpcMsgResp::Pong) {
         println!("success");

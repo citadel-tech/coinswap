@@ -166,6 +166,9 @@ fn main() -> Result<(), TakerError> {
 
     match &args.command {
         Commands::Restore { backup_file } => {
+            #[cfg(debug_assertions)]
+            log::debug!("[CLI_CMD] Executing Restore command | backup_file={}", backup_file);
+            
             Taker::restore_wallet(
                 args.data_directory,
                 args.wallet_name,
@@ -186,37 +189,75 @@ fn main() -> Result<(), TakerError> {
                 None,
                 Some(args.tor_auth),
             )?;
+            
             match &args.command {
                 Commands::ListUtxo => {
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Executing ListUtxo command");
+                    
                     let utxos = taker.get_wallet().list_all_utxo_spend_info();
+                    
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Found {} total UTXOs", utxos.len());
+                    
                     for utxo in utxos {
                         let utxo = UTXO::from_utxo_data(utxo);
                         println!("{}", serde_json::to_string_pretty(&utxo)?);
                     }
                 }
                 Commands::ListUtxoRegular => {
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Executing ListUtxoRegular command");
+                    
                     let utxos = taker.get_wallet().list_descriptor_utxo_spend_info();
+                    
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Found {} regular UTXOs", utxos.len());
+                    
                     for utxo in utxos {
                         let utxo = UTXO::from_utxo_data(utxo);
                         println!("{}", serde_json::to_string_pretty(&utxo)?);
                     }
                 }
                 Commands::ListUtxoSwap => {
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Executing ListUtxoSwap command");
+                    
                     let utxos = taker.get_wallet().list_incoming_swap_coin_utxo_spend_info();
+                    
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Found {} swap UTXOs", utxos.len());
+                    
                     for utxo in utxos {
                         let utxo = UTXO::from_utxo_data(utxo);
                         println!("{}", serde_json::to_string_pretty(&utxo)?);
                     }
                 }
                 Commands::ListUtxoContract => {
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Executing ListUtxoContract command");
+                    
                     let utxos = taker.get_wallet().list_live_timelock_contract_spend_info();
+                    
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Found {} contract UTXOs", utxos.len());
+                    
                     for utxo in utxos {
                         let utxo = UTXO::from_utxo_data(utxo);
                         println!("{}", serde_json::to_string_pretty(&utxo)?);
                     }
                 }
                 Commands::GetBalances => {
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Executing GetBalances command");
+                    
                     let balances = taker.get_wallet().get_balances()?;
+                    
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Balances | regular={} | contract={} | swap={} | spendable={}", 
+                        balances.regular.to_sat(), balances.contract.to_sat(), 
+                        balances.swap.to_sat(), balances.spendable.to_sat());
+                    
                     println!(
                         "{}",
                         to_string_pretty(&json!({
@@ -229,7 +270,14 @@ fn main() -> Result<(), TakerError> {
                     );
                 }
                 Commands::GetNewAddress => {
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Executing GetNewAddress command");
+                    
                     let address = taker.get_wallet_mut().get_next_external_address()?;
+                    
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Generated new address: {}", address);
+                    
                     println!("{address:?}");
                 }
                 Commands::SendToAddress {
@@ -237,6 +285,10 @@ fn main() -> Result<(), TakerError> {
                     amount,
                     feerate,
                 } => {
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Executing SendToAddress | address={} | amount={} | feerate={:?}", 
+                        address, amount, feerate);
+                    
                     let amount = Amount::from_sat(*amount);
 
                     let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
@@ -259,6 +311,9 @@ fn main() -> Result<(), TakerError> {
                         manually_selected_outpoints,
                     )?;
 
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Selected {} coins for spending", coins_to_spend.len());
+
                     let outputs = vec![(Address::from_str(address)?.assume_checked(), amount)];
                     let destination = Destination::Multi {
                         outputs,
@@ -273,11 +328,17 @@ fn main() -> Result<(), TakerError> {
 
                     let txid = taker.get_wallet().send_tx(&tx).unwrap();
 
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Broadcasted transaction: {}", txid);
+
                     println!("{txid}");
 
                     taker.get_wallet_mut().sync_no_fail();
                 }
                 Commands::FetchOffers => {
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Executing FetchOffers command");
+                    
                     let all_offers = {
                         let offerbook = taker.fetch_offers()?;
                         offerbook
@@ -287,6 +348,10 @@ fn main() -> Result<(), TakerError> {
                             .cloned()
                             .collect::<Vec<_>>()
                     };
+                    
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Fetched {} offers", all_offers.len());
+                    
                     if all_offers.is_empty() {
                         println!("NO LIVE OFFERS FOUND!! You should run a maker!!");
                         return Ok(());
@@ -298,6 +363,9 @@ fn main() -> Result<(), TakerError> {
                     }
                 }
                 Commands::Coinswap { makers, amount } => {
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Executing Coinswap | makers={} | amount={}", makers, amount);
+                    
                     let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
                         Some(
                             coinswap::utill::interactive_select(
@@ -317,18 +385,34 @@ fn main() -> Result<(), TakerError> {
                         maker_count: *makers,
                         manually_selected_outpoints,
                     };
+                    
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Starting coinswap with params: {:?}", swap_params);
+                    
                     taker.do_coinswap(swap_params)?;
                 }
                 Commands::Recover => {
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Executing Recover command");
+                    
                     taker.recover_from_swap()?;
+                    
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Recovery completed successfully");
                 }
                 Commands::Backup { encrypt } => {
+                    #[cfg(debug_assertions)]
+                    log::debug!("[CLI_CMD] Executing Backup command | encrypt={}", encrypt);
+                    
                     Wallet::backup_interactive(taker.get_wallet(), *encrypt);
                 }
                 _ => {}
             }
         }
     }
+
+    #[cfg(debug_assertions)]
+    log::debug!("[CLI] Command execution completed");
 
     Ok(())
 }
