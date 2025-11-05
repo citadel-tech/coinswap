@@ -282,7 +282,6 @@ impl Maker {
         let config_path = data_dir.join("config.toml");
         // Build configuration
         let mut builder = MakerConfig::builder().from_file(Some(&config_path))?;
-
         if let Some(port) = network_port {
             builder = builder.network_port(port);
         }

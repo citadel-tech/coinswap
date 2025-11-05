@@ -3,7 +3,7 @@ use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Error, Fields, Type};
 
 #[proc_macro_derive(ConfigBuilder)]
-///Generates a builder pattern for a struct which implements:
+/// Generates a builder pattern for a struct which implements:
 /// - `Default` trait
 /// - `new(Option<&std::path::Path>) -> std::io::Result<Self>` method
 ///
@@ -119,14 +119,7 @@ fn derive_config_builder_impl(input: TokenStream) -> syn::Result<TokenStream> {
         let name = &f.ident;
         let ty = &f.ty;
 
-        if is_string_type(ty) {
-            quote! {
-                /// Returns the value of the `#name` field as a string slice.
-                pub fn #name(&self) -> &str {
-                    &self.#name
-                }
-            }
-        } else if is_copy_type(ty) {
+        if is_copy_type(ty) {
             quote! {
                 /// Returns the value of the `#name` field.
                 pub fn #name(&self) -> #ty {
