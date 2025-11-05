@@ -364,7 +364,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                 maker.config.network_port,
                 ip
             );
-            
+
             log::info!(
                 "[{}] Creating new connection state for {}",
                 maker.config.network_port,
@@ -430,7 +430,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                     ip,
                     message_bytes.len()
                 );
-                
+
                 log::debug!(
                     "[{}] Successfully decoded message: {:?}",
                     maker.config.network_port,
@@ -460,7 +460,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                             let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
                             ongoing_swaps
                                 .insert(ip.clone(), (connection_state.clone(), Instant::now()));
-                            
+
                             #[cfg(debug_assertions)]
                             log::debug!(
                                 "[{}] STATE_CHANGE | Action: save_connection_state | IP: {} | SwapAmount: {} | Timelock: {}",
@@ -469,7 +469,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                                 connection_state.swap_amount,
                                 connection_state.timelock
                             );
-                            
+
                             log::debug!(
                                 "[{}] Saved connection state for {} after successful message handling",
                                 maker.config.network_port,
@@ -486,7 +486,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                             ip,
                             e
                         );
-                        
+
                         log::error!(
                             "[{}] Error handling message from {}: {:?}",
                             maker.config.network_port,
@@ -575,7 +575,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                 std::mem::discriminant(&response_msg),
                 ip
             );
-            
+
             log::info!("[{}] Sending response", maker.config.network_port,);
 
             if let Err(e) = send_message(stream, &response_msg) {
@@ -644,7 +644,7 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
         "[{}] THREAD_POOL | Action: start_server | Protocol: taproot",
         maker.config.network_port
     );
-    
+
     log::info!(
         "[{}] Starting taproot coinswap maker server",
         maker.config.network_port
@@ -668,13 +668,13 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
                 log::error!("Taproot idle checker thread error: {:?}", e);
             }
         })?;
-    
+
     #[cfg(debug_assertions)]
     log::debug!(
         "[{}] THREAD_POOL | Action: spawn | Name: idle-checker-taproot",
         maker.config.network_port
     );
-    
+
     maker.thread_pool.add_thread(idle_checker_handle);
 
     // Start liquidity monitoring
@@ -700,13 +700,13 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
                 sleep(HEART_BEAT_INTERVAL);
             }
         })?;
-    
+
     #[cfg(debug_assertions)]
     log::debug!(
         "[{}] THREAD_POOL | Action: spawn | Name: liquidity-monitor-taproot",
         maker.config.network_port
     );
-    
+
     maker.thread_pool.add_thread(liquidity_handle);
 
     // Start Bitcoin Core connection monitoring
@@ -732,13 +732,13 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
                 sleep(HEART_BEAT_INTERVAL);
             }
         })?;
-    
+
     #[cfg(debug_assertions)]
     log::debug!(
         "[{}] THREAD_POOL | Action: spawn | Name: core-monitor-taproot",
         maker.config.network_port
     );
-    
+
     maker.thread_pool.add_thread(core_monitor_handle);
 
     // Start RPC server
@@ -750,13 +750,13 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
                 log::error!("Taproot RPC server error: {:?}", e);
             }
         })?;
-    
+
     #[cfg(debug_assertions)]
     log::debug!(
         "[{}] THREAD_POOL | Action: spawn | Name: rpc-server-taproot",
         maker.config.network_port
     );
-    
+
     maker.thread_pool.add_thread(rpc_handle);
 
     // Mark setup as complete
@@ -787,7 +787,7 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
                     maker.config.network_port,
                     addr
                 );
-                
+
                 log::info!(
                     "[{}] New client connection from: {}",
                     maker.config.network_port,

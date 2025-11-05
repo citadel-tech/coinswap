@@ -754,7 +754,10 @@ impl Maker {
                 "[{}] WALLET_STATE | Action: sweep_incoming | Count: {} | Txids: {:?}",
                 self.config.network_port,
                 swept_txids.len(),
-                swept_txids.iter().map(|txid| format!("{:.8}", txid)).collect::<Vec<_>>()
+                swept_txids
+                    .iter()
+                    .map(|txid| format!("{:.8}", txid))
+                    .collect::<Vec<_>>()
             );
             log::info!(
                 "✅ Successfully swept {} incoming swap coins: {:?}",
@@ -783,7 +786,7 @@ fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
                 log::error!("Failed to recover from swap due to: {e:?}");
             }
         })?;
-    
+
     #[cfg(debug_assertions)]
     log::debug!(
         "[{}] THREAD_POOL | Action: spawn | Name: Swap Recovery Thread",

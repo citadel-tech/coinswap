@@ -85,43 +85,43 @@ fn main() -> Result<(), MakerError> {
         Commands::SendPing => {
             #[cfg(debug_assertions)]
             log::debug!("[MAKER_CLI] Sending Ping command");
-            
+
             send_rpc_req(stream, RpcMsgReq::Ping)?;
         }
         Commands::ListUtxoContract => {
             #[cfg(debug_assertions)]
             log::debug!("[MAKER_CLI] Sending ContractUtxo command");
-            
+
             send_rpc_req(stream, RpcMsgReq::ContractUtxo)?;
         }
         Commands::ListUtxoFidelity => {
             #[cfg(debug_assertions)]
             log::debug!("[MAKER_CLI] Sending FidelityUtxo command");
-            
+
             send_rpc_req(stream, RpcMsgReq::FidelityUtxo)?;
         }
         Commands::GetBalances => {
             #[cfg(debug_assertions)]
             log::debug!("[MAKER_CLI] Sending Balances command");
-            
+
             send_rpc_req(stream, RpcMsgReq::Balances)?;
         }
         Commands::ListUtxo => {
             #[cfg(debug_assertions)]
             log::debug!("[MAKER_CLI] Sending Utxo command");
-            
+
             send_rpc_req(stream, RpcMsgReq::Utxo)?;
         }
         Commands::ListUtxoSwap => {
             #[cfg(debug_assertions)]
             log::debug!("[MAKER_CLI] Sending SwapUtxo command");
-            
+
             send_rpc_req(stream, RpcMsgReq::SwapUtxo)?;
         }
         Commands::GetNewAddress => {
             #[cfg(debug_assertions)]
             log::debug!("[MAKER_CLI] Sending NewAddress command");
-            
+
             send_rpc_req(stream, RpcMsgReq::NewAddress)?;
         }
         Commands::SendToAddress {
@@ -130,9 +130,13 @@ fn main() -> Result<(), MakerError> {
             feerate,
         } => {
             #[cfg(debug_assertions)]
-            log::debug!("[MAKER_CLI] Sending SendToAddress command | address={} | amount={} | feerate={:?}", 
-                address, amount, feerate);
-            
+            log::debug!(
+                "[MAKER_CLI] Sending SendToAddress command | address={} | amount={} | feerate={:?}",
+                address,
+                amount,
+                feerate
+            );
+
             send_rpc_req(
                 stream,
                 RpcMsgReq::SendToAddress {
@@ -145,31 +149,31 @@ fn main() -> Result<(), MakerError> {
         Commands::ShowTorAddress => {
             #[cfg(debug_assertions)]
             log::debug!("[MAKER_CLI] Sending GetTorAddress command");
-            
+
             send_rpc_req(stream, RpcMsgReq::GetTorAddress)?;
         }
         Commands::ShowDataDir => {
             #[cfg(debug_assertions)]
             log::debug!("[MAKER_CLI] Sending GetDataDir command");
-            
+
             send_rpc_req(stream, RpcMsgReq::GetDataDir)?;
         }
         Commands::Stop => {
             #[cfg(debug_assertions)]
             log::debug!("[MAKER_CLI] Sending Stop command");
-            
+
             send_rpc_req(stream, RpcMsgReq::Stop)?;
         }
         Commands::ShowFidelity => {
             #[cfg(debug_assertions)]
             log::debug!("[MAKER_CLI] Sending ListFidelity command");
-            
+
             send_rpc_req(stream, RpcMsgReq::ListFidelity)?;
         }
         Commands::SyncWallet => {
             #[cfg(debug_assertions)]
             log::debug!("[MAKER_CLI] Sending SyncWallet command");
-            
+
             send_rpc_req(stream, RpcMsgReq::SyncWallet)?;
         }
     }

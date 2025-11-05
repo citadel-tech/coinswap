@@ -321,14 +321,14 @@ impl Maker {
         let wallet = self.wallet.read()?;
         let (incoming_contract_my_privkey, incoming_contract_my_pubkey) =
             wallet.get_tweakable_keypair()?;
-        
+
         #[cfg(debug_assertions)]
         log::debug!(
             "[{}] CRYPTO_OP | Operation: generate_offer_keypair | Pubkey: {:.8}",
             self.config.network_port,
             incoming_contract_my_pubkey
         );
-        
+
         connection_state.incoming_contract_my_privkey = Some(incoming_contract_my_privkey);
         connection_state.incoming_contract_my_pubkey = Some(incoming_contract_my_pubkey);
         // Get wallet balances to determine max size
@@ -430,7 +430,7 @@ impl Maker {
             self.config.network_port,
             message.contract_txs[0]
         );
-        
+
         // Store relevant data from the message
         connection_state.incoming_contract_hashlock_script =
             Some(message.hashlock_scripts[0].clone());
@@ -597,7 +597,7 @@ impl Maker {
             outgoing_contract_txid,
             outgoing_contract_amount
         );
-        
+
         // Store our own contract transaction hash for later use
         connection_state.outgoing_contract_txid = Some(outgoing_contract_txid);
 
@@ -693,7 +693,7 @@ impl Maker {
         use bitcoin::secp256k1::Secp256k1;
 
         log::info!("Processing SpendingTxAndReceiverNonce message");
-        
+
         #[cfg(debug_assertions)]
         log::debug!(
             "[{}] CRYPTO_OP | Operation: process_receiver_nonce | SpendingTxInputs: {}",
@@ -838,7 +838,7 @@ impl Maker {
             self.config.network_port,
             contract_txid
         );
-        
+
         // Save the aggregated nonce, partial signature, and spending transaction for later sweep completion
         connection_state.outgoing_aggregated_nonce = Some(aggregated_nonce);
         connection_state.outgoing_contract_my_partial_sig = Some(outgoing_contract_my_partial_sig);
@@ -1202,19 +1202,19 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                         ip,
                         instant.elapsed().as_secs()
                     );
-                    
+
                     log::warn!(
                         "[{}] Idle connection timeout for IP: {}. Removing connection state.",
                         maker.config.network_port,
                         ip
                     );
-                    
+
                     #[cfg(debug_assertions)]
                     log::debug!(
                         "[{}] STATE_CHANGE | Action: reset_connection_state | Reason: idle_timeout",
                         maker.config.network_port
                     );
-                    
+
                     bad_ip.push(ip.clone());
                     *state = ConnectionState::default();
                     break;

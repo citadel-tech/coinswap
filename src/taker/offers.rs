@@ -149,7 +149,7 @@ pub(crate) fn fetch_offer_from_makers(
         "[OFFER_FETCH] Starting fetch for {} maker addresses",
         maker_addresses.len()
     );
-    
+
     let (offers_writer, offers_reader) = mpsc::channel::<Option<OfferAndAddress>>();
     // Thread pool for all connections to fetch maker offers.
     let mut thread_pool = Vec::new();
@@ -186,7 +186,7 @@ pub(crate) fn fetch_offer_from_makers(
         result.len(),
         maker_addresses_len
     );
-    
+
     Ok(result)
 }
 

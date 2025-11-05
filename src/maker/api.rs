@@ -593,7 +593,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                             txid,
                             ip
                         );
-                        
+
                         log::warn!(
                             "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
                             maker.config.network_port,
@@ -615,13 +615,13 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                                     log::error!("Failed to recover from swap due to: {e:?}");
                                 }
                             })?;
-                        
+
                         #[cfg(debug_assertions)]
                         log::debug!(
                             "[{}] STATE_CHANGE | Action: reset_connection_state | Reason: contract_broadcast",
                             maker.config.network_port
                         );
-                        
+
                         maker.thread_pool.add_thread(handle);
                         // Clear the state value here
                         *connection_state = ConnectionState::default();
@@ -652,7 +652,7 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
         "[{}] RECOVERY | Trigger: reboot_restore | Action: spawn_recovery_thread",
         maker.config.network_port
     );
-    
+
     // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
     let maker_clone = maker.clone();
     let handle = std::thread::Builder::new()
@@ -695,7 +695,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                         ip,
                         no_response_since.as_secs()
                     );
-                    
+
                     log::error!(
                         "[{}] Potential Dropped Connection from taker. No response since : {} secs. Recovering from swap",
                         maker.config.network_port,
@@ -715,13 +715,13 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                                 log::error!("Failed to recover from swap due to: {e:?}");
                             }
                         })?;
-                    
+
                     #[cfg(debug_assertions)]
                     log::debug!(
                         "[{}] STATE_CHANGE | Action: reset_connection_state | Reason: idle_timeout",
                         maker.config.network_port
                     );
-                    
+
                     maker.thread_pool.add_thread(handle);
                     // Clear the state values here
                     *state = ConnectionState::default();
@@ -784,7 +784,7 @@ pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
                     maker.config.network_port,
                     hashlocked_broadcasted.len()
                 );
-                
+
                 log::info!(
                     "[{}] All incomings transactions claimed via hashlock. Recovery loop exiting.",
                     maker.config.network_port
@@ -826,7 +826,7 @@ pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
                     maker.config.network_port,
                     timelock_broadcasted.len()
                 );
-                
+
                 // For tests, terminate the maker at this stage.
                 #[cfg(feature = "integration-test")]
                 maker.shutdown.store(true, Relaxed);

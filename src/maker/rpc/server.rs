@@ -29,13 +29,13 @@ pub trait MakerRpc {
 fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result<(), MakerError> {
     let msg_bytes = read_message(socket)?;
     let rpc_request: RpcMsgReq = serde_cbor::from_slice(&msg_bytes)?;
-    
+
     #[cfg(debug_assertions)]
     log::debug!(
         "RPC_REQUEST | Type: {:?}",
         std::mem::discriminant(&rpc_request)
     );
-    
+
     log::info!("RPC request received: {rpc_request:?}");
 
     let resp = match rpc_request {
@@ -160,10 +160,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
     };
 
     #[cfg(debug_assertions)]
-    log::debug!(
-        "RPC_RESPONSE | Type: {:?}",
-        std::mem::discriminant(&resp)
-    );
+    log::debug!("RPC_RESPONSE | Type: {:?}", std::mem::discriminant(&resp));
 
     if let Err(e) = send_message(socket, &resp) {
         log::error!("Error sending RPC response {e:?}");
