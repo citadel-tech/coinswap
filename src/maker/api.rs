@@ -9,7 +9,7 @@
 use crate::{
     protocol::{
         contract::check_hashvalues_are_equal,
-        messages::{FidelityProof, ReqContractSigsForSender},
+        messages::{FidelityProof, MakerToTakerMessage, ReqContractSigsForSender, TakerToMakerMessage},
         Hash160,
     },
     utill::{
@@ -48,7 +48,7 @@ use crate::{
     wallet::{IncomingSwapCoin, OutgoingSwapCoin, Wallet, WalletError},
 };
 
-use super::{config::MakerConfig, error::MakerError};
+use super::{config::MakerConfig, error::MakerError, server::MakerServer};
 
 /// Interval for health checks on a stable RPC connection with bitcoind.
 pub const RPC_PING_INTERVAL: u32 = 9;
@@ -334,39 +334,6 @@ impl Maker {
         &self.wallet
     }
 
-    /// Ensures all unconfirmed fidelity bonds in the maker's wallet are tracked until confirmation.  
-    /// Once confirmed, updates their confirmation details in the wallet.
-    pub(super) fn track_and_update_unconfirmed_fidelity_bonds(&self) -> Result<(), MakerError> {
-        let bond_conf_heights = {
-            let wallet_read = self.get_wallet().read()?;
-
-            wallet_read
-                .store
-                .fidelity_bond
-                .iter()
-                .filter_map(|(i, bond)| {
-                    if bond.conf_height.is_none() && bond.cert_expiry.is_none() {
-                        let conf_height = wallet_read
-                            .wait_for_tx_confirmation(bond.outpoint.txid)
-                            .unwrap();
-                        Some((*i, conf_height))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<HashMap<u32, u32>>()
-        };
-
-        bond_conf_heights.into_iter().try_for_each(|(i, ht)| {
-            self.get_wallet()
-                .write()?
-                .update_fidelity_bond_conf_details(i, ht)?;
-            Ok::<(), MakerError>(())
-        })?;
-
-        Ok(())
-    }
-
     /// Checks consistency of the [`ProofOfFunding`] message and return the Hashvalue
     /// used in hashlock transaction.
     pub(crate) fn verify_proof_of_funding(
@@ -514,6 +481,162 @@ impl Maker {
         }
         Ok(sigs)
     }
+
+    /// Check that if any Taker connection went idle.
+    ///
+    /// If a connection remains idle for more than idle timeout time, that's a potential DOS attack.
+    /// Broadcast the contract transactions and claim funds via timelock.
+    pub(crate) fn check_for_idle_states(maker: Arc<Self>) -> Result<(), MakerError> {
+        let mut bad_ip = Vec::new();
+
+        loop {
+            if maker.shutdown.load(Relaxed) {
+                break;
+            }
+            let current_time = Instant::now();
+
+            // Extra scope to release all locks when done.
+            {
+                let mut lock_on_state = maker.ongoing_swap_state.lock()?;
+                for (ip, (state, last_connected_time)) in lock_on_state.iter_mut() {
+                    let no_response_since =
+                        current_time.saturating_duration_since(*last_connected_time);
+
+                    if no_response_since > IDLE_CONNECTION_TIMEOUT {
+                        log::error!(
+                            "[{}] Potential Dropped Connection from taker. No response since : {} secs. Recovering from swap",
+                            maker.config.network_port,
+                            no_response_since.as_secs()
+                        );
+                        bad_ip.push(ip.clone());
+                        // Spawn a separate thread to wait for contract maturity and broadcasting timelocked,hashlocked
+                        let maker_clone = maker.clone();
+                        log::info!(
+                            "[{}] Spawning recovery thread after Taker dropped",
+                            maker.config.network_port
+                        );
+                        let handle = std::thread::Builder::new()
+                            .name("Swap Recovery Thread".to_string())
+                            .spawn(move || {
+                                if let Err(e) = recover_from_swap(maker_clone) {
+                                    log::error!("Failed to recover from swap due to: {e:?}");
+                                }
+                            })?;
+                        maker.thread_pool.add_thread(handle);
+                        // Clear the state values here
+                        *state = ConnectionState::default();
+                        break;
+                    }
+                }
+
+                // Clear the state entry here
+                for ip in bad_ip.iter() {
+                    lock_on_state.remove(ip);
+                }
+            } // All locks are cleared here
+
+            std::thread::sleep(HEART_BEAT_INTERVAL);
+        }
+
+        Ok(())
+    }
+
+    /// Constantly checks for contract transactions in the bitcoin network for all
+    /// unsettled swap.
+    ///
+    /// If any one of them is ever observed, run the recovery routine.
+    pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Self>) -> Result<(), MakerError> {
+        let mut failed_swap_ip = Vec::new();
+        loop {
+            if maker.shutdown.load(Relaxed) {
+                break;
+            }
+            // An extra scope to release all locks when done.
+            {
+                let mut lock_onstate = maker.ongoing_swap_state.lock()?;
+                for (ip, (connection_state, _)) in lock_onstate.iter_mut() {
+                    let txids_to_watch = connection_state
+                        .incoming_swapcoins
+                        .iter()
+                        .map(|is| is.contract_tx.compute_txid())
+                        .chain(
+                            connection_state
+                                .outgoing_swapcoins
+                                .iter()
+                                .map(|oc| oc.contract_tx.compute_txid()),
+                        )
+                        .collect::<Vec<_>>();
+
+                    // No need to check for other contracts in the connection state, if any one of them
+                    // is ever observed in the mempool/block, run recovery routine.
+                    for txid in txids_to_watch {
+                        if maker
+                            .wallet
+                            .read()?
+                            .rpc
+                            .get_raw_transaction_info(&txid, None)
+                            .is_ok()
+                        {
+                            // Something is broadcasted. Report, Recover and Abort.
+                            log::warn!(
+                                "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
+                                maker.config.network_port,
+                                txid
+                            );
+
+                            failed_swap_ip.push(ip.clone());
+
+                            // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
+                            let maker_clone = maker.clone();
+                            log::info!(
+                                "[{}] Spawning recovery thread after seeing contracts in mempool",
+                                maker.config.network_port
+                            );
+                            let handle = std::thread::Builder::new()
+                                .name("Swap recovery thread".to_string())
+                                .spawn(move || {
+                                    if let Err(e) = recover_from_swap(maker_clone) {
+                                        log::error!("Failed to recover from swap due to: {e:?}");
+                                    }
+                                })?;
+                            maker.thread_pool.add_thread(handle);
+                            // Clear the state value here
+                            *connection_state = ConnectionState::default();
+                            break;
+                        }
+                    }
+                }
+
+                // Clear the state entry here
+                for ip in failed_swap_ip.iter() {
+                    lock_onstate.remove(ip);
+                }
+            } // All locks are cleared here.
+
+            std::thread::sleep(HEART_BEAT_INTERVAL);
+        }
+
+        Ok(())
+    }
+
+    /// Checks for swapcoins present in wallet store on reboot and starts recovery if found on bitcoind network.
+    /// If any one of them is ever observed, run the recovery routine.
+    pub(crate) fn restore_broadcasted_contracts_on_reboot(
+        maker: &Arc<Self>,
+    ) -> Result<(), MakerError> {
+        // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
+        let maker_clone = maker.clone();
+        let handle = std::thread::Builder::new()
+            .name("Swap recovery thread".to_string())
+            .spawn(move || {
+                if let Err(e) = recover_from_swap(maker_clone) {
+                    log::error!("Failed to recover from swap due to: {e:?}");
+                }
+            })?;
+        maker.thread_pool.add_thread(handle);
+
+        Ok(())
+    }
 }
 
 impl MakerRpc for Maker {
@@ -531,160 +654,85 @@ impl MakerRpc for Maker {
     }
 }
 
-/// Constantly checks for contract transactions in the bitcoin network for all
-/// unsettled swap.
-///
-/// If any one of them is ever observed, run the recovery routine.
-pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerError> {
-    let mut failed_swap_ip = Vec::new();
-    loop {
-        if maker.shutdown.load(Relaxed) {
-            break;
-        }
-        // An extra scope to release all locks when done.
-        {
-            let mut lock_onstate = maker.ongoing_swap_state.lock()?;
-            for (ip, (connection_state, _)) in lock_onstate.iter_mut() {
-                let txids_to_watch = connection_state
-                    .incoming_swapcoins
-                    .iter()
-                    .map(|is| is.contract_tx.compute_txid())
-                    .chain(
-                        connection_state
-                            .outgoing_swapcoins
-                            .iter()
-                            .map(|oc| oc.contract_tx.compute_txid()),
-                    )
-                    .collect::<Vec<_>>();
+impl MakerServer for Maker {
+    fn is_swap_ongoing(&self) -> Result<bool, MakerError> {
+        Ok(self.ongoing_swap_state.lock()?.is_empty())
+    }
 
-                // No need to check for other contracts in the connection state, if any one of them
-                // is ever observed in the mempool/block, run recovery routine.
-                for txid in txids_to_watch {
-                    if maker
-                        .wallet
-                        .read()?
-                        .rpc
-                        .get_raw_transaction_info(&txid, None)
-                        .is_ok()
-                    {
-                        // Something is broadcasted. Report, Recover and Abort.
-                        log::warn!(
-                            "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
-                            maker.config.network_port,
-                            txid
-                        );
+    fn get_wallet(&self) -> &RwLock<Wallet> {
+        &self.wallet
+    }
 
-                        failed_swap_ip.push(ip.clone());
+    fn get_data_dir(&self) -> &Path {
+        &self.data_dir
+    }
 
-                        // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
-                        let maker_clone = maker.clone();
-                        log::info!(
-                            "[{}] Spawning recovery thread after seeing contracts in mempool",
-                            maker.config.network_port
-                        );
-                        let handle = std::thread::Builder::new()
-                            .name("Swap recovery thread".to_string())
-                            .spawn(move || {
-                                if let Err(e) = recover_from_swap(maker_clone) {
-                                    log::error!("Failed to recover from swap due to: {e:?}");
-                                }
-                            })?;
-                        maker.thread_pool.add_thread(handle);
-                        // Clear the state value here
-                        *connection_state = ConnectionState::default();
-                        break;
+    fn highest_fidelity_proof(&self) -> &RwLock<Option<FidelityProof>> {
+       &self.highest_fidelity_proof
+    }
+
+    fn check_for_idle_states(maker: Arc<Self>) -> Result<(), MakerError> {
+        Self::check_for_idle_states(maker)
+    }
+
+    fn thread_pool(&self) -> &Arc<ThreadPool> {
+        &self.thread_pool
+    }
+
+    fn check_for_broadcasted_contracts(maker: Arc<Self>) -> Result<(), MakerError> {
+        Self::check_for_broadcasted_contracts(maker)
+    }
+
+    fn is_setup_complete(&self) -> &AtomicBool {
+        &self.is_setup_complete
+    }
+
+    fn restore_broadcasted_contracts_on_reboot(maker: Arc<Self>) -> Result<(), MakerError> {
+        Self::restore_broadcasted_contracts_on_reboot(&maker)
+    }
+
+    fn tracker(&self) -> &RwLock<Option<String>> {
+        &self.tracker
+    }
+
+    fn track_and_update_unconfirmed_fidelity_bonds(&self) -> Result<(), MakerError> {
+        let bond_conf_heights = {
+            let wallet_read = self.get_wallet().read()?;
+
+            wallet_read
+                .store
+                .fidelity_bond
+                .iter()
+                .filter_map(|(i, bond)| {
+                    if bond.conf_height.is_none() && bond.cert_expiry.is_none() {
+                        let conf_height = wallet_read
+                            .wait_for_tx_confirmation(bond.outpoint.txid)
+                            .unwrap();
+                        Some((*i, conf_height))
+                    } else {
+                        None
                     }
-                }
-            }
+                })
+                .collect::<HashMap<u32, u32>>()
+        };
 
-            // Clear the state entry here
-            for ip in failed_swap_ip.iter() {
-                lock_onstate.remove(ip);
-            }
-        } // All locks are cleared here.
-
-        std::thread::sleep(HEART_BEAT_INTERVAL);
-    }
-
-    Ok(())
-}
-
-/// Checks for swapcoins present in wallet store on reboot and starts recovery if found on bitcoind network.
-/// If any one of them is ever observed, run the recovery routine.
-pub(crate) fn restore_broadcasted_contracts_on_reboot(
-    maker: &Arc<Maker>,
-) -> Result<(), MakerError> {
-    // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
-    let maker_clone = maker.clone();
-    let handle = std::thread::Builder::new()
-        .name("Swap recovery thread".to_string())
-        .spawn(move || {
-            if let Err(e) = recover_from_swap(maker_clone) {
-                log::error!("Failed to recover from swap due to: {e:?}");
-            }
+        bond_conf_heights.into_iter().try_for_each(|(i, ht)| {
+            self.get_wallet()
+                .write()?
+                .update_fidelity_bond_conf_details(i, ht)?;
+            Ok::<(), MakerError>(())
         })?;
-    maker.thread_pool.add_thread(handle);
 
-    Ok(())
-}
-
-/// Check that if any Taker connection went idle.
-///
-/// If a connection remains idle for more than idle timeout time, that's a potential DOS attack.
-/// Broadcast the contract transactions and claim funds via timelock.
-pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
-    let mut bad_ip = Vec::new();
-
-    loop {
-        if maker.shutdown.load(Relaxed) {
-            break;
-        }
-        let current_time = Instant::now();
-
-        // Extra scope to release all locks when done.
-        {
-            let mut lock_on_state = maker.ongoing_swap_state.lock()?;
-            for (ip, (state, last_connected_time)) in lock_on_state.iter_mut() {
-                let no_response_since =
-                    current_time.saturating_duration_since(*last_connected_time);
-
-                if no_response_since > IDLE_CONNECTION_TIMEOUT {
-                    log::error!(
-                        "[{}] Potential Dropped Connection from taker. No response since : {} secs. Recovering from swap",
-                        maker.config.network_port,
-                        no_response_since.as_secs()
-                    );
-                    bad_ip.push(ip.clone());
-                    // Spawn a separate thread to wait for contract maturity and broadcasting timelocked,hashlocked
-                    let maker_clone = maker.clone();
-                    log::info!(
-                        "[{}] Spawning recovery thread after Taker dropped",
-                        maker.config.network_port
-                    );
-                    let handle = std::thread::Builder::new()
-                        .name("Swap Recovery Thread".to_string())
-                        .spawn(move || {
-                            if let Err(e) = recover_from_swap(maker_clone) {
-                                log::error!("Failed to recover from swap due to: {e:?}");
-                            }
-                        })?;
-                    maker.thread_pool.add_thread(handle);
-                    // Clear the state values here
-                    *state = ConnectionState::default();
-                    break;
-                }
-            }
-
-            // Clear the state entry here
-            for ip in bad_ip.iter() {
-                lock_on_state.remove(ip);
-            }
-        } // All locks are cleared here
-
-        std::thread::sleep(HEART_BEAT_INTERVAL);
+        Ok(())
     }
 
-    Ok(())
+    fn handle_message(
+        maker: &Arc<Self>,
+        connection_state: &mut ConnectionState,
+        message: TakerToMakerMessage,
+    ) -> Result<Option<MakerToTakerMessage>, MakerError> {
+        crate::maker::handlers::handle_message(maker, connection_state, message)
+    }
 }
 
 /// Broadcast Incoming and Outgoing Contract transactions & timelock contract after maturity or hashlock contract.
