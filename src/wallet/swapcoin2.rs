@@ -4,10 +4,6 @@ use bitcoin::{
     secp256k1::{Scalar, SecretKey, XOnlyPublicKey},
     PublicKey, ScriptBuf, Transaction, Txid,
 };
-use secp256k1::musig::PublicNonce;
-
-/// MUSIG secret nonce size (SecretNonce cannot be cloned, so we store raw bytes)
-pub const MUSIG_SECRET_NONCE_SIZE: usize = 132;
 
 /// Incoming swapcoin for a Taproot swap (active or completed).
 #[derive(Debug, Clone, Default)]
@@ -18,11 +14,9 @@ pub struct IncomingSwapCoinV2 {
     pub(crate) hashlock_script: ScriptBuf,
     pub(crate) timelock_script: ScriptBuf,
     pub(crate) contract_txid: Option<Txid>,
-    pub(crate) my_pub_nonce: Option<PublicNonce>,
     pub(crate) tap_tweak: Option<Scalar>,
     pub(crate) internal_key: Option<XOnlyPublicKey>,
     pub(crate) spending_tx: Option<Transaction>,
-    pub(crate) my_sec_nonce_bytes: Option<[u8; MUSIG_SECRET_NONCE_SIZE]>,
 }
 
 impl IncomingSwapCoinV2 {
@@ -51,7 +45,7 @@ impl IncomingSwapCoinV2 {
         &self.timelock_script
     }
 
-    /// Returns the transaction ID of the swap contract transaction, if broadcast.
+    /// Returns the transaction ID of the swap contract transaction, if already broadcasted.
     pub fn contract_txid(&self) -> Option<Txid> {
         self.contract_txid
     }
@@ -66,21 +60,9 @@ impl IncomingSwapCoinV2 {
         self.internal_key.as_ref()
     }
 
-    /// Returns the Maker’s public MuSig nonce for this swap
-    pub fn pub_nonce(&self) -> Option<&PublicNonce> {
-        self.my_pub_nonce.as_ref()
-    }
-
     /// Returns the spending transaction for this incoming swap, if already created.
     pub fn spending_tx(&self) -> Option<Transaction> {
         self.spending_tx.clone()
-    }
-
-    /// Returns the Maker’s secret MuSig nonce bytes for this swap, if stored.
-    ///
-    /// Used because the actual `SecretNonce` type is non-cloneable.
-    pub fn sec_nonce_bytes(&self) -> Option<&[u8; MUSIG_SECRET_NONCE_SIZE]> {
-        self.my_sec_nonce_bytes.as_ref()
     }
 }
 
@@ -135,7 +117,7 @@ impl OutgoingSwapCoinV2 {
         &self.timelock_script
     }
 
-    /// Returns the transaction ID of the outgoing swap contract, if broadcast.
+    /// Returns the transaction ID of the swap contract transaction,if broadcasted.
     pub fn contract_txid(&self) -> Option<&Txid> {
         self.contract_txid.as_ref()
     }

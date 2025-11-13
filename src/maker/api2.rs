@@ -19,15 +19,15 @@ use crate::{
         },
     },
     utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
-    wallet::{Destination, RPCConfig, Wallet},
+    wallet::{Destination, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError},
     watch_tower::{
         registry_storage::FileRegistry, rpc_backend::BitcoinRpc, service::WatchService,
         watcher::Watcher, zmq_backend::ZmqBackend,
     },
 };
 use bitcoin::{
-    locktime::absolute::LockTime, sighash::SighashCache, Amount, OutPoint, ScriptBuf, Sequence,
-    Transaction, TxIn, TxOut, Witness,
+    locktime::absolute::LockTime, sighash::SighashCache, Amount, OutPoint, Sequence, Transaction,
+    TxIn, TxOut, Witness,
 };
 use bitcoind::bitcoincore_rpc::{RawTx, RpcApi};
 use std::{
@@ -79,23 +79,8 @@ pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
 pub struct ConnectionState {
     pub(crate) swap_amount: Amount,
     pub(crate) timelock: u16,
-    pub(crate) incoming_contract_my_privkey: Option<bitcoin::secp256k1::SecretKey>,
-    pub(crate) incoming_contract_my_pubkey: Option<bitcoin::PublicKey>,
-    pub(crate) incoming_contract_other_pubkey: Option<bitcoin::PublicKey>,
-    pub(crate) incoming_contract_hashlock_script: Option<ScriptBuf>,
-    pub(crate) incoming_contract_timelock_script: Option<ScriptBuf>,
-    pub(crate) incoming_contract_txid: Option<bitcoin::Txid>,
-    pub(crate) incoming_contract_tap_tweak: Option<bitcoin::secp256k1::Scalar>,
-    pub(crate) incoming_contract_internal_key: Option<bitcoin::secp256k1::XOnlyPublicKey>,
-    pub(crate) incoming_contract_spending_tx: Option<Transaction>,
-    pub(crate) outgoing_contract_my_privkey: Option<bitcoin::secp256k1::SecretKey>,
-    pub(crate) outgoing_contract_my_pubkey: Option<bitcoin::PublicKey>,
-    pub(crate) outgoing_contract_other_pubkey: Option<bitcoin::PublicKey>,
-    pub(crate) outgoing_contract_txid: Option<bitcoin::Txid>,
-    pub(crate) outgoing_contract_tap_tweak: Option<bitcoin::secp256k1::Scalar>,
-    pub(crate) outgoing_contract_internal_key: Option<bitcoin::secp256k1::XOnlyPublicKey>,
-    pub(crate) outgoing_contract_hashlock_script: Option<ScriptBuf>,
-    pub(crate) outgoing_contract_timelock_script: Option<ScriptBuf>,
+    pub(crate) incoming_contract: IncomingSwapCoinV2,
+    pub(crate) outgoing_contract: OutgoingSwapCoinV2,
 }
 
 impl Clone for ConnectionState {
@@ -103,23 +88,8 @@ impl Clone for ConnectionState {
         ConnectionState {
             swap_amount: self.swap_amount,
             timelock: self.timelock,
-            incoming_contract_my_privkey: self.incoming_contract_my_privkey,
-            incoming_contract_my_pubkey: self.incoming_contract_my_pubkey,
-            incoming_contract_other_pubkey: self.incoming_contract_other_pubkey,
-            incoming_contract_hashlock_script: self.incoming_contract_hashlock_script.clone(),
-            incoming_contract_timelock_script: self.incoming_contract_timelock_script.clone(),
-            incoming_contract_txid: self.incoming_contract_txid,
-            incoming_contract_tap_tweak: self.incoming_contract_tap_tweak,
-            incoming_contract_internal_key: self.incoming_contract_internal_key,
-            incoming_contract_spending_tx: self.incoming_contract_spending_tx.clone(),
-            outgoing_contract_my_privkey: self.outgoing_contract_my_privkey,
-            outgoing_contract_my_pubkey: self.outgoing_contract_my_pubkey,
-            outgoing_contract_other_pubkey: self.outgoing_contract_other_pubkey,
-            outgoing_contract_txid: self.outgoing_contract_txid,
-            outgoing_contract_tap_tweak: self.outgoing_contract_tap_tweak,
-            outgoing_contract_internal_key: self.outgoing_contract_internal_key,
-            outgoing_contract_hashlock_script: self.outgoing_contract_hashlock_script.clone(),
-            outgoing_contract_timelock_script: self.outgoing_contract_timelock_script.clone(),
+            incoming_contract: self.incoming_contract.clone(),
+            outgoing_contract: self.outgoing_contract.clone(),
         }
     }
 }
@@ -418,7 +388,7 @@ impl Maker {
         connection_state.incoming_contract.other_pubkey = Some(message.pubkeys_a[0]);
 
         // Store next party's tweakable pubkey for outgoing contract
-        connection_state.outgoing_contract_other_pubkey = Some(message.next_party_tweakable_point);
+        connection_state.outgoing_contract.other_pubkey = Some(message.next_party_tweakable_point);
 
         // Verify we have sufficient funds and get necessary data
         let (outgoing_privkey, funding_utxo) = {
@@ -642,30 +612,28 @@ impl Maker {
         connection_state: &mut ConnectionState,
     ) -> Result<PrivateKeyHandover, MakerError> {
         // Create the spending transaction if it doesn't exist
-        let spending_tx = if connection_state.incoming_contract_spending_tx.is_none() {
+        if connection_state.incoming_contract.spending_tx().is_none() {
             log::info!(
                 "[{}] Creating spending transaction for incoming contract",
                 self.config.network_port
             );
             let tx = self.create_unsigned_spending_tx(connection_state)?;
-            connection_state.incoming_contract_spending_tx = Some(tx);
-            connection_state
-                .incoming_contract_spending_tx
-                .as_ref()
-                .unwrap()
-        } else {
-            connection_state
-                .incoming_contract_spending_tx
-                .as_ref()
-                .unwrap()
-        };
+            connection_state.incoming_contract.spending_tx = Some(tx);
+        }
+        let spending_tx = connection_state
+            .incoming_contract
+            .spending_tx()
+            .as_ref()
+            .ok_or_else(|| MakerError::General("No spending tx found"))?
+            .clone();
 
         // Generate fresh nonce pairs for both parties (maker and sender)
         // In the private key handover protocol, we generate nonces when we receive the private key
 
         // Generate maker's nonce pair for incoming contract
         let incoming_my_privkey = connection_state
-            .incoming_contract_my_privkey
+            .incoming_contract
+            .privkey()
             .ok_or_else(|| MakerError::General("No incoming contract private key"))?;
         let secp = bitcoin::secp256k1::Secp256k1::new();
         let incoming_my_keypair =
@@ -748,7 +716,7 @@ impl Maker {
             &incoming_aggregated_nonce,
             incoming_contract_my_sec_nonce,
             incoming_my_keypair,
-            incoming_tap_tweak,
+            *incoming_tap_tweak,
             incoming_ordered_pubkeys[0],
             incoming_ordered_pubkeys[1],
         );
@@ -758,7 +726,7 @@ impl Maker {
             &incoming_aggregated_nonce,
             incoming_contract_other_sec_nonce,
             incoming_other_keypair,
-            incoming_tap_tweak,
+            *incoming_tap_tweak,
             incoming_ordered_pubkeys[0],
             incoming_ordered_pubkeys[1],
         );
@@ -803,7 +771,7 @@ impl Maker {
         );
 
         let privkey_handover_message = PrivateKeyHandover {
-            secret_key: connection_state.outgoing_contract_my_privkey.unwrap(),
+            secret_key: *connection_state.outgoing_contract.privkey().unwrap(),
         };
 
         Ok(privkey_handover_message)
