@@ -11,6 +11,7 @@ use std::{sync::Arc, time::Instant};
 
 use bitcoin::{
     hashes::Hash,
+    hex::{Case, DisplayHex},
     secp256k1::{self, Secp256k1},
     Amount, OutPoint, PublicKey, Transaction, Txid,
 };
@@ -637,11 +638,12 @@ impl Maker {
                 key: outgoing_swapcoin.my_privkey,
             });
         }
-
+        
+        let unique_id = message.preimage[0..8].to_hex_string(Case::Lower);
         self.wallet.write()?.save_to_disk()?;
         Ok(MakerToTakerMessage::RespPrivKeyHandover(PrivKeyHandover {
             multisig_privkeys: swapcoin_private_keys,
-            unique_id: None,
+            id: unique_id,
         }))
     }
 
@@ -661,9 +663,7 @@ impl Maker {
         }
         // Remove only the connection state for this swap id so watchtowers are not triggered.
         let mut conn_state = self.ongoing_swap_state.lock()?;
-        if let Some(swap_id) = &message.unique_id {
-            conn_state.remove(swap_id);
-        }
+        conn_state.remove(&message.id);
 
         self.wallet.write()?.sync_and_save()?;
 

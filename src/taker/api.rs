@@ -1947,7 +1947,7 @@ impl Taker {
             &mut socket,
             &TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {
                 multisig_privkeys: privkeys_reply,
-                unique_id: Some(self.ongoing_swap_state.id.clone()),
+                id: self.ongoing_swap_state.id.clone(),
             }),
         )?;
         Ok(())

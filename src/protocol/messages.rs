@@ -182,7 +182,7 @@ pub(crate) struct MultisigPrivkey {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PrivKeyHandover {
     pub(crate) multisig_privkeys: Vec<MultisigPrivkey>,
-    pub(crate) unique_id: Option<String>,
+    pub(crate) id: String,
 }
 
 /// All messages sent from Taker to Maker.
