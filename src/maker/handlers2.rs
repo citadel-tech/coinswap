@@ -26,7 +26,7 @@ pub(crate) fn handle_message_taproot(
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     log::debug!(
         "[{}] Handling message: {:?}",
-        maker.config.network_port,
+        maker.config.network_port(),
         message
     );
 
@@ -57,14 +57,17 @@ fn handle_get_offer(
     _connection_state: &mut ConnectionState,
     _get_offer: GetOffer,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
-    log::info!("[{}] Handling GetOffer request", maker.config.network_port);
+    log::info!(
+        "[{}] Handling GetOffer request",
+        maker.config.network_port()
+    );
 
     // Create offer using the new api2 implementation
     let offer = maker.create_offer(_connection_state)?;
 
     log::info!(
         "[{}] Sending offer: min_size={}, max_size={}",
-        maker.config.network_port,
+        maker.config.network_port(),
         offer.min_size,
         offer.max_size
     );
@@ -80,7 +83,7 @@ fn handle_swap_details(
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     log::info!(
         "[{}] Handling SwapDetails: amount={}, timelock={}, tx_count={}",
-        maker.config.network_port,
+        maker.config.network_port(),
         swap_details.amount,
         swap_details.timelock,
         swap_details.no_of_tx
@@ -97,7 +100,7 @@ fn handle_swap_details(
     let our_fee = maker.calculate_swap_fee(swap_details.amount, swap_details.timelock);
     log::info!(
         "[{}] Calculated fee: {}",
-        maker.config.network_port,
+        maker.config.network_port(),
         our_fee
     );
 
@@ -113,7 +116,7 @@ fn handle_senders_contract(
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     log::info!(
         "[{}] Handling SendersContract with {} contracts",
-        maker.config.network_port,
+        maker.config.network_port(),
         senders_contract.contract_txs.len()
     );
 
@@ -123,7 +126,7 @@ fn handle_senders_contract(
 
     log::info!(
         "[{}] Sending SenderContractFromMaker with {} contracts",
-        maker.config.network_port,
+        maker.config.network_port(),
         receiver_contract.contract_txs.len()
     );
 
@@ -141,7 +144,7 @@ fn handle_spending_tx_and_receiver_nonce(
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     log::info!(
         "[{}] Handling SpendingTxAndReceiverNonce",
-        maker.config.network_port
+        maker.config.network_port()
     );
 
     // Generate nonces and partial signature for this sweep
@@ -162,7 +165,7 @@ fn handle_partial_sig_and_senders_nonce(
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     log::info!(
         "[{}] Handling PartialSigAndSendersNonce",
-        maker.config.network_port
+        maker.config.network_port()
     );
 
     // Complete the maker's sweep transaction with the received partial signature

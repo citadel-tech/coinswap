@@ -3,6 +3,8 @@
 //! This module defines the configuration options for the Maker server, controlling various aspects
 //! of the maker's behavior including network settings, swap parameters, and security settings.
 
+use config_builder::ConfigBuilder;
+
 use crate::utill::parse_toml;
 use std::{io, path::Path};
 
@@ -19,28 +21,28 @@ use super::api::MIN_SWAP_AMOUNT;
 /// - Swap amount limits
 /// - Market settings, like Fidelity Bonds, Fidelity amount, etc.
 /// - Connection preferences
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, ConfigBuilder)]
 pub struct MakerConfig {
     /// RPC listening port for maker-cli operations
-    pub rpc_port: u16,
+    rpc_port: u16,
     /// Network port for client connections
-    pub network_port: u16,
+    network_port: u16,
     /// Control port for Tor interface
-    pub control_port: u16,
+    control_port: u16,
     /// Socks port for Tor proxy
-    pub socks_port: u16,
+    socks_port: u16,
     /// Authentication password for Tor interface
-    pub tor_auth_password: String,
+    tor_auth_password: String,
     /// Minimum amount in satoshis that can be swapped
-    pub min_swap_amount: u64,
+    min_swap_amount: u64,
     /// Fidelity Bond amount in satoshis
-    pub fidelity_amount: u64,
+    fidelity_amount: u64,
     /// Fidelity Bond relative timelock in number of blocks
-    pub fidelity_timelock: u32,
+    fidelity_timelock: u32,
     /// A fixed base fee charged by the Maker for providing its services
-    pub base_fee: u64,
+    base_fee: u64,
     /// A percentage fee based on the swap amount.
-    pub amount_relative_fee_pct: f64,
+    amount_relative_fee_pct: f64,
 }
 
 impl Default for MakerConfig {
@@ -78,7 +80,7 @@ impl MakerConfig {
     ///
     /// Default data-dir for linux: `~/.coinswap/maker`
     /// Default config locations: `~/.coinswap/maker/config.toml`.
-    pub(crate) fn new(config_path: Option<&Path>) -> io::Result<Self> {
+    fn new(config_path: Option<&Path>) -> io::Result<Self> {
         let default_config_path = get_maker_dir().join("config.toml");
 
         let config_path = config_path.unwrap_or(&default_config_path);
@@ -205,7 +207,10 @@ mod tests {
             socks_port = 9050
         "#;
         let config_path = create_temp_config(contents, "valid_maker_config.toml");
-        let config = MakerConfig::new(Some(&config_path)).unwrap();
+        let config = MakerConfig::builder()
+            .from_file(Some(&config_path))
+            .unwrap()
+            .build();
         remove_temp_config(&config_path);
 
         let default_config = MakerConfig::default();
@@ -219,7 +224,11 @@ mod tests {
             network_port = 6103
         "#;
         let config_path = create_temp_config(contents, "missing_fields_maker_config.toml");
-        let config = MakerConfig::new(Some(&config_path)).unwrap();
+        let config = MakerConfig::builder()
+            .from_file(Some(&config_path))
+            .unwrap()
+            .build();
+
         remove_temp_config(&config_path);
 
         assert_eq!(config.network_port, 6103);
@@ -239,7 +248,10 @@ mod tests {
             network_port = "not_a_number"
         "#;
         let config_path = create_temp_config(contents, "incorrect_type_maker_config.toml");
-        let config = MakerConfig::new(Some(&config_path)).unwrap();
+        let config = MakerConfig::builder()
+            .from_file(Some(&config_path))
+            .unwrap()
+            .build();
         remove_temp_config(&config_path);
 
         assert_eq!(config, MakerConfig::default());
@@ -248,8 +260,42 @@ mod tests {
     #[test]
     fn test_missing_file() {
         let config_path = get_maker_dir().join("maker.toml");
-        let config = MakerConfig::new(Some(&config_path)).unwrap();
+        let config = MakerConfig::builder()
+            .from_file(Some(&config_path))
+            .unwrap()
+            .build();
         remove_temp_config(&config_path);
         assert_eq!(config, MakerConfig::default());
+    }
+
+    #[test]
+    fn test_builder_pattern() {
+        // Test building with default values
+        let config = MakerConfig::builder().build();
+        assert_eq!(config, MakerConfig::default());
+
+        let config = MakerConfig::builder()
+            .rpc_port(6051)
+            .network_port(6052)
+            .control_port(9052)
+            .socks_port(9053)
+            .min_swap_amount(2000)
+            .tor_auth_password("password")
+            .fidelity_amount(10000)
+            .fidelity_timelock(15000)
+            .build();
+
+        let expected = MakerConfig {
+            rpc_port: 6051,
+            network_port: 6052,
+            control_port: 9052,
+            socks_port: 9053,
+            tor_auth_password: "password".to_owned(),
+            min_swap_amount: 2000,
+            fidelity_amount: 10000,
+            fidelity_timelock: 15000,
+            ..Default::default()
+        };
+        assert_eq!(config, expected);
     }
 }

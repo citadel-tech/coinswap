@@ -237,40 +237,38 @@ impl Maker {
             wallet
         };
 
-        let mut config = MakerConfig::new(Some(&data_dir.join("config.toml")))?;
+        // If the config file doesn't exist, the default config will be loaded.
+        let config_path = data_dir.join("config.toml");
+        // Build configuration
+        let mut builder = MakerConfig::builder().from_file(Some(&config_path))?;
 
         if let Some(port) = network_port {
-            config.network_port = port;
+            builder = builder.network_port(port);
+        }
+        if let Some(port) = rpc_port {
+            builder = builder.rpc_port(port);
+        }
+        if let Some(port) = socks_port {
+            builder = builder.socks_port(port);
+        }
+        if let Some(port) = control_port {
+            builder = builder.control_port(port);
+        }
+        if let Some(password) = tor_auth_password {
+            builder = builder.tor_auth_password(password);
         }
 
-        if let Some(rpc_port) = rpc_port {
-            config.rpc_port = rpc_port;
-        }
-
-        if let Some(socks_port) = socks_port {
-            config.socks_port = socks_port;
-        }
-
-        if let Some(control_port) = control_port {
-            config.control_port = control_port;
-        }
-
-        if let Some(tor_auth_password) = tor_auth_password {
-            config.tor_auth_password = tor_auth_password;
-        }
-
-        // Check Tor status if not in integration test mode
+        let config = builder.build();
         if !cfg!(feature = "integration-test") {
-            check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
+            check_tor_status(config.control_port(), config.tor_auth_password())?;
         }
-
-        config.write_to_file(&data_dir.join("config.toml"))?;
+        config.write_to_file(&config_path)?;
 
         log::info!("Initializing wallet sync");
         wallet.sync()?;
         log::info!("Completed wallet sync");
 
-        let network_port = config.network_port;
+        let network_port = config.network_port();
 
         Ok(Self {
             config,
@@ -314,7 +312,7 @@ impl Maker {
         let fidelity_proof = if let Some(i) = highest_index {
             // Convert regular fidelity proof to taproot format
             let regular_proof = wallet
-                .generate_fidelity_proof(i, &format!("127.0.0.1:{}", self.config.network_port))?;
+                .generate_fidelity_proof(i, &format!("127.0.0.1:{}", self.config.network_port()))?;
 
             // Convert sha256d::Hash to sha256::Hash (taproot uses single hash)
             use bitcoin::hashes::Hash as HashTrait;
@@ -745,7 +743,7 @@ impl Maker {
 
         log::info!(
             "[{}] message (sighash): {:?}",
-            self.config.network_port,
+            self.config.network_port(),
             message
         );
 
@@ -832,12 +830,12 @@ impl Maker {
 
         log::info!(
             "[{}] Completing maker sweep with received partial signature",
-            self.config.network_port
+            self.config.network_port()
         );
 
         // Check if we have partial signatures from the other party
         if partial_sig_and_senders_nonce.partial_signatures.is_empty() {
-            log::warn!("[{}] No partial signatures received - taker partial signature generation not yet complete", self.config.network_port);
+            log::warn!("[{}] No partial signatures received - taker partial signature generation not yet complete", self.config.network_port());
             return Ok(());
         }
         let other_partial_sig: secp256k1::musig::PartialSignature = partial_sig_and_senders_nonce
@@ -852,11 +850,11 @@ impl Maker {
         // DETAILED LOGGING FOR MAKER SIGNATURE VERIFICATION
         log::info!(
             "[{}] Received sender_nonce from taker",
-            self.config.network_port
+            self.config.network_port()
         );
         log::info!(
             "[{}] Received partial_sig from taker",
-            self.config.network_port
+            self.config.network_port()
         );
 
         // Get the spending transaction we created for our incoming contract
@@ -997,7 +995,7 @@ impl Maker {
 
         log::info!(
             "[{}] Maker sweep transaction broadcasted with txid: {:?}",
-            self.config.network_port,
+            self.config.network_port(),
             txid
         );
 
@@ -1018,7 +1016,7 @@ impl Maker {
 
         log::info!(
             "[{}] Creating unsigned spending tx for incoming contract: {}",
-            self.config.network_port,
+            self.config.network_port(),
             incoming_contract_txid
         );
 
@@ -1064,7 +1062,7 @@ impl Maker {
 
         log::info!(
             "[{}] Created unsigned spending tx with output value: {}",
-            self.config.network_port,
+            self.config.network_port(),
             contract_value - Amount::from_sat(1000)
         );
 
@@ -1134,7 +1132,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                 if instant.elapsed() > IDLE_CONNECTION_TIMEOUT {
                     log::warn!(
                         "[{}] Idle connection timeout for IP: {}. Removing connection state.",
-                        maker.config.network_port,
+                        maker.config.network_port(),
                         ip
                     );
                     bad_ip.push(ip.clone());

@@ -3,22 +3,24 @@
 //! This module defines the configuration options for the Taker module, controlling various aspects
 //! of the taker's behavior including network settings, connection preferences, and security settings.
 
+use config_builder::ConfigBuilder;
+
 use crate::utill::{get_taker_dir, parse_field, parse_toml};
 use std::{io, io::Write, path::Path};
 
 /// Taker configuration
 ///
 /// This struct defines all configurable parameters for the Taker app, including all network ports and marketplace settings
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, ConfigBuilder)]
 pub struct TakerConfig {
     /// Control port for Tor interface (default: 9051)
-    pub control_port: u16,
+    control_port: u16,
     /// Socks port for Tor proxy (default: 9050)
-    pub socks_port: u16,
+    socks_port: u16,
     /// Authentication password for Tor interface
-    pub tor_auth_password: String,
+    tor_auth_password: String,
     /// Tracker address for maker discovery
-    pub tracker_address: String,
+    tracker_address: String,
 }
 
 impl Default for TakerConfig {
@@ -44,7 +46,7 @@ impl TakerConfig {
     ///
     /// Default data-dir for linux: `~/.coinswap/taker`
     /// Default config locations: `~/.coinswap/taker/config.toml`.
-    pub(crate) fn new(config_path: Option<&Path>) -> io::Result<Self> {
+    fn new(config_path: Option<&Path>) -> io::Result<Self> {
         let default_config_path = get_taker_dir().join("config.toml");
 
         let config_path = config_path.unwrap_or(&default_config_path);
@@ -150,7 +152,10 @@ mod tests {
             refund_locktime = 48
         "#;
         let config_path = create_temp_config(contents, "missing_fields_taker_config.toml");
-        let config = TakerConfig::new(Some(&config_path)).unwrap();
+        let config = TakerConfig::builder()
+            .from_file(Some(&config_path))
+            .unwrap()
+            .build();
         remove_temp_config(&config_path);
 
         assert_eq!(REFUND_LOCKTIME, 20);
@@ -164,7 +169,10 @@ mod tests {
             refund_locktime = "not_a_number"
         "#;
         let config_path = create_temp_config(contents, "incorrect_type_taker_config.toml");
-        let config = TakerConfig::new(Some(&config_path)).unwrap();
+        let config = TakerConfig::builder()
+            .from_file(Some(&config_path))
+            .unwrap()
+            .build();
         remove_temp_config(&config_path);
 
         assert_eq!(config, TakerConfig::default());
@@ -177,7 +185,10 @@ mod tests {
             socks_port = 9050
         "#;
         let config_path = create_temp_config(contents, "different_data_taker_config.toml");
-        let config = TakerConfig::new(Some(&config_path)).unwrap();
+        let config = TakerConfig::builder()
+            .from_file(Some(&config_path))
+            .unwrap()
+            .build();
         remove_temp_config(&config_path);
         assert_eq!(REFUND_LOCKTIME, 20);
         assert_eq!(
@@ -192,7 +203,10 @@ mod tests {
     #[test]
     fn test_missing_file() {
         let config_path = get_taker_dir().join("taker.toml");
-        let config = TakerConfig::new(Some(&config_path)).unwrap();
+        let config = TakerConfig::builder()
+            .from_file(Some(&config_path))
+            .unwrap()
+            .build();
         remove_temp_config(&config_path);
         assert_eq!(config, TakerConfig::default());
     }
