@@ -1,4 +1,4 @@
-//! This module defines the messages communicated between the parties(Taker, Maker and Tracker)
+//! This module defines the messages communicated between the parties(Taker, Maker)
 use crate::wallet::FidelityBond;
 use bitcoin::{hashes::sha256::Hash, Amount, PublicKey, ScriptBuf, Transaction, Txid};
 use secp256k1::musig::{PartialSignature, PublicNonce};
@@ -180,37 +180,6 @@ pub(crate) struct SenderContractFromMaker {
     pub(crate) tap_tweak: Option<SerializableScalar>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-/// Metadata shared by the maker with the Tracker for verifying authenticity.
-pub struct TrackerMetadata {
-    /// The maker's URL.
-    pub url: String,
-    /// Proof of the maker's fidelity bond funding.
-    pub proof: FidelityProof,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-/// Tracker response
-pub enum TrackerServerToClient {
-    /// Address of all makers, tracker currently have.
-    Address {
-        /// list of addresses
-        addresses: Vec<String>,
-    },
-    /// Just to let server know tracker existence and later on for indexing request.
-    Ping {
-        /// Address of tracker
-        address: String,
-        /// Port of tracker
-        port: u16,
-    },
-    /// To watch for particular utxo.
-    WatchResponse {
-        /// Set of mempool transaction with list of transaction spending it.
-        mempool_tx: Vec<MempoolTx>,
-    },
-}
-
 /// Mempool transaction
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MempoolTx {
@@ -218,29 +187,6 @@ pub struct MempoolTx {
     pub txid: String,
     /// Hex encoded raw transaction
     pub rawtx: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-/// Tracker client to server messages
-#[allow(clippy::large_enum_variant)]
-pub enum TrackerClientToServer {
-    /// A request sent by the maker to register itself with the server and authenticate.
-    Post {
-        /// Metadata containing the maker's URL and fidelity proof.
-        metadata: TrackerMetadata,
-    },
-    /// A request sent by the taker to fetch all valid maker addresses from the Tracker server.
-    Get,
-    /// To gauge server activity
-    Pong {
-        /// Address of the current server
-        address: String,
-    },
-    /// Request tracker to track any UTXO which is spending the UTXO
-    Watch {
-        /// Outpoint to watch
-        outpoint: bitcoin::OutPoint,
-    },
 }
 
 // New backwards sweeping protocol message types

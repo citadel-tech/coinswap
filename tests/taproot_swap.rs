@@ -7,8 +7,11 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server_taproot, TaprootMaker},
-    taker::api2::{SwapParams, Taker},
-    wallet::{RPCConfig, Wallet},
+    taker::{
+        api2::{SwapParams, Taker},
+        TakerBehavior,
+    },
+    wallet::Wallet,
 };
 use std::sync::Arc;
 
@@ -25,27 +28,19 @@ fn test_taproot_coinswap() {
     warn!("Running Test: Taproot Coinswap Basic Functionality");
 
     // Use different ports for taproot makers to avoid conflicts
-    let taproot_makers_config_map = [(7102, Some(19061)), (17102, Some(19062))];
+    let taproot_makers_config_map = vec![(7102, Some(19061)), (17102, Some(19062))];
+    let taker_behavior = vec![TakerBehavior::Normal];
 
     // Initialize test framework (without regular takers, we'll create taproot taker manually)
-    let (test_framework, _regular_takers, _regular_makers, block_generation_handle) =
-        TestFramework::init(vec![], vec![]);
+    let (test_framework, mut taproot_taker, taproot_makers, block_generation_handle) =
+        TestFramework::init_taproot(taproot_makers_config_map, taker_behavior);
 
     let bitcoind = &test_framework.bitcoind;
-
-    // Create taproot makers manually
-    let taproot_makers = create_taproot_makers(&test_framework, &taproot_makers_config_map);
-
-    // Create taproot taker
-    let mut taproot_taker = create_taproot_taker(&test_framework);
+    let taproot_taker = taproot_taker.get_mut(0).unwrap();
 
     // Fund the Taproot Taker with 3 UTXOs of 0.05 BTC each
-    let taproot_taker_original_balance = fund_taproot_taker(
-        &mut taproot_taker,
-        bitcoind,
-        3,
-        Amount::from_btc(0.05).unwrap(),
-    );
+    let taproot_taker_original_balance =
+        fund_taproot_taker(taproot_taker, bitcoind, 3, Amount::from_btc(0.05).unwrap());
 
     // Fund the Taproot Makers with 4 UTXOs of 0.05 BTC each
     fund_taproot_makers(
@@ -80,10 +75,6 @@ fn test_taproot_coinswap() {
     for maker in &taproot_makers {
         maker.wallet().write().unwrap().sync().unwrap();
     }
-
-    // Wait a bit for makers to fully register with the tracker
-    log::info!("Waiting for makers to register with tracker...");
-    thread::sleep(Duration::from_secs(5));
 
     // Get the actual spendable balances AFTER fidelity bond creation
     let mut actual_maker_spendable_balances = Vec::new();
@@ -186,38 +177,6 @@ fn test_taproot_coinswap() {
     block_generation_handle.join().unwrap();
 }
 
-/// Create taproot makers with the test framework configuration
-fn create_taproot_makers(
-    test_framework: &TestFramework,
-    configs: &[(u16, Option<u16>)],
-) -> Vec<Arc<TaprootMaker>> {
-    configs
-        .iter()
-        .enumerate()
-        .map(|(index, (network_port, rpc_port))| {
-            let data_dir = std::env::temp_dir()
-                .join("coinswap")
-                .join(format!("taproot_maker{}", index));
-
-            let rpc_config = RPCConfig::from(test_framework);
-
-            Arc::new(
-                TaprootMaker::init(
-                    Some(data_dir),
-                    Some(format!("taproot_maker{}_wallet", index)),
-                    Some(rpc_config),
-                    Some(*network_port),
-                    *rpc_port,
-                    None, // control_port
-                    None, // tor_auth_password
-                    None, // socks_port
-                )
-                .unwrap(),
-            )
-        })
-        .collect()
-}
-
 /// Fund taproot makers and verify their balances
 fn fund_taproot_makers(
     makers: &[Arc<TaprootMaker>],
@@ -259,28 +218,6 @@ fn fund_taproot_makers(
     }
 
     original_balances
-}
-
-/// Create a taproot taker with the test framework configuration
-fn create_taproot_taker(test_framework: &TestFramework) -> Taker {
-    // Use a unique directory with timestamp to avoid wallet conflicts
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let data_dir = std::env::temp_dir()
-        .join("coinswap")
-        .join(format!("taproot_taker_{}", timestamp));
-    let rpc_config = RPCConfig::from(test_framework);
-
-    Taker::init(
-        Some(data_dir),
-        Some("taproot_taker_wallet".to_string()),
-        Some(rpc_config),
-        None, // control_port
-        None, // tor_auth_password
-    )
-    .unwrap()
 }
 
 /// Fund taproot taker and verify balance

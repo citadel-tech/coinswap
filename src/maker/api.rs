@@ -8,30 +8,39 @@
 
 use crate::{
     protocol::{
-        contract::check_hashvalues_are_equal,
-        messages::{FidelityProof, ReqContractSigsForSender},
+        contract::{check_hashvalues_are_equal, read_hashvalue_from_contract},
+        messages::{FidelityProof, ReqContractSigsForSender, PREIMAGE_LEN},
         Hash160,
     },
     utill::{
-        check_tor_status, get_maker_dir, redeemscript_to_scriptpubkey, HEART_BEAT_INTERVAL,
-        REQUIRED_CONFIRMS,
+        check_tor_status, get_maker_dir, redeemscript_to_scriptpubkey, BLOCK_DELAY,
+        HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
     },
-    wallet::{RPCConfig, WalletSwapCoin},
+    wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
+    watch_tower::{
+        registry_storage::FileRegistry,
+        rpc_backend::BitcoinRpc,
+        service::WatchService,
+        watcher::{Watcher, WatcherEvent},
+        zmq_backend::ZmqBackend,
+    },
 };
 use bitcoin::{
     ecdsa::Signature,
+    hashes::Hash,
     secp256k1::{self, Secp256k1},
-    OutPoint, PublicKey, Transaction,
+    OutPoint, PublicKey, ScriptBuf, Transaction,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    convert::TryInto,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        Arc, Mutex, RwLock,
+        mpsc, Arc, Mutex, RwLock,
     },
-    thread::JoinHandle,
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
@@ -69,6 +78,10 @@ pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60 * 15);
 /// To enhance safety, the default value is set to 20 blocks.
 pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
 
+/// spent with witnesses:
+//  hashlock case:
+//  <hashlock_signature> <preimage len 32>
+pub const MIN_WITNESS_ITEM_FOR_HASHLOCK: usize = 2;
 /// # Fee Parameters for Coinswap
 ///
 /// These parameters define the fees charged by Makers in a coinswap transaction.
@@ -234,8 +247,8 @@ pub struct Maker {
     data_dir: PathBuf,
     /// Thread pool for managing all spawned threads
     pub(crate) thread_pool: Arc<ThreadPool>,
-    /// Indexer address to poll for UTXO
-    pub(crate) tracker: RwLock<Option<String>>,
+    /// Watcher service
+    pub watch_service: WatchService,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -263,6 +276,7 @@ impl Maker {
         tor_auth_password: Option<String>,
         socks_port: Option<u16>,
         behavior: MakerBehavior,
+        zmq_addr: String,
     ) -> Result<Self, MakerError> {
         // Get the provided data directory or the default data directory.
         let data_dir = data_dir.unwrap_or(get_maker_dir());
@@ -273,8 +287,20 @@ impl Maker {
         let wallet_path = wallets_dir.join(&wallet_file_name);
 
         let mut rpc_config = rpc_config.unwrap_or_default();
-
         rpc_config.wallet_name = wallet_file_name;
+
+        let backend = ZmqBackend::new(&zmq_addr);
+        let rpc_backend = BitcoinRpc::new(rpc_config.clone()).unwrap();
+        let registry = FileRegistry::load(data_dir.join(".maker-watcher"));
+        let (tx_requests, rx_requests) = mpsc::channel();
+        let (tx_events, rx_responses) = mpsc::channel();
+
+        let mut watcher = Watcher::new(backend, rpc_backend, registry, rx_requests, tx_events);
+        _ = thread::Builder::new()
+            .name("Watcher thread".to_string())
+            .spawn(move || watcher.run());
+
+        let watch_service = WatchService::new(tx_requests, rx_responses);
 
         let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config)?;
 
@@ -320,7 +346,7 @@ impl Maker {
             is_setup_complete: AtomicBool::new(false),
             data_dir,
             thread_pool: Arc::new(ThreadPool::new(network_port)),
-            tracker: RwLock::new(None),
+            watch_service,
         })
     }
 
@@ -514,6 +540,34 @@ impl Maker {
         }
         Ok(sigs)
     }
+
+    pub(crate) fn send_watch_request(
+        &self,
+        swap_coin: &impl SwapCoin,
+    ) -> Result<Vec<Transaction>, MakerError> {
+        let mut responses = Vec::new();
+
+        let contract_tx = swap_coin.get_contract_tx();
+        let contract_txid = contract_tx.compute_txid();
+
+        for (vout, _) in contract_tx.output.iter().enumerate() {
+            let outpoint = OutPoint {
+                txid: contract_txid,
+                vout: vout as u32,
+            };
+            self.watch_service.watch_request(outpoint);
+            let watch_event = self.watch_service.wait_for_event();
+
+            if let Some(WatcherEvent::UtxoSpent {
+                spending_tx: Some(spending_tx),
+                ..
+            }) = watch_event
+            {
+                responses.push(spending_tx);
+            }
+        }
+        Ok(responses)
+    }
 }
 
 impl MakerRpc for Maker {
@@ -560,20 +614,17 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                 // No need to check for other contracts in the connection state, if any one of them
                 // is ever observed in the mempool/block, run recovery routine.
                 for txid in txids_to_watch {
-                    if maker
-                        .wallet
-                        .read()?
-                        .rpc
-                        .get_raw_transaction_info(&txid, None)
-                        .is_ok()
-                    {
+                    let read_lock = maker.wallet.read()?;
+                    let transaction_broadcasted =
+                        read_lock.rpc.get_raw_transaction_info(&txid, None).is_ok();
+                    drop(read_lock);
+                    if transaction_broadcasted {
                         // Something is broadcasted. Report, Recover and Abort.
                         log::warn!(
                             "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
                             maker.config.network_port,
                             txid
                         );
-
                         failed_swap_ip.push(ip.clone());
 
                         // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
@@ -582,10 +633,15 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                             "[{}] Spawning recovery thread after seeing contracts in mempool",
                             maker.config.network_port
                         );
+
+                        let incomings = connection_state.incoming_swapcoins.clone();
+                        let outgoings = connection_state.outgoing_swapcoins.clone();
+
                         let handle = std::thread::Builder::new()
                             .name("Swap recovery thread".to_string())
                             .spawn(move || {
-                                if let Err(e) = recover_from_swap(maker_clone) {
+                                if let Err(e) = recover_from_swap(maker_clone, incomings, outgoings)
+                                {
                                     log::error!("Failed to recover from swap due to: {e:?}");
                                 }
                             })?;
@@ -614,12 +670,13 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
 pub(crate) fn restore_broadcasted_contracts_on_reboot(
     maker: &Arc<Maker>,
 ) -> Result<(), MakerError> {
+    let (incomings, outgoings) = maker.wallet.read()?.find_unfinished_swapcoins();
     // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
     let maker_clone = maker.clone();
     let handle = std::thread::Builder::new()
         .name("Swap recovery thread".to_string())
         .spawn(move || {
-            if let Err(e) = recover_from_swap(maker_clone) {
+            if let Err(e) = recover_from_swap(maker_clone, incomings, outgoings) {
                 log::error!("Failed to recover from swap due to: {e:?}");
             }
         })?;
@@ -661,10 +718,14 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                         "[{}] Spawning recovery thread after Taker dropped",
                         maker.config.network_port
                     );
+
+                    let incomings = state.incoming_swapcoins.clone();
+                    let outgoings = state.outgoing_swapcoins.clone();
+
                     let handle = std::thread::Builder::new()
                         .name("Swap Recovery Thread".to_string())
                         .spawn(move || {
-                            if let Err(e) = recover_from_swap(maker_clone) {
+                            if let Err(e) = recover_from_swap(maker_clone, incomings, outgoings) {
                                 log::error!("Failed to recover from swap due to: {e:?}");
                             }
                         })?;
@@ -687,86 +748,219 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
     Ok(())
 }
 
-/// Broadcast Incoming and Outgoing Contract transactions & timelock contract after maturity or hashlock contract.
-/// Remove contract transactions from the wallet.
-pub(crate) fn recover_from_swap(maker: Arc<Maker>) -> Result<(), MakerError> {
-    // Broadcast all the incoming contracts.
-    let (incomings, outgoings) = maker.wallet.read()?.find_unfinished_swapcoins();
-    let is_hash_preimage_known = incomings.iter().any(|ic_sc| ic_sc.is_hash_preimage_known());
+pub(crate) fn recover_from_swap(
+    maker: Arc<Maker>,
+    incoming_swapcoins: Vec<IncomingSwapCoin>,
+    outgoing_swapcoins: Vec<OutgoingSwapCoin>,
+) -> Result<(), MakerError> {
+    let timelock = outgoing_swapcoins
+        .first()
+        .and_then(|o| o.get_timelock().ok())
+        .ok_or(MakerError::General("missing timelock on outgoing swapcoin"))?
+        as u32;
 
-    if is_hash_preimage_known {
-        let incoming_infos = maker
+    let start_height = maker
+        .wallet
+        .read()?
+        .rpc
+        .get_block_count()
+        .map_err(WalletError::Rpc)? as u32;
+    let timelock_expiry = start_height.saturating_add(timelock);
+
+    log::info!(
+        "[{}] recover_from_swap started | height={} timelock_expiry={}",
+        maker.config.network_port,
+        start_height,
+        timelock_expiry
+    );
+
+    while !maker.shutdown.load(Relaxed) {
+        let current_height = maker
             .wallet
-            .write()?
-            .broadcast_incoming_contracts(incomings.clone())?;
+            .read()?
+            .rpc
+            .get_block_count()
+            .map_err(WalletError::Rpc)? as u32;
 
-        //check for contract transactions and broadcast hashlocked transaction
-        while !maker.shutdown.load(Relaxed) {
-            let hashlocked_broadcasted = maker
-                .wallet
-                .write()?
-                .spend_from_hashlock_contract(&incoming_infos)?;
-
+        if current_height >= timelock_expiry {
             log::info!(
-                "[{}]-> {} incoming contracts detected | {} hashlock txs broadcasted.",
+                "[{}] timelock expired at {} (expiry={}), using timelock path",
                 maker.config.network_port,
-                incomings.len(),
-                hashlocked_broadcasted.len()
+                current_height,
+                timelock_expiry
             );
-
-            if hashlocked_broadcasted.len() == incomings.len() {
-                log::info!(
-                    "[{}] All incomings transactions claimed via hashlock. Recovery loop exiting.",
-                    maker.config.network_port
-                );
-                break;
-            }
-            // Block wait time is varied between prod. and test builds.
-            let block_wait_time = if cfg!(feature = "integration-test") {
-                Duration::from_secs(10)
-            } else {
-                Duration::from_secs(10 * 60)
-            };
-            std::thread::sleep(block_wait_time);
+            return recover_via_timelock(maker, outgoing_swapcoins);
         }
-    } else {
-        let outgoing_infos = maker
+
+        check_for_watch_response(&maker, &outgoing_swapcoins, &incoming_swapcoins)?;
+
+        let wallet = maker.wallet.read()?;
+        let all_preimages_known = incoming_swapcoins.iter().all(|incoming| {
+            wallet
+                .find_incoming_swapcoin(&incoming.get_multisig_redeemscript())
+                .is_some_and(|s| s.is_hash_preimage_known())
+        });
+        drop(wallet);
+
+        if all_preimages_known {
+            log::info!(
+                "[{}] all preimages known at height {}, using hashlock path",
+                maker.config.network_port,
+                current_height
+            );
+            return recover_via_hashlock(maker, incoming_swapcoins);
+        }
+
+        std::thread::sleep(HEART_BEAT_INTERVAL);
+    }
+
+    Ok(())
+}
+
+fn recover_via_hashlock(
+    maker: Arc<Maker>,
+    incoming: Vec<IncomingSwapCoin>,
+) -> Result<(), MakerError> {
+    let infos = maker
+        .wallet
+        .write()?
+        .broadcast_incoming_contracts(incoming.clone())?;
+
+    while !maker.shutdown.load(Relaxed) {
+        let broadcasted = maker
             .wallet
             .write()?
-            .broadcast_outgoing_contracts(outgoings.clone())?;
+            .spend_from_hashlock_contract(&infos, &maker.watch_service)?;
+        log::info!(
+            "[{}] hashlock recovery: {}/{} txs broadcasted",
+            maker.config.network_port,
+            broadcasted.len(),
+            incoming.len()
+        );
+        if broadcasted.len() == incoming.len() {
+            #[cfg(feature = "integration-test")]
+            maker.shutdown.store(true, Relaxed);
+            break;
+        }
+        std::thread::sleep(HEART_BEAT_INTERVAL);
+    }
+    Ok(())
+}
 
-        // Check for contract confirmations and broadcast timelocked transaction
-        while !maker.shutdown.load(Relaxed) {
-            let timelock_broadcasted = maker
-                .wallet
-                .write()?
-                .spend_from_timelock_contract(&outgoing_infos)?;
+fn recover_via_timelock(
+    maker: Arc<Maker>,
+    outgoing: Vec<OutgoingSwapCoin>,
+) -> Result<(), MakerError> {
+    let infos = maker
+        .wallet
+        .write()?
+        .broadcast_outgoing_contracts(outgoing.clone())?;
 
-            log::info!(
-                "[{}] -> {} outgoing contracts detected | {} timelock txs broadcasted.",
-                maker.config.network_port,
-                outgoings.len(),
-                timelock_broadcasted.len()
-            );
+    while !maker.shutdown.load(Relaxed) {
+        let broadcasted = maker
+            .wallet
+            .write()?
+            .spend_from_timelock_contract(&infos, &maker.watch_service)?;
+        log::info!(
+            "[{}] timelock recovery: {}/{} txs broadcasted",
+            maker.config.network_port,
+            broadcasted.len(),
+            outgoing.len()
+        );
+        if broadcasted.len() == outgoing.len() {
+            #[cfg(feature = "integration-test")]
+            maker.shutdown.store(true, Relaxed);
+            break;
+        }
+        std::thread::sleep(BLOCK_DELAY);
+    }
+    Ok(())
+}
 
-            if timelock_broadcasted.len() == outgoings.len() {
-                // For tests, terminate the maker at this stage.
-                #[cfg(feature = "integration-test")]
-                maker.shutdown.store(true, Relaxed);
+/// Checks for `WatchResponse` messages from the tracker, extracts preimages from mempool
+/// transactions, and updates maker swapcoins accordingly.
+fn check_for_watch_response(
+    maker: &Maker,
+    outgoings: &[OutgoingSwapCoin],
+    incomings: &[IncomingSwapCoin],
+) -> Result<(), MakerError> {
+    let mut seen_outpoints = HashSet::new();
+    let mut preimages = Vec::new();
 
-                log::info!(
-                    "[{}] All outgoing transactions claimed back via timelock. Recovery loop exiting.", maker.config.network_port
-                );
-                break;
+    // Collect all responses for the outgoing contracts
+    let mut responses = Vec::new();
+    for outgoing in outgoings {
+        responses.extend(maker.send_watch_request(outgoing)?);
+    }
+
+    for transaction in responses {
+        log::info!(
+            "[{}] Received WatchResponse with mempool txs: {:?}",
+            maker.config.network_port,
+            transaction
+        );
+
+        for input in &transaction.input {
+            let outpoint = (input.previous_output.txid, input.previous_output.vout);
+            if seen_outpoints.insert(outpoint)
+                && input.witness.len() >= MIN_WITNESS_ITEM_FOR_HASHLOCK
+                && input.witness[1].len() == PREIMAGE_LEN
+            {
+                if let Ok(preimage) = input.witness[1].try_into() {
+                    preimages.push(preimage);
+                }
             }
-            // Block wait time is varied between prod. and test builds.
-            let block_wait_time = if cfg!(feature = "integration-test") {
-                Duration::from_secs(10)
-            } else {
-                Duration::from_secs(10 * 60)
-            };
-            std::thread::sleep(block_wait_time);
+        }
+        update_swapcoins_with_preimages(maker, incomings, &preimages, true)?;
+        update_swapcoins_with_preimages(maker, outgoings, &preimages, false)?;
+    }
+
+    Ok(())
+}
+
+fn update_swapcoins_with_preimages<T: SwapCoin>(
+    maker: &Maker,
+    coins: &[T],
+    preimages: &[[u8; 32]],
+    is_incoming: bool,
+) -> Result<(), MakerError> {
+    if preimages.is_empty() {
+        return Ok(());
+    }
+
+    let mut wallet = maker.wallet.write()?;
+
+    let mut apply_preimage = |redeemscript: &ScriptBuf, preimage: [u8; 32]| {
+        if is_incoming {
+            if let Some(swap) = wallet.find_incoming_swapcoin_mut(redeemscript) {
+                swap.hash_preimage = Some(preimage);
+                return true;
+            }
+        } else if let Some(swap) = wallet.find_outgoing_swapcoin_mut(redeemscript) {
+            swap.hash_preimage = Some(preimage);
+            return true;
+        }
+        false
+    };
+
+    for coin in coins {
+        for preimage in preimages {
+            let hash = Hash160::hash(preimage);
+            let matches_contract =
+                read_hashvalue_from_contract(&coin.get_contract_redeemscript())? == hash;
+            if matches_contract {
+                let redeemscript = coin.get_multisig_redeemscript();
+                if apply_preimage(&redeemscript, *preimage) {
+                    log::info!(
+                        "[{}] Applied preimage for {} swapcoin {:?}",
+                        maker.config.network_port,
+                        if is_incoming { "incoming" } else { "outgoing" },
+                        redeemscript
+                    );
+                }
+            }
         }
     }
+
     Ok(())
 }

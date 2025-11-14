@@ -34,6 +34,9 @@ struct Cli {
         default_value = "127.0.0.1:48332"
     )]
     pub rpc: String,
+    /// Bitcoin Core ZMQ address:port value
+    #[clap(name = "ZMQ", long, short = 'z', default_value = "127.0.0.1:38332")]
+    pub zmq: String,
     /// Bitcoin Core RPC authentication string (username, password).
     #[clap(
         name = "USER:PASSWORD",
@@ -70,6 +73,7 @@ fn main() -> Result<(), MakerError> {
         Some(args.tor_auth),
         None,
         MakerBehavior::Normal,
+        args.zmq,
     )?);
 
     start_maker_server(maker)?;

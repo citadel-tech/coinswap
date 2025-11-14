@@ -41,7 +41,7 @@ use crate::{
     },
     taker::SwapParams,
     utill::{calculate_fee_sats, MIN_FEE_RATE, REQUIRED_CONFIRMS},
-    wallet::{IncomingSwapCoin, SwapCoin, WalletError},
+    wallet::{IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletError},
 };
 
 /// The Global Handle Message function. Takes in a [`Arc<Maker>`] and handles messages
@@ -171,9 +171,12 @@ pub(crate) fn handle_message(
                 TakerToMakerMessage::RespContractSigsForRecvrAndSender(message) => {
                     // Nothing to send. Maker now creates and broadcasts his funding Txs
                     connection_state.allowed_message = ExpectedMessage::ReqContractSigsForRecvr;
+                    let outgoing_swapcoins = connection_state.outgoing_swapcoins.clone();
+                    let incoming_swapcoins = connection_state.incoming_swapcoins.clone();
+
                     maker.handle_contract_sigs_for_recvr_and_sender(connection_state, message)?;
                     if let MakerBehavior::BroadcastContractAfterSetup = maker.behavior {
-                        unexpected_recovery(maker.clone())?;
+                        unexpected_recovery(maker.clone(), outgoing_swapcoins, incoming_swapcoins)?;
                         return Err(maker.behavior.into());
                     } else {
                         None
@@ -343,6 +346,14 @@ impl Maker {
                 .incoming_swapcoins
                 .contains(&incoming_swapcoin)
             {
+                let txid = incoming_swapcoin.contract_tx.compute_txid();
+                for (vout, _) in incoming_swapcoin.contract_tx.output.iter().enumerate() {
+                    let outpoint = OutPoint {
+                        txid,
+                        vout: vout as u32,
+                    };
+                    self.watch_service.register_watch_request(outpoint);
+                }
                 connection_state.incoming_swapcoins.push(incoming_swapcoin);
             }
         }
@@ -437,6 +448,19 @@ impl Maker {
         );
 
         connection_state.pending_funding_txes = my_funding_txes;
+
+        for outgoing_transactions in &outgoing_swapcoins {
+            let contract_transaction = &outgoing_transactions.contract_tx;
+            let txid = contract_transaction.compute_txid();
+            for (vout, _) in contract_transaction.output.iter().enumerate() {
+                let outpoint = OutPoint {
+                    txid,
+                    vout: vout as u32,
+                };
+                self.watch_service.register_watch_request(outpoint);
+            }
+        }
+
         connection_state.outgoing_swapcoins = outgoing_swapcoins;
 
         // Save things to disk after Proof of Funding is confirmed.
@@ -663,7 +687,24 @@ impl Maker {
         }
         // Remove only the connection state for this swap id so watchtowers are not triggered.
         let mut conn_state = self.ongoing_swap_state.lock()?;
-        conn_state.remove(&message.id);
+
+        if let Some((conn_state, _)) = conn_state.remove(&message.id) {
+            let unwatch_contract_outputs = |contract_tx: &Transaction| {
+                let txid = contract_tx.compute_txid();
+                for (vout, _) in contract_tx.output.iter().enumerate() {
+                    self.watch_service.unwatch(OutPoint {
+                        txid,
+                        vout: vout as u32,
+                    });
+                }
+            };
+            for swap in &conn_state.incoming_swapcoins {
+                unwatch_contract_outputs(&swap.contract_tx);
+            }
+            for swap in &conn_state.outgoing_swapcoins {
+                unwatch_contract_outputs(&swap.contract_tx);
+            }
+        }
 
         self.wallet.write()?.sync_and_save()?;
 
@@ -685,17 +726,25 @@ impl Maker {
             );
         }
         self.wallet.write()?.sync_and_save()?;
+        // For tests, terminate the maker at this stage.
+        #[cfg(feature = "integration-test")]
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 }
 
-fn unexpected_recovery(maker: Arc<Maker>) -> Result<(), MakerError> {
+fn unexpected_recovery(
+    maker: Arc<Maker>,
+    outgoings: Vec<OutgoingSwapCoin>,
+    incomings: Vec<IncomingSwapCoin>,
+) -> Result<(), MakerError> {
     // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
     let maker_clone = maker.clone();
     let handle = std::thread::Builder::new()
         .name("Swap Recovery Thread".to_string())
         .spawn(move || {
-            if let Err(e) = recover_from_swap(maker_clone) {
+            if let Err(e) = recover_from_swap(maker_clone, incomings, outgoings) {
                 log::error!("Failed to recover from swap due to: {e:?}");
             }
         })?;

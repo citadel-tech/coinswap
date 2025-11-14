@@ -39,6 +39,10 @@ struct Cli {
     )]
     pub rpc: String,
 
+    /// Bitcoin Core ZMQ address:port value
+    #[clap(name = "ZMQ", long, short = 'z', default_value = "127.0.0.1:38332")]
+    pub zmq: String,
+
     /// Bitcoin Core RPC authentication string. Ex: username:password
     #[clap(name="USER:PASSWORD",short='a',long, value_parser = parse_proxy_auth, default_value = "user:password")]
     pub auth: (String, String),
@@ -185,6 +189,7 @@ fn main() -> Result<(), TakerError> {
                 TakerBehavior::Normal,
                 None,
                 Some(args.tor_auth),
+                args.zmq,
             )?;
             match &args.command {
                 Commands::ListUtxo => {

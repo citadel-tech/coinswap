@@ -13,8 +13,7 @@ use test_framework::*;
 
 /// ABORT 2: Maker Drops Before Setup
 /// This test demonstrates the situation where a Maker prematurely drops connections after doing
-/// initial protocol handshake. This should not necessarily disrupt the round, the Taker will try to find
-/// more makers in his address book and carry on as usual. The Taker will mark this Maker as "bad" and will
+/// initial protocol handshake. This is a bad behavior. The Taker will mark this Maker as "bad" and will
 /// not swap this maker again.
 ///
 /// CASE 3: Maker Drops After Sending Sender's Signature. Taker and other Maker recovers.
