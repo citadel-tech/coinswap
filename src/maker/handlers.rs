@@ -7,10 +7,11 @@
 //! The file includes functions to validate and sign contract transactions, verify proof of funding, and handle unexpected recovery scenarios.
 //! Implements the core functionality for a Maker in a Bitcoin coinswap protocol.
 
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant};
 
 use bitcoin::{
     hashes::Hash,
+    hex::{Case, DisplayHex},
     secp256k1::{self, Secp256k1},
     Amount, OutPoint, PublicKey, Transaction, Txid,
 };
@@ -638,9 +639,11 @@ impl Maker {
             });
         }
 
+        let unique_id = message.preimage[0..8].to_hex_string(Case::Lower);
         self.wallet.write()?.save_to_disk()?;
         Ok(MakerToTakerMessage::RespPrivKeyHandover(PrivKeyHandover {
             multisig_privkeys: swapcoin_private_keys,
+            id: unique_id,
         }))
     }
 
@@ -658,9 +661,9 @@ impl Maker {
                 .expect("incoming swapcoin not found")
                 .apply_privkey(swapcoin_private_key.key)?;
         }
-        // Reset the connection state so watchtowers are not triggered.
+        // Remove only the connection state for this swap id so watchtowers are not triggered.
         let mut conn_state = self.ongoing_swap_state.lock()?;
-        *conn_state = HashMap::default();
+        conn_state.remove(&message.id);
 
         self.wallet.write()?.sync_and_save()?;
 
