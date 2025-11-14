@@ -638,7 +638,7 @@ impl Maker {
                 key: outgoing_swapcoin.my_privkey,
             });
         }
-        
+
         let unique_id = message.preimage[0..8].to_hex_string(Case::Lower);
         self.wallet.write()?.save_to_disk()?;
         Ok(MakerToTakerMessage::RespPrivKeyHandover(PrivKeyHandover {

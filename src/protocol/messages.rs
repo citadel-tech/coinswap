@@ -182,6 +182,7 @@ pub(crate) struct MultisigPrivkey {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PrivKeyHandover {
     pub(crate) multisig_privkeys: Vec<MultisigPrivkey>,
+    /// Unique ID to remove the connection state for a completed swap so watchtowers are not triggered.
     pub(crate) id: String,
 }
 
