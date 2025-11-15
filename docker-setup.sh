@@ -230,7 +230,7 @@ EOF
     if [[ "$USE_EXTERNAL_BITCOIND" != "true" ]]; then
         cat >> "$compose_file" << EOF
   bitcoind:
-    image: bitcoin/bitcoin:alpine
+    image: bitcoin/bitcoin:master-alpine
     container_name: coinswap-bitcoind
     command: |
       bitcoind
