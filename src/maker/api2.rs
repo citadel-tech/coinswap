@@ -6,7 +6,8 @@
 use super::rpc::server::MakerRpc;
 use crate::{
     protocol::{
-        contract2::{calculate_coinswap_fee, calculate_contract_sighash}, messages2::{Offer, SenderContractFromMaker, SendersContract, SwapDetails}
+        contract2::{calculate_coinswap_fee, calculate_contract_sighash},
+        messages2::{Offer, SenderContractFromMaker, SendersContract, SwapDetails},
     },
     utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL},
     wallet::{RPCConfig, Wallet},
@@ -88,7 +89,6 @@ pub struct ConnectionState {
     pub(crate) outgoing_contract_internal_key: Option<bitcoin::secp256k1::XOnlyPublicKey>, // Internal key for our outgoing contract
     pub(crate) outgoing_contract_hashlock_script: Option<ScriptBuf>, // Hashlock script for our outgoing contract
     pub(crate) outgoing_contract_timelock_script: Option<ScriptBuf>, // Timelock script for our outgoing contract
-    pub(crate) outgoing_contract_my_sec_nonce: Option<secp256k1::musig::SecretNonce>, // Our secret nonce for the outgoing contract
     pub(crate) outgoing_contract_my_pub_nonce: Option<secp256k1::musig::PublicNonce>, // Our public nonce for the outgoing contract
     // Store our partial signature for the incoming contract (to avoid SecretNonce cloning issues)
     pub(crate) incoming_contract_my_partial_sig: Option<secp256k1::musig::PartialSignature>,
@@ -126,7 +126,6 @@ impl Clone for ConnectionState {
             outgoing_contract_txid: self.outgoing_contract_txid,
             outgoing_contract_tap_tweak: self.outgoing_contract_tap_tweak,
             outgoing_contract_internal_key: self.outgoing_contract_internal_key,
-            outgoing_contract_my_sec_nonce: None,
             outgoing_contract_my_pub_nonce: self.outgoing_contract_my_pub_nonce,
             incoming_contract_my_partial_sig: self.incoming_contract_my_partial_sig,
             incoming_contract_my_sec_nonce_bytes: self.incoming_contract_my_sec_nonce_bytes,
@@ -661,9 +660,12 @@ impl Maker {
     pub(crate) fn process_private_key_handover(
         &self,
         privkey_handover_message: &crate::protocol::messages2::PrivateKeyHandover,
-        connection_state: &mut ConnectionState
+        connection_state: &mut ConnectionState,
     ) -> Result<crate::protocol::messages2::PrivateKeyHandover, MakerError> {
-        use crate::protocol::musig_interface::{get_aggregated_nonce_compat, aggregate_partial_signatures_compat, generate_partial_signature_compat, generate_new_nonce_pair_compat};
+        use crate::protocol::musig_interface::{
+            aggregate_partial_signatures_compat, generate_new_nonce_pair_compat,
+            generate_partial_signature_compat, get_aggregated_nonce_compat,
+        };
         use bitcoin::{sighash::SighashCache, Witness};
 
         // Create the spending transaction if it doesn't exist
@@ -674,7 +676,10 @@ impl Maker {
             );
             let tx = self.create_unsigned_spending_tx(connection_state)?;
             connection_state.incoming_contract_spending_tx = Some(tx);
-            connection_state.incoming_contract_spending_tx.as_ref().unwrap()
+            connection_state
+                .incoming_contract_spending_tx
+                .as_ref()
+                .unwrap()
         } else {
             connection_state
                 .incoming_contract_spending_tx
@@ -781,7 +786,7 @@ impl Maker {
             &incoming_aggregated_nonce,
             incoming_contract_other_sec_nonce,
             incoming_other_keypair,
-            incoming_tap_tweak, 
+            incoming_tap_tweak,
             incoming_ordered_pubkeys[0],
             incoming_ordered_pubkeys[1],
         );
@@ -827,11 +832,13 @@ impl Maker {
         );
 
         let privkey_handover_message = crate::protocol::messages2::PrivateKeyHandover {
-            keypair: Keypair::from_secret_key(&secp, &connection_state.outgoing_contract_my_privkey.unwrap())
+            keypair: Keypair::from_secret_key(
+                &secp,
+                &connection_state.outgoing_contract_my_privkey.unwrap(),
+            ),
         };
 
         Ok(privkey_handover_message)
-         
     }
 
     /// Create an unsigned transaction to spend from the incoming contract

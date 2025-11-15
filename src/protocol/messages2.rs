@@ -54,7 +54,7 @@ impl Display for TakerToMakerMessage {
             Self::GetOffer(_) => write!(f, "GetOffer"),
             Self::SwapDetails(_) => write!(f, "SwapDetails"),
             Self::SendersContract(_) => write!(f, "SendersContract"),
-            Self::PrivateKeyHandover(_) => write!(f, "PrivateKeyHandover")
+            Self::PrivateKeyHandover(_) => write!(f, "PrivateKeyHandover"),
         }
     }
 }
@@ -65,7 +65,7 @@ impl Display for MakerToTakerMessage {
             Self::RespOffer(_) => write!(f, "RespOffer"),
             Self::AckResponse(_) => write!(f, "AckResponse"),
             Self::SenderContractFromMaker(_) => write!(f, "SenderContractFromMaker"),
-            Self::PrivateKeyHandover(_) => write!(f, "PrivateKeyHandover")
+            Self::PrivateKeyHandover(_) => write!(f, "PrivateKeyHandover"),
         }
     }
 }
@@ -111,7 +111,7 @@ pub(crate) enum TakerToMakerMessage {
     GetOffer(GetOffer),
     SwapDetails(SwapDetails),
     SendersContract(SendersContract),
-    PrivateKeyHandover(PrivateKeyHandover)
+    PrivateKeyHandover(PrivateKeyHandover),
 }
 
 #[derive(Debug, Serialize, Deserialize)]

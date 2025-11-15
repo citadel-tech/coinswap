@@ -13,7 +13,8 @@ use super::{
 };
 
 use crate::protocol::messages2::{
-    AckResponse, GetOffer, MakerToTakerMessage, PrivateKeyHandover, SendersContract, SwapDetails, TakerToMakerMessage
+    AckResponse, GetOffer, MakerToTakerMessage, PrivateKeyHandover, SendersContract, SwapDetails,
+    TakerToMakerMessage,
 };
 
 /// The Global Handle Message function for taproot protocol. Takes in a [`Arc<Maker>`] and handles
@@ -130,7 +131,7 @@ fn handle_senders_contract(
 fn handle_privkey_handover(
     maker: &Arc<Maker>,
     connection_state: &mut ConnectionState,
-    privkey_handover: PrivateKeyHandover
+    privkey_handover: PrivateKeyHandover,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     let response = maker.process_private_key_handover(&privkey_handover, connection_state)?;
     Ok(Some(MakerToTakerMessage::PrivateKeyHandover(response)))

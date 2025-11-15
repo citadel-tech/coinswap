@@ -64,7 +64,6 @@ struct OngoingSwapState {
     pub incoming_contract_tap_tweak: Option<bitcoin::secp256k1::Scalar>,
     pub incoming_contract_hashlock_script: Option<ScriptBuf>,
     pub incoming_contract_timelock_script: Option<ScriptBuf>,
-    pub my_spending_tx: Option<Transaction>,
     pub incoming_contract_my_privkey: Option<bitcoin::secp256k1::SecretKey>,
     pub incoming_contract_my_pubkey: Option<bitcoin::PublicKey>,
     pub incoming_contract_my_x_only: Option<bitcoin::secp256k1::XOnlyPublicKey>,
@@ -554,36 +553,6 @@ impl Taker {
         Ok(response)
     }
 
-    /// Send a message to a maker without expecting a response
-    fn send_message_to_maker(
-        &self,
-        maker_addr: &MakerAddress,
-        msg: TakerToMakerMessage,
-    ) -> Result<(), TakerError> {
-        let address = maker_addr.to_string();
-        log::debug!("Connecting to maker at {}", address);
-        let mut socket = connect_to_maker(&address, &self.config, TCP_TIMEOUT_SECONDS)?;
-        log::debug!("Successfully connected to maker at {}", address);
-
-        log::debug!("Sending message to {}", address);
-        send_message(&mut socket, &msg)?;
-        log::debug!("Message sent successfully to {}", address);
-
-        // Ensure the message is fully transmitted before closing
-        use std::io::Write;
-        socket.flush()?;
-        log::debug!("Socket flushed for {}", address);
-
-        // Add a small delay to ensure message delivery before closing connection
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        log::debug!("Connection delay completed for {}", address);
-
-        log::info!("===> {msg} | {maker_addr} (no response expected)");
-
-        // Close connection immediately, no response expected
-        Ok(())
-    }
-
     /// Find suitable makers for the given swap parameters
     pub fn find_suitable_makers(&self, swap_params: &SwapParams) -> Vec<OfferAndAddress> {
         let swap_amount = swap_params.send_amount;
@@ -962,40 +931,55 @@ impl Taker {
     /// 4. Maker1 sweeps, responds with Maker1's outgoing key
     /// 5. Taker sweeps using Maker1's outgoing key
     fn execute_taker_sweep_and_coordinate_makers(&mut self) -> Result<(), TakerError> {
+        use crate::protocol::messages2::{
+            MakerToTakerMessage, PrivateKeyHandover, TakerToMakerMessage,
+        };
         use bitcoin::secp256k1::{Keypair, Secp256k1};
-        use crate::protocol::messages2::{MakerToTakerMessage, PrivateKeyHandover, TakerToMakerMessage};
 
         let secp = Secp256k1::new();
         let maker_count = self.ongoing_swap_state.chosen_makers.len();
 
-        log::info!("Starting forward-flow private key handover with {} makers", maker_count);
+        log::info!(
+            "Starting forward-flow private key handover with {} makers",
+            maker_count
+        );
 
         // Forward flow: distribute outgoing keys to each maker in order
         for maker_index in 0..maker_count {
-            let maker_address = self.ongoing_swap_state.chosen_makers[maker_index].address.clone();
+            let maker_address = self.ongoing_swap_state.chosen_makers[maker_index]
+                .address
+                .clone();
 
-            log::info!("  [Maker {}] Sending private key to {}", maker_index, maker_address);
+            log::info!(
+                "  [Maker {}] Sending private key to {}",
+                maker_index,
+                maker_address
+            );
 
             // Determine which outgoing key to send
             let outgoing_privkey = if maker_index == 0 {
                 // To first maker: send taker's outgoing contract key
                 self.ongoing_swap_state
                     .outgoing_contract_my_privkey
-                    .ok_or_else(|| TakerError::General("Taker outgoing privkey not found".to_string()))?
+                    .ok_or_else(|| {
+                        TakerError::General("Taker outgoing privkey not found".to_string())
+                    })?
             } else {
                 // To subsequent makers: relay previous maker's outgoing key
-                self.ongoing_swap_state.maker_outgoing_privkeys[maker_index - 1]
-                    .ok_or_else(|| TakerError::General(format!(
-                        "Previous maker {} outgoing key not received yet",
-                        maker_index - 1
-                    )))?
+                self.ongoing_swap_state.maker_outgoing_privkeys[maker_index - 1].ok_or_else(
+                    || {
+                        TakerError::General(format!(
+                            "Previous maker {} outgoing key not received yet",
+                            maker_index - 1
+                        ))
+                    },
+                )?
             };
 
             // Create private key handover message
             let keypair = Keypair::from_secret_key(&secp, &outgoing_privkey);
-            let privkey_msg = TakerToMakerMessage::PrivateKeyHandover(PrivateKeyHandover {
-                keypair,
-            });
+            let privkey_msg =
+                TakerToMakerMessage::PrivateKeyHandover(PrivateKeyHandover { keypair });
 
             // Send to maker and get their outgoing key in response
             let response = self.send_to_maker_and_get_response(&maker_address, privkey_msg)?;
@@ -1005,13 +989,11 @@ impl Taker {
                 MakerToTakerMessage::PrivateKeyHandover(maker_privkey_handover) => {
                     let maker_outgoing_privkey = maker_privkey_handover.keypair.secret_key();
 
-                    log::info!(
-                        "  [Maker {}] Received outgoing private key",
-                        maker_index
-                    );
+                    log::info!("  [Maker {}] Received outgoing private key", maker_index);
 
                     // Store maker's outgoing key
-                    self.ongoing_swap_state.maker_outgoing_privkeys[maker_index] = Some(maker_outgoing_privkey);
+                    self.ongoing_swap_state.maker_outgoing_privkeys[maker_index] =
+                        Some(maker_outgoing_privkey);
                 }
                 _ => {
                     return Err(TakerError::General(format!(
@@ -1025,7 +1007,8 @@ impl Taker {
         log::info!("All makers have responded with their outgoing keys");
 
         // Finally, taker sweeps their incoming contract using the last maker's outgoing key
-        let last_maker_outgoing_key = self.ongoing_swap_state.maker_outgoing_privkeys[maker_count - 1]
+        let last_maker_outgoing_key = self.ongoing_swap_state.maker_outgoing_privkeys
+            [maker_count - 1]
             .ok_or_else(|| TakerError::General("Last maker outgoing key not found".to_string()))?;
 
         self.sweep_incoming_contract_with_maker_key(last_maker_outgoing_key)?;
@@ -1046,15 +1029,15 @@ impl Taker {
         &mut self,
         maker_outgoing_privkey: bitcoin::secp256k1::SecretKey,
     ) -> Result<(), TakerError> {
+        use crate::protocol::musig_interface::{
+            aggregate_partial_signatures_compat, generate_new_nonce_pair_compat,
+            generate_partial_signature_compat, get_aggregated_nonce_compat,
+        };
         use bitcoin::{
             secp256k1::{Keypair, Secp256k1},
             sighash::SighashCache,
             transaction::Version,
             Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
-        };
-        use crate::protocol::musig_interface::{
-            generate_new_nonce_pair_compat, get_aggregated_nonce_compat,
-            generate_partial_signature_compat, aggregate_partial_signatures_compat,
         };
 
         let secp = Secp256k1::new();
@@ -1070,9 +1053,7 @@ impl Taker {
         let incoming_contract_my_privkey = self
             .ongoing_swap_state
             .incoming_contract_my_privkey
-            .ok_or_else(|| {
-                TakerError::General("No taker incoming privkey found".to_string())
-            })?;
+            .ok_or_else(|| TakerError::General("No taker incoming privkey found".to_string()))?;
 
         // Fetch the incoming contract transaction to get amount and verify it exists
         let incoming_contract_tx = self
@@ -1125,7 +1106,10 @@ impl Taker {
             }],
         };
 
-        log::info!("  Created sweep transaction, output amount: {}", output_amount);
+        log::info!(
+            "  Created sweep transaction, output amount: {}",
+            output_amount
+        );
 
         // Create keypairs from both private keys
         let taker_keypair = Keypair::from_secret_key(&secp, &incoming_contract_my_privkey);
@@ -1135,25 +1119,33 @@ impl Taker {
         let internal_key = self
             .ongoing_swap_state
             .incoming_contract_internal_key
-            .ok_or_else(|| TakerError::General("No internal key found for incoming contract".to_string()))?;
+            .ok_or_else(|| {
+                TakerError::General("No internal key found for incoming contract".to_string())
+            })?;
 
         let tap_tweak = self
             .ongoing_swap_state
             .incoming_contract_tap_tweak
-            .ok_or_else(|| TakerError::General("No tap tweak found for incoming contract".to_string()))?;
+            .ok_or_else(|| {
+                TakerError::General("No tap tweak found for incoming contract".to_string())
+            })?;
 
         // Get contract scripts for sighash calculation
         let hashlock_script = self
             .ongoing_swap_state
             .incoming_contract_hashlock_script
             .as_ref()
-            .ok_or_else(|| TakerError::General("No hashlock script for incoming contract".to_string()))?;
+            .ok_or_else(|| {
+                TakerError::General("No hashlock script for incoming contract".to_string())
+            })?;
 
         let timelock_script = self
             .ongoing_swap_state
             .incoming_contract_timelock_script
             .as_ref()
-            .ok_or_else(|| TakerError::General("No timelock script for incoming contract".to_string()))?;
+            .ok_or_else(|| {
+                TakerError::General("No timelock script for incoming contract".to_string())
+            })?;
 
         // Calculate sighash using the helper function
         let message = crate::protocol::contract2::calculate_contract_sighash(
@@ -1166,10 +1158,7 @@ impl Taker {
         .map_err(|e| TakerError::General(format!("Failed to calculate sighash: {:?}", e)))?;
 
         // Order pubkeys lexicographically
-        let mut ordered_pubkeys = [
-            taker_keypair.public_key(),
-            maker_keypair.public_key(),
-        ];
+        let mut ordered_pubkeys = [taker_keypair.public_key(), maker_keypair.public_key()];
         ordered_pubkeys.sort_by_key(|a| a.serialize());
 
         // Generate nonce pairs for both parties
@@ -1223,10 +1212,9 @@ impl Taker {
             ordered_pubkeys[1],
         );
 
-        let final_signature = bitcoin::taproot::Signature::from_slice(
-            aggregated_sig.assume_valid().as_byte_array(),
-        )
-        .unwrap();
+        let final_signature =
+            bitcoin::taproot::Signature::from_slice(aggregated_sig.assume_valid().as_byte_array())
+                .unwrap();
 
         log::info!("  Created MuSig2 aggregated signature for key-path spend");
 
@@ -1248,5 +1236,4 @@ impl Taker {
 
         Ok(())
     }
-
 }
