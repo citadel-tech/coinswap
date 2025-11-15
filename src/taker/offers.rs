@@ -6,26 +6,13 @@
 //! It uses asynchronous channels for concurrent processing of maker offers.
 
 use std::{
-    convert::TryFrom,
-    fmt,
-    io::BufWriter,
-    net::TcpStream,
-    path::Path,
-    sync::mpsc,
-    thread::{self, Builder},
+    convert::TryFrom, fmt, io::BufWriter, net::TcpStream, path::Path, sync::mpsc, thread::Builder,
 };
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use socks::Socks5Stream;
-
-use crate::{
-    protocol::messages::Offer,
-    utill::{read_message, send_message, GLOBAL_PAUSE, NET_TIMEOUT},
-};
-
-use crate::protocol::messages::{TrackerClientToServer, TrackerServerToClient};
+use crate::protocol::messages::Offer;
 
 use super::{config::TakerConfig, error::TakerError, routines::download_maker_offer};
 
@@ -175,68 +162,6 @@ pub(crate) fn fetch_offer_from_makers(
         }
     }
     Ok(result)
-}
-
-/// Retrieves advertised maker addresses from tracker based on the specified network.
-pub fn fetch_addresses_from_tracker(
-    socks_port: Option<u16>,
-    tracker_addr: String,
-) -> Result<Vec<MakerAddress>, TakerError> {
-    loop {
-        let mut stream = if cfg!(feature = "integration-test") {
-            match TcpStream::connect(tracker_addr.as_str()) {
-                Err(e) => {
-                    log::error!("Error connecting to Tracker: {e:?}");
-                    thread::sleep(GLOBAL_PAUSE);
-                    continue;
-                }
-                Ok(s) => s,
-            }
-        } else {
-            let socket_addrs = format!("127.0.0.1:{}", socks_port.expect("Tor port expected"));
-            match Socks5Stream::connect(socket_addrs, tracker_addr.as_str()) {
-                Err(e) => {
-                    log::error!("Error connecting to Tracker: {e:?}");
-                    thread::sleep(GLOBAL_PAUSE);
-                    continue;
-                }
-                Ok(s) => s.into_inner(),
-            }
-        };
-
-        stream.set_read_timeout(Some(NET_TIMEOUT))?;
-        stream.set_write_timeout(Some(NET_TIMEOUT))?;
-        stream.set_nonblocking(false)?;
-
-        if let Err(e) = send_message(&mut stream, &TrackerClientToServer::Get) {
-            log::error!("Failed to send request. Retrying...{e}");
-            thread::sleep(GLOBAL_PAUSE);
-            continue;
-        }
-
-        let response: TrackerServerToClient = match read_message(&mut stream) {
-            Ok(resp) => serde_cbor::de::from_slice(&resp[..])?,
-            Err(e) => {
-                log::error!("Error reading Tracker response: {e}. Retrying...");
-                thread::sleep(GLOBAL_PAUSE);
-                continue;
-            }
-        };
-
-        if let TrackerServerToClient::Address { addresses } = response {
-            match addresses
-                .into_iter()
-                .map(MakerAddress::try_from)
-                .collect::<Result<Vec<_>, _>>()
-            {
-                Ok(makers) => return Ok(makers),
-                Err(e) => log::error!("Received invalid maker address. Retrying... {e}"),
-            }
-        }
-
-        thread::sleep(GLOBAL_PAUSE);
-        continue;
-    }
 }
 
 impl TryFrom<String> for OnionAddress {

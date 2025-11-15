@@ -11,6 +11,10 @@ use crate::{
     },
     utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL},
     wallet::{RPCConfig, Wallet},
+    watch_tower::{
+        registry_storage::FileRegistry, rpc_backend::BitcoinRpc, service::WatchService,
+        watcher::Watcher, zmq_backend::ZmqBackend,
+    },
 };
 use bitcoin::{Amount, ScriptBuf, Transaction};
 use bitcoind::bitcoincore_rpc::RpcApi;
@@ -19,9 +23,9 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        Arc, Mutex, RwLock,
+        mpsc, Arc, Mutex, RwLock,
     },
-    thread::JoinHandle,
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
@@ -201,8 +205,8 @@ pub struct Maker {
     data_dir: PathBuf,
     /// Thread pool for managing all spawned threads
     pub(crate) thread_pool: Arc<ThreadPool>,
-    /// Tracker address to connect to
-    pub(crate) tracker: RwLock<Option<String>>,
+    /// Watcher Service
+    pub watch_service: WatchService,
 }
 
 impl Maker {
@@ -217,6 +221,7 @@ impl Maker {
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
         socks_port: Option<u16>,
+        zmq_addr: String,
     ) -> Result<Self, MakerError> {
         let data_dir = data_dir.unwrap_or(get_maker_dir());
         let wallets_dir = data_dir.join("wallets");
@@ -226,6 +231,19 @@ impl Maker {
 
         let mut rpc_config = rpc_config.unwrap_or_default();
         rpc_config.wallet_name = wallet_file_name;
+
+        let backend = ZmqBackend::new(&zmq_addr);
+        let rpc_backend = BitcoinRpc::new(rpc_config.clone()).unwrap();
+        let registry = FileRegistry::load(data_dir.join(".maker-watcher"));
+        let (tx_requests, rx_requests) = mpsc::channel();
+        let (tx_events, rx_responses) = mpsc::channel();
+
+        let mut watcher = Watcher::new(backend, rpc_backend, registry, rx_requests, tx_events);
+        _ = thread::Builder::new()
+            .name("Watcher thread".to_string())
+            .spawn(move || watcher.run());
+
+        let watch_service = WatchService::new(tx_requests, rx_responses);
 
         let mut wallet = if wallet_path.exists() {
             let wallet = Wallet::load(&wallet_path, &rpc_config)?;
@@ -280,7 +298,7 @@ impl Maker {
             is_setup_complete: AtomicBool::new(false),
             data_dir,
             thread_pool: Arc::new(ThreadPool::new(network_port)),
-            tracker: RwLock::new(None),
+            watch_service,
         })
     }
 

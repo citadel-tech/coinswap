@@ -7,10 +7,12 @@
 //!
 use std::{
     collections::{HashMap, HashSet},
+    convert::TryFrom,
     io::BufWriter,
     net::TcpStream,
     path::PathBuf,
-    thread::sleep,
+    sync::mpsc,
+    thread::{self, sleep},
     time::{Duration, Instant},
 };
 
@@ -52,9 +54,15 @@ use crate::{
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
         WatchOnlySwapCoin,
     },
+    watch_tower::{
+        registry_storage::FileRegistry,
+        rpc_backend::BitcoinRpc,
+        service::WatchService,
+        watcher::{Watcher, WatcherEvent},
+        zmq_backend::ZmqBackend,
+    },
 };
 
-use crate::taker::offers::fetch_addresses_from_tracker;
 // Default values for Taker configurations
 pub(crate) const REFUND_LOCKTIME: u16 = 20;
 pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
@@ -162,6 +170,7 @@ pub struct Taker {
     #[cfg(feature = "integration-test")]
     behavior: TakerBehavior,
     data_dir: PathBuf,
+    watch_service: WatchService,
 }
 
 impl Drop for Taker {
@@ -170,6 +179,7 @@ impl Drop for Taker {
         self.offerbook
             .write_to_disk(&self.data_dir.join("offerbook.json"))
             .unwrap();
+        self.watch_service.shutdown();
         log::info!("offerbook data saved to disk.");
         self.wallet.save_to_disk().unwrap();
         log::info!("Wallet data saved to disk.");
@@ -199,6 +209,7 @@ impl Taker {
         #[cfg(feature = "integration-test")] behavior: TakerBehavior,
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
+        zmq_addr: String,
     ) -> Result<Taker, TakerError> {
         // Get provided data directory or the default data directory.
         let data_dir = data_dir.unwrap_or(get_taker_dir());
@@ -210,6 +221,19 @@ impl Taker {
 
         let mut rpc_config = rpc_config.unwrap_or_default();
         rpc_config.wallet_name = wallet_file_name;
+
+        let backend = ZmqBackend::new(&zmq_addr);
+        let rpc_backend = BitcoinRpc::new(rpc_config.clone()).unwrap();
+        let registry = FileRegistry::load(data_dir.join(".taker-watcher"));
+        let (tx_requests, rx_requests) = mpsc::channel();
+        let (tx_events, rx_responses) = mpsc::channel();
+
+        let mut watcher = Watcher::new(backend, rpc_backend, registry, rx_requests, tx_events);
+        _ = thread::Builder::new()
+            .name("Watcher thread".to_string())
+            .spawn(move || watcher.run());
+
+        let watch_service = WatchService::new(tx_requests, rx_responses);
 
         let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config)?;
 
@@ -265,6 +289,7 @@ impl Taker {
             #[cfg(feature = "integration-test")]
             behavior,
             data_dir,
+            watch_service,
         })
     }
 
@@ -1367,7 +1392,7 @@ impl Taker {
             this_maker.address
         );
         let id = self.ongoing_swap_state.id.clone();
-        send_message_with_prefix(
+        send_message(
             &mut socket,
             &TakerToMakerMessage::RespContractSigsForRecvrAndSender(
                 ContractSigsForRecvrAndSender {
@@ -1943,7 +1968,7 @@ impl Taker {
             ret
         })?;
         log::info!("===> PrivateKeyHandover | {maker_address}");
-        send_message_with_prefix(
+        send_message(
             &mut socket,
             &TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {
                 multisig_privkeys: privkeys_reply,
@@ -2006,6 +2031,14 @@ impl Taker {
                 .find_incoming_swapcoin_mut(&incoming_swapcoin.get_multisig_redeemscript())
                 .expect("Incoming swapcoin expeted")
                 .other_privkey = incoming_swapcoin.other_privkey;
+            let contract_txid = incoming_swapcoin.contract_tx.compute_txid();
+            for (vout, _) in incoming_swapcoin.contract_tx.output.iter().enumerate() {
+                let outpoint = OutPoint {
+                    txid: contract_txid,
+                    vout: vout as u32,
+                };
+                self.watch_service.unwatch(outpoint);
+            }
         }
 
         // Mark outgoing swapcoins as done.
@@ -2014,6 +2047,14 @@ impl Taker {
                 .find_outgoing_swapcoin_mut(&outgoing_swapcoins.get_multisig_redeemscript())
                 .expect("Outgoing swapcoin expected")
                 .hash_preimage = Some(self.ongoing_swap_state.active_preimage);
+            let contract_txid = outgoing_swapcoins.contract_tx.compute_txid();
+            for (vout, _) in outgoing_swapcoins.contract_tx.output.iter().enumerate() {
+                let outpoint = OutPoint {
+                    txid: contract_txid,
+                    vout: vout as u32,
+                };
+                self.watch_service.unwatch(outpoint);
+            }
         }
 
         self.wallet.sync_no_fail();
@@ -2062,21 +2103,21 @@ impl Taker {
     pub fn recover_from_swap(&mut self) -> Result<(), TakerError> {
         let (incomings, outgoings) = self.wallet.find_unfinished_swapcoins();
 
-        //If contract are already established then directly broadcast and spend from hashlock contract else loop for timelock maturity,and spend from the timelock contract instead.
-        if !self.ongoing_swap_state.active_preimage.is_empty() {
-            let incoming_infos = self
-                .get_wallet_mut()
-                .broadcast_incoming_contracts(incomings)?;
-
+        // First try to spend the hashlock contracts.
+        // If fails, then try to spend the timelock contracts.
+        if let Ok(incoming_infos) = self
+            .get_wallet_mut()
+            .broadcast_incoming_contracts(incomings)
+        {
+            log::info!(
+                "Incoming swapcoins are unspent. Trying to recover the incoming swapcoins first."
+            );
             // Start the loop to keep checking for the hashlock contract to broadcast and spend from the contract asap.
             loop {
-                if incoming_infos.is_empty() {
-                    break;
-                }
-
                 //spend from the hashlock contract.
-                let hashlock_broadcasted =
-                    self.wallet.spend_from_hashlock_contract(&incoming_infos)?;
+                let hashlock_broadcasted = self
+                    .wallet
+                    .spend_from_hashlock_contract(&incoming_infos, &self.watch_service)?;
 
                 // If Everything is broadcasted i.e. [`spend_from_hashlock_contract`] works fine,then clear the connectionstate and break the loop
                 log::info!(
@@ -2089,15 +2130,12 @@ impl Taker {
                     self.clear_ongoing_swaps();
                     break;
                 }
-                // Block wait time is varied between prod. and test builds.
-                let block_wait_time = if cfg!(feature = "integration-test") {
-                    Duration::from_secs(10)
-                } else {
-                    Duration::from_secs(10 * 60)
-                };
-                std::thread::sleep(block_wait_time);
+                std::thread::sleep(BLOCK_DELAY);
             }
         } else {
+            log::info!(
+                "Incoming swapcoins are already spent or empty. Trying to recover the outgoing swapcoins."
+            );
             let outgoing_infos = self
                 .get_wallet_mut()
                 .broadcast_outgoing_contracts(outgoings)?;
@@ -2109,8 +2147,9 @@ impl Taker {
                 if outgoing_infos.is_empty() {
                     break;
                 }
-                let timelock_broadcasted =
-                    self.wallet.spend_from_timelock_contract(&outgoing_infos)?;
+                let timelock_broadcasted = self
+                    .wallet
+                    .spend_from_timelock_contract(&outgoing_infos, &self.watch_service)?;
 
                 // Everything is broadcasted. Clear the connectionstate and break the loop
                 log::info!(
@@ -2139,27 +2178,18 @@ impl Taker {
 
     /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
     pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        let tracker_addr = if cfg!(feature = "integration-test") {
-            format!("127.0.0.1:{}", 8080)
-        } else {
-            self.config.tracker_address.clone()
+        self.watch_service.request_maker_address();
+        let watcher_event = self.watch_service.wait_for_event();
+
+        let Some(WatcherEvent::MakerAddresses { maker_addresses }) = watcher_event else {
+            return Err(TakerError::General("No response from watcher".to_string()));
         };
 
-        #[cfg(not(feature = "integration-test"))]
-        let socks_port = Some(self.config.socks_port);
-
-        #[cfg(feature = "integration-test")]
-        let socks_port = None;
-
-        log::info!("Fetching addresses from Tracker: {tracker_addr}");
-
-        let addresses_from_tracker = match fetch_addresses_from_tracker(socks_port, tracker_addr) {
-            Ok(tracker_addrs) => tracker_addrs,
-            Err(e) => {
-                log::error!("Could not connect to Tracker Server: {e:?}");
-                return Err(e);
-            }
-        };
+        let maker_addresses = maker_addresses
+            .into_iter()
+            .map(MakerAddress::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         // Find out addresses that was last updated 30 mins ago.
         let fresh_addrs = self
@@ -2170,7 +2200,7 @@ impl Taker {
             .collect::<HashSet<_>>();
 
         // Fetch only those addresses which are new, or last updated more than 30 mins ago
-        let addrs_to_fetch = addresses_from_tracker
+        let addrs_to_fetch = maker_addresses
             .iter()
             .filter(|tracker_addr| !fresh_addrs.contains(tracker_addr))
             .cloned()
@@ -2235,7 +2265,7 @@ impl Taker {
 
         socket.set_write_timeout(Some(reconnect_timeout))?;
 
-        send_message_with_prefix(&mut socket, &msg)?;
+        send_message(&mut socket, &msg)?;
         log::info!("===> {msg} | {maker_addr}");
 
         Ok(())

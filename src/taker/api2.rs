@@ -4,18 +4,28 @@ use crate::{
         config::TakerConfig,
         offers::{MakerAddress, OfferAndAddress, OfferBook},
     },
-    utill::get_taker_dir,
+    utill::{get_taker_dir, send_message},
     wallet::{RPCConfig, Wallet, WalletError},
+    watch_tower::{
+        registry_storage::FileRegistry,
+        rpc_backend::BitcoinRpc,
+        service::WatchService,
+        watcher::{Watcher, WatcherEvent},
+        zmq_backend::ZmqBackend,
+    },
 };
 use bitcoin::{hashes::Hash, Amount, ScriptBuf, Transaction};
 use secp256k1::musig;
 use socks::Socks5Stream;
-use std::{io::BufWriter, net::TcpStream, path::PathBuf, time::Duration};
+use std::{
+    convert::TryFrom, io::BufWriter, net::TcpStream, path::PathBuf, sync::mpsc, thread,
+    time::Duration,
+};
 
-use super::{error::TakerError, offers::fetch_addresses_from_tracker};
+use super::error::TakerError;
 use crate::{
     protocol::contract2::{calculate_coinswap_fee, calculate_contract_sighash},
-    utill::{check_tor_status, read_message, send_message_with_prefix},
+    utill::{check_tor_status, read_message},
 };
 use std::collections::HashSet;
 
@@ -151,7 +161,7 @@ fn download_taproot_offer(address: &MakerAddress, config: &TakerConfig) -> Optio
     };
 
     let msg = TakerToMakerMessage::GetOffer(get_offer_msg);
-    if let Err(e) = send_message_with_prefix(&mut socket, &msg) {
+    if let Err(e) = send_message(&mut socket, &msg) {
         log::error!("Failed to send GetOffer message to {}: {:?}", maker_addr, e);
         return None;
     }
@@ -223,6 +233,7 @@ pub struct Taker {
     offerbook: OfferBook,
     ongoing_swap_state: OngoingSwapState,
     data_dir: PathBuf,
+    watch_service: WatchService,
 }
 
 impl Taker {
@@ -233,6 +244,7 @@ impl Taker {
         rpc_config: Option<RPCConfig>,
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
+        zmq_addr: String,
     ) -> Result<Taker, TakerError> {
         let data_dir = data_dir.unwrap_or_else(get_taker_dir);
 
@@ -246,6 +258,19 @@ impl Taker {
 
         let mut rpc_config = rpc_config.unwrap_or_default();
         rpc_config.wallet_name = wallet_file_name;
+
+        let backend = ZmqBackend::new(&zmq_addr);
+        let rpc_backend = BitcoinRpc::new(rpc_config.clone()).unwrap();
+        let registry = FileRegistry::load(data_dir.join(".taker-watcher"));
+        let (tx_requests, rx_requests) = mpsc::channel();
+        let (tx_events, rx_responses) = mpsc::channel();
+
+        let mut watcher = Watcher::new(backend, rpc_backend, registry, rx_requests, tx_events);
+        _ = thread::Builder::new()
+            .name("Watcher thread".to_string())
+            .spawn(move || watcher.run());
+
+        let watch_service = WatchService::new(tx_requests, rx_responses);
 
         let mut wallet = if wallet_path.exists() {
             let wallet = Wallet::load(&wallet_path, &rpc_config)?;
@@ -301,6 +326,7 @@ impl Taker {
             offerbook,
             ongoing_swap_state: OngoingSwapState::default(),
             data_dir,
+            watch_service,
         })
     }
 
@@ -459,28 +485,20 @@ impl Taker {
 
     /// Sync the offer book with directory servers
     pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        let tracker_addr = if cfg!(feature = "integration-test") {
-            format!("127.0.0.1:{}", 8080)
-        } else {
-            self.config.tracker_address.clone()
+        self.watch_service.request_maker_address();
+        let watcher_event = self.watch_service.wait_for_event();
+
+        let Some(WatcherEvent::MakerAddresses { maker_addresses }) = watcher_event else {
+            return Err(TakerError::General("No response from watcher".to_string()));
         };
 
-        #[cfg(not(feature = "integration-test"))]
-        let socks_port = Some(self.config.socks_port);
+        let maker_addresses = maker_addresses
+            .into_iter()
+            .map(MakerAddress::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
-        #[cfg(feature = "integration-test")]
-        let socks_port = None;
-
-        log::info!("Fetching addresses from Tracker: {tracker_addr}");
-
-        let addresses_from_tracker = match fetch_addresses_from_tracker(socks_port, tracker_addr) {
-            Ok(tracker_addrs) => tracker_addrs,
-            Err(e) => {
-                log::error!("Could not connect to Tracker Server: {e:?}");
-                return Err(e);
-            }
-        };
-
+        // Find out addresses that was last updated 30 mins ago.
         let fresh_addrs = self
             .offerbook
             .get_fresh_addrs()
@@ -488,7 +506,8 @@ impl Taker {
             .map(|oa| &oa.address)
             .collect::<HashSet<_>>();
 
-        let addrs_to_fetch = addresses_from_tracker
+        // Fetch only those addresses which are new, or last updated more than 30 mins ago
+        let addrs_to_fetch = maker_addresses
             .iter()
             .filter(|tracker_addr| !fresh_addrs.contains(tracker_addr))
             .cloned()
@@ -497,18 +516,27 @@ impl Taker {
         let new_offers = fetch_taproot_offers(&addrs_to_fetch, &self.config)?;
 
         for new_offer in new_offers {
+            log::info!(
+                "Found offer from {}. Verifying Fidelity Proof",
+                new_offer.address
+            );
             if let Err(e) = self
                 .wallet
                 .verify_fidelity_proof(&new_offer.offer.fidelity, &new_offer.address.to_string())
             {
-                log::error!("Fidelity proof verification failed: {:?}", e);
+                log::warn!(
+                    "Fidelity Proof Verification failed with error: {:?}. Adding this to bad maker list: {}",
+                    e,
+                    new_offer.address
+                );
                 self.offerbook.add_bad_maker(&new_offer);
             } else {
-                log::info!("Fidelity proof verified successfully");
+                log::info!("Fidelity Bond verification success. Adding offer to our OfferBook");
                 self.offerbook.add_new_offer(&new_offer);
             }
         }
 
+        // Save the updated cache back to disk.
         self.offerbook
             .write_to_disk(&self.data_dir.join("offerbook.dat"))?;
 
@@ -524,7 +552,7 @@ impl Taker {
         let address = maker_addr.to_string();
         let mut socket = connect_to_maker(&address, &self.config, TCP_TIMEOUT_SECONDS)?;
 
-        send_message_with_prefix(&mut socket, &msg)?;
+        send_message(&mut socket, &msg)?;
         log::info!("===> {msg} | {maker_addr}");
 
         // Read response
@@ -547,7 +575,7 @@ impl Taker {
         log::debug!("Successfully connected to maker at {}", address);
 
         log::debug!("Sending message to {}", address);
-        send_message_with_prefix(&mut socket, &msg)?;
+        send_message(&mut socket, &msg)?;
         log::debug!("Message sent successfully to {}", address);
 
         // Ensure the message is fully transmitted before closing

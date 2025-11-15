@@ -24,51 +24,20 @@ use crate::{
         handlers2::handle_message_taproot,
         rpc::start_rpc_server,
     },
-    protocol::messages2::{
-        MakerToTakerMessage, TakerToMakerMessage, TrackerClientToServer, TrackerServerToClient,
-    },
+    protocol::messages2::{MakerToTakerMessage, TakerToMakerMessage},
     utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::WalletError,
 };
 
 use crate::maker::error::MakerError;
 
-/// Unified message type for taproot makers that can handle both taker and tracker messages
-#[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
-enum MessageToMakerTaproot {
-    TakerToMaker(TakerToMakerMessage),
-    TrackerMessage(TrackerServerToClient),
-}
-
-/// Decodes unified messages for taproot makers (supports both taker and tracker messages)
-fn decode_unified_message_taproot(data: &[u8]) -> Result<MessageToMakerTaproot, MakerError> {
-    let (prefix, body) = data
-        .split_first()
-        .ok_or_else(|| MakerError::General("Parsing error during decoding"))?;
-    match *prefix {
-        0x01 => {
-            let msg = serde_cbor::from_slice::<TakerToMakerMessage>(body)?;
-            Ok(MessageToMakerTaproot::TakerToMaker(msg))
-        }
-        0x02 => {
-            let msg = serde_cbor::from_slice::<TrackerServerToClient>(body)?;
-            Ok(MessageToMakerTaproot::TrackerMessage(msg))
-        }
-        _ => Err(MakerError::General("Parsing error during decoding")),
-    }
-}
-
-/// Fetches the Maker and Tracker address, and sends maker address to the Tracker server for taproot swaps.
-/// Depending upon ConnectionType and test/prod environment, different maker address and Tracker address are returned.
-/// Return the Maker address and the Tracker address.
-fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<(String, String), MakerError> {
+/// Fetches the Maker address.
+fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<String, MakerError> {
     let maker_port = maker.config.network_port;
-    let (maker_address, tracker_address) = if cfg!(feature = "integration-test") {
+    let maker_address = if cfg!(feature = "integration-test") {
         // Always clearnet in integration tests
         let maker_address = format!("127.0.0.1:{maker_port}");
-        let tracker_address = format!("127.0.0.1:{}", 8080);
-        (maker_address, tracker_address)
+        maker_address
     } else {
         // Always Tor in production
         let maker_hostname = get_tor_hostname(
@@ -78,10 +47,7 @@ fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<(String, String), Make
             &maker.config.tor_auth_password,
         )?;
         let maker_address = format!("{maker_hostname}:{maker_port}");
-        // In production, get tracker address dynamically from tracker server
-        // For now, use a placeholder
-        let tracker_address = "tracker.onion:8080".to_string();
-        (maker_address, tracker_address)
+        maker_address
     };
 
     // Track and update unconfirmed fidelity bonds
@@ -89,23 +55,13 @@ fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<(String, String), Make
         .as_ref()
         .track_and_update_unconfirmed_fidelity_bonds()?;
 
-    // Register our taproot-capable maker with the Tracker
-    manage_fidelity_bonds_and_update_tracker_taproot(
-        maker.as_ref(),
-        &maker_address,
-        &tracker_address,
-    )?;
+    manage_fidelity_bonds_taproot(maker.as_ref(), &maker_address)?;
 
-    Ok((maker_address, tracker_address))
+    Ok(maker_address)
 }
 
-/// Manages the maker's fidelity bonds and ensures the Tracker server is updated with the latest bond proof and maker address.
-/// This version is adapted for taproot protocol but follows the same Tracker registration pattern as regular makers.
-fn manage_fidelity_bonds_and_update_tracker_taproot(
-    maker: &Maker,
-    maker_addr: &str,
-    tracker_addr: &str,
-) -> Result<(), MakerError> {
+/// Setup's maker fidelity
+fn manage_fidelity_bonds_taproot(maker: &Maker, maker_addr: &str) -> Result<(), MakerError> {
     // Redeem expired fidelity bonds first
     maker.wallet().write()?.redeem_expired_fidelity_bonds()?;
 
@@ -113,7 +69,7 @@ fn manage_fidelity_bonds_and_update_tracker_taproot(
     let _ = setup_fidelity_bond_taproot(maker, maker_addr)?;
 
     let network_port = maker.config.network_port;
-    log::info!("[{network_port}] Taproot maker initialized - Address: {maker_addr}, Tracker: {tracker_addr}");
+    log::info!("[{network_port}] Taproot maker initialized - Address: {maker_addr}");
     log::info!("[{network_port}] Connection ended.");
 
     Ok(())
@@ -398,14 +354,13 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
             }
         };
 
-        // Deserialize the message using unified decoding (supports both taker and tracker messages)
         log::debug!(
             "[{}] Received {} bytes from {}",
             maker.config.network_port,
             message_bytes.len(),
             ip
         );
-        let unified_message = match decode_unified_message_taproot(&message_bytes) {
+        let message = match serde_cbor::from_slice::<TakerToMakerMessage>(&message_bytes) {
             Ok(msg) => {
                 log::debug!(
                     "[{}] Successfully decoded message: {:?}",
@@ -425,102 +380,46 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
             }
         };
 
-        // Handle the message based on its type
-        let response = match unified_message {
-            MessageToMakerTaproot::TakerToMaker(message) => {
-                // Handle the message using taproot handlers
-                match handle_message_taproot(maker, &mut connection_state, message) {
-                    Ok(response) => {
-                        // Save connection state immediately after successful message handling
-                        {
-                            let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-                            ongoing_swaps
-                                .insert(ip.clone(), (connection_state.clone(), Instant::now()));
-                            log::debug!(
-                                "[{}] Saved connection state for {} after successful message handling",
-                                maker.config.network_port,
-                                ip
-                            );
-                        }
-                        response
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "[{}] Error handling message from {}: {:?}",
-                            maker.config.network_port,
-                            ip,
-                            e
-                        );
-
-                        // Always save connection state even if there was an error
-                        {
-                            let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-                            ongoing_swaps
-                                .insert(ip.clone(), (connection_state.clone(), Instant::now()));
-                        }
-
-                        // Check if this is a behavior-triggered error
-                        match &e {
-                            MakerError::General(msg) if msg.contains("behavior") => {
-                                log::info!(
-                                    "[{}] Behavior-triggered disconnection",
-                                    maker.config.network_port
-                                );
-                            }
-                            _ => {}
-                        }
-                        break;
-                    }
+        // Handle the message using taproot handlers
+        let response = match handle_message_taproot(maker, &mut connection_state, message) {
+            Ok(response) => {
+                // Save connection state immediately after successful message handling
+                {
+                    let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
+                    ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
+                    log::debug!(
+                        "[{}] Saved connection state for {} after successful message handling",
+                        maker.config.network_port,
+                        ip
+                    );
                 }
+                response
             }
-            MessageToMakerTaproot::TrackerMessage(tracker_msg) => {
-                // Handle tracker messages (ping-pong protocol)
-                match tracker_msg {
-                    TrackerServerToClient::Ping { address, port } => {
-                        log::info!(
-                            "[{}] Received a ping from tracker",
-                            maker.config.network_port
-                        );
-                        if let Ok(mut guard) = maker.tracker.write() {
-                            if guard.is_none() {
-                                let tracker_address = format!("{address}:{port}");
-                                *guard = Some(tracker_address);
-                            }
-                        }
-                        let hostname = if cfg!(feature = "integration-test") {
-                            "127.0.0.1".to_string()
-                        } else {
-                            get_tor_hostname(
-                                maker.data_dir(),
-                                maker.config.control_port,
-                                maker.config.network_port,
-                                &maker.config.tor_auth_password,
-                            )?
-                        };
-                        let address = format!("{}:{}", hostname, maker.config.network_port);
-                        let response = TrackerClientToServer::Pong { address };
-                        if let Err(e) = send_message(stream, &response) {
-                            log::error!(
-                                "Failed to send Pong to tracker: {e:?}. Closing connection."
-                            );
-                            break;
-                        }
-                        log::info!(
-                            "[{}] Sent Pong response to tracker",
-                            maker.config.network_port
-                        );
-                        // No MakerToTakerMessage response for tracker messages
-                        None
-                    }
-                    _ => {
-                        log::warn!(
-                            "[{}] Unhandled tracker message: {:?}",
-                            maker.config.network_port,
-                            tracker_msg
-                        );
-                        None
-                    }
+            Err(e) => {
+                log::error!(
+                    "[{}] Error handling message from {}: {:?}",
+                    maker.config.network_port,
+                    ip,
+                    e
+                );
+
+                // Always save connection state even if there was an error
+                {
+                    let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
+                    ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
                 }
+
+                // Check if this is a behavior-triggered error
+                match &e {
+                    MakerError::General(msg) if msg.contains("behavior") => {
+                        log::info!(
+                            "[{}] Behavior-triggered disconnection",
+                            maker.config.network_port
+                        );
+                    }
+                    _ => {}
+                }
+                break;
             }
         };
 
@@ -587,14 +486,13 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
         maker.config.network_port
     );
 
-    // Set up network and Tracker registration
-    let (maker_address, tracker_address) = network_bootstrap_taproot(maker.clone())?;
+    // Set up network
+    let maker_address = network_bootstrap_taproot(maker.clone())?;
 
     log::info!(
-        "[{}] Taproot maker initialized - Address: {}, Tracker: {}",
+        "[{}] Taproot maker initialized - Address: {}",
         maker.config.network_port,
         maker_address,
-        tracker_address
     );
 
     let maker_clone_idle = maker.clone();

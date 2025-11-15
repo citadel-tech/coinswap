@@ -9,5 +9,3 @@ pub mod musig2;
 pub mod musig_interface;
 
 pub(crate) use contract::Hash160;
-
-pub use messages::TrackerMetadata;

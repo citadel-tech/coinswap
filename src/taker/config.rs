@@ -17,8 +17,6 @@ pub struct TakerConfig {
     pub socks_port: u16,
     /// Authentication password for Tor interface
     pub tor_auth_password: String,
-    /// Tracker address for maker discovery
-    pub tracker_address: String,
 }
 
 impl Default for TakerConfig {
@@ -27,8 +25,6 @@ impl Default for TakerConfig {
             control_port: 9051,
             socks_port: 9050,
             tor_auth_password: "".to_string(),
-            tracker_address: "lp75qh3del4qot6fmkqq4taqm33pidvk63lncvhlwsllbwrl2f4g4qqd.onion:8080"
-                .to_string(),
         }
     }
 }
@@ -73,10 +69,6 @@ impl TakerConfig {
                 config_map.get("tor_auth_password"),
                 default_config.tor_auth_password,
             ),
-            tracker_address: parse_field(
-                config_map.get("tracker_address"),
-                default_config.tracker_address,
-            ),
         })
     }
 
@@ -90,10 +82,8 @@ control_port = {}
 # Socks port for Tor proxy
 socks_port = {}
 # Authentication password for Tor control interface
-tor_auth_password = {}
-# Tracker address
-tracker_address = {}",
-            self.control_port, self.socks_port, self.tor_auth_password, self.tracker_address,
+tor_auth_password = {}",
+            self.control_port, self.socks_port, self.tor_auth_password,
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;

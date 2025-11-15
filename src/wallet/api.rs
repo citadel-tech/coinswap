@@ -3,12 +3,19 @@
 //! Currently, wallet synchronization is exclusively performed through RPC for makers.
 //! In the future, takers might adopt alternative synchronization methods, such as lightweight wallet solutions.
 
-use std::{convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr, thread, time::Duration};
+use std::{
+    convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr, thread, thread::sleep,
+    time::Duration,
+};
 
 use std::collections::HashMap;
 
 use crate::{
-    security::KeyMaterial, taker::SwapParams, utill::ContractMetadata, wallet::Destination,
+    security::KeyMaterial,
+    taker::SwapParams,
+    utill::{ContractMetadata, BLOCK_DELAY, HEART_BEAT_INTERVAL},
+    wallet::Destination,
+    watch_tower::service::WatchService,
 };
 
 use bip39::Mnemonic;
@@ -1868,6 +1875,13 @@ impl Wallet {
         &mut self,
         incomings: Vec<IncomingSwapCoin>,
     ) -> Result<ContractMetadata, WalletError> {
+        // Return early with error if no incomings to broadcast
+        if incomings.is_empty() {
+            log::info!("No incoming contracts to broadcast");
+            return Err(WalletError::General(
+                "No incoming contracts to broadcast".to_string(),
+            ));
+        }
         let mut incoming_infos = Vec::with_capacity(incomings.len());
 
         for incoming in incomings {
@@ -1928,6 +1942,7 @@ impl Wallet {
     pub(crate) fn spend_from_hashlock_contract(
         &mut self,
         incoming_infos: &ContractMetadata,
+        watch_service: &WatchService,
     ) -> Result<Vec<Transaction>, WalletError> {
         let mut broadcasted = Vec::new();
 
@@ -1951,9 +1966,22 @@ impl Wallet {
             self.send_tx(hashlock_tx)?;
             broadcasted.push(hashlock_tx.to_owned());
 
+            // Add them as part of swapcoins, because they are technically output of a swap.
+            self.store
+                .swept_incoming_swapcoins
+                .insert(hashlock_tx.output[0].script_pubkey.clone(), ic_rs.clone());
+
             let removed = self
                 .remove_incoming_swapcoin(ic_rs)?
                 .expect("incoming swapcoin expected");
+            let contract_txid = removed.contract_tx.compute_txid();
+            for (vout, _) in removed.contract_tx.output.iter().enumerate() {
+                let outpoint = OutPoint {
+                    txid: contract_txid,
+                    vout: vout as u32,
+                };
+                watch_service.unwatch(outpoint);
+            }
             log::info!(
                 "Removed Incoming Swapcoin from Wallet, Contract Txid: {}",
                 removed.contract_tx.compute_txid()
@@ -1969,6 +1997,7 @@ impl Wallet {
     pub(crate) fn spend_from_timelock_contract(
         &mut self,
         outgoing_infos: &ContractMetadata,
+        watch_service: &WatchService,
     ) -> Result<Vec<Transaction>, WalletError> {
         let mut broadcasted = Vec::new();
         for ((redeem_script, contract), (timelock, timelocked_tx)) in outgoing_infos.iter() {
@@ -1980,8 +2009,19 @@ impl Wallet {
                 continue;
             };
             let confirmations = match info.confirmations {
-                Some(c) if c > (*timelock as u32) => c,
-                _ => continue,
+                Some(c) => {
+                    if c > (*timelock as u32) {
+                        c
+                    } else {
+                        log::info!("Contract Tx {txid} has {c} confirmations, waiting for {timelock} confirmations.");
+                        sleep(BLOCK_DELAY);
+                        continue;
+                    }
+                }
+                _ => {
+                    sleep(HEART_BEAT_INTERVAL);
+                    continue;
+                }
             };
             log::info!(
                 "Contract Tx {txid} reached {confirmations} confirmations, required: {timelock}"
@@ -1995,6 +2035,14 @@ impl Wallet {
             let removed = self
                 .remove_outgoing_swapcoin(redeem_script)?
                 .expect("Outgoing swapcoin expected");
+            let contract_txid = removed.contract_tx.compute_txid();
+            for (vout, _) in removed.contract_tx.output.iter().enumerate() {
+                let outpoint = OutPoint {
+                    txid: contract_txid,
+                    vout: vout as u32,
+                };
+                watch_service.unwatch(outpoint);
+            }
             log::info!(
                 "Removed Outgoing Swapcoin. Contract Txid: {}",
                 removed.contract_tx.compute_txid()

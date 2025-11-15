@@ -15,8 +15,8 @@ use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 /// ABORT 3: Maker Drops After Setup
 /// Case 2: CloseAtContractSigsForRecvr
 ///
-/// Maker closes the connection after sending a `ContractSigsForRecvr`. Funding txs are already broadcasted.
-/// The Maker will lose contract txs fees in that case, so it's not malice.
+/// Maker closes the connection after sending a `ContractSigsForRecvr`. Funding txs to the faulty maker are already broadcasted.
+/// The other makers will lose contract txs fees in that case, so it's not malice.
 /// Taker waits for the response until timeout. Aborts if the Maker doesn't show up.
 #[test]
 fn abort3_case2_close_at_contract_sigs_for_recvr() {

@@ -1,4 +1,5 @@
 #![cfg(feature = "integration-test")]
+use bip39::rand;
 use bitcoin::{address::NetworkChecked, Address, Amount};
 use bitcoind::{bitcoincore_rpc::RpcApi, tempfile::env::temp_dir, BitcoinD};
 
@@ -13,6 +14,7 @@ use log::info;
 struct TakerCli {
     data_dir: PathBuf,
     bitcoind: BitcoinD,
+    zmq_addr: String,
 }
 
 impl TakerCli {
@@ -27,10 +29,18 @@ impl TakerCli {
             fs::remove_dir_all(&temp_dir).unwrap();
         }
 
-        let bitcoind = init_bitcoind(&temp_dir);
+        let port_zmq = 28332 + rand::random::<u16>() % 1000;
+
+        let zmq_addr = format!("tcp://127.0.0.1:{port_zmq}");
+
+        let bitcoind = init_bitcoind(&temp_dir, zmq_addr.clone());
         let data_dir = temp_dir.join("taker");
 
-        TakerCli { data_dir, bitcoind }
+        TakerCli {
+            data_dir,
+            bitcoind,
+            zmq_addr,
+        }
     }
 
     // Execute a cli-command
@@ -50,6 +60,9 @@ impl TakerCli {
 
         args.push("--WALLET");
         args.push("test_wallet");
+
+        args.push("--ZMQ");
+        args.push(&self.zmq_addr);
 
         for arg in cmd {
             args.push(arg);

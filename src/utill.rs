@@ -48,7 +48,6 @@ use crate::{
         error::ProtocolError,
         messages::{FidelityProof, MultisigPrivkey},
     },
-    taker::error::TakerError,
     wallet::{fidelity_redeemscript, FidelityError, SwapCoin, UTXOSpendInfo, WalletError},
 };
 
@@ -68,14 +67,14 @@ const CHECKSUM_FINAL_XOR_VALUE: u64 = 1;
 ///    4- Transaction- It contains timelock_spend/hashlock_spend transaction
 pub type ContractMetadata = Vec<((ScriptBuf, Transaction), (u16, Transaction))>;
 
-/// Global timeout for all network connections.
-pub(crate) const NET_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Used as delays on reattempting some network communications.
-pub(crate) const GLOBAL_PAUSE: Duration = Duration::from_secs(10);
-
 /// Global heartbeat interval used during waiting periods in critical situations.
 pub(crate) const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
+
+pub(crate) const BLOCK_DELAY: Duration = if cfg!(feature = "integration-test") {
+    Duration::from_secs(10) // 10 secs delay for tests
+} else {
+    Duration::from_secs(10 * 60) // 10 mins delay for production
+};
 
 /// Number of confirmation required funding transaction.
 pub const REQUIRED_CONFIRMS: u32 = 1;
@@ -200,7 +199,7 @@ pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
 /// Takes log level to set the desired logging verbosity
 pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     Once::new().call_once(|| {
-        env::set_var("RUST_LOG", "coinswap=info");
+        // env::set_var("RUST_LOG", "coinswap=info");
         setup_taker_logger(filter, true, data_dir.as_ref().map(|d| d.join("taker")));
         setup_maker_logger(filter, data_dir.as_ref().map(|d| d.join("maker")));
     });
@@ -214,26 +213,6 @@ pub fn send_message(
 ) -> Result<(), NetError> {
     let mut writer = BufWriter::new(socket_writer);
     let msg_bytes = serde_cbor::ser::to_vec(message)?;
-    let msg_len = (msg_bytes.len() as u32).to_be_bytes();
-    let mut to_send = Vec::with_capacity(msg_bytes.len() + msg_len.len());
-    to_send.extend(msg_len);
-    to_send.extend(msg_bytes);
-    writer.write_all(&to_send)?;
-    writer.flush()?;
-    Ok(())
-}
-
-/// This method adds a prefix for
-/// maker to identify if its
-/// taker or not
-pub fn send_message_with_prefix(
-    socket_writer: &mut TcpStream,
-    message: &impl serde::Serialize,
-) -> Result<(), TakerError> {
-    let mut writer = BufWriter::new(socket_writer);
-    let mut msg_bytes = Vec::new();
-    msg_bytes.push(0x01);
-    msg_bytes.extend(serde_cbor::to_vec(message)?);
     let msg_len = (msg_bytes.len() as u32).to_be_bytes();
     let mut to_send = Vec::with_capacity(msg_bytes.len() + msg_len.len());
     to_send.extend(msg_len);
