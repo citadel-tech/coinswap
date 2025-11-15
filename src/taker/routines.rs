@@ -90,6 +90,14 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
     locktime: u16,
 ) -> Result<ContractSigsForSender, TakerError> {
     handshake_maker(socket)?;
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[MSG_EXCHANGE] Direction: sending | MsgType: ReqContractSigsForSender | SwapcoinsCount: {} | Locktime: {}",
+        outgoing_swapcoins.len(),
+        locktime
+    );
+
     let txs_info = maker_multisig_nonces
         .iter()
         .zip(maker_hashlock_nonces.iter())
@@ -128,6 +136,11 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
                 })
                 .into());
             } else {
+                #[cfg(debug_assertions)]
+                log::debug!(
+                    "[MSG_EXCHANGE] Direction: received | MsgType: RespContractSigsForSender | SigsCount: {}",
+                    m.sigs.len()
+                );
                 m
             }
         }
@@ -147,6 +160,13 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
     {
         outgoing_swapcoin.verify_contract_tx_sender_sig(sig)?;
     }
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[CONTRACT_OP] Operation: verify_sender_sigs | SigsCount: {} | Result: success",
+        contract_sigs_for_sender.sigs.len()
+    );
+
     Ok(contract_sigs_for_sender)
 }
 
@@ -157,6 +177,13 @@ pub(crate) fn req_sigs_for_recvr_once<S: SwapCoin>(
     receivers_contract_txes: &[Transaction],
 ) -> Result<ContractSigsForRecvr, TakerError> {
     handshake_maker(socket)?;
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[MSG_EXCHANGE] Direction: sending | MsgType: ReqContractSigsForRecvr | SwapcoinsCount: {} | ContractTxsCount: {}",
+        incoming_swapcoins.len(),
+        receivers_contract_txes.len()
+    );
 
     let txs_info = incoming_swapcoins
         .iter()
@@ -183,6 +210,11 @@ pub(crate) fn req_sigs_for_recvr_once<S: SwapCoin>(
                 })
                 .into());
             } else {
+                #[cfg(debug_assertions)]
+                log::debug!(
+                    "[MSG_EXCHANGE] Direction: received | MsgType: RespContractSigsForRecvr | SigsCount: {}",
+                    m.sigs.len()
+                );
                 m
             }
         }
@@ -202,6 +234,13 @@ pub(crate) fn req_sigs_for_recvr_once<S: SwapCoin>(
     {
         swapcoin.verify_contract_tx_receiver_sig(sig)?;
     }
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[CONTRACT_OP] Operation: verify_receiver_sigs | SigsCount: {} | Result: success",
+        contract_sigs_for_recvr.sigs.len()
+    );
+
     Ok(contract_sigs_for_recvr)
 }
 
@@ -243,12 +282,23 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         )
         .collect::<Vec<NextHopInfo>>();
 
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[MSG_EXCHANGE] SwapID: {} | Direction: sending | MsgType: ProofOfFunding | FundingTxsCount: {} | RefundLocktime: {}",
+        id.clone(),
+        tmi.funding_tx_infos.len(),
+        tmi.this_maker_refund_locktime
+    );
+
     let pof_msg = TakerToMakerMessage::RespProofOfFunding(ProofOfFunding {
         confirmed_funding_txes: tmi.funding_tx_infos.clone(),
         next_coinswap_info,
         refund_locktime: tmi.this_maker_refund_locktime,
         contract_feerate: MIN_FEE_RATE,
+        #[cfg(not(debug_assertions))]
         id,
+        #[cfg(debug_assertions)]
+        id: id.clone(),
     });
 
     send_message_with_prefix(socket, &pof_msg)?;
@@ -271,6 +321,13 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
                 })
                 .into());
             } else {
+                #[cfg(debug_assertions)]
+                log::debug!(
+                    "[MSG_EXCHANGE] SwapID: {} | Direction: received | MsgType: ContractSigsAsRecvrAndSender | ReceiversTxs: {} | SendersTxs: {}",
+                    id,
+                    m.receivers_contract_txs.len(),
+                    m.senders_contract_txs_info.len()
+                );
                 m
             }
         }
@@ -322,6 +379,18 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
 
     let calculated_next_amount = this_amount - coinswap_fees - miner_fees_paid_by_taker;
 
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[FEE_CALC] SwapID: {} | IncomingAmount: {} | OutgoingAmount: {} | CoinswapFee: {} | MiningFee: {} | Locktime: {} | CalculatedNextAmount: {}",
+        id,
+        this_amount,
+        next_amount.to_sat(),
+        coinswap_fees,
+        miner_fees_paid_by_taker,
+        tmi.this_maker_refund_locktime,
+        calculated_next_amount
+    );
+
     if Amount::from_sat(calculated_next_amount) != next_amount {
         return Err((ProtocolError::IncorrectFundingAmount {
             expected: Amount::from_sat(calculated_next_amount),
@@ -354,6 +423,14 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
             contract_redeemscript,
         )?;
     }
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[CONTRACT_OP] SwapID: {} | Operation: validate_contract_txs | ContractTxsCount: {} | Result: success",
+        id,
+        contract_sigs_as_recvr_and_sender.receivers_contract_txs.len()
+    );
+
     let next_swap_contract_redeemscripts = npi
         .next_peer_hashlock_pubkeys
         .iter()
@@ -384,6 +461,16 @@ pub(crate) fn send_hash_preimage_and_get_private_keys(
     receivers_multisig_redeemscripts: &[ScriptBuf],
     preimage: &Preimage,
 ) -> Result<PrivKeyHandover, TakerError> {
+    #[cfg(debug_assertions)]
+    {
+        log::debug!(
+            "[MSG_EXCHANGE] Direction: sending | MsgType: HashPreimage | SendersRedeemscripts: {} | ReceiversRedeemscripts: {} | Preimage: {:?}",
+            senders_multisig_redeemscripts.len(),
+            receivers_multisig_redeemscripts.len(),
+            preimage
+        );
+    }
+
     let hash_preimage_msg = TakerToMakerMessage::RespHashPreimage(HashPreimage {
         senders_multisig_redeemscripts: senders_multisig_redeemscripts.to_vec(),
         receivers_multisig_redeemscripts: receivers_multisig_redeemscripts.to_vec(),
@@ -403,6 +490,11 @@ pub(crate) fn send_hash_preimage_and_get_private_keys(
                 })
                 .into());
             } else {
+                #[cfg(debug_assertions)]
+                log::debug!(
+                    "[MSG_EXCHANGE] Direction: received | MsgType: PrivkeyHandover | PrivkeysCount: {}",
+                    m.multisig_privkeys.len()
+                );
                 m
             }
         }
