@@ -422,12 +422,18 @@ build_image() {
     print_info "Building Coinswap Docker images for platform: ${platform:-native}..."
     cd "$SCRIPT_DIR"
     
-    # Build the shared builder image first
-    print_info "Building builder image..."
-    if docker buildx build $platform_arg --load -f docker/Dockerfile.builder -t coinswap-builder .; then
+    # Build the shared builder and base images first
+    print_info "Building builder and base images..."
+    if docker buildx build $platform_arg --load -f docker/Dockerfile.builder --target builder -t coinswap-builder:latest .; then
         print_success "Builder image built successfully"
     else
         print_error "Failed to build builder image"
+        exit 1
+    fi
+    if docker buildx build $platform_arg --load -f docker/Dockerfile.builder -t coinswap-base:latest .; then
+        print_success "Base image built successfully"
+    else
+        print_error "Failed to build base image"
         exit 1
     fi
     
@@ -436,7 +442,7 @@ build_image() {
     
     for service in "${services[@]}"; do
         print_info "Building $service image..."
-        if docker buildx build $platform_arg --load -f "docker/Dockerfile.$service" --build-arg BUILDER_IMAGE=coinswap-builder -t "coinswap-$service" .; then
+        if docker buildx build $platform_arg --load -f "docker/Dockerfile.$service" -t "coinswap-$service" .; then
             print_success "$service image built successfully"
         else
             print_error "Failed to build $service image"
@@ -517,7 +523,7 @@ show_logs() {
 run_command() {
     local cmd="$1"
     shift
-    docker run --rm -it --network coinswap-network "$IMAGE_NAME" "$cmd" "$@"
+    docker run --rm -it --network coinswap-network "coinswap-$cmd" "$@"
 }
 
 run_tests() {
@@ -598,7 +604,7 @@ case "${1:-}" in
         docker compose -f "$compose_file" ps
         ;;
     "shell")
-        docker run --rm -it --network coinswap-network "$IMAGE_NAME" /bin/sh
+        docker run --rm -it --network coinswap-network "coinswap-taker" /bin/sh
         ;;
     "test")
         check_docker

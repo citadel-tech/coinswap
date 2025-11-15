@@ -1,41 +1,15 @@
 # Taker Dockerfile
-ARG BUILDER_IMAGE=coinswap-builder
+ARG BUILDER_IMAGE=coinswap-builder:latest
+ARG BASE_IMAGE=coinswap-base:latest
+
 FROM ${BUILDER_IMAGE} AS builder
-
-FROM alpine:3.20
-
-# Install runtime dependencies
-RUN --mount=type=cache,target=/var/cache/apk \
-    apk add --no-cache \
-    ca-certificates \
-    openssl \
-    libgcc
-
-# Create app user
-RUN adduser -D -u 1001 coinswap
-
-# Create directories
-RUN mkdir -p /app/bin /home/coinswap/.coinswap && \
-    chown -R coinswap:coinswap /app /home/coinswap
+FROM ${BASE_IMAGE}
 
 # Copy taker binary from builder
-COPY --from=builder /usr/local/bin/taker /app/bin/
+COPY --from=builder /usr/src/coinswap/target/release/taker /app/bin/
 
 # Set proper permissions
-RUN chmod +x /app/bin/*
-
-# Switch to app user
-USER coinswap
-WORKDIR /app
-
-# Add binaries to PATH
-ENV PATH="/app/bin:$PATH"
-
-# Set environment variables for data directories
-ENV COINSWAP_DATA_DIR="/home/coinswap/.coinswap"
-
-# Create volume mount point
-VOLUME ["/home/coinswap/.coinswap"]
+RUN chmod +x /app/bin/taker
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

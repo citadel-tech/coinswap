@@ -1,7 +1,8 @@
 # Test environment Dockerfile
-ARG BUILDER_IMAGE=coinswap-builder
+ARG BUILDER_IMAGE=coinswap-builder:latest
 FROM ${BUILDER_IMAGE} AS builder
 
+# The test environment needs the full rust toolchain, so we don't use the minimal base image.
 FROM rust:1.90-alpine3.20
 
 # Install system dependencies for testing
@@ -27,7 +28,7 @@ RUN mkdir -p /app/bin /home/coinswap/.coinswap && \
     chown -R coinswap:coinswap /app /home/coinswap
 
 # Copy all binaries from builder
-COPY --from=builder /usr/local/bin/* /app/bin/
+COPY --from=builder /usr/src/coinswap/target/release/* /app/bin/
 
 # Copy source code for tests (from current context)
 COPY . /app/source

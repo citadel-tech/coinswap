@@ -1,4 +1,7 @@
-## Multi-stage build for coinswap project using Alpine
+# This Dockerfile creates a builder environment and a common base runtime image.
+
+## --- Builder Stage ---
+# Compiles all necessary binaries.
 FROM rust:1.90-alpine3.20 AS builder
 
 # Install system dependencies
@@ -13,61 +16,52 @@ RUN apk add --no-cache \
     sqlite-static \
     zeromq-dev
 
-# Create non-root user
-RUN addgroup -g 1000 coinswap && \
-    adduser -D -u 1000 -G coinswap coinswap
-
-# Set working directory
-WORKDIR /tmp
-
-# Create directory for compiled binaries
-RUN mkdir -p /tmp/binaries
-
-# Build coinswap
-COPY . /tmp/coinswap
-WORKDIR /tmp/coinswap
-
-# Build the main coinswap project
+# Build coinswap binaries
+WORKDIR /usr/src/coinswap
+COPY . .
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    cargo build --release && \
-    cp target/release/makerd /tmp/binaries/ && \
-    cp target/release/taker /tmp/binaries/ && \
-    cp target/release/maker-cli /tmp/binaries/
+    cargo build --release
 
-# Build tracker from external repository
-WORKDIR /tmp
+# Build tracker binary
+WORKDIR /usr/src/
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     git clone https://github.com/citadel-tech/tracker.git && \
     cd tracker && \
     cargo build --release && \
-    cp target/release/tracker /tmp/binaries/
+    cp target/release/tracker /usr/src/coinswap/target/release/
 
-# Runtime stage
+## --- Base Runtime Stage ---
+# This is the common base for all service images.
 FROM alpine:3.20
 
-# Install runtime dependencies
-RUN apk add --no-cache \
-    libgcc \
+# Install common runtime dependencies
+RUN --mount=type=cache,target=/var/cache/apk \
+    apk add --no-cache \
+    ca-certificates \
     openssl \
+    libgcc \
     sqlite \
     zeromq
 
-# Create non-root user
-RUN addgroup -g 1000 coinswap && \
-    adduser -D -u 1000 -G coinswap coinswap
+# Create app user
+RUN adduser -D -u 1001 coinswap
 
-# Copy binaries from builder stage
-COPY --from=builder /tmp/binaries/* /usr/local/bin/
+# Create common directories
+RUN mkdir -p /app/bin /home/coinswap/.coinswap /home/coinswap/.tracker && \
+    chown -R coinswap:coinswap /app /home/coinswap
 
-# Create data directories
-RUN mkdir -p /home/coinswap/.coinswap && \
-    chown -R coinswap:coinswap /home/coinswap
-
-# Switch to non-root user
+# Switch to app user
 USER coinswap
-WORKDIR /home/coinswap
+WORKDIR /app
 
-# Default command
-CMD ["/bin/sh"]
+# Add binaries to PATH
+ENV PATH="/app/bin:$PATH"
+
+# Set common environment variables
+ENV COINSWAP_DATA_DIR="/home/coinswap/.coinswap"
+ENV TRACKER_DATA_DIR="/home/coinswap/.tracker"
+
+# Create volume mount points
+VOLUME ["/home/coinswap/.coinswap", "/home/coinswap/.tracker"]

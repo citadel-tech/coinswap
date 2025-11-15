@@ -37,7 +37,7 @@ jobs:
       run: docker run --rm --platform ${{ matrix.platform }} coinswap-tracker tracker --help
 
     - name: Run integration tests
-      run: docker run --rm --platform ${{ matrix.platform }} coinswap-test
+      run: ./docker-setup.sh test
 
     - name: Start Coinswap stack
       run: ./docker-setup.sh start
