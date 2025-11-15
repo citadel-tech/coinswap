@@ -13,8 +13,7 @@ use super::{
 };
 
 use crate::protocol::messages2::{
-    AckResponse, GetOffer, MakerToTakerMessage, PartialSigAndSendersNonce, SendersContract,
-    SpendingTxAndReceiverNonce, SwapDetails, TakerToMakerMessage,
+    AckResponse, GetOffer, MakerToTakerMessage, PrivateKeyHandover, SendersContract, SwapDetails, TakerToMakerMessage
 };
 
 /// The Global Handle Message function for taproot protocol. Takes in a [`Arc<Maker>`] and handles
@@ -41,12 +40,8 @@ pub(crate) fn handle_message_taproot(
         TakerToMakerMessage::SendersContract(senders_contract) => {
             handle_senders_contract(maker, connection_state, senders_contract)
         }
-        // New backwards sweeping protocol messages
-        TakerToMakerMessage::SpendingTxAndReceiverNonce(spending_tx_msg) => {
-            handle_spending_tx_and_receiver_nonce(maker, connection_state, spending_tx_msg)
-        }
-        TakerToMakerMessage::PartialSigAndSendersNonce(partial_sig_msg) => {
-            handle_partial_sig_and_senders_nonce(maker, connection_state, partial_sig_msg)
+        TakerToMakerMessage::PrivateKeyHandover(privkey_handover_message) => {
+            handle_privkey_handover(maker, connection_state, privkey_handover_message)
         }
     }
 }
@@ -132,43 +127,11 @@ fn handle_senders_contract(
     )))
 }
 
-/// Handles SpendingTxAndReceiverNonce message in the new backwards sweeping protocol
-/// This is step 13 or 16 in the protocol where taker sends spending transaction and receiver nonce
-fn handle_spending_tx_and_receiver_nonce(
+fn handle_privkey_handover(
     maker: &Arc<Maker>,
     connection_state: &mut ConnectionState,
-    spending_tx_msg: SpendingTxAndReceiverNonce,
+    privkey_handover: PrivateKeyHandover
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
-    log::info!(
-        "[{}] Handling SpendingTxAndReceiverNonce",
-        maker.config.network_port
-    );
-
-    // Generate nonces and partial signature for this sweep
-    let response =
-        maker.process_spending_tx_and_receiver_nonce(&spending_tx_msg, connection_state)?;
-
-    Ok(Some(MakerToTakerMessage::NoncesPartialSigsAndSpendingTx(
-        response,
-    )))
-}
-
-/// Handles PartialSigAndSendersNonce message in the new backwards sweeping protocol
-/// This is step 18 or 20 in the protocol where taker relays partial signature to complete maker's sweep
-fn handle_partial_sig_and_senders_nonce(
-    maker: &Arc<Maker>,
-    connection_state: &mut ConnectionState,
-    partial_sig_and_senders_nonce: PartialSigAndSendersNonce,
-) -> Result<Option<MakerToTakerMessage>, MakerError> {
-    log::info!(
-        "[{}] Handling PartialSigAndSendersNonce",
-        maker.config.network_port
-    );
-
-    // Complete the maker's sweep transaction with the received partial signature
-    maker
-        .complete_sweep_with_partial_signature(&partial_sig_and_senders_nonce, connection_state)?;
-
-    // No response needed for this message type
-    Ok(None)
+    let response = maker.process_private_key_handover(&privkey_handover, connection_state)?;
+    Ok(Some(MakerToTakerMessage::PrivateKeyHandover(response)))
 }
