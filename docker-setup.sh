@@ -401,12 +401,30 @@ EOF
 
 # Build the Docker image
 build_image() {
-    print_info "Building Coinswap Docker images..."
+    local platform="$1"
+    if [ -z "$platform" ]; then
+        local arch=$(uname -m)
+        case "$arch" in
+            x86_64) platform="linux/amd64" ;;
+            aarch64|arm64) platform="linux/arm64" ;;
+            *)
+                print_warning "Unsupported architecture: $arch. Building with Docker's default platform."
+                platform=""
+                ;;
+        esac
+    fi
+
+    local platform_arg=""
+    if [ -n "$platform" ]; then
+        platform_arg="--platform $platform"
+    fi
+
+    print_info "Building Coinswap Docker images for platform: ${platform:-native}..."
     cd "$SCRIPT_DIR"
     
     # Build the shared builder image first
     print_info "Building builder image..."
-    if docker build -f docker/Dockerfile.builder -t coinswap-builder .; then
+    if docker buildx build $platform_arg --load -f docker/Dockerfile.builder -t coinswap-builder .; then
         print_success "Builder image built successfully"
     else
         print_error "Failed to build builder image"
@@ -418,7 +436,7 @@ build_image() {
     
     for service in "${services[@]}"; do
         print_info "Building $service image..."
-        if docker build -f "docker/Dockerfile.$service" --build-arg BUILDER_IMAGE=coinswap-builder -t "coinswap-$service" .; then
+        if docker buildx build $platform_arg --load -f "docker/Dockerfile.$service" --build-arg BUILDER_IMAGE=coinswap-builder -t "coinswap-$service" .; then
             print_success "$service image built successfully"
         else
             print_error "Failed to build $service image"
@@ -457,10 +475,10 @@ start_stack() {
     print_info "Starting Coinswap stack with docker-compose..."
     cd "$SCRIPT_DIR"
     
-    if docker-compose -f docker-compose.generated.yml up -d; then
+    if docker compose -f docker-compose.generated.yml up -d; then
         print_success "Coinswap stack started successfully"
         print_info "Services running:"
-        docker-compose -f docker-compose.generated.yml ps
+        docker compose -f docker-compose.generated.yml ps
     else
         print_error "Failed to start Coinswap stack"
         exit 1
@@ -473,9 +491,9 @@ stop_stack() {
     
     # Use generated compose file if it exists, otherwise fall back to default
     if [ -f "docker-compose.generated.yml" ]; then
-        docker-compose -f docker-compose.generated.yml down
+        docker compose -f docker-compose.generated.yml down
     else
-        docker-compose down
+        docker compose down
     fi
     
     print_success "Coinswap stack stopped"
@@ -490,9 +508,9 @@ show_logs() {
     fi
     
     if [ -n "$1" ]; then
-        docker-compose -f "$compose_file" logs -f "$1"
+        docker compose -f "$compose_file" logs -f "$1"
     else
-        docker-compose -f "$compose_file" logs -f
+        docker compose -f "$compose_file" logs -f
     fi
 }
 
@@ -505,23 +523,7 @@ run_command() {
 run_tests() {
     print_info "Running Coinswap tests in Docker..."
     
-    # Build the builder image first
-    print_info "Building builder image..."
-    if docker build -f docker/Dockerfile.builder -t coinswap-builder .; then
-        print_success "Builder image built successfully"
-    else
-        print_error "Failed to build builder image"
-        exit 1
-    fi
-    
-    # Build the test image
-    print_info "Building test image..."
-    if docker build -f docker/Dockerfile.test --build-arg BUILDER_IMAGE=coinswap-builder -t coinswap-test .; then
-        print_success "Test image built successfully"
-    else
-        print_error "Failed to build test image"
-        exit 1
-    fi
+    build_image
     
     # Run the tests
     print_info "Executing integration tests..."
@@ -537,15 +539,15 @@ show_help() {
     echo "Usage: $0 [COMMAND]"
     echo ""
     echo "Commands:"
-    echo "  configure       Configure Coinswap Docker setup"
-    echo "  build           Build the Docker image"
-    echo "  start           Start the full Coinswap stack"
-    echo "  stop            Stop the Coinswap stack"
-    echo "  restart         Restart the Coinswap stack"
-    echo "  logs [service]  Show logs (optionally for specific service)"
-    echo "  status          Show status of running services"
-    echo "  shell           Open shell in a new container"
-    echo "  test            Run integration tests"
+    echo "  configure        Configure Coinswap Docker setup"
+    echo "  build [platform] Build the Docker image for a specific platform (e.g., linux/amd64, linux/arm64). Defaults to host architecture."
+    echo "  start            Start the full Coinswap stack"
+    echo "  stop             Stop the Coinswap stack"
+    echo "  restart          Restart the Coinswap stack"
+    echo "  logs [service]   Show logs (optionally for specific service)"
+    echo "  status           Show status of running services"
+    echo "  shell            Open shell in a new container"
+    echo "  test             Run integration tests"
     echo ""
     echo "Individual application commands:"
     echo "  makerd [args]   Run makerd with arguments"
@@ -556,6 +558,7 @@ show_help() {
     echo ""
     echo "Examples:"
     echo "  $0 build"
+    echo "  $0 build linux/arm64"
     echo "  $0 start"
     echo "  $0 taker --help"
     echo "  $0 maker-cli ping"
@@ -569,7 +572,7 @@ case "${1:-}" in
         ;;
     "build")
         check_docker
-        build_image
+        build_image "$2"
         ;;
     "start")
         check_docker
@@ -592,7 +595,7 @@ case "${1:-}" in
         if [ ! -f "$compose_file" ]; then
             compose_file="docker-compose.yml"
         fi
-        docker-compose -f "$compose_file" ps
+        docker compose -f "$compose_file" ps
         ;;
     "shell")
         docker run --rm -it --network coinswap-network "$IMAGE_NAME" /bin/sh
