@@ -24,7 +24,7 @@ use std::{
 use super::error::TakerError;
 use crate::{
     protocol::contract2::calculate_coinswap_fee,
-    utill::{check_tor_status, read_message, send_message_with_prefix},
+    utill::{check_tor_status, read_message},
 };
 use std::collections::HashSet;
 
