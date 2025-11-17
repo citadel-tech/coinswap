@@ -1,10 +1,23 @@
 use crate::{
-    protocol::messages2::{AckResponse, Preimage},
+    protocol::{
+        contract2::{
+            calculate_coinswap_fee, create_hashlock_script, create_taproot_script,
+            create_timelock_script,
+        },
+        messages2::{
+            AckResponse, GetOffer, MakerToTakerMessage, Preimage, PrivateKeyHandover,
+            SenderContractFromMaker, SendersContract, SwapDetails, TakerToMakerMessage,
+        },
+        musig_interface::{
+            aggregate_partial_signatures_compat, generate_new_nonce_pair_compat,
+            generate_partial_signature_compat, get_aggregated_nonce_compat,
+        },
+    },
     taker::{
         config::TakerConfig,
         offers::{MakerAddress, OfferAndAddress, OfferBook},
     },
-    utill::{get_taker_dir, send_message},
+    utill::{check_tor_status, get_taker_dir, read_message, send_message},
     wallet::{RPCConfig, Wallet, WalletError},
     watch_tower::{
         registry_storage::FileRegistry,
@@ -14,23 +27,27 @@ use crate::{
         zmq_backend::ZmqBackend,
     },
 };
-use bitcoin::{hashes::Hash, Amount, ScriptBuf, Transaction};
+use bitcoin::{
+    hashes::{sha256, Hash},
+    hex::DisplayHex,
+    locktime::absolute::LockTime,
+    secp256k1::{
+        rand::{rngs::OsRng, RngCore},
+        Keypair, Secp256k1,
+    },
+    sighash::SighashCache,
+    transaction::Version,
+    Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+};
+use bitcoind::bitcoincore_rpc::{RawTx, RpcApi};
+use chrono::Utc;
 use socks::Socks5Stream;
 use std::{
-    convert::TryFrom, io::BufWriter, net::TcpStream, path::PathBuf, sync::mpsc, thread,
-    time::Duration,
+    collections::HashSet, convert::TryFrom, io::BufWriter, net::TcpStream, path::PathBuf,
+    sync::mpsc, thread, time::Duration,
 };
 
 use super::error::TakerError;
-use crate::{
-    protocol::contract2::calculate_coinswap_fee,
-    utill::{check_tor_status, read_message},
-};
-use std::collections::HashSet;
-
-use crate::protocol::messages2::{GetOffer, MakerToTakerMessage, SwapDetails, TakerToMakerMessage};
-use bitcoind::bitcoincore_rpc::RpcApi;
-use chrono::Utc;
 
 #[derive(Debug, Default, Clone)]
 /// Parameters for initiating a coinswap
@@ -370,12 +387,6 @@ impl Taker {
 
     /// Choose makers for the swap by negotiating with them
     fn choose_makers_for_swap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
-        use crate::protocol::messages2::{MakerToTakerMessage, TakerToMakerMessage};
-        use bitcoin::{
-            hex::DisplayHex,
-            secp256k1::rand::{rngs::OsRng, RngCore},
-        };
-
         // Find suitable maker asks for an offer from the makers
         let suitable_makers = self.find_suitable_makers(&swap_params);
         log::info!(
@@ -601,14 +612,9 @@ impl Taker {
 
     /// Setup contract keys and scripts for the swap
     fn setup_contract_keys_and_scripts(&mut self) -> Result<(), TakerError> {
-        use crate::protocol::contract2::{create_hashlock_script, create_timelock_script};
-        use bitcoin::{hashes::sha256, locktime::absolute::LockTime};
-
-        let secp = bitcoin::secp256k1::Secp256k1::new();
+        let secp = Secp256k1::new();
 
         let mut preimage = [0u8; 32];
-
-        use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
         OsRng.fill_bytes(&mut preimage);
         self.ongoing_swap_state.active_preimage = preimage;
 
@@ -650,8 +656,6 @@ impl Taker {
 
     /// Create and broadcast contract transactions
     fn create_outgoing_contract_transactions(&mut self) -> Result<Vec<Transaction>, TakerError> {
-        use crate::protocol::contract2::create_taproot_script;
-
         let available_utxos = self.wallet.list_all_utxo_spend_info();
         let mut contract_transactions = Vec::new();
 
@@ -745,10 +749,6 @@ impl Taker {
         &mut self,
         outgoing_signed_contract_transactions: &[Transaction],
     ) -> Result<(), TakerError> {
-        use crate::protocol::messages2::{
-            MakerToTakerMessage, SendersContract, TakerToMakerMessage,
-        };
-
         let first_maker = self
             .ongoing_swap_state
             .chosen_makers
@@ -808,12 +808,8 @@ impl Taker {
     /// Forward contracts through makers and coordinate the sweep process
     fn forward_contracts_and_coordinate_sweep(
         &mut self,
-        mut current_contract: crate::protocol::messages2::SenderContractFromMaker,
+        mut current_contract: SenderContractFromMaker,
     ) -> Result<(), TakerError> {
-        use crate::protocol::messages2::{
-            MakerToTakerMessage, SendersContract, TakerToMakerMessage,
-        };
-
         let maker_count = self.ongoing_swap_state.chosen_makers.len();
 
         // Handle single maker case
@@ -931,11 +927,6 @@ impl Taker {
     /// 4. Maker1 sweeps, responds with Maker1's outgoing key
     /// 5. Taker sweeps using Maker1's outgoing key
     fn execute_taker_sweep_and_coordinate_makers(&mut self) -> Result<(), TakerError> {
-        use crate::protocol::messages2::{
-            MakerToTakerMessage, PrivateKeyHandover, TakerToMakerMessage,
-        };
-        use bitcoin::secp256k1::{Keypair, Secp256k1};
-
         let secp = Secp256k1::new();
         let maker_count = self.ongoing_swap_state.chosen_makers.len();
 
@@ -1029,17 +1020,6 @@ impl Taker {
         &mut self,
         maker_outgoing_privkey: bitcoin::secp256k1::SecretKey,
     ) -> Result<(), TakerError> {
-        use crate::protocol::musig_interface::{
-            aggregate_partial_signatures_compat, generate_new_nonce_pair_compat,
-            generate_partial_signature_compat, get_aggregated_nonce_compat,
-        };
-        use bitcoin::{
-            secp256k1::{Keypair, Secp256k1},
-            sighash::SighashCache,
-            transaction::Version,
-            Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
-        };
-
         let secp = Secp256k1::new();
 
         log::info!("Sweeping taker's incoming contract using maker's outgoing key");
@@ -1225,7 +1205,6 @@ impl Taker {
         let completed_tx = sighasher.into_transaction();
 
         // Broadcast the transaction
-        use crate::bitcoind::bitcoincore_rpc::RawTx;
         let txid = self
             .wallet
             .rpc

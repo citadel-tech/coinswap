@@ -6,18 +6,30 @@
 use super::rpc::server::MakerRpc;
 use crate::{
     protocol::{
-        contract2::{calculate_coinswap_fee, calculate_contract_sighash},
-        messages2::{Offer, SenderContractFromMaker, SendersContract, SwapDetails},
+        contract2::{
+            calculate_coinswap_fee, calculate_contract_sighash, create_taproot_script,
+            create_timelock_script,
+        },
+        messages2::{
+            Offer, PrivateKeyHandover, SenderContractFromMaker, SendersContract, SwapDetails,
+        },
+        musig_interface::{
+            aggregate_partial_signatures_compat, generate_new_nonce_pair_compat,
+            generate_partial_signature_compat, get_aggregated_nonce_compat,
+        },
     },
-    utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL},
-    wallet::{RPCConfig, Wallet},
+    utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
+    wallet::{Destination, RPCConfig, Wallet},
     watch_tower::{
         registry_storage::FileRegistry, rpc_backend::BitcoinRpc, service::WatchService,
         watcher::Watcher, zmq_backend::ZmqBackend,
     },
 };
-use bitcoin::{key::Keypair, Amount, ScriptBuf, Transaction};
-use bitcoind::bitcoincore_rpc::RpcApi;
+use bitcoin::{
+    key::Keypair, locktime::absolute::LockTime, sighash::SighashCache, Amount, OutPoint, ScriptBuf,
+    Sequence, Transaction, TxIn, TxOut, Witness,
+};
+use bitcoind::bitcoincore_rpc::{RawTx, RpcApi};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -465,9 +477,6 @@ impl Maker {
             ));
         }
 
-        use crate::protocol::contract2::{create_taproot_script, create_timelock_script};
-        use bitcoin::locktime::absolute::LockTime;
-
         let secp = bitcoin::secp256k1::Secp256k1::new();
         let (outgoing_x_only, _) =
             bitcoin::secp256k1::Keypair::from_secret_key(&secp, &outgoing_privkey)
@@ -541,9 +550,6 @@ impl Maker {
         log::info!("Signing and broadcasting maker's contract transaction");
         let outgoing_contract_txid = {
             let mut wallet = self.wallet.write()?;
-
-            // Use wallet's spend_from_wallet method to properly sign the transaction
-            use crate::{utill::MIN_FEE_RATE, wallet::Destination};
 
             // Get the funding UTXO spend info
             let funding_utxo_info = wallet
@@ -659,15 +665,9 @@ impl Maker {
 
     pub(crate) fn process_private_key_handover(
         &self,
-        privkey_handover_message: &crate::protocol::messages2::PrivateKeyHandover,
+        privkey_handover_message: &PrivateKeyHandover,
         connection_state: &mut ConnectionState,
-    ) -> Result<crate::protocol::messages2::PrivateKeyHandover, MakerError> {
-        use crate::protocol::musig_interface::{
-            aggregate_partial_signatures_compat, generate_new_nonce_pair_compat,
-            generate_partial_signature_compat, get_aggregated_nonce_compat,
-        };
-        use bitcoin::{sighash::SighashCache, Witness};
-
+    ) -> Result<PrivateKeyHandover, MakerError> {
         // Create the spending transaction if it doesn't exist
         let spending_tx = if connection_state.incoming_contract_spending_tx.is_none() {
             log::info!(
@@ -817,7 +817,6 @@ impl Maker {
         let completed_tx = final_sighasher.into_transaction();
 
         // Broadcast the completed spending transaction
-        use crate::bitcoind::bitcoincore_rpc::RawTx;
         let txid = self
             .wallet
             .read()?
@@ -831,7 +830,7 @@ impl Maker {
             txid
         );
 
-        let privkey_handover_message = crate::protocol::messages2::PrivateKeyHandover {
+        let privkey_handover_message = PrivateKeyHandover {
             keypair: Keypair::from_secret_key(
                 &secp,
                 &connection_state.outgoing_contract_my_privkey.unwrap(),
@@ -846,8 +845,6 @@ impl Maker {
         &self,
         connection_state: &ConnectionState,
     ) -> Result<Transaction, MakerError> {
-        use bitcoin::{Amount, OutPoint, Sequence, TxIn, TxOut, Witness};
-
         // Get the incoming contract transaction hash
         let incoming_contract_txid = connection_state
             .incoming_contract_txid
