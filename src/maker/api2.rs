@@ -524,9 +524,6 @@ impl Maker {
         };
         log::info!("Outgoing contract txid: {:?}", outgoing_contract_txid);
 
-        // Store our own contract transaction hash for later use
-        connection_state.outgoing_contract.contract_txid = Some(outgoing_contract_txid);
-
         // For cooperative spending, we prepare to spend from the incoming contract transaction
         let incoming_contract_txid = connection_state
             .incoming_contract
@@ -586,7 +583,7 @@ impl Maker {
             incoming_contract_tx_output_value,
             hashlock_script,
             timelock_script,
-            *internal_key,
+            internal_key,
         )
         .map_err(|_| MakerError::General("Failed to calculate sighash"))?;
 
@@ -597,12 +594,12 @@ impl Maker {
         // Return our contract transaction details
         Ok(SenderContractFromMaker {
             contract_txs: vec![outgoing_contract_txid], // Our own contract transaction
-            pubkeys_a: vec![*connection_state.outgoing_contract.pubkey().unwrap()], // Next party's pubkey
+            pubkeys_a: vec![connection_state.outgoing_contract.pubkey().unwrap()], // Next party's pubkey
             hashlock_scripts: vec![connection_state.outgoing_contract.hashlock_script().clone()],
             timelock_scripts: vec![connection_state.outgoing_contract.timelock_script().clone()],
             // Include the internal key and tap tweak that were used to create OUR outgoing contract
-            internal_key: Some(*connection_state.outgoing_contract.internal_key().unwrap()),
-            tap_tweak: Some((*connection_state.outgoing_contract.tap_tweak().unwrap()).into()),
+            internal_key: Some(connection_state.outgoing_contract.internal_key().unwrap()),
+            tap_tweak: Some((connection_state.outgoing_contract.tap_tweak().unwrap()).into()),
         })
     }
 
@@ -685,7 +682,7 @@ impl Maker {
             incoming_contract_amount,
             &incoming_hashlock_script,
             &incoming_timelock_script,
-            *incoming_internal_key,
+            incoming_internal_key,
         )
         .map_err(|_| MakerError::General("Failed to calculate sighash"))?;
 
@@ -716,7 +713,7 @@ impl Maker {
             &incoming_aggregated_nonce,
             incoming_contract_my_sec_nonce,
             incoming_my_keypair,
-            *incoming_tap_tweak,
+            incoming_tap_tweak,
             incoming_ordered_pubkeys[0],
             incoming_ordered_pubkeys[1],
         );
@@ -726,7 +723,7 @@ impl Maker {
             &incoming_aggregated_nonce,
             incoming_contract_other_sec_nonce,
             incoming_other_keypair,
-            *incoming_tap_tweak,
+            incoming_tap_tweak,
             incoming_ordered_pubkeys[0],
             incoming_ordered_pubkeys[1],
         );
@@ -740,7 +737,7 @@ impl Maker {
         let aggregated_sig = aggregate_partial_signatures_compat(
             incoming_message,
             incoming_aggregated_nonce,
-            *incoming_tap_tweak,
+            incoming_tap_tweak,
             partial_sigs,
             incoming_ordered_pubkeys[0],
             incoming_ordered_pubkeys[1],
@@ -771,7 +768,7 @@ impl Maker {
         );
 
         let privkey_handover_message = PrivateKeyHandover {
-            secret_key: *connection_state.outgoing_contract.privkey().unwrap(),
+            secret_key: connection_state.outgoing_contract.privkey().unwrap(),
         };
 
         Ok(privkey_handover_message)
