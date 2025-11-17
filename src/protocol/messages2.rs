@@ -107,6 +107,7 @@ pub struct PrivateKeyHandover {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum TakerToMakerMessage {
     GetOffer(GetOffer),
     SwapDetails(SwapDetails),

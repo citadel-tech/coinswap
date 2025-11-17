@@ -455,10 +455,8 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                         maker.config.network_port
                     );
                 }
-                MakerToTakerMessage::SenderContractFromMaker(_) => {
-                }
-                MakerToTakerMessage::PrivateKeyHandover(_) => {
-                }
+                MakerToTakerMessage::SenderContractFromMaker(_) => {}
+                MakerToTakerMessage::PrivateKeyHandover(_) => {}
             }
         }
 
