@@ -71,7 +71,6 @@ struct OngoingSwapState {
     pub chosen_makers: Vec<OfferAndAddress>,
     pub outgoing_contract_my_privkey: Option<bitcoin::secp256k1::SecretKey>,
     pub outgoing_contract_my_pubkey: Option<bitcoin::PublicKey>,
-    pub outgoing_contract_my_x_only: Option<bitcoin::secp256k1::XOnlyPublicKey>,
     pub outgoing_contract_hashlock_script: Option<ScriptBuf>,
     pub outgoing_contract_timelock_script: Option<ScriptBuf>,
     pub outgoing_contract_internal_key: Option<bitcoin::secp256k1::XOnlyPublicKey>,
@@ -83,7 +82,6 @@ struct OngoingSwapState {
     pub incoming_contract_timelock_script: Option<ScriptBuf>,
     pub incoming_contract_my_privkey: Option<bitcoin::secp256k1::SecretKey>,
     pub incoming_contract_my_pubkey: Option<bitcoin::PublicKey>,
-    pub incoming_contract_my_x_only: Option<bitcoin::secp256k1::XOnlyPublicKey>,
     pub incoming_contract_other_pubkey: Option<bitcoin::PublicKey>,
     // Private key handover: store maker outgoing contract private keys (indexed by maker position)
     // Each maker hands over their outgoing contract private key after sweeping their incoming contract
@@ -626,17 +624,14 @@ impl Taker {
         self.ongoing_swap_state.outgoing_contract_my_pubkey = Some(bitcoin::PublicKey::from(
             outgoing_contract_my_keypair.public_key(),
         ));
-        self.ongoing_swap_state.outgoing_contract_my_x_only = Some(outgoing_contract_my_x_only);
 
         let (incoming_contract_my_privkey, _) = self.wallet.get_tweakable_keypair()?;
         let incoming_contract_my_keypair =
             bitcoin::secp256k1::Keypair::from_secret_key(&secp, &incoming_contract_my_privkey);
-        let (incoming_contract_my_x_only, _) = incoming_contract_my_keypair.x_only_public_key();
         self.ongoing_swap_state.incoming_contract_my_privkey = Some(incoming_contract_my_privkey);
         self.ongoing_swap_state.incoming_contract_my_pubkey = Some(bitcoin::PublicKey::from(
             incoming_contract_my_keypair.public_key(),
         ));
-        self.ongoing_swap_state.incoming_contract_my_x_only = Some(incoming_contract_my_x_only);
 
         // Create scripts for outgoing contract
         let hash = sha256::Hash::hash(&preimage);

@@ -84,30 +84,18 @@ pub struct ConnectionState {
     pub(crate) incoming_contract_other_pubkey: Option<bitcoin::PublicKey>,
     pub(crate) incoming_contract_hashlock_script: Option<ScriptBuf>,
     pub(crate) incoming_contract_timelock_script: Option<ScriptBuf>,
-    // Additional fields for MuSig2 signing
-    pub(crate) incoming_contract_txid: Option<bitcoin::Txid>, // Taker's contract transaction
-    pub(crate) incoming_contract_my_pub_nonce: Option<secp256k1::musig::PublicNonce>, // Our public nonce for the incoming contract
-    // outgoing_contract_txid is defined below in the new fields section
-    pub(crate) outgoing_aggregated_nonce: Option<secp256k1::musig::AggregatedNonce>, // For outgoing contract
-    pub(crate) incoming_aggregated_nonce: Option<secp256k1::musig::AggregatedNonce>, // For incoming contract
+    pub(crate) incoming_contract_txid: Option<bitcoin::Txid>,
     pub(crate) incoming_contract_tap_tweak: Option<bitcoin::secp256k1::Scalar>,
     pub(crate) incoming_contract_internal_key: Option<bitcoin::secp256k1::XOnlyPublicKey>,
-    pub(crate) incoming_contract_spending_tx: Option<Transaction>, // Spending transaction for incoming contract
-    pub(crate) outgoing_contract_my_privkey: Option<bitcoin::secp256k1::SecretKey>, // Our outgoing contract private key
-    pub(crate) outgoing_contract_my_pubkey: Option<bitcoin::PublicKey>, // Our outgoing contract public key
-    pub(crate) outgoing_contract_other_pubkey: Option<bitcoin::PublicKey>, // Taker's tweakable pubkey
-    pub(crate) outgoing_contract_txid: Option<bitcoin::Txid>, // Our outgoing contract transaction
-    pub(crate) outgoing_contract_tap_tweak: Option<bitcoin::secp256k1::Scalar>, // Tap tweak for our outgoing contract
-    pub(crate) outgoing_contract_internal_key: Option<bitcoin::secp256k1::XOnlyPublicKey>, // Internal key for our outgoing contract
-    pub(crate) outgoing_contract_hashlock_script: Option<ScriptBuf>, // Hashlock script for our outgoing contract
-    pub(crate) outgoing_contract_timelock_script: Option<ScriptBuf>, // Timelock script for our outgoing contract
-    pub(crate) outgoing_contract_my_pub_nonce: Option<secp256k1::musig::PublicNonce>, // Our public nonce for the outgoing contract
-    // Store our partial signature for the incoming contract (to avoid SecretNonce cloning issues)
-    pub(crate) incoming_contract_my_partial_sig: Option<secp256k1::musig::PartialSignature>,
-    // Store secret nonce bytes for incoming contract (since SecretNonce can't be cloned)
-    pub(crate) incoming_contract_my_sec_nonce_bytes: Option<[u8; 132]>, // MUSIG_SECNONCE_SIZE
-    pub(crate) outgoing_contract_spending_tx: Option<Transaction>, // Spending transaction for our outgoing contract
-    pub(crate) outgoing_contract_my_partial_sig: Option<secp256k1::musig::PartialSignature>, // Our partial signature for outgoing contract
+    pub(crate) incoming_contract_spending_tx: Option<Transaction>,
+    pub(crate) outgoing_contract_my_privkey: Option<bitcoin::secp256k1::SecretKey>,
+    pub(crate) outgoing_contract_my_pubkey: Option<bitcoin::PublicKey>,
+    pub(crate) outgoing_contract_other_pubkey: Option<bitcoin::PublicKey>,
+    pub(crate) outgoing_contract_txid: Option<bitcoin::Txid>,
+    pub(crate) outgoing_contract_tap_tweak: Option<bitcoin::secp256k1::Scalar>,
+    pub(crate) outgoing_contract_internal_key: Option<bitcoin::secp256k1::XOnlyPublicKey>,
+    pub(crate) outgoing_contract_hashlock_script: Option<ScriptBuf>,
+    pub(crate) outgoing_contract_timelock_script: Option<ScriptBuf>,
 }
 
 impl Clone for ConnectionState {
@@ -121,28 +109,17 @@ impl Clone for ConnectionState {
             incoming_contract_hashlock_script: self.incoming_contract_hashlock_script.clone(),
             incoming_contract_timelock_script: self.incoming_contract_timelock_script.clone(),
             incoming_contract_txid: self.incoming_contract_txid,
-            incoming_contract_my_pub_nonce: self.incoming_contract_my_pub_nonce,
-            // outgoing_contract_txid is handled below
-            outgoing_aggregated_nonce: self.outgoing_aggregated_nonce,
-            incoming_aggregated_nonce: self.incoming_aggregated_nonce,
             incoming_contract_tap_tweak: self.incoming_contract_tap_tweak,
             incoming_contract_internal_key: self.incoming_contract_internal_key,
             incoming_contract_spending_tx: self.incoming_contract_spending_tx.clone(),
-            // Ordered pubkeys are computed on-the-fly
             outgoing_contract_my_privkey: self.outgoing_contract_my_privkey,
             outgoing_contract_my_pubkey: self.outgoing_contract_my_pubkey,
             outgoing_contract_other_pubkey: self.outgoing_contract_other_pubkey,
-            outgoing_contract_hashlock_script: self.outgoing_contract_hashlock_script.clone(),
-            outgoing_contract_timelock_script: self.outgoing_contract_timelock_script.clone(),
-            // New fields for backwards sweeping protocol
             outgoing_contract_txid: self.outgoing_contract_txid,
             outgoing_contract_tap_tweak: self.outgoing_contract_tap_tweak,
             outgoing_contract_internal_key: self.outgoing_contract_internal_key,
-            outgoing_contract_my_pub_nonce: self.outgoing_contract_my_pub_nonce,
-            incoming_contract_my_partial_sig: self.incoming_contract_my_partial_sig,
-            incoming_contract_my_sec_nonce_bytes: self.incoming_contract_my_sec_nonce_bytes,
-            outgoing_contract_spending_tx: self.outgoing_contract_spending_tx.clone(),
-            outgoing_contract_my_partial_sig: self.outgoing_contract_my_partial_sig,
+            outgoing_contract_hashlock_script: self.outgoing_contract_hashlock_script.clone(),
+            outgoing_contract_timelock_script: self.outgoing_contract_timelock_script.clone(),
         }
     }
 }
@@ -441,7 +418,7 @@ impl Maker {
         // Store taker's pubkey
         connection_state.incoming_contract_other_pubkey = Some(message.pubkeys_a[0]);
 
-        // Store taker's tweakable pubkey for backwards sweeping protocol
+        // Store next party's tweakable pubkey for outgoing contract
         connection_state.outgoing_contract_other_pubkey = Some(message.next_party_tweakable_point);
 
         // Verify we have sufficient funds and get necessary data
