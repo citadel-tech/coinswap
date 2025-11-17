@@ -84,90 +84,66 @@ P2TR Output:
 }
 ```
 
-### Phase 3: Sequential Sweeping (Revised)
+### Phase 3: Private Key Handover and Sweeping
 
-**Design Principle**: After contract creation, the taker initiates backwards sweeping starting with the last maker and working backwards through the chain. Each receiving party constructs their spending transaction.
+**Design Principle**: After contract creation, parties exchange their outgoing contract private keys in a forward flow. Each party independently sweeps their incoming contract using MuSig2 with both keys (their incoming key + sender's outgoing key).
 
-#### Flow Description (1 Taker + 2 Makers: Maker0 → Maker1 → Taker)
+#### Flow Description (1 Taker + 2 Makers)
 
 ```
-13. Taker → Maker1 (Last Maker): SpendingTxAndReceiverNonce {
-    spending_transaction: taker_constructed_spending_tx_for_maker1_to_taker_contract,
-    receiver_nonce: taker_nonce_for_maker1_to_taker_contract
+13. Taker → Maker0: PrivateKeyHandover {
+    keypair: taker_outgoing_contract_keypair  // Taker's key for Taker→Maker0 contract
 }
 
-14. Maker1 → Taker: NoncesPartialSigsAndSpendingTx {
-    sender_nonce: maker1_nonce_for_maker1_to_taker_contract,
-    receiver_nonce: maker1_nonce_for_maker0_to_maker1_contract,
-    partial_signatures: [maker1_partial_sig_for_maker1_to_taker_contract],
-    spending_transaction: maker1_constructed_spending_tx_for_maker0_to_maker1_contract
+14. Maker0 receives taker's outgoing key:
+    - Creates spending transaction for incoming contract (Taker→Maker0)
+    - Generates fresh nonce pairs for both maker0 and taker (using received key)
+    - Creates partial signatures from both keys using MuSig2
+    - Aggregates partial signatures into final signature
+    - Broadcasts sweep transaction to claim from Taker→Maker0 contract
+
+15. Maker0 → Taker: PrivateKeyHandover {
+    keypair: maker0_outgoing_contract_keypair  // Maker0's key for Maker0→Maker1 contract
 }
 
-15. Taker completes and broadcasts taker's spending transaction:
-    - Generates taker_partial_sig_for_maker1_to_taker_contract
-    - Aggregates with maker1's partial signature
-    - Broadcasts spending transaction to claim from maker1_to_taker_contract
-
-16. Taker → Maker0: SpendingTxAndReceiverNonce {
-    spending_transaction: maker1_constructed_spending_tx_for_maker0_to_maker1_contract,  // From step 14
-    receiver_nonce: maker1_nonce_for_maker0_to_maker1_contract  // From step 14
+16. Taker → Maker1: PrivateKeyHandover {
+    keypair: maker0_outgoing_contract_keypair  // Relayed from Maker0
 }
 
-17. Maker0 → Taker: NoncesPartialSigsAndSpendingTx {
-    sender_nonce: maker0_nonce_for_maker0_to_maker1_contract,
-    receiver_nonce: maker0_nonce_for_taker_to_maker0_contract,
-    partial_signatures: [maker0_partial_sig_for_maker0_to_maker1_contract],
-    spending_transaction: maker0_constructed_spending_tx_for_taker_to_maker0_contract
+17. Maker1 receives maker0's outgoing key:
+    - Creates spending transaction for incoming contract (Maker0→Maker1)
+    - Generates fresh nonce pairs for both maker1 and maker0 (using received key)
+    - Creates partial signatures from both keys using MuSig2
+    - Aggregates partial signatures into final signature
+    - Broadcasts sweep transaction to claim from Maker0→Maker1 contract
+
+18. Maker1 → Taker: PrivateKeyHandover {
+    keypair: maker1_outgoing_contract_keypair  // Maker1's key for Maker1→Taker contract
 }
 
-18. Taker → Maker1: PartialSigAndSendersNonce {
-    partial_signatures: [maker0_partial_sig_for_maker0_to_maker1_contract],  // From step 17
-    sender_nonce: maker0_nonce_for_maker0_to_maker1_contract  // From step 17
-}
-
-19. Maker1 completes and broadcasts maker1's spending transaction:
-    - Generates maker1_partial_sig_for_maker0_to_maker1_contract
-    - Aggregates with maker0's partial signature
-    - Broadcasts spending transaction to claim from maker0_to_maker1_contract
-
-20. Taker → Maker0: PartialSigAndSendersNonce {
-    partial_signatures: [taker_partial_sig_for_taker_to_maker0_contract],
-    sender_nonce: taker_nonce_for_taker_to_maker0_contract
-}
-
-21. Maker0 completes and broadcasts maker0's spending transaction:
-    - Generates maker0_partial_sig_for_taker_to_maker0_contract
-    - Aggregates with taker's partial signature
-    - Broadcasts spending transaction to claim from taker_to_maker0_contract
+19. Taker receives maker1's outgoing key:
+    - Creates spending transaction for incoming contract (Maker1→Taker)
+    - Generates fresh nonce pairs for both taker and maker1 (using received key)
+    - Creates partial signatures from both keys using MuSig2
+    - Aggregates partial signatures into final signature
+    - Broadcasts sweep transaction to claim from Maker1→Taker contract
 ```
 
-#### Message Types for New Protocol
+#### Message Type for Private Key Handover
 
 ```rust
-SpendingTxAndReceiverNonce {
-    spending_transaction: Transaction,
-    receiver_nonce: SerializablePublicNonce,
-}
-
-NoncesPartialSigsAndSpendingTx {
-    sender_nonce: SerializablePublicNonce,
-    receiver_nonce: SerializablePublicNonce,
-    partial_signatures: Vec<SerializablePartialSignature>,
-    spending_transaction: Transaction,
-}
-
-PartialSigAndSendersNonce {
-    partial_signatures: Vec<SerializablePartialSignature>,
-    sender_nonce: SerializablePublicNonce,
+PrivateKeyHandover {
+    keypair: Keypair,  // Contains the outgoing contract private key
 }
 ```
 
 #### Key Characteristics
 
-1. **Backwards Flow**: Taker starts with last maker and works backwards
-2. **Receiver Constructs**: Each party constructs the spending transaction for the contract they're claiming from
-3. **Atomic Coordination**: Taker coordinates all signature exchanges but each party broadcasts their own transaction
-4. **Sequential Execution**: Taker sweeps first, then each maker sweeps in reverse order
+1. **Forward Flow**: Each party sends their OUTGOING contract private key
+2. **Independent Sweeping**: Each party generates their own nonces and performs MuSig2 aggregation locally
+3. **No Coordination Required**: No need to exchange nonces or partial signatures between parties
+4. **Simplified Protocol**: Reduced from 16 messages to 4 messages (2 per maker)
+5. **Security Note**: Uses master-derived keys (m/0' path) - parties trust each other not to double-spend during the brief handover window
 
 ## Spending Transaction Details
 
@@ -228,11 +204,11 @@ let message = Message::from(sighash);
 ## Complete Protocol Summary
 
 ### Total Message Flow
-The complete taproot coinswap involves **28 messages** across 3 phases:
+The complete taproot coinswap involves **16 messages** across 3 phases:
 
 1. **Discovery (8 messages)**: Offer fetching and swap negotiation
 2. **Contract Creation (4 messages)**: Cyclic contract setup
-3. **Sequential Cooperative Spending (16 messages)**: Taker-coordinated MuSig2 signature exchanges for all three spending transactions
+3. **Private Key Handover (4 messages)**: Forward-flow exchange of outgoing contract keys
 
 ### Execution Order
 The protocol phases execute sequentially with taker coordination:
@@ -242,11 +218,12 @@ Phase 1: Discovery & Negotiation (messages 1-8)
     ↓
 Phase 2: Contract Creation (messages 9-12)
     ↓
-Phase 3A: Maker0 spends from Taker's contract (messages 13-17, taker-initiated)
-    ↓
-Phase 3B: Maker1 spends from Maker0's contract (messages 18-24, via Taker relay)  
-    ↓
-Phase 3C: Taker spends from Maker1's contract (messages 25-28)
+Phase 3: Private Key Handover & Sweeping (messages 13-16)
+    ├─ Taker → Maker0: Taker's outgoing key
+    ├─ Maker0 sweeps & returns Maker0's outgoing key
+    ├─ Taker → Maker1: Maker0's outgoing key (relayed)
+    ├─ Maker1 sweeps & returns Maker1's outgoing key
+    └─ Taker sweeps using Maker1's outgoing key
 ```
 
 ### Non-Cooperative Cases (Recovery Paths)
@@ -309,20 +286,14 @@ ReceiversContract {
 }
 ```
 
-### Spending Messages
+### Private Key Handover Message
 ```rust
-SenderNonce // Initiates sweep for a maker
-
-ReceiverNonce {
-    sender_nonces: Vec<SerializablePublicNonce>,
-    partial_signatures: Vec<SerializablePartialSignature>,  // Usually empty for nonce exchange
-}
-
-PartialSignature {
-    partial_signatures: Vec<SerializablePartialSignature>,
-    sender_nonces: Vec<SerializablePublicNonce>,
+PrivateKeyHandover {
+    keypair: Keypair,  // Contains the outgoing contract private key
 }
 ```
+
+**Usage**: After contract creation, each party sends their OUTGOING contract private key to enable the receiver to sweep independently without coordination.
 
 ## Implementation Architecture
 

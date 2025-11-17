@@ -6,18 +6,30 @@
 use super::rpc::server::MakerRpc;
 use crate::{
     protocol::{
-        contract2::{calculate_coinswap_fee, calculate_contract_sighash},
-        messages2::{Offer, SenderContractFromMaker, SendersContract, SwapDetails},
+        contract2::{
+            calculate_coinswap_fee, calculate_contract_sighash, create_taproot_script,
+            create_timelock_script,
+        },
+        messages2::{
+            Offer, PrivateKeyHandover, SenderContractFromMaker, SendersContract, SwapDetails,
+        },
+        musig_interface::{
+            aggregate_partial_signatures_compat, generate_new_nonce_pair_compat,
+            generate_partial_signature_compat, get_aggregated_nonce_compat,
+        },
     },
-    utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL},
-    wallet::{RPCConfig, Wallet},
+    utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
+    wallet::{Destination, RPCConfig, Wallet},
     watch_tower::{
         registry_storage::FileRegistry, rpc_backend::BitcoinRpc, service::WatchService,
         watcher::Watcher, zmq_backend::ZmqBackend,
     },
 };
-use bitcoin::{Amount, ScriptBuf, Transaction};
-use bitcoind::bitcoincore_rpc::RpcApi;
+use bitcoin::{
+    locktime::absolute::LockTime, sighash::SighashCache, Amount, OutPoint, ScriptBuf, Sequence,
+    Transaction, TxIn, TxOut, Witness,
+};
+use bitcoind::bitcoincore_rpc::{RawTx, RpcApi};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -72,31 +84,18 @@ pub struct ConnectionState {
     pub(crate) incoming_contract_other_pubkey: Option<bitcoin::PublicKey>,
     pub(crate) incoming_contract_hashlock_script: Option<ScriptBuf>,
     pub(crate) incoming_contract_timelock_script: Option<ScriptBuf>,
-    // Additional fields for MuSig2 signing
-    pub(crate) incoming_contract_txid: Option<bitcoin::Txid>, // Taker's contract transaction
-    pub(crate) incoming_contract_my_pub_nonce: Option<secp256k1::musig::PublicNonce>, // Our public nonce for the incoming contract
-    // outgoing_contract_txid is defined below in the new fields section
-    pub(crate) outgoing_aggregated_nonce: Option<secp256k1::musig::AggregatedNonce>, // For outgoing contract
-    pub(crate) incoming_aggregated_nonce: Option<secp256k1::musig::AggregatedNonce>, // For incoming contract
+    pub(crate) incoming_contract_txid: Option<bitcoin::Txid>,
     pub(crate) incoming_contract_tap_tweak: Option<bitcoin::secp256k1::Scalar>,
     pub(crate) incoming_contract_internal_key: Option<bitcoin::secp256k1::XOnlyPublicKey>,
-    pub(crate) incoming_contract_spending_tx: Option<Transaction>, // Spending transaction for incoming contract
-    pub(crate) outgoing_contract_my_privkey: Option<bitcoin::secp256k1::SecretKey>, // Our outgoing contract private key
-    pub(crate) outgoing_contract_my_pubkey: Option<bitcoin::PublicKey>, // Our outgoing contract public key
-    pub(crate) outgoing_contract_other_pubkey: Option<bitcoin::PublicKey>, // Taker's tweakable pubkey
-    pub(crate) outgoing_contract_txid: Option<bitcoin::Txid>, // Our outgoing contract transaction
-    pub(crate) outgoing_contract_tap_tweak: Option<bitcoin::secp256k1::Scalar>, // Tap tweak for our outgoing contract
-    pub(crate) outgoing_contract_internal_key: Option<bitcoin::secp256k1::XOnlyPublicKey>, // Internal key for our outgoing contract
-    pub(crate) outgoing_contract_hashlock_script: Option<ScriptBuf>, // Hashlock script for our outgoing contract
-    pub(crate) outgoing_contract_timelock_script: Option<ScriptBuf>, // Timelock script for our outgoing contract
-    pub(crate) outgoing_contract_my_sec_nonce: Option<secp256k1::musig::SecretNonce>, // Our secret nonce for the outgoing contract
-    pub(crate) outgoing_contract_my_pub_nonce: Option<secp256k1::musig::PublicNonce>, // Our public nonce for the outgoing contract
-    // Store our partial signature for the incoming contract (to avoid SecretNonce cloning issues)
-    pub(crate) incoming_contract_my_partial_sig: Option<secp256k1::musig::PartialSignature>,
-    // Store secret nonce bytes for incoming contract (since SecretNonce can't be cloned)
-    pub(crate) incoming_contract_my_sec_nonce_bytes: Option<[u8; 132]>, // MUSIG_SECNONCE_SIZE
-    pub(crate) outgoing_contract_spending_tx: Option<Transaction>, // Spending transaction for our outgoing contract
-    pub(crate) outgoing_contract_my_partial_sig: Option<secp256k1::musig::PartialSignature>, // Our partial signature for outgoing contract
+    pub(crate) incoming_contract_spending_tx: Option<Transaction>,
+    pub(crate) outgoing_contract_my_privkey: Option<bitcoin::secp256k1::SecretKey>,
+    pub(crate) outgoing_contract_my_pubkey: Option<bitcoin::PublicKey>,
+    pub(crate) outgoing_contract_other_pubkey: Option<bitcoin::PublicKey>,
+    pub(crate) outgoing_contract_txid: Option<bitcoin::Txid>,
+    pub(crate) outgoing_contract_tap_tweak: Option<bitcoin::secp256k1::Scalar>,
+    pub(crate) outgoing_contract_internal_key: Option<bitcoin::secp256k1::XOnlyPublicKey>,
+    pub(crate) outgoing_contract_hashlock_script: Option<ScriptBuf>,
+    pub(crate) outgoing_contract_timelock_script: Option<ScriptBuf>,
 }
 
 impl Clone for ConnectionState {
@@ -110,29 +109,17 @@ impl Clone for ConnectionState {
             incoming_contract_hashlock_script: self.incoming_contract_hashlock_script.clone(),
             incoming_contract_timelock_script: self.incoming_contract_timelock_script.clone(),
             incoming_contract_txid: self.incoming_contract_txid,
-            incoming_contract_my_pub_nonce: self.incoming_contract_my_pub_nonce,
-            // outgoing_contract_txid is handled below
-            outgoing_aggregated_nonce: self.outgoing_aggregated_nonce,
-            incoming_aggregated_nonce: self.incoming_aggregated_nonce,
             incoming_contract_tap_tweak: self.incoming_contract_tap_tweak,
             incoming_contract_internal_key: self.incoming_contract_internal_key,
             incoming_contract_spending_tx: self.incoming_contract_spending_tx.clone(),
-            // Ordered pubkeys are computed on-the-fly
             outgoing_contract_my_privkey: self.outgoing_contract_my_privkey,
             outgoing_contract_my_pubkey: self.outgoing_contract_my_pubkey,
             outgoing_contract_other_pubkey: self.outgoing_contract_other_pubkey,
-            outgoing_contract_hashlock_script: self.outgoing_contract_hashlock_script.clone(),
-            outgoing_contract_timelock_script: self.outgoing_contract_timelock_script.clone(),
-            // New fields for backwards sweeping protocol
             outgoing_contract_txid: self.outgoing_contract_txid,
             outgoing_contract_tap_tweak: self.outgoing_contract_tap_tweak,
             outgoing_contract_internal_key: self.outgoing_contract_internal_key,
-            outgoing_contract_my_sec_nonce: None,
-            outgoing_contract_my_pub_nonce: self.outgoing_contract_my_pub_nonce,
-            incoming_contract_my_partial_sig: self.incoming_contract_my_partial_sig,
-            incoming_contract_my_sec_nonce_bytes: self.incoming_contract_my_sec_nonce_bytes,
-            outgoing_contract_spending_tx: self.outgoing_contract_spending_tx.clone(),
-            outgoing_contract_my_partial_sig: self.outgoing_contract_my_partial_sig,
+            outgoing_contract_hashlock_script: self.outgoing_contract_hashlock_script.clone(),
+            outgoing_contract_timelock_script: self.outgoing_contract_timelock_script.clone(),
         }
     }
 }
@@ -431,7 +418,7 @@ impl Maker {
         // Store taker's pubkey
         connection_state.incoming_contract_other_pubkey = Some(message.pubkeys_a[0]);
 
-        // Store taker's tweakable pubkey for backwards sweeping protocol
+        // Store next party's tweakable pubkey for outgoing contract
         connection_state.outgoing_contract_other_pubkey = Some(message.next_party_tweakable_point);
 
         // Verify we have sufficient funds and get necessary data
@@ -466,9 +453,6 @@ impl Maker {
                 "Expected exactly one contract transaction",
             ));
         }
-
-        use crate::protocol::contract2::{create_taproot_script, create_timelock_script};
-        use bitcoin::locktime::absolute::LockTime;
 
         let secp = bitcoin::secp256k1::Secp256k1::new();
         let (outgoing_x_only, _) =
@@ -543,9 +527,6 @@ impl Maker {
         log::info!("Signing and broadcasting maker's contract transaction");
         let outgoing_contract_txid = {
             let mut wallet = self.wallet.write()?;
-
-            // Use wallet's spend_from_wallet method to properly sign the transaction
-            use crate::{utill::MIN_FEE_RATE, wallet::Destination};
 
             // Get the funding UTXO spend info
             let funding_utxo_info = wallet
@@ -659,247 +640,54 @@ impl Maker {
         })
     }
 
-    /// Process SpendingTxAndReceiverNonce message and return response with nonces, partial signatures and spending tx
-    pub(crate) fn process_spending_tx_and_receiver_nonce(
+    pub(crate) fn process_private_key_handover(
         &self,
-        spending_tx_msg: &crate::protocol::messages2::SpendingTxAndReceiverNonce,
+        privkey_handover_message: &PrivateKeyHandover,
         connection_state: &mut ConnectionState,
-    ) -> Result<crate::protocol::messages2::NoncesPartialSigsAndSpendingTx, MakerError> {
-        use crate::protocol::musig_interface::generate_new_nonce_pair_compat;
-        use bitcoin::secp256k1::Secp256k1;
-
-        log::info!("Processing SpendingTxAndReceiverNonce message");
-
-        // Extract the spending transaction and receiver nonce
-        let outgoing_contract_spending_tx = &spending_tx_msg.spending_transaction;
-        let outgoing_contract_other_nonce: secp256k1::musig::PublicNonce =
-            spending_tx_msg.receiver_nonce.clone().into();
-
-        let outgoing_contract_my_pubkey = connection_state.outgoing_contract_my_pubkey.unwrap();
-        let outgoing_contract_my_privkey = connection_state.outgoing_contract_my_privkey.unwrap();
-
-        // Get taker pubkey from connection state
-        let outgoing_contract_other_pubkey =
-            connection_state.outgoing_contract_other_pubkey.unwrap();
-
-        // Use outgoing contract tap_tweak (the one we calculated when creating our outgoing contract)
-        // This is the contract that the taker is trying to spend from
-        let tap_tweak = connection_state
-            .outgoing_contract_tap_tweak
-            .unwrap_or_else(|| {
-                // log::warn!("No outgoing_contract_tap_tweak found in connection state, using default zeros");
-                bitcoin::secp256k1::Scalar::from_be_bytes([0u8; 32]).unwrap()
-            });
-
-        // Generate sender nonce for this sweep (maker's nonce for taker's spending tx)
-        // Use consistent order: taker first, maker second (not lexicographic)
-        // This matches the e2e test pattern where each party uses the same pubkey order
-        let pubkey1 = outgoing_contract_other_pubkey; // taker pubkey first
-        let pubkey2 = outgoing_contract_my_pubkey; // maker pubkey second
-
-        // Calculate sighash for the spending transaction to use in nonce generation
-        let contract_txid = outgoing_contract_spending_tx.input[0].previous_output.txid;
-
-        log::info!(
-            "  Received spending tx trying to spend: {:?}",
-            contract_txid
-        );
-        log::info!(
-            "  My outgoing contract txid: {:?}",
-            connection_state.outgoing_contract_txid
-        );
-
-        // Validate that the taker is trying to spend from the correct contract
-        if let Some(my_contract_txid) = connection_state.outgoing_contract_txid {
-            if contract_txid != my_contract_txid {
-                log::error!(
-                    "Taker is trying to spend from wrong contract. Expected: {:?}, Got: {:?}",
-                    my_contract_txid,
-                    contract_txid
-                );
-                return Err(MakerError::General(
-                    "Taker is trying to spend from wrong contract",
-                ));
-            }
+    ) -> Result<PrivateKeyHandover, MakerError> {
+        // Create the spending transaction if it doesn't exist
+        let spending_tx = if connection_state.incoming_contract_spending_tx.is_none() {
+            log::info!(
+                "[{}] Creating spending transaction for incoming contract",
+                self.config.network_port
+            );
+            let tx = self.create_unsigned_spending_tx(connection_state)?;
+            connection_state.incoming_contract_spending_tx = Some(tx);
+            connection_state
+                .incoming_contract_spending_tx
+                .as_ref()
+                .unwrap()
         } else {
-            return Err(MakerError::General("No outgoing contract txid stored"));
-        }
+            connection_state
+                .incoming_contract_spending_tx
+                .as_ref()
+                .unwrap()
+        };
 
-        let contract_tx = self
-            .wallet
-            .read()?
-            .rpc
-            .get_raw_transaction(&contract_txid, None)
-            .map_err(|e| MakerError::Wallet(crate::wallet::WalletError::Rpc(e)))?;
-        let contract_amount = contract_tx.output[0].value;
+        // Generate fresh nonce pairs for both parties (maker and sender)
+        // In the private key handover protocol, we generate nonces when we receive the private key
 
-        // Create prevout for sighash calculation
-        // Use the same method as taker: construct script from internal key
-        // For the final contract, internal key is aggregated from taker and maker pubkeys
-        // We need to use lexicographic ordering for internal key calculation to match contract creation
-        let mut internal_key_pubkeys = [pubkey1, pubkey2];
-        internal_key_pubkeys.sort_by(|a, b| a.inner.serialize().cmp(&b.inner.serialize()));
-        let expected_internal_key = crate::protocol::musig_interface::get_aggregated_pubkey_compat(
-            internal_key_pubkeys[0].inner,
-            internal_key_pubkeys[1].inner,
-        );
-        let outgoing_contract_hashlock_script = connection_state
-            .outgoing_contract_hashlock_script
-            .clone()
-            .unwrap();
-        let outgoing_contract_timelock_script = connection_state
-            .outgoing_contract_timelock_script
-            .clone()
-            .unwrap();
-        // Use helper to calculate sighash
-        let message = calculate_contract_sighash(
-            outgoing_contract_spending_tx,
-            contract_amount,
-            &outgoing_contract_hashlock_script,
-            &outgoing_contract_timelock_script,
-            expected_internal_key,
-        )
-        .map_err(|_| MakerError::General("Failed to calculate sighash"))?;
+        // Generate maker's nonce pair for incoming contract
+        let incoming_my_privkey = connection_state
+            .incoming_contract_my_privkey
+            .ok_or_else(|| MakerError::General("No incoming contract private key"))?;
+        let secp = bitcoin::secp256k1::Secp256k1::new();
+        let incoming_my_keypair =
+            bitcoin::secp256k1::Keypair::from_secret_key(&secp, &incoming_my_privkey);
 
-        log::info!(
-            "[{}] message (sighash): {:?}",
-            self.config.network_port,
-            message
+        let incoming_other_keypair = bitcoin::secp256k1::Keypair::from_secret_key(
+            &secp,
+            &privkey_handover_message.secret_key,
         );
 
-        // Use lexicographic ordering to match how the contract was created
-        let mut ordered_pubkeys = [pubkey1, pubkey2];
-        ordered_pubkeys.sort_by(|a, b| a.inner.serialize().cmp(&b.inner.serialize()));
-
-        let (outgoing_contract_my_sec_nonce, outgoing_contract_my_pub_nonce) =
-            generate_new_nonce_pair_compat(
-                outgoing_contract_my_pubkey.inner, // Signer is maker
-            );
-
-        connection_state.outgoing_contract_my_sec_nonce = Some(outgoing_contract_my_sec_nonce);
-        connection_state.outgoing_contract_my_pub_nonce = Some(outgoing_contract_my_pub_nonce);
-
-        let nonce_refs = vec![
-            &outgoing_contract_my_pub_nonce,
-            &outgoing_contract_other_nonce,
-        ];
-        let aggregated_nonce =
-            crate::protocol::musig_interface::get_aggregated_nonce_compat(&nonce_refs);
-        let secp = Secp256k1::new();
-
-        let outgoing_contract_my_partial_sig =
-            crate::protocol::musig_interface::generate_partial_signature_compat(
-                message,
-                &aggregated_nonce,
-                connection_state
-                    .outgoing_contract_my_sec_nonce
-                    .take()
-                    .unwrap(),
-                bitcoin::secp256k1::Keypair::from_secret_key(&secp, &outgoing_contract_my_privkey),
-                tap_tweak,
-                internal_key_pubkeys[0].inner,
-                internal_key_pubkeys[1].inner,
-            );
-
-        // Save the aggregated nonce, partial signature, and spending transaction for later sweep completion
-        connection_state.outgoing_aggregated_nonce = Some(aggregated_nonce);
-        connection_state.outgoing_contract_my_partial_sig = Some(outgoing_contract_my_partial_sig);
-        connection_state.outgoing_contract_spending_tx =
-            Some(outgoing_contract_spending_tx.clone());
-
-        // let next_message = self.get_incoming_contract_sighash_message();
-        let unsigned_spending_tx = self.create_unsigned_spending_tx(connection_state)?;
         let (incoming_contract_my_sec_nonce, incoming_contract_my_pub_nonce) =
-            generate_new_nonce_pair_compat(
-                outgoing_contract_my_pubkey.inner, // Signer is maker
-            );
+            generate_new_nonce_pair_compat(incoming_my_keypair.public_key());
 
-        // Store nonces and spending transaction for later use in sweep completion
-        connection_state.incoming_contract_my_pub_nonce = Some(incoming_contract_my_pub_nonce);
-        connection_state.incoming_contract_spending_tx = Some(unsigned_spending_tx.clone());
+        // Generate sender's nonce pair using their keypair
+        let (incoming_contract_other_sec_nonce, incoming_contract_other_pub_nonce) =
+            generate_new_nonce_pair_compat(incoming_other_keypair.public_key());
 
-        // Store secret nonce bytes since SecretNonce can't be cloned
-        // We'll regenerate the partial signature later when we have the sender nonce
-        connection_state.incoming_contract_my_sec_nonce_bytes =
-            Some(incoming_contract_my_sec_nonce.dangerous_into_bytes());
-
-        // Create response
-        let response = crate::protocol::messages2::NoncesPartialSigsAndSpendingTx {
-            sender_nonce: outgoing_contract_my_pub_nonce.into(),
-            receiver_nonce: incoming_contract_my_pub_nonce.into(),
-            partial_signatures: vec![outgoing_contract_my_partial_sig.into()],
-            spending_transaction: unsigned_spending_tx,
-        };
-
-        // log::info!("Generated NoncesPartialSigsAndSpendingTx response");
-        Ok(response)
-    }
-
-    /// Complete sweep with received partial signature
-    pub(crate) fn complete_sweep_with_partial_signature(
-        &self,
-        partial_sig_and_senders_nonce: &crate::protocol::messages2::PartialSigAndSendersNonce,
-        connection_state: &mut ConnectionState,
-    ) -> Result<(), MakerError> {
-        use crate::protocol::musig_interface::{
-            aggregate_partial_signatures_compat, generate_partial_signature_compat,
-            get_aggregated_nonce_compat,
-        };
-        use bitcoin::{secp256k1::Secp256k1, sighash::SighashCache, Witness};
-        use bitcoind::bitcoincore_rpc::RpcApi;
-
-        log::info!(
-            "[{}] Completing maker sweep with received partial signature",
-            self.config.network_port
-        );
-
-        // Check if we have partial signatures from the other party
-        if partial_sig_and_senders_nonce.partial_signatures.is_empty() {
-            log::warn!("[{}] No partial signatures received - taker partial signature generation not yet complete", self.config.network_port);
-            return Ok(());
-        }
-        let other_partial_sig: secp256k1::musig::PartialSignature = partial_sig_and_senders_nonce
-            .partial_signatures[0]
-            .clone()
-            .into();
-
-        // Get the sender nonce that we just received
-        let sender_nonce: secp256k1::musig::PublicNonce =
-            partial_sig_and_senders_nonce.sender_nonce.clone().into();
-
-        // DETAILED LOGGING FOR MAKER SIGNATURE VERIFICATION
-        log::info!(
-            "[{}] Received sender_nonce from taker",
-            self.config.network_port
-        );
-        log::info!(
-            "[{}] Received partial_sig from taker",
-            self.config.network_port
-        );
-
-        // Get the spending transaction we created for our incoming contract
-        let spending_tx = connection_state
-            .incoming_contract_spending_tx
-            .as_ref()
-            .ok_or_else(|| {
-                MakerError::General("No spending transaction found for sweep completion")
-            })?;
-
-        // Now we can generate our partial signature for the incoming contract sweep
-        // Get stored secret nonce bytes and reconstruct the SecretNonce
-        let sec_nonce_bytes = connection_state
-            .incoming_contract_my_sec_nonce_bytes
-            .ok_or_else(|| {
-                MakerError::General("No stored secret nonce bytes for incoming contract")
-            })?;
-        let incoming_contract_my_sec_nonce =
-            secp256k1::musig::SecretNonce::dangerous_from_bytes(sec_nonce_bytes);
-
-        // Get our public nonce
-        let incoming_contract_my_pub_nonce = connection_state
-            .incoming_contract_my_pub_nonce
-            .as_ref()
-            .ok_or_else(|| MakerError::General("No stored public nonce for incoming contract"))?;
+        let sender_nonce = incoming_contract_other_pub_nonce;
 
         // Get incoming contract details
         let incoming_contract_txid = connection_state
@@ -942,13 +730,7 @@ impl Maker {
         )
         .map_err(|_| MakerError::General("Failed to calculate sighash"))?;
 
-        // Get keypairs and order them for incoming contract
-        let incoming_my_privkey = connection_state
-            .incoming_contract_my_privkey
-            .ok_or_else(|| MakerError::General("No incoming contract private key"))?;
-        let secp = Secp256k1::new();
-        let incoming_my_keypair =
-            bitcoin::secp256k1::Keypair::from_secret_key(&secp, &incoming_my_privkey);
+        // Get other pubkey for ordering
         let incoming_other_pubkey = connection_state
             .incoming_contract_other_pubkey
             .ok_or_else(|| MakerError::General("No incoming contract other pubkey"))?;
@@ -962,9 +744,9 @@ impl Maker {
         // Create aggregated nonce with sender nonce and our public nonce
         let incoming_nonce_refs = if incoming_ordered_pubkeys[0] == incoming_my_keypair.public_key()
         {
-            vec![incoming_contract_my_pub_nonce, &sender_nonce]
+            vec![&incoming_contract_my_pub_nonce, &sender_nonce]
         } else {
-            vec![&sender_nonce, incoming_contract_my_pub_nonce]
+            vec![&sender_nonce, &incoming_contract_my_pub_nonce]
         };
         let incoming_aggregated_nonce = get_aggregated_nonce_compat(&incoming_nonce_refs);
 
@@ -974,6 +756,16 @@ impl Maker {
             &incoming_aggregated_nonce,
             incoming_contract_my_sec_nonce,
             incoming_my_keypair,
+            incoming_tap_tweak,
+            incoming_ordered_pubkeys[0],
+            incoming_ordered_pubkeys[1],
+        );
+
+        let other_partial_sig = generate_partial_signature_compat(
+            incoming_message,
+            &incoming_aggregated_nonce,
+            incoming_contract_other_sec_nonce,
+            incoming_other_keypair,
             incoming_tap_tweak,
             incoming_ordered_pubkeys[0],
             incoming_ordered_pubkeys[1],
@@ -1005,7 +797,6 @@ impl Maker {
         let completed_tx = final_sighasher.into_transaction();
 
         // Broadcast the completed spending transaction
-        use crate::bitcoind::bitcoincore_rpc::RawTx;
         let txid = self
             .wallet
             .read()?
@@ -1019,7 +810,11 @@ impl Maker {
             txid
         );
 
-        Ok(())
+        let privkey_handover_message = PrivateKeyHandover {
+            secret_key: connection_state.outgoing_contract_my_privkey.unwrap(),
+        };
+
+        Ok(privkey_handover_message)
     }
 
     /// Create an unsigned transaction to spend from the incoming contract
@@ -1027,8 +822,6 @@ impl Maker {
         &self,
         connection_state: &ConnectionState,
     ) -> Result<Transaction, MakerError> {
-        use bitcoin::{Amount, OutPoint, Sequence, TxIn, TxOut, Witness};
-
         // Get the incoming contract transaction hash
         let incoming_contract_txid = connection_state
             .incoming_contract_txid

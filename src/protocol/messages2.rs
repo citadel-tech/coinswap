@@ -1,6 +1,6 @@
 //! This module defines the messages communicated between the parties(Taker, Maker)
 use crate::wallet::FidelityBond;
-use bitcoin::{hashes::sha256::Hash, Amount, PublicKey, ScriptBuf, Transaction, Txid};
+use bitcoin::{hashes::sha256::Hash, Amount, PublicKey, ScriptBuf, Txid};
 use secp256k1::musig::{PartialSignature, PublicNonce};
 use serde::{Deserialize, Serialize};
 use std::{convert::TryInto, fmt::Display};
@@ -54,8 +54,7 @@ impl Display for TakerToMakerMessage {
             Self::GetOffer(_) => write!(f, "GetOffer"),
             Self::SwapDetails(_) => write!(f, "SwapDetails"),
             Self::SendersContract(_) => write!(f, "SendersContract"),
-            Self::SpendingTxAndReceiverNonce(_) => write!(f, "SpendingTxAndReceiverNonce"),
-            Self::PartialSigAndSendersNonce(_) => write!(f, "PartialSigAndSendersNonce"),
+            Self::PrivateKeyHandover(_) => write!(f, "PrivateKeyHandover"),
         }
     }
 }
@@ -66,7 +65,7 @@ impl Display for MakerToTakerMessage {
             Self::RespOffer(_) => write!(f, "RespOffer"),
             Self::AckResponse(_) => write!(f, "AckResponse"),
             Self::SenderContractFromMaker(_) => write!(f, "SenderContractFromMaker"),
-            Self::NoncesPartialSigsAndSpendingTx(_) => write!(f, "NoncesPartialSigsAndSpendingTx"),
+            Self::PrivateKeyHandover(_) => write!(f, "PrivateKeyHandover"),
         }
     }
 }
@@ -96,13 +95,24 @@ pub struct FidelityProof {
     pub(crate) cert_sig: bitcoin::secp256k1::ecdsa::Signature,
 }
 
+/// Private key handover message exchanged during taproot coinswap sweeps
+///
+/// After contract transactions are established and broadcasted, parties exchange
+/// their outgoing contract private keys to enable independent sweeping without
+/// requiring MuSig2 coordination.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PrivateKeyHandover {
+    /// The outgoing contract private key
+    pub(crate) secret_key: bitcoin::secp256k1::SecretKey,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum TakerToMakerMessage {
     GetOffer(GetOffer),
     SwapDetails(SwapDetails),
     SendersContract(SendersContract),
-    SpendingTxAndReceiverNonce(SpendingTxAndReceiverNonce),
-    PartialSigAndSendersNonce(PartialSigAndSendersNonce),
+    PrivateKeyHandover(PrivateKeyHandover),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -110,7 +120,7 @@ pub(crate) enum MakerToTakerMessage {
     RespOffer(Box<Offer>),
     AckResponse(AckResponse),
     SenderContractFromMaker(SenderContractFromMaker),
-    NoncesPartialSigsAndSpendingTx(NoncesPartialSigsAndSpendingTx),
+    PrivateKeyHandover(PrivateKeyHandover),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -187,26 +197,4 @@ pub struct MempoolTx {
     pub txid: String,
     /// Hex encoded raw transaction
     pub rawtx: String,
-}
-
-// New backwards sweeping protocol message types
-
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct SpendingTxAndReceiverNonce {
-    pub(crate) spending_transaction: Transaction,
-    pub(crate) receiver_nonce: SerializablePublicNonce,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct NoncesPartialSigsAndSpendingTx {
-    pub(crate) sender_nonce: SerializablePublicNonce,
-    pub(crate) receiver_nonce: SerializablePublicNonce,
-    pub(crate) partial_signatures: Vec<SerializablePartialSignature>,
-    pub(crate) spending_transaction: Transaction,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct PartialSigAndSendersNonce {
-    pub(crate) partial_signatures: Vec<SerializablePartialSignature>,
-    pub(crate) sender_nonce: SerializablePublicNonce,
 }

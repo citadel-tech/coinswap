@@ -455,12 +455,8 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                         maker.config.network_port
                     );
                 }
-                MakerToTakerMessage::SenderContractFromMaker(_) => {
-                    // Keep connection open for SpendingTxAndReceiverNonce
-                }
-                MakerToTakerMessage::NoncesPartialSigsAndSpendingTx(_) => {
-                    // Keep connection open for PartialSigAndSendersNonce
-                }
+                MakerToTakerMessage::SenderContractFromMaker(_) => {}
+                MakerToTakerMessage::PrivateKeyHandover(_) => {}
             }
         }
 
