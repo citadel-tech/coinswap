@@ -26,8 +26,8 @@ use crate::{
     },
 };
 use bitcoin::{
-    key::Keypair, locktime::absolute::LockTime, sighash::SighashCache, Amount, OutPoint, ScriptBuf,
-    Sequence, Transaction, TxIn, TxOut, Witness,
+    locktime::absolute::LockTime, sighash::SighashCache, Amount, OutPoint, ScriptBuf, Sequence,
+    Transaction, TxIn, TxOut, Witness,
 };
 use bitcoind::bitcoincore_rpc::{RawTx, RpcApi};
 use std::{
@@ -687,8 +687,6 @@ impl Maker {
                 .unwrap()
         };
 
-        let incoming_other_keypair = privkey_handover_message.keypair;
-
         // Generate fresh nonce pairs for both parties (maker and sender)
         // In the private key handover protocol, we generate nonces when we receive the private key
 
@@ -699,6 +697,11 @@ impl Maker {
         let secp = bitcoin::secp256k1::Secp256k1::new();
         let incoming_my_keypair =
             bitcoin::secp256k1::Keypair::from_secret_key(&secp, &incoming_my_privkey);
+
+        let incoming_other_keypair = bitcoin::secp256k1::Keypair::from_secret_key(
+            &secp,
+            &privkey_handover_message.secret_key,
+        );
 
         let (incoming_contract_my_sec_nonce, incoming_contract_my_pub_nonce) =
             generate_new_nonce_pair_compat(incoming_my_keypair.public_key());
@@ -831,10 +834,7 @@ impl Maker {
         );
 
         let privkey_handover_message = PrivateKeyHandover {
-            keypair: Keypair::from_secret_key(
-                &secp,
-                &connection_state.outgoing_contract_my_privkey.unwrap(),
-            ),
+            secret_key: connection_state.outgoing_contract_my_privkey.unwrap(),
         };
 
         Ok(privkey_handover_message)

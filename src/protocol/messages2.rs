@@ -1,6 +1,6 @@
 //! This module defines the messages communicated between the parties(Taker, Maker)
 use crate::wallet::FidelityBond;
-use bitcoin::{hashes::sha256::Hash, key::Keypair, Amount, PublicKey, ScriptBuf, Txid};
+use bitcoin::{hashes::sha256::Hash, Amount, PublicKey, ScriptBuf, Txid};
 use secp256k1::musig::{PartialSignature, PublicNonce};
 use serde::{Deserialize, Serialize};
 use std::{convert::TryInto, fmt::Display};
@@ -102,8 +102,8 @@ pub struct FidelityProof {
 /// requiring MuSig2 coordination.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PrivateKeyHandover {
-    /// The keypair containing the outgoing contract private key
-    pub(crate) keypair: Keypair,
+    /// The outgoing contract private key
+    pub(crate) secret_key: bitcoin::secp256k1::SecretKey,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

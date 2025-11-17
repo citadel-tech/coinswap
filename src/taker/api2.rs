@@ -927,7 +927,6 @@ impl Taker {
     /// 4. Maker1 sweeps, responds with Maker1's outgoing key
     /// 5. Taker sweeps using Maker1's outgoing key
     fn execute_taker_sweep_and_coordinate_makers(&mut self) -> Result<(), TakerError> {
-        let secp = Secp256k1::new();
         let maker_count = self.ongoing_swap_state.chosen_makers.len();
 
         log::info!(
@@ -968,9 +967,9 @@ impl Taker {
             };
 
             // Create private key handover message
-            let keypair = Keypair::from_secret_key(&secp, &outgoing_privkey);
-            let privkey_msg =
-                TakerToMakerMessage::PrivateKeyHandover(PrivateKeyHandover { keypair });
+            let privkey_msg = TakerToMakerMessage::PrivateKeyHandover(PrivateKeyHandover {
+                secret_key: outgoing_privkey,
+            });
 
             // Send to maker and get their outgoing key in response
             let response = self.send_to_maker_and_get_response(&maker_address, privkey_msg)?;
@@ -978,7 +977,7 @@ impl Taker {
             // Extract maker's outgoing key from response
             match response {
                 MakerToTakerMessage::PrivateKeyHandover(maker_privkey_handover) => {
-                    let maker_outgoing_privkey = maker_privkey_handover.keypair.secret_key();
+                    let maker_outgoing_privkey = maker_privkey_handover.secret_key;
 
                     log::info!("  [Maker {}] Received outgoing private key", maker_index);
 
