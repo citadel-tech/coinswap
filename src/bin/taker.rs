@@ -324,12 +324,11 @@ fn main() -> Result<(), TakerError> {
                             zmq_clone.clone(),
                         )?;
 
-                        // Taproot swap uses different SwapParams
                         let taproot_swap_params = coinswap::taker::api2::SwapParams {
                             send_amount: Amount::from_sat(*amount),
                             maker_count: *makers,
-                            tx_count: 1,          // Default to single transaction
-                            required_confirms: 1, // Default confirmations
+                            tx_count: 1,
+                            required_confirms: 1,
                         };
                         taproot_taker.do_coinswap(taproot_swap_params)?;
                     } else {
