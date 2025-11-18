@@ -157,6 +157,8 @@ pub struct Maker {
     pub shutdown: AtomicBool,
     /// Map of IP address to Connection State + last Connected instant
     pub(crate) ongoing_swap_state: Mutex<HashMap<String, (ConnectionState, Instant)>>,
+    /// Highest Value Fidelity Proof
+    pub(crate) highest_fidelity_proof: RwLock<Option<crate::protocol::messages2::FidelityProof>>,
     /// Is setup complete
     pub is_setup_complete: AtomicBool,
     /// Path for the data directory.
@@ -253,6 +255,7 @@ impl Maker {
             wallet: RwLock::new(wallet),
             shutdown: AtomicBool::new(false),
             ongoing_swap_state: Mutex::new(HashMap::new()),
+            highest_fidelity_proof: RwLock::new(None),
             is_setup_complete: AtomicBool::new(false),
             data_dir,
             thread_pool: Arc::new(ThreadPool::new(network_port)),
@@ -284,30 +287,12 @@ impl Maker {
         let balances = wallet.get_balances()?;
         let max_size = balances.spendable;
 
-        // Get the highest value fidelity bond, similar to regular makers
-        let highest_index = wallet.get_highest_fidelity_index()?;
-
-        let fidelity_proof = if let Some(i) = highest_index {
-            // Convert regular fidelity proof to taproot format
-            let regular_proof = wallet
-                .generate_fidelity_proof(i, &format!("127.0.0.1:{}", self.config.network_port))?;
-
-            // Convert sha256d::Hash to sha256::Hash (taproot uses single hash)
-            use bitcoin::hashes::Hash as HashTrait;
-            let sha256_hash = bitcoin::hashes::sha256::Hash::from_byte_array(
-                regular_proof.cert_hash.to_byte_array(),
-            );
-
-            crate::protocol::messages2::FidelityProof {
-                bond: regular_proof.bond,
-                cert_hash: sha256_hash,
-                cert_sig: regular_proof.cert_sig,
-            }
-        } else {
-            return Err(MakerError::General(
-                "No fidelity bond available. Please create one first.",
-            ));
-        };
+        // Read the cached fidelity proof
+        let fidelity_proof = self.highest_fidelity_proof.read()?;
+        let fidelity_proof = fidelity_proof
+            .as_ref()
+            .ok_or_else(|| MakerError::General("No fidelity proof available"))?
+            .clone();
 
         // Calculate minimum swap amount
         let min_size = MIN_SWAP_AMOUNT;

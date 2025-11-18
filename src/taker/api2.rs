@@ -122,18 +122,42 @@ fn fetch_taproot_offers(
     maker_addresses: &[MakerAddress],
     config: &TakerConfig,
 ) -> Result<Vec<OfferAndAddress>, TakerError> {
-    let mut offers = Vec::new();
+    use std::sync::mpsc;
+
+    let (offers_writer, offers_reader) = mpsc::channel::<Option<OfferAndAddress>>();
+    let mut thread_pool = Vec::new();
+    let maker_addresses_len = maker_addresses.len();
 
     for address in maker_addresses {
-        match download_taproot_offer(address, config) {
-            Some(offer) => offers.push(offer),
-            None => {
-                log::warn!("Failed to download offer from taproot maker: {}", address);
-            }
+        let offers_writer = offers_writer.clone();
+        let taker_config = config.clone();
+        let addr = address.clone();
+
+        let thread = thread::Builder::new()
+            .name(format!("taproot_offer_fetch_thread_{}", addr))
+            .spawn(move || -> Result<(), TakerError> {
+                let offer = download_taproot_offer(&addr, &taker_config);
+                Ok(offers_writer.send(offer)?)
+            })?;
+
+        thread_pool.push(thread);
+    }
+
+    let mut result = Vec::new();
+    for _ in 0..maker_addresses_len {
+        if let Some(offer_addr) = offers_reader.recv()? {
+            result.push(offer_addr);
         }
     }
 
-    Ok(offers)
+    for thread in thread_pool {
+        let join_result = thread.join();
+        if let Err(e) = join_result {
+            log::error!("Error while joining thread: {e:?}");
+        }
+    }
+
+    Ok(result)
 }
 
 /// Download a single offer from a taproot maker
