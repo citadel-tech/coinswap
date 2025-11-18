@@ -1,7 +1,10 @@
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
-    maker::{start_maker_server, Maker, MakerBehavior, MakerError},
+    maker::{
+        start_maker_server, start_maker_server_taproot, Maker, MakerBehavior, MakerError,
+        TaprootMaker,
+    },
     utill::{parse_proxy_auth, setup_maker_logger},
     wallet::RPCConfig,
 };
@@ -51,6 +54,9 @@ struct Cli {
     /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with the given name. Default: maker-wallet
     #[clap(name = "WALLET", long, short = 'w')]
     pub(crate) wallet_name: Option<String>,
+    /// Use experimental Taproot-based coinswap protocol
+    #[clap(long)]
+    pub taproot: bool,
 }
 
 fn main() -> Result<(), MakerError> {
@@ -63,20 +69,37 @@ fn main() -> Result<(), MakerError> {
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
 
-    let maker = Arc::new(Maker::init(
-        args.data_directory,
-        args.wallet_name,
-        Some(rpc_config),
-        None,
-        None,
-        None,
-        Some(args.tor_auth),
-        None,
-        MakerBehavior::Normal,
-        args.zmq,
-    )?);
+    if args.taproot {
+        log::warn!("Using experimental Taproot-based coinswap protocol");
+        let maker = Arc::new(TaprootMaker::init(
+            args.data_directory,
+            args.wallet_name,
+            Some(rpc_config),
+            None,
+            None,
+            None,
+            Some(args.tor_auth),
+            None,
+            args.zmq,
+        )?);
 
-    start_maker_server(maker)?;
+        start_maker_server_taproot(maker)?;
+    } else {
+        let maker = Arc::new(Maker::init(
+            args.data_directory,
+            args.wallet_name,
+            Some(rpc_config),
+            None,
+            None,
+            None,
+            Some(args.tor_auth),
+            None,
+            MakerBehavior::Normal,
+            args.zmq,
+        )?);
+
+        start_maker_server(maker)?;
+    }
 
     Ok(())
 }
