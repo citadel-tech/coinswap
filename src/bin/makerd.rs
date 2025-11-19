@@ -16,7 +16,7 @@ use std::{path::PathBuf, sync::Arc};
 ///
 /// The server is operated with the maker-cli app, for all basic wallet related operations.
 ///
-/// For more detailed usage information, please refer the [Maker Doc]<https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/makerd.md>
+/// For more detailed usage information, please refer the [Maker Doc]<https://github.com/citadel-tech/coinswap/blob/master/docs/makerd.md>
 ///
 /// This is early beta, and there are known and unknown bugs. Please report issues in the [Project Issue Board]<https://github.com/citadel-tech/coinswap/issues>
 #[derive(Parser, Debug)]

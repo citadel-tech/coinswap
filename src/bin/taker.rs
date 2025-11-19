@@ -17,9 +17,9 @@ use coinswap::taker::TakerBehavior;
 ///
 /// The app works as a regular Bitcoin wallet with the added capability to perform coinswaps. The app
 /// requires a running Bitcoin Core node with RPC access. It currently only runs on Testnet4.
-/// Suggested faucet for getting Signet coins (tor browser required): <http://a4ovtjlwiclzy37bjaurcbb6wpl6dtckmlqwrywq7uoajeaz6kth4uyd.onion/>
+/// Suggested faucet for getting Signet coins (tor browser required): <http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/>
 ///
-/// For more detailed usage information, please refer: <https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker.md>
+/// For more detailed usage information, please refer: <https://github.com/citadel-tech/coinswap/blob/master/docs/taker.md>
 ///
 /// This is early beta, and there are known and unknown bugs. Please report issues at: <https://github.com/citadel-tech/coinswap/issues>
 #[derive(Parser, Debug)]
