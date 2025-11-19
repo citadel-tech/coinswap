@@ -26,7 +26,7 @@ jobs:
       run: docker run --rm coinswap-tracker tracker --help
 
     - name: Run integration tests
-      run: ./docker-setup.sh test
+      run: docker run --rm coinswap-test
 
     - name: Start Coinswap stack
       run: ./docker-setup.sh start --default
