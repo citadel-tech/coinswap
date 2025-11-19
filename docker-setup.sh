@@ -222,8 +222,6 @@ generate_compose_file() {
     print_info "Generating docker-compose configuration..."
     
     cat > "$compose_file" << EOF
-version: '3.8'
-
 services:
 EOF
 
@@ -260,7 +258,11 @@ EOF
     if [[ "$USE_EXTERNAL_TOR" != "true" ]]; then
         cat >> "$compose_file" << EOF
   tor:
-    image: torproject/tor:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.tor
+    image: coinswap-tor
+    pull_policy: never
     container_name: coinswap-tor
     volumes:
       - tor-data:/var/lib/tor
@@ -279,6 +281,7 @@ EOF
       context: .
       dockerfile: docker/Dockerfile.tracker
     image: coinswap-tracker
+    pull_policy: never
     container_name: coinswap-tracker
     ports:
       - "$TRACKER_PORT:8080"
@@ -310,6 +313,7 @@ EOF
       context: .
       dockerfile: docker/Dockerfile.maker
     image: coinswap-maker
+    pull_policy: never
     container_name: coinswap-makerd
     command: |
       sh -c "
@@ -401,36 +405,18 @@ EOF
 
 # Build the Docker image
 build_image() {
-    local platform="$1"
-    if [ -z "$platform" ]; then
-        local arch=$(uname -m)
-        case "$arch" in
-            x86_64) platform="linux/amd64" ;;
-            aarch64|arm64) platform="linux/arm64" ;;
-            *)
-                print_warning "Unsupported architecture: $arch. Building with Docker's default platform."
-                platform=""
-                ;;
-        esac
-    fi
-
-    local platform_arg=""
-    if [ -n "$platform" ]; then
-        platform_arg="--platform $platform"
-    fi
-
-    print_info "Building Coinswap Docker images for platform: ${platform:-native}..."
+    print_info "Building Coinswap Docker images..."
     cd "$SCRIPT_DIR"
     
     # Build the shared builder and base images first
     print_info "Building builder and base images..."
-    if docker buildx build $platform_arg --load -f docker/Dockerfile.builder --target builder -t coinswap-builder:latest .; then
+    if docker build -f docker/Dockerfile.builder --target builder -t coinswap-builder:latest .; then
         print_success "Builder image built successfully"
     else
         print_error "Failed to build builder image"
         exit 1
     fi
-    if docker buildx build $platform_arg --load -f docker/Dockerfile.builder -t coinswap-base:latest .; then
+    if docker build -f docker/Dockerfile.builder -t coinswap-base:latest .; then
         print_success "Base image built successfully"
     else
         print_error "Failed to build base image"
@@ -438,11 +424,11 @@ build_image() {
     fi
     
     # Build individual service images
-    local services=("maker" "taker" "tracker" "test")
+    local services=("maker" "taker" "tracker" "test" "tor")
     
     for service in "${services[@]}"; do
         print_info "Building $service image..."
-        if docker buildx build $platform_arg --load -f "docker/Dockerfile.$service" -t "coinswap-$service" .; then
+        if docker build -f "docker/Dockerfile.$service" -t "coinswap-$service" .; then
             print_success "$service image built successfully"
         else
             print_error "Failed to build $service image"
@@ -455,12 +441,30 @@ build_image() {
 
 # Start the full stack using docker-compose
 start_stack() {
+    local use_defaults="false"
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -d|--default)
+                use_defaults="true"
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
     # Load existing configuration or prompt for new one
     load_config
     
     # If no configuration exists, run configuration setup
     if [[ -z "$BITCOIN_DATADIR" ]]; then
-        configure_setup
+        if [[ "$use_defaults" == "true" ]]; then
+            print_info "Using default configuration..."
+        else
+            configure_setup
+        fi
     fi
     
     # Set defaults for any unset variables
@@ -546,8 +550,10 @@ show_help() {
     echo ""
     echo "Commands:"
     echo "  configure        Configure Coinswap Docker setup"
-    echo "  build [platform] Build the Docker image for a specific platform (e.g., linux/amd64, linux/arm64). Defaults to host architecture."
-    echo "  start            Start the full Coinswap stack"
+    echo "  build            Build the Docker image"
+    echo "  start [options]  Start the full Coinswap stack"
+    echo "                   Options:"
+    echo "                     -d, --default   Use default configuration without prompting"
     echo "  stop             Stop the Coinswap stack"
     echo "  restart          Restart the Coinswap stack"
     echo "  logs [service]   Show logs (optionally for specific service)"
@@ -578,11 +584,11 @@ case "${1:-}" in
         ;;
     "build")
         check_docker
-        build_image "$2"
+        build_image
         ;;
     "start")
         check_docker
-        start_stack
+        start_stack "${@:2}"
         ;;
     "stop")
         stop_stack

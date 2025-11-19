@@ -9,38 +9,27 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [linux/amd64, linux/arm64]
 
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Set up QEMU
-      if: matrix.platform == 'linux/arm64'
-      uses: docker/setup-qemu-action@v3
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
 
     - name: Build Docker images
-      run: ./docker-setup.sh build ${{ matrix.platform }}
+      run: ./docker-setup.sh build
 
     - name: Test makerd
-      run: docker run --rm --platform ${{ matrix.platform }} coinswap-maker makerd --help
+      run: docker run --rm coinswap-maker makerd --help
 
     - name: Test taker
-      run: docker run --rm --platform ${{ matrix.platform }} coinswap-taker taker --help
+      run: docker run --rm coinswap-taker taker --help
 
     - name: Test tracker
-      run: docker run --rm --platform ${{ matrix.platform }} coinswap-tracker tracker --help
+      run: docker run --rm coinswap-tracker tracker --help
 
     - name: Run integration tests
       run: ./docker-setup.sh test
 
     - name: Start Coinswap stack
-      run: ./docker-setup.sh start
+      run: ./docker-setup.sh start --default
 
     - name: Wait for services to be healthy
       run: |
