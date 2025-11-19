@@ -9,3 +9,4 @@ bin
 /coverage/reports
 
 docker-compose.generated.yml
+.docker-config
