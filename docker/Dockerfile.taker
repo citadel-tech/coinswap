@@ -6,7 +6,7 @@ FROM ${BUILDER_IMAGE} AS builder
 FROM ${BASE_IMAGE}
 
 # Copy taker binary from builder
-COPY --from=builder /usr/src/coinswap/target/release/taker /app/bin/
+COPY --from=builder --chown=coinswap:coinswap /usr/src/coinswap/target/release/taker /app/bin/
 
 # Set proper permissions
 RUN chmod +x /app/bin/taker
