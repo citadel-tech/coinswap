@@ -36,8 +36,5 @@ jobs:
     - name: Check service status
       run: ./docker-setup.sh status
 
-    - name: Show logs
-      run: ./docker-setup.sh logs
-
     - name: Stop Coinswap stack
       run: ./docker-setup.sh stop
