@@ -181,7 +181,7 @@ INFO coinswap::maker::server - Fund the wallet with at least 0.00051000 BTC at a
 
 ### 4. Fund the Wallet
 
-Use the [Custom Signet Faucet](http://a4ovtjlwiclzy37bjaurcbb6wpl6dtckmlqwrywq7uoajeaz6kth4uyd.onion/) (open in Tor browser) to send coins to the address shown in the logs.
+Use the [Custom Signet Faucet](http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/) (open in Tor browser) to send coins to the address shown in the logs.
 
 Suggested amount: **0.01 BTC** (provides fidelity bond + swap liquidity)
 
@@ -246,7 +246,7 @@ $ taker get-new-address
 
 ### 3. Fund the Taker Wallet
 
-Use the [Custom Signet Faucet](http://a4ovtjlwiclzy37bjaurcbb6wpl6dtckmlqwrywq7uoajeaz6kth4uyd.onion/) (open in Tor browser) to send some funds to the address above.
+Use the [Custom Signet Faucet](http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/) (open in Tor browser) to send some funds to the address above.
 
 Suggested amount: **0.001 BTC** (sufficient for testing swaps)
 
