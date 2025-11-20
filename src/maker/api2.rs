@@ -10,6 +10,7 @@ use crate::{
             calculate_coinswap_fee, calculate_contract_sighash, create_taproot_script,
             create_timelock_script,
         },
+        error2::TaprootProtocolError,
         messages2::{
             Offer, PrivateKeyHandover, SenderContractFromMaker, SendersContract, SwapDetails,
         },
@@ -190,7 +191,7 @@ impl Maker {
         rpc_config.wallet_name = wallet_file_name;
 
         let backend = ZmqBackend::new(&zmq_addr);
-        let rpc_backend = BitcoinRpc::new(rpc_config.clone()).unwrap();
+        let rpc_backend = BitcoinRpc::new(rpc_config.clone())?;
         let registry = FileRegistry::load(data_dir.join(".maker-watcher"));
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = mpsc::channel();
@@ -439,21 +440,21 @@ impl Maker {
         // Create internal key for cooperative spending between taker and maker
         // Order pubkeys lexicographically to match signing order
         let mut pubkeys_for_internal_key = [
-            connection_state.outgoing_contract.pubkey().unwrap(),
-            connection_state.outgoing_contract.other_pubkey().unwrap(),
+            connection_state.outgoing_contract.pubkey()?,
+            connection_state.outgoing_contract.other_pubkey()?,
         ];
         pubkeys_for_internal_key.sort_by(|a, b| a.inner.serialize().cmp(&b.inner.serialize()));
         let internal_key = crate::protocol::musig_interface::get_aggregated_pubkey_compat(
             pubkeys_for_internal_key[0].inner,
             pubkeys_for_internal_key[1].inner,
-        );
+        )?;
 
         // Create taproot script (P2TR output)
         let (taproot_script, taproot_spendinfo) = create_taproot_script(
             hashlock_script.clone(),
             timelock_script.clone(),
             internal_key,
-        );
+        )?;
 
         // Store the values for later use in the return statement
         connection_state.outgoing_contract.internal_key = Some(internal_key);
@@ -461,10 +462,7 @@ impl Maker {
             Some(taproot_spendinfo.tap_tweak().to_scalar());
 
         // Get the actual amount we received from the incoming contract
-        let incoming_contract_txid = connection_state
-            .incoming_contract
-            .contract_txid()
-            .ok_or_else(|| MakerError::General("No taker contract transaction hash found"))?;
+        let incoming_contract_txid = connection_state.incoming_contract.contract_txid()?;
 
         let received_amount = {
             let wallet = self.wallet.read()?;
@@ -525,17 +523,11 @@ impl Maker {
         log::info!("Outgoing contract txid: {:?}", outgoing_contract_txid);
 
         // For cooperative spending, we prepare to spend from the incoming contract transaction
-        let incoming_contract_txid = connection_state
-            .incoming_contract
-            .contract_txid()
-            .ok_or_else(|| MakerError::General("No taker contract transaction hash found"))?;
+        let incoming_contract_txid = connection_state.incoming_contract.contract_txid()?;
 
         // Get the prevout for sighash calculation
         // Use the internal key and tap tweak from the message (set during contract creation)
-        let internal_key = connection_state
-            .incoming_contract
-            .internal_key()
-            .ok_or_else(|| MakerError::General("No internal key found in message"))?;
+        let internal_key = connection_state.incoming_contract.internal_key()?;
 
         use bitcoin::{OutPoint, Sequence, TxIn, TxOut, Witness};
 
@@ -594,12 +586,12 @@ impl Maker {
         // Return our contract transaction details
         Ok(SenderContractFromMaker {
             contract_txs: vec![outgoing_contract_txid], // Our own contract transaction
-            pubkeys_a: vec![connection_state.outgoing_contract.pubkey().unwrap()], // Next party's pubkey
+            pubkeys_a: vec![connection_state.outgoing_contract.pubkey()?], // Next party's pubkey
             hashlock_scripts: vec![connection_state.outgoing_contract.hashlock_script().clone()],
             timelock_scripts: vec![connection_state.outgoing_contract.timelock_script().clone()],
             // Include the internal key and tap tweak that were used to create OUR outgoing contract
-            internal_key: Some(connection_state.outgoing_contract.internal_key().unwrap()),
-            tap_tweak: Some((connection_state.outgoing_contract.tap_tweak().unwrap()).into()),
+            internal_key: Some(connection_state.outgoing_contract.internal_key()?),
+            tap_tweak: Some((connection_state.outgoing_contract.tap_tweak()?).into()),
         })
     }
 
@@ -628,10 +620,7 @@ impl Maker {
         // In the private key handover protocol, we generate nonces when we receive the private key
 
         // Generate maker's nonce pair for incoming contract
-        let incoming_my_privkey = connection_state
-            .incoming_contract
-            .privkey()
-            .ok_or_else(|| MakerError::General("No incoming contract private key"))?;
+        let incoming_my_privkey = connection_state.incoming_contract.privkey()?;
         let secp = bitcoin::secp256k1::Secp256k1::new();
         let incoming_my_keypair =
             bitcoin::secp256k1::Keypair::from_secret_key(&secp, &incoming_my_privkey);
@@ -642,27 +631,18 @@ impl Maker {
         );
 
         let (incoming_contract_my_sec_nonce, incoming_contract_my_pub_nonce) =
-            generate_new_nonce_pair_compat(incoming_my_keypair.public_key());
+            generate_new_nonce_pair_compat(incoming_my_keypair.public_key())?;
 
         // Generate sender's nonce pair using their keypair
         let (incoming_contract_other_sec_nonce, incoming_contract_other_pub_nonce) =
-            generate_new_nonce_pair_compat(incoming_other_keypair.public_key());
+            generate_new_nonce_pair_compat(incoming_other_keypair.public_key())?;
 
         let sender_nonce = incoming_contract_other_pub_nonce;
 
         // Get incoming contract details
-        let incoming_contract_txid = connection_state
-            .incoming_contract
-            .contract_txid()
-            .ok_or_else(|| MakerError::General("No incoming contract txid"))?;
-        let incoming_tap_tweak = connection_state
-            .incoming_contract
-            .tap_tweak()
-            .ok_or_else(|| MakerError::General("No tap tweak for incoming contract"))?;
-        let incoming_internal_key = connection_state
-            .incoming_contract
-            .internal_key()
-            .ok_or_else(|| MakerError::General("No internal key for incoming contract"))?;
+        let incoming_contract_txid = connection_state.incoming_contract.contract_txid()?;
+        let incoming_tap_tweak = connection_state.incoming_contract.tap_tweak()?;
+        let incoming_internal_key = connection_state.incoming_contract.internal_key()?;
 
         // Get contract transaction and reconstruct script
         let incoming_contract_tx = self
@@ -687,11 +667,7 @@ impl Maker {
         .map_err(|_| MakerError::General("Failed to calculate sighash"))?;
 
         // Get other pubkey for ordering
-        let incoming_other_pubkey = connection_state
-            .incoming_contract
-            .other_pubkey()
-            .ok_or_else(|| MakerError::General("No incoming contract other pubkey"))?;
-
+        let incoming_other_pubkey = connection_state.incoming_contract.other_pubkey()?;
         let mut incoming_ordered_pubkeys = [
             incoming_my_keypair.public_key(),
             incoming_other_pubkey.inner,
@@ -716,7 +692,7 @@ impl Maker {
             incoming_tap_tweak,
             incoming_ordered_pubkeys[0],
             incoming_ordered_pubkeys[1],
-        );
+        )?;
 
         let other_partial_sig = generate_partial_signature_compat(
             incoming_message,
@@ -726,7 +702,7 @@ impl Maker {
             incoming_tap_tweak,
             incoming_ordered_pubkeys[0],
             incoming_ordered_pubkeys[1],
-        );
+        )?;
 
         // Aggregate both partial signatures
         let partial_sigs = if incoming_ordered_pubkeys[0] == incoming_my_keypair.public_key() {
@@ -741,16 +717,19 @@ impl Maker {
             partial_sigs,
             incoming_ordered_pubkeys[0],
             incoming_ordered_pubkeys[1],
-        );
+        )?;
 
         // Create final signature and add to transaction witness
         let final_signature =
             bitcoin::taproot::Signature::from_slice(aggregated_sig.assume_valid().as_byte_array())
-                .unwrap();
+                .map_err(TaprootProtocolError::SigSlice)?;
 
         let mut final_tx = spending_tx.clone();
         let mut final_sighasher = SighashCache::new(&mut final_tx);
-        *final_sighasher.witness_mut(0).unwrap() = Witness::p2tr_key_spend(&final_signature);
+        *final_sighasher
+            .witness_mut(0)
+            .ok_or(MakerError::General("Failed to access witness for signing"))? =
+            Witness::p2tr_key_spend(&final_signature);
         let completed_tx = final_sighasher.into_transaction();
 
         // Broadcast the completed spending transaction
@@ -768,7 +747,7 @@ impl Maker {
         );
 
         let privkey_handover_message = PrivateKeyHandover {
-            secret_key: connection_state.outgoing_contract.privkey().unwrap(),
+            secret_key: connection_state.outgoing_contract.privkey()?,
         };
 
         Ok(privkey_handover_message)
@@ -780,10 +759,7 @@ impl Maker {
         connection_state: &ConnectionState,
     ) -> Result<Transaction, MakerError> {
         // Get the incoming contract transaction hash
-        let incoming_contract_txid = connection_state
-            .incoming_contract
-            .contract_txid()
-            .ok_or_else(|| MakerError::General("No incoming contract transaction hash found"))?;
+        let incoming_contract_txid = connection_state.incoming_contract.contract_txid()?;
 
         log::info!(
             "[{}] Creating unsigned spending tx for incoming contract: {}",
@@ -854,7 +830,7 @@ impl Maker {
                     if bond.conf_height.is_none() && bond.cert_expiry.is_none() {
                         let conf_height = wallet_read
                             .wait_for_tx_confirmation(bond.outpoint.txid)
-                            .unwrap();
+                            .ok()?;
                         Some((*i, conf_height))
                     } else {
                         None

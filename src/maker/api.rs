@@ -290,7 +290,7 @@ impl Maker {
         rpc_config.wallet_name = wallet_file_name;
 
         let backend = ZmqBackend::new(&zmq_addr);
-        let rpc_backend = BitcoinRpc::new(rpc_config.clone()).unwrap();
+        let rpc_backend = BitcoinRpc::new(rpc_config.clone())?;
         let registry = FileRegistry::load(data_dir.join(".maker-watcher"));
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = mpsc::channel();
