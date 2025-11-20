@@ -304,13 +304,15 @@ EOF
       base_fee = 100
       amount_relative_fee_ppt = 1000
       EOM
-      makerd
+      makerd --rpc bitcoind:$BITCOIN_RPC_PORT --auth coinswap:coinswappass
       "
     ports:
       - "$MAKERD_PORT:$MAKERD_PORT"
       - "$MAKERD_RPC_PORT:$MAKERD_RPC_PORT"
     volumes:
       - maker-data:/home/coinswap/.coinswap
+    environment:
+      - RUST_LOG=info
 EOF
 
     # Add makerd dependencies  
