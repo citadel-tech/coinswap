@@ -4,7 +4,7 @@ use crate::{
             calculate_coinswap_fee, create_hashlock_script, create_taproot_script,
             create_timelock_script,
         },
-        error2::TaprootProtocolError,
+        error::ProtocolError,
         messages2::{
             AckResponse, GetOffer, MakerToTakerMessage, Preimage, PrivateKeyHandover,
             SenderContractFromMaker, SendersContract, SwapDetails, TakerToMakerMessage,
@@ -1148,7 +1148,7 @@ impl Taker {
 
         let final_signature =
             bitcoin::taproot::Signature::from_slice(aggregated_sig.assume_valid().as_byte_array())
-                .map_err(TaprootProtocolError::SigSlice)?;
+                .map_err(ProtocolError::TaprootSigSlice)?;
 
         log::info!("  Created MuSig2 aggregated signature for key-path spend");
 
@@ -1157,7 +1157,7 @@ impl Taker {
         let mut sighasher = SighashCache::new(&mut final_tx);
         *sighasher
             .witness_mut(0)
-            .ok_or(TaprootProtocolError::General("Failed to get witness"))? =
+            .ok_or(ProtocolError::General("Failed to get witness"))? =
             Witness::p2tr_key_spend(&final_signature);
         let completed_tx = sighasher.into_transaction();
 

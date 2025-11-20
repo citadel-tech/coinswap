@@ -1,5 +1,5 @@
 //! This module provides an interface for the musig2 protocol.
-use crate::protocol::error2::TaprootProtocolError;
+use crate::protocol::error::ProtocolError;
 
 use super::{
     musig2::{aggregate_partial_signatures, generate_partial_signature},
@@ -15,7 +15,7 @@ use musig2::{generate_new_nonce_pair, get_aggregated_pubkey};
 pub fn get_aggregated_pubkey_compat(
     pubkey1: bitcoin::secp256k1::PublicKey,
     pubkey2: bitcoin::secp256k1::PublicKey,
-) -> Result<bitcoin::secp256k1::XOnlyPublicKey, TaprootProtocolError> {
+) -> Result<bitcoin::secp256k1::XOnlyPublicKey, ProtocolError> {
     let s_pubkey1 = pubkey1.serialize();
     let s_pubkey2 = pubkey2.serialize();
     let pubkey1 = secp256k1::PublicKey::from_slice(&s_pubkey1)?;
@@ -31,7 +31,7 @@ pub fn get_aggregated_pubkey_compat(
 /// Generates a new nonce pair
 pub fn generate_new_nonce_pair_compat(
     nonce_pubkey: bitcoin::secp256k1::PublicKey,
-) -> Result<(secp256k1::musig::SecretNonce, secp256k1::musig::PublicNonce), TaprootProtocolError> {
+) -> Result<(secp256k1::musig::SecretNonce, secp256k1::musig::PublicNonce), ProtocolError> {
     let nonce_pubkey = nonce_pubkey.serialize();
     let nonce_pubkey = secp256k1::PublicKey::from_slice(&nonce_pubkey)?;
     // Convert bitcoin::secp256k1::Message to secp256k1::Message directly from bytes
@@ -55,7 +55,7 @@ pub fn generate_partial_signature_compat(
     tap_tweak: bitcoin::secp256k1::Scalar,
     pubkey1: bitcoin::secp256k1::PublicKey,
     pubkey2: bitcoin::secp256k1::PublicKey,
-) -> Result<secp256k1::musig::PartialSignature, TaprootProtocolError> {
+) -> Result<secp256k1::musig::PartialSignature, ProtocolError> {
     let secp = secp256k1::Secp256k1::new();
     let tap_tweak = tap_tweak.to_be_bytes();
     let tap_tweak = secp256k1::Scalar::from_be_bytes(tap_tweak)?;
@@ -81,7 +81,7 @@ pub fn aggregate_partial_signatures_compat(
     partial_sigs: Vec<&secp256k1::musig::PartialSignature>,
     pubkey_1: bitcoin::secp256k1::PublicKey,
     pubkey2: bitcoin::secp256k1::PublicKey,
-) -> Result<secp256k1::musig::AggregatedSignature, TaprootProtocolError> {
+) -> Result<secp256k1::musig::AggregatedSignature, ProtocolError> {
     let tap_tweak = tap_tweak.to_be_bytes();
     let tap_tweak = secp256k1::Scalar::from_be_bytes(tap_tweak)?;
     // Convert bitcoin::secp256k1::Message to secp256k1::Message directly from bytes

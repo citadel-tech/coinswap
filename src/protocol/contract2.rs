@@ -1,6 +1,6 @@
 //! This module implements the contract protocol for a 2-of-2 multisig transaction
 
-use crate::protocol::error2::TaprootProtocolError;
+use crate::protocol::error::ProtocolError;
 
 use bitcoin::{
     blockdata::transaction::{Transaction, TxOut},
@@ -38,7 +38,7 @@ pub(crate) fn create_taproot_script(
     hashlock_script: ScriptBuf,
     timelock_script: ScriptBuf,
     internal_pubkey: XOnlyPublicKey,
-) -> Result<(ScriptBuf, TaprootSpendInfo), TaprootProtocolError> {
+) -> Result<(ScriptBuf, TaprootSpendInfo), ProtocolError> {
     let secp = Secp256k1::new();
     let taproot_spendinfo = TaprootBuilder::new()
         .add_leaf(1, hashlock_script.clone())?
@@ -65,7 +65,7 @@ pub(crate) fn calculate_contract_sighash(
     hashlock_script: &ScriptBuf,
     timelock_script: &ScriptBuf,
     internal_key: bitcoin::secp256k1::XOnlyPublicKey,
-) -> Result<bitcoin::secp256k1::Message, TaprootProtocolError> {
+) -> Result<bitcoin::secp256k1::Message, ProtocolError> {
     // Reconstruct the Taproot script
     let (contract_script, _) = create_taproot_script(
         hashlock_script.clone(),
@@ -125,7 +125,7 @@ mod tests {
         input_value: Amount,
         script_pubkey: ScriptBuf,
         fee: Amount,
-    ) -> Result<Transaction, TaprootProtocolError> {
+    ) -> Result<Transaction, ProtocolError> {
         Ok(Transaction {
             input: vec![TxIn {
                 previous_output: input,

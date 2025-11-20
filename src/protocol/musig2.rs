@@ -10,7 +10,7 @@ use secp256k1::{
     rand, Keypair, Message, PublicKey, Scalar, Secp256k1, XOnlyPublicKey,
 };
 
-use crate::protocol::error2::TaprootProtocolError;
+use crate::protocol::error::ProtocolError;
 
 /// get aggregated public key from two public keys
 pub fn get_aggregated_pubkey(pubkey1: &PublicKey, pubkey2: &PublicKey) -> XOnlyPublicKey {
@@ -45,7 +45,7 @@ pub fn generate_partial_signature(
     keypair: Keypair,
     tap_tweak: Scalar,
     pubkeys: &[&PublicKey],
-) -> Result<PartialSignature, TaprootProtocolError> {
+) -> Result<PartialSignature, ProtocolError> {
     let secp = Secp256k1::new();
     let mut musig_key_agg_cache = KeyAggCache::new(&secp, pubkeys);
     musig_key_agg_cache.pubkey_xonly_tweak_add(&secp, &tap_tweak)?;
@@ -60,7 +60,7 @@ pub fn aggregate_partial_signatures(
     tap_tweak: Scalar,
     partial_sigs: &[&PartialSignature],
     pubkeys: &[&PublicKey],
-) -> Result<AggregatedSignature, TaprootProtocolError> {
+) -> Result<AggregatedSignature, ProtocolError> {
     let secp = Secp256k1::new();
     let mut musig_key_agg_cache = KeyAggCache::new(&secp, pubkeys);
     musig_key_agg_cache.pubkey_xonly_tweak_add(&secp, &tap_tweak)?;

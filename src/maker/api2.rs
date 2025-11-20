@@ -10,7 +10,7 @@ use crate::{
             calculate_coinswap_fee, calculate_contract_sighash, create_taproot_script,
             create_timelock_script,
         },
-        error2::TaprootProtocolError,
+        error::ProtocolError,
         messages2::{
             Offer, PrivateKeyHandover, SenderContractFromMaker, SendersContract, SwapDetails,
         },
@@ -722,7 +722,7 @@ impl Maker {
         // Create final signature and add to transaction witness
         let final_signature =
             bitcoin::taproot::Signature::from_slice(aggregated_sig.assume_valid().as_byte_array())
-                .map_err(TaprootProtocolError::SigSlice)?;
+                .map_err(ProtocolError::TaprootSigSlice)?;
 
         let mut final_tx = spending_tx.clone();
         let mut final_sighasher = SighashCache::new(&mut final_tx);
