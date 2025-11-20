@@ -11,8 +11,6 @@ DEFAULT_BITCOIN_NETWORK="regtest"
 DEFAULT_BITCOIN_RPC_PORT="18332"
 DEFAULT_MAKERD_PORT="6102"
 DEFAULT_MAKERD_RPC_PORT="6103"
-DEFAULT_MARKETD_PORT="8000"
-DEFAULT_MARKETD_WEB_PORT="3000"
 DEFAULT_TRACKER_PORT="8080"
 DEFAULT_TOR_SOCKS_PORT="9050"
 DEFAULT_TOR_CONTROL_PORT="9051"
@@ -53,8 +51,6 @@ BITCOIN_NETWORK="$BITCOIN_NETWORK"
 BITCOIN_RPC_PORT="$BITCOIN_RPC_PORT"
 MAKERD_PORT="$MAKERD_PORT"
 MAKERD_RPC_PORT="$MAKERD_RPC_PORT"
-MARKETD_PORT="$MARKETD_PORT"
-MARKETD_WEB_PORT="$MARKETD_WEB_PORT"
 TRACKER_PORT="$TRACKER_PORT"
 TOR_SOCKS_PORT="$TOR_SOCKS_PORT"
 TOR_CONTROL_PORT="$TOR_CONTROL_PORT"
@@ -174,12 +170,6 @@ configure_setup() {
     
     read -p "Makerd RPC port [${DEFAULT_MAKERD_RPC_PORT}]: " makerd_rpc
     MAKERD_RPC_PORT="${makerd_rpc:-$DEFAULT_MAKERD_RPC_PORT}"
-    
-    read -p "Marketd port [${DEFAULT_MARKETD_PORT}]: " marketd_port
-    MARKETD_PORT="${marketd_port:-$DEFAULT_MARKETD_PORT}"
-
-    read -p "Marketd Web port [${DEFAULT_MARKETD_WEB_PORT}]: " marketd_web_port
-    MARKETD_WEB_PORT="${marketd_web_port:-$DEFAULT_MARKETD_WEB_PORT}"
 
     read -p "Tracker port [${DEFAULT_TRACKER_PORT}]: " tracker_port
     TRACKER_PORT="${tracker_port:-$DEFAULT_TRACKER_PORT}"
@@ -203,8 +193,6 @@ configure_setup() {
     fi
     echo "Makerd Port: $MAKERD_PORT"
     echo "Makerd RPC Port: $MAKERD_RPC_PORT"
-    echo "Marketd Port: $MARKETD_PORT"
-    echo "Marketd Web Port: $MARKETD_WEB_PORT"
     echo "Tracker Port: $TRACKER_PORT"
     echo ""
     
@@ -320,24 +308,6 @@ EOF
     cat >> "$compose_file" << EOF
     restart: unless-stopped
 
-  marketd:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.marketd
-    image: coinswap-marketd
-    pull_policy: never
-    container_name: coinswap-marketd
-    environment:
-      - MARKETD_WEB_PORT=$MARKETD_WEB_PORT
-    ports:
-      - "$MARKETD_PORT:8000"
-      - "$MARKETD_WEB_PORT:$MARKETD_WEB_PORT"
-    volumes:
-      - marketd-data:/home/coinswap/.marketd
-    depends_on:
-      - makerd
-    restart: unless-stopped
-
   makerd:
     build:
       context: .
@@ -424,8 +394,6 @@ EOF
     driver: local
   maker-data:
     driver: local
-  marketd-data:
-    driver: local
 
 networks:
   default:
@@ -456,7 +424,7 @@ build_image() {
     fi
     
     # Build individual service images
-    local services=("maker" "taker" "tracker" "test" "tor" "marketd")
+    local services=("maker" "taker" "tracker" "test" "tor")
     
     for service in "${services[@]}"; do
         print_info "Building $service image..."
@@ -505,8 +473,6 @@ start_stack() {
     BITCOIN_RPC_PORT="${BITCOIN_RPC_PORT:-$DEFAULT_BITCOIN_RPC_PORT}"
     MAKERD_PORT="${MAKERD_PORT:-$DEFAULT_MAKERD_PORT}"
     MAKERD_RPC_PORT="${MAKERD_RPC_PORT:-$DEFAULT_MAKERD_RPC_PORT}"
-    MARKETD_PORT="${MARKETD_PORT:-$DEFAULT_MARKETD_PORT}"
-    MARKETD_WEB_PORT="${MARKETD_WEB_PORT:-$DEFAULT_MARKETD_WEB_PORT}"
     TRACKER_PORT="${TRACKER_PORT:-$DEFAULT_TRACKER_PORT}"
     TOR_SOCKS_PORT="${TOR_SOCKS_PORT:-$DEFAULT_TOR_SOCKS_PORT}"
     TOR_CONTROL_PORT="${TOR_CONTROL_PORT:-$DEFAULT_TOR_CONTROL_PORT}"
