@@ -10,6 +10,7 @@ mod spend;
 mod split_utxos;
 mod storage;
 mod swapcoin;
+mod swapcoin2;
 
 pub(crate) use api::UTXOSpendInfo;
 pub use api::{Balances, Wallet};
@@ -21,3 +22,4 @@ pub use spend::Destination;
 pub(crate) use swapcoin::{
     IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletSwapCoin, WatchOnlySwapCoin,
 };
+pub(crate) use swapcoin2::{IncomingSwapCoinV2, OutgoingSwapCoinV2};
