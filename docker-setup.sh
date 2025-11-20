@@ -9,6 +9,7 @@ CONFIG_FILE="$SCRIPT_DIR/.docker-config"
 DEFAULT_BITCOIN_DATADIR="/home/coinswap/.bitcoin"
 DEFAULT_BITCOIN_NETWORK="regtest"
 DEFAULT_BITCOIN_RPC_PORT="18332"
+DEFAULT_BITCOIN_ZMQ_PORT="28332"
 DEFAULT_MAKERD_PORT="6102"
 DEFAULT_MAKERD_RPC_PORT="6103"
 DEFAULT_TRACKER_PORT="8080"
@@ -49,6 +50,7 @@ save_config() {
 BITCOIN_DATADIR="$BITCOIN_DATADIR"
 BITCOIN_NETWORK="$BITCOIN_NETWORK"
 BITCOIN_RPC_PORT="$BITCOIN_RPC_PORT"
+BITCOIN_ZMQ_PORT="$BITCOIN_ZMQ_PORT"
 MAKERD_PORT="$MAKERD_PORT"
 MAKERD_RPC_PORT="$MAKERD_RPC_PORT"
 TRACKER_PORT="$TRACKER_PORT"
@@ -109,11 +111,11 @@ configure_setup() {
     read -p "Network [1]: " network_choice
     
     case "${network_choice:-1}" in
-        1) BITCOIN_NETWORK="regtest"; BITCOIN_RPC_PORT="18332" ;;
-        2) BITCOIN_NETWORK="signet"; BITCOIN_RPC_PORT="38332" ;;
-        3) BITCOIN_NETWORK="testnet"; BITCOIN_RPC_PORT="18332" ;;
-        4) BITCOIN_NETWORK="mainnet"; BITCOIN_RPC_PORT="8332" ;;
-        *) BITCOIN_NETWORK="regtest"; BITCOIN_RPC_PORT="18332" ;;
+        1) BITCOIN_NETWORK="regtest"; BITCOIN_RPC_PORT="18332"; BITCOIN_ZMQ_PORT="28332" ;;
+        2) BITCOIN_NETWORK="signet"; BITCOIN_RPC_PORT="38332"; BITCOIN_ZMQ_PORT="28332" ;;
+        3) BITCOIN_NETWORK="testnet"; BITCOIN_RPC_PORT="18332"; BITCOIN_ZMQ_PORT="28332" ;;
+        4) BITCOIN_NETWORK="mainnet"; BITCOIN_RPC_PORT="8332"; BITCOIN_ZMQ_PORT="28332" ;;
+        *) BITCOIN_NETWORK="regtest"; BITCOIN_RPC_PORT="18332"; BITCOIN_ZMQ_PORT="28332" ;;
     esac
     
     echo ""
@@ -128,11 +130,15 @@ configure_setup() {
             USE_EXTERNAL_BITCOIND="false"
             read -p "Bitcoin RPC port [$BITCOIN_RPC_PORT]: " btc_port
             BITCOIN_RPC_PORT="${btc_port:-$BITCOIN_RPC_PORT}"
+            read -p "Bitcoin ZMQ port [$BITCOIN_ZMQ_PORT]: " btc_zmq_port
+            BITCOIN_ZMQ_PORT="${btc_zmq_port:-$BITCOIN_ZMQ_PORT}"
         fi
     else
         USE_EXTERNAL_BITCOIND="false"
         read -p "Bitcoin RPC port [$BITCOIN_RPC_PORT]: " btc_port
         BITCOIN_RPC_PORT="${btc_port:-$BITCOIN_RPC_PORT}"
+        read -p "Bitcoin ZMQ port [$BITCOIN_ZMQ_PORT]: " btc_zmq_port
+        BITCOIN_ZMQ_PORT="${btc_zmq_port:-$BITCOIN_ZMQ_PORT}"
     fi
     
     echo ""
@@ -180,6 +186,7 @@ configure_setup() {
     echo "Bitcoin Network: $BITCOIN_NETWORK"
     echo "Bitcoin Data Dir: $BITCOIN_DATADIR"
     echo "Bitcoin RPC Port: $BITCOIN_RPC_PORT"
+    echo "Bitcoin ZMQ Port: $BITCOIN_ZMQ_PORT"
     echo "Use External Bitcoin: $USE_EXTERNAL_BITCOIND"
     if [[ "$USE_EXTERNAL_BITCOIND" == "true" ]]; then
         echo "External Bitcoin Host: $EXTERNAL_BITCOIND_HOST"
@@ -239,10 +246,13 @@ EOF
       -rpcpassword=coinswappass
       -rpcallowip=0.0.0.0/0
       -rpcbind=0.0.0.0:$BITCOIN_RPC_PORT
+      -zmqpubrawblock=tcp://0.0.0.0:$BITCOIN_ZMQ_PORT
+      -zmqpubrawtx=tcp://0.0.0.0:$BITCOIN_ZMQ_PORT
       -txindex=1
       -datadir=/home/bitcoin/.bitcoin
     ports:
       - "$BITCOIN_RPC_PORT:$BITCOIN_RPC_PORT"
+      - "$BITCOIN_ZMQ_PORT:$BITCOIN_ZMQ_PORT"
     volumes:
       - bitcoin-data:/home/bitcoin/.bitcoin
     restart: unless-stopped
@@ -471,6 +481,7 @@ start_stack() {
     BITCOIN_DATADIR="${BITCOIN_DATADIR:-$DEFAULT_BITCOIN_DATADIR}"
     BITCOIN_NETWORK="${BITCOIN_NETWORK:-$DEFAULT_BITCOIN_NETWORK}"
     BITCOIN_RPC_PORT="${BITCOIN_RPC_PORT:-$DEFAULT_BITCOIN_RPC_PORT}"
+    BITCOIN_ZMQ_PORT="${BITCOIN_ZMQ_PORT:-$DEFAULT_BITCOIN_ZMQ_PORT}"
     MAKERD_PORT="${MAKERD_PORT:-$DEFAULT_MAKERD_PORT}"
     MAKERD_RPC_PORT="${MAKERD_RPC_PORT:-$DEFAULT_MAKERD_RPC_PORT}"
     TRACKER_PORT="${TRACKER_PORT:-$DEFAULT_TRACKER_PORT}"
