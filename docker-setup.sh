@@ -637,7 +637,7 @@ case "${1:-}" in
         ;;
     "status")
         cd "$SCRIPT_DIR"
-        local compose_file="docker-compose.generated.yml"
+        compose_file="docker-compose.generated.yml"
         if [ ! -f "$compose_file" ]; then
             compose_file="docker-compose.yml"
         fi
