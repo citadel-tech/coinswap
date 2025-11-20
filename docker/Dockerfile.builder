@@ -23,15 +23,6 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     cargo build --release
 
-# Build tracker binary
-WORKDIR /usr/src/
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    git clone https://github.com/citadel-tech/tracker.git && \
-    cd tracker && \
-    cargo build --release && \
-    cp target/release/tracker /usr/src/coinswap/target/release/
-
 ## --- Base Runtime Stage ---
 # This is the common base for all service images.
 FROM alpine:3.20
@@ -49,7 +40,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
 RUN adduser -D -u 1001 coinswap
 
 # Create common directories
-RUN mkdir -p /app/bin /home/coinswap/.coinswap /home/coinswap/.tracker && \
+RUN mkdir -p /app/bin /home/coinswap/.coinswap && \
     chown -R coinswap:coinswap /app /home/coinswap
 
 # Switch to app user
@@ -61,7 +52,6 @@ ENV PATH="/app/bin:$PATH"
 
 # Set common environment variables
 ENV COINSWAP_DATA_DIR="/home/coinswap/.coinswap"
-ENV TRACKER_DATA_DIR="/home/coinswap/.tracker"
 
 # Create volume mount points
-VOLUME ["/home/coinswap/.coinswap", "/home/coinswap/.tracker"]
+VOLUME ["/home/coinswap/.coinswap"]

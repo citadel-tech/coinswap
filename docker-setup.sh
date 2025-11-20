@@ -12,7 +12,6 @@ DEFAULT_BITCOIN_RPC_PORT="18332"
 DEFAULT_BITCOIN_ZMQ_PORT="28332"
 DEFAULT_MAKERD_PORT="6102"
 DEFAULT_MAKERD_RPC_PORT="6103"
-DEFAULT_TRACKER_PORT="8080"
 DEFAULT_TOR_SOCKS_PORT="9050"
 DEFAULT_TOR_CONTROL_PORT="9051"
 
@@ -53,7 +52,6 @@ BITCOIN_RPC_PORT="$BITCOIN_RPC_PORT"
 BITCOIN_ZMQ_PORT="$BITCOIN_ZMQ_PORT"
 MAKERD_PORT="$MAKERD_PORT"
 MAKERD_RPC_PORT="$MAKERD_RPC_PORT"
-TRACKER_PORT="$TRACKER_PORT"
 TOR_SOCKS_PORT="$TOR_SOCKS_PORT"
 TOR_CONTROL_PORT="$TOR_CONTROL_PORT"
 USE_EXTERNAL_BITCOIND="$USE_EXTERNAL_BITCOIND"
@@ -176,9 +174,6 @@ configure_setup() {
     
     read -p "Makerd RPC port [${DEFAULT_MAKERD_RPC_PORT}]: " makerd_rpc
     MAKERD_RPC_PORT="${makerd_rpc:-$DEFAULT_MAKERD_RPC_PORT}"
-
-    read -p "Tracker port [${DEFAULT_TRACKER_PORT}]: " tracker_port
-    TRACKER_PORT="${tracker_port:-$DEFAULT_TRACKER_PORT}"
     
     echo ""
     print_info "Configuration Summary"
@@ -200,7 +195,6 @@ configure_setup() {
     fi
     echo "Makerd Port: $MAKERD_PORT"
     echo "Makerd RPC Port: $MAKERD_RPC_PORT"
-    echo "Tracker Port: $TRACKER_PORT"
     echo ""
     
     read -p "Save this configuration? [Y/n]: " save_config_prompt
@@ -286,38 +280,6 @@ EOF
     fi
 
     cat >> "$compose_file" << EOF
-  tracker:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.tracker
-    image: coinswap-tracker
-    pull_policy: never
-    container_name: coinswap-tracker
-    ports:
-      - "$TRACKER_PORT:8080"
-    volumes:
-      - tracker-data:/home/coinswap/.tracker
-EOF
-
-    # Add tracker dependencies
-    local tracker_deps=()
-    [[ "$USE_EXTERNAL_BITCOIND" != "true" ]] && tracker_deps+=("bitcoind")
-    [[ "$USE_EXTERNAL_TOR" != "true" ]] && tracker_deps+=("tor")
-    
-    if [[ ${#tracker_deps[@]} -gt 0 ]]; then
-        cat >> "$compose_file" << EOF
-    depends_on:
-EOF
-        for dep in "${tracker_deps[@]}"; do
-            cat >> "$compose_file" << EOF
-      - $dep
-EOF
-        done
-    fi
-
-    cat >> "$compose_file" << EOF
-    restart: unless-stopped
-
   makerd:
     build:
       context: .
@@ -339,19 +301,6 @@ EOF
       fidelity_amount = 50000
       fidelity_timelock = 13104
       connection_type = \"TOR\"
-EOF
-
-    if [[ "$USE_EXTERNAL_TOR" == "true" ]]; then
-        cat >> "$compose_file" << EOF
-      directory_server_address = \"https://tracker.citadel-tech.com\"
-EOF
-    else
-        cat >> "$compose_file" << EOF
-      directory_server_address = \"tracker:$TRACKER_PORT\"
-EOF
-    fi
-
-    cat >> "$compose_file" << EOF
       base_fee = 100
       amount_relative_fee_ppt = 1000
       EOM
@@ -368,7 +317,6 @@ EOF
     local makerd_deps=()
     [[ "$USE_EXTERNAL_BITCOIND" != "true" ]] && makerd_deps+=("bitcoind")
     [[ "$USE_EXTERNAL_TOR" != "true" ]] && makerd_deps+=("tor")
-    makerd_deps+=("tracker")
     
     cat >> "$compose_file" << EOF
     depends_on:
@@ -400,8 +348,6 @@ EOF
     fi
 
     cat >> "$compose_file" << EOF
-  tracker-data:
-    driver: local
   maker-data:
     driver: local
 
@@ -434,7 +380,7 @@ build_image() {
     fi
     
     # Build individual service images
-    local services=("maker" "taker" "tracker" "test" "tor")
+    local services=("maker" "taker" "test" "tor")
     
     for service in "${services[@]}"; do
         print_info "Building $service image..."
@@ -484,7 +430,6 @@ start_stack() {
     BITCOIN_ZMQ_PORT="${BITCOIN_ZMQ_PORT:-$DEFAULT_BITCOIN_ZMQ_PORT}"
     MAKERD_PORT="${MAKERD_PORT:-$DEFAULT_MAKERD_PORT}"
     MAKERD_RPC_PORT="${MAKERD_RPC_PORT:-$DEFAULT_MAKERD_RPC_PORT}"
-    TRACKER_PORT="${TRACKER_PORT:-$DEFAULT_TRACKER_PORT}"
     TOR_SOCKS_PORT="${TOR_SOCKS_PORT:-$DEFAULT_TOR_SOCKS_PORT}"
     TOR_CONTROL_PORT="${TOR_CONTROL_PORT:-$DEFAULT_TOR_CONTROL_PORT}"
     USE_EXTERNAL_BITCOIND="${USE_EXTERNAL_BITCOIND:-false}"
@@ -576,7 +521,6 @@ show_help() {
     echo "  makerd [args]   Run makerd with arguments"
     echo "  maker-cli [args] Run maker-cli with arguments"
     echo "  taker [args]    Run taker with arguments"
-    echo "  tracker [args]  Run tracker with arguments"
     echo "  bitcoin-cli [args] Run bitcoin-cli with arguments"
     echo ""
     echo "Examples:"
@@ -627,7 +571,7 @@ case "${1:-}" in
         check_docker
         run_tests
         ;;
-    "makerd"|"maker-cli"|"taker"|"tracker"|"bitcoin-cli")
+    "makerd"|"maker-cli"|"taker"|"bitcoin-cli")
         run_command "$@"
         ;;
     "help"|"--help"|"-h"|"")

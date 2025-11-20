@@ -22,10 +22,6 @@ jobs:
     - name: Test taker
       run: docker run --rm coinswap-taker taker --help
 
-    - name: Test tracker
-      run: docker run --rm coinswap-tracker tracker --help
-
-
     - name: Run integration tests
       run: docker run --rm coinswap-test
 
