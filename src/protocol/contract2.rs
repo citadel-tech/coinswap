@@ -1,6 +1,7 @@
 //! This module implements the contract protocol for a 2-of-2 multisig transaction
 
-use super::error::ProtocolError;
+use crate::protocol::error::ProtocolError;
+
 use bitcoin::{
     blockdata::transaction::{Transaction, TxOut},
     locktime::absolute::LockTime,
@@ -37,27 +38,24 @@ pub(crate) fn create_taproot_script(
     hashlock_script: ScriptBuf,
     timelock_script: ScriptBuf,
     internal_pubkey: XOnlyPublicKey,
-) -> (ScriptBuf, TaprootSpendInfo) {
+) -> Result<(ScriptBuf, TaprootSpendInfo), ProtocolError> {
     let secp = Secp256k1::new();
     let taproot_spendinfo = TaprootBuilder::new()
-        .add_leaf(1, hashlock_script.clone())
-        .unwrap()
-        .add_leaf(1, timelock_script.clone())
-        .unwrap()
-        .finalize(&secp, internal_pubkey)
-        .expect("Error finalizing taproot info");
+        .add_leaf(1, hashlock_script.clone())?
+        .add_leaf(1, timelock_script.clone())?
+        .finalize(&secp, internal_pubkey)?;
     let _hashlock_control_block =
         taproot_spendinfo.control_block(&(hashlock_script, LeafVersion::TapScript));
     let _timelock_control_block =
         taproot_spendinfo.control_block(&(timelock_script, LeafVersion::TapScript));
-    (
+    Ok((
         ScriptBuf::new_p2tr(
             &secp,
             taproot_spendinfo.internal_key(),
             taproot_spendinfo.merkle_root(),
         ),
         taproot_spendinfo,
-    )
+    ))
 }
 
 /// Calculate Taproot sighash for contract spending
@@ -73,7 +71,7 @@ pub(crate) fn calculate_contract_sighash(
         hashlock_script.clone(),
         timelock_script.clone(),
         internal_key,
-    );
+    )?;
 
     // Create prevout for sighash calculation
     let prevout = TxOut {
@@ -86,9 +84,11 @@ pub(crate) fn calculate_contract_sighash(
     // Calculate sighash
     let mut spending_tx_copy = spending_tx.clone();
     let mut sighasher = SighashCache::new(&mut spending_tx_copy);
-    let sighash = sighasher
-        .taproot_key_spend_signature_hash(0, &prevouts_ref, bitcoin::TapSighashType::Default)
-        .map_err(|_| ProtocolError::General("Failed to compute sighash"))?;
+    let sighash = sighasher.taproot_key_spend_signature_hash(
+        0,
+        &prevouts_ref,
+        bitcoin::TapSighashType::Default,
+    )?;
 
     Ok(bitcoin::secp256k1::Message::from(sighash))
 }
@@ -222,7 +222,8 @@ mod tests {
             hashlock_script.clone(),
             timelock_script.clone(),
             internal_key,
-        );
+        )
+        .unwrap();
         println!("Taproot script ASM {:?}", taproot_script.to_asm_string());
         let spending_txid = spending_utxo.txid;
         let spending_vout = spending_utxo.vout;
@@ -308,8 +309,10 @@ mod tests {
         let pubkey1 = keypair1.public_key();
         let pubkey2 = keypair2.public_key();
         // let signature = secp.sign_schnorr(&msg, &tweaked.to_inner());
-        let nonce_pair_1: (SecretNonce, PublicNonce) = generate_new_nonce_pair_compat(pubkey1);
-        let nonce_pair_2: (SecretNonce, PublicNonce) = generate_new_nonce_pair_compat(pubkey2);
+        let nonce_pair_1: (SecretNonce, PublicNonce) =
+            generate_new_nonce_pair_compat(pubkey1).unwrap();
+        let nonce_pair_2: (SecretNonce, PublicNonce) =
+            generate_new_nonce_pair_compat(pubkey2).unwrap();
         let agg_nonce: AggregatedNonce =
             get_aggregated_nonce_compat(&[&nonce_pair_1.1, &nonce_pair_2.1]);
 
@@ -336,10 +339,11 @@ mod tests {
             msg,
             agg_nonce,
             tap_tweak,
-            vec![&partial_signature_1, &partial_signature_2],
+            vec![&partial_signature_1.unwrap(), &partial_signature_2.unwrap()],
             pubkey1,
             pubkey2,
-        );
+        )
+        .unwrap();
         // let signature = bitcoin::taproot::Signature { signature, sighash_type};
         // let signature = [146, 123, 43, 11, 8, 25, 106, 52, 146, 170, 93, 164, 241, 65, 172, 150, 242, 122, 30, 219, 154, 177, 9, 40, 105, 228, 213, 77, 219, 43, 139, 35, 176, 185, 230, 70, 213, 228, 160, 12, 144, 149, 191, 113, 210, 77, 137, 251, 2, 250, 109, 0, 69, 244, 156, 135, 122, 231, 227, 208, 78, 237, 142, 191];
         let signature = bitcoin::taproot::Signature::from_slice(
@@ -543,7 +547,7 @@ mod tests {
         let (contract_txid, taproot_spendinfo, _hashlock_script, _timelock_script) =
             create_and_broadcast_contract(
                 spending_utxo,
-                internal_key,
+                internal_key.unwrap(),
                 hashlock_pubkey,
                 timelock_pubkey,
                 hash_preimage,
@@ -606,7 +610,7 @@ mod tests {
         let (contract_txid, taproot_spendinfo, hashlock_script, _timelock_script) =
             create_and_broadcast_contract(
                 spending_utxo,
-                internal_key,
+                internal_key.unwrap(),
                 hashlock_pubkey,
                 timelock_pubkey,
                 hash_preimage,
@@ -670,7 +674,7 @@ mod tests {
         let (contract_txid, taproot_spendinfo, _hashlock_script, timelock_script) =
             create_and_broadcast_contract(
                 spending_utxo,
-                internal_key,
+                internal_key.unwrap(),
                 hashlock_pubkey,
                 timelock_pubkey,
                 hash_preimage,

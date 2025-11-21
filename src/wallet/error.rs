@@ -114,7 +114,6 @@ impl From<ProtocolError> for WalletError {
         Self::Protocol(value)
     }
 }
-
 impl From<serde_cbor::Error> for WalletError {
     fn from(value: serde_cbor::Error) -> Self {
         Self::Cbor(value)

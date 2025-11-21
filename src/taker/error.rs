@@ -1,6 +1,7 @@
 //! All Taker-related errors.
 use crate::{
     error::NetError, protocol::error::ProtocolError, utill::TorError, wallet::WalletError,
+    watch_tower::watcher_error::WatcherError,
 };
 use bitcoin::address::ParseError;
 
@@ -37,6 +38,8 @@ pub enum TakerError {
     AddressParseError(ParseError),
     /// General error with a custom message
     General(String),
+    /// Watcher Service Error
+    Watcher(WatcherError),
 }
 
 impl From<TorError> for TakerError {
@@ -96,5 +99,11 @@ impl<T> From<std::sync::mpsc::SendError<T>> for TakerError {
 impl From<ParseError> for TakerError {
     fn from(value: ParseError) -> Self {
         Self::AddressParseError(value)
+    }
+}
+
+impl From<WatcherError> for TakerError {
+    fn from(value: WatcherError) -> Self {
+        Self::Watcher(value)
     }
 }

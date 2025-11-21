@@ -1,4 +1,6 @@
 //! This module provides an interface for the musig2 protocol.
+use crate::protocol::error::ProtocolError;
+
 use super::{
     musig2::{aggregate_partial_signatures, generate_partial_signature},
     *,
@@ -13,25 +15,27 @@ use musig2::{generate_new_nonce_pair, get_aggregated_pubkey};
 pub fn get_aggregated_pubkey_compat(
     pubkey1: bitcoin::secp256k1::PublicKey,
     pubkey2: bitcoin::secp256k1::PublicKey,
-) -> bitcoin::secp256k1::XOnlyPublicKey {
+) -> Result<bitcoin::secp256k1::XOnlyPublicKey, ProtocolError> {
     let s_pubkey1 = pubkey1.serialize();
     let s_pubkey2 = pubkey2.serialize();
-    let pubkey1 = secp256k1::PublicKey::from_slice(&s_pubkey1).unwrap();
-    let pubkey2 = secp256k1::PublicKey::from_slice(&s_pubkey2).unwrap();
+    let pubkey1 = secp256k1::PublicKey::from_slice(&s_pubkey1)?;
+    let pubkey2 = secp256k1::PublicKey::from_slice(&s_pubkey2)?;
     let agg_pubkey = get_aggregated_pubkey(&pubkey1, &pubkey2);
     let s_agg_pubkey = agg_pubkey.serialize();
 
-    bitcoin::secp256k1::XOnlyPublicKey::from_slice(&s_agg_pubkey).unwrap()
+    Ok(bitcoin::secp256k1::XOnlyPublicKey::from_slice(
+        &s_agg_pubkey,
+    )?)
 }
 
 /// Generates a new nonce pair
 pub fn generate_new_nonce_pair_compat(
     nonce_pubkey: bitcoin::secp256k1::PublicKey,
-) -> (secp256k1::musig::SecretNonce, secp256k1::musig::PublicNonce) {
+) -> Result<(secp256k1::musig::SecretNonce, secp256k1::musig::PublicNonce), ProtocolError> {
     let nonce_pubkey = nonce_pubkey.serialize();
-    let nonce_pubkey = secp256k1::PublicKey::from_slice(&nonce_pubkey).unwrap();
+    let nonce_pubkey = secp256k1::PublicKey::from_slice(&nonce_pubkey)?;
     // Convert bitcoin::secp256k1::Message to secp256k1::Message directly from bytes
-    generate_new_nonce_pair(nonce_pubkey)
+    Ok(generate_new_nonce_pair(nonce_pubkey))
 }
 
 /// get aggregated nonce
@@ -51,20 +55,20 @@ pub fn generate_partial_signature_compat(
     tap_tweak: bitcoin::secp256k1::Scalar,
     pubkey1: bitcoin::secp256k1::PublicKey,
     pubkey2: bitcoin::secp256k1::PublicKey,
-) -> secp256k1::musig::PartialSignature {
+) -> Result<secp256k1::musig::PartialSignature, ProtocolError> {
     let secp = secp256k1::Secp256k1::new();
     let tap_tweak = tap_tweak.to_be_bytes();
-    let tap_tweak = secp256k1::Scalar::from_be_bytes(tap_tweak).unwrap();
+    let tap_tweak = secp256k1::Scalar::from_be_bytes(tap_tweak)?;
     let pubkey1 = pubkey1.serialize();
     let pubkey2 = pubkey2.serialize();
-    let pubkey1 = secp256k1::PublicKey::from_slice(&pubkey1).unwrap();
-    let pubkey2 = secp256k1::PublicKey::from_slice(&pubkey2).unwrap();
+    let pubkey1 = secp256k1::PublicKey::from_slice(&pubkey1)?;
+    let pubkey2 = secp256k1::PublicKey::from_slice(&pubkey2)?;
     let pubkeys = [&pubkey1, &pubkey2];
     // Convert bitcoin::secp256k1::Message to secp256k1::Message directly from bytes
     let message_bytes = message.as_ref();
     let message = secp256k1::Message::from_digest(*message_bytes);
     let keypair_secret = keypair.secret_bytes();
-    let secret_key = secp256k1::SecretKey::from_slice(&keypair_secret).unwrap();
+    let secret_key = secp256k1::SecretKey::from_slice(&keypair_secret)?;
     let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
     generate_partial_signature(message, agg_nonce, sec_nonce, keypair, tap_tweak, &pubkeys)
 }
@@ -77,16 +81,16 @@ pub fn aggregate_partial_signatures_compat(
     partial_sigs: Vec<&secp256k1::musig::PartialSignature>,
     pubkey_1: bitcoin::secp256k1::PublicKey,
     pubkey2: bitcoin::secp256k1::PublicKey,
-) -> secp256k1::musig::AggregatedSignature {
+) -> Result<secp256k1::musig::AggregatedSignature, ProtocolError> {
     let tap_tweak = tap_tweak.to_be_bytes();
-    let tap_tweak = secp256k1::Scalar::from_be_bytes(tap_tweak).unwrap();
+    let tap_tweak = secp256k1::Scalar::from_be_bytes(tap_tweak)?;
     // Convert bitcoin::secp256k1::Message to secp256k1::Message directly from bytes
     let message_bytes = message.as_ref();
     let message = secp256k1::Message::from_digest(*message_bytes);
     let pubkey1 = pubkey_1.serialize();
     let pubkey2 = pubkey2.serialize();
-    let pubkey1 = secp256k1::PublicKey::from_slice(&pubkey1).unwrap();
-    let pubkey2 = secp256k1::PublicKey::from_slice(&pubkey2).unwrap();
+    let pubkey1 = secp256k1::PublicKey::from_slice(&pubkey1)?;
+    let pubkey2 = secp256k1::PublicKey::from_slice(&pubkey2)?;
     aggregate_partial_signatures(
         message,
         agg_nonce,
