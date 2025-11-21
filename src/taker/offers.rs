@@ -19,8 +19,11 @@ use super::{config::TakerConfig, error::TakerError, routines::download_maker_off
 /// Represents an offer along with the corresponding maker address.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OfferAndAddress {
-    pub(crate) offer: Offer,
+    /// Details for Maker Offer
+    pub offer: Offer,
+    /// Maker Address: onion_addr:port
     pub address: MakerAddress,
+    /// When this offer had been downloaded and cached locally
     pub timestamp: DateTime<Utc>,
 }
 

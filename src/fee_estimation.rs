@@ -112,7 +112,8 @@ impl FeeEstimator {
         Ok(final_fees)
     }
 
-    fn fetch_mempool_fees() -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
+    /// Fetches live feerates for different blocktargets from mempool.space
+    pub fn fetch_mempool_fees() -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
         let response = minreq::get(MEMPOOL_FEES_API_URL)
             .send()?
             .json::<MempoolFeeResponse>()?;
@@ -157,7 +158,8 @@ impl FeeEstimator {
         Ok(fees)
     }
 
-    fn fetch_esplora_fees() -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
+    /// Fetches (live + historical averages) feerates for different blocktargets from blockstream
+    pub fn fetch_esplora_fees() -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
         let response = minreq::get(ESPLORA_FEES_API_URL)
             .send()?
             .json::<EsploraFeeResponse>()?
