@@ -248,8 +248,8 @@ fn main() -> Result<(), TakerError> {
                         Some(
                             coinswap::utill::interactive_select(
                                 taker.get_wallet().list_all_utxo_spend_info(),
-                            )
-                            .unwrap()
+                                amount,
+                            )?
                             .iter()
                             .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
                             .collect::<Vec<_>>(),
@@ -304,11 +304,13 @@ fn main() -> Result<(), TakerError> {
                 }
                 Commands::Coinswap { makers, amount } => {
                     let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
+                        let target_amount = Amount::from_sat(*amount);
+
                         Some(
                             coinswap::utill::interactive_select(
                                 taker.get_wallet().list_all_utxo_spend_info(),
-                            )
-                            .unwrap()
+                                target_amount,
+                            )?
                             .iter()
                             .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
                             .collect::<Vec<_>>(),
