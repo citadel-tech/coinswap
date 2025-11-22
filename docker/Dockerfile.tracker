@@ -1,0 +1,22 @@
+# Tracker Dockerfile
+ARG BUILDER_IMAGE=coinswap-builder:latest
+ARG BASE_IMAGE=coinswap-base:latest
+
+FROM ${BUILDER_IMAGE} AS builder
+FROM ${BASE_IMAGE}
+
+# Copy tracker binary from builder
+COPY --from=builder --chown=coinswap:coinswap /usr/src/coinswap/target/release/tracker /app/bin/
+
+# Set proper permissions
+RUN chmod +x /app/bin/tracker
+
+# Expose ports
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD tracker --help > /dev/null 2>&1 || exit 1
+
+# Default command
+CMD ["tracker"]
