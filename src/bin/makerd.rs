@@ -34,11 +34,16 @@ struct Cli {
         name = "ADDRESS:PORT",
         long,
         short = 'r',
-        default_value = "127.0.0.1:48332"
+        default_value = "127.0.0.1:38332"
     )]
     pub rpc: String,
     /// Bitcoin Core ZMQ address:port value
-    #[clap(name = "ZMQ", long, short = 'z', default_value = "127.0.0.1:38332")]
+    #[clap(
+        name = "ZMQ",
+        long,
+        short = 'z',
+        default_value = "tcp://127.0.0.1:28332"
+    )]
     pub zmq: String,
     /// Bitcoin Core RPC authentication string (username, password).
     #[clap(

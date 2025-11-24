@@ -8,7 +8,7 @@ CONFIG_FILE="$SCRIPT_DIR/.docker-config"
 
 DEFAULT_BITCOIN_DATADIR="/home/coinswap/.bitcoin"
 DEFAULT_BITCOIN_NETWORK="signet"
-DEFAULT_BITCOIN_RPC_PORT="18332"
+DEFAULT_BITCOIN_RPC_PORT="38332"
 DEFAULT_BITCOIN_ZMQ_PORT="28332"
 DEFAULT_MAKERD_PORT="6102"
 DEFAULT_MAKERD_RPC_PORT="6103"
@@ -109,11 +109,11 @@ configure_setup() {
     read -p "Network [1]: " network_choice
     
     case "${network_choice:-1}" in
-        1) BITCOIN_NETWORK="regtest"; BITCOIN_RPC_PORT="18332"; BITCOIN_ZMQ_PORT="28332" ;;
+        1) BITCOIN_NETWORK="regtest"; BITCOIN_RPC_PORT="18442"; BITCOIN_ZMQ_PORT="28332" ;;
         2) BITCOIN_NETWORK="signet"; BITCOIN_RPC_PORT="38332"; BITCOIN_ZMQ_PORT="28332" ;;
         3) BITCOIN_NETWORK="testnet"; BITCOIN_RPC_PORT="18332"; BITCOIN_ZMQ_PORT="28332" ;;
         4) BITCOIN_NETWORK="mainnet"; BITCOIN_RPC_PORT="8332"; BITCOIN_ZMQ_PORT="28332" ;;
-        *) BITCOIN_NETWORK="regtest"; BITCOIN_RPC_PORT="18332"; BITCOIN_ZMQ_PORT="28332" ;;
+        *) BITCOIN_NETWORK="regtest"; BITCOIN_RPC_PORT="18442"; BITCOIN_ZMQ_PORT="28332" ;;
     esac
     
     echo ""
@@ -236,14 +236,17 @@ EOF
       -${BITCOIN_NETWORK}=1
       -server=1
       -fallbackfee=0.0001
-      -rpcuser=coinswap
-      -rpcpassword=coinswappass
+      -rpcuser=user
+      -rpcpassword=password
       -rpcallowip=0.0.0.0/0
       -rpcbind=0.0.0.0:$BITCOIN_RPC_PORT
       -zmqpubrawblock=tcp://0.0.0.0:$BITCOIN_ZMQ_PORT
       -zmqpubrawtx=tcp://0.0.0.0:$BITCOIN_ZMQ_PORT
       -txindex=1
+      -blockfilterindex=1
       -datadir=/home/bitcoin/.bitcoin
+      -signetchallenge=0014c9e9f8875a25c3cc6d99ad3e5fd54254d00fed44
+      -addnode=172.81.178.3:38333
     ports:
       - "$BITCOIN_RPC_PORT:$BITCOIN_RPC_PORT"
       - "$BITCOIN_ZMQ_PORT:$BITCOIN_ZMQ_PORT"
@@ -251,7 +254,7 @@ EOF
       - bitcoin-data:/home/bitcoin/.bitcoin
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "bitcoin-cli", "-rpcuser=coinswap", "-rpcpassword=coinswappass", "getblockchaininfo"]
+      test: ["CMD", "bitcoin-cli", "-rpcuser=user", "-rpcpassword=password", "getblockchaininfo"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -304,7 +307,7 @@ EOF
       base_fee = 100
       amount_relative_fee_ppt = 1000
       EOM
-      makerd --rpc bitcoind:$BITCOIN_RPC_PORT --auth coinswap:coinswappass
+      makerd -r bitcoind:$BITCOIN_RPC_PORT -a user:password
       "
     ports:
       - "$MAKERD_PORT:$MAKERD_PORT"
