@@ -258,7 +258,11 @@ impl Taker {
 
         let backend = ZmqBackend::new(&zmq_addr);
         let rpc_backend = BitcoinRpc::new(rpc_config.clone())?;
-        let registry = FileRegistry::load(data_dir.join(".taker-watcher"));
+        let blockchain_info = rpc_backend.get_blockchain_info()?;
+        let file_registry = data_dir
+            .join(".taker_watcher")
+            .join(blockchain_info.chain.to_string());
+        let registry = FileRegistry::load(file_registry);
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = mpsc::channel();
 

@@ -66,8 +66,8 @@ use crate::{
 // Default values for Taker configurations
 pub(crate) const REFUND_LOCKTIME: u16 = 20;
 pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
-pub(crate) const FIRST_CONNECT_ATTEMPTS: u32 = 5;
-pub(crate) const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1;
+pub(crate) const FIRST_CONNECT_ATTEMPTS: u32 = 2;
+pub(crate) const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 500;
 pub(crate) const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 30;
 
 // Tries reconnection by variable delay.
@@ -224,7 +224,11 @@ impl Taker {
 
         let backend = ZmqBackend::new(&zmq_addr);
         let rpc_backend = BitcoinRpc::new(rpc_config.clone())?;
-        let registry = FileRegistry::load(data_dir.join(".taker-watcher"));
+        let blockchain_info = rpc_backend.get_blockchain_info()?;
+        let file_registry = data_dir
+            .join(".taker_watcher")
+            .join(blockchain_info.chain.to_string());
+        let registry = FileRegistry::load(file_registry);
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = mpsc::channel();
 

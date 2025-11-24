@@ -1,14 +1,16 @@
+use bitcoin::Network;
 use bitcoincore_rpc::{
     bitcoin::{Block, BlockHash, Transaction, Txid},
     json::GetBlockchainInfoResult,
     Client, RpcApi,
 };
 use bitcoind::bitcoincore_rpc;
-use log::info;
+use log::debug;
 
 use crate::{
     wallet::RPCConfig,
     watch_tower::{
+        constants::{BITCOIN, REGTEST, SIGNET, TESTNET, TESTNET4},
         registry_storage::FileRegistry,
         utils::{process_fidelity, process_transaction},
         watcher_error::WatcherError,
@@ -63,12 +65,20 @@ impl BitcoinRpc {
         Ok(())
     }
 
-    pub fn run_recovery(&mut self, registry: &mut FileRegistry) -> Result<(), WatcherError> {
+    pub fn run_discovery(&mut self, registry: &mut FileRegistry) -> Result<(), WatcherError> {
+        log::info!("Starting with market discovery");
+        let blockchain_info = self.get_blockchain_info()?;
+        let coinswap_height = match blockchain_info.chain {
+            Network::Bitcoin => BITCOIN,
+            Network::Regtest => REGTEST,
+            Network::Signet => SIGNET,
+            Network::Testnet => TESTNET,
+            Network::Testnet4 => TESTNET4,
+        };
         let last_tip = registry
             .load_checkpoint()
             .map(|checkpoint| checkpoint.height)
-            .unwrap_or(1);
-        let blockchain_info = self.get_blockchain_info()?;
+            .unwrap_or(coinswap_height);
         let tip_height = blockchain_info.blocks + 1;
         for height in last_tip..tip_height {
             let block_hash = self.get_block_hash(height)?;
@@ -76,11 +86,12 @@ impl BitcoinRpc {
             for tx in block.txdata {
                 let onion_address = process_fidelity(&tx);
                 if let Some(onion_address) = onion_address {
-                    info!("New address found: {:?}", onion_address);
+                    debug!("Maker found in the market: {:?}", onion_address);
                     registry.insert_fidelity(tx.compute_txid(), onion_address);
                 }
             }
         }
+        log::info!("market discovery completed");
         Ok(())
     }
 }
