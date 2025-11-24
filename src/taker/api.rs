@@ -48,10 +48,15 @@ use crate::{
             TakerToMakerMessage,
         },
     },
-    taker::{config::TakerConfig, offers::OfferBook},
+    security::{load_sensitive_struct_from_value, SerdeJson},
+    taker::{
+        config::TakerConfig,
+        ffi::{MakerFeeInfo, SwapReport},
+        offers::OfferBook,
+    },
     utill::*,
     wallet::{
-        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
+        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletBackup, WalletError,
         WatchOnlySwapCoin,
     },
     watch_tower::{
@@ -331,6 +336,55 @@ impl Taker {
         );
     }
 
+    /// Restores a wallet from an encrypted or unencrypted JSON backup string for GUI/FFI applications.
+    ///
+    /// This is a non-interactive restore method designed for programmatic use via FFI bindings.
+    /// Unlike `restore_wallet`, this function accepts a JSON string directly and handles both
+    /// encrypted and unencrypted backups using [`load_sensitive_struct_from_value`].
+    ///
+    /// # Behavior
+    ///
+    /// 1. Parses the JSON backup string into a [`WalletBackup`] structure
+    /// 2. If encrypted, decrypts using the provided password and preserves encryption material
+    /// 3. Constructs the wallet path: `{data_dir_or_default}/wallets/{wallet_file_name_or_default}`
+    /// 4. Calls [`Wallet::restore`] to reconstruct the wallet with all UTXOs and metadata
+    ///
+    /// # Parameters
+    ///
+    /// - `data_dir`: Target directory, defaults to `~/.coinswap/taker`
+    /// - `wallet_file_name`: Restored wallet filename, defaults to name from backup if empty
+    /// - `backup_file`: JSON string containing the wallet backup (encrypted or plain)
+    /// - `password`: Required if backup is encrypted, ignored otherwise
+    pub fn restore_wallet_gui_app(
+        data_dir: Option<PathBuf>,
+        wallet_file_name: Option<String>,
+        rpc_config: RPCConfig,
+        backup_file: String,
+        password: Option<String>,
+    ) {
+        let value = serde_json::from_str(&backup_file).unwrap();
+        let (backup, encryption_material) =
+            load_sensitive_struct_from_value::<WalletBackup, SerdeJson>(&value, password.unwrap());
+        let restored_wallet_filename = wallet_file_name.unwrap_or("".to_string());
+
+        let restored_wallet_path = data_dir
+            .clone()
+            .unwrap_or(get_taker_dir())
+            .join("wallets")
+            .join(restored_wallet_filename);
+
+        if let Err(e) = Wallet::restore(
+            &backup,
+            &restored_wallet_path,
+            &rpc_config,
+            encryption_material,
+        ) {
+            log::error!("Wallet restore failed: {e:?}");
+        } else {
+            println!("Wallet restore succeeded!");
+        }
+    }
+
     /// Get wallet
     pub fn get_wallet(&self) -> &Wallet {
         &self.wallet
@@ -342,7 +396,10 @@ impl Taker {
     }
 
     ///  Does the coinswap process
-    pub fn do_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
+    pub fn do_coinswap(
+        &mut self,
+        swap_params: SwapParams,
+    ) -> Result<Option<SwapReport>, TakerError> {
         self.send_coinswap(swap_params)
     }
 
@@ -355,7 +412,10 @@ impl Taker {
     /// by executing the contract txs. If that fails too for any reason, user should manually call the [Taker::recover_from_swap].
     ///
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
-    pub(crate) fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
+    pub(crate) fn send_coinswap(
+        &mut self,
+        swap_params: SwapParams,
+    ) -> Result<Option<SwapReport>, TakerError> {
         let swap_start_time = std::time::Instant::now();
         let initial_utxoset = self.wallet.list_all_utxo();
         self.ongoing_swap_state.swap_params = swap_params.clone();
@@ -471,7 +531,7 @@ impl Taker {
                         log::error!("Could not initiate next hop. Error : {e:?}");
                         log::warn!("Starting recovery from existing swap");
                         self.recover_from_swap()?;
-                        return Ok(());
+                        return Ok(None);
                     }
                 };
 
@@ -491,7 +551,7 @@ impl Taker {
                         self.offerbook.add_bad_maker(bad_maker);
                     }
                     self.recover_from_swap()?;
-                    return Ok(());
+                    return Ok(None);
                 }
             }
 
@@ -507,7 +567,7 @@ impl Taker {
                         log::error!("Incoming SwapCoin Generation failed : {e:?}");
                         log::warn!("Starting recovery from existing swap");
                         self.recover_from_swap()?;
-                        return Ok(());
+                        return Ok(None);
                     }
                 }
             }
@@ -517,13 +577,13 @@ impl Taker {
         {
             if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
                 log::error!("Dropping Swap Process after full setup");
-                return Ok(());
+                return Ok(None);
             }
 
             if self.behavior == TakerBehavior::BroadcastContractAfterFullSetup {
                 log::error!("Special Behavior BroadcastContractAfterFullSetup");
                 self.recover_from_swap()?;
-                return Ok(());
+                return Ok(None);
             }
         }
 
@@ -547,28 +607,32 @@ impl Taker {
 
                 // Generate post-swap report
                 self.wallet.sync_and_save()?;
-                self.print_swap_report(prereset_swapstate, swap_start_time, initial_utxoset)?;
+                let swap_report = Some(self.generate_swap_report(
+                    prereset_swapstate,
+                    swap_start_time,
+                    initial_utxoset,
+                )?);
+                log::info!("Successfully Completed Coinswap.");
+                Ok(swap_report)
             }
             Err(e) => {
                 log::error!("Swap Settlement Failed : {e:?}");
                 log::warn!("Starting recovery from existing swap");
                 self.recover_from_swap()?;
-                return Ok(());
+                Ok(None)
             }
         }
-        log::info!("Successfully Completed Coinswap.");
-        Ok(())
     }
 
-    fn print_swap_report(
+    fn generate_swap_report(
         &self,
         prereset_swapstate: &OngoingSwapState,
         start_time: std::time::Instant,
         initial_utxos: Vec<ListUnspentResultEntry>,
-    ) -> Result<(), TakerError> {
+    ) -> Result<SwapReport, TakerError> {
         let swap_state = &prereset_swapstate;
 
-        let mut target_amount = swap_state.swap_params.send_amount.to_sat();
+        let target_amount = swap_state.swap_params.send_amount.to_sat();
         let swap_duration = start_time.elapsed();
 
         let all_regular_utxo = self
@@ -607,7 +671,6 @@ impl Taker {
             .map(|utxo| utxo.amount.to_sat())
             .collect::<Vec<u64>>();
 
-        // Present in current set but not in initial regular set (created)
         let output_regular_utxos = all_regular_utxo
             .iter()
             .filter(|utxo| {
@@ -617,17 +680,50 @@ impl Taker {
                 };
                 !initial_outpoints.contains(&final_outpoint)
             })
+            .collect::<Vec<_>>();
+
+        // Present in current set but not in initial regular set (created)
+        let output_change_amounts = output_regular_utxos
+            .iter()
             .map(|utxo| utxo.amount.to_sat())
             .collect::<Vec<u64>>();
+
+        let network = self.wallet.store.network;
 
         let output_swap_utxos = self
             .wallet
             .list_swept_incoming_swap_utxos()
             .into_iter()
-            .map(|(utxo, _)| utxo.amount.to_sat())
+            .map(|(utxo, _)| {
+                let address = utxo
+                    .address
+                    .as_ref()
+                    .and_then(|addr| addr.clone().require_network(network).ok())
+                    .map(|addr| addr.to_string())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                (utxo.amount.to_sat(), address)
+            })
+            .collect::<Vec<(u64, String)>>();
+
+        let output_swap_amounts = output_swap_utxos
+            .iter()
+            .map(|(amount, _)| *amount)
             .collect::<Vec<u64>>();
 
-        let output_utxos = [output_regular_utxos.clone(), output_swap_utxos.clone()].concat();
+        let output_change_utxos = output_regular_utxos
+            .iter()
+            .map(|utxo| {
+                let address = utxo
+                    .address
+                    .as_ref()
+                    .and_then(|addr| addr.clone().require_network(network).ok())
+                    .map(|addr| addr.to_string())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                (utxo.amount.to_sat(), address)
+            })
+            .collect::<Vec<(u64, String)>>();
+
+        let output_utxos = [output_change_amounts.clone(), output_swap_amounts.clone()].concat();
 
         let total_input_amount = input_utxos.iter().sum::<u64>();
         let total_output_amount = output_utxos.iter().sum::<u64>();
@@ -696,6 +792,10 @@ impl Taker {
         let total_fee = total_input_amount - total_output_amount;
         println!("\x1b[1;37mTotal Fees        :\x1b[0m \x1b[1;31m{total_fee} sats\x1b[0m",);
 
+        // Collect maker fee information
+        let mut maker_fee_info = Vec::new();
+        let mut temp_target_amount = swap_state.swap_params.send_amount.to_sat();
+
         let total_maker_fees = (0..swap_state.swap_params.maker_count)
             .map(|maker_index| {
                 let maker_refund_locktime = REFUND_LOCKTIME
@@ -707,14 +807,14 @@ impl Taker {
                     .peer
                     .offer
                     .amount_relative_fee_pct
-                    * target_amount as f64)
+                    * temp_target_amount as f64)
                     / 1_00.00;
                 let time_rel_fee = (swap_state.peer_infos[maker_index]
                     .peer
                     .offer
                     .time_relative_fee_pct
                     * maker_refund_locktime as f64
-                    * target_amount as f64)
+                    * temp_target_amount as f64)
                     / 1_00.00;
 
                 println!("\n\x1b[1;33mMaker {}:\x1b[0m", maker_index + 1);
@@ -722,14 +822,27 @@ impl Taker {
                 println!("    Amount Relative Fee  : {amount_rel_fee:.2}");
                 println!("    Time Relative Fee    : {time_rel_fee:.2}");
 
-                target_amount -= (base_fee + amount_rel_fee + time_rel_fee) as u64;
-                base_fee + amount_rel_fee + time_rel_fee
+                let total_maker_fee = base_fee + amount_rel_fee + time_rel_fee;
+
+                // Store maker fee info
+                maker_fee_info.push(MakerFeeInfo {
+                    maker_index,
+                    maker_address: swap_state.peer_infos[maker_index].peer.address.to_string(),
+                    base_fee,
+                    amount_relative_fee: amount_rel_fee,
+                    time_relative_fee: time_rel_fee,
+                    total_fee: total_maker_fee,
+                });
+
+                temp_target_amount -= total_maker_fee as u64;
+                total_maker_fee
             })
             .sum::<f64>() as u64;
 
         let mining_fee = total_fee - total_maker_fees;
         println!("\n\x1b[1;37mMining Fees       :\x1b[0m \x1b[36m{mining_fee} sats\x1b[0m",);
-        let fee_percentage = (total_fee as f64 / target_amount as f64) * 100.0;
+        let fee_percentage =
+            (total_fee as f64 / swap_state.swap_params.send_amount.to_sat() as f64) * 100.0;
         println!("\x1b[1;37mTotal Fee Rate    :\x1b[0m \x1b[1;31m{fee_percentage:.2} %\x1b[0m",);
 
         println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
@@ -737,14 +850,55 @@ impl Taker {
         println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
         println!("\x1b[1;37mInput UTXOs:\x1b[0m {input_utxos:?}");
         println!("\x1b[1;37mOutput UTXOs:\x1b[0m");
-        println!("  Seed / Regular : {output_regular_utxos:?}");
+        println!("  Seed / Regular : {output_change_utxos:?}");
         println!("  Swap Coins     : {output_swap_utxos:?}");
 
         println!("\n\x1b[1;36m════════════════════════════════════════════════════════════════════════════════");
         println!("                                END REPORT");
         println!("════════════════════════════════════════════════════════════════════════════════\x1b[0m\n");
 
-        Ok(())
+        // Collect maker addresses
+        let maker_addresses = swap_state
+            .peer_infos
+            .iter()
+            .take(swap_state.swap_params.maker_count)
+            .map(|peer_info| peer_info.peer.address.to_string())
+            .collect::<Vec<_>>();
+
+        // Collect funding txids by hop
+        let funding_txids_by_hop = swap_state
+            .funding_txs
+            .iter()
+            .map(|(txs, _)| {
+                txs.iter()
+                    .map(|tx| tx.compute_txid().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let report = SwapReport {
+            swap_id: swap_state.id.clone(),
+            swap_duration_seconds: swap_duration.as_secs_f64(),
+            target_amount: swap_state.swap_params.send_amount.to_sat(),
+            total_input_amount,
+            total_output_amount,
+            makers_count: swap_state.swap_params.maker_count,
+            maker_addresses,
+            total_funding_txs,
+            funding_txids_by_hop,
+            total_fee,
+            total_maker_fees,
+            mining_fee,
+            fee_percentage,
+            maker_fee_info,
+            input_utxos,
+            output_change_amounts,
+            output_swap_amounts,
+            output_swap_utxos,
+            output_change_utxos,
+        };
+
+        Ok(report)
     }
 
     // ######## PROTOCOL SUBROUTINES ############
@@ -856,7 +1010,6 @@ impl Taker {
                 self.ongoing_swap_state.funding_txs.push(stuffs);
             }
             Err(e) => {
-                log::error!("Error: {e:?}");
                 if let TakerError::ContractsBroadcasted(_) = e {
                     self.offerbook.add_bad_maker(&maker);
                 }

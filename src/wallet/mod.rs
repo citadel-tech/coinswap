@@ -12,11 +12,11 @@ mod storage;
 mod swapcoin;
 mod swapcoin2;
 
-pub(crate) use api::UTXOSpendInfo;
-pub use api::{Balances, Wallet};
+pub use api::{Balances, UTXOSpendInfo, Wallet};
 pub use backup::WalletBackup;
 pub use error::WalletError;
-pub(crate) use fidelity::{fidelity_redeemscript, FidelityBond, FidelityError};
+pub use fidelity::FidelityBond;
+pub(crate) use fidelity::{fidelity_redeemscript, FidelityError};
 pub use rpc::RPCConfig;
 pub use spend::Destination;
 pub(crate) use swapcoin::{

@@ -27,7 +27,9 @@ use bitcoin::{
     sighash::{EcdsaSighashType, SighashCache},
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, Weight,
 };
-use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
+use bitcoind::bitcoincore_rpc::{
+    bitcoincore_rpc_json::ListUnspentResultEntry, json::ListTransactionResult, Client, RpcApi,
+};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -138,32 +140,56 @@ const WATCH_ONLY_SWAPCOIN_LABEL: &str = "watchonly_swapcoin_label";
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum UTXOSpendInfo {
     /// Seed Coin
-    SeedCoin { path: String, input_value: Amount },
-    /// Coins that we have received in a swap
-    IncomingSwapCoin { multisig_redeemscript: ScriptBuf },
-    /// Coins that we have sent in a swap
-    OutgoingSwapCoin { multisig_redeemscript: ScriptBuf },
-    /// Timelock Contract
-    TimelockContract {
-        swapcoin_multisig_redeemscript: ScriptBuf,
-        input_value: Amount,
-    },
-    /// HashLockContract
-    HashlockContract {
-        swapcoin_multisig_redeemscript: ScriptBuf,
-        input_value: Amount,
-    },
-    /// Fidelity Bond Coin
-    FidelityBondCoin { index: u32, input_value: Amount },
-    ///Swept incoming swap coin
-    SweptCoin {
+    SeedCoin {
+        /// HD derivation path for the private key
         path: String,
+        /// UTXO value in satoshis
         input_value: Amount,
+    },
+    /// Coins that we have received in a swap
+    IncomingSwapCoin {
+        /// Multisig redeem script for spending (2-OF-2 MSIG)
+        multisig_redeemscript: ScriptBuf,
+    },
+    /// Coins that we have sent in a swap
+    OutgoingSwapCoin {
+        /// Multisig redeem script for spending (2-OF-2 MSIG)
+        multisig_redeemscript: ScriptBuf,
+    },
+    /// Timelock contract UTXO (can be claimed after locktime expiry)
+    TimelockContract {
+        /// Original swap multisig redeem script
+        swapcoin_multisig_redeemscript: ScriptBuf,
+        /// UTXO value in satoshis
+        input_value: Amount,
+    },
+    /// Hashlock contract UTXO (requires hash preimage to spend)
+    HashlockContract {
+        /// Original swap multisig redeem script
+        swapcoin_multisig_redeemscript: ScriptBuf,
+        /// UTXO value in satoshis
+        input_value: Amount,
+    },
+    /// Fidelity Bond Coin (time-locked)
+    FidelityBondCoin {
+        /// Bond index in wallet's fidelity bond list
+        index: u32,
+        /// UTXO value in satoshis
+        input_value: Amount,
+    },
+    /// Swept incoming swap coin (recovered to regular wallet address at the end of the Swap)
+    SweptCoin {
+        /// HD derivation path for the swept address
+        path: String,
+        /// UTXO value in satoshis
+        input_value: Amount,
+        /// Original multisig script before sweeping
         original_multisig_redeemscript: ScriptBuf,
     },
 }
 
 impl UTXOSpendInfo {
+    /// Estimates Witness Size for different types of UTXOs in the context of Coinswap
     pub fn estimate_witness_size(&self) -> usize {
         const P2PWPKH_WITNESS_SIZE: usize = 107;
         const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 222;
@@ -978,6 +1004,15 @@ impl Wallet {
             .into_iter()
             .map(|addrs| addrs.assume_checked())
             .collect())
+    }
+
+    /// Returns a list of recent Incoming Transactions (bydefault last 10)
+    pub fn get_transactions(
+        &self,
+        count: Option<usize>,
+        skip: Option<usize>,
+    ) -> Result<Vec<ListTransactionResult>, WalletError> {
+        Ok(self.rpc.list_transactions(None, count, skip, Some(true))?)
     }
 
     /// Refreshes the offer maximum size cache based on the current wallet's unspent transaction outputs (UTXOs).
@@ -2052,5 +2087,43 @@ impl Wallet {
             log::info!("Wallet sync and save complete.");
         }
         Ok(broadcasted)
+    }
+
+    /// Sends specified Amount of Satoshis to an External Address
+    pub fn send_to_address(
+        &mut self,
+        amount: u64,
+        address: String,
+        fee_rate: Option<f64>,
+        manually_selected_outpoints: Option<Vec<OutPoint>>,
+    ) -> Result<Txid, WalletError> {
+        let amount = Amount::from_sat(amount);
+
+        let coins_to_spend = self.coin_select(
+            amount,
+            fee_rate.unwrap_or(MIN_FEE_RATE),
+            manually_selected_outpoints,
+        )?;
+
+        let addr = Address::from_str(&address)
+            .map_err(|e| WalletError::General(format!("Invalid address: {}", e)))?
+            .assume_checked();
+        let outputs = vec![(addr, amount)];
+        let destination = Destination::Multi {
+            outputs,
+            op_return_data: None,
+        };
+
+        let tx = self.spend_from_wallet(
+            fee_rate.unwrap_or(MIN_FEE_RATE),
+            destination,
+            &coins_to_spend,
+        )?;
+
+        let txid = self.send_tx(&tx).unwrap();
+        self.sync_no_fail();
+        println!("Send to Address TxId: {txid}");
+
+        Ok(txid)
     }
 }

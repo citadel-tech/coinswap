@@ -236,23 +236,35 @@ pub(crate) struct MakerHello {
 /// Contains proof data related to fidelity bond.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FidelityProof {
-    pub(crate) bond: FidelityBond,
-    pub(crate) cert_hash: Hash,
-    pub(crate) cert_sig: bitcoin::secp256k1::ecdsa::Signature,
+    /// Details for Fidelity Bond
+    pub bond: FidelityBond,
+    /// Double SHA256 hash of certificate message proving bond ownership and binding to maker address
+    pub cert_hash: Hash,
+    /// ECDSA signature over cert_hash using the bond's private key
+    pub cert_sig: bitcoin::secp256k1::ecdsa::Signature,
 }
 
 /// Represents an offer in the context of the Coinswap protocol.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub(crate) struct Offer {
-    pub(crate) base_fee: u64,                // base fee in sats
-    pub(crate) amount_relative_fee_pct: f64, // % fee on total amount
-    pub(crate) time_relative_fee_pct: f64, // amount * refund_locktime * TRF% = fees for locking the fund.
-    pub(crate) required_confirms: u32,
-    pub(crate) minimum_locktime: u16,
-    pub(crate) max_size: u64,
-    pub(crate) min_size: u64,
-    pub(crate) tweakable_point: PublicKey,
-    pub(crate) fidelity: FidelityProof,
+pub struct Offer {
+    /// Base fee charged per swap in satoshis (fixed cost component)
+    pub base_fee: u64, // base fee in sats
+    /// Percentage fee relative to swap amount
+    pub amount_relative_fee_pct: f64, // % fee on total amount
+    /// Percentage fee for time-locked funds
+    pub time_relative_fee_pct: f64, // amount * refund_locktime * TRF% = fees for locking the fund.
+    /// Minimum confirmations required before proceeding with swap
+    pub required_confirms: u32,
+    /// Minimum timelock duration in blocks for contract transactions
+    pub minimum_locktime: u16,
+    /// Maximum swap amount accepted in sats
+    pub max_size: u64,
+    /// Minimum swap amount accepted in sats
+    pub min_size: u64,
+    /// Public key for Tor onion address generation and authentication
+    pub tweakable_point: PublicKey,
+    /// Cryptographic proof of fidelity bond for Sybil resistance
+    pub fidelity: FidelityProof,
 }
 
 /// Contract Tx signatures provided by a Sender of a Coinswap.

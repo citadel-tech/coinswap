@@ -331,3 +331,58 @@ pub fn load_sensitive_struct_interactive<T: DeserializeOwned, F: SerdeFormat>(
 
     (sensitive_struct, encryption_material)
 }
+
+/// Loads a sensitive struct from a JSON value, supporting both encrypted and plaintext formats.
+///
+/// This is a non-interactive variant of [`load_sensitive_struct_interactive`] designed for
+/// programmatic use via FFI bindings or GUI applications where password prompts are not feasible.
+///
+/// # Behavior
+///
+/// The function attempts to deserialize the JSON value in two steps:
+///
+/// 1. **Unencrypted:** Attempts to deserialize the value directly as `T`.
+/// 2. **Encrypted:** If that fails, attempts to deserialize as [`EncryptedData`],
+///    then decrypts it using the provided password (no interactive prompt).
+///
+/// The deserialization format is defined by the [`SerdeFormat`] trait implementation
+/// passed via the type parameter `F`.`
+///
+/// # Type Parameters
+///
+/// - `T`: The struct type to load.
+/// - `F`: A type implementing [`SerdeFormat`].
+pub fn load_sensitive_struct_from_value<T: DeserializeOwned, F: SerdeFormat>(
+    value: &serde_json::Value,
+    password: String,
+) -> (T, Option<KeyMaterial>) {
+    let content = serde_json::to_vec(value).expect("Failed to serialize JSON value");
+
+    let (sensitive_struct, encryption_material) = match F::from_slice::<T>(&content) {
+        Ok(unencrypted_struct) => (unencrypted_struct, None),
+        Err(unencrypted_err) => match F::from_slice::<EncryptedData>(&content) {
+            Ok(encrypted_struct) => {
+                let encryption_password = password;
+
+                let enc_material = KeyMaterial::existing(
+                    encryption_password,
+                    encrypted_struct.nonce,
+                    encrypted_struct.pbkdf2_salt,
+                );
+
+                let decrypted = decrypt_struct::<T>(encrypted_struct, &enc_material)
+                    .unwrap_or_else(|err| panic!("Failed to decrypt struct: {:?}", err));
+
+                (decrypted, Some(enc_material))
+            }
+            Err(encrypted_err) => {
+                panic!(
+                    "Failed to deserialize JSON:\n- As unencrypted: {}\n- As encrypted: {}",
+                    unencrypted_err, encrypted_err
+                );
+            }
+        },
+    };
+
+    (sensitive_struct, encryption_material)
+}
