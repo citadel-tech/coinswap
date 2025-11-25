@@ -9,7 +9,8 @@ The Docker setup provides a complete environment for running Coinswap applicatio
 - **Single unified Dockerfile** containing all Coinswap components
 - **Alpine Linux 3.20** base image for minimal size
 - **Rust 1.90.0** for building the applications
-- **External images** for Bitcoin Core and Tor
+- **Custom Bitcoin Mutinynet image** for Signet testing
+- **External Tor image** (`leplusorg/tor`)
 - **Interactive configuration** with automatic service detection
 - Coinswap binaries: `makerd`, `maker-cli`, `taker`
 
