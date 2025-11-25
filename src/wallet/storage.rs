@@ -18,7 +18,10 @@ use std::{
     path::Path,
 };
 
-use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
+use super::{
+    swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
+    swapcoin2::{IncomingSwapCoinV2, OutgoingSwapCoinV2},
+};
 
 use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 
@@ -39,6 +42,10 @@ pub(crate) struct WalletStore {
     pub(super) incoming_swapcoins: HashMap<ScriptBuf, IncomingSwapCoin>,
     /// Map of multisig redeemscript to outgoing swapcoins.
     pub(super) outgoing_swapcoins: HashMap<ScriptBuf, OutgoingSwapCoin>,
+    /// Map of taproot contract txid to incoming taproot swapcoins.
+    pub(super) incoming_swapcoins_v2: HashMap<bitcoin::Txid, IncomingSwapCoinV2>,
+    /// Map of taproot contract txid to outgoing taproot swapcoins.
+    pub(super) outgoing_swapcoins_v2: HashMap<bitcoin::Txid, OutgoingSwapCoinV2>,
     /// Map of prevout to contract redeemscript.
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
     /// Map of swept incoming swap coins to prevent mixing with regular UTXOs
@@ -73,6 +80,8 @@ impl WalletStore {
             offer_maxsize: 0,
             incoming_swapcoins: HashMap::new(),
             outgoing_swapcoins: HashMap::new(),
+            incoming_swapcoins_v2: HashMap::new(),
+            outgoing_swapcoins_v2: HashMap::new(),
             prevout_to_contract_map: HashMap::new(),
             swept_incoming_swapcoins: HashMap::new(),
             fidelity_bond: HashMap::new(),

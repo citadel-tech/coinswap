@@ -50,6 +50,20 @@ use std::{
 
 use super::error::TakerError;
 
+/// Represents how a taproot contract output was spent
+#[derive(Debug, Clone)]
+pub enum TaprootSpendingPath {
+    /// Cooperative key-path spend (MuSig2)
+    KeyPath,
+    /// Script-path spend using hashlock
+    Hashlock {
+        /// The 32-byte hash preimage revealed in the spending transaction
+        preimage: [u8; 32],
+    },
+    /// Script-path spend using timelock
+    Timelock,
+}
+
 #[derive(Debug, Default, Clone)]
 /// Parameters for initiating a coinswap
 pub struct SwapParams {
@@ -63,7 +77,6 @@ pub struct SwapParams {
     pub required_confirms: u32,
 }
 
-#[derive(Default)]
 struct OngoingSwapState {
     pub swap_params: SwapParams,
     pub active_preimage: Preimage,
@@ -75,6 +88,63 @@ struct OngoingSwapState {
     // Private key handover: store maker outgoing contract private keys (indexed by maker position)
     // Each maker hands over their outgoing contract private key after sweeping their incoming contract
     pub maker_outgoing_privkeys: Vec<Option<bitcoin::secp256k1::SecretKey>>,
+}
+
+impl Default for OngoingSwapState {
+    fn default() -> Self {
+        use bitcoin::{secp256k1::SecretKey, ScriptBuf, Transaction};
+
+        let dummy_key = SecretKey::from_slice(&[1u8; 32]).expect("valid key");
+
+        Self {
+            swap_params: SwapParams::default(),
+            active_preimage: Preimage::default(),
+            id: String::new(),
+            suitable_makers: Vec::new(),
+            chosen_makers: Vec::new(),
+            outgoing_contract: OutgoingSwapCoinV2 {
+                my_privkey: None,
+                my_pubkey: None,
+                other_pubkey: None,
+                tap_tweak: None,
+                internal_key: None,
+                hashlock_script: ScriptBuf::new(),
+                timelock_script: ScriptBuf::new(),
+                contract_tx: Transaction {
+                    version: bitcoin::transaction::Version::TWO,
+                    lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
+                    input: vec![],
+                    output: vec![],
+                },
+                hash_preimage: None,
+                other_privkey: None,
+                timelock_privkey: dummy_key,
+                funding_amount: Amount::ZERO,
+            },
+            incoming_contract: IncomingSwapCoinV2 {
+                my_privkey: None,
+                my_pubkey: None,
+                other_pubkey: None,
+                hashlock_script: ScriptBuf::new(),
+                timelock_script: ScriptBuf::new(),
+                contract_tx: Transaction {
+                    version: bitcoin::transaction::Version::TWO,
+                    lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
+                    input: vec![],
+                    output: vec![],
+                },
+                contract_txid: None,
+                tap_tweak: None,
+                internal_key: None,
+                spending_tx: None,
+                hash_preimage: None,
+                other_privkey: None,
+                hashlock_privkey: dummy_key,
+                funding_amount: Amount::ZERO,
+            },
+            maker_outgoing_privkeys: Vec::new(),
+        }
+    }
 }
 
 pub(crate) const TCP_TIMEOUT_SECONDS: u64 = 300;
@@ -382,6 +452,24 @@ impl Taker {
         };
         self.wallet.send_tx(tx)?;
 
+        // Register outgoing contract with watcher for monitoring
+        let outgoing_contract_txid = tx.compute_txid();
+        let outgoing_outpoint = bitcoin::OutPoint {
+            txid: outgoing_contract_txid,
+            vout: 0,
+        };
+        self.watch_service.register_watch_request(outgoing_outpoint);
+        log::info!(
+            "Registered watcher for taker's outgoing contract: {}",
+            outgoing_outpoint
+        );
+
+        // Persist outgoing swapcoin to wallet store for recovery
+        self.wallet
+            .add_outgoing_swapcoin_v2(&self.ongoing_swap_state.outgoing_contract);
+        self.wallet.save_to_disk()?;
+        log::info!("Persisted outgoing swapcoin to wallet store and saved to disk");
+
         for tx in &outgoing_signed_contract_transactions {
             self.wallet.wait_for_tx_confirmation(tx.compute_txid())?;
         }
@@ -638,6 +726,8 @@ impl Taker {
         self.ongoing_swap_state.outgoing_contract.my_pubkey = Some(bitcoin::PublicKey::from(
             outgoing_contract_my_keypair.public_key(),
         ));
+        // Store preimage on outgoing contract for recovery
+        self.ongoing_swap_state.outgoing_contract.hash_preimage = Some(preimage);
 
         let (incoming_contract_my_privkey, _) = self.wallet.get_tweakable_keypair()?;
         let incoming_contract_my_keypair =
@@ -646,14 +736,26 @@ impl Taker {
         self.ongoing_swap_state.incoming_contract.my_pubkey = Some(bitcoin::PublicKey::from(
             incoming_contract_my_keypair.public_key(),
         ));
+        // Store preimage on incoming contract for recovery
+        self.ongoing_swap_state.incoming_contract.hash_preimage = Some(preimage);
+
+        // For outgoing contract scripts:
+        // - Hashlock: Created with MAKER's pubkey (so maker can spend it with preimage)
+        // - Timelock: Created with TAKER's pubkey (so taker can recover after timelock)
+
+        let first_maker = self
+            .ongoing_swap_state
+            .chosen_makers
+            .first()
+            .ok_or(TakerError::General("No makers chosen".to_string()))?;
+        let maker_pubkey = first_maker.offer.tweakable_point.inner;
+        let maker_x_only = bitcoin::key::XOnlyPublicKey::from(maker_pubkey);
 
         // Create scripts for outgoing contract
         let hash = sha256::Hash::hash(&preimage);
-        let hashlock_script =
-            create_hashlock_script(&hash.to_byte_array(), &outgoing_contract_my_x_only);
+        let hashlock_script = create_hashlock_script(&hash.to_byte_array(), &maker_x_only);
         self.ongoing_swap_state.outgoing_contract.hashlock_script = hashlock_script.clone();
 
-        // Taker gets the longest timelock (higher than all makers)
         let maker_count = self.ongoing_swap_state.swap_params.maker_count;
         let taker_timelock = REFUND_LOCKTIME + REFUND_LOCKTIME_STEP * maker_count as u16;
         let timelock =
@@ -716,7 +818,7 @@ impl Taker {
 
         let outgoing_contract_taproot_address = bitcoin::Address::from_script(
             &outgoing_contract_taproot_script,
-            bitcoin::Network::Regtest,
+            self.wallet.store.network,
         )
         .map_err(|e| TakerError::General(format!("Failed to create taproot address: {:?}", e)))?;
 
@@ -742,6 +844,11 @@ impl Taker {
                 &[(funding_utxo.clone(), funding_utxo_info)],
             )?
         };
+
+        // Store the contract transaction and funding amount in the outgoing swapcoin
+        self.ongoing_swap_state.outgoing_contract.contract_tx = signed_outgoing_contract_tx.clone();
+        self.ongoing_swap_state.outgoing_contract.funding_amount =
+            self.ongoing_swap_state.swap_params.send_amount;
 
         contract_transactions.push(signed_outgoing_contract_tx);
 
@@ -917,6 +1024,38 @@ impl Taker {
         if let Some(incoming_contract_other_pubkey) = final_contract.pubkeys_a.first() {
             self.ongoing_swap_state.incoming_contract.other_pubkey =
                 Some(*incoming_contract_other_pubkey);
+        }
+
+        // Register incoming contract with watcher for monitoring
+        if let Some(incoming_contract_txid) = final_contract.contract_txs.first() {
+            let incoming_outpoint = bitcoin::OutPoint {
+                txid: *incoming_contract_txid,
+                vout: 0,
+            };
+            self.watch_service.register_watch_request(incoming_outpoint);
+            log::info!(
+                "Registered watcher for taker's incoming contract: {}",
+                incoming_outpoint
+            );
+
+            // Fetch and store the incoming contract transaction
+            let incoming_contract_tx = self
+                .wallet
+                .rpc
+                .get_raw_transaction(incoming_contract_txid, None)
+                .map_err(|e| {
+                    TakerError::General(format!("Failed to get incoming contract tx: {:?}", e))
+                })?;
+            self.ongoing_swap_state.incoming_contract.contract_tx = incoming_contract_tx.clone();
+            // Set funding amount from the transaction output
+            self.ongoing_swap_state.incoming_contract.funding_amount =
+                incoming_contract_tx.output[0].value;
+
+            // Persist incoming swapcoin to wallet store for recovery
+            self.wallet
+                .add_incoming_swapcoin_v2(&self.ongoing_swap_state.incoming_contract);
+            self.wallet.save_to_disk()?;
+            log::info!("Persisted incoming swapcoin to wallet store and saved to disk");
         }
 
         Ok(())
@@ -1186,6 +1325,212 @@ impl Taker {
 
         log::info!("  Broadcast taker sweep transaction: {}", txid);
 
+        Ok(())
+    }
+
+    /// Recover from a failed taproot swap by attempting to spend unfinished contracts
+    ///
+    /// Recovery strategy:
+    /// 1. For incoming contracts: Try hashlock spend using stored preimage, fallback to timelock
+    /// 2. For outgoing contracts: Wait for timelock maturity, then spend via timelock
+    /// 3. Skip contracts that were already spent (via keypath, hashlock, or timelock)
+    pub fn recover_from_swap(&mut self) -> Result<(), TakerError> {
+        log::info!("Starting taproot swap recovery");
+
+        // Find unfinished swapcoins (contracts that weren't cooperatively swept)
+        let (incoming_swapcoins, outgoing_swapcoins) = self.wallet.find_unfinished_swapcoins_v2();
+
+        if incoming_swapcoins.is_empty() && outgoing_swapcoins.is_empty() {
+            log::info!("No unfinished swapcoins found - nothing to recover");
+            return Ok(());
+        }
+
+        log::info!(
+            "Found {} incoming and {} outgoing unfinished swapcoins",
+            incoming_swapcoins.len(),
+            outgoing_swapcoins.len()
+        );
+
+        // Try to recover incoming swapcoins first (we're the receiver, have hashlock privilege)
+        if !incoming_swapcoins.is_empty() {
+            log::info!(
+                "Attempting to recover {} incoming swapcoins",
+                incoming_swapcoins.len()
+            );
+
+            for incoming in &incoming_swapcoins {
+                let contract_txid = incoming.contract_tx.compute_txid();
+                log::info!(
+                    "Checking recovery options for incoming contract: {}",
+                    contract_txid
+                );
+
+                // Check if contract has been spent already
+                let outpoint = bitcoin::OutPoint {
+                    txid: contract_txid,
+                    vout: 0,
+                };
+                self.watch_service.watch_request(outpoint);
+
+                let spending_result = if let Some(event) = self.watch_service.wait_for_event() {
+                    match event {
+                        WatcherEvent::UtxoSpent { spending_tx, .. } => spending_tx,
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
+                match spending_result {
+                    Some(spending_tx) => {
+                        log::info!(
+                            "Contract {} already spent, analyzing spending path",
+                            contract_txid
+                        );
+
+                        // Detect how it was spent by analyzing witness
+                        match crate::protocol::contract2::detect_taproot_spending_path(
+                            &spending_tx,
+                        )? {
+                            TaprootSpendingPath::KeyPath => {
+                                log::info!(
+                                    "Contract spent via cooperative key-path - no recovery needed"
+                                );
+                                continue;
+                            }
+                            TaprootSpendingPath::Hashlock { preimage: _ } => {
+                                log::info!("Contract spent via hashlock - preimage available");
+                                continue;
+                            }
+                            TaprootSpendingPath::Timelock => {
+                                log::warn!("Contract spent via timelock by counterparty - this indicates failure");
+                                continue;
+                            }
+                        }
+                    }
+                    None => {
+                        // Contract not spent yet - we can try to spend it
+                        log::info!(
+                            "Contract {} not spent yet - attempting hashlock recovery",
+                            contract_txid
+                        );
+
+                        // Try hashlock first (we're the receiver)
+                        if let Some(preimage) = &incoming.hash_preimage {
+                            match self.wallet.spend_via_hashlock_v2(
+                                incoming,
+                                preimage,
+                                &self.watch_service,
+                            ) {
+                                Ok(txid) => {
+                                    log::info!(
+                                        "Successfully recovered incoming contract via hashlock: {}",
+                                        txid
+                                    );
+                                }
+                                Err(e) => {
+                                    log::warn!("Failed to spend via hashlock: {:?}, will retry with timelock after maturity", e);
+                                }
+                            }
+                        } else {
+                            log::warn!("No preimage available for incoming contract - waiting for timelock");
+                            // Will try timelock below after checking maturity
+                        }
+                    }
+                }
+            }
+        }
+
+        // Recover outgoing swapcoins (we're the sender, must wait for timelock)
+        if !outgoing_swapcoins.is_empty() {
+            log::info!(
+                "Attempting to recover {} outgoing swapcoins",
+                outgoing_swapcoins.len()
+            );
+
+            for outgoing in &outgoing_swapcoins {
+                let contract_txid = outgoing.contract_tx.compute_txid();
+                log::info!(
+                    "Checking recovery options for outgoing contract: {}",
+                    contract_txid
+                );
+
+                // Check if contract has been spent
+                let outpoint = bitcoin::OutPoint {
+                    txid: contract_txid,
+                    vout: 0,
+                };
+                self.watch_service.watch_request(outpoint);
+
+                let spending_result = if let Some(event) = self.watch_service.wait_for_event() {
+                    match event {
+                        WatcherEvent::UtxoSpent { spending_tx, .. } => spending_tx,
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
+                match spending_result {
+                    Some(spending_tx) => {
+                        log::info!("Outgoing contract {} already spent", contract_txid);
+
+                        match crate::protocol::contract2::detect_taproot_spending_path(
+                            &spending_tx,
+                        )? {
+                            TaprootSpendingPath::KeyPath => {
+                                log::info!("Contract spent cooperatively - no recovery needed");
+                                continue;
+                            }
+                            TaprootSpendingPath::Hashlock { .. } => {
+                                log::info!("Contract spent by receiver via hashlock - swap partially completed");
+                                continue;
+                            }
+                            TaprootSpendingPath::Timelock => {
+                                log::warn!("We already recovered this via timelock");
+                                continue;
+                            }
+                        }
+                    }
+                    None => {
+                        // Contract not spent - check if timelock matured
+                        log::info!(
+                            "Outgoing contract {} not spent - checking timelock maturity",
+                            contract_txid
+                        );
+
+                        if let Some(timelock) = outgoing.get_timelock() {
+                            if crate::protocol::contract2::is_timelock_mature(
+                                &self.wallet.rpc,
+                                &contract_txid,
+                                timelock,
+                            )? {
+                                log::info!("Timelock matured, attempting recovery");
+
+                                match self
+                                    .wallet
+                                    .spend_via_timelock_v2(outgoing, &self.watch_service)
+                                {
+                                    Ok(txid) => {
+                                        log::info!("Successfully recovered outgoing contract via timelock: {}", txid);
+                                    }
+                                    Err(e) => {
+                                        log::error!("Failed to spend via timelock: {:?}", e);
+                                    }
+                                }
+                            } else {
+                                log::info!(
+                                    "Timelock not yet mature for contract {}",
+                                    contract_txid
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        log::info!("Taproot swap recovery completed");
         Ok(())
     }
 }

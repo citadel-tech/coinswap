@@ -113,6 +113,18 @@ fn handle_senders_contract(
         senders_contract.contract_txs.len()
     );
 
+    // Check for CloseAtContractSigsExchange behavior (before creating outgoing contract)
+    #[cfg(feature = "integration-test")]
+    if maker.behavior == super::api2::MakerBehavior::CloseAtContractSigsExchange {
+        log::warn!(
+            "[{}] Maker behavior: CloseAtContractSigsExchange - Closing connection after receiving incoming contract",
+            maker.config.network_port
+        );
+        return Err(MakerError::General(
+            "Maker closing connection at contract exchange (test behavior)",
+        ));
+    }
+
     // Process the sender's contract and create our response
     let receiver_contract =
         maker.verify_and_process_senders_contract(&senders_contract, connection_state)?;

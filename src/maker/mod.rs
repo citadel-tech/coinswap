@@ -27,4 +27,6 @@ pub use server::start_maker_server;
 
 // Taproot protocol exports
 pub use api2::Maker as TaprootMaker;
+#[cfg(feature = "integration-test")]
+pub use api2::MakerBehavior as TaprootMakerBehavior;
 pub use server2::start_maker_server_taproot;
