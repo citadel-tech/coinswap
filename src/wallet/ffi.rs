@@ -13,13 +13,16 @@
 //! would be difficult to represent in other languages.
 
 use crate::{
-    security::{load_sensitive_struct_from_value, SerdeJson},
+    security::{load_sensitive_struct_from_value, KeyMaterial, SerdeJson},
     utill::{get_taker_dir, MIN_FEE_RATE},
     wallet::{Destination, RPCConfig, Wallet, WalletBackup, WalletError},
 };
 use bitcoin::{Address, Amount, OutPoint, Txid};
 use bitcoind::bitcoincore_rpc::{json::ListTransactionResult, RpcApi};
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 /// Information about individual maker fees in a swap
 #[derive(Debug)]
@@ -131,6 +134,46 @@ pub fn restore_wallet_gui_app(
 }
 
 impl Wallet {
+    /// Creates a wallet backup for GUI/FFI applications with optional encryption.
+    ///
+    /// This is a convenience wrapper around [`Wallet::backup`] that handles encryption
+    /// material generation internally based on whether a password is provided.
+    ///
+    /// # Behavior
+    ///
+    /// - If `password` is `Some(pwd)` and not empty: Creates encrypted backup using the password
+    /// - If `password` is `None` or empty string: Creates unencrypted backup (logs warning)
+    /// - The backup is written as a `.json` file at the specified path
+    ///
+    /// # Parameters
+    ///
+    /// - `path`: Destination file path for the backup (`.json` extension added automatically)
+    /// - `password`: Optional password for encryption. Use `None` or empty string for plaintext backup
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if backup succeeds
+    /// - `Err(WalletError)` if file I/O or serialization fails
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Encrypted backup
+    /// wallet.backup_gui_app("/path/to/backup".to_string(), Some("my_password".to_string()))?;
+    ///
+    /// // Unencrypted backup
+    /// wallet.backup_gui_app("/path/to/backup".to_string(), None)?;
+    pub fn backup_wallet_gui_app(
+        &self,
+        destination_path: String,
+        password: Option<String>,
+    ) -> Result<(), WalletError> {
+        let km = KeyMaterial::new_from_password(password);
+        let backup_path = Path::new(&destination_path);
+        self.backup(backup_path, km)?;
+        Ok(())
+    }
+
     /// Returns a list of recent Incoming Transactions (bydefault last 10)
     pub fn get_transactions(
         &self,
