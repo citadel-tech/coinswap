@@ -47,6 +47,7 @@ use super::{config::MakerConfig, error::MakerError};
 /// Represents different behaviors the maker can have during the swap.
 /// Used for testing various failure scenarios.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature="integration-test")]
 pub enum MakerBehavior {
     /// Normal, honest behavior
     Normal,
