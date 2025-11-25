@@ -1,90 +1,73 @@
-# Working with `bitcoind` in regtest mode
+# Working with `bitcoind` for the Mutinynet
 
-In this tutorial, we will guide you through setting up a Bitcoin Core `bitcoind` node in `regtest` mode. We will cover basic operations like creating wallets, generating blocks, checking balances, and sending Bitcoin between two wallets.
+In this tutorial, we will guide you through setting up [Mutinynet](https://github.com/benthecarman/bitcoin/tree/mutinynet-inq-29), a fork of Bitcoin Core. We will cover basic operations like creating wallets, generating blocks, checking balances, and sending Bitcoin between two wallets.
 
+### 1. Installing `bitcoind`
+
+#### Steps:
+
+1. Download and install:
+
+   - Download the [latest binaries](https://github.com/benthecarman/bitcoin/releases/latest) from the Mutinynet project repository.
+   - Extract the zip folder. The required binaries are in the `bin/` folder.
+   - Copy the `bitcoind` and `bitcoin-cli` binaries to a directory in your PATH (for Unix: `/usr/local/bin/`).
+
+2. Verify installation:
+  
+   After installation, you can run the following command to confirm that `bitcoind` is properly installed:
+   ```bash
+   $ which bitcoind
+   /usr/local/bin/bitcoind
+   ```
 ---
 
-### **1. Installing `bitcoind`**
+### 2. Setting up the `bitcoin.conf` file
 
-To start working with Bitcoin, You need to install the Bitcoin Core software, which includes the `bitcoind` daemon.
-
-#### **Steps:**
-
-1. **Get Bitcoin Core:**
-
-   - We will visit the [official Bitcoin Core website](https://bitcoin.org/en/download) and download the appropriate version for our operating system.
-   - After downloading, we’ll follow the instructions on the site to verify the downloaded files by checking the signatures to ensure authenticity.
-
-2. **Verify Installation:**
-   - After installation, we can run the following command to confirm that `bitcoind` is properly installed:
-     ```bash
-     bitcoind --version
-     ```
-   - This will output the version of `bitcoind` if it's installed correctly.
-
----
-
-### **2. Setting up a `bitcoin.conf` File**
-
-While `bitcoind` can be run on various Bitcoin networks, we will focus on the `regtest` network in this tutorial, which is a local blockchain environment ideal for development and testing. Before running `bitcoind`, we need to configure the node with a `bitcoin.conf` file to set up the `regtest` network.
-
-#### **Sample `bitcoin.conf` File for `regtest`**
-
-First, we’ll create a directory for Bitcoin data and configuration files if it doesn’t already exist:
+First, create the Bitcoin data directory if it doesn't already exist:
 
 ```bash
 mkdir -p ~/.bitcoin
 ```
 
-Then, we’ll create a `bitcoin.conf` file in `~/.bitcoin/` and add the following lines:
-
-```ini
-regtest=1 # change this to change Bitcoin Network
-server=1
-fallbackfee=0.0001 # for regtest only
-rpcuser=user
-rpcpassword=password
-rpcallowip=0.0.0.0/0
-txindex=1
-```
-
-#### **Explanation of Configurations:**
-
-- `regtest=1`: Runs the node in regtest mode.
-- `server=1`: Enables `bitcoind` to run as a server and accept RPC (Remote Procedure Call) commands.
-- `rpcuser` and `rpcpassword`: Set the username and password for `bitcoin-cli` RPC access. We can customize these values or leave them as provided.
-- `rpcallowip=0.0.0.0/0`: Allows RPC connections from any IP address. We should be cautious when using this in a non-development environment.
-- `txindex=1`: Enables a full transaction index for our node, which is useful for querying historical transactions.
-
-After setting up the configuration file, our node will be ready to run in `regtest` mode.
-
-
-
-> **NOTE**: `regtest` is a toy network that allows for creating custom blocks and generating coins, making it ideal for easy integration testing of applications.  
-> For actual swap markets, use our `custom signet`(See [demo doc](./demo.md))
----
-
-### **3. Basic Operations**
-
-Once the `bitcoin.conf` file is configured, we can start `bitcoind` and perform basic operations using `bitcoin-cli`.
-
-#### **3.1 Start the `bitcoind` daemon:**
-
-We run the following command to start the Bitcoin node:
+Copy the `bitcoin.conf` file from the docs folder into the data directory:
 
 ```bash
-$ bitcoind 
+cp ./docs/bitcoin.conf ~/.bitcoin/bitcoin.conf
 ```
 
-- **Note**: We don’t need to specify the network explicitly since the `bitcoin.conf` file already defines the network.
+This reference configuration contains the settings required to run `bitcoind` for Coinswap on either Mutinynet (Signet) or Regtest.
 
-To check the status of the node and confirm that it's running, we can use:
+---
+
+### 3. Basic Operations
+
+Once the `bitcoin.conf` file is configured, you can start `bitcoind` and perform basic operations using `bitcoin-cli`.
+
+#### 3.1 Start the `bitcoind` daemon
+
+Run the following command to start the Bitcoin node in either Signet or Regtest mode:
+
+```bash
+$ bitcoind -signet
+or
+$ bitcoind -regtest 
+```
+
+> Note: The Coinswap marketplace is live on Mutinynet. To access the market and perform swaps with other makers, start `bitcoind -signet`.
+
+Useful links for Mutinynet operations:
+ - [Mutinynet Block Explorer](https://mutinynet.com/mining)
+ - [Mutinynet Faucet](https://faucet.mutinynet.com/)
+
+In the rest of this tutorial, we assume you are running `bitcoind -regtest`.
+
+To check the status of the node and confirm that it's running, use:
 
 ```bash
 $ bitcoin-cli getblockchaininfo
 ```
 
-This will output the current state of the blockchain, including the number of blocks and synchronization status, as shown:
+This will output the current state of the blockchain, including the number of blocks and synchronization status, for example:
 
 ```bash
 {
@@ -104,9 +87,9 @@ This will output the current state of the blockchain, including the number of bl
 }
 ```
 
-#### **3.2 Create a Wallet for Alice**
+#### 3.2 Create a wallet for Alice
 
-We create a wallet called `alice` to perform wallet-related operations in the `regtest` environment:
+Create a wallet named `alice` to perform wallet-related operations in the regtest environment:
 
 ```bash
 $ bitcoin-cli createwallet "alice"
@@ -120,9 +103,9 @@ The response will confirm that the wallet `alice` has been created:
 }
 ```
 
-#### **3.3 Create a Wallet for Bob**
+#### 3.3 Create a wallet for Bob
 
-Similarly, we create another wallet called `bob`:
+Similarly, create another wallet named `bob`:
 
 ```bash
 $ bitcoin-cli createwallet "bob"
@@ -136,9 +119,9 @@ The response will confirm that the wallet `bob` has been created:
 }
 ```
 
-#### **3.4 Get a New Bitcoin Address for Alice**
+#### 3.4 Get a new Bitcoin address for Alice
 
-We generate a new Bitcoin address for `alice` to receive funds:
+Generate a new Bitcoin address for `alice` to receive funds:
 
 ```bash
 $ bitcoin-cli -rpcwallet=alice getnewaddress
@@ -150,15 +133,15 @@ This returns a new address for `alice`:
 bcrt1qfvgecwpwtn77f7vv6wfc78zdcxseq4pjpyn9jv
 ```
 
-#### **3.5 Generate Some Blocks for Alice**
+#### 3.5 Generate some blocks for Alice
 
-Since we’re using `regtest`, we can generate new blocks to the generated address for `alice` and receive Bitcoin as block rewards:
+Since we’re using `regtest`, you can generate new blocks to Alice's address and receive Bitcoin as block rewards:
 
 ```bash
 $ bitcoin-cli -rpcwallet=alice generatetoaddress 101 <alice_address>
 ```
 
-This will return a list of block hashes in hex format, corresponding to the 101 newly generated blocks as shown: 
+This will return a list of block hashes in hex format, corresponding to the 101 newly generated blocks, for example:
 
 ```bash
 [
@@ -171,9 +154,9 @@ This will return a list of block hashes in hex format, corresponding to the 101 
 ]
 ```
 
-#### **3.6 Check Alice's Wallet Balance**
+#### 3.6 Check Alice's wallet balance
 
-We can now check the balance in `alice`'s wallet:
+Now check the balance in `alice`'s wallet:
 
 ```bash
 $ bitcoin-cli -rpcwallet=alice getbalances
@@ -193,13 +176,13 @@ This will show a balance corresponding to the block rewards for the generated bl
 
 ---
 
-### **4. Sending Bitcoin from Alice to Bob**
+### 4. Sending Bitcoin from Alice to Bob
 
 Now, let’s send 1 BTC from `alice` to `bob` using the `sendtoaddress` RPC command.
 
-#### **4.1 Get Bob's Bitcoin Address**
+#### 4.1 Get Bob's Bitcoin address
 
-We generate a new Bitcoin address for `bob`:
+Generate a new Bitcoin address for `bob`:
 
 ```bash
 $ bitcoin-cli -rpcwallet=bob getnewaddress
@@ -211,9 +194,9 @@ This returns a new address for `bob`:
 bcrt1q2nys4aedf448ngt5gpw5gmun6gdjqgy04qj6cq
 ```
 
-#### **4.2 Send 1 BTC from Alice to Bob**
+#### 4.2 Send 1 BTC from Alice to Bob
 
-Next, we send 1 BTC from `alice` to `bob` using the `sendtoaddress` command:
+Next, send 1 BTC from `alice` to `bob` using the `sendtoaddress` command:
 
 ```bash
 $ bitcoin-cli -rpcwallet=alice sendtoaddress <bob_address> 1
@@ -225,9 +208,9 @@ This will create and broadcast a signed transaction, returning the transaction h
 0b0c6a25e16f987e5a68fe59c301e06615376837b11a3ed678b0f0bd8a69a18a
 ```
 
-#### **4.3 Generate a Block to Confirm the Transaction**
+#### 4.3 Generate a block to confirm the transaction
 
-We generate a block to confirm the transaction to `bob`:
+Generate a block to confirm the transaction:
 
 ```bash
 $ bitcoin-cli -rpcwallet=bob generatetoaddress 1 <bob_address>
@@ -239,11 +222,11 @@ This will return the block hash in hex format:
 "43e5d06abcf026e3faec392626545fb4880592682fd61645dc99d51e277bd761"
 ```
 
-#### **4.4 Check the Final Balance of Each Wallet**
+#### 4.4 Check the final balance of each wallet
 
-Finally, we check the balance of both wallets to confirm that the transaction was successful.
+Finally, check the balance of both wallets to confirm that the transaction was successful.
 
-##### **For Bob's Wallet:**
+##### For Bob's wallet:
 
 ```bash
 $ bitcoin-cli -rpcwallet=bob getbalances
@@ -261,13 +244,13 @@ The response should show that `bob` has received the 1 BTC:
 }
 ```
 
-##### **For Alice's Wallet:**
+##### For Alice's wallet:
 
 ```bash
 $ bitcoin-cli -rpcwallet=alice getbalances
 ```
 
-The response will show that `alice`'s balance has been reduced by a little more than 1 BTC, where 1 BTC has been sent to `bob`, and the remaining amount goes toward mining fees for confirming the transaction:
+Alice's balance will be reduced by slightly more than 1 BTC: 1 BTC was sent to Bob and the remainder was paid as transaction fees. For example:
 
 ```json
 {
@@ -281,5 +264,5 @@ The response will show that `alice`'s balance has been reduced by a little more 
 
 ---
 
-We’ve set up `bitcoind`, created two wallets (`alice` and `bob`), generated blocks, and sent Bitcoin between the wallets. This provides everything we need to start with `bitcoind` on `regtest`. Now, we’re ready to explore Bitcoin transactions and experiment with coinswap CLI apps.
+We’ve set up `bitcoind`, created two wallets (`alice` and `bob`), generated blocks, and sent Bitcoin between the wallets. You are now ready to explore Bitcoin transactions and experiment with coinswap CLI apps.
 
