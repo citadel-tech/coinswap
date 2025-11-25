@@ -125,35 +125,22 @@ fn fetch_taproot_offers(
     use std::sync::mpsc;
 
     let (offers_writer, offers_reader) = mpsc::channel::<Option<OfferAndAddress>>();
-    let mut thread_pool = Vec::new();
     let maker_addresses_len = maker_addresses.len();
 
-    for address in maker_addresses {
-        let offers_writer = offers_writer.clone();
-        let taker_config = config.clone();
-        let addr = address.clone();
-
-        let thread = thread::Builder::new()
-            .name(format!("taproot_offer_fetch_thread_{}", addr))
-            .spawn(move || -> Result<(), TakerError> {
-                let offer = download_taproot_offer(&addr, &taker_config);
-                Ok(offers_writer.send(offer)?)
-            })?;
-
-        thread_pool.push(thread);
-    }
+    thread::scope(|s| {
+        for address in maker_addresses {
+            let offers_writer = offers_writer.clone();
+            s.spawn(move || {
+                let offer = download_taproot_offer(address, config);
+                let _ = offers_writer.send(offer);
+            });
+        }
+    });
 
     let mut result = Vec::new();
     for _ in 0..maker_addresses_len {
         if let Some(offer_addr) = offers_reader.recv()? {
             result.push(offer_addr);
-        }
-    }
-
-    for thread in thread_pool {
-        let join_result = thread.join();
-        if let Err(e) = join_result {
-            log::error!("Error while joining thread: {e:?}");
         }
     }
 
