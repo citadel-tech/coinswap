@@ -58,9 +58,8 @@ impl Watcher {
 
     pub fn run(&mut self) -> Result<(), WatcherError> {
         log::info!("Watcher initiated");
-        log::info!("Starting with recovery");
-        self.rpc_backend.run_recovery(&mut self.registry)?;
-        log::info!("recovery completed");
+        self.rpc_backend.run_discovery(&mut self.registry)?;
+
         loop {
             match self.rx_requests.try_recv() {
                 Ok(cmd) => {

@@ -480,7 +480,7 @@ pub(crate) fn download_maker_offer(
                     log::warn!(
                         "Failed to request offer from maker {address}, with error: {e:?} reattempting {ii} of {FIRST_CONNECT_ATTEMPTS}"
                     );
-                    sleep(Duration::from_secs(FIRST_CONNECT_SLEEP_DELAY_SEC));
+                    sleep(Duration::from_millis(FIRST_CONNECT_SLEEP_DELAY_SEC));
                     continue;
                 } else {
                     log::error!(

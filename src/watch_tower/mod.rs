@@ -1,6 +1,7 @@
 //! Watch tower implementation for coinswap.
 #![allow(missing_docs)]
 
+pub mod constants;
 pub mod registry_storage;
 pub mod rpc_backend;
 pub mod service;

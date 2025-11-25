@@ -289,9 +289,20 @@ impl Maker {
         let mut rpc_config = rpc_config.unwrap_or_default();
         rpc_config.wallet_name = wallet_file_name;
 
+        // If the config file doesn't exist, the default config will be loaded.
+        let mut config = MakerConfig::new(Some(&data_dir.join("config.toml")))?;
+
+        if let Some(port) = network_port {
+            config.network_port = port;
+        }
+
         let backend = ZmqBackend::new(&zmq_addr);
         let rpc_backend = BitcoinRpc::new(rpc_config.clone())?;
-        let registry = FileRegistry::load(data_dir.join(".maker-watcher"));
+        let blockchain_info = rpc_backend.get_blockchain_info()?;
+        let file_registry = data_dir
+            .join(format!(".maker_{}_watcher", config.network_port))
+            .join(blockchain_info.chain.to_string());
+        let registry = FileRegistry::load(file_registry);
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = mpsc::channel();
 
@@ -303,13 +314,6 @@ impl Maker {
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
         let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config)?;
-
-        // If the config file doesn't exist, the default config will be loaded.
-        let mut config = MakerConfig::new(Some(&data_dir.join("config.toml")))?;
-
-        if let Some(port) = network_port {
-            config.network_port = port;
-        }
 
         if let Some(rpc_port) = rpc_port {
             config.rpc_port = rpc_port;
