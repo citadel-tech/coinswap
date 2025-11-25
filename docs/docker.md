@@ -53,7 +53,8 @@ graph TD
 The Docker setup uses:
 
 - `docker/Dockerfile` - Unified image containing `makerd`, `maker-cli`, and `taker`
-- External images: `bitcoin/bitcoin` for Bitcoin Core, `torproject/tor` for Tor
+- `docker/Dockerfile.bitcoin-mutinynet` - Custom Bitcoin Core image for Mutinynet
+- External images: `leplusorg/tor` for Tor
 
 ## Quick Start
 
@@ -70,6 +71,9 @@ cd coinswap
 
 # Build the Docker image
 ./docker-setup.sh build
+
+# (Optional) Build the Bitcoin Mutinynet image if needed
+./docker-setup.sh build-bitcoin
 
 # Start the complete stack
 ./docker-setup.sh start
@@ -113,6 +117,9 @@ cd coinswap
 # Build using the setup script
 ./docker-setup.sh build
 
+# Build Bitcoin Mutinynet image
+./docker-setup.sh build-bitcoin
+
 # Or build manually
 docker build -f docker/Dockerfile -t coinswap:latest .
 ```
@@ -120,6 +127,7 @@ docker build -f docker/Dockerfile -t coinswap:latest .
 ### Available Images
 
 - **coinswap**: Contains `makerd`, `maker-cli`, and `taker`
+- **bitcoin-mutinynet**: Custom Bitcoin Core node for Mutinynet network
 
 ## Running Applications
 
@@ -201,7 +209,6 @@ All application data is stored in Docker volumes:
 - `bitcoin-data`: Bitcoin blockchain data
 - `tor-data`: Tor configuration and data
 - `maker-data`: Maker configuration and wallet data
-- `taker-data`: Taker wallet data (when using manual commands)
 
 ## Troubleshooting
 
