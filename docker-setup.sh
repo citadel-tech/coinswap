@@ -370,6 +370,41 @@ build_image() {
     fi
 }
 
+# Publish the Docker image
+publish_image() {
+    local version="$1"
+    local username="${DOCKERHUB_USERNAME}"
+    
+    if [ -z "$username" ]; then
+        read -p "Enter Docker Hub username: " username
+    fi
+    
+    if [ -z "$username" ]; then
+        print_error "Username required to publish"
+        exit 1
+    fi
+
+    local repo="${username}/${IMAGE_NAME}"
+    
+    # Ensure image is built
+    build_image
+    
+    print_info "Tagging and pushing image to $repo..."
+    
+    # Tag and push latest
+    docker tag "${IMAGE_NAME}:latest" "${repo}:latest"
+    docker push "${repo}:latest"
+    
+    # Tag and push version if provided
+    if [ -n "$version" ]; then
+        docker tag "${IMAGE_NAME}:latest" "${repo}:${version}"
+        docker push "${repo}:${version}"
+        print_success "Published ${repo}:${version}"
+    fi
+    
+    print_success "Published ${repo}:latest"
+}
+
 # Start the full stack using docker-compose
 start_stack() {
     local use_defaults="false"
@@ -469,6 +504,7 @@ show_help() {
     echo "Commands:"
     echo "  configure        Configure Coinswap Docker setup"
     echo "  build            Build the Docker image"
+    echo "  publish [ver]    Publish image to Docker Hub (optional version tag)"
     echo "  start [options]  Start the full Coinswap stack"
     echo "                   Options:"
     echo "                     -d, --default   Use default configuration without prompting"
@@ -486,6 +522,7 @@ show_help() {
     echo ""
     echo "Examples:"
     echo "  $0 build"
+    echo "  $0 publish 1.0.0"
     echo "  $0 start"
     echo "  $0 taker --help"
     echo "  $0 maker-cli ping"
@@ -499,6 +536,10 @@ case "${1:-}" in
     "build")
         check_docker
         build_image
+        ;;
+    "publish")
+        check_docker
+        publish_image "$2"
         ;;
     "start")
         check_docker
