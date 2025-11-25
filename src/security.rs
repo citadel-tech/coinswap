@@ -138,17 +138,19 @@ pub struct KeyMaterial {
 }
 impl KeyMaterial {
     /// Creates new key material from a password, with a freshly random generated nonce and salt.
-    pub fn new_from_password(password: String) -> Self {
-        let pbkdf2_salt = random::<PBKDF2Salt>();
-        KeyMaterial {
-            key: pbkdf2_hmac_array::<Sha256, 32>(
-                password.as_bytes(),
-                &pbkdf2_salt,
-                PBKDF2_ITERATIONS,
-            ),
-            nonce: Aes256Gcm::generate_nonce(&mut OsRng).into(),
-            pbkdf2_salt,
-        }
+    pub fn new_from_password(enc_password: Option<String>) -> Option<Self> {
+        enc_password.map(|pwd| {
+            let pbkdf2_salt = random::<PBKDF2Salt>();
+            KeyMaterial {
+                key: pbkdf2_hmac_array::<Sha256, 32>(
+                    pwd.as_bytes(),
+                    &pbkdf2_salt,
+                    PBKDF2_ITERATIONS,
+                ),
+                nonce: Aes256Gcm::generate_nonce(&mut OsRng).into(),
+                pbkdf2_salt,
+            }
+        })
     }
     /// Prompts the user interactively for a new encryption passphrase.
     ///

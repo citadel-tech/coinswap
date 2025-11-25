@@ -53,6 +53,10 @@ struct Cli {
     #[clap(name = "WALLET", long, short = 'w')]
     pub wallet_name: Option<String>,
 
+    /// Optional Password for the encryption of the wallet.
+    #[clap(name = "PASSWORD", long, short = 'p')]
+    pub password: Option<String>,
+
     /// Sets the verbosity level of debug.log file
     #[clap(long, short = 'v', possible_values = &["off", "error", "warn", "info", "debug", "trace"], default_value = "info")]
     pub verbosity: String,
@@ -199,6 +203,7 @@ fn main() -> Result<(), TakerError> {
                 None,
                 Some(args.tor_auth),
                 args.zmq,
+                args.password,
             )?;
             match &args.command {
                 Commands::ListUtxo => {

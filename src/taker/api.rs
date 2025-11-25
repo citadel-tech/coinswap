@@ -48,15 +48,11 @@ use crate::{
             TakerToMakerMessage,
         },
     },
-    security::{load_sensitive_struct_from_value, SerdeJson},
-    taker::{
-        config::TakerConfig,
-        ffi::{MakerFeeInfo, SwapReport},
-        offers::OfferBook,
-    },
+    taker::{config::TakerConfig, offers::OfferBook},
     utill::*,
     wallet::{
-        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletBackup, WalletError,
+        ffi::{MakerFeeInfo, SwapReport},
+        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
         WatchOnlySwapCoin,
     },
     watch_tower::{
@@ -191,6 +187,7 @@ impl Drop for Taker {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 impl Taker {
     // ######## MAIN PUBLIC INTERFACE ############
 
@@ -215,6 +212,7 @@ impl Taker {
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
         zmq_addr: String,
+        password: Option<String>,
     ) -> Result<Taker, TakerError> {
         // Get provided data directory or the default data directory.
         let data_dir = data_dir.unwrap_or(get_taker_dir());
@@ -244,7 +242,7 @@ impl Taker {
 
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
-        let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config)?;
+        let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config, password)?;
 
         // If config file doesn't exist, default config will be loaded.
         let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
@@ -334,55 +332,6 @@ impl Taker {
             &rpc_config.unwrap_or_default(),
             &restored_wallet_path,
         );
-    }
-
-    /// Restores a wallet from an encrypted or unencrypted JSON backup string for GUI/FFI applications.
-    ///
-    /// This is a non-interactive restore method designed for programmatic use via FFI bindings.
-    /// Unlike `restore_wallet`, this function accepts a JSON string directly and handles both
-    /// encrypted and unencrypted backups using [`load_sensitive_struct_from_value`].
-    ///
-    /// # Behavior
-    ///
-    /// 1. Parses the JSON backup string into a [`WalletBackup`] structure
-    /// 2. If encrypted, decrypts using the provided password and preserves encryption material
-    /// 3. Constructs the wallet path: `{data_dir_or_default}/wallets/{wallet_file_name_or_default}`
-    /// 4. Calls [`Wallet::restore`] to reconstruct the wallet with all UTXOs and metadata
-    ///
-    /// # Parameters
-    ///
-    /// - `data_dir`: Target directory, defaults to `~/.coinswap/taker`
-    /// - `wallet_file_name`: Restored wallet filename, defaults to name from backup if empty
-    /// - `backup_file`: JSON string containing the wallet backup (encrypted or plain)
-    /// - `password`: Required if backup is encrypted, ignored otherwise
-    pub fn restore_wallet_gui_app(
-        data_dir: Option<PathBuf>,
-        wallet_file_name: Option<String>,
-        rpc_config: RPCConfig,
-        backup_file: String,
-        password: Option<String>,
-    ) {
-        let value = serde_json::from_str(&backup_file).unwrap();
-        let (backup, encryption_material) =
-            load_sensitive_struct_from_value::<WalletBackup, SerdeJson>(&value, password.unwrap());
-        let restored_wallet_filename = wallet_file_name.unwrap_or("".to_string());
-
-        let restored_wallet_path = data_dir
-            .clone()
-            .unwrap_or(get_taker_dir())
-            .join("wallets")
-            .join(restored_wallet_filename);
-
-        if let Err(e) = Wallet::restore(
-            &backup,
-            &restored_wallet_path,
-            &rpc_config,
-            encryption_material,
-        ) {
-            log::error!("Wallet restore failed: {e:?}");
-        } else {
-            println!("Wallet restore succeeded!");
-        }
     }
 
     /// Get wallet

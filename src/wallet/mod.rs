@@ -3,6 +3,7 @@
 mod api;
 mod backup;
 mod error;
+pub mod ffi;
 mod fidelity;
 mod funding;
 mod rpc;

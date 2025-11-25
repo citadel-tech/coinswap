@@ -96,6 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(9051),                        //control port
         None,                              // tor_auth_password
         "tcp://127.0.0.1:3321".to_string(),
+        None, // Encryption Password
     )
     .unwrap();
 

@@ -27,9 +27,7 @@ use bitcoin::{
     sighash::{EcdsaSighashType, SighashCache},
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, Weight,
 };
-use bitcoind::bitcoincore_rpc::{
-    bitcoincore_rpc_json::ListUnspentResultEntry, json::ListTransactionResult, Client, RpcApi,
-};
+use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -340,6 +338,7 @@ impl Wallet {
     pub(crate) fn load_or_init_wallet(
         path: &Path,
         rpc_config: &RPCConfig,
+        password: Option<String>,
     ) -> Result<Wallet, WalletError> {
         let wallet = if path.exists() {
             // wallet already exists, load the wallet
@@ -349,7 +348,7 @@ impl Wallet {
         } else {
             // wallet doesn't exists at the given path, create a new one
 
-            let store_enc_material = KeyMaterial::new_interactive(None);
+            let store_enc_material = KeyMaterial::new_from_password(password);
 
             let wallet = Wallet::init(path, rpc_config, store_enc_material)?;
 
@@ -1004,15 +1003,6 @@ impl Wallet {
             .into_iter()
             .map(|addrs| addrs.assume_checked())
             .collect())
-    }
-
-    /// Returns a list of recent Incoming Transactions (bydefault last 10)
-    pub fn get_transactions(
-        &self,
-        count: Option<usize>,
-        skip: Option<usize>,
-    ) -> Result<Vec<ListTransactionResult>, WalletError> {
-        Ok(self.rpc.list_transactions(None, count, skip, Some(true))?)
     }
 
     /// Refreshes the offer maximum size cache based on the current wallet's unspent transaction outputs (UTXOs).
@@ -2087,43 +2077,5 @@ impl Wallet {
             log::info!("Wallet sync and save complete.");
         }
         Ok(broadcasted)
-    }
-
-    /// Sends specified Amount of Satoshis to an External Address
-    pub fn send_to_address(
-        &mut self,
-        amount: u64,
-        address: String,
-        fee_rate: Option<f64>,
-        manually_selected_outpoints: Option<Vec<OutPoint>>,
-    ) -> Result<Txid, WalletError> {
-        let amount = Amount::from_sat(amount);
-
-        let coins_to_spend = self.coin_select(
-            amount,
-            fee_rate.unwrap_or(MIN_FEE_RATE),
-            manually_selected_outpoints,
-        )?;
-
-        let addr = Address::from_str(&address)
-            .map_err(|e| WalletError::General(format!("Invalid address: {}", e)))?
-            .assume_checked();
-        let outputs = vec![(addr, amount)];
-        let destination = Destination::Multi {
-            outputs,
-            op_return_data: None,
-        };
-
-        let tx = self.spend_from_wallet(
-            fee_rate.unwrap_or(MIN_FEE_RATE),
-            destination,
-            &coins_to_spend,
-        )?;
-
-        let txid = self.send_tx(&tx).unwrap();
-        self.sync_no_fail();
-        println!("Send to Address TxId: {txid}");
-
-        Ok(txid)
     }
 }
