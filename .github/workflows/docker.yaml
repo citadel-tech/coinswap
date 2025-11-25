@@ -17,13 +17,10 @@ jobs:
       run: ./docker-setup.sh build
 
     - name: Test makerd
-      run: docker run --rm coinswap-maker makerd --help
+      run: docker run --rm coinswap:latest makerd --help
 
     - name: Test taker
-      run: docker run --rm coinswap-taker taker --help
-
-    - name: Run integration tests
-      run: docker run --rm coinswap-test
+      run: docker run --rm coinswap:latest taker --help
 
     - name: Start Coinswap stack
       run: ./docker-setup.sh start --default

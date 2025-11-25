@@ -4,10 +4,10 @@ This guide covers how to build and run Coinswap using Docker with a modern multi
 
 ## Overview
 
-The Docker setup provides a complete environment for running Coinswap applications with service-specific containers:
+The Docker setup provides a complete environment for running Coinswap applications:
 
-- **Service-specific Dockerfiles** for optimal maintainability and efficiency
-- **Alpine Linux 3.20** base images for minimal size
+- **Single unified Dockerfile** containing all Coinswap components
+- **Alpine Linux 3.20** base image for minimal size
 - **Rust 1.90.0** for building the applications
 - **External images** for Bitcoin Core and Tor
 - **Interactive configuration** with automatic service detection
@@ -15,7 +15,7 @@ The Docker setup provides a complete environment for running Coinswap applicatio
 
 ## Architecture
 
-This is an overview fro the docker stack with default settings for all nodes:
+This is an overview for the docker stack with default settings for all nodes:
 
 ```mermaid
 graph TD
@@ -50,14 +50,10 @@ graph TD
     style maker_vol fill:#fcf0f
 ```
 
-The Docker setup uses multiple specialized containers:
+The Docker setup uses:
 
-- `docker/Dockerfile.builder` - Shared build stage for all Rust binaries
-- `docker/Dockerfile.maker` - Maker daemon service
-- `docker/Dockerfile.taker` - Taker client service  
-- `docker/Dockerfile.tor` - Custom Tor service container
-- `docker/Dockerfile.test` - Test environment with all binaries
-- External images: `bitcoin/bitcoin` for Bitcoin Core
+- `docker/Dockerfile` - Unified image containing `makerd`, `maker-cli`, and `taker`
+- External images: `bitcoin/bitcoin` for Bitcoin Core, `torproject/tor` for Tor
 
 ## Quick Start
 
@@ -72,7 +68,7 @@ cd coinswap
 # Interactive configuration
 ./docker-setup.sh configure
 
-# Build all Docker images
+# Build the Docker image
 ./docker-setup.sh build
 
 # Start the complete stack
@@ -108,38 +104,22 @@ Configuration is saved to `.docker-config` and reused on subsequent runs.
 
 ## Building Docker Images
 
-The build process uses a shared builder stage and service-specific images:
+The build process creates a single image containing all binaries:
 
 ```bash
 git clone https://github.com/citadel-tech/coinswap.git
 cd coinswap
 
-# Build all images using the setup script
+# Build using the setup script
 ./docker-setup.sh build
 
 # Or build manually
-docker build -f docker/Dockerfile.builder --target builder -t coinswap-builder:latest .
-docker build -f docker/Dockerfile.builder -t coinswap-base:latest .
-docker build -f docker/Dockerfile.maker -t coinswap-maker .
-docker build -f docker/Dockerfile.taker -t coinswap-taker .
-docker build -f docker/Dockerfile.tor -t coinswap-tor .
+docker build -f docker/Dockerfile -t coinswap:latest .
 ```
-
-The build process uses multi-stage builds and caching for optimal performance:
-- Shared builder stage compiles all Rust binaries
-- Common base stage provides runtime environment
-- Dependencies are cached separately from source code
-- Service-specific images only include necessary binaries
-- Each service gets a minimal Alpine runtime image
 
 ### Available Images
 
-- **coinswap-builder**: Shared builder with all compiled binaries
-- **coinswap-base**: Common runtime base for all services
-- **coinswap-maker**: Maker daemon service (`makerd`, `maker-cli`)
-- **coinswap-taker**: Taker client service (`taker`)
-- **coinswap-tor**: Tor proxy service
-- **coinswap-test**: Test environment with all binaries
+- **coinswap**: Contains `makerd`, `maker-cli`, and `taker`
 
 ## Running Applications
 
@@ -158,7 +138,7 @@ docker run -d \
   -p 6103:6103 \
   -v coinswap-maker-data:/home/coinswap/.coinswap \
   --network coinswap-network \
-  coinswap-maker
+  coinswap:latest makerd
 ```
 
 **Port mappings:**
@@ -176,9 +156,9 @@ Control the maker daemon:
 ./docker-setup.sh maker-cli stop
 
 # Or manually
-docker run --rm --network coinswap-network coinswap-maker maker-cli ping
-docker run --rm --network coinswap-network coinswap-maker maker-cli wallet-balance
-docker run --rm --network coinswap-network coinswap-maker maker-cli stop
+docker run --rm --network coinswap-network coinswap:latest maker-cli ping
+docker run --rm --network coinswap-network coinswap:latest maker-cli wallet-balance
+docker run --rm --network coinswap-network coinswap:latest maker-cli stop
 ```
 
 ### Taker
@@ -193,38 +173,7 @@ Run taker operations:
 docker run --rm -it \
   -v coinswap-taker-data:/home/coinswap/.coinswap \
   --network coinswap-network \
-  coinswap-taker --help
-```
-
-## Running Tests
-
-### Integration Tests
-
-Run the complete test suite using Docker:
-
-```bash
-# Using the setup script (recommended)
-./docker-setup.sh test
-
-# Or manually
-docker build -f docker/Dockerfile.builder --target builder -t coinswap-builder:latest .
-docker build -f docker/Dockerfile.test -t coinswap-test .
-docker run --rm -it coinswap-test
-```
-
-The test environment includes:
-- All source code and test files
-- Pre-built test dependencies
-- Integration test features enabled
-
-### Test Data Persistence
-
-Test data can be persisted using volumes:
-
-```bash
-docker run --rm -it \
-  -v coinswap-test-data:/home/coinswap/.coinswap \
-  coinswap-test
+  coinswap:latest taker --help
 ```
 
 ## Docker Compose Setup
@@ -243,73 +192,6 @@ docker compose -f docker-compose.generated.yml up -d
 
 # View logs
 ./docker-setup.sh logs makerd
-```
-
-### Example Generated Configuration
-
-The setup script creates configuration like this:
-
-```yaml
-services:
-  bitcoind:
-    image: bitcoin/bitcoin:master-alpine
-    container_name: coinswap-bitcoind
-    command: |
-      bitcoind
-      -regtest=1
-      -server=1
-      -fallbackfee=0.0001
-      -rpcuser=coinswap
-      -rpcpassword=coinswappass
-      -rpcallowip=0.0.0.0/0
-      -rpcbind=0.0.0.0:18332
-      -zmqpubrawblock=tcp://0.0.0.0:28332
-      -zmqpubrawtx=tcp://0.0.0.0:28332
-      -txindex=1
-    ports:
-      - "18332:18332"
-      - "28332:28332"
-    volumes:
-      - bitcoin-data:/home/bitcoin/.bitcoin
-
-  tor:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.tor
-    image: coinswap-tor
-    container_name: coinswap-tor
-    ports:
-      - "9050:9050"
-      - "9051:9051"
-    volumes:
-      - tor-data:/var/lib/tor
-
-  makerd:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.maker
-    image: coinswap-maker
-    container_name: coinswap-makerd
-    command: makerd --rpc bitcoind:18332 --auth coinswap:coinswappass
-    ports:
-      - "6102:6102"
-      - "6103:6103"
-    volumes:
-      - maker-data:/home/coinswap/.coinswap
-    depends_on:
-      - bitcoind
-      - tor
-    environment:
-      - RUST_LOG=info
-
-volumes:
-  bitcoin-data:
-  tor-data:
-  maker-data:
-
-networks:
-  default:
-    name: coinswap-network
 ```
 
 ## Data Persistence
@@ -340,15 +222,5 @@ docker compose -f docker-compose.generated.yml logs -f makerd
 ./docker-setup.sh shell
 
 # or manually
-docker run --rm -it coinswap-taker sh
-```
-
-### Network connectivity
-
-```bash
-# test maker connectivity
-./docker-setup.sh maker-cli ping
-
-# check Bitcoin connection
-docker exec coinswap-makerd sh -c "makerd --rpc bitcoind:18332 --auth coinswap:coinswappass --help"
+docker run --rm -it coinswap:latest sh
 ```

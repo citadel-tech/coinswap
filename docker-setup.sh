@@ -102,15 +102,15 @@ configure_setup() {
     
     echo ""
     echo "Select Bitcoin network:"
-    echo "1) regtest (default - for testing)"
-    echo "2) signet (test network)"
+    echo "1) signet (default - test network)"
+    echo "2) regtest (for testing)"
     echo "3) testnet (test network)"  
     echo "4) mainnet (CAUTION: real bitcoin)"
     read -p "Network [1]: " network_choice
     
     case "${network_choice:-1}" in
-        1) BITCOIN_NETWORK="regtest"; BITCOIN_RPC_PORT="18442"; BITCOIN_ZMQ_PORT="28332" ;;
-        2) BITCOIN_NETWORK="signet"; BITCOIN_RPC_PORT="38332"; BITCOIN_ZMQ_PORT="28332" ;;
+        1) BITCOIN_NETWORK="signet"; BITCOIN_RPC_PORT="38332"; BITCOIN_ZMQ_PORT="28332" ;;
+        2) BITCOIN_NETWORK="regtest"; BITCOIN_RPC_PORT="18442"; BITCOIN_ZMQ_PORT="28332" ;;
         3) BITCOIN_NETWORK="testnet"; BITCOIN_RPC_PORT="18332"; BITCOIN_ZMQ_PORT="28332" ;;
         4) BITCOIN_NETWORK="mainnet"; BITCOIN_RPC_PORT="8332"; BITCOIN_ZMQ_PORT="28332" ;;
         *) BITCOIN_NETWORK="regtest"; BITCOIN_RPC_PORT="18442"; BITCOIN_ZMQ_PORT="28332" ;;
@@ -265,11 +265,7 @@ EOF
     if [[ "$USE_EXTERNAL_TOR" != "true" ]]; then
         cat >> "$compose_file" << EOF
   tor:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.tor
-    image: coinswap-tor
-    pull_policy: never
+    image: torproject/tor:latest
     container_name: coinswap-tor
     volumes:
       - tor-data:/var/lib/tor
@@ -284,10 +280,7 @@ EOF
 
     cat >> "$compose_file" << EOF
   makerd:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.maker
-    image: coinswap-maker
+    image: ${IMAGE_NAME}:latest
     pull_policy: never
     container_name: coinswap-makerd
     command: |
@@ -307,7 +300,7 @@ EOF
       base_fee = 100
       amount_relative_fee_ppt = 1000
       EOM
-      makerd -r bitcoind:$BITCOIN_RPC_PORT -a user:password
+      makerd --rpc bitcoind:$BITCOIN_RPC_PORT --auth coinswap:coinswappass
       "
     ports:
       - "$MAKERD_PORT:$MAKERD_PORT"
@@ -366,38 +359,15 @@ EOF
 
 # Build the Docker image
 build_image() {
-    print_info "Building Coinswap Docker images..."
+    print_info "Building Coinswap Docker image..."
     cd "$SCRIPT_DIR"
     
-    # Build the shared builder and base images first
-    print_info "Building builder and base images..."
-    if docker build -f docker/Dockerfile.builder --target builder -t coinswap-builder:latest .; then
-        print_success "Builder image built successfully"
+    if docker build -f docker/Dockerfile -t "${IMAGE_NAME}:latest" .; then
+        print_success "Coinswap image built successfully"
     else
-        print_error "Failed to build builder image"
+        print_error "Failed to build Coinswap image"
         exit 1
     fi
-    if docker build -f docker/Dockerfile.builder -t coinswap-base:latest .; then
-        print_success "Base image built successfully"
-    else
-        print_error "Failed to build base image"
-        exit 1
-    fi
-    
-    # Build individual service images
-    local services=("maker" "taker" "test" "tor")
-    
-    for service in "${services[@]}"; do
-        print_info "Building $service image..."
-        if docker build -f "docker/Dockerfile.$service" -t "coinswap-$service" .; then
-            print_success "$service image built successfully"
-        else
-            print_error "Failed to build $service image"
-            exit 1
-        fi
-    done
-    
-    print_success "All Docker images built successfully"
 }
 
 # Start the full stack using docker-compose
@@ -488,20 +458,7 @@ show_logs() {
 run_command() {
     local cmd="$1"
     shift
-    docker run --rm -it --network coinswap-network "coinswap-$cmd" "$@"
-}
-
-run_tests() {
-    print_info "Running Coinswap tests in Docker..."
-    
-    build_image
-    
-    # Run the tests
-    print_info "Executing integration tests..."
-    docker run --rm -it \
-        --network coinswap-network \
-        -v coinswap-test-data:/home/coinswap/.coinswap \
-        coinswap-test
+    docker run --rm -it --network coinswap-network "${IMAGE_NAME}:latest" "$cmd" "$@"
 }
 
 show_help() {
@@ -520,7 +477,6 @@ show_help() {
     echo "  logs [service]   Show logs (optionally for specific service)"
     echo "  status           Show status of running services"
     echo "  shell            Open shell in a new container"
-    echo "  test             Run integration tests"
     echo ""
     echo "Individual application commands:"
     echo "  makerd [args]   Run makerd with arguments"
@@ -530,12 +486,10 @@ show_help() {
     echo ""
     echo "Examples:"
     echo "  $0 build"
-    echo "  $0 build linux/arm64"
     echo "  $0 start"
     echo "  $0 taker --help"
     echo "  $0 maker-cli ping"
     echo "  $0 logs makerd"
-    echo "  $0 test"
 }
 
 case "${1:-}" in
@@ -570,11 +524,7 @@ case "${1:-}" in
         docker compose -f "$compose_file" ps
         ;;
     "shell")
-        docker run --rm -it --network coinswap-network "coinswap-taker" /bin/sh
-        ;;
-    "test")
-        check_docker
-        run_tests
+        docker run --rm -it --network coinswap-network "${IMAGE_NAME}:latest" /bin/sh
         ;;
     "makerd"|"maker-cli"|"taker"|"bitcoin-cli")
         run_command "$@"
