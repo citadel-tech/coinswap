@@ -3,8 +3,10 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMAGE_NAME="coinswap"
+IMAGE_NAME="coinswap/coinswap"
+BITCOIN_IMAGE_NAME="coinswap/bitcoin-mutinynet"
 CONFIG_FILE="$SCRIPT_DIR/.docker-config"
+VERSION_FILE="$SCRIPT_DIR/docker/bitcoin-mutinynet.version"
 
 DEFAULT_BITCOIN_DATADIR="/home/coinswap/.bitcoin"
 DEFAULT_BITCOIN_NETWORK="signet"
@@ -220,6 +222,13 @@ check_docker() {
 generate_compose_file() {
     local compose_file="$SCRIPT_DIR/docker-compose.generated.yml"
     
+    # Read Bitcoin version tag
+    local bitcoin_tag="latest"
+    if [ -f "$VERSION_FILE" ]; then
+        # Extract TAG value
+        bitcoin_tag=$(grep "^TAG=" "$VERSION_FILE" | cut -d'=' -f2)
+    fi
+    
     print_info "Generating docker-compose configuration..."
     
     cat > "$compose_file" << EOF
@@ -229,7 +238,7 @@ EOF
     if [[ "$USE_EXTERNAL_BITCOIND" != "true" ]]; then
         cat >> "$compose_file" << EOF
   bitcoind:
-    image: bitcoin/bitcoin:master-alpine
+    image: ${BITCOIN_IMAGE_NAME}:${bitcoin_tag}
     container_name: coinswap-bitcoind
     command: |
       bitcoind
@@ -369,6 +378,38 @@ build_image() {
     fi
 }
 
+# Build the Bitcoin Docker image
+build_bitcoin_image() {
+    print_info "Building Bitcoin Mutinynet Docker image..."
+    cd "$SCRIPT_DIR"
+    
+    if [ -f "$VERSION_FILE" ]; then
+        local tag=$(grep "^TAG=" "$VERSION_FILE" | cut -d'=' -f2)
+        local f_amd64=$(grep "^FILENAME_AMD64=" "$VERSION_FILE" | cut -d'=' -f2)
+        local s_amd64=$(grep "^SHA256_AMD64=" "$VERSION_FILE" | cut -d'=' -f2)
+        local f_arm64=$(grep "^FILENAME_ARM64=" "$VERSION_FILE" | cut -d'=' -f2)
+        local s_arm64=$(grep "^SHA256_ARM64=" "$VERSION_FILE" | cut -d'=' -f2)
+        
+        if docker build \
+            --build-arg TAG="$tag" \
+            --build-arg FILENAME_AMD64="$f_amd64" \
+            --build-arg SHA256_AMD64="$s_amd64" \
+            --build-arg FILENAME_ARM64="$f_arm64" \
+            --build-arg SHA256_ARM64="$s_arm64" \
+            -f docker/Dockerfile.bitcoin-mutinynet \
+            -t "${BITCOIN_IMAGE_NAME}:${tag}" \
+            -t "${BITCOIN_IMAGE_NAME}:latest" .; then
+            print_success "Bitcoin Mutinynet image built successfully"
+        else
+            print_error "Failed to build Bitcoin Mutinynet image"
+            exit 1
+        fi
+    else
+        print_error "Version file not found: $VERSION_FILE"
+        exit 1
+    fi
+}
+
 # Publish the Docker image
 publish_image() {
     local version="$1"
@@ -402,6 +443,45 @@ publish_image() {
     fi
     
     print_success "Published ${repo}:latest"
+}
+
+# Publish the Bitcoin Docker image
+publish_bitcoin_image() {
+    local username="${DOCKERHUB_USERNAME}"
+    
+    if [ -z "$username" ]; then
+        read -p "Enter Docker Hub username: " username
+    fi
+    
+    if [ -z "$username" ]; then
+        print_error "Username required to publish"
+        exit 1
+    fi
+
+    # Extract repo name if it contains a slash (e.g. coinswap/bitcoin-mutinynet -> bitcoin-mutinynet)
+    local repo_name=$(echo "$BITCOIN_IMAGE_NAME" | awk -F/ '{print $NF}')
+    local target_repo="${username}/${repo_name}"
+    
+    # Ensure image is built
+    build_bitcoin_image
+    
+    # Get tag from version file
+    local tag=$(grep "^TAG=" "$VERSION_FILE" | cut -d'=' -f2)
+    
+    print_info "Tagging and pushing image to $target_repo..."
+    
+    # Tag and push latest
+    docker tag "${BITCOIN_IMAGE_NAME}:latest" "${target_repo}:latest"
+    docker push "${target_repo}:latest"
+    
+    # Tag and push version
+    if [ -n "$tag" ]; then
+        docker tag "${BITCOIN_IMAGE_NAME}:${tag}" "${target_repo}:${tag}"
+        docker push "${target_repo}:${tag}"
+        print_success "Published ${target_repo}:${tag}"
+    fi
+    
+    print_success "Published ${target_repo}:latest"
 }
 
 # Start the full stack using docker-compose
@@ -503,7 +583,9 @@ show_help() {
     echo "Commands:"
     echo "  configure        Configure Coinswap Docker setup"
     echo "  build            Build the Docker image"
+    echo "  build-bitcoin    Build the Bitcoin Mutinynet Docker image"
     echo "  publish [ver]    Publish image to Docker Hub (optional version tag)"
+    echo "  publish-bitcoin  Publish Bitcoin Mutinynet image to Docker Hub"
     echo "  start [options]  Start the full Coinswap stack"
     echo "                   Options:"
     echo "                     -d, --default   Use default configuration without prompting"
@@ -515,13 +597,14 @@ show_help() {
     echo ""
     echo "Individual application commands:"
     echo "  makerd [args]   Run makerd with arguments"
-    echo "  maker-cli [args] Run maker-cli with arguments"
+    echo "  maker-cli [args] run maker-cli with arguments"
     echo "  taker [args]    Run taker with arguments"
     echo "  bitcoin-cli [args] Run bitcoin-cli with arguments"
     echo ""
     echo "Examples:"
     echo "  $0 build"
     echo "  $0 publish 1.0.0"
+    echo "  $0 publish-bitcoin"
     echo "  $0 start"
     echo "  $0 taker --help"
     echo "  $0 maker-cli ping"
@@ -536,9 +619,17 @@ case "${1:-}" in
         check_docker
         build_image
         ;;
+    "build-bitcoin")
+        check_docker
+        build_bitcoin_image
+        ;;
     "publish")
         check_docker
         publish_image "$2"
+        ;;
+    "publish-bitcoin")
+        check_docker
+        publish_bitcoin_image
         ;;
     "start")
         check_docker
