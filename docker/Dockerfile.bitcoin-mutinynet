@@ -38,7 +38,7 @@ RUN useradd -m -u 1000 bitcoin
 
 # Setup directories and config
 RUN mkdir -p /home/bitcoin/.bitcoin
-COPY bitcoin.conf /home/bitcoin/.bitcoin/bitcoin.conf
+COPY docker/bitcoin.conf /home/bitcoin/.bitcoin/bitcoin.conf
 RUN chown -R bitcoin:bitcoin /home/bitcoin/.bitcoin
 
 # Switch to user
