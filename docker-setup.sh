@@ -265,7 +265,7 @@ EOF
     if [[ "$USE_EXTERNAL_TOR" != "true" ]]; then
         cat >> "$compose_file" << EOF
   tor:
-    image: torproject/tor:latest
+    image: leplusorg/tor:latest
     container_name: coinswap-tor
     volumes:
       - tor-data:/var/lib/tor
@@ -280,8 +280,7 @@ EOF
 
     cat >> "$compose_file" << EOF
   makerd:
-    image: ${IMAGE_NAME}:latest
-    pull_policy: never
+    image: coinswap/${IMAGE_NAME}:latest
     container_name: coinswap-makerd
     command: |
       sh -c "
@@ -300,7 +299,7 @@ EOF
       base_fee = 100
       amount_relative_fee_ppt = 1000
       EOM
-      makerd --rpc bitcoind:$BITCOIN_RPC_PORT --auth coinswap:coinswappass
+      makerd -r bitcoind:$BITCOIN_RPC_PORT --auth coinswap:coinswappass
       "
     ports:
       - "$MAKERD_PORT:$MAKERD_PORT"
