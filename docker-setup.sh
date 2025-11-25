@@ -242,20 +242,13 @@ EOF
     container_name: coinswap-bitcoind
     command: |
       bitcoind
+      -conf=/home/bitcoin/.bitcoin/bitcoin.conf
+      -datadir=/home/bitcoin/.bitcoin
       -${BITCOIN_NETWORK}=1
-      -server=1
-      -fallbackfee=0.0001
-      -rpcuser=user
-      -rpcpassword=password
-      -rpcallowip=0.0.0.0/0
-      -rpcbind=0.0.0.0:$BITCOIN_RPC_PORT
+      -rpcbind=0.0.0.0
+      -rpcport=$BITCOIN_RPC_PORT
       -zmqpubrawblock=tcp://0.0.0.0:$BITCOIN_ZMQ_PORT
       -zmqpubrawtx=tcp://0.0.0.0:$BITCOIN_ZMQ_PORT
-      -txindex=1
-      -blockfilterindex=1
-      -datadir=/home/bitcoin/.bitcoin
-      -signetchallenge=0014c9e9f8875a25c3cc6d99ad3e5fd54254d00fed44
-      -addnode=172.81.178.3:38333
     ports:
       - "$BITCOIN_RPC_PORT:$BITCOIN_RPC_PORT"
       - "$BITCOIN_ZMQ_PORT:$BITCOIN_ZMQ_PORT"
@@ -289,7 +282,7 @@ EOF
 
     cat >> "$compose_file" << EOF
   makerd:
-    image: coinswap/${IMAGE_NAME}:latest
+    image: ${IMAGE_NAME}:latest
     container_name: coinswap-makerd
     command: |
       sh -c "
