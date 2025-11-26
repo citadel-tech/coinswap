@@ -8,6 +8,7 @@ target/
 # Keep README.md as it's needed by src/lib.rs
 # *.md
 docs/
+!docs/bitcoin.conf
 assets/
 
 # Keep test files for running tests in container
