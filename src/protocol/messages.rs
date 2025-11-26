@@ -261,7 +261,8 @@ pub struct Offer {
     pub max_size: u64,
     /// Minimum swap amount accepted in sats
     pub min_size: u64,
-    /// Public key for Tor onion address generation and authentication
+    /// Displayed public key of makers, for receiving swaps.
+    /// Actual swap addresses are derived from this public key using unique nonces per swap.
     pub tweakable_point: PublicKey,
     /// Cryptographic proof of fidelity bond for Sybil resistance
     pub fidelity: FidelityProof,
