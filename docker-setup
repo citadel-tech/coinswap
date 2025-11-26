@@ -165,12 +165,9 @@ configure_setup() {
     fi
     
     echo ""
-    print_info "Coinswap Service Ports"
+    print_info "Coinswap Maker Ports"
     echo "----------------------------------------"
-    
-    read -p "Makerd network port [${DEFAULT_MAKERD_PORT}]: " makerd_port
-    MAKERD_PORT="${makerd_port:-$DEFAULT_MAKERD_PORT}"
-    
+        
     read -p "Makerd RPC port [${DEFAULT_MAKERD_RPC_PORT}]: " makerd_rpc
     MAKERD_RPC_PORT="${makerd_rpc:-$DEFAULT_MAKERD_RPC_PORT}"
     
