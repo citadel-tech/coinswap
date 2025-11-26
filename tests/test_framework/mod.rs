@@ -753,7 +753,7 @@ impl TestFramework {
                     None,
                     None,
                     zmq_addr.clone(),
-                    None
+                    None,
                 )
                 .unwrap()
             })
@@ -778,8 +778,7 @@ impl TestFramework {
                         None,
                         port.1,
                         zmq_addr.clone(),
-                        None
-                        
+                        None,
                     )
                     .unwrap(),
                 )

@@ -299,7 +299,7 @@ pub fn decrypt_struct<T: DeserializeOwned>(
 /// # Type Parameters
 /// - `T`: The struct type to load.
 /// - `F`: A type implementing [`SerdeFormat`] (`SerdeCbor` or `SerdeJson`).
-// TODO: Combine the from_interactive and from_value APIs into a single API with an optional password parameter. 
+// TODO: Combine the from_interactive and from_value APIs into a single API with an optional password parameter.
 pub fn load_sensitive_struct_interactive<T: DeserializeOwned, F: SerdeFormat>(
     file: &Path,
 ) -> (T, Option<KeyMaterial>) {
