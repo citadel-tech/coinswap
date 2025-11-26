@@ -104,18 +104,14 @@ configure_setup() {
     
     echo ""
     echo "Select Bitcoin network:"
-    echo "1) signet (default - test network)"
-    echo "2) regtest (for testing)"
-    echo "3) testnet (test network)"  
-    echo "4) mainnet (CAUTION: real bitcoin)"
+    echo "1) Mutinynet (signet - default)"
+    echo "2) Regtest (local testing)"
     read -p "Network [1]: " network_choice
     
     case "${network_choice:-1}" in
         1) BITCOIN_NETWORK="signet"; BITCOIN_RPC_PORT="38332"; BITCOIN_ZMQ_PORT="28332" ;;
         2) BITCOIN_NETWORK="regtest"; BITCOIN_RPC_PORT="18442"; BITCOIN_ZMQ_PORT="28332" ;;
-        3) BITCOIN_NETWORK="testnet"; BITCOIN_RPC_PORT="18332"; BITCOIN_ZMQ_PORT="28332" ;;
-        4) BITCOIN_NETWORK="mainnet"; BITCOIN_RPC_PORT="8332"; BITCOIN_ZMQ_PORT="28332" ;;
-        *) BITCOIN_NETWORK="regtest"; BITCOIN_RPC_PORT="18442"; BITCOIN_ZMQ_PORT="28332" ;;
+        *) BITCOIN_NETWORK="signet"; BITCOIN_RPC_PORT="38332"; BITCOIN_ZMQ_PORT="28332" ;;
     esac
     
     echo ""
