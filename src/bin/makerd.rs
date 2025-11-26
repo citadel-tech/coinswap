@@ -84,6 +84,7 @@ fn main() -> Result<(), MakerError> {
             Some(args.tor_auth),
             None,
             args.zmq,
+            args.password,
         )?);
 
         start_maker_server_taproot(maker)?;

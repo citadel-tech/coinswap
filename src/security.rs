@@ -299,10 +299,11 @@ pub fn decrypt_struct<T: DeserializeOwned>(
 /// # Type Parameters
 /// - `T`: The struct type to load.
 /// - `F`: A type implementing [`SerdeFormat`] (`SerdeCbor` or `SerdeJson`).
+// TODO: Combine the from_interactive and from_value APIs into a single API with an optional password parameter. 
 pub fn load_sensitive_struct_interactive<T: DeserializeOwned, F: SerdeFormat>(
-    path: &Path,
+    file: &Path,
 ) -> (T, Option<KeyMaterial>) {
-    let content = fs::read(path).unwrap_or_else(|_| panic!("Failed to read the file: {:?}", path));
+    let content = fs::read(file).unwrap_or_else(|_| panic!("Failed to read the file: {:?}", file));
 
     let (sensitive_struct, encryption_material) = match F::from_slice::<T>(&content) {
         Ok(unencrypted_struct) => (unencrypted_struct, None),
@@ -318,14 +319,14 @@ pub fn load_sensitive_struct_interactive<T: DeserializeOwned, F: SerdeFormat>(
                 );
 
                 let decrypted = decrypt_struct::<T>(encrypted_struct, &enc_material)
-                    .unwrap_or_else(|err| panic!("Failed to decrypt file {:?}: {:?}", path, err));
+                    .unwrap_or_else(|err| panic!("Failed to decrypt file {:?}: {:?}", file, err));
 
                 (decrypted, Some(enc_material))
             }
             Err(encrypted_err) => {
                 panic!(
                     "Failed to deserialize file {:?}:\n- As unencrypted: {}\n- As encrypted: {}",
-                    path, unencrypted_err, encrypted_err
+                    file, unencrypted_err, encrypted_err
                 );
             }
         },
@@ -355,10 +356,10 @@ pub fn load_sensitive_struct_interactive<T: DeserializeOwned, F: SerdeFormat>(
 /// - `T`: The struct type to load.
 /// - `F`: A type implementing [`SerdeFormat`].
 pub fn load_sensitive_struct_from_value<T: DeserializeOwned, F: SerdeFormat>(
-    path: &Path,
+    file: &Path,
     password: String,
 ) -> (T, Option<KeyMaterial>) {
-    let content = fs::read(path).expect("Failed to serialize JSON value");
+    let content = fs::read(file).expect("Failed to serialize JSON value");
 
     let (sensitive_struct, encryption_material) = match F::from_slice::<T>(&content) {
         Ok(unencrypted_struct) => (unencrypted_struct, None),

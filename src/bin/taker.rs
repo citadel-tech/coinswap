@@ -327,6 +327,7 @@ fn main() -> Result<(), TakerError> {
                             None,
                             Some(tor_auth_clone.clone()),
                             zmq_clone.clone(),
+                            None
                         )?;
 
                         let taproot_swap_params = coinswap::taker::api2::SwapParams {
