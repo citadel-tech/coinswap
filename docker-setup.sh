@@ -174,8 +174,8 @@ configure_setup() {
     read -p "Makerd RPC port [${DEFAULT_MAKERD_RPC_PORT}]: " makerd_rpc
     MAKERD_RPC_PORT="${makerd_rpc:-$DEFAULT_MAKERD_RPC_PORT}"
     
-    read -p "Use Taproot (experimental)? [y/N]: " use_taproot
-    if [[ "${use_taproot:-N}" =~ ^[Yy]$ ]]; then
+    read -p "Use Taproot (experimental)? [Y/n]: " use_taproot
+    if [[ "${use_taproot:-Y}" =~ ^[Yy]$ ]]; then
         USE_TAPROOT="true"
     else
         USE_TAPROOT="false"
@@ -522,7 +522,7 @@ start_stack() {
     BITCOIN_ZMQ_PORT="${BITCOIN_ZMQ_PORT:-$DEFAULT_BITCOIN_ZMQ_PORT}"
     MAKERD_PORT="${MAKERD_PORT:-$DEFAULT_MAKERD_PORT}"
     MAKERD_RPC_PORT="${MAKERD_RPC_PORT:-$DEFAULT_MAKERD_RPC_PORT}"
-    USE_TAPROOT="${USE_TAPROOT:-false}"
+    USE_TAPROOT="${USE_TAPROOT:-true}"
     TOR_SOCKS_PORT="${TOR_SOCKS_PORT:-$DEFAULT_TOR_SOCKS_PORT}"
     TOR_CONTROL_PORT="${TOR_CONTROL_PORT:-$DEFAULT_TOR_CONTROL_PORT}"
     USE_EXTERNAL_BITCOIND="${USE_EXTERNAL_BITCOIND:-false}"
