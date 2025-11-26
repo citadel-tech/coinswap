@@ -301,7 +301,7 @@ EOF
       base_fee = 100
       amount_relative_fee_ppt = 1000
       EOM
-      makerd -r bitcoind:$BITCOIN_RPC_PORT --auth coinswap:coinswappass
+      makerd -r bitcoind:$BITCOIN_RPC_PORT -a coinswap:coinswappass
       "
     ports:
       - "$MAKERD_PORT:$MAKERD_PORT"
