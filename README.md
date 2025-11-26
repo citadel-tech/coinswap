@@ -81,9 +81,8 @@ git clone https://github.com/citadel-tech/coinswap.git
 cd coinswap
 
 # Configure, build, and start
-./docker-setup.sh configure
-./docker-setup.sh build
-./docker-setup.sh start
+./docker-setup configure
+./docker-setup start
 ```
 
 For advanced usage, manual commands, and architecture details, refer to the [Docker Documentation](./docs/docker.md).

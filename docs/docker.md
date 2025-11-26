@@ -61,29 +61,29 @@ The Docker setup uses:
 
 ### Using the Setup Script (Recommended)
 
-The `docker-setup.sh` script provides an interactive way to configure and run Coinswap:
+The `docker-setup` script provides an interactive way to configure and run Coinswap:
 
 ```bash
 git clone https://github.com/citadel-tech/coinswap.git
 cd coinswap
 
 # Interactive configuration
-./docker-setup.sh configure
+./docker-setup configure
 
 # Build the Docker image
-./docker-setup.sh build
+./docker-setup build
 
 # (Optional) Build the Bitcoin Mutinynet image if needed
-./docker-setup.sh build-bitcoin
+./docker-setup build-bitcoin
 
 # Start the complete stack
-./docker-setup.sh start
+./docker-setup start
 
 # Check status
-./docker-setup.sh status
+./docker-setup status
 
 # View logs
-./docker-setup.sh logs makerd
+./docker-setup logs makerd
 ```
 
 ### Configuration Options
@@ -116,10 +116,10 @@ git clone https://github.com/citadel-tech/coinswap.git
 cd coinswap
 
 # Build using the setup script
-./docker-setup.sh build
+./docker-setup build
 
 # Build Bitcoin Mutinynet image
-./docker-setup.sh build-bitcoin
+./docker-setup build-bitcoin
 
 # Or build manually
 docker build -f docker/Dockerfile -t coinswap:latest .
@@ -138,7 +138,7 @@ Run the maker daemon with persistent data storage:
 
 ```bash
 # Using the setup script (recommended)
-./docker-setup.sh start
+./docker-setup start
 
 # Or manually with specific image
 docker run -d \
@@ -160,9 +160,9 @@ Control the maker daemon:
 
 ```bash
 # Using the setup script
-./docker-setup.sh maker-cli ping
-./docker-setup.sh maker-cli wallet-balance
-./docker-setup.sh maker-cli stop
+./docker-setup maker-cli ping
+./docker-setup maker-cli wallet-balance
+./docker-setup maker-cli stop
 
 # Or manually
 docker run --rm --network coinswap-network coinswap:latest maker-cli ping
@@ -176,7 +176,7 @@ Run taker operations:
 
 ```bash
 # Using the setup script
-./docker-setup.sh taker --help
+./docker-setup taker --help
 
 # Or manually
 docker run --rm -it \
@@ -191,16 +191,16 @@ The setup script automatically generates `docker-compose.generated.yml` based on
 
 ```bash
 # Start all services (Bitcoin Core, Tor, Makerd)
-./docker-setup.sh start
+./docker-setup start
 
 # Or use docker-compose directly
 docker compose -f docker-compose.generated.yml up -d
 
 # Check status
-./docker-setup.sh status
+./docker-setup status
 
 # View logs
-./docker-setup.sh logs makerd
+./docker-setup logs makerd
 ```
 
 ## Data Persistence
@@ -217,7 +217,7 @@ All application data is stored in Docker volumes:
 
 ```bash
 # using setup script
-./docker-setup.sh logs makerd
+./docker-setup logs makerd
 
 # or directly with docker-compose
 docker compose -f docker-compose.generated.yml logs -f makerd
@@ -227,7 +227,7 @@ docker compose -f docker-compose.generated.yml logs -f makerd
 
 ```bash
 # enter container for debugging
-./docker-setup.sh shell
+./docker-setup shell
 
 # or manually
 docker run --rm -it coinswap:latest sh
