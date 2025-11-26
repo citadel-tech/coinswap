@@ -120,6 +120,9 @@ fn setup_fidelity_bond_taproot(
             wallet_read.calculate_bond_value(bond)?.to_sat()
         );
 
+        // Store the fidelity proof in maker
+        *maker.highest_fidelity_proof.write()? = Some(highest_proof.clone());
+
         return Ok(highest_proof);
     }
 
@@ -228,6 +231,9 @@ fn setup_fidelity_bond_taproot(
                 // sync and save the wallet data to disk
                 maker.wallet().write()?.sync_no_fail();
                 maker.wallet().read()?.save_to_disk()?;
+
+                // Store the fidelity proof in maker
+                *maker.highest_fidelity_proof.write()? = Some(highest_proof.clone());
 
                 return Ok(highest_proof);
             }

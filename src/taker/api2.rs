@@ -122,18 +122,29 @@ fn fetch_taproot_offers(
     maker_addresses: &[MakerAddress],
     config: &TakerConfig,
 ) -> Result<Vec<OfferAndAddress>, TakerError> {
-    let mut offers = Vec::new();
+    use std::sync::mpsc;
 
-    for address in maker_addresses {
-        match download_taproot_offer(address, config) {
-            Some(offer) => offers.push(offer),
-            None => {
-                log::warn!("Failed to download offer from taproot maker: {}", address);
-            }
+    let (offers_writer, offers_reader) = mpsc::channel::<Option<OfferAndAddress>>();
+    let maker_addresses_len = maker_addresses.len();
+
+    thread::scope(|s| {
+        for address in maker_addresses {
+            let offers_writer = offers_writer.clone();
+            s.spawn(move || {
+                let offer = download_taproot_offer(address, config);
+                let _ = offers_writer.send(offer);
+            });
+        }
+    });
+
+    let mut result = Vec::new();
+    for _ in 0..maker_addresses_len {
+        if let Some(offer_addr) = offers_reader.recv()? {
+            result.push(offer_addr);
         }
     }
 
-    Ok(offers)
+    Ok(result)
 }
 
 /// Download a single offer from a taproot maker

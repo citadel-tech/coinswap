@@ -50,13 +50,13 @@ pub(crate) fn handle_message_taproot(
 /// Handles GetOffer message and returns an Offer with fidelity proof
 fn handle_get_offer(
     maker: &Arc<Maker>,
-    _connection_state: &mut ConnectionState,
+    connection_state: &mut ConnectionState,
     _get_offer: GetOffer,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     log::info!("[{}] Handling GetOffer request", maker.config.network_port);
 
     // Create offer using the new api2 implementation
-    let offer = maker.create_offer(_connection_state)?;
+    let offer = maker.create_offer(connection_state)?;
 
     log::info!(
         "[{}] Sending offer: min_size={}, max_size={}",
