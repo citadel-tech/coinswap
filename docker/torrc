@@ -1,0 +1,11 @@
+# Tor configuration for coinswap
+SOCKSPort 0.0.0.0:9050
+ControlPort 0.0.0.0:9051
+DataDirectory /var/lib/tor
+
+# Logging
+Log notice file /var/lib/tor/notices.log
+
+# Security settings
+CookieAuthentication 1
+CookieAuthFileGroupReadable 1

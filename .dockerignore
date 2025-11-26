@@ -1,0 +1,37 @@
+# Ignore target directory (except for copying specific files)
+target/
+!target/release/
+
+# Ignore git and development files
+.git
+.gitignore
+# Keep README.md as it's needed by src/lib.rs
+# *.md
+docs/
+!docs/bitcoin.conf
+assets/
+
+# Keep test files for running tests in container
+# tests/
+
+# Ignore IDE files
+.vscode/
+.idea/
+
+# Ignore temporary files
+*.tmp
+*.temp
+*~
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore Docker files (keep the one we're using)
+Dockerfile.*
+!Dockerfile
+
+# Ignore other build artifacts
+*.log
+.env
+.env.local

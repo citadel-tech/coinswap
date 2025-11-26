@@ -1,0 +1,5 @@
+TAG=mutinynet-inq-29
+FILENAME_AMD64=bitcoin-38351585048e-x86_64-linux-gnu.tar.gz
+SHA256_AMD64=0c61faf45e2cf44cf6d51b9f279aa7c67cb16bb385b471d2c36bd852817c6f03
+FILENAME_ARM64=bitcoin-38351585048e-aarch64-linux-gnu.tar.gz
+SHA256_ARM64=e79d214d2a265e64ebe6ef1ed617bece3f611df2350645c28c7e6fd9bed46a31

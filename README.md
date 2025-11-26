@@ -56,6 +56,8 @@ sudo apt install build-essential automake libtool
 
 ## Build and Install
 
+### Option 1: Build from Source
+
 ```console
 git clone https://github.com/citadel-tech/coinswap.git
 cd coinswap
@@ -70,7 +72,24 @@ sudo install ./target/release/makerd /usr/local/bin/
 sudo install ./target/release/maker-cli /usr/local/bin/  
 ```
 
+### Option 2: Using Docker
+
+We provide a helper script to easily configure, build, and run the Coinswap stack (including Bitcoin Core and Tor).
+
+```console
+git clone https://github.com/citadel-tech/coinswap.git
+cd coinswap
+
+# Configure, build, and start
+./docker-setup configure
+./docker-setup start
+```
+
+For advanced usage, manual commands, and architecture details, refer to the [Docker Documentation](./docs/docker.md).
+
 ## Verify Setup
+
+### Native Installation
 
 ```console
 makerd --help
@@ -79,6 +98,17 @@ taker --help
 
 # Test connection to market
 taker fetch-offers
+```
+
+### Docker Installation
+
+```console
+# Check binaries
+./docker-setup taker --help
+./docker-setup maker-cli --help
+
+# Test connection to market
+./docker-setup taker fetch-offers
 ```
 
 # Applications
