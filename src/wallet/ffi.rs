@@ -84,15 +84,15 @@ pub struct SwapReport {
     pub output_swap_utxos: Vec<(u64, String)>,
 }
 
-/// Restores a wallet from an encrypted or unencrypted JSON backup string for GUI/FFI applications.
+/// Restores a wallet from an encrypted or unencrypted JSON backup file for GUI/FFI applications.
 ///
 /// This is a non-interactive restore method designed for programmatic use via FFI bindings.
-/// Unlike `restore_wallet`, this function accepts a JSON string directly and handles both
+/// Unlike `restore_wallet`, this function accepts a path to a JSON backup file and handles both
 /// encrypted and unencrypted backups using [`load_sensitive_struct_from_value`].
 ///
 /// # Behavior
 ///
-/// 1. Parses the JSON backup string into a [`WalletBackup`] structure
+/// 1. Reads and parses the JSON backup file into a [`WalletBackup`] structure
 /// 2. If encrypted, decrypts using the provided password and preserves encryption material
 /// 3. Constructs the wallet path: `{data_dir_or_default}/wallets/{wallet_file_name_or_default}`
 /// 4. Calls [`Wallet::restore`] to reconstruct the wallet with all UTXOs and metadata
@@ -101,18 +101,19 @@ pub struct SwapReport {
 ///
 /// - `data_dir`: Target directory, defaults to `~/.coinswap/taker`
 /// - `wallet_file_name`: Restored wallet filename, defaults to name from backup if empty
-/// - `backup_file`: JSON string containing the wallet backup (encrypted or plain)
+/// - `backup_file_path`: Path to the JSON file containing the wallet backup (encrypted or plain)
 /// - `password`: Required if backup is encrypted, ignored otherwise
 pub fn restore_wallet_gui_app(
     data_dir: Option<PathBuf>,
     wallet_file_name: Option<String>,
     rpc_config: RPCConfig,
-    backup_file: String,
+    backup_file_path: PathBuf,
     password: Option<String>,
 ) {
-    let value = serde_json::from_str(&backup_file).unwrap();
-    let (backup, encryption_material) =
-        load_sensitive_struct_from_value::<WalletBackup, SerdeJson>(&value, password.unwrap());
+    let (backup, encryption_material) = load_sensitive_struct_from_value::<WalletBackup, SerdeJson>(
+        &backup_file_path,
+        password.unwrap(),
+    );
     let restored_wallet_filename = wallet_file_name.unwrap_or("".to_string());
 
     let restored_wallet_path = data_dir
@@ -136,7 +137,7 @@ pub fn restore_wallet_gui_app(
 impl Wallet {
     /// Creates a wallet backup for GUI/FFI applications with optional encryption.
     ///
-    /// This is a convenience wrapper around [`Wallet::backup`] that handles encryption
+    /// This is a ffi-only wrapper around [`Wallet::backup`] that handles encryption
     /// material generation internally based on whether a password is provided.
     ///
     /// # Behavior
@@ -147,13 +148,8 @@ impl Wallet {
     ///
     /// # Parameters
     ///
-    /// - `path`: Destination file path for the backup (`.json` extension added automatically)
+    /// - `destination_path`: Destination file path for the backup (`.json`)
     /// - `password`: Optional password for encryption. Use `None` or empty string for plaintext backup
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(())` if backup succeeds
-    /// - `Err(WalletError)` if file I/O or serialization fails
     ///
     /// # Example
     ///
@@ -171,6 +167,7 @@ impl Wallet {
         let km = KeyMaterial::new_from_password(password);
         let backup_path = Path::new(&destination_path);
         self.backup(backup_path, km)?;
+
         Ok(())
     }
 

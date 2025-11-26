@@ -253,6 +253,7 @@ impl Taker {
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
         zmq_addr: String,
+        password: Option<String>,
     ) -> Result<Taker, TakerError> {
         let data_dir = data_dir.unwrap_or_else(get_taker_dir);
 
@@ -285,7 +286,7 @@ impl Taker {
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
         let mut wallet = if wallet_path.exists() {
-            let wallet = Wallet::load(&wallet_path, &rpc_config)?;
+            let wallet = Wallet::load(&wallet_path, &rpc_config, password)?;
             log::info!("Loaded wallet from {}", wallet_path.display());
             wallet
         } else {

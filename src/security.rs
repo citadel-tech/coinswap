@@ -355,10 +355,10 @@ pub fn load_sensitive_struct_interactive<T: DeserializeOwned, F: SerdeFormat>(
 /// - `T`: The struct type to load.
 /// - `F`: A type implementing [`SerdeFormat`].
 pub fn load_sensitive_struct_from_value<T: DeserializeOwned, F: SerdeFormat>(
-    value: &serde_json::Value,
+    path: &Path,
     password: String,
 ) -> (T, Option<KeyMaterial>) {
-    let content = serde_json::to_vec(value).expect("Failed to serialize JSON value");
+    let content = fs::read(path).expect("Failed to serialize JSON value");
 
     let (sensitive_struct, encryption_material) = match F::from_slice::<T>(&content) {
         Ok(unencrypted_struct) => (unencrypted_struct, None),

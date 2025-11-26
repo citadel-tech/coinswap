@@ -293,8 +293,13 @@ impl Wallet {
     /// Load wallet data from file and connect to a core RPC.
     /// The core rpc wallet name, and wallet_id field in the file should match.
     /// If encryption material is provided, decrypt the wallet store using it.
-    pub(crate) fn load(path: &Path, rpc_config: &RPCConfig) -> Result<Wallet, WalletError> {
-        let (store, store_enc_material) = WalletStore::read_from_disk(path)?;
+    pub(crate) fn load(
+        path: &Path,
+        rpc_config: &RPCConfig,
+        password: Option<String>,
+    ) -> Result<Wallet, WalletError> {
+        let (store, store_enc_material) =
+            WalletStore::read_from_disk(path, password.unwrap_or_default())?;
 
         if rpc_config.wallet_name != store.file_name {
             return Err(WalletError::General(format!(
@@ -342,7 +347,7 @@ impl Wallet {
     ) -> Result<Wallet, WalletError> {
         let wallet = if path.exists() {
             // wallet already exists, load the wallet
-            let wallet = Wallet::load(path, rpc_config)?;
+            let wallet = Wallet::load(path, rpc_config, password)?;
             log::info!("Wallet file at {path:?} successfully loaded.");
             wallet
         } else {

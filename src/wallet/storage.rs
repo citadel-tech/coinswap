@@ -3,7 +3,7 @@
 //! Wallet data is currently written in unencrypted CBOR files which are not directly human readable.
 
 use crate::{
-    security::{encrypt_struct, load_sensitive_struct_interactive, KeyMaterial, SerdeCbor},
+    security::{encrypt_struct, load_sensitive_struct_from_value, KeyMaterial, SerdeCbor},
     wallet::UTXOSpendInfo,
 };
 
@@ -120,9 +120,12 @@ impl WalletStore {
     /// Reads from a path (errors if path doesn't exist).
     /// If `store_enc_material` is provided, attempts to decrypt the file using the
     /// provided key. Returns the deserialized `WalletStore` and the nonce.
-    pub(crate) fn read_from_disk(path: &Path) -> Result<(Self, Option<KeyMaterial>), WalletError> {
+    pub(crate) fn read_from_disk(
+        backup_file_path: &Path,
+        password: String,
+    ) -> Result<(Self, Option<KeyMaterial>), WalletError> {
         let (wallet_store, store_enc_material) =
-            load_sensitive_struct_interactive::<Self, SerdeCbor>(path);
+            load_sensitive_struct_from_value::<Self, SerdeCbor>(backup_file_path, password);
 
         Ok((wallet_store, store_enc_material))
     }
@@ -158,7 +161,7 @@ mod tests {
             .write_to_disk(&file_path, &None)
             .unwrap();
 
-        let (read_wallet, _nonce) = WalletStore::read_from_disk(&file_path).unwrap();
+        let (read_wallet, _nonce) = WalletStore::read_from_disk(&file_path, String::new()).unwrap();
         assert_eq!(original_wallet_store, read_wallet);
     }
 }
