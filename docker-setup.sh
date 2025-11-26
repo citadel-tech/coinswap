@@ -581,6 +581,7 @@ show_help() {
     echo "  stop             Stop the Coinswap stack"
     echo "  restart          Restart the Coinswap stack"
     echo "  logs [service]   Show logs (optionally for specific service)"
+    echo "                   Services: bitcoind, tor, makerd"
     echo "  status           Show status of running services"
     echo "  shell            Open shell in a new container"
     echo ""
