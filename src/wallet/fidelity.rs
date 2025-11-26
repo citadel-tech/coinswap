@@ -129,6 +129,7 @@ pub struct FidelityBond {
 }
 
 impl FidelityBond {
+    /// Whether the fidelity bond is spent or not
     pub fn is_spent(&self) -> bool {
         self.is_spent
     }

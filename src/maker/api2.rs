@@ -182,6 +182,7 @@ impl Maker {
         tor_auth_password: Option<String>,
         socks_port: Option<u16>,
         zmq_addr: String,
+        password: Option<String>,
     ) -> Result<Self, MakerError> {
         let data_dir = data_dir.unwrap_or(get_maker_dir());
         let wallets_dir = data_dir.join("wallets");
@@ -216,7 +217,7 @@ impl Maker {
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
         let mut wallet = if wallet_path.exists() {
-            let wallet = Wallet::load(&wallet_path, &rpc_config)?;
+            let wallet = Wallet::load(&wallet_path, &rpc_config, password)?;
             log::info!("Wallet file at {wallet_path:?} successfully loaded.");
             wallet
         } else {

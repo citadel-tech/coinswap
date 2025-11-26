@@ -138,17 +138,19 @@ pub struct KeyMaterial {
 }
 impl KeyMaterial {
     /// Creates new key material from a password, with a freshly random generated nonce and salt.
-    pub fn new_from_password(password: String) -> Self {
-        let pbkdf2_salt = random::<PBKDF2Salt>();
-        KeyMaterial {
-            key: pbkdf2_hmac_array::<Sha256, 32>(
-                password.as_bytes(),
-                &pbkdf2_salt,
-                PBKDF2_ITERATIONS,
-            ),
-            nonce: Aes256Gcm::generate_nonce(&mut OsRng).into(),
-            pbkdf2_salt,
-        }
+    pub fn new_from_password(enc_password: Option<String>) -> Option<Self> {
+        enc_password.map(|pwd| {
+            let pbkdf2_salt = random::<PBKDF2Salt>();
+            KeyMaterial {
+                key: pbkdf2_hmac_array::<Sha256, 32>(
+                    pwd.as_bytes(),
+                    &pbkdf2_salt,
+                    PBKDF2_ITERATIONS,
+                ),
+                nonce: Aes256Gcm::generate_nonce(&mut OsRng).into(),
+                pbkdf2_salt,
+            }
+        })
     }
     /// Prompts the user interactively for a new encryption passphrase.
     ///
@@ -297,10 +299,11 @@ pub fn decrypt_struct<T: DeserializeOwned>(
 /// # Type Parameters
 /// - `T`: The struct type to load.
 /// - `F`: A type implementing [`SerdeFormat`] (`SerdeCbor` or `SerdeJson`).
+// TODO: Combine the from_interactive and from_value APIs into a single API with an optional password parameter.
 pub fn load_sensitive_struct_interactive<T: DeserializeOwned, F: SerdeFormat>(
-    path: &Path,
+    file: &Path,
 ) -> (T, Option<KeyMaterial>) {
-    let content = fs::read(path).unwrap_or_else(|_| panic!("Failed to read the file: {:?}", path));
+    let content = fs::read(file).unwrap_or_else(|_| panic!("Failed to read the file: {:?}", file));
 
     let (sensitive_struct, encryption_material) = match F::from_slice::<T>(&content) {
         Ok(unencrypted_struct) => (unencrypted_struct, None),
@@ -316,14 +319,69 @@ pub fn load_sensitive_struct_interactive<T: DeserializeOwned, F: SerdeFormat>(
                 );
 
                 let decrypted = decrypt_struct::<T>(encrypted_struct, &enc_material)
-                    .unwrap_or_else(|err| panic!("Failed to decrypt file {:?}: {:?}", path, err));
+                    .unwrap_or_else(|err| panic!("Failed to decrypt file {:?}: {:?}", file, err));
 
                 (decrypted, Some(enc_material))
             }
             Err(encrypted_err) => {
                 panic!(
                     "Failed to deserialize file {:?}:\n- As unencrypted: {}\n- As encrypted: {}",
-                    path, unencrypted_err, encrypted_err
+                    file, unencrypted_err, encrypted_err
+                );
+            }
+        },
+    };
+
+    (sensitive_struct, encryption_material)
+}
+
+/// Loads a sensitive struct from a JSON value, supporting both encrypted and plaintext formats.
+///
+/// This is a non-interactive variant of [`load_sensitive_struct_interactive`] designed for
+/// programmatic use via FFI bindings or GUI applications where password prompts are not feasible.
+///
+/// # Behavior
+///
+/// The function attempts to deserialize the JSON value in two steps:
+///
+/// 1. **Unencrypted:** Attempts to deserialize the value directly as `T`.
+/// 2. **Encrypted:** If that fails, attempts to deserialize as [`EncryptedData`],
+///    then decrypts it using the provided password (no interactive prompt).
+///
+/// The deserialization format is defined by the [`SerdeFormat`] trait implementation
+/// passed via the type parameter `F`.`
+///
+/// # Type Parameters
+///
+/// - `T`: The struct type to load.
+/// - `F`: A type implementing [`SerdeFormat`].
+pub fn load_sensitive_struct_from_value<T: DeserializeOwned, F: SerdeFormat>(
+    file: &Path,
+    password: String,
+) -> (T, Option<KeyMaterial>) {
+    let content = fs::read(file).expect("Failed to serialize JSON value");
+
+    let (sensitive_struct, encryption_material) = match F::from_slice::<T>(&content) {
+        Ok(unencrypted_struct) => (unencrypted_struct, None),
+        Err(unencrypted_err) => match F::from_slice::<EncryptedData>(&content) {
+            Ok(encrypted_struct) => {
+                let encryption_password = password;
+
+                let enc_material = KeyMaterial::existing(
+                    encryption_password,
+                    encrypted_struct.nonce,
+                    encrypted_struct.pbkdf2_salt,
+                );
+
+                let decrypted = decrypt_struct::<T>(encrypted_struct, &enc_material)
+                    .unwrap_or_else(|err| panic!("Failed to decrypt struct: {:?}", err));
+
+                (decrypted, Some(enc_material))
+            }
+            Err(encrypted_err) => {
+                panic!(
+                    "Failed to deserialize JSON:\n- As unencrypted: {}\n- As encrypted: {}",
+                    unencrypted_err, encrypted_err
                 );
             }
         },

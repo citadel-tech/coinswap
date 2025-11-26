@@ -277,6 +277,7 @@ impl Maker {
         socks_port: Option<u16>,
         behavior: MakerBehavior,
         zmq_addr: String,
+        password: Option<String>,
     ) -> Result<Self, MakerError> {
         // Get the provided data directory or the default data directory.
         let data_dir = data_dir.unwrap_or(get_maker_dir());
@@ -313,7 +314,7 @@ impl Maker {
 
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
-        let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config)?;
+        let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config, password)?;
 
         if let Some(rpc_port) = rpc_port {
             config.rpc_port = rpc_port;

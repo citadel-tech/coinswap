@@ -57,6 +57,9 @@ struct Cli {
     /// Use experimental Taproot-based coinswap protocol
     #[clap(long)]
     pub taproot: bool,
+    /// Optional Password for the encryption of the wallet.
+    #[clap(name = "PASSWORD", long, short = 'p')]
+    pub password: Option<String>,
 }
 
 fn main() -> Result<(), MakerError> {
@@ -81,6 +84,7 @@ fn main() -> Result<(), MakerError> {
             Some(args.tor_auth),
             None,
             args.zmq,
+            args.password,
         )?);
 
         start_maker_server_taproot(maker)?;
@@ -96,6 +100,7 @@ fn main() -> Result<(), MakerError> {
             None,
             MakerBehavior::Normal,
             args.zmq,
+            args.password,
         )?);
 
         start_maker_server(maker)?;
