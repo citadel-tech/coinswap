@@ -54,6 +54,7 @@ BITCOIN_RPC_PORT="$BITCOIN_RPC_PORT"
 BITCOIN_ZMQ_PORT="$BITCOIN_ZMQ_PORT"
 MAKERD_PORT="$MAKERD_PORT"
 MAKERD_RPC_PORT="$MAKERD_RPC_PORT"
+USE_TAPROOT="$USE_TAPROOT"
 TOR_SOCKS_PORT="$TOR_SOCKS_PORT"
 TOR_CONTROL_PORT="$TOR_CONTROL_PORT"
 USE_EXTERNAL_BITCOIND="$USE_EXTERNAL_BITCOIND"
@@ -173,6 +174,13 @@ configure_setup() {
     read -p "Makerd RPC port [${DEFAULT_MAKERD_RPC_PORT}]: " makerd_rpc
     MAKERD_RPC_PORT="${makerd_rpc:-$DEFAULT_MAKERD_RPC_PORT}"
     
+    read -p "Use Taproot (experimental)? [y/N]: " use_taproot
+    if [[ "${use_taproot:-N}" =~ ^[Yy]$ ]]; then
+        USE_TAPROOT="true"
+    else
+        USE_TAPROOT="false"
+    fi
+    
     echo ""
     print_info "Configuration Summary"
     echo "----------------------------------------"
@@ -193,6 +201,7 @@ configure_setup() {
     fi
     echo "Makerd Port: $MAKERD_PORT"
     echo "Makerd RPC Port: $MAKERD_RPC_PORT"
+    echo "Use Taproot: $USE_TAPROOT"
     echo ""
     
     read -p "Save this configuration? [Y/n]: " save_config_prompt
@@ -226,6 +235,11 @@ generate_compose_file() {
     fi
     
     print_info "Generating docker-compose configuration..."
+    
+    local makerd_args="-r bitcoind:$BITCOIN_RPC_PORT -a user:password"
+    if [[ "$USE_TAPROOT" == "true" ]]; then
+        makerd_args="$makerd_args --taproot"
+    fi
     
     cat > "$compose_file" << EOF
 services:
@@ -297,7 +311,7 @@ EOF
       base_fee = 100
       amount_relative_fee_ppt = 1000
       EOM
-      makerd -r bitcoind:$BITCOIN_RPC_PORT -a coinswap:coinswappass
+      makerd $makerd_args
       "
     ports:
       - "$MAKERD_PORT:$MAKERD_PORT"
@@ -508,6 +522,7 @@ start_stack() {
     BITCOIN_ZMQ_PORT="${BITCOIN_ZMQ_PORT:-$DEFAULT_BITCOIN_ZMQ_PORT}"
     MAKERD_PORT="${MAKERD_PORT:-$DEFAULT_MAKERD_PORT}"
     MAKERD_RPC_PORT="${MAKERD_RPC_PORT:-$DEFAULT_MAKERD_RPC_PORT}"
+    USE_TAPROOT="${USE_TAPROOT:-false}"
     TOR_SOCKS_PORT="${TOR_SOCKS_PORT:-$DEFAULT_TOR_SOCKS_PORT}"
     TOR_CONTROL_PORT="${TOR_CONTROL_PORT:-$DEFAULT_TOR_CONTROL_PORT}"
     USE_EXTERNAL_BITCOIND="${USE_EXTERNAL_BITCOIND:-false}"
