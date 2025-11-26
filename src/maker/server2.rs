@@ -449,7 +449,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                 ip
             );
 
-            // For certain message types, close the connection after responding
+            // For certain message types, handle cleanup
             match &response_msg {
                 MakerToTakerMessage::RespOffer(_) => {
                     // Keep connection open for SwapDetails
@@ -462,7 +462,18 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                     );
                 }
                 MakerToTakerMessage::SenderContractFromMaker(_) => {}
-                MakerToTakerMessage::PrivateKeyHandover(_) => {}
+                MakerToTakerMessage::PrivateKeyHandover(_) => {
+                    // Swap completed successfully - remove from ongoing swaps
+                    log::info!(
+                        "[{}] Swap completed successfully with {}, removing from ongoing swaps",
+                        maker.config.network_port,
+                        ip
+                    );
+                    let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
+                    ongoing_swaps.remove(&ip);
+                    // Exit loop - swap is complete
+                    break;
+                }
             }
         }
 
