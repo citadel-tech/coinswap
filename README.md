@@ -104,11 +104,11 @@ taker fetch-offers
 
 ```console
 # Check binaries
-./docker-setup.sh taker --help
-./docker-setup.sh maker-cli --help
+./docker-setup taker --help
+./docker-setup maker-cli --help
 
 # Test connection to market
-./docker-setup.sh taker fetch-offers
+./docker-setup taker fetch-offers
 ```
 
 # Applications

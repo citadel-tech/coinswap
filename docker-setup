@@ -314,7 +314,6 @@ EOF
       makerd $makerd_args
       "
     ports:
-      - "$MAKERD_PORT:$MAKERD_PORT"
       - "$MAKERD_RPC_PORT:$MAKERD_RPC_PORT"
     volumes:
       - maker-data:/home/coinswap/.coinswap
