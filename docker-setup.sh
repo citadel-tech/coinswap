@@ -3,8 +3,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMAGE_NAME="coinswap/coinswap"
-BITCOIN_IMAGE_NAME="coinswap/bitcoin-mutinynet"
+IMAGE_NAME="coinswap"
+BITCOIN_IMAGE_NAME="bitcoin-mutinynet"
 CONFIG_FILE="$SCRIPT_DIR/.docker-config"
 VERSION_FILE="$SCRIPT_DIR/docker/bitcoin-mutinynet.version"
 
@@ -248,7 +248,7 @@ EOF
     if [[ "$USE_EXTERNAL_BITCOIND" != "true" ]]; then
         cat >> "$compose_file" << EOF
   bitcoind:
-    image: ${BITCOIN_IMAGE_NAME}:${bitcoin_tag}
+    image: coinswap/${BITCOIN_IMAGE_NAME}:${bitcoin_tag}
     container_name: coinswap-bitcoind
     command: |
       bitcoind
@@ -292,7 +292,7 @@ EOF
 
     cat >> "$compose_file" << EOF
   makerd:
-    image: ${IMAGE_NAME}:latest
+    image: coinswap/${IMAGE_NAME}:latest
     container_name: coinswap-makerd
     command: |
       sh -c "
