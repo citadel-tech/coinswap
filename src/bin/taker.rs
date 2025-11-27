@@ -199,6 +199,7 @@ fn main() -> Result<(), TakerError> {
                 None,
                 Some(args.tor_auth),
                 args.zmq,
+                None,
             )?;
             taproot_taker.recover_from_swap()?;
         }
@@ -212,6 +213,7 @@ fn main() -> Result<(), TakerError> {
                 None,
                 Some(args.tor_auth),
                 args.zmq,
+                None,
             )?;
 
             let taproot_swap_params = coinswap::taker::api2::SwapParams {
@@ -350,47 +352,12 @@ fn main() -> Result<(), TakerError> {
                     }
                 }
                 Commands::Coinswap { makers, amount } => {
-<<<<<<< HEAD
-                    if args.taproot {
-                        // Use experimental Taproot-based coinswap
-                        log::warn!("Using experimental Taproot-based coinswap protocol");
-                        let mut taproot_taker = TaprootTaker::init(
-                            args.data_directory.clone(),
-                            args.wallet_name.clone(),
-                            Some(rpc_config.clone()),
-                            None,
-                            Some(tor_auth_clone.clone()),
-                            zmq_clone.clone(),
-                            None,
-                        )?;
-
-                        let taproot_swap_params = coinswap::taker::api2::SwapParams {
-                            send_amount: Amount::from_sat(*amount),
-                            maker_count: *makers,
-                            tx_count: 1,
-                            required_confirms: 1,
-                        };
-                        taproot_taker.do_coinswap(taproot_swap_params)?;
-                    } else {
-                        // Use regular ECDSA-based coinswap
-                        let manually_selected_outpoints = if cfg!(not(feature = "integration-test"))
-                        {
-                            Some(
-                                coinswap::utill::interactive_select(
-                                    taker.get_wallet().list_all_utxo_spend_info(),
-                                )
-                                .unwrap()
-                                .iter()
-                                .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
-                                .collect::<Vec<_>>(),
-=======
                     // Note: taproot coinswap is handled at the top level to avoid
                     // double Taker initialization. Regular ECDSA coinswap goes here.
                     let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
                         Some(
                             coinswap::utill::interactive_select(
                                 taker.get_wallet().list_all_utxo_spend_info(),
->>>>>>> bcbb612 (more recovery edge cases and bug resolutions)
                             )
                             .unwrap()
                             .iter()

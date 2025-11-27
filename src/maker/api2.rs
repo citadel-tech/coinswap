@@ -1355,14 +1355,27 @@ pub(crate) fn recover_from_swap(
         };
 
         if incoming_spent {
-            log::info!(
-                "[{}] Incoming contract {} already spent (likely via key-path). Recovery not needed.",
+            // If we have other_privkey, the swap was successful (key exchange happened)
+            // and we already claimed the incoming contract via key-path. No recovery needed.
+            if incoming_swapcoin.other_privkey.is_some() {
+                log::info!(
+                    "[{}] Incoming contract {} already spent via key-path (swap succeeded). Recovery not needed.",
+                    maker.config.network_port,
+                    incoming_contract_txid
+                );
+                // Stop watching the outgoing contract
+                maker.watch_service.unwatch(outgoing_outpoint);
+                return Ok(());
+            }
+
+            // If we don't have other_privkey, the taker used timelock recovery on the incoming
+            // contract. We must recover our funds from the outgoing contract via timelock.
+            log::warn!(
+                "[{}] Incoming contract {} was spent by taker via timelock (no key exchange). We must recover our outgoing contract.",
                 maker.config.network_port,
                 incoming_contract_txid
             );
-            // Stop watching the outgoing contract
-            maker.watch_service.unwatch(outgoing_outpoint);
-            return Ok(());
+            // Continue to timelock recovery for our outgoing contract below
         }
 
         // Check if outgoing contract has been spent (taker may have used hashlock)
