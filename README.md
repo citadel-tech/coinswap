@@ -27,7 +27,7 @@
 
 - **GUI Coinswap Client available for testing**: [Taker App](https://github.com/citadel-tech/taker-app)
 
-- **One-Click Deployment for Coinswap maker server on Mutinynet available here**: [Coinswap Docker](./docs/docker.md)  
+- **One-Click Deployment for Coinswap maker server available here**: [Coinswap Docker](./docs/docker.md)  
 
 ## ⚠️ Warning
 This library is currently under development and is in an experimental stage. **Mainnet use is NOT recommended.**
