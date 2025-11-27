@@ -120,6 +120,7 @@ impl Default for OngoingSwapState {
                 other_privkey: None,
                 timelock_privkey: dummy_key,
                 funding_amount: Amount::ZERO,
+                swap_id: None,
             },
             incoming_contract: IncomingSwapCoinV2 {
                 my_privkey: None,
@@ -141,6 +142,7 @@ impl Default for OngoingSwapState {
                 other_privkey: None,
                 hashlock_privkey: dummy_key,
                 funding_amount: Amount::ZERO,
+                swap_id: None,
             },
             maker_outgoing_privkeys: Vec::new(),
         }
@@ -486,7 +488,7 @@ impl Taker {
     /// Choose makers for the swap by negotiating with them
     fn choose_makers_for_swap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         // Find suitable maker asks for an offer from the makers
-        let suitable_makers = self.find_suitable_makers(&swap_params);
+        let mut suitable_makers = self.find_suitable_makers(&swap_params);
         log::info!(
             "Found {} suitable makers for swap (need {})",
             suitable_makers.len(),
@@ -508,21 +510,74 @@ impl Taker {
 
         // Send SwapDetails message to all the makers
         // Receive the Ack or Nack message from the maker
-        for (maker_index, suitable_maker) in suitable_makers.iter().enumerate() {
-            log::info!("Maker {}: {:?}", maker_index, suitable_maker.address);
+        for (maker_index, suitable_maker) in suitable_makers.iter_mut().enumerate() {
+            // Skip if this maker is already chosen (prevent same maker in multiple hops)
+            let already_chosen = self
+                .ongoing_swap_state
+                .chosen_makers
+                .iter()
+                .any(|m| m.address == suitable_maker.address);
+
+            if already_chosen {
+                log::warn!(
+                    "Skipping maker {} - already chosen for this swap",
+                    suitable_maker.address
+                );
+                continue;
+            }
+
+            // Use chosen_makers.len() for position in swap chain (not maker_index which is position in suitable_makers list)
+            let chain_position = self.ongoing_swap_state.chosen_makers.len();
+
+            log::info!(
+                "Maker {} (chain position {}): {:?}",
+                maker_index,
+                chain_position,
+                suitable_maker.address
+            );
+
+            // Always send GetOffer first to ensure maker has fresh keypair state
+            // This is required because offers may be cached but maker might have restarted
+            let get_offer_msg = GetOffer {
+                protocol_version_min: 1,
+                protocol_version_max: 1,
+                number_of_transactions: 1,
+            };
+            let get_offer_response = self.send_to_maker_and_get_response(
+                &suitable_maker.address,
+                TakerToMakerMessage::GetOffer(get_offer_msg),
+            )?;
+            match get_offer_response {
+                MakerToTakerMessage::RespOffer(fresh_offer) => {
+                    log::info!(
+                        "Received fresh offer from maker: {:?}, updating tweakable_point",
+                        suitable_maker.address
+                    );
+                    // TODO: Update entire offer instead of just tweakable_point.
+                    // This requires OfferAndAddress to use messages2::Offer for taproot swaps.
+                    suitable_maker.offer.tweakable_point = fresh_offer.tweakable_point;
+                }
+                _ => {
+                    log::warn!(
+                        "Unexpected response to GetOffer from maker: {:?}",
+                        suitable_maker.address
+                    );
+                    continue;
+                }
+            }
 
             // Calculate staggered timelock for this maker
             // Taker has the longest, each maker gets progressively shorter
             // With 2 makers: Taker=60, Maker0=40, Maker1=20
             let maker_timelock = REFUND_LOCKTIME
                 + REFUND_LOCKTIME_STEP
-                    * (self.ongoing_swap_state.swap_params.maker_count - maker_index - 1) as u16;
+                    * (self.ongoing_swap_state.swap_params.maker_count - chain_position - 1) as u16;
 
             log::info!(
-                "Assigning timelock {} blocks to maker {} (index {}/{})",
+                "Assigning timelock {} blocks to maker {} (position {}/{})",
                 maker_timelock,
                 suitable_maker.address,
-                maker_index,
+                chain_position,
                 self.ongoing_swap_state.swap_params.maker_count - 1
             );
 
@@ -1391,6 +1446,7 @@ impl Taker {
                         // Detect how it was spent by analyzing witness
                         match crate::protocol::contract2::detect_taproot_spending_path(
                             &spending_tx,
+                            outpoint,
                         )? {
                             TaprootSpendingPath::KeyPath => {
                                 log::info!(
@@ -1477,6 +1533,7 @@ impl Taker {
 
                         match crate::protocol::contract2::detect_taproot_spending_path(
                             &spending_tx,
+                            outpoint,
                         )? {
                             TaprootSpendingPath::KeyPath => {
                                 log::info!("Contract spent cooperatively - no recovery needed");

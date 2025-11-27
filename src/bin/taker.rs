@@ -190,14 +190,42 @@ fn main() -> Result<(), TakerError> {
                 backup_file,
             );
         }
+        Commands::Recover if args.taproot => {
+            log::warn!("Using experimental Taproot-based recovery");
+            let mut taproot_taker = TaprootTaker::init(
+                args.data_directory.clone(),
+                args.wallet_name.clone(),
+                Some(rpc_config.clone()),
+                None,
+                Some(args.tor_auth),
+                args.zmq,
+            )?;
+            taproot_taker.recover_from_swap()?;
+        }
+        Commands::Coinswap { makers, amount } if args.taproot => {
+            // For taproot coinswap, skip regular Taker initialization
+            log::warn!("Using experimental Taproot-based coinswap protocol");
+            let mut taproot_taker = TaprootTaker::init(
+                args.data_directory.clone(),
+                args.wallet_name.clone(),
+                Some(rpc_config.clone()),
+                None,
+                Some(args.tor_auth),
+                args.zmq,
+            )?;
+
+            let taproot_swap_params = coinswap::taker::api2::SwapParams {
+                send_amount: Amount::from_sat(*amount),
+                maker_count: *makers,
+                tx_count: 1,
+                required_confirms: 1,
+            };
+            taproot_taker.do_coinswap(taproot_swap_params)?;
+        }
         _ => {
-            // Only initialize Taker if the command is NOT Restore.
+            // Only initialize Taker if the command is NOT Restore, taproot Recover, or taproot Coinswap.
             // For Restore, we don't initialize Taker because it tries to load the wallet,
             // which may not exist yet before restoring from the backup.
-
-            // Clone these before moving them into Taker::init (needed for taproot case)
-            let tor_auth_clone = args.tor_auth.clone();
-            let zmq_clone = args.zmq.clone();
 
             let mut taker = Taker::init(
                 args.data_directory.clone(),
@@ -322,6 +350,7 @@ fn main() -> Result<(), TakerError> {
                     }
                 }
                 Commands::Coinswap { makers, amount } => {
+<<<<<<< HEAD
                     if args.taproot {
                         // Use experimental Taproot-based coinswap
                         log::warn!("Using experimental Taproot-based coinswap protocol");
@@ -354,20 +383,34 @@ fn main() -> Result<(), TakerError> {
                                 .iter()
                                 .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
                                 .collect::<Vec<_>>(),
+=======
+                    // Note: taproot coinswap is handled at the top level to avoid
+                    // double Taker initialization. Regular ECDSA coinswap goes here.
+                    let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
+                        Some(
+                            coinswap::utill::interactive_select(
+                                taker.get_wallet().list_all_utxo_spend_info(),
+>>>>>>> bcbb612 (more recovery edge cases and bug resolutions)
                             )
-                        } else {
-                            None
-                        };
+                            .unwrap()
+                            .iter()
+                            .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
+                            .collect::<Vec<_>>(),
+                        )
+                    } else {
+                        None
+                    };
 
-                        let swap_params = SwapParams {
-                            send_amount: Amount::from_sat(*amount),
-                            maker_count: *makers,
-                            manually_selected_outpoints,
-                        };
-                        taker.do_coinswap(swap_params)?;
-                    }
+                    let swap_params = SwapParams {
+                        send_amount: Amount::from_sat(*amount),
+                        maker_count: *makers,
+                        manually_selected_outpoints,
+                    };
+                    taker.do_coinswap(swap_params)?;
                 }
                 Commands::Recover => {
+                    // Note: taproot recovery is handled at the top level to avoid
+                    // overwriting the wallet file. Regular recovery goes here.
                     taker.recover_from_swap()?;
                 }
                 Commands::Backup { encrypt } => {

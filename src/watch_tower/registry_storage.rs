@@ -53,6 +53,11 @@ impl FileRegistry {
     }
 
     fn flush(&self) {
+        // Ensure parent directory exists
+        if let Some(parent) = self.path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
         let tmp = self.path.with_extension("tmp");
         let bytes = serde_cbor::to_vec(&self.data).expect("serialize");
         std::fs::write(&tmp, bytes).expect("write tmp");

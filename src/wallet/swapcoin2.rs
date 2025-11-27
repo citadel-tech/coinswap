@@ -58,6 +58,7 @@ pub struct IncomingSwapCoinV2 {
     pub(crate) other_privkey: Option<SecretKey>,
     pub(crate) hashlock_privkey: SecretKey,
     pub(crate) funding_amount: Amount,
+    pub(crate) swap_id: Option<String>,
 }
 
 impl IncomingSwapCoinV2 {
@@ -142,6 +143,7 @@ pub struct OutgoingSwapCoinV2 {
     pub(crate) other_privkey: Option<SecretKey>,
     pub(crate) timelock_privkey: SecretKey,
     pub(crate) funding_amount: Amount,
+    pub(crate) swap_id: Option<String>,
 }
 
 impl OutgoingSwapCoinV2 {

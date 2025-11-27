@@ -79,45 +79,96 @@ pub(crate) fn extract_preimage_from_spending_tx(spending_tx: &Transaction) -> Op
 /// Detect how a taproot output was spent by analyzing witness data
 pub(crate) fn detect_taproot_spending_path(
     spending_tx: &Transaction,
+    spent_outpoint: bitcoin::OutPoint,
 ) -> Result<crate::taker::api2::TaprootSpendingPath, ProtocolError> {
     use crate::taker::api2::TaprootSpendingPath;
 
-    // Analyze the first input's witness (contract spends have 1 input)
-    if spending_tx.input.is_empty() {
-        return Err(ProtocolError::General("Spending transaction has no inputs"));
-    }
+    // Find the input that spends the specific outpoint
+    let input_index = spending_tx
+        .input
+        .iter()
+        .position(|input| input.previous_output == spent_outpoint);
 
-    let witness = &spending_tx.input[0].witness;
+    let input_index = match input_index {
+        Some(idx) => {
+            log::info!(
+                "Found spent outpoint {} at input index {}",
+                spent_outpoint,
+                idx
+            );
+            idx
+        }
+        None => {
+            log::error!(
+                "Could not find input spending outpoint {} in tx {}",
+                spent_outpoint,
+                spending_tx.compute_txid()
+            );
+            return Err(ProtocolError::General(
+                "Spending transaction does not spend the specified outpoint",
+            ));
+        }
+    };
+
+    let witness = &spending_tx.input[input_index].witness;
+
+    log::info!(
+        "Analyzing spending tx {}: witness has {} elements",
+        spending_tx.compute_txid(),
+        witness.len()
+    );
+    for (i, elem) in witness.iter().enumerate() {
+        log::info!("  Witness[{}]: {} bytes", i, elem.len());
+    }
 
     // Key-path spend: single signature in witness
     if witness.len() == 1 {
+        log::info!("Detected key-path spend");
         return Ok(TaprootSpendingPath::KeyPath);
     }
 
     // Script-path spend: has script and control block
     if witness.len() >= 3 {
+        log::info!("Witness has >= 3 elements, analyzing script-path spend");
         // Last element is control block, second-to-last is script
         let script_bytes = &witness[witness.len() - 2];
 
         // Parse script to detect hashlock vs timelock
         let script = bitcoin::Script::from_bytes(script_bytes);
+        log::info!("Script length: {} bytes", script.as_bytes().len());
 
         // Hashlock script contains OP_SHA256 <hash> OP_EQUALVERIFY
         if script.as_bytes().windows(2).any(|w| w[0] == 0xa8) {
+            log::info!("Found OP_SHA256 (0xa8) - appears to be hashlock script");
             // OP_SHA256 = 0xa8
             // Extract preimage from witness (it's before the script)
             if witness.len() >= 4 && witness[1].len() == 32 {
                 let mut preimage = [0u8; 32];
                 preimage.copy_from_slice(&witness[1]);
+                log::info!("Detected hashlock spend with preimage");
                 return Ok(TaprootSpendingPath::Hashlock { preimage });
+            } else {
+                log::warn!(
+                    "Found OP_SHA256 but witness structure doesn't match: len={}, witness[1].len()={}",
+                    witness.len(),
+                    if witness.len() > 1 { witness[1].len() } else { 0 }
+                );
             }
         }
 
         // Timelock script contains OP_CHECKLOCKTIMEVERIFY
         if script.as_bytes().contains(&0xb1) {
+            log::info!("Found OP_CHECKLOCKTIMEVERIFY (0xb1) - detected timelock spend");
             // OP_CHECKLOCKTIMEVERIFY = 0xb1
             return Ok(TaprootSpendingPath::Timelock);
         }
+
+        log::warn!("Script-path spend but couldn't identify as hashlock or timelock");
+    } else {
+        log::warn!(
+            "Witness has {} elements, not enough for script-path (need >= 3)",
+            witness.len()
+        );
     }
 
     Err(ProtocolError::General(

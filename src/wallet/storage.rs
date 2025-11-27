@@ -106,7 +106,10 @@ impl WalletStore {
         path: &Path,
         store_enc_material: &Option<KeyMaterial>,
     ) -> Result<(), WalletError> {
-        let wallet_file = fs::OpenOptions::new().write(true).open(path)?;
+        let wallet_file = fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(path)?;
         let writer = BufWriter::new(wallet_file);
 
         match store_enc_material {

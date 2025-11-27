@@ -47,7 +47,7 @@ use super::{config::MakerConfig, error::MakerError};
 /// Represents different behaviors the maker can have during the swap.
 /// Used for testing various failure scenarios.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg(feature="integration-test")]
+#[cfg(feature = "integration-test")]
 pub enum MakerBehavior {
     /// Normal, honest behavior
     Normal,
@@ -130,6 +130,7 @@ impl Default for ConnectionState {
                 other_privkey: None,
                 hashlock_privkey: dummy_key,
                 funding_amount: Amount::ZERO,
+                swap_id: None,
             },
             outgoing_contract: OutgoingSwapCoinV2 {
                 my_privkey: None,
@@ -149,6 +150,7 @@ impl Default for ConnectionState {
                 other_privkey: None,
                 timelock_privkey: dummy_key,
                 funding_amount: Amount::ZERO,
+                swap_id: None,
             },
         }
     }
@@ -364,6 +366,11 @@ impl Maker {
             wallet.get_tweakable_keypair()?;
         connection_state.incoming_contract.my_privkey = Some(incoming_contract_my_privkey);
         connection_state.incoming_contract.my_pubkey = Some(incoming_contract_my_pubkey);
+        log::info!(
+            "[{}] create_offer: Set my_privkey for incoming contract, is_some={}",
+            self.config.network_port,
+            connection_state.incoming_contract.my_privkey.is_some()
+        );
         // Get wallet balances to determine max size
         let balances = wallet.get_balances()?;
         let max_size = balances.spendable;
@@ -470,7 +477,11 @@ impl Maker {
 
         // Verify we have sufficient funds and get necessary data
         let (outgoing_privkey, funding_utxo) = {
-            let wallet = self.wallet.write()?;
+            let mut wallet = self.wallet.write()?;
+
+            // Sync wallet to get latest UTXO state
+            wallet.sync()?;
+
             let balance = wallet.get_balances()?;
             if balance.spendable < connection_state.swap_amount {
                 return Err(MakerError::General("Insufficient funds for swap"));
@@ -481,7 +492,11 @@ impl Maker {
             connection_state.outgoing_contract.my_privkey = Some(outgoing_privkey);
             connection_state.outgoing_contract.my_pubkey = Some(outgoing_pubkey);
 
-            // Get funding UTXO from our wallet
+            // Prepare for UTXO selection: unlock all, then lock unspendable UTXOs
+            wallet.rpc.unlock_unspent_all().map_err(WalletError::Rpc)?;
+            wallet.lock_unspendable_utxos()?;
+
+            // Get funding UTXO from our wallet (excludes locked UTXOs)
             let spendable_utxos = wallet.list_descriptor_utxo_spend_info();
             let funding_utxo = spendable_utxos
                 .into_iter()
@@ -490,6 +505,18 @@ impl Maker {
                 .ok_or_else(|| {
                     MakerError::General("No single UTXO found with sufficient amount")
                 })?;
+
+            // Lock the selected UTXO to prevent double-spending in concurrent swaps
+            let funding_outpoint = OutPoint::new(funding_utxo.txid, funding_utxo.vout);
+            wallet
+                .rpc
+                .lock_unspent(&[funding_outpoint])
+                .map_err(WalletError::Rpc)?;
+            log::info!(
+                "[{}] Locked funding UTXO {} for swap",
+                self.config.network_port,
+                funding_outpoint
+            );
 
             (outgoing_privkey, funding_utxo)
         };
@@ -883,6 +910,21 @@ impl Maker {
             ));
         }
 
+        // Mark the incoming swapcoin as finished by storing the received private key
+        connection_state.incoming_contract.other_privkey =
+            Some(privkey_handover_message.secret_key);
+
+        // Update the wallet with the completed incoming swapcoin
+        {
+            let mut wallet = self.wallet.write()?;
+            wallet.add_incoming_swapcoin_v2(&connection_state.incoming_contract);
+            wallet.save_to_disk()?;
+            log::info!(
+                "[{}] Marked incoming swapcoin as finished (other_privkey stored)",
+                self.config.network_port
+            );
+        }
+
         let privkey_handover_message = PrivateKeyHandover {
             secret_key: connection_state.outgoing_contract.privkey()?,
         };
@@ -1002,6 +1044,140 @@ impl MakerRpc for Maker {
     }
 }
 
+/// Checks for spent contract outputs and triggers recovery.
+/// This detects when contract outputs are spent via hashlock or timelock paths,
+/// indicating protocol violations or adjacent maker failures that require recovery.
+pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerError> {
+    let mut failed_swap_ip = Vec::new();
+    loop {
+        if maker.shutdown.load(Relaxed) {
+            break;
+        }
+
+        {
+            let mut lock_on_state = maker.ongoing_swap_state.lock()?;
+            for (ip, (connection_state, _)) in lock_on_state.iter_mut() {
+                // Skip if no contracts have been exchanged yet
+                let Some(incoming_txid) = connection_state.incoming_contract.contract_txid else {
+                    continue;
+                };
+
+                let outgoing_txid = connection_state
+                    .outgoing_contract
+                    .contract_tx
+                    .compute_txid();
+
+                // Check if the outgoing contract output has been SPENT (not just broadcasted)
+                // If spent, the taker/next-maker used hashlock to claim it, revealing the preimage
+                let outgoing_outpoint = OutPoint {
+                    txid: outgoing_txid,
+                    vout: 0,
+                };
+
+                let outgoing_spent = {
+                    let read_lock = maker.wallet.read()?;
+                    // get_tx_out returns None if the UTXO is spent
+                    read_lock
+                        .rpc
+                        .get_tx_out(&outgoing_outpoint.txid, outgoing_outpoint.vout, Some(true))
+                        .map_err(WalletError::Rpc)?
+                        .is_none()
+                };
+
+                if outgoing_spent {
+                    log::warn!(
+                        "[{}] Outgoing contract {} has been SPENT! Triggering recovery for swap with {}",
+                        maker.config.network_port,
+                        outgoing_txid,
+                        ip
+                    );
+                    failed_swap_ip.push(ip.clone());
+
+                    let incoming = connection_state.incoming_contract.clone();
+                    let outgoing = connection_state.outgoing_contract.clone();
+                    let maker_clone = maker.clone();
+
+                    log::info!(
+                        "[{}] Spawning recovery thread after detecting outgoing contract spend",
+                        maker.config.network_port
+                    );
+
+                    let handle = std::thread::Builder::new()
+                        .name("Taproot Contract Recovery Thread".to_string())
+                        .spawn(move || {
+                            if let Err(e) = recover_from_swap(maker_clone, incoming, outgoing) {
+                                log::error!("Failed to recover from taproot swap: {:?}", e);
+                            }
+                        })?;
+
+                    maker.thread_pool.add_thread(handle);
+
+                    // Clear the state since recovery thread now owns it
+                    *connection_state = ConnectionState::default();
+                    continue;
+                }
+
+                // Also check if incoming contract was spent by someone else (not us)
+                // This could indicate the taker recovered via timelock
+                let incoming_outpoint = OutPoint {
+                    txid: incoming_txid,
+                    vout: 0,
+                };
+
+                let incoming_spent = {
+                    let read_lock = maker.wallet.read()?;
+                    read_lock
+                        .rpc
+                        .get_tx_out(&incoming_outpoint.txid, incoming_outpoint.vout, Some(true))
+                        .map_err(WalletError::Rpc)?
+                        .is_none()
+                };
+
+                if incoming_spent {
+                    log::warn!(
+                        "[{}] Incoming contract {} has been SPENT! Triggering recovery for swap with {}",
+                        maker.config.network_port,
+                        incoming_txid,
+                        ip
+                    );
+                    failed_swap_ip.push(ip.clone());
+
+                    let incoming = connection_state.incoming_contract.clone();
+                    let outgoing = connection_state.outgoing_contract.clone();
+                    let maker_clone = maker.clone();
+
+                    log::info!(
+                        "[{}] Spawning recovery thread after detecting incoming contract spend",
+                        maker.config.network_port
+                    );
+
+                    let handle = std::thread::Builder::new()
+                        .name("Taproot Contract Recovery Thread".to_string())
+                        .spawn(move || {
+                            if let Err(e) = recover_from_swap(maker_clone, incoming, outgoing) {
+                                log::error!("Failed to recover from taproot swap: {:?}", e);
+                            }
+                        })?;
+
+                    maker.thread_pool.add_thread(handle);
+
+                    *connection_state = ConnectionState::default();
+                }
+            }
+
+            // Remove failed swap entries
+            for ip in failed_swap_ip.iter() {
+                lock_on_state.remove(ip);
+            }
+        }
+
+        failed_swap_ip.clear();
+        std::thread::sleep(HEART_BEAT_INTERVAL);
+    }
+
+    Ok(())
+}
+
 /// Checks for idle connection states and removes them after timeout.
 pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
     let mut bad_ip = Vec::new();
@@ -1066,6 +1242,72 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
     Ok(())
 }
 
+/// Checks for unfinished taproot swapcoins in wallet on reboot and starts recovery if needed.
+/// Matches incoming and outgoing swapcoins by swap_id to ensure correct pairing.
+pub(crate) fn restore_broadcasted_contracts_on_reboot_v2(
+    maker: &Arc<Maker>,
+) -> Result<(), MakerError> {
+    let (incoming_swapcoins, outgoing_swapcoins) =
+        maker.wallet.read()?.find_unfinished_swapcoins_v2();
+
+    log::info!(
+        "[{}] Found {} unfinished incoming and {} unfinished outgoing taproot swapcoins on reboot",
+        maker.config.network_port,
+        incoming_swapcoins.len(),
+        outgoing_swapcoins.len()
+    );
+
+    // Match incoming and outgoing swapcoins by swap_id
+    for incoming in incoming_swapcoins.iter() {
+        let Some(ref incoming_swap_id) = incoming.swap_id else {
+            log::warn!(
+                "[{}] Incoming swapcoin {} has no swap_id, skipping",
+                maker.config.network_port,
+                incoming.contract_tx.compute_txid()
+            );
+            continue;
+        };
+
+        // Find matching outgoing swapcoin
+        let matching_outgoing = outgoing_swapcoins
+            .iter()
+            .find(|o| o.swap_id.as_ref() == Some(incoming_swap_id));
+
+        let Some(outgoing) = matching_outgoing else {
+            log::warn!(
+                "[{}] No matching outgoing swapcoin found for swap_id={}, skipping",
+                maker.config.network_port,
+                incoming_swap_id
+            );
+            continue;
+        };
+
+        log::info!(
+            "[{}] Spawning recovery thread for swap_id={} (incoming={}, outgoing={})",
+            maker.config.network_port,
+            incoming_swap_id,
+            incoming.contract_tx.compute_txid(),
+            outgoing.contract_tx.compute_txid()
+        );
+
+        let maker_clone = maker.clone();
+        let incoming_clone = incoming.clone();
+        let outgoing_clone = outgoing.clone();
+
+        let handle = std::thread::Builder::new()
+            .name("Taproot Reboot Recovery Thread".to_string())
+            .spawn(move || {
+                if let Err(e) = recover_from_swap(maker_clone, incoming_clone, outgoing_clone) {
+                    log::error!("Failed to recover from taproot swap on reboot: {:?}", e);
+                }
+            })?;
+
+        maker.thread_pool.add_thread(handle);
+    }
+
+    Ok(())
+}
+
 /// Recover from a failed taproot swap by monitoring contract maturity and attempting recovery.
 ///
 /// This function waits for either:
@@ -1096,6 +1338,33 @@ pub(crate) fn recover_from_swap(
     };
 
     while !maker.shutdown.load(Relaxed) {
+        // First, check if incoming contract has already been spent (e.g., via key-path)
+        // If so, the maker already recovered their funds and we can exit
+        let incoming_contract_txid = incoming_swapcoin.contract_tx.compute_txid();
+        let incoming_outpoint = bitcoin::OutPoint {
+            txid: incoming_contract_txid,
+            vout: 0,
+        };
+        let incoming_spent = {
+            let wallet = maker.wallet.read()?;
+            wallet
+                .rpc
+                .get_tx_out(&incoming_outpoint.txid, incoming_outpoint.vout, Some(true))
+                .map_err(WalletError::Rpc)?
+                .is_none()
+        };
+
+        if incoming_spent {
+            log::info!(
+                "[{}] Incoming contract {} already spent (likely via key-path). Recovery not needed.",
+                maker.config.network_port,
+                incoming_contract_txid
+            );
+            // Stop watching the outgoing contract
+            maker.watch_service.unwatch(outgoing_outpoint);
+            return Ok(());
+        }
+
         // Check if outgoing contract has been spent (taker may have used hashlock)
         if incoming_swapcoin.hash_preimage.is_none() {
             maker.watch_service.watch_request(outgoing_outpoint);
@@ -1127,6 +1396,8 @@ pub(crate) fn recover_from_swap(
                 "[{}] Preimage available, recovering incoming contract via hashlock",
                 maker.config.network_port
             );
+            // Stop watching the outgoing contract before recovery
+            maker.watch_service.unwatch(outgoing_outpoint);
             return recover_via_hashlock(maker, incoming_swapcoin);
         }
 
@@ -1182,7 +1453,8 @@ pub(crate) fn recover_from_swap(
                                 maker.config.network_port
                             );
                             incoming_swapcoin.hash_preimage = Some(preimage);
-                            // Now recover incoming via hashlock
+                            // Stop watching and recover incoming via hashlock
+                            maker.watch_service.unwatch(outgoing_outpoint);
                             return recover_via_hashlock(maker, incoming_swapcoin);
                         }
                     }
@@ -1193,6 +1465,7 @@ pub(crate) fn recover_from_swap(
                         "[{}] Outgoing contract spent but couldn't extract preimage. Maker should have already swept incoming.",
                         maker.config.network_port
                     );
+                    maker.watch_service.unwatch(outgoing_outpoint);
                     return Ok(());
                 }
             }
@@ -1201,6 +1474,7 @@ pub(crate) fn recover_from_swap(
                 "[{}] Timelock matured, recovering outgoing contract via timelock",
                 maker.config.network_port
             );
+            maker.watch_service.unwatch(outgoing_outpoint);
             return recover_via_timelock(maker, outgoing_swapcoin);
         }
 

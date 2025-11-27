@@ -203,16 +203,13 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path, zmq_addr: String) -> Bitc
 
 /// Generate Blocks in regtest node.
 pub(crate) fn generate_blocks(bitcoind: &BitcoinD, n: u64) {
-    let mining_address = bitcoind
-        .client
-        .get_new_address(None, None)
-        .unwrap()
-        .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
-        .unwrap();
-    bitcoind
-        .client
-        .generate_to_address(n, &mining_address)
-        .unwrap();
+    let mining_address = match bitcoind.client.get_new_address(None, None) {
+        Ok(addr) => addr
+            .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
+            .unwrap(),
+        Err(_) => return,
+    };
+    let _ = bitcoind.client.generate_to_address(n, &mining_address);
 }
 
 /// Send coins to a bitcoin address.

@@ -302,6 +302,12 @@ impl Wallet {
         let (store, store_enc_material) =
             WalletStore::read_from_disk(path, password.unwrap_or_default())?;
 
+        log::info!(
+            "Loaded wallet from disk: {} incoming_v2, {} outgoing_v2 swapcoins",
+            store.incoming_swapcoins_v2.len(),
+            store.outgoing_swapcoins_v2.len()
+        );
+
         if rpc_config.wallet_name != store.file_name {
             return Err(WalletError::General(format!(
                 "Wallet name of database file and core mismatch, expected {}, found {}",
@@ -367,6 +373,11 @@ impl Wallet {
 
     /// Update the existing file. Error if path does not exist.
     pub(crate) fn save_to_disk(&self) -> Result<(), WalletError> {
+        log::info!(
+            "Saving wallet to disk: {} incoming_v2, {} outgoing_v2 swapcoins",
+            self.store.incoming_swapcoins_v2.len(),
+            self.store.outgoing_swapcoins_v2.len()
+        );
         self.store
             .write_to_disk(&self.wallet_file_path, &self.store_enc_material)
     }
@@ -421,12 +432,22 @@ impl Wallet {
     pub(crate) fn add_incoming_swapcoin_v2(&mut self, coin: &IncomingSwapCoinV2) {
         let txid = coin.contract_tx.compute_txid();
         self.store.incoming_swapcoins_v2.insert(txid, coin.clone());
+        log::info!(
+            "Added incoming swapcoin_v2 to wallet store: {} (total: {})",
+            txid,
+            self.store.incoming_swapcoins_v2.len()
+        );
     }
 
     /// Adds an outgoing taproot swap coin (v2) to the wallet.
     pub(crate) fn add_outgoing_swapcoin_v2(&mut self, coin: &OutgoingSwapCoinV2) {
         let txid = coin.contract_tx.compute_txid();
         self.store.outgoing_swapcoins_v2.insert(txid, coin.clone());
+        log::info!(
+            "Added outgoing swapcoin_v2 to wallet store: {} (total: {})",
+            txid,
+            self.store.outgoing_swapcoins_v2.len()
+        );
     }
 
     /// Removes an incoming swap coin with the specified multisig redeem script from the wallet.
@@ -1045,12 +1066,23 @@ impl Wallet {
     ) {
         use crate::wallet::swapcoin2::{IncomingSwapCoinV2, OutgoingSwapCoinV2};
 
+        log::info!(
+            "Searching for unfinished swapcoins: {} incoming, {} outgoing in store",
+            self.store.incoming_swapcoins_v2.len(),
+            self.store.outgoing_swapcoins_v2.len()
+        );
+
         // Unfinished incoming: no other_privkey received
         let unfinished_incomings = self
             .store
             .incoming_swapcoins_v2
             .iter()
-            .filter_map(|(_, ic)| {
+            .filter_map(|(txid, ic)| {
+                log::info!(
+                    "Incoming swapcoin {}: other_privkey present = {}",
+                    txid,
+                    ic.other_privkey.is_some()
+                );
                 if ic.other_privkey.is_none() {
                     Some(ic.clone())
                 } else {
