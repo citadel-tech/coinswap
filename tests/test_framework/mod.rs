@@ -51,7 +51,7 @@ use bitcoind::{
 };
 
 use coinswap::{
-    maker::{Maker, MakerBehavior, TaprootMaker},
+    maker::{Maker, MakerBehavior, TaprootMaker, TaprootMakerBehavior},
     taker::{Taker, TakerBehavior, TaprootTaker},
     utill::setup_logger,
     wallet::{Balances, RPCConfig},
@@ -203,16 +203,13 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path, zmq_addr: String) -> Bitc
 
 /// Generate Blocks in regtest node.
 pub(crate) fn generate_blocks(bitcoind: &BitcoinD, n: u64) {
-    let mining_address = bitcoind
-        .client
-        .get_new_address(None, None)
-        .unwrap()
-        .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
-        .unwrap();
-    bitcoind
-        .client
-        .generate_to_address(n, &mining_address)
-        .unwrap();
+    let mining_address = match bitcoind.client.get_new_address(None, None) {
+        Ok(addr) => addr
+            .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
+            .unwrap(),
+        Err(_) => return,
+    };
+    let _ = bitcoind.client.generate_to_address(n, &mining_address);
 }
 
 /// Send coins to a bitcoin address.
@@ -704,7 +701,7 @@ impl TestFramework {
 
     #[allow(clippy::type_complexity)]
     pub fn init_taproot(
-        makers_config_map: Vec<(u16, Option<u16>)>,
+        makers_config_map: Vec<(u16, Option<u16>, TaprootMakerBehavior)>,
         taker_behavior: Vec<TakerBehavior>,
     ) -> (
         Arc<Self>,
@@ -762,23 +759,24 @@ impl TestFramework {
 
         let makers = makers_config_map // Create the Makers as per given configuration map.
             .into_iter()
-            .map(|port| {
+            .map(|(network_port, socks_port, behavior)| {
                 base_rpc_port += 1;
-                let maker_id = format!("maker{}", port.0); // ex: "maker6102"
+                let maker_id = format!("maker{}", network_port); // ex: "maker6102"
                 let maker_rpc_config = rpc_config.clone();
                 thread::sleep(Duration::from_secs(5)); // Sleep for some time avoid resource unavailable error.
                 Arc::new(
                     TaprootMaker::init(
-                        Some(temp_dir.join(port.0.to_string())),
+                        Some(temp_dir.join(network_port.to_string())),
                         Some(maker_id),
                         Some(maker_rpc_config),
-                        Some(port.0),
+                        Some(network_port),
                         Some(base_rpc_port),
                         None,
                         None,
-                        port.1,
+                        socks_port,
                         zmq_addr.clone(),
                         None,
+                        Some(behavior),
                     )
                     .unwrap(),
                 )

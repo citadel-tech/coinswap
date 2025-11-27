@@ -20,7 +20,7 @@ pub(crate) use super::api2::{Maker, RPC_PING_INTERVAL};
 use crate::{
     error::NetError,
     maker::{
-        api2::{check_for_idle_states, ConnectionState},
+        api2::{check_for_broadcasted_contracts, check_for_idle_states, ConnectionState},
         handlers2::handle_message_taproot,
         rpc::start_rpc_server,
     },
@@ -67,10 +67,6 @@ fn manage_fidelity_bonds_taproot(maker: &Maker, maker_addr: &str) -> Result<(), 
 
     // Create or get existing fidelity proof for taproot maker
     let _ = setup_fidelity_bond_taproot(maker, maker_addr)?;
-
-    let network_port = maker.config.network_port;
-    log::info!("[{network_port}] Taproot maker initialized - Address: {maker_addr}");
-    log::info!("[{network_port}] Connection ended.");
 
     Ok(())
 }
@@ -321,10 +317,11 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         });
 
         log::info!(
-            "[{}] Retrieved connection state for {}: swap_amount={}",
+            "[{}] Retrieved connection state for {}: swap_amount={}, my_privkey_is_some={}",
             maker.config.network_port,
             ip,
-            state.swap_amount
+            state.swap_amount,
+            state.incoming_contract.my_privkey.is_some()
         );
 
         state.clone()
@@ -392,12 +389,14 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                 // Save connection state immediately after successful message handling
                 {
                     let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-                    ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
-                    log::debug!(
-                        "[{}] Saved connection state for {} after successful message handling",
+                    log::info!(
+                        "[{}] Saving connection state for {}: swap_amount={}, my_privkey_is_some={}",
                         maker.config.network_port,
-                        ip
+                        ip,
+                        connection_state.swap_amount,
+                        connection_state.incoming_contract.my_privkey.is_some()
                     );
+                    ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
                 }
                 response
             }
@@ -449,7 +448,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                 ip
             );
 
-            // For certain message types, close the connection after responding
+            // For certain message types, handle cleanup
             match &response_msg {
                 MakerToTakerMessage::RespOffer(_) => {
                     // Keep connection open for SwapDetails
@@ -462,7 +461,18 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                     );
                 }
                 MakerToTakerMessage::SenderContractFromMaker(_) => {}
-                MakerToTakerMessage::PrivateKeyHandover(_) => {}
+                MakerToTakerMessage::PrivateKeyHandover(_) => {
+                    // Swap completed successfully - remove from ongoing swaps
+                    log::info!(
+                        "[{}] Swap completed successfully with {}, removing from ongoing swaps",
+                        maker.config.network_port,
+                        ip
+                    );
+                    let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
+                    ongoing_swaps.remove(&ip);
+                    // Exit loop - swap is complete
+                    break;
+                }
             }
         }
 
@@ -497,6 +507,7 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
         maker_address,
     );
 
+    // Start idle connection checker thread
     let maker_clone_idle = maker.clone();
     let idle_checker_handle = thread::Builder::new()
         .name("idle-checker-taproot".to_string())
@@ -506,6 +517,17 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
             }
         })?;
     maker.thread_pool.add_thread(idle_checker_handle);
+
+    // Start contract broadcast watcher thread
+    let maker_clone_watcher = maker.clone();
+    let contract_watcher_handle = thread::Builder::new()
+        .name("contract-watcher-taproot".to_string())
+        .spawn(move || {
+            if let Err(e) = check_for_broadcasted_contracts(maker_clone_watcher) {
+                log::error!("Taproot contract watcher thread error: {:?}", e);
+            }
+        })?;
+    maker.thread_pool.add_thread(contract_watcher_handle);
 
     // Start liquidity monitoring
     let maker_clone_liquidity = maker.clone();
@@ -567,6 +589,20 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
             }
         })?;
     maker.thread_pool.add_thread(rpc_handle);
+
+    // Check for unfinished swapcoins from previous runs and start recovery if needed
+    {
+        let (inc, out) = maker.wallet.read()?.find_unfinished_swapcoins_v2();
+        if !inc.is_empty() || !out.is_empty() {
+            log::info!(
+                "[{}] Incomplete taproot swaps detected ({} incoming, {} outgoing). Starting recovery.",
+                maker.config.network_port,
+                inc.len(),
+                out.len()
+            );
+            crate::maker::api2::restore_broadcasted_contracts_on_reboot_v2(&maker)?;
+        }
+    }
 
     // Mark setup as complete
     maker.is_setup_complete.store(true, Relaxed);

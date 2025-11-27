@@ -28,7 +28,11 @@ fn test_taproot_coinswap() {
     warn!("Running Test: Taproot Coinswap Basic Functionality");
 
     // Use different ports for taproot makers to avoid conflicts
-    let taproot_makers_config_map = vec![(7102, Some(19061)), (17102, Some(19062))];
+    use coinswap::maker::TaprootMakerBehavior as MakerBehavior;
+    let taproot_makers_config_map = vec![
+        (7102, Some(19061), MakerBehavior::Normal),
+        (17102, Some(19062), MakerBehavior::Normal),
+    ];
     let taker_behavior = vec![TakerBehavior::Normal];
 
     // Initialize test framework (without regular takers, we'll create taproot taker manually)

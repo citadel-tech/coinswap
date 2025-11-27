@@ -122,7 +122,7 @@ pub fn process_transaction(tx: &Transaction, registry: &mut FileRegistry, in_blo
             }
         }
         for watch_request in &watch_requests {
-            if outpoint.txid == watch_request.outpoint.txid {
+            if outpoint == watch_request.outpoint {
                 let mut watch_request = watch_request.clone();
                 watch_request.spent_tx = Some(tx.clone());
                 watch_request.in_block = in_block;

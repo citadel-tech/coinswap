@@ -7,6 +7,8 @@
 
 use std::sync::Arc;
 
+use bitcoin::Amount;
+
 use super::{
     api2::{ConnectionState, Maker},
     error::MakerError,
@@ -82,6 +84,27 @@ fn handle_swap_details(
         swap_details.no_of_tx
     );
 
+    // Reject if GetOffer wasn't received first (my_privkey must be set)
+    // This ensures the taker has a fresh offer with a valid tweakable_point
+    if connection_state.incoming_contract.my_privkey.is_none() {
+        log::warn!(
+            "[{}] Rejecting SwapDetails - GetOffer must be sent first to establish keypair",
+            maker.config.network_port
+        );
+        return Ok(Some(MakerToTakerMessage::AckResponse(AckResponse::Nack)));
+    }
+
+    // Reject if there's already an active swap in progress for this connection
+    // This prevents an attacker from resetting another taker's swap state
+    if connection_state.swap_amount > Amount::ZERO {
+        log::warn!(
+            "[{}] Rejecting SwapDetails - swap already in progress with amount {}",
+            maker.config.network_port,
+            connection_state.swap_amount
+        );
+        return Ok(Some(MakerToTakerMessage::AckResponse(AckResponse::Nack)));
+    }
+
     // Validate swap parameters using api2
     maker.validate_swap_parameters(&swap_details)?;
 
@@ -113,9 +136,49 @@ fn handle_senders_contract(
         senders_contract.contract_txs.len()
     );
 
+    // Check for CloseAtContractSigsExchange behavior (before creating outgoing contract)
+    #[cfg(feature = "integration-test")]
+    if maker.behavior == super::api2::MakerBehavior::CloseAtContractSigsExchange {
+        log::warn!(
+            "[{}] Maker behavior: CloseAtContractSigsExchange - Closing connection after receiving incoming contract",
+            maker.config.network_port
+        );
+        return Err(MakerError::General(
+            "Maker closing connection at contract exchange (test behavior)",
+        ));
+    }
+
     // Process the sender's contract and create our response
     let receiver_contract =
         maker.verify_and_process_senders_contract(&senders_contract, connection_state)?;
+
+    // Generate a unique swap_id to link incoming and outgoing swapcoins
+    let swap_id = format!(
+        "{}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+        connection_state
+            .incoming_contract
+            .contract_tx
+            .compute_txid()
+    );
+    connection_state.incoming_contract.swap_id = Some(swap_id.clone());
+    connection_state.outgoing_contract.swap_id = Some(swap_id.clone());
+
+    // Persist both incoming and outgoing swapcoins for recovery
+    {
+        let mut wallet = maker.wallet().write()?;
+        wallet.add_incoming_swapcoin_v2(&connection_state.incoming_contract);
+        wallet.add_outgoing_swapcoin_v2(&connection_state.outgoing_contract);
+        wallet.save_to_disk()?;
+        log::info!(
+            "[{}] Persisted incoming and outgoing swapcoins with swap_id={} to wallet",
+            maker.config.network_port,
+            swap_id
+        );
+    }
 
     log::info!(
         "[{}] Sending SenderContractFromMaker with {} contracts",

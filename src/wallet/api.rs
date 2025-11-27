@@ -51,6 +51,7 @@ use super::{
     rpc::RPCConfig,
     storage::WalletStore,
     swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletSwapCoin},
+    swapcoin2::{IncomingSwapCoinV2, OutgoingSwapCoinV2},
 };
 
 // these subroutines are coded so that as much as possible they keep all their
@@ -301,6 +302,12 @@ impl Wallet {
         let (store, store_enc_material) =
             WalletStore::read_from_disk(path, password.unwrap_or_default())?;
 
+        log::info!(
+            "Loaded wallet from disk: {} incoming_v2, {} outgoing_v2 swapcoins",
+            store.incoming_swapcoins_v2.len(),
+            store.outgoing_swapcoins_v2.len()
+        );
+
         if rpc_config.wallet_name != store.file_name {
             return Err(WalletError::General(format!(
                 "Wallet name of database file and core mismatch, expected {}, found {}",
@@ -366,6 +373,11 @@ impl Wallet {
 
     /// Update the existing file. Error if path does not exist.
     pub(crate) fn save_to_disk(&self) -> Result<(), WalletError> {
+        log::info!(
+            "Saving wallet to disk: {} incoming_v2, {} outgoing_v2 swapcoins",
+            self.store.incoming_swapcoins_v2.len(),
+            self.store.outgoing_swapcoins_v2.len()
+        );
         self.store
             .write_to_disk(&self.wallet_file_path, &self.store_enc_material)
     }
@@ -416,6 +428,28 @@ impl Wallet {
             .insert(coin.get_multisig_redeemscript(), coin.clone());
     }
 
+    /// Adds an incoming taproot swap coin (v2) to the wallet.
+    pub(crate) fn add_incoming_swapcoin_v2(&mut self, coin: &IncomingSwapCoinV2) {
+        let txid = coin.contract_tx.compute_txid();
+        self.store.incoming_swapcoins_v2.insert(txid, coin.clone());
+        log::info!(
+            "Added incoming swapcoin_v2 to wallet store: {} (total: {})",
+            txid,
+            self.store.incoming_swapcoins_v2.len()
+        );
+    }
+
+    /// Adds an outgoing taproot swap coin (v2) to the wallet.
+    pub(crate) fn add_outgoing_swapcoin_v2(&mut self, coin: &OutgoingSwapCoinV2) {
+        let txid = coin.contract_tx.compute_txid();
+        self.store.outgoing_swapcoins_v2.insert(txid, coin.clone());
+        log::info!(
+            "Added outgoing swapcoin_v2 to wallet store: {} (total: {})",
+            txid,
+            self.store.outgoing_swapcoins_v2.len()
+        );
+    }
+
     /// Removes an incoming swap coin with the specified multisig redeem script from the wallet.
     pub(crate) fn remove_incoming_swapcoin(
         &mut self,
@@ -449,6 +483,46 @@ impl Wallet {
             .list_live_timelock_contract_spend_info()
             .iter()
             .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount);
+
+        // V2 contracts - include unfinished swapcoins that are still on-chain
+        let (unfinished_incoming_v2, unfinished_outgoing_v2) = self.find_unfinished_swapcoins_v2();
+
+        let contract_v2_incoming =
+            unfinished_incoming_v2
+                .iter()
+                .fold(Amount::ZERO, |sum, incoming| {
+                    let contract_txid = match incoming.contract_txid() {
+                        Ok(txid) => txid,
+                        Err(_) => return sum,
+                    };
+
+                    let outpoint = bitcoin::OutPoint::new(contract_txid, 0);
+                    match self
+                        .rpc
+                        .get_tx_out(&outpoint.txid, outpoint.vout, Some(false))
+                    {
+                        Ok(Some(_)) => sum + incoming.funding_amount(),
+                        _ => sum, // UTXO spent or error, don't count
+                    }
+                });
+
+        let contract_v2_outgoing =
+            unfinished_outgoing_v2
+                .iter()
+                .fold(Amount::ZERO, |sum, outgoing| {
+                    let contract_txid = outgoing.contract_tx().compute_txid();
+                    let outpoint = bitcoin::OutPoint::new(contract_txid, 0);
+                    match self
+                        .rpc
+                        .get_tx_out(&outpoint.txid, outpoint.vout, Some(false))
+                    {
+                        Ok(Some(_)) => sum + outgoing.funding_amount(),
+                        _ => sum, // UTXO spent or error, don't count
+                    }
+                });
+
+        let contract = contract + contract_v2_incoming + contract_v2_outgoing;
+
         let swap = self
             .list_swept_incoming_swap_utxos()
             .iter()
@@ -676,6 +750,12 @@ impl Wallet {
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Result<Option<UTXOSpendInfo>, WalletError> {
+        // Check v2 (taproot) swapcoins first
+        if let Some(v2_info) = self.check_v2_swapcoin(utxo)? {
+            return Ok(Some(v2_info));
+        }
+
+        // Check v1 swapcoins
         if let Some((_, outgoing_swapcoin)) =
             self.store.outgoing_swapcoins.iter().find(|(_, og)| {
                 redeemscript_to_scriptpubkey(&og.contract_redeemscript).unwrap()
@@ -699,6 +779,34 @@ impl Wallet {
                 }));
             }
         }
+        Ok(None)
+    }
+
+    /// Check if a UTXO belongs to a v2  swapcoin
+    fn check_v2_swapcoin(
+        &self,
+        utxo: &ListUnspentResultEntry,
+    ) -> Result<Option<UTXOSpendInfo>, WalletError> {
+        for outgoing in self.store.outgoing_swapcoins_v2.values() {
+            let contract_txid = outgoing.contract_tx.compute_txid();
+            if utxo.txid == contract_txid && utxo.vout == 0 {
+                return Ok(Some(UTXOSpendInfo::TimelockContract {
+                    swapcoin_multisig_redeemscript: ScriptBuf::new(),
+                    input_value: utxo.amount,
+                }));
+            }
+        }
+
+        for incoming in self.store.incoming_swapcoins_v2.values() {
+            let contract_txid = incoming.contract_tx.compute_txid();
+            if utxo.txid == contract_txid && utxo.vout == 0 {
+                return Ok(Some(UTXOSpendInfo::HashlockContract {
+                    swapcoin_multisig_redeemscript: ScriptBuf::new(),
+                    input_value: utxo.amount,
+                }));
+            }
+        }
+
         Ok(None)
     }
 
@@ -943,6 +1051,69 @@ impl Wallet {
             if !out_contract_txid.is_empty() {
                 log::debug!("Unfinished outgoing contract TxIDs: {out_contract_txid:?}");
             }
+        }
+
+        (unfinished_incomings, unfinished_outgoings)
+    }
+
+    /// Finds unfinished taproot swapcoins (V2 protocol)
+    /// Returns (incoming, outgoing) swapcoins that haven't been cooperatively swept
+    pub(crate) fn find_unfinished_swapcoins_v2(
+        &self,
+    ) -> (
+        Vec<crate::wallet::swapcoin2::IncomingSwapCoinV2>,
+        Vec<crate::wallet::swapcoin2::OutgoingSwapCoinV2>,
+    ) {
+        use crate::wallet::swapcoin2::{IncomingSwapCoinV2, OutgoingSwapCoinV2};
+
+        log::info!(
+            "Searching for unfinished swapcoins: {} incoming, {} outgoing in store",
+            self.store.incoming_swapcoins_v2.len(),
+            self.store.outgoing_swapcoins_v2.len()
+        );
+
+        // Unfinished incoming: no other_privkey received
+        let unfinished_incomings = self
+            .store
+            .incoming_swapcoins_v2
+            .iter()
+            .filter_map(|(txid, ic)| {
+                log::info!(
+                    "Incoming swapcoin {}: other_privkey present = {}",
+                    txid,
+                    ic.other_privkey.is_some()
+                );
+                if ic.other_privkey.is_none() {
+                    Some(ic.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<IncomingSwapCoinV2>>();
+
+        // Unfinished outgoing: no other_privkey received (swap not cooperatively completed)
+        // Note: Taker always has the preimage (they generated it), but they can't use it
+        // to recover their outgoing contract - hashlock uses receiver's pubkey, not sender's!
+        // Taker must use timelock to recover their outgoing contract.
+        let unfinished_outgoings = self
+            .store
+            .outgoing_swapcoins_v2
+            .iter()
+            .filter_map(|(_, oc)| {
+                if oc.other_privkey.is_none() {
+                    Some(oc.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<OutgoingSwapCoinV2>>();
+
+        if !unfinished_incomings.is_empty() || !unfinished_outgoings.is_empty() {
+            log::info!(
+                "Unfinished taproot swaps - Incoming: {}, Outgoing: {}",
+                unfinished_incomings.len(),
+                unfinished_outgoings.len()
+            );
         }
 
         (unfinished_incomings, unfinished_outgoings)
@@ -2082,5 +2253,279 @@ impl Wallet {
             log::info!("Wallet sync and save complete.");
         }
         Ok(broadcasted)
+    }
+
+    /// Spend taproot contract via hashlock script path
+    pub(crate) fn spend_via_hashlock_v2(
+        &mut self,
+        incoming: &crate::wallet::swapcoin2::IncomingSwapCoinV2,
+        preimage: &[u8; 32],
+        watch_service: &crate::watch_tower::service::WatchService,
+    ) -> Result<bitcoin::Txid, WalletError> {
+        use bitcoin::{OutPoint, Sequence, TxIn, TxOut, Witness};
+
+        log::info!("Creating hashlock recovery transaction for taproot contract");
+
+        // Create spending transaction
+        let contract_txid = incoming.contract_tx.compute_txid();
+        let input = TxIn {
+            previous_output: OutPoint {
+                txid: contract_txid,
+                vout: 0, // Contracts have single output
+            },
+            sequence: Sequence::ENABLE_LOCKTIME_NO_RBF,
+            script_sig: bitcoin::ScriptBuf::new(),
+            witness: Witness::new(), // Will be filled later
+        };
+
+        // Get destination address
+        let destination = self.get_next_internal_addresses(1)?[0].clone();
+
+        // Estimate output amount (contract amount minus fees)
+        let contract_amount = incoming.funding_amount;
+        let estimated_fee = bitcoin::Amount::from_sat(200); // ~1 input, 1 output at 2 sat/vB
+        let output_amount = contract_amount - estimated_fee;
+
+        let output = TxOut {
+            value: output_amount,
+            script_pubkey: destination.script_pubkey(),
+        };
+
+        let mut spending_tx = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![input],
+            output: vec![output],
+        };
+
+        // Build witness for hashlock script-path spend
+        // Witness stack: <sig> <preimage> <hashlock_script> <control_block>
+
+        use bitcoin::{
+            secp256k1::{Keypair, Message, Secp256k1},
+            sighash::{Prevouts, SighashCache},
+            taproot::{LeafVersion, TapLeafHash},
+            TapSighashType,
+        };
+
+        let secp = Secp256k1::new();
+
+        // Recreate the taproot spend info to get the control block
+        let internal_key = incoming.internal_key.ok_or_else(|| {
+            WalletError::General("Incoming swapcoin missing internal key".to_string())
+        })?;
+        let (_, taproot_spendinfo) = crate::protocol::contract2::create_taproot_script(
+            incoming.hashlock_script.clone(),
+            incoming.timelock_script.clone(),
+            internal_key,
+        )?;
+
+        // Get control block for the hashlock script path
+        let control_block = taproot_spendinfo
+            .control_block(&(incoming.hashlock_script.clone(), LeafVersion::TapScript))
+            .ok_or_else(|| {
+                WalletError::General("Failed to get control block for hashlock script".to_string())
+            })?;
+
+        // Create prevout for sighash calculation
+        let contract_output = TxOut {
+            value: contract_amount,
+            script_pubkey: incoming.contract_tx.output[0].script_pubkey.clone(),
+        };
+        let prevouts = vec![contract_output];
+        let prevouts_all = Prevouts::All(&prevouts);
+
+        // Calculate sighash for script-path spend
+        let mut sighasher = SighashCache::new(&mut spending_tx);
+        let script_leaf_hash =
+            TapLeafHash::from_script(&incoming.hashlock_script, LeafVersion::TapScript);
+        let sighash = sighasher
+            .taproot_script_spend_signature_hash(
+                0,
+                &prevouts_all,
+                script_leaf_hash,
+                TapSighashType::All,
+            )
+            .map_err(|e| WalletError::General(format!("Failed to compute sighash: {:?}", e)))?;
+
+        let msg = Message::from(sighash);
+
+        // Sign with Schnorr signature (need to convert SecretKey to Keypair)
+        // Note: The hashlock script was created with the X-only pubkey derived from my_privkey
+        let my_privkey = incoming.privkey()?;
+        let hashlock_keypair = Keypair::from_secret_key(&secp, &my_privkey);
+        let signature = secp.sign_schnorr(&msg, &hashlock_keypair);
+        let taproot_signature = bitcoin::taproot::Signature {
+            signature,
+            sighash_type: TapSighashType::All,
+        };
+
+        // Build witness
+        let mut witness = Witness::new();
+        witness.push(taproot_signature.to_vec());
+        witness.push(preimage);
+        witness.push(incoming.hashlock_script.as_bytes());
+        witness.push(control_block.serialize());
+
+        *sighasher.witness_mut(0).unwrap() = witness;
+
+        let spending_tx = sighasher.into_transaction();
+
+        // Broadcast
+        let txid = self.send_tx(spending_tx)?;
+
+        // Remove from wallet storage
+        self.store
+            .incoming_swapcoins_v2
+            .retain(|_, ic| ic.contract_tx.compute_txid() != contract_txid);
+
+        // Unwatch contract
+        let outpoint = OutPoint {
+            txid: contract_txid,
+            vout: 0,
+        };
+        watch_service.unwatch(outpoint);
+
+        log::info!("Hashlock recovery tx broadcasted: {}", txid);
+        self.sync_and_save()?;
+
+        Ok(txid)
+    }
+
+    /// Spend taproot contract via timelock script path
+    pub(crate) fn spend_via_timelock_v2(
+        &mut self,
+        outgoing: &crate::wallet::swapcoin2::OutgoingSwapCoinV2,
+        watch_service: &crate::watch_tower::service::WatchService,
+    ) -> Result<bitcoin::Txid, WalletError> {
+        use bitcoin::{OutPoint, Sequence, TxIn, TxOut, Witness};
+
+        log::info!("Creating timelock recovery transaction for taproot contract");
+
+        let contract_txid = outgoing.contract_tx.compute_txid();
+
+        // Get timelock value
+        let timelock_value = outgoing.get_timelock().ok_or_else(|| {
+            WalletError::General("Failed to extract timelock from script".to_string())
+        })?;
+
+        let input = TxIn {
+            previous_output: OutPoint {
+                txid: contract_txid,
+                vout: 0,
+            },
+            sequence: Sequence::ZERO,
+            script_sig: bitcoin::ScriptBuf::new(),
+            witness: Witness::new(),
+        };
+
+        // Get destination
+        let destination = self.get_next_internal_addresses(1)?[0].clone();
+
+        let contract_amount = outgoing.funding_amount;
+        let estimated_fee = bitcoin::Amount::from_sat(200);
+        let output_amount = contract_amount - estimated_fee;
+
+        let output = TxOut {
+            value: output_amount,
+            script_pubkey: destination.script_pubkey(),
+        };
+
+        let mut spending_tx = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::from_height(timelock_value)?,
+            input: vec![input],
+            output: vec![output],
+        };
+
+        // Build witness for timelock script-path spend
+        // Witness stack: <sig> <timelock_script> <control_block>
+
+        use bitcoin::{
+            secp256k1::{Keypair, Message, Secp256k1},
+            sighash::{Prevouts, SighashCache},
+            taproot::{LeafVersion, TapLeafHash},
+            TapSighashType,
+        };
+
+        let secp = Secp256k1::new();
+
+        // Recreate the taproot spend info to get the control block
+        let internal_key = outgoing.internal_key()?;
+        let (_, taproot_spendinfo) = crate::protocol::contract2::create_taproot_script(
+            outgoing.hashlock_script.clone(),
+            outgoing.timelock_script.clone(),
+            internal_key,
+        )?;
+
+        // Get control block for the timelock script path
+        let control_block = taproot_spendinfo
+            .control_block(&(outgoing.timelock_script.clone(), LeafVersion::TapScript))
+            .ok_or_else(|| {
+                WalletError::General("Failed to get control block for timelock script".to_string())
+            })?;
+
+        // Create prevout for sighash calculation
+        let contract_output = TxOut {
+            value: contract_amount,
+            script_pubkey: outgoing.contract_tx.output[0].script_pubkey.clone(),
+        };
+        let prevouts = vec![contract_output];
+        let prevouts_all = Prevouts::All(&prevouts);
+
+        // Calculate sighash for script-path spend
+        let mut sighasher = SighashCache::new(&mut spending_tx);
+        let script_leaf_hash =
+            TapLeafHash::from_script(&outgoing.timelock_script, LeafVersion::TapScript);
+        let sighash = sighasher
+            .taproot_script_spend_signature_hash(
+                0,
+                &prevouts_all,
+                script_leaf_hash,
+                TapSighashType::All,
+            )
+            .map_err(|e| WalletError::General(format!("Failed to compute sighash: {:?}", e)))?;
+
+        let msg = Message::from(sighash);
+
+        // Sign with Schnorr signature (need to convert SecretKey to Keypair)
+        // Note: The timelock script was created with the X-only pubkey derived from my_privkey
+        let my_privkey = outgoing.privkey()?;
+        let timelock_keypair = Keypair::from_secret_key(&secp, &my_privkey);
+        let signature = secp.sign_schnorr(&msg, &timelock_keypair);
+        let taproot_signature = bitcoin::taproot::Signature {
+            signature,
+            sighash_type: TapSighashType::All,
+        };
+
+        // Build witness
+        let mut witness = Witness::new();
+        witness.push(taproot_signature.to_vec());
+        witness.push(outgoing.timelock_script.as_bytes());
+        witness.push(control_block.serialize());
+
+        *sighasher.witness_mut(0).unwrap() = witness;
+
+        let spending_tx = sighasher.into_transaction();
+
+        // Broadcast
+        let txid = self.send_tx(spending_tx)?;
+
+        // Remove from storage
+        self.store
+            .outgoing_swapcoins_v2
+            .retain(|_, oc| oc.contract_tx.compute_txid() != contract_txid);
+
+        // Unwatch
+        let outpoint = OutPoint {
+            txid: contract_txid,
+            vout: 0,
+        };
+        watch_service.unwatch(outpoint);
+
+        log::info!("Timelock recovery tx broadcasted: {}", txid);
+        self.sync_and_save()?;
+
+        Ok(txid)
     }
 }

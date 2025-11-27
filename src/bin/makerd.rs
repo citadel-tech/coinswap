@@ -90,6 +90,8 @@ fn main() -> Result<(), MakerError> {
             None,
             args.zmq,
             args.password,
+            #[cfg(feature = "integration-test")]
+            None,
         )?);
 
         start_maker_server_taproot(maker)?;
