@@ -27,7 +27,7 @@ pub(crate) fn create_hashlock_script(hash: &[u8; 32], pubkey: &XOnlyPublicKey) -
 }
 
 /// Extract the hash from a hashlock script
-/// Hashlock script format: OP_SHA256 <32-byte hash> OP_EQUALVERIFY <pubkey> OP_CHECKSIG
+/// Hashlock script format: `OP_SHA256 <32-byte hash> OP_EQUALVERIFY <pubkey> OP_CHECKSIG`
 pub(crate) fn extract_hash_from_hashlock(script: &ScriptBuf) -> Result<[u8; 32], ProtocolError> {
     let instructions: Vec<_> = script.instructions().collect();
 
