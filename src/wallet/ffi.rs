@@ -112,7 +112,7 @@ pub fn restore_wallet_gui_app(
 ) {
     let (backup, encryption_material) = load_sensitive_struct_from_value::<WalletBackup, SerdeJson>(
         &backup_file_path,
-        password.unwrap(),
+        password.unwrap_or_default(),
     );
     let restored_wallet_filename = wallet_file_name.unwrap_or("".to_string());
 
@@ -169,6 +169,23 @@ impl Wallet {
         self.backup(backup_path, km)?;
 
         Ok(())
+    }
+
+    /// Checks whether wallet is encrypted or not.
+    pub fn is_wallet_encrypted(wallet_path: &Path) -> Result<bool, WalletError> {
+        if !wallet_path.exists() {
+            return Ok(false); // No wallet = not encrypted
+        }
+
+        let content = std::fs::read(wallet_path).map_err(WalletError::IO)?;
+
+        // Try to deserialize as EncryptedData using CBOR
+        // If it succeeds, the wallet is encrypted
+        // If it fails, the wallet is plaintext
+        match serde_cbor::from_slice::<crate::security::EncryptedData>(&content) {
+            Ok(_) => Ok(true),   // Successfully parsed as EncryptedData = encrypted
+            Err(_) => Ok(false), // Failed to parse as EncryptedData = plaintext
+        }
     }
 
     /// Returns a list of recent Incoming Transactions (bydefault last 10)
