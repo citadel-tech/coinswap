@@ -116,26 +116,44 @@ configure_setup() {
     esac
     
     echo ""
-    if check_bitcoind_running "$BITCOIN_RPC_PORT"; then
-        print_info "Detected Bitcoin Core running on port $BITCOIN_RPC_PORT"
-        read -p "Use existing Bitcoin Core instance? [Y/n]: " use_existing
-        if [[ "${use_existing:-Y}" =~ ^[Yy]$ ]]; then
-            USE_EXTERNAL_BITCOIND="true"
-            read -p "Bitcoin RPC host [localhost:$BITCOIN_RPC_PORT]: " btc_host
-            EXTERNAL_BITCOIND_HOST="${btc_host:-localhost:$BITCOIN_RPC_PORT}"
-        else
-            USE_EXTERNAL_BITCOIND="false"
+    echo "Select Bitcoin Node Source:"
+    echo "1) Run Local Node (Docker)"
+    if [ "$BITCOIN_NETWORK" == "signet" ]; then
+        echo "2) Use Coinswap Public Node"
+    fi
+    echo "3) Connect to External Node"
+    
+    read -p "Source [1]: " source_choice
+    
+    USE_EXTERNAL_BITCOIND="false"
+    
+    if [ "$BITCOIN_NETWORK" == "signet" ] && [ "${source_choice:-1}" == "2" ]; then
+        USE_EXTERNAL_BITCOIND="true"
+        EXTERNAL_BITCOIND_HOST="172.81.178.3:48332"
+        BITCOIN_ZMQ_PORT="58332"
+        print_info "Using Coinswap Public Node at $EXTERNAL_BITCOIND_HOST"
+    elif [ "${source_choice:-1}" == "3" ] || ([ "$BITCOIN_NETWORK" != "signet" ] && [ "${source_choice:-1}" == "2" ]); then
+         USE_EXTERNAL_BITCOIND="true"
+         read -p "Bitcoin RPC host [localhost:$BITCOIN_RPC_PORT]: " btc_host
+         EXTERNAL_BITCOIND_HOST="${btc_host:-localhost:$BITCOIN_RPC_PORT}"
+    else
+        if check_bitcoind_running "$BITCOIN_RPC_PORT"; then
+            print_warning "Detected Bitcoin Core running on port $BITCOIN_RPC_PORT"
+            read -p "Port is in use. Use this existing instance instead? [Y/n]: " use_existing
+            if [[ "${use_existing:-Y}" =~ ^[Yy]$ ]]; then
+                USE_EXTERNAL_BITCOIND="true"
+                EXTERNAL_BITCOIND_HOST="localhost:$BITCOIN_RPC_PORT"
+            else
+                print_warning "Continuing with local node configuration. Startup may fail if port is bound."
+            fi
+        fi
+        
+        if [[ "$USE_EXTERNAL_BITCOIND" == "false" ]]; then
             read -p "Bitcoin RPC port [$BITCOIN_RPC_PORT]: " btc_port
             BITCOIN_RPC_PORT="${btc_port:-$BITCOIN_RPC_PORT}"
             read -p "Bitcoin ZMQ port [$BITCOIN_ZMQ_PORT]: " btc_zmq_port
             BITCOIN_ZMQ_PORT="${btc_zmq_port:-$BITCOIN_ZMQ_PORT}"
         fi
-    else
-        USE_EXTERNAL_BITCOIND="false"
-        read -p "Bitcoin RPC port [$BITCOIN_RPC_PORT]: " btc_port
-        BITCOIN_RPC_PORT="${btc_port:-$BITCOIN_RPC_PORT}"
-        read -p "Bitcoin ZMQ port [$BITCOIN_ZMQ_PORT]: " btc_zmq_port
-        BITCOIN_ZMQ_PORT="${btc_zmq_port:-$BITCOIN_ZMQ_PORT}"
     fi
     
     echo ""
@@ -233,7 +251,12 @@ generate_compose_file() {
     
     print_info "Generating docker-compose configuration..."
     
-    local makerd_args="-r bitcoind:$BITCOIN_RPC_PORT -a user:password"
+    local rpc_host="bitcoind:$BITCOIN_RPC_PORT"
+    if [[ "$USE_EXTERNAL_BITCOIND" == "true" ]]; then
+        rpc_host="$EXTERNAL_BITCOIND_HOST"
+    fi
+
+    local makerd_args="-r $rpc_host -a user:password"
     if [[ "$USE_TAPROOT" == "true" ]]; then
         makerd_args="$makerd_args --taproot"
     fi
@@ -243,19 +266,22 @@ services:
 EOF
 
     if [[ "$USE_EXTERNAL_BITCOIND" != "true" ]]; then
+        # construct bitcoind command
+        local btc_cmd="bitcoind -datadir=/home/bitcoin/.bitcoin -server=1 -rpcuser=user -rpcpassword=password -rpcallowip=0.0.0.0/0 -txindex=1 -blockfilterindex=1"
+        
+        if [[ "$BITCOIN_NETWORK" == "signet" ]]; then
+            btc_cmd="$btc_cmd -signet=1 -signetchallenge=512102f7561d208dd9ae99bf497273e16f389bdbd6c4742ddb8e6b216e64fa2928ad8f51ae -addnode=45.79.52.207:38333 -dnsseed=0 -signetblocktime=30"
+        else
+            btc_cmd="$btc_cmd -regtest=1 -fallbackfee=0.00001000"
+        fi
+        
+        btc_cmd="$btc_cmd -rpcbind=0.0.0.0 -rpcport=$BITCOIN_RPC_PORT -zmqpubrawblock=tcp://0.0.0.0:$BITCOIN_ZMQ_PORT -zmqpubrawtx=tcp://0.0.0.0:$BITCOIN_ZMQ_PORT"
+
         cat >> "$compose_file" << EOF
   bitcoind:
     image: coinswap/${BITCOIN_IMAGE_NAME}:${bitcoin_tag}
     container_name: coinswap-bitcoind
-    command: |
-      bitcoind
-      -conf=/home/bitcoin/.bitcoin/bitcoin.conf
-      -datadir=/home/bitcoin/.bitcoin
-      -${BITCOIN_NETWORK}=1
-      -rpcbind=0.0.0.0
-      -rpcport=$BITCOIN_RPC_PORT
-      -zmqpubrawblock=tcp://0.0.0.0:$BITCOIN_ZMQ_PORT
-      -zmqpubrawtx=tcp://0.0.0.0:$BITCOIN_ZMQ_PORT
+    command: $btc_cmd
     ports:
       - "$BITCOIN_RPC_PORT:$BITCOIN_RPC_PORT"
       - "$BITCOIN_ZMQ_PORT:$BITCOIN_ZMQ_PORT"
