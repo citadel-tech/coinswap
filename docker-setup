@@ -261,13 +261,18 @@ generate_compose_file() {
         makerd_args="$makerd_args --taproot"
     fi
     
+    local socat_cmd=""
+    if [[ "$USE_EXTERNAL_TOR" != "true" ]]; then
+        socat_cmd="socat TCP-LISTEN:$TOR_SOCKS_PORT,fork,bind=127.0.0.1 TCP:tor:9050 & socat TCP-LISTEN:$TOR_CONTROL_PORT,fork,bind=127.0.0.1 TCP:tor:9051 &"
+    fi
+    
     cat > "$compose_file" << EOF
 services:
 EOF
 
     if [[ "$USE_EXTERNAL_BITCOIND" != "true" ]]; then
         # construct bitcoind command
-        local btc_cmd="bitcoind -datadir=/home/bitcoin/.bitcoin -server=1 -rpcuser=user -rpcpassword=password -rpcallowip=0.0.0.0/0 -txindex=1 -blockfilterindex=1"
+        local btc_cmd="bitcoind -server=1 -rpcuser=user -rpcpassword=password -rpcallowip=0.0.0.0/0 -txindex=1 -blockfilterindex=1"
         
         if [[ "$BITCOIN_NETWORK" == "signet" ]]; then
             btc_cmd="$btc_cmd -signet=1 -signetchallenge=512102f7561d208dd9ae99bf497273e16f389bdbd6c4742ddb8e6b216e64fa2928ad8f51ae -addnode=45.79.52.207:38333 -dnsseed=0 -signetblocktime=30"
@@ -281,6 +286,7 @@ EOF
   bitcoind:
     image: coinswap/${BITCOIN_IMAGE_NAME}:${bitcoin_tag}
     container_name: coinswap-bitcoind
+    user: "0:0"
     command: $btc_cmd
     ports:
       - "$BITCOIN_RPC_PORT:$BITCOIN_RPC_PORT"
@@ -302,6 +308,8 @@ EOF
   tor:
     image: leplusorg/tor:latest
     container_name: coinswap-tor
+    environment:
+      - SKIP_TEMPLATE=true
     volumes:
       - tor-data:/var/lib/tor
       - ./docker/torrc:/etc/tor/torrc:ro
@@ -319,6 +327,7 @@ EOF
     container_name: coinswap-makerd
     command: |
       sh -c "
+      $socat_cmd
       sleep 15 &&
       mkdir -p /home/coinswap/.coinswap/maker &&
       cat > /home/coinswap/.coinswap/maker/config.toml << EOM
@@ -682,7 +691,7 @@ case "${1:-}" in
         docker compose -f "$compose_file" ps
         ;;
     "shell")
-        docker run --rm -it --network coinswap-network "${IMAGE_NAME}:latest" /bin/sh
+        docker run --rm -it --network coinswap-network "coinswap/${IMAGE_NAME}:latest" /bin/sh
         ;;
     "makerd"|"maker-cli"|"taker"|"bitcoin-cli")
         run_command "$@"

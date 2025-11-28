@@ -30,7 +30,8 @@ RUN --mount=type=cache,target=/var/cache/apk \
     openssl \
     libgcc \
     sqlite \
-    zeromq
+    zeromq \
+    socat
 
 RUN adduser -D -u 1001 coinswap
 
