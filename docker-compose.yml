@@ -1,0 +1,61 @@
+services:
+
+  tor:
+    image: osminogin/tor-simple
+    container_name: tor
+    restart: unless-stopped
+    ports:
+      - "${TOR_SOCKS_PORT:-19050}:${TOR_SOCKS_PORT:-19050}"
+      - "${TOR_CONTROL_PORT:-19051}:${TOR_CONTROL_PORT:-19051}"
+      - "${MAKER_RPC_PORT:-6113}:${MAKER_RPC_PORT:-6113}"
+    volumes:
+      - ./torrc:/etc/tor/torrc:ro
+      - tor-data:/var/lib/tor
+
+  makerd:
+    image: coinswap/coinswap:latest
+    container_name: coinswap-makerd
+    network_mode: "service:tor"
+    command:
+      - sh
+      - -c
+      - |
+        sleep 15
+        mkdir -p /home/coinswap/.coinswap/maker
+        printf '%s\n' \
+          "network_port = ${MAKER_NETWORK_PORT:-6112}" \
+          "rpc_port = ${MAKER_RPC_PORT:-6113}" \
+          "socks_port = ${TOR_SOCKS_PORT:-19050}" \
+          "control_port = ${TOR_CONTROL_PORT:-19051}" \
+          "tor_auth_password = ${TOR_AUTH_PASSWORD:-coinswap}" \
+          "min_swap_amount = ${MIN_SWAP_AMOUNT:-10000}" \
+          "fidelity_amount = ${FIDELITY_AMOUNT:-50000}" \
+          "fidelity_timelock = ${FIDELITY_TIMELOCK:-13104}" \
+          "connection_type = TOR" \
+          "base_fee = ${BASE_FEE:-100}" \
+          "amount_relative_fee_ppt = ${AMOUNT_RELATIVE_FEE_PPT:-1000}" \
+          > /home/coinswap/.coinswap/maker/config.toml
+        makerd -r ${BITCOIN_RPC_HOST:-172.81.178.3:48332} -a ${BITCOIN_RPC_AUTH:-user:password} --taproot
+    volumes:
+      - maker-data:/home/coinswap/.coinswap
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - TOR_SOCKS_PORT=${TOR_SOCKS_PORT:-19050}
+      - TOR_CONTROL_PORT=${TOR_CONTROL_PORT:-19051}
+      - TOR_AUTH_PASSWORD=${TOR_AUTH_PASSWORD:-coinswap}
+      - MAKER_NETWORK_PORT=${MAKER_NETWORK_PORT:-6112}
+      - MAKER_RPC_PORT=${MAKER_RPC_PORT:-6113}
+      - MIN_SWAP_AMOUNT=${MIN_SWAP_AMOUNT:-10000}
+      - FIDELITY_AMOUNT=${FIDELITY_AMOUNT:-50000}
+      - FIDELITY_TIMELOCK=${FIDELITY_TIMELOCK:-13104}
+      - BASE_FEE=${BASE_FEE:-100}
+      - AMOUNT_RELATIVE_FEE_PPT=${AMOUNT_RELATIVE_FEE_PPT:-1000}
+      - BITCOIN_RPC_HOST=${BITCOIN_RPC_HOST:-172.81.178.3:48332}
+      - BITCOIN_RPC_AUTH=${BITCOIN_RPC_AUTH:-user:password}
+    restart: unless-stopped
+
+volumes:
+  tor-data:
+    driver: local
+  maker-data:
+    driver: local
