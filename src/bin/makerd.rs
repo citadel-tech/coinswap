@@ -54,8 +54,8 @@ struct Cli {
         default_value = "user:password",
     )]
     pub auth: (String, String),
-    #[clap(long, short = 't', default_value = "")]
-    pub tor_auth: String,
+    #[clap(long, short = 't')]
+    pub tor_auth: Option<String>,
     /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with the given name. Default: maker-wallet
     #[clap(name = "WALLET", long, short = 'w')]
     pub(crate) wallet_name: Option<String>,
@@ -86,7 +86,7 @@ fn main() -> Result<(), MakerError> {
             None,
             None,
             None,
-            Some(args.tor_auth),
+            args.tor_auth.clone(),
             None,
             args.zmq,
             args.password,
@@ -103,7 +103,7 @@ fn main() -> Result<(), MakerError> {
             None,
             None,
             None,
-            Some(args.tor_auth),
+            args.tor_auth,
             None,
             MakerBehavior::Normal,
             args.zmq,
