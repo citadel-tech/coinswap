@@ -13,7 +13,7 @@ services:
       - tor-data:/var/lib/tor
 
   makerd:
-    image: coinswap/coinswap:latest
+    image: coinswap/coinswap:master
     container_name: coinswap-makerd
     network_mode: "service:tor"
     command:
