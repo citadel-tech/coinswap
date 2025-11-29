@@ -1,10 +1,14 @@
-# Docker Setup & Usage Guide
+# Coinswap Docker
 
-This guide covers how to build and run Coinswap using Docker with a modern multi-service architecture.
+A dockerized version  of the **Complete Coinswap Backend**.
+
+The Docker spawns a multiple containers, with Mutinynet, Tor, makerd, maker-cli, and taker, with the right configurations and connections among each other. 
+
+Various subset of the stack can be used for different application needs and environments.
 
 ## Overview
 
-The Docker setup provides a complete environment for running Coinswap applications:
+The Docker setup provides a complete environment for running any Coinswap applications:
 
 - **Single unified Dockerfile** containing all Coinswap components
 - **Alpine Linux 3.20** base image for minimal size
@@ -12,7 +16,7 @@ The Docker setup provides a complete environment for running Coinswap applicatio
 - **Custom Bitcoin Mutinynet image** for Signet testing
 - **External Tor image** (`leplusorg/tor`)
 - **Interactive configuration** with automatic service detection
-- Coinswap binaries: `makerd`, `maker-cli`, `taker`
+- **Coinswap binaries:** `makerd`, `maker-cli`, `taker`
 
 ## Architecture
 

@@ -1,6 +1,10 @@
 # Working with `bitcoind` for the Mutinynet
 
-In this tutorial, we will guide you through setting up [Mutinynet](https://github.com/benthecarman/bitcoin/tree/mutinynet-inq-29), a fork of Bitcoin Core. We will cover basic operations like creating wallets, generating blocks, checking balances, and sending Bitcoin between two wallets.
+In this tutorial, we will guide you through setting up [Mutinynet](https://github.com/benthecarman/bitcoin/tree/mutinynet-inq-29), which running on the [inquisition hardfork](https://github.com/bitcoin-inquisition/bitcoin) of bitcoin core, to allow experimental consensus rules, while maintaining compatibility with existing Bitcoin consensus rules. 
+
+Coinswap doesn't need any experimental consensus. Mutinynet serves as a stable public Bitcoin Signet network to host the first movers of the coinswap marketplace.
+
+This tutorial will cover basic operations like setting up, creating wallets, getting funds, checking balances, and sending sats between two wallets using `bitcoin-cli`.
 
 ### 1. Installing `bitcoind`
 
@@ -29,7 +33,7 @@ First, create the Bitcoin data directory if it doesn't already exist:
 mkdir -p ~/.bitcoin
 ```
 
-Copy the `bitcoin.conf` file from the docs folder into the data directory:
+Copy this [`bitcoin.conf`](./bitcoin.conf) file from the docs folder into the data directory:
 
 ```bash
 cp ./docs/bitcoin.conf ~/.bitcoin/bitcoin.conf
@@ -45,21 +49,24 @@ Once the `bitcoin.conf` file is configured, you can start `bitcoind` and perform
 
 #### 3.1 Start the `bitcoind` daemon
 
-Run the following command to start the Bitcoin node in either Signet or Regtest mode:
+Run the Mutinynet:
 
 ```bash
 $ bitcoind -signet
-or
+```
+Or, run local Regtest
+```bash
 $ bitcoind -regtest 
 ```
 
-> Note: The Coinswap marketplace is live on Mutinynet. To access the market and perform swaps with other makers, start `bitcoind -signet`.
+> **Note**: The Coinswap marketplace is live on Mutinynet. To access the market and perform swaps with other makers, start `bitcoind -signet`.
 
 Useful links for Mutinynet operations:
  - [Mutinynet Block Explorer](https://mutinynet.com/mining)
  - [Mutinynet Faucet](https://faucet.mutinynet.com/)
 
-In the rest of this tutorial, we assume you are running `bitcoind -regtest`.
+> **Note**: Command outputs for the rest of the tutorial below are shown for Regtest, but all commands are equivalent for Mutinynet. Except
+> the mining command, `bitcoin-cli generatetoaddress`. Instead of that, to get funds in the wallet, use the Mutiny Faucet.  
 
 To check the status of the node and confirm that it's running, use:
 
