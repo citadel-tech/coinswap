@@ -51,8 +51,8 @@ struct Cli {
     /// Bitcoin Core RPC authentication string. Ex: username:password
     #[clap(name="USER:PASSWORD",short='a',long, value_parser = parse_proxy_auth, default_value = "user:password")]
     pub auth: (String, String),
-    #[clap(long, short = 't', default_value = "")]
-    pub tor_auth: String,
+    #[clap(long, short = 't')]
+    pub tor_auth: Option<String>,
 
     /// Sets the taker wallet's name. If the wallet file already exists, it will load that wallet. Default: taker-wallet
     #[clap(name = "WALLET", long, short = 'w')]
@@ -197,7 +197,7 @@ fn main() -> Result<(), TakerError> {
                 args.wallet_name.clone(),
                 Some(rpc_config.clone()),
                 None,
-                Some(args.tor_auth),
+                args.tor_auth,
                 args.zmq,
                 None,
             )?;
@@ -211,7 +211,7 @@ fn main() -> Result<(), TakerError> {
                 args.wallet_name.clone(),
                 Some(rpc_config.clone()),
                 None,
-                Some(args.tor_auth),
+                args.tor_auth,
                 args.zmq,
                 None,
             )?;
@@ -236,7 +236,7 @@ fn main() -> Result<(), TakerError> {
                 #[cfg(feature = "integration-test")]
                 TakerBehavior::Normal,
                 None,
-                Some(args.tor_auth),
+                args.tor_auth,
                 args.zmq,
                 args.password,
             )?;
