@@ -1,11 +1,4 @@
-# Tor configuration for coinswap
-SOCKSPort 0.0.0.0:9050
+SocksPort 0.0.0.0:9050
 ControlPort 0.0.0.0:9051
+HashedControlPassword 16:16E946B27E1A526E60A2B64061EC3F140ACA991F1B705ACD35374D6730
 DataDirectory /var/lib/tor
-
-# Logging
-Log notice file /var/lib/tor/notices.log
-
-# Security settings
-CookieAuthentication 1
-CookieAuthFileGroupReadable 1
