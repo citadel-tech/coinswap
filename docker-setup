@@ -12,10 +12,10 @@ DEFAULT_BITCOIN_DATADIR="/home/coinswap/.bitcoin"
 DEFAULT_BITCOIN_NETWORK="signet"
 DEFAULT_BITCOIN_RPC_PORT="38332"
 DEFAULT_BITCOIN_ZMQ_PORT="28332"
-DEFAULT_MAKERD_PORT="6102"
-DEFAULT_MAKERD_RPC_PORT="6103"
-DEFAULT_TOR_SOCKS_PORT="9050"
-DEFAULT_TOR_CONTROL_PORT="9051"
+DEFAULT_MAKERD_PORT="6112"
+DEFAULT_MAKERD_RPC_PORT="6113"
+DEFAULT_TOR_SOCKS_PORT="19050"
+DEFAULT_TOR_CONTROL_PORT="19051"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -239,8 +239,26 @@ check_docker() {
     print_success "Docker is available and running"
 }
 
+generate_torrc() {
+    local torrc_file="$SCRIPT_DIR/torrc.generated"
+    print_info "Generating torrc configuration..."
+
+    cat > "$torrc_file" << EOF
+SocksPort 0.0.0.0:${TOR_SOCKS_PORT}
+ControlPort 0.0.0.0:${TOR_CONTROL_PORT}
+HashedControlPassword 16:16E946B27E1A526E60A2B64061EC3F140ACA991F1B705ACD35374D6730
+DataDirectory /var/lib/tor
+EOF
+    print_success "Generated torrc: $torrc_file"
+}
+
 generate_compose_file() {
     local compose_file="$SCRIPT_DIR/docker-compose.generated.yml"
+    
+    # Generate torrc first if using internal Tor
+    if [[ "$USE_EXTERNAL_TOR" != "true" ]]; then
+        generate_torrc
+    fi
     
     # Read Bitcoin version tag
     local bitcoin_tag="latest"
@@ -256,9 +274,9 @@ generate_compose_file() {
         rpc_host="$EXTERNAL_BITCOIND_HOST"
     fi
 
-    local makerd_args="-r $rpc_host -a user:password"
+    local makerd_args_cmd="makerd -r \${BITCOIN_RPC_HOST:-$rpc_host} -a \${BITCOIN_RPC_AUTH:-user:password}"
     if [[ "$USE_TAPROOT" == "true" ]]; then
-        makerd_args="$makerd_args --taproot"
+        makerd_args_cmd="$makerd_args_cmd --taproot"
     fi
     
     cat > "$compose_file" << EOF
@@ -305,11 +323,11 @@ EOF
     container_name: coinswap-tor
     volumes:
       - tor-data:/var/lib/tor
-      - ./docker/torrc:/etc/tor/torrc:ro
+      - ./torrc.generated:/etc/tor/torrc:ro
     ports:
-      - "$TOR_SOCKS_PORT:$TOR_SOCKS_PORT"
-      - "$TOR_CONTROL_PORT:$TOR_CONTROL_PORT"
-      - "$MAKERD_RPC_PORT:$MAKERD_RPC_PORT"
+      - "\${TOR_SOCKS_PORT:-$TOR_SOCKS_PORT}:\${TOR_SOCKS_PORT:-$TOR_SOCKS_PORT}"
+      - "\${TOR_CONTROL_PORT:-$TOR_CONTROL_PORT}:\${TOR_CONTROL_PORT:-$TOR_CONTROL_PORT}"
+      - "\${MAKER_RPC_PORT:-$MAKERD_RPC_PORT}:\${MAKER_RPC_PORT:-$MAKERD_RPC_PORT}"
     restart: unless-stopped
 
 EOF
@@ -317,7 +335,7 @@ EOF
 
     cat >> "$compose_file" << EOF
   makerd:
-    image: coinswap/${IMAGE_NAME}:latest
+    image: coinswap/${IMAGE_NAME}:master
     container_name: coinswap-makerd
 EOF
 
@@ -338,52 +356,35 @@ EOF
         sleep 15
         mkdir -p /home/coinswap/.coinswap/maker
         printf '%s\n' \\
-          "network_port = $MAKERD_PORT" \\
-          "rpc_port = $MAKERD_RPC_PORT" \\
-          "socks_port = $TOR_SOCKS_PORT" \\
-          "control_port = $TOR_CONTROL_PORT" \\
-          "tor_auth_password = \"coinswap\"" \\
-          "min_swap_amount = 10000" \\
-          "fidelity_amount = 50000" \\
-          "fidelity_timelock = 13104" \\
-          "connection_type = \"TOR\"" \\
-          "base_fee = 100" \\
-          "amount_relative_fee_ppt = 1000" \\
+          "network_port = \${MAKER_NETWORK_PORT:-$MAKERD_PORT}" \\
+          "rpc_port = \${MAKER_RPC_PORT:-$MAKERD_RPC_PORT}" \\
+          "socks_port = \${TOR_SOCKS_PORT:-$TOR_SOCKS_PORT}" \\
+          "control_port = \${TOR_CONTROL_PORT:-$TOR_CONTROL_PORT}" \\
+          "tor_auth_password = \${TOR_AUTH_PASSWORD:-coinswap}" \\
+          "min_swap_amount = \${MIN_SWAP_AMOUNT:-10000}" \\
+          "fidelity_amount = \${FIDELITY_AMOUNT:-50000}" \\
+          "fidelity_timelock = \${FIDELITY_TIMELOCK:-13104}" \\
+          "connection_type = TOR" \\
+          "base_fee = \${BASE_FEE:-100}" \\
+          "amount_relative_fee_ppt = \${AMOUNT_RELATIVE_FEE_PPT:-1000}" \\
           > /home/coinswap/.coinswap/maker/config.toml
-        makerd $makerd_args
+        $makerd_args_cmd
     volumes:
       - maker-data:/home/coinswap/.coinswap
     environment:
-      - RUST_LOG=info
-      - TOR_SOCKS_PORT=$TOR_SOCKS_PORT
-      - TOR_CONTROL_PORT=$TOR_CONTROL_PORT
-      - TOR_AUTH_PASSWORD=coinswap
-      - MAKER_NETWORK_PORT=$MAKERD_PORT
-      - MAKER_RPC_PORT=$MAKERD_RPC_PORT
-      - MIN_SWAP_AMOUNT=10000
-      - FIDELITY_AMOUNT=50000
-      - FIDELITY_TIMELOCK=13104
-      - BASE_FEE=100
-      - AMOUNT_RELATIVE_FEE_PPT=1000
-      - BITCOIN_RPC_HOST=$rpc_host
-      - BITCOIN_RPC_AUTH=user:password
-EOF
-
-    # Add makerd dependencies  
-    local makerd_deps=()
-    [[ "$USE_EXTERNAL_BITCOIND" != "true" ]] && makerd_deps+=("bitcoind")
-    [[ "$USE_EXTERNAL_TOR" != "true" ]] && makerd_deps+=("tor")
-    
-    cat >> "$compose_file" << EOF
-    depends_on:
-EOF
-    for dep in "${makerd_deps[@]}"; do
-        cat >> "$compose_file" << EOF
-      - $dep
-EOF
-    done
-    
-    cat >> "$compose_file" << EOF
+      - RUST_LOG=\${RUST_LOG:-info}
+      - TOR_SOCKS_PORT=\${TOR_SOCKS_PORT:-19050}
+      - TOR_CONTROL_PORT=\${TOR_CONTROL_PORT:-19051}
+      - TOR_AUTH_PASSWORD=\${TOR_AUTH_PASSWORD:-coinswap}
+      - MAKER_NETWORK_PORT=\${MAKER_NETWORK_PORT:-6112}
+      - MAKER_RPC_PORT=\${MAKER_RPC_PORT:-6113}
+      - MIN_SWAP_AMOUNT=\${MIN_SWAP_AMOUNT:-10000}
+      - FIDELITY_AMOUNT=\${FIDELITY_AMOUNT:-50000}
+      - FIDELITY_TIMELOCK=\${FIDELITY_TIMELOCK:-13104}
+      - BASE_FEE=\${BASE_FEE:-100}
+      - AMOUNT_RELATIVE_FEE_PPT=\${AMOUNT_RELATIVE_FEE_PPT:-1000}
+      - BITCOIN_RPC_HOST=\${BITCOIN_RPC_HOST:-172.81.178.3:48332}
+      - BITCOIN_RPC_AUTH=\${BITCOIN_RPC_AUTH:-user:password}
     restart: unless-stopped
 
 volumes:
