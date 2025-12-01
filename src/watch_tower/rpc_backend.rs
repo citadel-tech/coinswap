@@ -56,7 +56,7 @@ impl BitcoinRpc {
     }
 
     pub fn process_mempool(&mut self, registry: &mut FileRegistry) -> Result<(), WatcherError> {
-        let txids = self.get_raw_mempool().unwrap();
+        let txids = self.get_raw_mempool()?;
         for txid in &txids {
             let tx = self.get_raw_tx(txid)?;
             process_transaction(&tx, registry, false);
@@ -64,7 +64,7 @@ impl BitcoinRpc {
         Ok(())
     }
 
-    pub fn run_discovery(&mut self, registry: &mut FileRegistry) -> Result<(), WatcherError> {
+    pub fn run_discovery(self, mut registry: FileRegistry) -> Result<(), WatcherError> {
         log::info!("Starting with market discovery");
         let blockchain_info = self.get_blockchain_info()?;
         let coinswap_height = match blockchain_info.chain {

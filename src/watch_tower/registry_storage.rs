@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use bitcoin::{BlockHash, OutPoint, Transaction, Txid};
 use serde::{Deserialize, Serialize};
@@ -29,9 +33,10 @@ struct RegistryData {
     checkpoint: Option<Checkpoint>,
 }
 
+#[derive(Clone)]
 pub struct FileRegistry {
     path: PathBuf,
-    data: RegistryData,
+    data: Arc<Mutex<RegistryData>>,
 }
 
 impl FileRegistry {
@@ -39,21 +44,24 @@ impl FileRegistry {
         let path = path.into();
         let data = if path.exists() {
             match std::fs::read(&path) {
-                Ok(bytes) => serde_cbor::from_slice(&bytes).unwrap_or_default(),
+                Ok(bytes) => Arc::new(Mutex::new(
+                    serde_cbor::from_slice(&bytes).unwrap_or_default(),
+                )),
                 Err(e) => {
                     log::error!("Failed to read registry file {:?}: {}", path, e);
-                    RegistryData::default()
+                    Arc::new(Mutex::new(RegistryData::default()))
                 }
             }
         } else {
-            let data = RegistryData::default();
+            let data = Arc::new(Mutex::new(RegistryData::default()));
             if let Some(parent) = path.parent() {
                 if let Err(e) = std::fs::create_dir_all(parent) {
                     log::error!("Failed to create registry directory {:?}: {}", parent, e);
                     return Self { path, data };
                 }
             }
-            match serde_cbor::to_vec(&data) {
+
+            match serde_cbor::to_vec(&RegistryData::default()) {
                 Ok(bytes) => {
                     if let Err(e) = std::fs::write(&path, bytes) {
                         log::error!("Failed to write initial registry file {:?}: {}", path, e);
@@ -79,45 +87,48 @@ impl FileRegistry {
         }
 
         let tmp = self.path.with_extension("tmp");
-        let bytes = match serde_cbor::to_vec(&self.data) {
-            Ok(b) => b,
-            Err(e) => {
-                log::error!("Failed to serialize registry data: {}", e);
+        if let Ok(data) = self.data.lock() {
+            let bytes = match serde_cbor::to_vec(&*data) {
+                Ok(b) => b,
+                Err(e) => {
+                    log::error!("Failed to serialize registry data: {}", e);
+                    return;
+                }
+            };
+
+            if let Err(e) = std::fs::write(&tmp, &bytes) {
+                log::error!("Failed to write tmp registry file {:?}: {}", tmp, e);
                 return;
             }
-        };
-        if let Err(e) = std::fs::write(&tmp, &bytes) {
-            log::error!("Failed to write tmp registry file {:?}: {}", tmp, e);
-            return;
-        }
-        if let Err(e) = std::fs::rename(&tmp, &self.path) {
-            log::error!(
-                "Failed to rename registry file {:?} -> {:?}: {}",
-                tmp,
-                self.path,
-                e
-            );
+            if let Err(e) = std::fs::rename(&tmp, &self.path) {
+                log::error!(
+                    "Failed to rename registry file {:?} -> {:?}: {}",
+                    tmp,
+                    self.path,
+                    e
+                );
+            }
         }
     }
 }
 
 impl FileRegistry {
     pub fn upsert_watch(&mut self, req: &WatchRequest) {
-        self.data.watches.insert(req.outpoint, req.clone());
+        self.with_data(|data| data.watches.insert(req.outpoint, req.clone()));
         self.flush();
     }
 
     pub fn remove_watch(&mut self, outpoint: OutPoint) {
-        self.data.watches.remove(&outpoint);
+        self.with_data(|data| data.watches.remove(&outpoint));
         self.flush();
     }
 
     pub fn list_watches(&self) -> Vec<WatchRequest> {
-        self.data.watches.values().cloned().collect()
+        self.with_data(|data| data.watches.values().cloned().collect())
     }
 
     pub fn list_fidelity(&self) -> Vec<Fidelity> {
-        self.data.fidelity.clone()
+        self.with_data(|data| data.fidelity.clone())
     }
 
     pub fn insert_fidelity(&mut self, txid: Txid, onion_address: String) {
@@ -125,20 +136,28 @@ impl FileRegistry {
             txid,
             onion_address,
         };
-        self.data.fidelity.push(fidelity);
+        self.with_data(|data| data.fidelity.push(fidelity));
     }
 
     pub fn remove_fidelity(&mut self, txid: Txid) {
-        self.data.fidelity.retain(|f| f.txid != txid);
+        self.with_data(|data| data.fidelity.retain(|f| f.txid != txid));
     }
 
     pub fn save_checkpoint(&mut self, cp: Checkpoint) {
-        self.data.checkpoint = Some(cp);
+        self.with_data(|data| data.checkpoint = Some(cp));
         self.flush();
     }
 
     pub fn load_checkpoint(&self) -> Option<Checkpoint> {
-        self.data.checkpoint.clone()
+        self.data.lock().unwrap().checkpoint.clone()
+    }
+
+    fn with_data<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce(&mut RegistryData) -> T,
+    {
+        let mut data = self.data.lock().unwrap();
+        f(&mut data)
     }
 }
 

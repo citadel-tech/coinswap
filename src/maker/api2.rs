@@ -22,8 +22,11 @@ use crate::{
     utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::{Destination, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError},
     watch_tower::{
-        registry_storage::FileRegistry, rpc_backend::BitcoinRpc, service::WatchService,
-        watcher::Watcher, zmq_backend::ZmqBackend,
+        registry_storage::FileRegistry,
+        rpc_backend::BitcoinRpc,
+        service::WatchService,
+        watcher::{Role, Watcher},
+        zmq_backend::ZmqBackend,
     },
 };
 use bitcoin::{
@@ -285,10 +288,10 @@ impl Maker {
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = mpsc::channel();
 
-        let mut watcher = Watcher::new(backend, rpc_backend, registry, rx_requests, tx_events);
+        let mut watcher = Watcher::<Maker>::new(backend, registry, rx_requests, tx_events);
         _ = thread::Builder::new()
             .name("Watcher thread".to_string())
-            .spawn(move || watcher.run());
+            .spawn(move || watcher.run(rpc_backend));
 
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
@@ -1603,4 +1606,8 @@ fn recover_via_timelock(maker: Arc<Maker>, outgoing: OutgoingSwapCoinV2) -> Resu
     }
 
     Ok(())
+}
+
+impl Role for Maker {
+    const RUN_DISCOVERY: bool = false;
 }

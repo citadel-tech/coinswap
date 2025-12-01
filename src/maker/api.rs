@@ -21,7 +21,7 @@ use crate::{
         registry_storage::FileRegistry,
         rpc_backend::BitcoinRpc,
         service::WatchService,
-        watcher::{Watcher, WatcherEvent},
+        watcher::{Role, Watcher, WatcherEvent},
         zmq_backend::ZmqBackend,
     },
 };
@@ -307,10 +307,10 @@ impl Maker {
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = mpsc::channel();
 
-        let mut watcher = Watcher::new(backend, rpc_backend, registry, rx_requests, tx_events);
+        let mut watcher = Watcher::<Maker>::new(backend, registry, rx_requests, tx_events);
         _ = thread::Builder::new()
             .name("Watcher thread".to_string())
-            .spawn(move || watcher.run());
+            .spawn(move || watcher.run(rpc_backend));
 
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
@@ -968,4 +968,8 @@ fn update_swapcoins_with_preimages<T: SwapCoin>(
     }
 
     Ok(())
+}
+
+impl Role for Maker {
+    const RUN_DISCOVERY: bool = false;
 }
