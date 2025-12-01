@@ -563,8 +563,10 @@ impl From<serde_cbor::Error> for TorError {
 }
 
 pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), TorError> {
-    use std::io::BufRead;
-    use std::net::{SocketAddr, ToSocketAddrs};
+    use std::{
+        io::BufRead,
+        net::{SocketAddr, ToSocketAddrs},
+    };
 
     let addr: SocketAddr = format!("127.0.0.1:{control_port}")
         .to_socket_addrs()
@@ -575,7 +577,11 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
     // Use connect_timeout to avoid blocking indefinitely if Tor is not running
     let timeout = Duration::from_secs(5);
     let mut stream = TcpStream::connect_timeout(&addr, timeout).map_err(|e| {
-        log::error!("Failed to connect to Tor control port {}: {}", control_port, e);
+        log::error!(
+            "Failed to connect to Tor control port {}: {}",
+            control_port,
+            e
+        );
         TorError::General(format!(
             "Cannot connect to Tor control port {}. Is Tor running? Error: {}",
             control_port, e

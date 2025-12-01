@@ -107,6 +107,7 @@ fn test_taproot_hashlock_recovery_end_to_end() {
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
+        manually_selected_outpoints: None
     };
 
     // Attempt the swap - it will fail when maker closes connection

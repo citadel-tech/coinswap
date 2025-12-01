@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
 
 use bitcoin::{BlockHash, OutPoint, Transaction, Txid};
 use serde::{Deserialize, Serialize};
@@ -91,7 +91,12 @@ impl FileRegistry {
             return;
         }
         if let Err(e) = std::fs::rename(&tmp, &self.path) {
-            log::error!("Failed to rename registry file {:?} -> {:?}: {}", tmp, self.path, e);
+            log::error!(
+                "Failed to rename registry file {:?} -> {:?}: {}",
+                tmp,
+                self.path,
+                e
+            );
         }
     }
 }

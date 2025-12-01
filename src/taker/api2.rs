@@ -44,8 +44,8 @@ use bitcoind::bitcoincore_rpc::{RawTx, RpcApi};
 use chrono::Utc;
 use socks::Socks5Stream;
 use std::{
-    collections::HashSet, convert::TryFrom, net::TcpStream, path::PathBuf,
-    sync::mpsc, thread, time::Duration,
+    collections::HashSet, convert::TryFrom, net::TcpStream, path::PathBuf, sync::mpsc, thread,
+    time::Duration,
 };
 
 use super::error::TakerError;

@@ -5,7 +5,6 @@ use bitcoincore_rpc::{
     Client, RpcApi,
 };
 use bitcoind::bitcoincore_rpc;
-use log::debug;
 
 use crate::{
     wallet::RPCConfig,

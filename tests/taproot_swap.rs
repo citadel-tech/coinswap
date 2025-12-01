@@ -128,6 +128,7 @@ fn test_taproot_coinswap() {
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
+        manually_selected_outpoints: None
     };
 
     // Mine some blocks before the swap to ensure wallet is ready
