@@ -35,7 +35,7 @@ services:
           "base_fee = ${BASE_FEE:-100}" \
           "amount_relative_fee_ppt = ${AMOUNT_RELATIVE_FEE_PPT:-1000}" \
           > /home/coinswap/.coinswap/maker/config.toml
-        makerd -r ${BITCOIN_RPC_HOST:-172.81.178.3:48332} -a ${BITCOIN_RPC_AUTH:-user:password} --taproot
+        makerd -w ${WALLET_NAME} -r ${BITCOIN_RPC_HOST:-172.81.178.3:48332} -a ${BITCOIN_RPC_AUTH:-user:password} --taproot
     volumes:
       - maker-data:/home/coinswap/.coinswap
     environment:

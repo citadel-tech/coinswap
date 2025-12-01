@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
 
 use bitcoin::{BlockHash, OutPoint, Transaction, Txid};
 use serde::{Deserialize, Serialize};
@@ -38,14 +38,31 @@ impl FileRegistry {
     pub fn load<P: Into<PathBuf>>(path: P) -> Self {
         let path = path.into();
         let data = if path.exists() {
-            let bytes = std::fs::read(&path).expect("read registry");
-            serde_cbor::from_slice(&bytes).unwrap_or_default()
+            match std::fs::read(&path) {
+                Ok(bytes) => serde_cbor::from_slice(&bytes).unwrap_or_default(),
+                Err(e) => {
+                    log::error!("Failed to read registry file {:?}: {}", path, e);
+                    RegistryData::default()
+                }
+            }
         } else {
             let data = RegistryData::default();
-            _ = std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"));
-            _ = fs::File::create(&path);
-            let bytes = serde_cbor::to_vec(&data).expect("serialize");
-            std::fs::write(&path, bytes).expect("Write to path");
+            if let Some(parent) = path.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    log::error!("Failed to create registry directory {:?}: {}", parent, e);
+                    return Self { path, data };
+                }
+            }
+            match serde_cbor::to_vec(&data) {
+                Ok(bytes) => {
+                    if let Err(e) = std::fs::write(&path, bytes) {
+                        log::error!("Failed to write initial registry file {:?}: {}", path, e);
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to serialize initial registry data: {}", e);
+                }
+            }
             data
         };
 
@@ -55,13 +72,32 @@ impl FileRegistry {
     fn flush(&self) {
         // Ensure parent directory exists
         if let Some(parent) = self.path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                log::error!("Failed to create registry directory {:?}: {}", parent, e);
+                return;
+            }
         }
 
         let tmp = self.path.with_extension("tmp");
-        let bytes = serde_cbor::to_vec(&self.data).expect("serialize");
-        std::fs::write(&tmp, bytes).expect("write tmp");
-        std::fs::rename(tmp, &self.path).expect("atomic replace");
+        let bytes = match serde_cbor::to_vec(&self.data) {
+            Ok(b) => b,
+            Err(e) => {
+                log::error!("Failed to serialize registry data: {}", e);
+                return;
+            }
+        };
+        if let Err(e) = std::fs::write(&tmp, &bytes) {
+            log::error!("Failed to write tmp registry file {:?}: {}", tmp, e);
+            return;
+        }
+        if let Err(e) = std::fs::rename(&tmp, &self.path) {
+            log::error!(
+                "Failed to rename registry file {:?} -> {:?}: {}",
+                tmp,
+                self.path,
+                e
+            );
+        }
     }
 }
 

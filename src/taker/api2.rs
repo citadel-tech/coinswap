@@ -44,8 +44,8 @@ use bitcoind::bitcoincore_rpc::{RawTx, RpcApi};
 use chrono::Utc;
 use socks::Socks5Stream;
 use std::{
-    collections::HashSet, convert::TryFrom, io::BufWriter, net::TcpStream, path::PathBuf,
-    sync::mpsc, thread, time::Duration,
+    collections::HashSet, convert::TryFrom, net::TcpStream, path::PathBuf, sync::mpsc, thread,
+    time::Duration,
 };
 
 use super::error::TakerError;
@@ -75,6 +75,8 @@ pub struct SwapParams {
     pub tx_count: u32,
     /// Required confirmations for funding transactions
     pub required_confirms: u32,
+    /// User selected UTXOs (optional, for manual UTXO selection)
+    pub manually_selected_outpoints: Option<Vec<OutPoint>>,
 }
 
 struct OngoingSwapState {
@@ -379,7 +381,7 @@ impl Taker {
 
         config.write_to_file(&data_dir.join("config.toml"))?;
 
-        let offerbook_path = data_dir.join("offerbook.dat");
+        let offerbook_path = data_dir.join("offerbook.json");
         let offerbook = if offerbook_path.exists() {
             match OfferBook::read_from_disk(&offerbook_path) {
                 Ok(offerbook) => {
@@ -395,9 +397,8 @@ impl Taker {
             }
         } else {
             let empty_book = OfferBook::default();
-            let file = std::fs::File::create(&offerbook_path)?;
-            let writer = BufWriter::new(file);
-            serde_cbor::to_writer(writer, &empty_book)?;
+            std::fs::File::create(&offerbook_path)?;
+            empty_book.write_to_disk(&offerbook_path)?;
             empty_book
         };
 
@@ -694,9 +695,16 @@ impl Taker {
 
         // Save the updated cache back to disk.
         self.offerbook
-            .write_to_disk(&self.data_dir.join("offerbook.dat"))?;
+            .write_to_disk(&self.data_dir.join("offerbook.json"))?;
 
         Ok(())
+    }
+
+    /// Fetch offers from available makers
+    /// This syncs the offerbook first and then returns a reference to it
+    pub fn fetch_offers(&mut self) -> Result<&OfferBook, TakerError> {
+        self.sync_offerbook()?;
+        Ok(&self.offerbook)
     }
 
     /// Send a message to a maker and get response

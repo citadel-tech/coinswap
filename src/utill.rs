@@ -563,8 +563,35 @@ impl From<serde_cbor::Error> for TorError {
 }
 
 pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), TorError> {
-    use std::io::BufRead;
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{control_port}"))?;
+    use std::{
+        io::BufRead,
+        net::{SocketAddr, ToSocketAddrs},
+    };
+
+    let addr: SocketAddr = format!("127.0.0.1:{control_port}")
+        .to_socket_addrs()
+        .map_err(|e| TorError::General(format!("Invalid address: {}", e)))?
+        .next()
+        .ok_or_else(|| TorError::General("Could not resolve address".to_string()))?;
+
+    // Use connect_timeout to avoid blocking indefinitely if Tor is not running
+    let timeout = Duration::from_secs(5);
+    let mut stream = TcpStream::connect_timeout(&addr, timeout).map_err(|e| {
+        log::error!(
+            "Failed to connect to Tor control port {}: {}",
+            control_port,
+            e
+        );
+        TorError::General(format!(
+            "Cannot connect to Tor control port {}. Is Tor running? Error: {}",
+            control_port, e
+        ))
+    })?;
+
+    // Set read/write timeouts to avoid hanging on slow responses
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+
     let mut reader = BufReader::new(stream.try_clone()?);
     let auth_command = format!("AUTHENTICATE \"{password}\"\r\n");
     stream.write_all(auth_command.as_bytes())?;
