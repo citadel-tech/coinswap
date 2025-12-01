@@ -905,7 +905,7 @@ impl Maker {
             ));
         }
 
-        // Remove the incoming swapcoin since we've successfully swept it
+        // Record and remove the incoming swapcoin since we've successfully swept it
         // NOTE: We do NOT remove the outgoing swapcoin here - that happens after
         // the PrivateKeyHandover message is successfully sent (in server2.rs)
         {
@@ -914,6 +914,16 @@ impl Maker {
                 .incoming_contract
                 .contract_tx
                 .compute_txid();
+
+            // Record the swept coin to track swap balance
+            let output_scriptpubkey = spending_tx.output[0].script_pubkey.clone();
+            wallet.record_swept_incoming_swapcoin_v2(output_scriptpubkey, incoming_txid);
+            log::info!(
+                "[{}] Recorded swept incoming swapcoin V2: {}",
+                self.config.network_port,
+                incoming_txid
+            );
+
             wallet.remove_incoming_swapcoin_v2(&incoming_txid);
             log::info!(
                 "[{}] Removed incoming swapcoin {} after successful sweep",

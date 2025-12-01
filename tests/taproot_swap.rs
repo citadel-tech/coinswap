@@ -264,7 +264,9 @@ fn verify_taproot_swap_results(
 ) {
     let taker_balances = taker_wallet.get_balances().unwrap();
 
-    let taker_total_after = taker_balances.regular;
+    // Use spendable balance (regular + swap) since swept coins from V2 swaps
+    // are tracked as SweptCoinV2 and appear in swap balance
+    let taker_total_after = taker_balances.spendable;
     assert!(
         taker_total_after < org_taker_spend_balance,
         "Taker should have paid fees for the taproot swap. Original: {}, After: {}",
@@ -283,7 +285,7 @@ fn verify_taproot_swap_results(
     );
 
     info!(
-        "Taker balance verification passed. Original: {}, After: {} (fees paid: {})",
+        "Taker balance verification passed. Original spendable: {}, After spendable: {} (fees paid: {})",
         org_taker_spend_balance,
         taker_total_after,
         org_taker_spend_balance - taker_total_after
@@ -294,32 +296,31 @@ fn verify_taproot_swap_results(
     {
         let wallet = maker.wallet().read().unwrap();
         let balances = wallet.get_balances().unwrap();
-        let current_total = balances.regular + balances.swap + balances.contract;
 
         info!(
-            "Taproot Maker {} final balances - Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Total spendable: {}",
+            "Taproot Maker {} final balances - Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Spendable: {}",
             i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable
         );
 
         // In taproot swaps, makers sweep their incoming contracts
-        // They should have roughly the same total balance (minus small fees plus earned fees)
-        // The balance might be in different categories (regular vs contract vs swap)
+        // Swept coins are tracked as SweptCoinV2 and appear in swap balance
+        // Use spendable (regular + swap) for comparison
         let max_fees = Amount::from_sat(100000); // Maximum expected mining fees
 
-        // The maker's total balance should be at least (original - max_fees + min_earned_fees)
+        // The maker's spendable balance should be at least (original - max_fees + min_earned_fees)
         let expected_minimum = original_spendable - max_fees;
         assert!(
-            current_total >= expected_minimum,
-            "Taproot Maker {} balance should not decrease significantly. Original spendable: {}, Current total: {}, Expected minimum: {}",
+            balances.spendable >= expected_minimum,
+            "Taproot Maker {} balance should not decrease significantly. Original spendable: {}, Current spendable: {}, Expected minimum: {}",
             i,
             original_spendable,
-            current_total,
+            balances.spendable,
             expected_minimum
         );
 
         info!(
-            "Taproot Maker {} balance verification passed. Original spendable: {}, Current total: {}",
-            i, original_spendable, current_total
+            "Taproot Maker {} balance verification passed. Original spendable: {}, Current spendable: {}",
+            i, original_spendable, balances.spendable
         );
     }
 }

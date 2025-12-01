@@ -1397,6 +1397,15 @@ impl Taker {
 
         log::info!("  Broadcast taker sweep transaction: {}", txid);
 
+        // Record the swept coin to track swap balance
+        let output_scriptpubkey = destination_address.script_pubkey();
+        self.wallet
+            .record_swept_incoming_swapcoin_v2(output_scriptpubkey, incoming_contract_txid);
+        log::info!(
+            "Recorded swept incoming swapcoin V2: {}",
+            incoming_contract_txid
+        );
+
         // Remove the incoming swapcoin since we've successfully swept it
         self.wallet
             .remove_incoming_swapcoin_v2(&incoming_contract_txid);
