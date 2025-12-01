@@ -1,4 +1,7 @@
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::{
+    marker::PhantomData,
+    sync::mpsc::{Receiver, Sender, TryRecvError},
+};
 
 use bitcoin::{consensus::deserialize, Block, OutPoint, Transaction};
 
@@ -10,12 +13,16 @@ use crate::watch_tower::{
     zmq_backend::{BackendEvent, ZmqBackend},
 };
 
-pub struct Watcher {
+pub trait Role {
+    const RUN_DISCOVERY: bool;
+}
+
+pub struct Watcher<R: Role> {
     backend: ZmqBackend,
-    rpc_backend: BitcoinRpc,
     registry: FileRegistry,
     rx_requests: Receiver<WatcherCommand>,
     tx_events: Sender<WatcherEvent>,
+    _role: PhantomData<R>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,42 +46,49 @@ pub enum WatcherCommand {
     Shutdown,
 }
 
-impl Watcher {
+impl<R: Role> Watcher<R> {
     pub fn new(
         backend: ZmqBackend,
-        rpc_backend: BitcoinRpc,
         registry: FileRegistry,
         rx_requests: Receiver<WatcherCommand>,
         tx_events: Sender<WatcherEvent>,
     ) -> Self {
         Self {
             backend,
-            rpc_backend,
             registry,
             rx_requests,
             tx_events,
+            _role: PhantomData,
         }
     }
 
-    pub fn run(&mut self) -> Result<(), WatcherError> {
+    pub fn run(&mut self, rpc_backend: BitcoinRpc) -> Result<(), WatcherError> {
         log::info!("Watcher initiated");
-        self.rpc_backend.run_discovery(&mut self.registry)?;
-
-        loop {
-            match self.rx_requests.try_recv() {
-                Ok(cmd) => {
-                    if !self.handle_command(cmd) {
-                        break;
+        let registry = self.registry.clone();
+        std::thread::scope(move |s| {
+            if R::RUN_DISCOVERY {
+                s.spawn(move || {
+                    if let Err(e) = rpc_backend.run_discovery(registry) {
+                        log::error!("Discovery thread failed: {:?}", e);
                     }
+                });
+            }
+            loop {
+                match self.rx_requests.try_recv() {
+                    Ok(cmd) => {
+                        if !self.handle_command(cmd) {
+                            break;
+                        }
+                    }
+                    Err(TryRecvError::Disconnected) => break,
+                    Err(TryRecvError::Empty) => {}
                 }
-                Err(TryRecvError::Disconnected) => break,
-                Err(TryRecvError::Empty) => {}
-            }
 
-            if let Some(event) = self.backend.poll() {
-                self.handle_event(event);
+                if let Some(event) = self.backend.poll() {
+                    self.handle_event(event);
+                }
             }
-        }
+        });
         Ok(())
     }
 
