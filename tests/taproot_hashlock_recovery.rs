@@ -111,9 +111,13 @@ fn test_taproot_hashlock_recovery_end_to_end() {
     };
 
     // Attempt the swap - it will fail when maker closes connection
+    // After recovery, do_coinswap returns Ok(None) to indicate recovery was triggered
     match taproot_taker.do_coinswap(swap_params) {
-        Ok(_) => {
-            panic!("Swap should have failed due to maker closing connection!");
+        Ok(Some(_report)) => {
+            panic!("Swap should have failed due to maker closing connection, but succeeded with report!");
+        }
+        Ok(None) => {
+            info!("✅ Taproot coinswap triggered recovery as expected (Ok(None))");
         }
         Err(e) => {
             info!("✅ Taproot coinswap failed as expected: {:?}", e);
