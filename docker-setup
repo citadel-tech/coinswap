@@ -355,6 +355,12 @@ EOF
       - |
         sleep 15
         mkdir -p /home/coinswap/.coinswap/maker
+
+        RAND_SUFFIX=\$\$(date +%s)
+        WALLET_NAME="maker-wallet-\$\$RAND_SUFFIX"
+
+        echo "Wallet Name: \$\$WALLET_NAME"
+
         printf '%s\n' \\
           "network_port = \${MAKER_NETWORK_PORT:-$MAKERD_PORT}" \\
           "rpc_port = \${MAKER_RPC_PORT:-$MAKERD_RPC_PORT}" \\
@@ -368,7 +374,7 @@ EOF
           "base_fee = \${BASE_FEE:-100}" \\
           "amount_relative_fee_ppt = \${AMOUNT_RELATIVE_FEE_PPT:-1000}" \\
           > /home/coinswap/.coinswap/maker/config.toml
-        $makerd_args_cmd
+        $makerd_args_cmd -w "\$\$WALLET_NAME"
     volumes:
       - maker-data:/home/coinswap/.coinswap
     environment:
