@@ -36,10 +36,9 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then \
 # Create user
 RUN useradd -m -u 1000 bitcoin
 
-# Setup directories and config
-RUN mkdir -p /home/bitcoin/.bitcoin
-COPY docs/bitcoin.conf /home/bitcoin/.bitcoin/bitcoin.conf
-RUN chown -R bitcoin:bitcoin /home/bitcoin/.bitcoin
+# Setup directories
+RUN mkdir -p /home/bitcoin/.bitcoin && \
+    chown -R bitcoin:bitcoin /home/bitcoin/.bitcoin
 
 # Switch to user
 USER bitcoin
