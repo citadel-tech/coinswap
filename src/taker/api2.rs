@@ -1170,6 +1170,21 @@ impl Taker {
             // Send to maker and get their outgoing key in response
             let response = self.send_to_maker_and_get_response(&maker_address, privkey_msg)?;
 
+            // remove taker's outgoing swapcoin since we've handed over the key
+            if maker_index == 0 {
+                let outgoing_txid = self
+                    .ongoing_swap_state
+                    .outgoing_contract
+                    .contract_tx
+                    .compute_txid();
+                self.wallet.remove_outgoing_swapcoin_v2(&outgoing_txid);
+                log::info!(
+                    "Removed taker's outgoing swapcoin {} after sending PrivateKeyHandover",
+                    outgoing_txid
+                );
+                self.wallet.save_to_disk()?;
+            }
+
             // Extract maker's outgoing key from response
             match response {
                 MakerToTakerMessage::PrivateKeyHandover(maker_privkey_handover) => {
@@ -1381,6 +1396,15 @@ impl Taker {
             .map_err(|e| TakerError::Wallet(crate::wallet::WalletError::Rpc(e)))?;
 
         log::info!("  Broadcast taker sweep transaction: {}", txid);
+
+        // Remove the incoming swapcoin since we've successfully swept it
+        self.wallet
+            .remove_incoming_swapcoin_v2(&incoming_contract_txid);
+        log::info!(
+            "Removed taker's incoming swapcoin {} after successful sweep",
+            incoming_contract_txid
+        );
+        self.wallet.save_to_disk()?;
 
         Ok(())
     }

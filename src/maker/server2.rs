@@ -462,12 +462,29 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                 }
                 MakerToTakerMessage::SenderContractFromMaker(_) => {}
                 MakerToTakerMessage::PrivateKeyHandover(_) => {
-                    // Swap completed successfully - remove from ongoing swaps
+                    // Swap completed successfully - remove outgoing swapcoin and ongoing swap state
                     log::info!(
                         "[{}] Swap completed successfully with {}, removing from ongoing swaps",
                         maker.config.network_port,
                         ip
                     );
+
+                    // Remove the outgoing swapcoin now that PrivateKeyHandover was sent
+                    let outgoing_txid = connection_state
+                        .outgoing_contract
+                        .contract_tx
+                        .compute_txid();
+                    {
+                        let mut wallet = maker.wallet.write()?;
+                        wallet.remove_outgoing_swapcoin_v2(&outgoing_txid);
+                        log::info!(
+                            "[{}] Removed outgoing swapcoin {} after PrivateKeyHandover sent",
+                            maker.config.network_port,
+                            outgoing_txid
+                        );
+                        wallet.save_to_disk()?;
+                    }
+
                     let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
                     ongoing_swaps.remove(&ip);
                     // Exit loop - swap is complete

@@ -905,19 +905,22 @@ impl Maker {
             ));
         }
 
-        // Mark the incoming swapcoin as finished by storing the received private key
-        connection_state.incoming_contract.other_privkey =
-            Some(privkey_handover_message.secret_key);
-
-        // Update the wallet with the completed incoming swapcoin
+        // Remove the incoming swapcoin since we've successfully swept it
+        // NOTE: We do NOT remove the outgoing swapcoin here - that happens after
+        // the PrivateKeyHandover message is successfully sent (in server2.rs)
         {
             let mut wallet = self.wallet.write()?;
-            wallet.add_incoming_swapcoin_v2(&connection_state.incoming_contract);
-            wallet.save_to_disk()?;
+            let incoming_txid = connection_state
+                .incoming_contract
+                .contract_tx
+                .compute_txid();
+            wallet.remove_incoming_swapcoin_v2(&incoming_txid);
             log::info!(
-                "[{}] Marked incoming swapcoin as finished (other_privkey stored)",
-                self.config.network_port
+                "[{}] Removed incoming swapcoin {} after successful sweep",
+                self.config.network_port,
+                incoming_txid
             );
+            wallet.save_to_disk()?;
         }
 
         let privkey_handover_message = PrivateKeyHandover {
