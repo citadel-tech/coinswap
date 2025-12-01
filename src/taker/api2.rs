@@ -831,7 +831,8 @@ impl Taker {
 
     /// Create and broadcast contract transactions
     fn create_outgoing_contract_transactions(&mut self) -> Result<Vec<Transaction>, TakerError> {
-        let available_utxos = self.wallet.list_all_utxo_spend_info();
+        use crate::utill::MIN_FEE_RATE;
+
         let mut contract_transactions = Vec::new();
         let first_maker = match self.ongoing_swap_state.chosen_makers.first() {
             Some(maker) => maker,
@@ -840,13 +841,12 @@ impl Taker {
             }
         };
         let send_amount = self.ongoing_swap_state.swap_params.send_amount;
-        let funding_utxo = available_utxos
-            .iter()
-            .find(|(utxo, _)| utxo.amount >= send_amount)
-            .map(|(utxo, _)| utxo.clone())
-            .ok_or_else(|| {
-                TakerError::General("No available UTXO found for contract transaction".to_string())
-            })?;
+
+        // Use coin_select to get UTXOs that sum to the required amount
+        let selected_utxos = self
+            .wallet
+            .coin_select(send_amount, MIN_FEE_RATE, None)
+            .map_err(|e| TakerError::General(format!("Coin selection failed: {:?}", e)))?;
 
         let hashlock_script = self
             .ongoing_swap_state
@@ -886,15 +886,9 @@ impl Taker {
         .map_err(|e| TakerError::General(format!("Failed to create taproot address: {:?}", e)))?;
 
         let signed_outgoing_contract_tx = {
-            use crate::{utill::MIN_FEE_RATE, wallet::Destination};
-
-            let funding_utxo_info = self
-                .wallet
-                .get_utxo((funding_utxo.txid, funding_utxo.vout))?
-                .ok_or_else(|| TakerError::General("Funding UTXO not found".to_string()))?;
+            use crate::wallet::Destination;
 
             // Use Destination::Multi to send exact amount and get change back
-
             self.wallet.spend_from_wallet(
                 MIN_FEE_RATE,
                 Destination::Multi {
@@ -904,7 +898,7 @@ impl Taker {
                     )],
                     op_return_data: None,
                 },
-                &[(funding_utxo.clone(), funding_utxo_info)],
+                &selected_utxos,
             )?
         };
 
