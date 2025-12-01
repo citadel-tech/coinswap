@@ -221,6 +221,7 @@ fn main() -> Result<(), TakerError> {
                 maker_count: *makers,
                 tx_count: 1,
                 required_confirms: 1,
+                manually_selected_outpoints: None
             };
             taproot_taker.do_coinswap(taproot_swap_params)?;
         }

@@ -80,18 +80,39 @@ impl BitcoinRpc {
             .map(|checkpoint| checkpoint.height)
             .unwrap_or(coinswap_height);
         let tip_height = blockchain_info.blocks + 1;
-        for height in last_tip..tip_height {
+        let total_blocks = tip_height.saturating_sub(last_tip);
+        log::info!(
+            "Scanning {} blocks for fidelity bonds (height {} to {})",
+            total_blocks,
+            last_tip,
+            tip_height.saturating_sub(1)
+        );
+        let mut makers_found = 0;
+        for (i, height) in (last_tip..tip_height).enumerate() {
+            if total_blocks > 100 {
+                log::info!(
+                    "Discovery progress: {}/{} blocks scanned ({:.1}%)",
+                    i + 1,
+                    total_blocks,
+                    ((i + 1) as f64 / total_blocks as f64) * 100.0
+                );
+            }
             let block_hash = self.get_block_hash(height)?;
             let block = self.get_block(block_hash)?;
             for tx in block.txdata {
                 let onion_address = process_fidelity(&tx);
                 if let Some(onion_address) = onion_address {
-                    debug!("Maker found in the market: {:?}", onion_address);
+                    makers_found += 1;
+                    log::info!("Maker found in the market: {:?}", onion_address);
                     registry.insert_fidelity(tx.compute_txid(), onion_address);
                 }
             }
         }
-        log::info!("market discovery completed");
+        log::info!(
+            "Market discovery completed: scanned {} blocks, found {} makers",
+            total_blocks,
+            makers_found
+        );
         Ok(())
     }
 }
