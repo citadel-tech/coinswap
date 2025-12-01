@@ -1080,7 +1080,9 @@ impl Wallet {
     }
 
     /// Lists all swept incoming taproot swapcoin UTXOs (V2) along with their Spend info.
-    pub fn list_swept_incoming_swap_utxos_v2(&self) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    pub fn list_swept_incoming_swap_utxos_v2(
+        &self,
+    ) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
         let all_valid_utxo = self.list_all_utxo_spend_info();
         let filtered_utxos: Vec<_> = all_valid_utxo
             .iter()

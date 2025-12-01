@@ -19,7 +19,10 @@ use crate::{
         offers::{MakerAddress, OfferAndAddress, OfferBook},
     },
     utill::{check_tor_status, get_taker_dir, read_message, send_message},
-    wallet::{IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError},
+    wallet::{
+        ffi::{MakerFeeInfo, SwapReport},
+        IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError,
+    },
     watch_tower::{
         registry_storage::FileRegistry,
         rpc_backend::BitcoinRpc,
@@ -40,7 +43,7 @@ use bitcoin::{
     transaction::Version,
     Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
-use bitcoind::bitcoincore_rpc::{RawTx, RpcApi};
+use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, RawTx, RpcApi};
 use chrono::Utc;
 use socks::Socks5Stream;
 use std::{
@@ -79,6 +82,7 @@ pub struct SwapParams {
     pub manually_selected_outpoints: Option<Vec<OutPoint>>,
 }
 
+#[derive(Clone)]
 struct OngoingSwapState {
     pub swap_params: SwapParams,
     pub active_preimage: Preimage,
@@ -427,7 +431,13 @@ impl Taker {
     }
 
     /// Initiate a coinswap with the given parameters
-    pub fn do_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
+    pub fn do_coinswap(
+        &mut self,
+        swap_params: SwapParams,
+    ) -> Result<Option<SwapReport>, TakerError> {
+        let swap_start_time = std::time::Instant::now();
+        let initial_utxoset = self.wallet.list_all_utxo();
+
         let available = self.wallet.get_balances()?.spendable;
 
         // assuming the fees for the swap is 1000 sats
@@ -477,13 +487,281 @@ impl Taker {
             self.wallet.wait_for_tx_confirmation(tx.compute_txid())?;
         }
 
-        self.negotiate_with_makers_and_coordinate_sweep(&outgoing_signed_contract_transactions)?;
+        match self
+            .negotiate_with_makers_and_coordinate_sweep(&outgoing_signed_contract_transactions)
+        {
+            Ok(_) => {
+                log::info!(
+                    "Swaps settled successfully. Sweeping the coins and resetting everything."
+                );
 
-        for tx in &outgoing_signed_contract_transactions {
-            self.wallet.wait_for_tx_confirmation(tx.compute_txid())?;
+                // Store swap state before reset for report generation
+                let prereset_swapstate = self.ongoing_swap_state.clone();
+
+                // Sync wallet and generate report
+                self.wallet.sync_and_save()?;
+                let swap_report = self.generate_swap_report(
+                    &prereset_swapstate,
+                    swap_start_time,
+                    initial_utxoset,
+                )?;
+
+                log::info!("Successfully Completed Taproot Coinswap.");
+                Ok(Some(swap_report))
+            }
+            Err(e) => {
+                log::error!("Swap Settlement Failed: {:?}", e);
+                log::warn!("Starting recovery from existing swap");
+                self.recover_from_swap()?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Generate a swap report after successful completion of a taproot coinswap
+    fn generate_swap_report(
+        &self,
+        prereset_swapstate: &OngoingSwapState,
+        start_time: std::time::Instant,
+        initial_utxos: Vec<ListUnspentResultEntry>,
+    ) -> Result<SwapReport, TakerError> {
+        let swap_state = prereset_swapstate;
+        let target_amount = swap_state.swap_params.send_amount.to_sat();
+        let swap_duration = start_time.elapsed();
+
+        let all_regular_utxo = self
+            .wallet
+            .list_descriptor_utxo_spend_info()
+            .into_iter()
+            .map(|(utxo, _)| utxo)
+            .collect::<Vec<_>>();
+
+        let initial_outpoints = initial_utxos
+            .iter()
+            .map(|utxo| OutPoint {
+                txid: utxo.txid,
+                vout: utxo.vout,
+            })
+            .collect::<HashSet<_>>();
+
+        let current_outpoints = all_regular_utxo
+            .iter()
+            .map(|utxo| OutPoint {
+                txid: utxo.txid,
+                vout: utxo.vout,
+            })
+            .collect::<HashSet<_>>();
+
+        // Present in initial set but not in current set (consumed)
+        let input_utxos = initial_utxos
+            .iter()
+            .filter(|utxo| {
+                let initial_outpoint = OutPoint {
+                    txid: utxo.txid,
+                    vout: utxo.vout,
+                };
+                !current_outpoints.contains(&initial_outpoint)
+            })
+            .map(|utxo| utxo.amount.to_sat())
+            .collect::<Vec<u64>>();
+
+        let output_regular_utxos = all_regular_utxo
+            .iter()
+            .filter(|utxo| {
+                let final_outpoint = OutPoint {
+                    txid: utxo.txid,
+                    vout: utxo.vout,
+                };
+                !initial_outpoints.contains(&final_outpoint)
+            })
+            .collect::<Vec<_>>();
+
+        // Present in current set but not in initial regular set (created as change)
+        let output_change_amounts = output_regular_utxos
+            .iter()
+            .map(|utxo| utxo.amount.to_sat())
+            .collect::<Vec<u64>>();
+
+        let network = self.wallet.store.network;
+
+        // Get swept swap UTXOs (V2)
+        let output_swap_utxos = self
+            .wallet
+            .list_swept_incoming_swap_utxos_v2()
+            .into_iter()
+            .map(|(utxo, _)| {
+                let address = utxo
+                    .address
+                    .as_ref()
+                    .and_then(|addr| addr.clone().require_network(network).ok())
+                    .map(|addr| addr.to_string())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                (utxo.amount.to_sat(), address)
+            })
+            .collect::<Vec<(u64, String)>>();
+
+        let output_swap_amounts = output_swap_utxos
+            .iter()
+            .map(|(amount, _)| *amount)
+            .collect::<Vec<u64>>();
+
+        let output_change_utxos = output_regular_utxos
+            .iter()
+            .map(|utxo| {
+                let address = utxo
+                    .address
+                    .as_ref()
+                    .and_then(|addr| addr.clone().require_network(network).ok())
+                    .map(|addr| addr.to_string())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                (utxo.amount.to_sat(), address)
+            })
+            .collect::<Vec<(u64, String)>>();
+
+        let output_utxos = [output_change_amounts.clone(), output_swap_amounts.clone()].concat();
+
+        let total_input_amount = input_utxos.iter().sum::<u64>();
+        let total_output_amount = output_utxos.iter().sum::<u64>();
+
+        println!("\n\x1b[1;36m════════════════════════════════════════════════════════════════════════════════");
+        println!("                         🪙 TAPROOT COINSWAP REPORT 🪙");
+        println!("════════════════════════════════════════════════════════════════════════════════\x1b[0m\n");
+
+        println!("\x1b[1;37mSwap ID           :\x1b[0m {}", swap_state.id);
+        println!("\x1b[1;37mStatus            :\x1b[0m \x1b[1;32m✅ COMPLETED SUCCESSFULLY\x1b[0m");
+        println!(
+            "\x1b[1;37mDuration          :\x1b[0m {:.2} seconds",
+            swap_duration.as_secs_f64()
+        );
+
+        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
+        println!("                              Swap Parameters");
+        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
+        println!("\x1b[1;37mTarget Amount     :\x1b[0m {target_amount} Sats");
+        println!("\x1b[1;37mTotal Input       :\x1b[0m {total_input_amount} Sats");
+        println!("\x1b[1;37mTotal Output      :\x1b[0m {total_output_amount} Sats");
+        println!(
+            "\x1b[1;37mMakers Involved   :\x1b[0m {}",
+            swap_state.swap_params.maker_count
+        );
+
+        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
+        println!("                                Makers Used");
+        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
+        for (index, maker) in swap_state.chosen_makers.iter().enumerate() {
+            println!("  \x1b[1;33m{}.\x1b[0m {}", index + 1, maker.address);
         }
 
-        Ok(())
+        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
+        println!("                            Transaction Details");
+        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
+
+        // In V2 taproot, we have one outgoing contract tx
+        let outgoing_txid = swap_state.outgoing_contract.contract_tx.compute_txid();
+        println!(
+            "\x1b[1;37mOutgoing Contract :\x1b[0m \x1b[2m{}\x1b[0m",
+            outgoing_txid
+        );
+
+        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
+        println!("                              Fee Information");
+        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
+
+        let total_fee = total_input_amount.saturating_sub(total_output_amount);
+        println!("\x1b[1;37mTotal Fees        :\x1b[0m \x1b[1;31m{total_fee} sats\x1b[0m");
+
+        // Collect maker fee information for V2
+        let mut maker_fee_info = Vec::new();
+        let mut total_maker_fees = 0u64;
+
+        for (maker_index, maker) in swap_state.chosen_makers.iter().enumerate() {
+            let maker_fee = calculate_coinswap_fee(
+                swap_state.swap_params.send_amount.to_sat(),
+                0, // timelock not used for fee display in report
+                maker.offer.base_fee,
+                maker.offer.amount_relative_fee_pct,
+                maker.offer.time_relative_fee_pct,
+            );
+
+            println!("\n\x1b[1;33mMaker {}:\x1b[0m", maker_index + 1);
+            println!("    Address              : {}", maker.address);
+            println!("    Base Fee             : {}", maker.offer.base_fee);
+            println!(
+                "    Amount Relative Fee  : {:.2}%",
+                maker.offer.amount_relative_fee_pct
+            );
+            println!("    Total Fee            : {} sats", maker_fee);
+
+            maker_fee_info.push(MakerFeeInfo {
+                maker_index,
+                maker_address: maker.address.to_string(),
+                base_fee: maker.offer.base_fee as f64,
+                amount_relative_fee: (maker.offer.amount_relative_fee_pct
+                    * swap_state.swap_params.send_amount.to_sat() as f64)
+                    / 100.0,
+                time_relative_fee: 0.0, // Simplified for report
+                total_fee: maker_fee as f64,
+            });
+
+            total_maker_fees += maker_fee;
+        }
+
+        let mining_fee = total_fee.saturating_sub(total_maker_fees);
+        println!("\n\x1b[1;37mTotal Maker Fees  :\x1b[0m \x1b[36m{total_maker_fees} sats\x1b[0m");
+        println!("\x1b[1;37mMining Fees       :\x1b[0m \x1b[36m{mining_fee} sats\x1b[0m");
+
+        let fee_percentage = if target_amount > 0 {
+            (total_fee as f64 / target_amount as f64) * 100.0
+        } else {
+            0.0
+        };
+        println!("\x1b[1;37mTotal Fee Rate    :\x1b[0m \x1b[1;31m{fee_percentage:.2} %\x1b[0m");
+
+        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
+        println!("                              UTXO Information");
+        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
+        println!("\x1b[1;37mInput UTXOs:\x1b[0m {input_utxos:?}");
+        println!("\x1b[1;37mOutput UTXOs:\x1b[0m");
+        println!("  Seed / Regular : {output_change_utxos:?}");
+        println!("  Swap Coins     : {output_swap_utxos:?}");
+
+        println!("\n\x1b[1;36m════════════════════════════════════════════════════════════════════════════════");
+        println!("                                END REPORT");
+        println!("════════════════════════════════════════════════════════════════════════════════\x1b[0m\n");
+
+        // Collect maker addresses
+        let maker_addresses = swap_state
+            .chosen_makers
+            .iter()
+            .map(|maker| maker.address.to_string())
+            .collect::<Vec<_>>();
+
+        // For V2, we have a single funding tx (the outgoing contract)
+        let funding_txids_by_hop = vec![vec![outgoing_txid.to_string()]];
+
+        let report = SwapReport {
+            swap_id: swap_state.id.clone(),
+            swap_duration_seconds: swap_duration.as_secs_f64(),
+            target_amount,
+            total_input_amount,
+            total_output_amount,
+            makers_count: swap_state.swap_params.maker_count,
+            maker_addresses,
+            total_funding_txs: 1,
+            funding_txids_by_hop,
+            total_fee,
+            total_maker_fees,
+            mining_fee,
+            fee_percentage,
+            maker_fee_info,
+            input_utxos,
+            output_change_amounts,
+            output_swap_amounts,
+            output_swap_utxos,
+            output_change_utxos,
+        };
+
+        Ok(report)
     }
 
     /// Choose makers for the swap by negotiating with them

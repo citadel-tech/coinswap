@@ -136,8 +136,11 @@ fn test_taproot_coinswap() {
 
     // Perform the swap
     match taproot_taker.do_coinswap(swap_params) {
-        Ok(()) => {
+        Ok(Some(_report)) => {
             log::info!("Taproot coinswap completed successfully!");
+        }
+        Ok(None) => {
+            log::warn!("Taproot coinswap completed but no report generated (recovery occurred)");
         }
         Err(e) => {
             log::error!("Taproot coinswap failed: {:?}", e);

@@ -112,7 +112,7 @@ fn test_taproot_hashlock_recovery_end_to_end() {
 
     // Attempt the swap - it will fail when maker closes connection
     match taproot_taker.do_coinswap(swap_params) {
-        Ok(()) => {
+        Ok(_) => {
             panic!("Swap should have failed due to maker closing connection!");
         }
         Err(e) => {
