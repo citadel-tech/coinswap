@@ -7,8 +7,6 @@
 
 use std::sync::Arc;
 
-use bitcoin::Amount;
-
 use super::{
     api2::{ConnectionState, Maker},
     error::MakerError,
@@ -96,14 +94,15 @@ fn handle_swap_details(
 
     // Reject if there's already an active swap in progress for this connection
     // This prevents an attacker from resetting another taker's swap state
-    if connection_state.swap_amount > Amount::ZERO {
-        log::warn!(
-            "[{}] Rejecting SwapDetails - swap already in progress with amount {}",
-            maker.config.network_port,
-            connection_state.swap_amount
-        );
-        return Ok(Some(MakerToTakerMessage::AckResponse(AckResponse::Nack)));
-    }
+    // [TODO] Remove this once we have a way to handle multiple swaps using swap_id
+    // if connection_state.swap_amount > Amount::ZERO {
+    //     log::warn!(
+    //         "[{}] Rejecting SwapDetails - swap already in progress with amount {}",
+    //         maker.config.network_port,
+    //         connection_state.swap_amount
+    //     );
+    //     return Ok(Some(MakerToTakerMessage::AckResponse(AckResponse::Nack)));
+    // }
 
     // Validate swap parameters using api2
     maker.validate_swap_parameters(&swap_details)?;

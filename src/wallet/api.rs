@@ -185,15 +185,6 @@ pub enum UTXOSpendInfo {
         /// Original multisig script before sweeping
         original_multisig_redeemscript: ScriptBuf,
     },
-    /// Swept incoming taproot swap coin (V2 - recovered to regular wallet address at the end of the Swap)
-    SweptCoinV2 {
-        /// HD derivation path for the swept address
-        path: String,
-        /// UTXO value in satoshis
-        input_value: Amount,
-        /// Original contract txid before sweeping
-        original_contract_txid: bitcoin::Txid,
-    },
 }
 
 impl UTXOSpendInfo {
@@ -206,9 +197,7 @@ impl UTXOSpendInfo {
         const HASH_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 211;
 
         match *self {
-            Self::SeedCoin { .. } | Self::SweptCoin { .. } | Self::SweptCoinV2 { .. } => {
-                P2PWPKH_WITNESS_SIZE
-            }
+            Self::SeedCoin { .. } | Self::SweptCoin { .. } => P2PWPKH_WITNESS_SIZE,
             Self::IncomingSwapCoin { .. } | Self::OutgoingSwapCoin { .. } => {
                 P2WSH_MULTISIG_2OF2_WITNESS_SIZE
             }
@@ -226,7 +215,6 @@ impl Display for UTXOSpendInfo {
                 write!(f, "regular")
             }
             UTXOSpendInfo::SweptCoin { .. } => write!(f, "swept-incoming-swap"),
-            UTXOSpendInfo::SweptCoinV2 { .. } => write!(f, "swept-incoming-swap-v2"),
             UTXOSpendInfo::FidelityBondCoin { .. } => write!(f, "fidelity-bond"),
             UTXOSpendInfo::HashlockContract { .. } => write!(f, "hashlock-contract"),
             UTXOSpendInfo::TimelockContract { .. } => write!(f, "timelock-contract"),
@@ -567,15 +555,10 @@ impl Wallet {
 
         let contract = contract + contract_v2_incoming + contract_v2_outgoing;
 
-        let swap_v1 = self
+        let swap = self
             .list_swept_incoming_swap_utxos()
             .iter()
             .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount);
-        let swap_v2 = self
-            .list_swept_incoming_swap_utxos_v2()
-            .iter()
-            .fold(Amount::ZERO, |sum, (utxo, _)| sum + utxo.amount);
-        let swap = swap_v1 + swap_v2;
         let fidelity = self
             .list_fidelity_spend_info()
             .iter()
@@ -792,30 +775,6 @@ impl Wallet {
         None
     }
 
-    /// Check if a UTXO is a swept incoming taproot swap coin (V2) based on ScriptPubkey
-    fn check_if_swept_incoming_swapcoin_v2(
-        &self,
-        utxo: &ListUnspentResultEntry,
-    ) -> Option<UTXOSpendInfo> {
-        if let Some(original_contract_txid) = self
-            .store
-            .swept_incoming_swapcoins_v2
-            .get(&utxo.script_pub_key)
-        {
-            if let Some(descriptor) = &utxo.descriptor {
-                if let Some((_, addr_type, index)) = get_hd_path_from_descriptor(descriptor) {
-                    let path = format!("m/{addr_type}/{index}");
-                    return Some(UTXOSpendInfo::SweptCoinV2 {
-                        input_value: utxo.amount,
-                        path,
-                        original_contract_txid: *original_contract_txid,
-                    });
-                }
-            }
-        }
-        None
-    }
-
     /// Checks if a UTXO belongs to live contracts, and then returns corresponding UTXOSpendInfo
     /// ### Note
     /// This is a costly search and should be used with care.
@@ -892,11 +851,6 @@ impl Wallet {
     ) -> Result<Option<UTXOSpendInfo>, WalletError> {
         // First check if it's a swept incoming swap coin (V1)
         if let Some(swept_info) = self.check_if_swept_incoming_swapcoin(utxo) {
-            return Ok(Some(swept_info));
-        }
-
-        // Check if it's a swept incoming swap coin (V2 - Taproot)
-        if let Some(swept_info) = self.check_if_swept_incoming_swapcoin_v2(utxo) {
             return Ok(Some(swept_info));
         }
 
@@ -1077,31 +1031,6 @@ impl Wallet {
             .cloned()
             .collect();
         filtered_utxos
-    }
-
-    /// Lists all swept incoming taproot swapcoin UTXOs (V2) along with their Spend info.
-    pub fn list_swept_incoming_swap_utxos_v2(
-        &self,
-    ) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
-        let all_valid_utxo = self.list_all_utxo_spend_info();
-        let filtered_utxos: Vec<_> = all_valid_utxo
-            .iter()
-            .filter(|(_, spend_info)| matches!(spend_info, UTXOSpendInfo::SweptCoinV2 { .. }))
-            .cloned()
-            .collect();
-        filtered_utxos
-    }
-
-    /// Records a swept incoming taproot swapcoin (V2) to track swap balance.
-    /// Maps the output scriptpubkey to the original contract txid.
-    pub fn record_swept_incoming_swapcoin_v2(
-        &mut self,
-        output_scriptpubkey: ScriptBuf,
-        original_contract_txid: bitcoin::Txid,
-    ) {
-        self.store
-            .swept_incoming_swapcoins_v2
-            .insert(output_scriptpubkey, original_contract_txid);
     }
 
     /// A simplification of `find_incomplete_coinswaps` function
@@ -1398,9 +1327,6 @@ impl Wallet {
                 }
                 UTXOSpendInfo::SeedCoin { path, input_value }
                 | UTXOSpendInfo::SweptCoin {
-                    path, input_value, ..
-                }
-                | UTXOSpendInfo::SweptCoinV2 {
                     path, input_value, ..
                 } => {
                     let privkey = master_private_key
@@ -2401,7 +2327,7 @@ impl Wallet {
             version: bitcoin::transaction::Version::TWO,
             lock_time: bitcoin::absolute::LockTime::ZERO,
             input: vec![input],
-            output: vec![output],
+            output: vec![output.clone()],
         };
 
         // Build witness for hashlock script-path spend
@@ -2479,6 +2405,10 @@ impl Wallet {
 
         // Broadcast
         let txid = self.send_tx(spending_tx)?;
+
+        self.store
+            .swept_incoming_swapcoins
+            .insert(output.script_pubkey.clone(), output.script_pubkey);
 
         // Remove from wallet storage
         self.store

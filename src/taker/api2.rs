@@ -587,7 +587,7 @@ impl Taker {
         // Get swept swap UTXOs (V2)
         let output_swap_utxos = self
             .wallet
-            .list_swept_incoming_swap_utxos_v2()
+            .list_swept_incoming_swap_utxos()
             .into_iter()
             .map(|(utxo, _)| {
                 let address = utxo
@@ -1678,7 +1678,9 @@ impl Taker {
         // Record the swept coin to track swap balance
         let output_scriptpubkey = destination_address.script_pubkey();
         self.wallet
-            .record_swept_incoming_swapcoin_v2(output_scriptpubkey, incoming_contract_txid);
+            .store
+            .swept_incoming_swapcoins
+            .insert(output_scriptpubkey.clone(), output_scriptpubkey);
         log::info!(
             "Recorded swept incoming swapcoin V2: {}",
             incoming_contract_txid

@@ -50,7 +50,7 @@ pub(crate) struct WalletStore {
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
     /// Map of swept incoming swap coins to prevent mixing with regular UTXOs
     /// Key: ScriptPubKey of swept UTXO, Value: Original multisig redeemscript
-    pub(super) swept_incoming_swapcoins: HashMap<ScriptBuf, ScriptBuf>,
+    pub(crate) swept_incoming_swapcoins: HashMap<ScriptBuf, ScriptBuf>,
     /// Map of swept incoming taproot swap coins (V2) to track swap balance
     /// Key: ScriptPubKey of swept UTXO, Value: Original contract txid
     pub(super) swept_incoming_swapcoins_v2: HashMap<ScriptBuf, bitcoin::Txid>,
