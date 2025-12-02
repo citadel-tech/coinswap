@@ -466,6 +466,38 @@ impl Wallet {
         Ok(self.store.outgoing_swapcoins.remove(multisig_redeemscript))
     }
 
+    /// Removes an outgoing taproot swap coin (v2) by contract txid from the wallet.
+    pub(crate) fn remove_outgoing_swapcoin_v2(
+        &mut self,
+        contract_txid: &bitcoin::Txid,
+    ) -> Option<OutgoingSwapCoinV2> {
+        let removed = self.store.outgoing_swapcoins_v2.remove(contract_txid);
+        if removed.is_some() {
+            log::info!(
+                "Removed outgoing swapcoin_v2 from wallet store: {} (remaining: {})",
+                contract_txid,
+                self.store.outgoing_swapcoins_v2.len()
+            );
+        }
+        removed
+    }
+
+    /// Removes an incoming taproot swap coin (v2) by contract txid from the wallet.
+    pub(crate) fn remove_incoming_swapcoin_v2(
+        &mut self,
+        contract_txid: &bitcoin::Txid,
+    ) -> Option<IncomingSwapCoinV2> {
+        let removed = self.store.incoming_swapcoins_v2.remove(contract_txid);
+        if removed.is_some() {
+            log::info!(
+                "Removed incoming swapcoin_v2 from wallet store: {} (remaining: {})",
+                contract_txid,
+                self.store.incoming_swapcoins_v2.len()
+            );
+        }
+        removed
+    }
+
     /// Gets the total count of swap coins in the wallet.
     pub fn get_swapcoins_count(&self) -> usize {
         self.store.incoming_swapcoins.len() + self.store.outgoing_swapcoins.len()
@@ -817,7 +849,7 @@ impl Wallet {
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Result<Option<UTXOSpendInfo>, WalletError> {
-        // First check if it's a swept incoming swap coin
+        // First check if it's a swept incoming swap coin (V1)
         if let Some(swept_info) = self.check_if_swept_incoming_swapcoin(utxo) {
             return Ok(Some(swept_info));
         }
@@ -2295,7 +2327,7 @@ impl Wallet {
             version: bitcoin::transaction::Version::TWO,
             lock_time: bitcoin::absolute::LockTime::ZERO,
             input: vec![input],
-            output: vec![output],
+            output: vec![output.clone()],
         };
 
         // Build witness for hashlock script-path spend
@@ -2373,6 +2405,10 @@ impl Wallet {
 
         // Broadcast
         let txid = self.send_tx(spending_tx)?;
+
+        self.store
+            .swept_incoming_swapcoins
+            .insert(output.script_pubkey.clone(), output.script_pubkey);
 
         // Remove from wallet storage
         self.store

@@ -117,9 +117,13 @@ fn test_taproot_timelock_recovery_end_to_end() {
     };
 
     // Attempt the swap - it will fail when maker closes connection
+    // After recovery, do_coinswap returns Ok(None) to indicate recovery was triggered
     match taproot_taker.do_coinswap(swap_params) {
-        Ok(()) => {
-            panic!("Swap should have failed due to maker closing connection!");
+        Ok(Some(_report)) => {
+            panic!("Swap should have failed due to maker closing connection, but succeeded with report!");
+        }
+        Ok(None) => {
+            info!("✅ Taproot coinswap triggered recovery as expected (Ok(None))");
         }
         Err(e) => {
             info!("✅ Taproot coinswap failed as expected: {:?}", e);
@@ -127,6 +131,8 @@ fn test_taproot_timelock_recovery_end_to_end() {
     }
 
     // Mine a block to confirm any broadcasted transactions
+    // Note: do_coinswap may have already attempted recovery internally, but timelock
+    // recovery requires waiting for blocks, so funds may still be in contract
     generate_blocks(bitcoind, 1);
     taproot_taker.get_wallet_mut().sync().unwrap();
 
@@ -137,18 +143,11 @@ fn test_taproot_timelock_recovery_end_to_end() {
         taker_balances.regular, taker_balances.contract, taker_balances.spendable
     );
 
-    // Verify taker has funds stuck in outgoing contract
-    assert!(
-        taker_balances.contract > Amount::ZERO,
-        "Taker should have contract balance stuck. Contract: {}",
-        taker_balances.contract
-    );
-
     // Mine blocks to mature timelock (20 blocks from swap params)
     info!("⏰ Mining blocks to mature timelock (20+ blocks)...");
     generate_blocks(bitcoind, 25);
 
-    // Taker recovers via TIMELOCK (no preimage, no incoming contract)
+    // Taker recovers via TIMELOCK (may be no-op if already recovered)
     info!("🔧 Taker recovering via timelock...");
     match taproot_taker.recover_from_swap() {
         Ok(()) => {

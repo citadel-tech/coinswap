@@ -479,7 +479,7 @@ impl Maker {
         connection_state.outgoing_contract.other_pubkey = Some(message.next_party_tweakable_point);
 
         // Verify we have sufficient funds and get necessary data
-        let (outgoing_privkey, funding_utxo) = {
+        let (outgoing_privkey, selected_utxos) = {
             let mut wallet = self.wallet.write()?;
 
             // Sync wallet to get latest UTXO state
@@ -499,29 +499,29 @@ impl Maker {
             wallet.rpc.unlock_unspent_all().map_err(WalletError::Rpc)?;
             wallet.lock_unspendable_utxos()?;
 
-            // Get funding UTXO from our wallet (excludes locked UTXOs)
-            let spendable_utxos = wallet.list_descriptor_utxo_spend_info();
-            let funding_utxo = spendable_utxos
-                .into_iter()
-                .find(|(utxo, _)| utxo.amount >= connection_state.swap_amount)
-                .map(|(utxo, _)| utxo)
-                .ok_or_else(|| {
-                    MakerError::General("No single UTXO found with sufficient amount")
+            // Use coin_select to get UTXOs that sum to the required amount
+            let selected_utxos = wallet
+                .coin_select(connection_state.swap_amount, MIN_FEE_RATE, None)
+                .map_err(|e| {
+                    MakerError::General(format!("Coin selection failed: {:?}", e).leak())
                 })?;
 
-            // Lock the selected UTXO to prevent double-spending in concurrent swaps
-            let funding_outpoint = OutPoint::new(funding_utxo.txid, funding_utxo.vout);
+            // Lock the selected UTXOs to prevent double-spending in concurrent swaps
+            let funding_outpoints: Vec<OutPoint> = selected_utxos
+                .iter()
+                .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                .collect();
             wallet
                 .rpc
-                .lock_unspent(&[funding_outpoint])
+                .lock_unspent(&funding_outpoints)
                 .map_err(WalletError::Rpc)?;
             log::info!(
-                "[{}] Locked funding UTXO {} for swap",
+                "[{}] Locked {} funding UTXOs for swap",
                 self.config.network_port,
-                funding_outpoint
+                funding_outpoints.len()
             );
 
-            (outgoing_privkey, funding_utxo)
+            (outgoing_privkey, selected_utxos)
         };
 
         // We expect only one contract for now
@@ -611,11 +611,6 @@ impl Maker {
         let outgoing_contract_txid = {
             let mut wallet = self.wallet.write()?;
 
-            // Get the funding UTXO spend info
-            let funding_utxo_info = wallet
-                .get_utxo((funding_utxo.txid, funding_utxo.vout))?
-                .ok_or_else(|| MakerError::General("Funding UTXO not found"))?;
-
             // Use Destination::Multi to send exact amount to contract and keep the fee as change
             let contract_address =
                 bitcoin::Address::from_script(&taproot_script, wallet.store.network)
@@ -629,7 +624,7 @@ impl Maker {
                     outputs: vec![(contract_address, outgoing_contract_amount)],
                     op_return_data: None,
                 },
-                &[(funding_utxo.clone(), funding_utxo_info)],
+                &selected_utxos,
             )?;
 
             // Broadcast the signed transaction
@@ -913,19 +908,31 @@ impl Maker {
             ));
         }
 
-        // Mark the incoming swapcoin as finished by storing the received private key
-        connection_state.incoming_contract.other_privkey =
-            Some(privkey_handover_message.secret_key);
-
-        // Update the wallet with the completed incoming swapcoin
+        // Record and remove the incoming swapcoin since we've successfully swept it
+        // NOTE: We do NOT remove the outgoing swapcoin here - that happens after
+        // the PrivateKeyHandover message is successfully sent (in server2.rs)
         {
             let mut wallet = self.wallet.write()?;
-            wallet.add_incoming_swapcoin_v2(&connection_state.incoming_contract);
-            wallet.save_to_disk()?;
+            let incoming_txid = connection_state
+                .incoming_contract
+                .contract_tx
+                .compute_txid();
+
+            // Record the swept coin to track swap balance
+            let output_scriptpubkey = spending_tx.output[0].script_pubkey.clone();
+            // [TODO] Look into the key value pair later, it shouldn't be both sriptpubkey
+            wallet
+                .store
+                .swept_incoming_swapcoins
+                .insert(output_scriptpubkey.clone(), output_scriptpubkey);
+
+            wallet.remove_incoming_swapcoin_v2(&incoming_txid);
             log::info!(
-                "[{}] Marked incoming swapcoin as finished (other_privkey stored)",
-                self.config.network_port
+                "[{}] Removed incoming swapcoin {} after successful sweep",
+                self.config.network_port,
+                incoming_txid
             );
+            wallet.save_to_disk()?;
         }
 
         let privkey_handover_message = PrivateKeyHandover {
