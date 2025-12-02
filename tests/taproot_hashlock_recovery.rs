@@ -125,41 +125,36 @@ fn test_taproot_hashlock_recovery_end_to_end() {
     }
 
     // Mine blocks to confirm any broadcasted transactions
+    // Note: When do_coinswap returns Ok(None), recovery has already been attempted internally,
+    // so contract balance may already be 0 if recovery succeeded
     info!("⛏️ Mining blocks to confirm contracts...");
     generate_blocks(bitcoind, 2);
     taproot_taker.get_wallet_mut().sync().unwrap();
 
-    info!("📊 Taker balance after failed swap:");
+    info!("📊 Taker balance after failed swap (recovery already attempted):");
     let taker_balances = taproot_taker.get_wallet().get_balances().unwrap();
     info!(
         "  Regular: {}, Contract: {}, Spendable: {}",
         taker_balances.regular, taker_balances.contract, taker_balances.spendable
     );
 
-    // Verify taker has funds in contract (outgoing contract was broadcasted)
-    assert!(
-        taker_balances.contract > Amount::ZERO,
-        "Taker should have funds stuck in contract after failed swap. Contract balance: {}",
-        taker_balances.contract
-    );
-
-    // Taker knows the preimage, so they can recover via hashlock immediately
-    info!("🔧 Taker recovering via hashlock (they know the preimage)...");
+    // Call recover_from_swap again - should be idempotent if already recovered
+    info!("🔧 Calling recover_from_swap (may be no-op if already recovered)...");
     match taproot_taker.recover_from_swap() {
         Ok(()) => {
-            info!("✅ Taker initiated hashlock recovery!");
+            info!("✅ Recovery call completed!");
         }
         Err(e) => {
             panic!("⚠️ Taker recovery failed: {:?}", e);
         }
     }
 
-    // Mine blocks to confirm taker's hashlock sweep
-    info!("⛏️ Mining blocks to confirm taker's hashlock sweep...");
+    // Mine blocks to confirm any recovery transactions
+    info!("⛏️ Mining blocks to confirm recovery transactions...");
     generate_blocks(bitcoind, 2);
     taproot_taker.get_wallet_mut().sync().unwrap();
 
-    info!("📊 Taker balance after hashlock recovery:");
+    info!("📊 Taker balance after recovery:");
     let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
     info!(
         "  Regular: {}, Contract: {}, Spendable: {}",
