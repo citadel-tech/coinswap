@@ -138,3 +138,200 @@ pub fn process_transaction(tx: &Transaction, registry: &mut FileRegistry, in_blo
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::watch_tower::registry_storage::{FileRegistry, WatchRequest};
+    use bitcoin::{
+        absolute::{Height, LockTime},
+        hashes::Hash,
+        transaction, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Txid, Witness,
+    };
+    use bitcoind::tempfile::TempDir;
+
+    #[cfg(not(feature = "integration-test"))]
+    const TEST_ADDR: &[u8] = b"aslkdfjbiakdsfn.onion:9050";
+    #[cfg(feature = "integration-test")]
+    const TEST_ADDR: &[u8] = b"127.0.0.1:9050";
+
+    fn op_return(data: &[u8]) -> Vec<u8> {
+        let mut script = vec![0x6a, data.len() as u8];
+        script.extend_from_slice(data);
+        script
+    }
+
+    fn tx(lock: u32, inputs: Vec<OutPoint>, outputs: Vec<ScriptBuf>) -> Transaction {
+        Transaction {
+            version: transaction::Version(2),
+            lock_time: LockTime::Blocks(
+                Height::from_consensus(lock).expect("Invalid height value"),
+            ),
+            input: inputs
+                .into_iter()
+                .map(|op| TxIn {
+                    previous_output: op,
+                    script_sig: ScriptBuf::new(),
+                    sequence: Sequence::MAX,
+                    witness: Witness::new(),
+                })
+                .collect(),
+            output: outputs
+                .into_iter()
+                .map(|spk| TxOut {
+                    value: Amount::ZERO,
+                    script_pubkey: spk,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn test_extract_onion_address_from_script_valid() {
+        let script = op_return(TEST_ADDR);
+        let expected = String::from_utf8(TEST_ADDR.to_vec()).unwrap();
+        let result = extract_onion_address_from_script(&script)
+            .expect("extract_onion_address_from_script_valid FAILED");
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_extract_onion_address_from_script_invalid() {
+        //Not OP_RETURN
+        assert!(extract_onion_address_from_script(&[0x51]).is_none());
+
+        //Bad length
+        let bad_len = vec![0x6a, 5, b'a', b'b'];
+        assert!(extract_onion_address_from_script(&bad_len).is_none());
+
+        //Wrong suffix (not .onion)
+        let wrong_suffix = op_return(b"aslkdfjbiakdsfn.com:9050");
+        assert!(extract_onion_address_from_script(&wrong_suffix).is_none());
+
+        //Port zero
+        let zero_port = op_return(b"aslkdfjbiakdsfn.onion:0");
+        assert!(extract_onion_address_from_script(&zero_port).is_none());
+    }
+
+    #[test]
+    fn test_process_fidelity_valid() {
+        let txh = tx(
+            1,
+            vec![OutPoint::null()],
+            vec![ScriptBuf::new(), op_return(TEST_ADDR).into()],
+        );
+        assert_eq!(
+            process_fidelity(&txh),
+            Some(String::from_utf8(TEST_ADDR.to_vec()).unwrap())
+        );
+    }
+
+    #[test]
+    fn test_process_fidelity_invalid() {
+        //lock time zero
+        let tx0 = tx(
+            0,
+            vec![OutPoint::null()],
+            vec![ScriptBuf::new(), op_return(TEST_ADDR).into()],
+        );
+        assert!(process_fidelity(&tx0).is_none());
+
+        //Transaction outputs length: too few
+        let tx1 = tx(1, vec![OutPoint::null()], vec![op_return(TEST_ADDR).into()]);
+        assert!(process_fidelity(&tx1).is_none());
+
+        //Transaction outputs length: too many
+        let tx5 = tx(
+            1,
+            vec![OutPoint::null()],
+            vec![
+                ScriptBuf::new(),
+                ScriptBuf::new(),
+                ScriptBuf::new(),
+                ScriptBuf::new(),
+                ScriptBuf::new(),
+                op_return(TEST_ADDR).into(),
+            ],
+        );
+        assert!(process_fidelity(&tx5).is_none());
+
+        //No OP_RETURN (onion address)
+        let tx_no = tx(
+            1,
+            vec![OutPoint::null()],
+            vec![ScriptBuf::new(), ScriptBuf::new()],
+        );
+        assert!(process_fidelity(&tx_no).is_none());
+    }
+
+    #[test]
+    fn test_process_transaction_mark_watch_and_removes_fidelity() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("reg.cbor");
+
+        let mut reg = FileRegistry::load(&path);
+
+        //Seed watcher and fidelity entry
+        let watched = OutPoint {
+            txid: Txid::from_slice(&[1u8; 32]).unwrap(),
+            vout: 0,
+        };
+        reg.upsert_watch(&WatchRequest {
+            outpoint: watched,
+            in_block: false,
+            spent_tx: None,
+        });
+
+        //insert fidelity
+        let fid_txid = Txid::from_slice(&[2u8; 32]).unwrap();
+        reg.insert_fidelity(fid_txid, String::from_utf8(TEST_ADDR.to_vec()).unwrap());
+
+        let spending = tx(
+            0,
+            vec![
+                OutPoint {
+                    txid: fid_txid,
+                    vout: 0,
+                },
+                watched,
+            ],
+            vec![],
+        );
+        let spend_txid = spending.compute_txid();
+
+        process_transaction(&spending, &mut reg, true);
+
+        //Fidelity removed check
+        assert!(reg.list_fidelity().is_empty());
+
+        //watches status check
+        let w = reg.list_watches().pop().unwrap();
+        assert!(w.in_block);
+        assert_eq!(w.outpoint, watched);
+        assert_eq!(w.spent_tx.unwrap().compute_txid(), spend_txid);
+    }
+
+    #[test]
+    fn test_process_transaction_in_block_false() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("reg.cbor");
+
+        let mut reg = FileRegistry::load(&path);
+
+        let watched = OutPoint {
+            txid: Txid::from_slice(&[3u8; 32]).unwrap(),
+            vout: 1,
+        };
+        reg.upsert_watch(&WatchRequest {
+            outpoint: watched,
+            in_block: false,
+            spent_tx: None,
+        });
+
+        let spending = tx(0, vec![watched], vec![]);
+        process_transaction(&spending, &mut reg, false);
+
+        let w = reg.list_watches().pop().unwrap();
+        assert!(!w.in_block);
+    }
+}
