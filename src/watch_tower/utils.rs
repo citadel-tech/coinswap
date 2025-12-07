@@ -142,7 +142,11 @@ mod tests {
         transaction, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Txid, Witness,
     };
     use bitcoind::tempfile::TempDir;
-    use std::vec;
+
+    #[cfg(not(feature = "integration-test"))]
+    const TEST_ADDR: &[u8] = b"aslkdfjbiakdsfn.onion:9050";
+    #[cfg(feature = "integration-test")]
+    const TEST_ADDR: &[u8] = b"127.0.0.1:9050";
 
     fn op_return(data: &[u8]) -> Vec<u8> {
         let mut script = vec![0x6a, data.len() as u8];
@@ -177,9 +181,11 @@ mod tests {
 
     #[test]
     fn test_extract_onion_address_from_script_valid() {
-        let script = op_return(b"aslkdfjbiakdsfn.onion:9050");
-        let result = extract_onion_address_from_script(&script).unwrap();
-        assert_eq!(result, "aslkdfjbiakdsfn.onion:9050".to_string());
+        let script = op_return(TEST_ADDR);
+        let expected = String::from_utf8(TEST_ADDR.to_vec()).unwrap();
+        let result = extract_onion_address_from_script(&script)
+            .expect("extract_onion_address_from_script_valid FAILED");
+        assert_eq!(result, expected);
     }
 
     #[test]
@@ -202,31 +208,29 @@ mod tests {
 
     #[test]
     fn test_process_fidelity_valid() {
-        let onion = b"aslkdfjbiakdsfn.onion:9050";
         let txh = tx(
             1,
             vec![OutPoint::null()],
-            vec![ScriptBuf::new(), op_return(onion).into()],
+            vec![ScriptBuf::new(), op_return(TEST_ADDR).into()],
         );
         assert_eq!(
             process_fidelity(&txh),
-            Some("aslkdfjbiakdsfn.onion:9050".into())
+            Some(String::from_utf8(TEST_ADDR.to_vec()).unwrap())
         );
     }
 
     #[test]
     fn test_process_fidelity_invalid() {
-        let onion = b"aslkdfjbiakdsfn.onion:9050";
         //lock time zero
         let tx0 = tx(
             0,
             vec![OutPoint::null()],
-            vec![ScriptBuf::new(), op_return(onion).into()],
+            vec![ScriptBuf::new(), op_return(TEST_ADDR).into()],
         );
         assert!(process_fidelity(&tx0).is_none());
 
         //Transaction outputs length: too few
-        let tx1 = tx(1, vec![OutPoint::null()], vec![op_return(onion).into()]);
+        let tx1 = tx(1, vec![OutPoint::null()], vec![op_return(TEST_ADDR).into()]);
         assert!(process_fidelity(&tx1).is_none());
 
         //Transaction outputs length: too many
@@ -239,7 +243,7 @@ mod tests {
                 ScriptBuf::new(),
                 ScriptBuf::new(),
                 ScriptBuf::new(),
-                op_return(onion).into(),
+                op_return(TEST_ADDR).into(),
             ],
         );
         assert!(process_fidelity(&tx5).is_none());
@@ -273,7 +277,7 @@ mod tests {
 
         //insert fidelity
         let fid_txid = Txid::from_slice(&[2u8; 32]).unwrap();
-        reg.insert_fidelity(fid_txid, "asbasefasdfa.onion:9050".into());
+        reg.insert_fidelity(fid_txid, String::from_utf8(TEST_ADDR.to_vec()).unwrap());
 
         let spending = tx(
             0,
