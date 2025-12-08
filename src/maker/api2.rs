@@ -918,6 +918,20 @@ impl Maker {
                 .contract_tx
                 .compute_txid();
 
+            for (vout, _) in connection_state
+                .incoming_contract
+                .contract_tx
+                .output
+                .iter()
+                .enumerate()
+            {
+                let outpoint = OutPoint {
+                    txid: incoming_txid,
+                    vout: vout as u32,
+                };
+                self.watch_service.unwatch(outpoint);
+            }
+
             // Record the swept coin to track swap balance
             let output_scriptpubkey = spending_tx.output[0].script_pubkey.clone();
             // [TODO] Look into the key value pair later, it shouldn't be both sriptpubkey
@@ -925,6 +939,9 @@ impl Maker {
                 .store
                 .swept_incoming_swapcoins
                 .insert(output_scriptpubkey.clone(), output_scriptpubkey);
+
+            let mut conn_state = self.ongoing_swap_state.lock()?;
+            conn_state.remove(connection_state.incoming_contract.swap_id.as_ref().unwrap());
 
             wallet.remove_incoming_swapcoin_v2(&incoming_txid);
             log::info!(

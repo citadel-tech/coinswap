@@ -1,0 +1,255 @@
+#![cfg(feature = "integration-test")]
+//! This test demonstrates a taproot-based coinswap between 2 Taker and 2 Makers.
+
+use bitcoin::Amount;
+use coinswap::{
+    maker::{start_maker_server_taproot, TaprootMaker},
+    taker::{
+        api2::{SwapParams, Taker},
+        TakerBehavior,
+    },
+};
+use std::sync::Arc;
+
+mod test_framework;
+use test_framework::*;
+
+use log::{info, warn};
+use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
+
+/// Test taproot coinswap
+#[test]
+fn test_taproot_multi_taker() {
+    // ---- Setup ----
+    warn!("Running Test: Multiple Taproot Takers with normal behaviour");
+
+    use coinswap::maker::TaprootMakerBehavior as MakerBehavior;
+    let taproot_makers_config_map = vec![
+        (7102, Some(19061), MakerBehavior::Normal),
+        (17102, Some(19062), MakerBehavior::Normal),
+    ];
+    // Create two taker's to test a multi taker taproot swap,i.e. ensuring the taproot maker's works fine when performing a taproot based swap with multiple taker a time.
+    let taker_behavior = vec![TakerBehavior::Normal, TakerBehavior::Normal];
+
+    // Initialize test framework
+    let (test_framework, mut taproot_takers, taproot_makers, block_generation_handle) =
+        TestFramework::init_taproot(taproot_makers_config_map, taker_behavior);
+
+    let bitcoind = &test_framework.bitcoind;
+
+    // Fund the Taproot Takers with 3 UTXOs of 0.05 BTC each
+    for taker in taproot_takers.iter_mut() {
+        fund_taproot_taker(taker, bitcoind, 3, Amount::from_btc(0.05).unwrap());
+    }
+
+    // Fund the Taproot Makers with 8 UTXOs of 0.05 BTC each
+    fund_taproot_makers(
+        &taproot_makers,
+        bitcoind,
+        8,
+        Amount::from_btc(0.05).unwrap(),
+    );
+
+    // Start the Taproot Maker Server threads
+    log::info!("Initiating Taproot Makers...");
+
+    let taproot_maker_threads = taproot_makers
+        .iter()
+        .map(|maker| {
+            let maker_clone = maker.clone();
+            thread::spawn(move || {
+                start_maker_server_taproot(maker_clone).unwrap();
+            })
+        })
+        .collect::<Vec<_>>();
+
+    // Wait for taproot makers to complete setup
+    for maker in &taproot_makers {
+        while !maker.is_setup_complete.load(Relaxed) {
+            log::info!("Waiting for taproot maker setup completion");
+            thread::sleep(Duration::from_secs(10));
+        }
+    }
+
+    // Sync wallets after setup to ensure fidelity bonds are accounted for
+    for maker in &taproot_makers {
+        maker.wallet().write().unwrap().sync().unwrap();
+    }
+
+    // Get the actual spendable balances AFTER fidelity bond creation
+    let mut actual_maker_spendable_balances = Vec::new();
+
+    // Test taproot maker balance verification
+    log::info!("Testing taproot maker balance verification");
+    for (i, maker) in taproot_makers.iter().enumerate() {
+        let wallet = maker.wallet().read().unwrap();
+        let balances = wallet.get_balances().unwrap();
+
+        info!(
+            "Taproot Maker {} balances: Regular: {}, Swap: {}, Contract: {}, Fidelity: {}",
+            i, balances.regular, balances.swap, balances.contract, balances.fidelity
+        );
+
+        // With real fidelity bonds, regular balance should be 0.40 BTC minus 0.05 BTC fidelity bond minus small fee
+        assert!(
+            balances.regular >= Amount::from_btc(0.30).unwrap(),
+            "Regular balance should be around 0.3489 BTC after fidelity bond creation"
+        );
+        assert!(
+            balances.regular <= Amount::from_btc(0.35).unwrap(),
+            "Regular balance should not exceed 0.30 BTC"
+        );
+        assert_eq!(balances.swap, Amount::ZERO);
+        assert_eq!(balances.contract, Amount::ZERO);
+        assert_eq!(
+            balances.fidelity,
+            Amount::from_btc(0.05).unwrap(),
+            "Fidelity bond should be 0.05 BTC"
+        );
+        assert!(
+            balances.spendable > Amount::ZERO,
+            "Maker should have spendable balance"
+        );
+
+        // Store the actual spendable balance AFTER fidelity bond creation
+        actual_maker_spendable_balances.push(balances.spendable);
+    }
+
+    log::info!("Starting end-to-end taproot swap test...");
+    log::info!("Initiating taproot coinswap protocol");
+
+    // Mine some blocks before the swap to ensure wallet is ready
+    generate_blocks(bitcoind, 1);
+
+    // Spawn threads for each taker to initiate coinswap concurrently
+    thread::scope(|s| {
+        for taker in &mut taproot_takers {
+            // Perform the swap concurrently — consume the takers vector so each thread gets ownership.
+            let swap_params = SwapParams {
+                send_amount: Amount::from_sat(500000), // 0.005 BTC
+                maker_count: 2,
+                tx_count: 3,
+                required_confirms: 1,
+                manually_selected_outpoints: None,
+            };
+            s.spawn(move || match taker.do_coinswap(swap_params) {
+                Ok(Some(_report)) => {
+                    log::info!("Taproot coinswap completed successfully!");
+                }
+                Ok(None) => {
+                    log::warn!(
+                        "Taproot coinswap completed but no report generated (recovery occurred)"
+                    );
+                }
+                Err(e) => {
+                    log::error!("Taproot coinswap failed: {:?}", e);
+                    panic!("Taproot coinswap failed: {:?}", e);
+                }
+            });
+            std::thread::sleep(Duration::from_secs(10));
+        }
+    });
+
+    // After swap, shutdown maker threads
+    taproot_makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+
+    taproot_maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
+
+    log::info!("All taproot coinswaps processed successfully. Transaction complete.");
+
+    // Sync wallets and verify results
+    for taker in &mut taproot_takers {
+        taker.get_wallet_mut().sync().unwrap();
+    }
+
+    // Mine a block to confirm the sweep transactions
+    generate_blocks(bitcoind, 1);
+
+    // Synchronize each taproot maker's wallet multiple times to ensure all UTXOs are discovered
+    for maker in taproot_makers.iter() {
+        let mut wallet = maker.wallet().write().unwrap();
+        wallet.sync().unwrap();
+    }
+
+    info!("✅ Multi Taker test passed!");
+
+    test_framework.stop();
+    block_generation_handle.join().unwrap();
+}
+
+/// Fund taproot makers and verify their balances
+fn fund_taproot_makers(
+    makers: &[Arc<TaprootMaker>],
+    bitcoind: &bitcoind::BitcoinD,
+    utxo_count: u32,
+    utxo_value: Amount,
+) -> Vec<Amount> {
+    let mut original_balances = Vec::new();
+
+    for maker in makers {
+        let mut wallet = maker.wallet().write().unwrap();
+
+        // Fund with regular UTXOs
+        for _ in 0..utxo_count {
+            let addr = wallet.get_next_external_address().unwrap();
+            send_to_address(bitcoind, &addr, utxo_value);
+        }
+
+        generate_blocks(bitcoind, 1);
+        wallet.sync().unwrap();
+
+        // Verify balances - for now just check regular balance
+        let balances = wallet.get_balances().unwrap();
+        let expected_regular = utxo_value * utxo_count.into();
+
+        assert_eq!(balances.regular, expected_regular);
+
+        info!(
+            "Taproot Maker funded successfully. Regular: {}, Fidelity: {}",
+            balances.regular, balances.fidelity
+        );
+
+        // Store the original spendable balance (after fidelity bond creation)
+        info!(
+            "Storing original spendable balance for maker: {} (Regular: {}, Fidelity: {})",
+            balances.spendable, balances.regular, balances.fidelity
+        );
+        original_balances.push(balances.spendable);
+    }
+
+    original_balances
+}
+
+/// Fund taproot taker and verify balance
+fn fund_taproot_taker(
+    taker: &mut Taker,
+    bitcoind: &bitcoind::BitcoinD,
+    utxo_count: u32,
+    utxo_value: Amount,
+) -> Amount {
+    // Fund with regular UTXOs
+    for _ in 0..utxo_count {
+        let addr = taker.get_wallet_mut().get_next_external_address().unwrap();
+        send_to_address(bitcoind, &addr, utxo_value);
+    }
+
+    generate_blocks(bitcoind, 1);
+    taker.get_wallet_mut().sync().unwrap();
+
+    // Verify balances
+    let balances = taker.get_wallet().get_balances().unwrap();
+    let expected_regular = utxo_value * utxo_count.into();
+
+    assert_eq!(balances.regular, expected_regular);
+
+    info!(
+        "Taproot Taker funded successfully. Regular: {}, Spendable: {}",
+        balances.regular, balances.spendable
+    );
+
+    balances.spendable
+}
