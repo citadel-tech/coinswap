@@ -741,7 +741,7 @@ impl TestFramework {
         let takers = taker_behavior
             .into_iter()
             .enumerate()
-            .map(|(i, _behavior)| {
+            .map(|(i, behavior)| {
                 let taker_id = format!("taker{}", i + 1); // ex: "taker1"
                 TaprootTaker::init(
                     Some(temp_dir.join(&taker_id)),
@@ -751,6 +751,7 @@ impl TestFramework {
                     None,
                     zmq_addr.clone(),
                     None,
+                    behavior,
                 )
                 .unwrap()
             })

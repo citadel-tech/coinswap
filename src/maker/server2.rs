@@ -5,7 +5,7 @@
 //! It uses the new message protocol (messages2) and integrates with api2.rs and handlers2.rs.
 //! The server listens at two ports: 6102 for P2P, and 6103 for RPC Client requests.
 
-use bitcoin::Amount;
+use bitcoin::{Amount, OutPoint};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use std::{
     io::ErrorKind,
@@ -474,7 +474,23 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                         .outgoing_contract
                         .contract_tx
                         .compute_txid();
+                    for (vout, _) in connection_state
+                        .outgoing_contract
+                        .contract_tx
+                        .output
+                        .iter()
+                        .enumerate()
                     {
+                        let outpoint = OutPoint {
+                            txid: outgoing_txid,
+                            vout: vout as u32,
+                        };
+                        maker.watch_service.unwatch(outpoint);
+                    }
+                    {
+                        let mut conn_state = maker.ongoing_swap_state.lock()?;
+                        conn_state
+                            .remove(connection_state.outgoing_contract.swap_id.as_ref().unwrap());
                         let mut wallet = maker.wallet.write()?;
                         wallet.remove_outgoing_swapcoin_v2(&outgoing_txid);
                         log::info!(

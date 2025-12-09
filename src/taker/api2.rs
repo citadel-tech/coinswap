@@ -1,3 +1,6 @@
+use super::error::TakerError;
+#[cfg(feature = "integration-test")]
+use crate::taker::TakerBehavior;
 use crate::{
     protocol::{
         contract2::{
@@ -50,8 +53,6 @@ use std::{
     collections::HashSet, convert::TryFrom, net::TcpStream, path::PathBuf, sync::mpsc, thread,
     time::Duration,
 };
-
-use super::error::TakerError;
 
 /// Represents how a taproot contract output was spent
 #[derive(Debug, Clone)]
@@ -320,10 +321,13 @@ pub struct Taker {
     ongoing_swap_state: OngoingSwapState,
     data_dir: PathBuf,
     watch_service: WatchService,
+    #[cfg(feature = "integration-test")]
+    behavior: TakerBehavior,
 }
 
 impl Taker {
     /// Initialize a new Taker instance
+    #[allow(clippy::too_many_arguments)]
     pub fn init(
         data_dir: Option<PathBuf>,
         wallet_file_name: Option<String>,
@@ -332,6 +336,7 @@ impl Taker {
         tor_auth_password: Option<String>,
         zmq_addr: String,
         password: Option<String>,
+        #[cfg(feature = "integration-test")] behavior: TakerBehavior,
     ) -> Result<Taker, TakerError> {
         let data_dir = data_dir.unwrap_or_else(get_taker_dir);
 
@@ -417,6 +422,8 @@ impl Taker {
             ongoing_swap_state: OngoingSwapState::default(),
             data_dir,
             watch_service,
+            #[cfg(feature = "integration-test")]
+            behavior,
         })
     }
 
@@ -487,6 +494,14 @@ impl Taker {
             self.wallet.wait_for_tx_confirmation(tx.compute_txid())?;
         }
 
+        #[cfg(feature = "integration-test")]
+        {
+            if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
+                log::error!("Dropping Swap Process after full setup");
+                self.recover_from_swap()?;
+                return Ok(None);
+            }
+        }
         match self
             .negotiate_with_makers_and_coordinate_sweep(&outgoing_signed_contract_transactions)
         {
@@ -497,6 +512,7 @@ impl Taker {
 
                 // Store swap state before reset for report generation
                 let prereset_swapstate = self.ongoing_swap_state.clone();
+                self.save_and_reset_swap_round()?;
 
                 // Sync wallet and generate report
                 self.wallet.sync_and_save()?;
@@ -516,6 +532,44 @@ impl Taker {
                 Ok(None)
             }
         }
+    }
+
+    /// Save all the finalized swap data and reset the [`OngoingSwapState`].
+    fn save_and_reset_swap_round(&mut self) -> Result<(), TakerError> {
+        // Mark incoiming swapcoins as done
+        let incoming_swapcoin = &self.ongoing_swap_state.incoming_contract;
+        let contract_txid = incoming_swapcoin.contract_tx.compute_txid();
+        for (vout, _) in incoming_swapcoin.contract_tx.output.iter().enumerate() {
+            let outpoint = OutPoint {
+                txid: contract_txid,
+                vout: vout as u32,
+            };
+            self.watch_service.unwatch(outpoint);
+        }
+
+        // Mark outgoing swapcoins as done.
+        let outgoing_swapcoin = &self.ongoing_swap_state.outgoing_contract;
+        let contract_txid = outgoing_swapcoin.contract_tx.compute_txid();
+        for (vout, _) in outgoing_swapcoin.contract_tx.output.iter().enumerate() {
+            let outpoint = OutPoint {
+                txid: contract_txid,
+                vout: vout as u32,
+            };
+            self.watch_service.unwatch(outpoint);
+        }
+
+        self.wallet.sync_no_fail();
+
+        self.wallet.save_to_disk()?;
+
+        self.clear_ongoing_swaps();
+
+        Ok(())
+    }
+
+    /// Clear the [`OngoingSwapState`].
+    fn clear_ongoing_swaps(&mut self) {
+        self.ongoing_swap_state = OngoingSwapState::default();
     }
 
     /// Generate a swap report after successful completion of a taproot coinswap

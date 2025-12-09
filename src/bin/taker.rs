@@ -200,6 +200,8 @@ fn main() -> Result<(), TakerError> {
                 args.tor_auth,
                 args.zmq,
                 None,
+                #[cfg(feature = "integration-test")]
+                TakerBehavior::Normal,
             )?;
             taproot_taker.recover_from_swap()?;
         }
@@ -214,6 +216,8 @@ fn main() -> Result<(), TakerError> {
                 args.tor_auth,
                 args.zmq,
                 None,
+                #[cfg(feature = "integration-test")]
+                TakerBehavior::Normal,
             )?;
 
             let taproot_swap_params = coinswap::taker::api2::SwapParams {
