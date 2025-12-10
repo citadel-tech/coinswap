@@ -827,7 +827,7 @@ pub(crate) fn recover_from_swap(
         .get_block_count()
         .map_err(WalletError::Rpc)? as u32;
     let timelock_expiry = start_height.saturating_add(timelock);
-    
+
     #[cfg(debug_assertions)]
     log::debug!(
         "[{}] RECOVERY | Action: start_recovery | IncomingCount: {} | OutgoingCount: {} | timelock: {} | start_height: {} | timelock_expiry: {}",
