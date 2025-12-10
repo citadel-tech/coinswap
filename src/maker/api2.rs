@@ -185,6 +185,13 @@ impl ThreadPool {
 
     pub(crate) fn add_thread(&self, handle: JoinHandle<()>) {
         let mut threads = self.threads.lock().unwrap();
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] THREAD_POOL | Action: add | Name: {:?} | ActiveCount: {}",
+            self.port,
+            handle.thread().name(),
+            threads.len() + 1
+        );
         threads.push(handle);
     }
 
@@ -203,10 +210,22 @@ impl ThreadPool {
 
             match thread.join() {
                 Ok(_) => {
+                    #[cfg(debug_assertions)]
+                    log::debug!(
+                        "[{}] THREAD_POOL | Action: join | Name: {} | Status: success",
+                        self.port,
+                        thread_name
+                    );
                     log::info!("[{}] Thread {} joined", self.port, thread_name);
                     joined_count += 1;
                 }
                 Err(e) => {
+                    #[cfg(debug_assertions)]
+                    log::debug!(
+                        "[{}] THREAD_POOL | Action: join | Name: {} | Status: error",
+                        self.port,
+                        thread_name
+                    );
                     log::error!(
                         "[{}] Error {:?} while joining thread {}",
                         self.port,
@@ -367,6 +386,14 @@ impl Maker {
         let wallet = self.wallet.read()?;
         let (incoming_contract_my_privkey, incoming_contract_my_pubkey) =
             wallet.get_tweakable_keypair()?;
+
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] CRYPTO_OP | Operation: generate_offer_keypair | Pubkey: {:.8}",
+            self.config.network_port,
+            incoming_contract_my_pubkey
+        );
+
         connection_state.incoming_contract.my_privkey = Some(incoming_contract_my_privkey);
         connection_state.incoming_contract.my_pubkey = Some(incoming_contract_my_pubkey);
         log::info!(
@@ -449,6 +476,13 @@ impl Maker {
         message: &SendersContract,
         connection_state: &mut ConnectionState,
     ) -> Result<SenderContractFromMaker, MakerError> {
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] STATE_CHANGE | Action: process_senders_contract | IncomingTxid: {:.8}",
+            self.config.network_port,
+            message.contract_txs[0]
+        );
+
         // Store relevant data from the message
 
         connection_state.incoming_contract.hashlock_script = message.hashlock_scripts[0].clone();
@@ -637,6 +671,14 @@ impl Maker {
             signed_tx.compute_txid()
         };
         log::info!("Outgoing contract txid: {:?}", outgoing_contract_txid);
+
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] STATE_CHANGE | Action: store_outgoing_contract | OutgoingTxid: {:.8} | Amount: {}",
+            self.config.network_port,
+            outgoing_contract_txid,
+            outgoing_contract_amount
+        );
 
         // For cooperative spending, we prepare to spend from the incoming contract transaction
         let incoming_contract_txid = connection_state.incoming_contract.contract_txid()?;
@@ -889,6 +931,13 @@ impl Maker {
             .rpc
             .send_raw_transaction(completed_tx.raw_hex())
             .map_err(|e| MakerError::Wallet(crate::wallet::WalletError::Rpc(e)))?;
+
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] CRYPTO_OP | Operation: broadcast_sweep | SweepTxid: {:.8}",
+            self.config.network_port,
+            txid
+        );
 
         log::info!(
             "[{}] Maker sweep transaction broadcasted with txid: {:?}",

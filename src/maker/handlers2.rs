@@ -24,10 +24,13 @@ pub(crate) fn handle_message_taproot(
     connection_state: &mut ConnectionState,
     message: TakerToMakerMessage,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
+    #[cfg(debug_assertions)]
     log::debug!(
-        "[{}] Handling message: {:?}",
+        "[{}] MSG_FLOW | Direction: in | Type: {:?} | StateAmount: {} | Timelock: {}",
         maker.config.network_port,
-        message
+        std::mem::discriminant(&message),
+        connection_state.swap_amount,
+        connection_state.timelock
     );
 
     // Handle messages based on their type, not on expected state
@@ -106,6 +109,22 @@ fn handle_swap_details(
 
     // Validate swap parameters using api2
     maker.validate_swap_parameters(&swap_details)?;
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] STATE_CHANGE | Field: swap_amount | Old: {} | New: {}",
+        maker.config.network_port,
+        connection_state.swap_amount,
+        swap_details.amount
+    );
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] STATE_CHANGE | Field: timelock | Old: {} | New: {}",
+        maker.config.network_port,
+        connection_state.timelock,
+        swap_details.timelock
+    );
 
     // Store swap details in connection state
     connection_state.swap_amount = swap_details.amount;

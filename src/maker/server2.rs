@@ -297,6 +297,14 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
     let peer_addr = stream.peer_addr().map_err(NetError::IO)?;
     let ip = peer_addr.ip().to_string();
 
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] STATE_CHANGE | Action: new_connection | IP: {} | Port: {}",
+        maker.config.network_port,
+        ip,
+        peer_addr.port()
+    );
+
     log::info!(
         "[{}] New taproot client connected: {} (port {})",
         maker.config.network_port,
@@ -308,6 +316,13 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
     let mut connection_state = {
         let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
         let (state, _) = ongoing_swaps.entry(ip.clone()).or_insert_with(|| {
+            #[cfg(debug_assertions)]
+            log::debug!(
+                "[{}] STATE_CHANGE | Action: create_connection_state | IP: {}",
+                maker.config.network_port,
+                ip
+            );
+
             log::info!(
                 "[{}] Creating new connection state for {}",
                 maker.config.network_port,
@@ -365,6 +380,15 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         );
         let message = match serde_cbor::from_slice::<TakerToMakerMessage>(&message_bytes) {
             Ok(msg) => {
+                #[cfg(debug_assertions)]
+                log::debug!(
+                    "[{}] MSG_FLOW | Direction: in | Type: {:?} | IP: {} | Size: {} bytes",
+                    maker.config.network_port,
+                    std::mem::discriminant(&msg),
+                    ip,
+                    message_bytes.len()
+                );
+
                 log::debug!(
                     "[{}] Successfully decoded message: {:?}",
                     maker.config.network_port,
@@ -397,6 +421,14 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                         connection_state.incoming_contract.my_privkey.is_some()
                     );
                     ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
+                    #[cfg(debug_assertions)]
+                    log::debug!(
+                        "[{}] STATE_CHANGE | Action: save_connection_state | IP: {} | SwapAmount: {} | Timelock: {}",
+                        maker.config.network_port,
+                        ip,
+                        connection_state.swap_amount,
+                        connection_state.timelock
+                    );
                 }
                 response
             }
@@ -430,6 +462,14 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
 
         // Send response if we have one (only applies to taker messages)
         if let Some(response_msg) = response {
+            #[cfg(debug_assertions)]
+            log::debug!(
+                "[{}] MSG_FLOW | Direction: out | Type: {:?} | IP: {}",
+                maker.config.network_port,
+                std::mem::discriminant(&response_msg),
+                ip
+            );
+
             log::info!("[{}] Sending response", maker.config.network_port,);
 
             if let Err(e) = send_message(stream, &response_msg) {
@@ -500,6 +540,13 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         }
     }
 
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] STATE_CHANGE | Action: connection_ended | IP: {}",
+        maker.config.network_port,
+        ip
+    );
+
     log::info!(
         "[{}] Client {} session ended",
         maker.config.network_port,
@@ -510,6 +557,12 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
 
 /// Starts the taproot maker server
 pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] THREAD_POOL | Action: start_server | Protocol: taproot",
+        maker.config.network_port
+    );
+
     log::info!(
         "[{}] Starting taproot coinswap maker server",
         maker.config.network_port
@@ -533,6 +586,13 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
                 log::error!("Taproot idle checker thread error: {:?}", e);
             }
         })?;
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] THREAD_POOL | Action: spawn | Name: idle-checker-taproot",
+        maker.config.network_port
+    );
+
     maker.thread_pool.add_thread(idle_checker_handle);
 
     // Start contract broadcast watcher thread
@@ -569,6 +629,13 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
                 sleep(HEART_BEAT_INTERVAL);
             }
         })?;
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] THREAD_POOL | Action: spawn | Name: liquidity-monitor-taproot",
+        maker.config.network_port
+    );
+
     maker.thread_pool.add_thread(liquidity_handle);
 
     // Start Bitcoin Core connection monitoring
@@ -594,6 +661,13 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
                 sleep(HEART_BEAT_INTERVAL);
             }
         })?;
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] THREAD_POOL | Action: spawn | Name: core-monitor-taproot",
+        maker.config.network_port
+    );
+
     maker.thread_pool.add_thread(core_monitor_handle);
 
     // Start RPC server
@@ -605,6 +679,13 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
                 log::error!("Taproot RPC server error: {:?}", e);
             }
         })?;
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] THREAD_POOL | Action: spawn | Name: rpc-server-taproot",
+        maker.config.network_port
+    );
+
     maker.thread_pool.add_thread(rpc_handle);
 
     // Check for unfinished swapcoins from previous runs and start recovery if needed
@@ -643,6 +724,13 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
     while !maker.shutdown.load(Relaxed) {
         match listener.accept() {
             Ok((mut stream, addr)) => {
+                #[cfg(debug_assertions)]
+                log::debug!(
+                    "[{}] STATE_CHANGE | Action: accept_connection | Addr: {}",
+                    maker.config.network_port,
+                    addr
+                );
+
                 log::info!(
                     "[{}] New client connection from: {}",
                     maker.config.network_port,
@@ -674,6 +762,12 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
         // Sleep briefly to avoid busy waiting
         sleep(HEART_BEAT_INTERVAL);
     }
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] STATE_CHANGE | Action: shutdown_initiated",
+        maker.config.network_port
+    );
 
     log::info!(
         "[{}] Taproot maker server shutting down",

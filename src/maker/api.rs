@@ -190,6 +190,13 @@ impl ThreadPool {
 
     pub(crate) fn add_thread(&self, handle: JoinHandle<()>) {
         let mut threads = self.threads.lock().unwrap();
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[{}] THREAD_POOL | Action: add | Name: {:?} | ActiveCount: {}",
+            self.port,
+            handle.thread().name(),
+            threads.len() + 1
+        );
         threads.push(handle);
     }
     #[inline]
@@ -208,10 +215,21 @@ impl ThreadPool {
 
             match thread.join() {
                 Ok(_) => {
-                    log::info!("[{}] Thread {} joined", self.port, thread_name);
+                    #[cfg(debug_assertions)]
+                    log::debug!(
+                        "[{}] THREAD_POOL | Action: join | Name: {} | Status: success",
+                        self.port,
+                        thread_name
+                    );
                     joined_count += 1;
                 }
                 Err(e) => {
+                    #[cfg(debug_assertions)]
+                    log::debug!(
+                        "[{}] THREAD_POOL | Action: join | Name: {} | Status: error",
+                        self.port,
+                        thread_name
+                    );
                     log::error!(
                         "[{}] Error {:?} while joining thread {}",
                         self.port,
@@ -625,6 +643,14 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                     drop(read_lock);
                     if transaction_broadcasted {
                         // Something is broadcasted. Report, Recover and Abort.
+                        #[cfg(debug_assertions)]
+                        log::debug!(
+                            "[{}] RECOVERY | Trigger: contract_broadcast_detected | ContractTxid: {:.8} | IP: {}",
+                            maker.config.network_port,
+                            txid,
+                            ip
+                        );
+
                         log::warn!(
                             "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
                             maker.config.network_port,
@@ -650,6 +676,13 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                                     log::error!("Failed to recover from swap due to: {e:?}");
                                 }
                             })?;
+
+                        #[cfg(debug_assertions)]
+                        log::debug!(
+                            "[{}] STATE_CHANGE | Action: reset_connection_state | Reason: contract_broadcast",
+                            maker.config.network_port
+                        );
+
                         maker.thread_pool.add_thread(handle);
                         // Clear the state value here
                         *connection_state = ConnectionState::default();
@@ -676,6 +709,14 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot(
     maker: &Arc<Maker>,
 ) -> Result<(), MakerError> {
     let (incomings, outgoings) = maker.wallet.read()?.find_unfinished_swapcoins();
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] RECOVERY | Trigger: reboot_restore | Action: spawn_recovery_thread | incomings: {} | outgoings: {}",
+        maker.config.network_port,
+        incomings.len(),
+        outgoings.len()
+    );
+
     // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
     let maker_clone = maker.clone();
     let handle = std::thread::Builder::new()
@@ -711,6 +752,14 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                     current_time.saturating_duration_since(*last_connected_time);
 
                 if no_response_since > IDLE_CONNECTION_TIMEOUT {
+                    #[cfg(debug_assertions)]
+                    log::debug!(
+                        "[{}] RECOVERY | Trigger: idle_timeout | IP: {} | IdleTime: {}s",
+                        maker.config.network_port,
+                        ip,
+                        no_response_since.as_secs()
+                    );
+
                     log::error!(
                         "[{}] Potential Dropped Connection from taker. No response since : {} secs. Recovering from swap",
                         maker.config.network_port,
@@ -734,6 +783,13 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                                 log::error!("Failed to recover from swap due to: {e:?}");
                             }
                         })?;
+
+                    #[cfg(debug_assertions)]
+                    log::debug!(
+                        "[{}] STATE_CHANGE | Action: reset_connection_state | Reason: idle_timeout",
+                        maker.config.network_port
+                    );
+
                     maker.thread_pool.add_thread(handle);
                     // Clear the state values here
                     *state = ConnectionState::default();
@@ -771,6 +827,17 @@ pub(crate) fn recover_from_swap(
         .get_block_count()
         .map_err(WalletError::Rpc)? as u32;
     let timelock_expiry = start_height.saturating_add(timelock);
+
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[{}] RECOVERY | Action: start_recovery | IncomingCount: {} | OutgoingCount: {} | timelock: {} | start_height: {} | timelock_expiry: {}",
+        maker.config.network_port,
+        incoming_swapcoins.len(),
+        outgoing_swapcoins.len(),
+        timelock,
+        start_height,
+        timelock_expiry
+    );
 
     log::info!(
         "[{}] recover_from_swap started | height={} timelock_expiry={}",
