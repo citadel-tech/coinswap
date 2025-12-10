@@ -7,8 +7,11 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server_taproot, TaprootMaker},
-    taker::api2::{SwapParams, Taker},
-    wallet::{RPCConfig, Wallet},
+    taker::{
+        api2::{SwapParams, Taker},
+        TakerBehavior,
+    },
+    wallet::Wallet,
 };
 use std::sync::Arc;
 
@@ -25,27 +28,23 @@ fn test_taproot_coinswap() {
     warn!("Running Test: Taproot Coinswap Basic Functionality");
 
     // Use different ports for taproot makers to avoid conflicts
-    let taproot_makers_config_map = [(7102, Some(19061)), (17102, Some(19062))];
+    use coinswap::maker::TaprootMakerBehavior as MakerBehavior;
+    let taproot_makers_config_map = vec![
+        (7102, Some(19061), MakerBehavior::Normal),
+        (17102, Some(19062), MakerBehavior::Normal),
+    ];
+    let taker_behavior = vec![TakerBehavior::Normal];
 
     // Initialize test framework (without regular takers, we'll create taproot taker manually)
-    let (test_framework, _regular_takers, _regular_makers, block_generation_handle) =
-        TestFramework::init(vec![], vec![]);
+    let (test_framework, mut taproot_taker, taproot_makers, block_generation_handle) =
+        TestFramework::init_taproot(taproot_makers_config_map, taker_behavior);
 
     let bitcoind = &test_framework.bitcoind;
-
-    // Create taproot makers manually
-    let taproot_makers = create_taproot_makers(&test_framework, &taproot_makers_config_map);
-
-    // Create taproot taker
-    let mut taproot_taker = create_taproot_taker(&test_framework);
+    let taproot_taker = taproot_taker.get_mut(0).unwrap();
 
     // Fund the Taproot Taker with 3 UTXOs of 0.05 BTC each
-    let taproot_taker_original_balance = fund_taproot_taker(
-        &mut taproot_taker,
-        bitcoind,
-        3,
-        Amount::from_btc(0.05).unwrap(),
-    );
+    let taproot_taker_original_balance =
+        fund_taproot_taker(taproot_taker, bitcoind, 3, Amount::from_btc(0.05).unwrap());
 
     // Fund the Taproot Makers with 4 UTXOs of 0.05 BTC each
     fund_taproot_makers(
@@ -80,10 +79,6 @@ fn test_taproot_coinswap() {
     for maker in &taproot_makers {
         maker.wallet().write().unwrap().sync().unwrap();
     }
-
-    // Wait a bit for makers to fully register with the tracker
-    log::info!("Waiting for makers to register with tracker...");
-    thread::sleep(Duration::from_secs(5));
 
     // Get the actual spendable balances AFTER fidelity bond creation
     let mut actual_maker_spendable_balances = Vec::new();
@@ -133,6 +128,7 @@ fn test_taproot_coinswap() {
         maker_count: 2,
         tx_count: 3,
         required_confirms: 1,
+        manually_selected_outpoints: None,
     };
 
     // Mine some blocks before the swap to ensure wallet is ready
@@ -140,8 +136,11 @@ fn test_taproot_coinswap() {
 
     // Perform the swap
     match taproot_taker.do_coinswap(swap_params) {
-        Ok(()) => {
+        Ok(Some(_report)) => {
             log::info!("Taproot coinswap completed successfully!");
+        }
+        Ok(None) => {
+            log::warn!("Taproot coinswap completed but no report generated (recovery occurred)");
         }
         Err(e) => {
             log::error!("Taproot coinswap failed: {:?}", e);
@@ -184,38 +183,6 @@ fn test_taproot_coinswap() {
 
     test_framework.stop();
     block_generation_handle.join().unwrap();
-}
-
-/// Create taproot makers with the test framework configuration
-fn create_taproot_makers(
-    test_framework: &TestFramework,
-    configs: &[(u16, Option<u16>)],
-) -> Vec<Arc<TaprootMaker>> {
-    configs
-        .iter()
-        .enumerate()
-        .map(|(index, (network_port, rpc_port))| {
-            let data_dir = std::env::temp_dir()
-                .join("coinswap")
-                .join(format!("taproot_maker{}", index));
-
-            let rpc_config = RPCConfig::from(test_framework);
-
-            Arc::new(
-                TaprootMaker::init(
-                    Some(data_dir),
-                    Some(format!("taproot_maker{}_wallet", index)),
-                    Some(rpc_config),
-                    Some(*network_port),
-                    *rpc_port,
-                    None, // control_port
-                    None, // tor_auth_password
-                    None, // socks_port
-                )
-                .unwrap(),
-            )
-        })
-        .collect()
 }
 
 /// Fund taproot makers and verify their balances
@@ -261,28 +228,6 @@ fn fund_taproot_makers(
     original_balances
 }
 
-/// Create a taproot taker with the test framework configuration
-fn create_taproot_taker(test_framework: &TestFramework) -> Taker {
-    // Use a unique directory with timestamp to avoid wallet conflicts
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let data_dir = std::env::temp_dir()
-        .join("coinswap")
-        .join(format!("taproot_taker_{}", timestamp));
-    let rpc_config = RPCConfig::from(test_framework);
-
-    Taker::init(
-        Some(data_dir),
-        Some("taproot_taker_wallet".to_string()),
-        Some(rpc_config),
-        None, // control_port
-        None, // tor_auth_password
-    )
-    .unwrap()
-}
-
 /// Fund taproot taker and verify balance
 fn fund_taproot_taker(
     taker: &mut Taker,
@@ -322,7 +267,9 @@ fn verify_taproot_swap_results(
 ) {
     let taker_balances = taker_wallet.get_balances().unwrap();
 
-    let taker_total_after = taker_balances.regular;
+    // Use spendable balance (regular + swap) since swept coins from V2 swaps
+    // are tracked as SweptCoinV2 and appear in swap balance
+    let taker_total_after = taker_balances.spendable;
     assert!(
         taker_total_after < org_taker_spend_balance,
         "Taker should have paid fees for the taproot swap. Original: {}, After: {}",
@@ -341,7 +288,7 @@ fn verify_taproot_swap_results(
     );
 
     info!(
-        "Taker balance verification passed. Original: {}, After: {} (fees paid: {})",
+        "Taker balance verification passed. Original spendable: {}, After spendable: {} (fees paid: {})",
         org_taker_spend_balance,
         taker_total_after,
         org_taker_spend_balance - taker_total_after
@@ -352,32 +299,31 @@ fn verify_taproot_swap_results(
     {
         let wallet = maker.wallet().read().unwrap();
         let balances = wallet.get_balances().unwrap();
-        let current_total = balances.regular + balances.swap + balances.contract;
 
         info!(
-            "Taproot Maker {} final balances - Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Total spendable: {}",
+            "Taproot Maker {} final balances - Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Spendable: {}",
             i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable
         );
 
         // In taproot swaps, makers sweep their incoming contracts
-        // They should have roughly the same total balance (minus small fees plus earned fees)
-        // The balance might be in different categories (regular vs contract vs swap)
+        // Swept coins are tracked as SweptCoinV2 and appear in swap balance
+        // Use spendable (regular + swap) for comparison
         let max_fees = Amount::from_sat(100000); // Maximum expected mining fees
 
-        // The maker's total balance should be at least (original - max_fees + min_earned_fees)
+        // The maker's spendable balance should be at least (original - max_fees + min_earned_fees)
         let expected_minimum = original_spendable - max_fees;
         assert!(
-            current_total >= expected_minimum,
-            "Taproot Maker {} balance should not decrease significantly. Original spendable: {}, Current total: {}, Expected minimum: {}",
+            balances.spendable >= expected_minimum,
+            "Taproot Maker {} balance should not decrease significantly. Original spendable: {}, Current spendable: {}, Expected minimum: {}",
             i,
             original_spendable,
-            current_total,
+            balances.spendable,
             expected_minimum
         );
 
         info!(
-            "Taproot Maker {} balance verification passed. Original spendable: {}, Current total: {}",
-            i, original_spendable, current_total
+            "Taproot Maker {} balance verification passed. Original spendable: {}, Current spendable: {}",
+            i, original_spendable, balances.spendable
         );
     }
 }

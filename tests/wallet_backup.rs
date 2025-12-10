@@ -3,6 +3,7 @@ mod test_framework;
 
 use std::{fs, path::PathBuf};
 
+use bip39::rand;
 use bitcoin::{Address, Amount};
 use bitcoind::{
     bitcoincore_rpc::{self, Auth},
@@ -33,9 +34,12 @@ fn setup(test_name: String) -> (PathBuf, RPCConfig, PathBuf, BitcoinD, PathBuf) 
     if temp_dir.exists() {
         fs::remove_dir_all(&temp_dir).unwrap();
     }
-    //println!("temporary directory : {}", temp_dir.display());
 
-    let bitcoind = init_bitcoind(&temp_dir);
+    let port_zmq = 28332 + rand::random::<u16>() % 1000;
+
+    let zmq_addr = format!("tcp://127.0.0.1:{port_zmq}");
+
+    let bitcoind = init_bitcoind(&temp_dir, zmq_addr);
 
     let url = bitcoind.rpc_url().split_at(7).1.to_string();
     let auth = Auth::CookieFile(bitcoind.params.cookie_file.clone());

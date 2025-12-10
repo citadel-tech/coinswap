@@ -1,0 +1,50 @@
+FROM debian:bookworm-slim
+
+ARG TARGETARCH
+ARG TAG
+ARG FILENAME_AMD64
+ARG SHA256_AMD64
+ARG FILENAME_ARM64
+ARG SHA256_ARM64
+
+# Install dependencies
+RUN apt-get update && \
+    apt-get install -y curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp
+
+# Download and verify binary based on architecture
+RUN if [ "$TARGETARCH" = "amd64" ]; then \
+        FILENAME=$FILENAME_AMD64; \
+        SHA256=$SHA256_AMD64; \
+    elif [ "$TARGETARCH" = "arm64" ]; then \
+        FILENAME=$FILENAME_ARM64; \
+        SHA256=$SHA256_ARM64; \
+    else \
+        echo "Unsupported architecture: $TARGETARCH"; exit 1; \
+    fi && \
+    echo "Downloading $FILENAME..." && \
+    curl -L -O "https://github.com/benthecarman/bitcoin/releases/download/${TAG}/${FILENAME}" && \
+    echo "${SHA256}  ${FILENAME}" | sha256sum -c - && \
+    tar -xzvf "$FILENAME" && \
+    # Find and move binaries (directory name changes with commit hash)
+    find . -name bitcoind -type f -exec cp {} /usr/local/bin/ \; && \
+    find . -name bitcoin-cli -type f -exec cp {} /usr/local/bin/ \; && \
+    rm -rf *
+
+# Create user
+RUN useradd -m -u 1000 bitcoin
+
+# Setup directories
+RUN mkdir -p /home/bitcoin/.bitcoin && \
+    chown -R bitcoin:bitcoin /home/bitcoin/.bitcoin
+
+# Switch to user
+USER bitcoin
+WORKDIR /home/bitcoin
+
+# Expose ports (Signet, Regtest, ZMQ)
+EXPOSE 38332 38333 18442 18444 28332
+
+CMD ["bitcoind"]

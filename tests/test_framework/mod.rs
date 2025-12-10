@@ -27,6 +27,7 @@ macro_rules! assert_in_range {
     }};
 }
 
+use bip39::rand;
 use bitcoin::Amount;
 use std::{
     env,
@@ -40,7 +41,6 @@ use std::{
     thread::{self, JoinHandle},
     time::Duration,
 };
-use tokio::sync::mpsc::{self, Sender};
 
 use flate2::read::GzDecoder;
 use tar::Archive;
@@ -51,8 +51,8 @@ use bitcoind::{
 };
 
 use coinswap::{
-    maker::{Maker, MakerBehavior},
-    taker::{Taker, TakerBehavior},
+    maker::{Maker, MakerBehavior, TaprootMaker, TaprootMakerBehavior},
+    taker::{Taker, TakerBehavior, TaprootTaker},
     utill::setup_logger,
     wallet::{Balances, RPCConfig},
 };
@@ -135,9 +135,13 @@ fn get_bitcoind_filename(os: &str, arch: &str) -> String {
 }
 
 /// Initiate the bitcoind backend.
-pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
+pub(crate) fn init_bitcoind(datadir: &std::path::Path, zmq_addr: String) -> BitcoinD {
     let mut conf = bitcoind::Conf::default();
     conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
+    let raw_tx = format!("-zmqpubrawtx={}", zmq_addr);
+    conf.args.push(&raw_tx);
+    let block_hash = format!("-zmqpubrawblock={}", zmq_addr);
+    conf.args.push(&block_hash);
     conf.staticdir = Some(datadir.join(".bitcoin"));
     log::info!(
         "🔗 bitcoind datadir: {:?}",
@@ -199,16 +203,13 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
 
 /// Generate Blocks in regtest node.
 pub(crate) fn generate_blocks(bitcoind: &BitcoinD, n: u64) {
-    let mining_address = bitcoind
-        .client
-        .get_new_address(None, None)
-        .unwrap()
-        .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
-        .unwrap();
-    bitcoind
-        .client
-        .generate_to_address(n, &mining_address)
-        .unwrap();
+    let mining_address = match bitcoind.client.get_new_address(None, None) {
+        Ok(addr) => addr
+            .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
+            .unwrap(),
+        Err(_) => return,
+    };
+    let _ = bitcoind.client.generate_to_address(n, &mining_address);
 }
 
 /// Send coins to a bitcoin address.
@@ -414,7 +415,7 @@ pub fn verify_swap_results(
             balances.regular.to_sat(),
             [
                 14499696, // Successful coinswap
-                14943035, // Recovery via timelock
+                14999142, // Recovery via timelock (abort2_case 1, 2, 3)(abort3_case 1, 2)
                 14940090, // Recovery via Hashlock
                 15000000, // No spending
             ],
@@ -426,7 +427,8 @@ pub fn verify_swap_results(
             [
                 443633, // Successful coinswap
                 442714, // Recovery via timelock
-                0,      // Unsuccessful coinswap
+                0,      // Unsuccessful coinswap (abort2_case 1, 2, 3)(abort3_case 1, 2)
+                443339, // Recovery via hashlock
             ],
             "Taker swapcoin balance mismatch"
         );
@@ -450,10 +452,10 @@ pub fn verify_swap_results(
                 56671,  // Successful coinswap
                 56965,  // Recovery via timelock
                 500304, // Spent swapcoin
-                2574,   // Recovery via timelock (new fee system)
-                59910,  // Recovery via Hashlock (abort3_case3)
+                858, // Recovery via timelock (new fee system) (abort2_case 1, 2, 3)(abort3_case 1, 2)
+                59910, // Recovery via Hashlock (abort3_case3)
                 500912, // Recovery via Hashlock(abort3_case1)
-                0       // No spending
+                0    // No spending
             ],
             "Taker spendable balance change mismatch"
         );
@@ -484,7 +486,8 @@ pub fn verify_swap_results(
                 [
                     14555295, // First maker on successful coinswap
                     14533010, // Second maker on successful coinswap
-                    14999508, // No spending
+                    14999508, // No spending (abort2_case 2, 3)(abort3_case 1, 2)
+                    14998652, // Recovery via timelock (abort2_case 1, 2)(abort3_case 1, 2)
                     24999510, // Multi-taker scenario
                 ],
                 "Maker seed balance mismatch"
@@ -496,7 +499,8 @@ pub fn verify_swap_results(
                     465918, // First maker
                     499724, // Second maker
                     442712, // Taker swap amount
-                    0,      // No swap or funding tx missing
+                    465624, // One of the maker in recovery via hashlock (abort3_case3)
+                    0, // No swap or funding tx missing + recovery via timelock (abort2_case 1, 2, 3)(abort3_case 1, 2)
                 ],
                 "Maker swapcoin balance mismatch"
             );
@@ -528,13 +532,14 @@ pub fn verify_swap_results(
                 [
                     21705,  // First maker fee
                     33226,  // Second maker fee
-                    0,      // No spending
-                    2574,   // Recovery via timelock
+                    0,      // No Swap (abort2_case 1, 2, 3)(abort3_case 1, 2)
+                    858,    // Recovery via timelock (abort2_case 1, 2, 3)(abort3_case 1, 2)
                     444213, // Taker abort after setup - first maker recovery cost (abort1 test case)
                     443624, // Taker abort after setup - second maker recovery cost (abort1 test case)
                     466498, // Maker abort after setup(abort3_case3)
                     410176, // Multi-taker first maker (previous run)
                     410118, // Multi-taker first maker (current run)
+                    21411   // Recovery via hashlock (abort3_case3)
                 ],
                 "Maker spendable balance change mismatch"
             );
@@ -563,7 +568,6 @@ pub struct TestFramework {
     pub(super) bitcoind: BitcoinD,
     temp_dir: PathBuf,
     shutdown: AtomicBool,
-    tracker_shutdown: Sender<()>,
 }
 
 impl TestFramework {
@@ -585,7 +589,6 @@ impl TestFramework {
     ) -> (Arc<Self>, Vec<Taker>, Vec<Arc<Maker>>, JoinHandle<()>) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
-        let temp_dir_clone = temp_dir.clone();
         // Remove if previously existing
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
@@ -593,15 +596,17 @@ impl TestFramework {
         setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
         log::info!("📁 temporary directory : {}", temp_dir.display());
 
-        let bitcoind = init_bitcoind(&temp_dir);
+        let port_zmq = 28332 + rand::random::<u16>() % 1000;
+
+        let zmq_addr = format!("tcp://127.0.0.1:{port_zmq}");
+
+        let bitcoind = init_bitcoind(&temp_dir, zmq_addr.clone());
 
         let shutdown = AtomicBool::new(false);
-        let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
         let test_framework = Arc::new(Self {
             bitcoind,
             temp_dir: temp_dir.clone(),
             shutdown,
-            tracker_shutdown: shutdown_tx,
         });
 
         log::info!("🌐 Initiating Directory Server .....");
@@ -609,29 +614,6 @@ impl TestFramework {
         // Translate a RpcConfig from the test framework.
         // a modification of this will be used for taker and makers rpc connections.
         let rpc_config = RPCConfig::from(test_framework.as_ref());
-        let rpc_config_clone = rpc_config.clone();
-
-        std::thread::spawn(move || {
-            let tracker_rt =
-                tokio::runtime::Runtime::new().expect("Failed to create tracker runtime");
-
-            let tracker_config = tracker::Config {
-                rpc_url: rpc_config_clone.url,
-                rpc_auth: rpc_config_clone.auth,
-                address: "127.0.0.1:8080".to_string(),
-                datadir: temp_dir_clone.to_string_lossy().to_string(),
-            };
-
-            tracker_rt.block_on(async move {
-                tokio::select! {
-                    _ = tracker::start(tracker_config) => {},
-                    _ = shutdown_rx.recv() => {
-                        log::info!("Tracker received shutdown signal, shutting down gracefully");
-                    },
-                }
-            });
-        });
-
         // Create the Taker.
         let taker_rpc_config = rpc_config.clone();
         let takers = taker_behavior
@@ -645,6 +627,8 @@ impl TestFramework {
                     Some(taker_rpc_config.clone()),
                     behavior,
                     None,
+                    None,
+                    zmq_addr.clone(),
                     None,
                 )
                 .unwrap()
@@ -670,6 +654,8 @@ impl TestFramework {
                         None,
                         port.1,
                         behavior,
+                        zmq_addr.clone(),
+                        None,
                     )
                     .unwrap(),
                 )
@@ -713,6 +699,109 @@ impl TestFramework {
         }
     }
 
+    #[allow(clippy::type_complexity)]
+    pub fn init_taproot(
+        makers_config_map: Vec<(u16, Option<u16>, TaprootMakerBehavior)>,
+        taker_behavior: Vec<TakerBehavior>,
+    ) -> (
+        Arc<Self>,
+        Vec<TaprootTaker>,
+        Vec<Arc<TaprootMaker>>,
+        JoinHandle<()>,
+    ) {
+        // Setup directory
+        let temp_dir = env::temp_dir().join("coinswap");
+        // Remove if previously existing
+        if temp_dir.exists() {
+            fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
+        }
+        setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
+        log::info!("📁 temporary directory : {}", temp_dir.display());
+
+        let port_zmq = 28332 + rand::random::<u16>() % 1000;
+
+        let zmq_addr = format!("tcp://127.0.0.1:{port_zmq}");
+
+        let bitcoind = init_bitcoind(&temp_dir, zmq_addr.clone());
+
+        let shutdown = AtomicBool::new(false);
+        let test_framework = Arc::new(Self {
+            bitcoind,
+            temp_dir: temp_dir.clone(),
+            shutdown,
+        });
+
+        log::info!("🌐 Initiating Directory Server .....");
+
+        // Translate a RpcConfig from the test framework.
+        // a modification of this will be used for taker and makers rpc connections.
+        let rpc_config = RPCConfig::from(test_framework.as_ref());
+        // Create the Taker.
+        let taker_rpc_config = rpc_config.clone();
+        let takers = taker_behavior
+            .into_iter()
+            .enumerate()
+            .map(|(i, _behavior)| {
+                let taker_id = format!("taker{}", i + 1); // ex: "taker1"
+                TaprootTaker::init(
+                    Some(temp_dir.join(&taker_id)),
+                    Some(taker_id),
+                    Some(taker_rpc_config.clone()),
+                    None,
+                    None,
+                    zmq_addr.clone(),
+                    None,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mut base_rpc_port = 3500; // Random port for RPC connection in tests. (Not used)
+
+        let makers = makers_config_map // Create the Makers as per given configuration map.
+            .into_iter()
+            .map(|(network_port, socks_port, behavior)| {
+                base_rpc_port += 1;
+                let maker_id = format!("maker{}", network_port); // ex: "maker6102"
+                let maker_rpc_config = rpc_config.clone();
+                thread::sleep(Duration::from_secs(5)); // Sleep for some time avoid resource unavailable error.
+                Arc::new(
+                    TaprootMaker::init(
+                        Some(temp_dir.join(network_port.to_string())),
+                        Some(maker_id),
+                        Some(maker_rpc_config),
+                        Some(network_port),
+                        Some(base_rpc_port),
+                        None,
+                        None,
+                        socks_port,
+                        zmq_addr.clone(),
+                        None,
+                        Some(behavior),
+                    )
+                    .unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // start the block generation thread
+        log::info!("⛏️ Spawning block generation thread");
+        let tf_clone = test_framework.clone();
+        let generate_blocks_handle = thread::spawn(move || loop {
+            thread::sleep(Duration::from_secs(3));
+
+            if tf_clone.shutdown.load(Relaxed) {
+                log::info!("🔚 Ending block generation thread");
+                return;
+            }
+            // tf_clone.generate_blocks(10);
+            generate_blocks(&tf_clone.bitcoind, 10);
+        });
+
+        log::info!("✅ Test Framework initialization complete");
+
+        (test_framework, takers, makers, generate_blocks_handle)
+    }
+
     /// Stop bitcoind and clean up all test data.
     pub fn stop(&self) {
         log::info!("🛑 Stopping Test Framework");
@@ -720,7 +809,6 @@ impl TestFramework {
         self.shutdown.store(true, Relaxed);
         // stop bitcoind
         let _ = self.bitcoind.client.stop().unwrap();
-        _ = self.tracker_shutdown.send(());
     }
 }
 

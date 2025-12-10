@@ -26,7 +26,7 @@ use crate::{
         },
         Hash160,
     },
-    utill::{calculate_fee_sats, read_message, send_message_with_prefix, MIN_FEE_RATE},
+    utill::{calculate_fee_sats, read_message, send_message, MIN_FEE_RATE},
     wallet::WalletError,
 };
 use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
@@ -47,7 +47,7 @@ use crate::wallet::SwapCoin;
 /// Ensures that the Maker is alive and responding.
 // In the future, handshake can be used to find protocol compatibility across multiple versions.
 pub(crate) fn handshake_maker(socket: &mut TcpStream) -> Result<(), TakerError> {
-    send_message_with_prefix(
+    send_message(
         socket,
         &TakerToMakerMessage::TakerHello(TakerHello {
             protocol_version_min: 1,
@@ -116,7 +116,7 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
         )
         .collect::<Result<Vec<ContractTxInfoForSender>, WalletError>>()?;
 
-    send_message_with_prefix(
+    send_message(
         socket,
         &TakerToMakerMessage::ReqContractSigsForSender(ReqContractSigsForSender {
             txs_info,
@@ -194,7 +194,7 @@ pub(crate) fn req_sigs_for_recvr_once<S: SwapCoin>(
         })
         .collect::<Vec<ContractTxInfoForRecvr>>();
 
-    send_message_with_prefix(
+    send_message(
         socket,
         &TakerToMakerMessage::ReqContractSigsForRecvr(ReqContractSigsForRecvr { txs: txs_info }),
     )?;
@@ -301,7 +301,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         id: id.clone(),
     });
 
-    send_message_with_prefix(socket, &pof_msg)?;
+    send_message(socket, &pof_msg)?;
 
     // Recv ContractSigsAsRecvrAndSender.
     let msg_bytes = read_message(socket)?;
@@ -477,7 +477,7 @@ pub(crate) fn send_hash_preimage_and_get_private_keys(
         preimage: *preimage,
     });
 
-    send_message_with_prefix(socket, &hash_preimage_msg)?;
+    send_message(socket, &hash_preimage_msg)?;
 
     let msg_bytes = read_message(socket)?;
     let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
@@ -531,7 +531,7 @@ fn download_maker_offer_attempt_once(
 
     handshake_maker(&mut socket)?;
 
-    send_message_with_prefix(&mut socket, &TakerToMakerMessage::ReqGiveOffer(GiveOffer))?;
+    send_message(&mut socket, &TakerToMakerMessage::ReqGiveOffer(GiveOffer))?;
 
     let msg_bytes = read_message(&mut socket)?;
     let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
@@ -572,7 +572,7 @@ pub(crate) fn download_maker_offer(
                     log::warn!(
                         "Failed to request offer from maker {address}, with error: {e:?} reattempting {ii} of {FIRST_CONNECT_ATTEMPTS}"
                     );
-                    sleep(Duration::from_secs(FIRST_CONNECT_SLEEP_DELAY_SEC));
+                    sleep(Duration::from_millis(FIRST_CONNECT_SLEEP_DELAY_SEC));
                     continue;
                 } else {
                     log::error!(

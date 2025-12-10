@@ -8,7 +8,7 @@ use bitcoin::{
     absolute::LockTime, script::PushBytesBuf, transaction::Version, Address, Amount, OutPoint,
     ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
-use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RawTx, RpcApi};
+use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
 
 use crate::{
     utill::calculate_fee_sats,
@@ -171,7 +171,9 @@ impl Wallet {
                 }
             }
         }
-        Err(WalletError::General("Contract Does not exist".to_string()))
+        Err(WalletError::General(
+            "Timelock Contract Does not exist".to_string(),
+        ))
     }
 
     pub(crate) fn create_hashlock_spend(
@@ -198,7 +200,9 @@ impl Wallet {
                 }
             }
         }
-        Err(WalletError::General("Contract Does not exist".to_string()))
+        Err(WalletError::General(
+            "Hashlock Contract Does not exist".to_string(),
+        ))
     }
 
     /// Creates a [`Transaction`] spending given UTXOs to a [`Destination`] with fee calculated from `feerate`.
@@ -514,14 +518,13 @@ impl Wallet {
         let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
 
         log::info!(
-            "Created Funding tx, txid: {} | Size: {} vB | Fee: {} sats | Feerate: {:.2} sat/vB",
+            "Created tx, txid: {} | Size: {} vB | Fee: {} sats | Feerate: {:.2} sat/vB",
             tx.compute_txid(),
             tx_size,
             actual_fee.to_sat(),
             actual_feerate
         );
 
-        log::debug!("Signed Transaction : {:?}", tx.raw_hex());
         Ok(tx)
     }
 }

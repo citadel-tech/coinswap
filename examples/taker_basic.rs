@@ -19,17 +19,19 @@
 //! cargo run --example taker_basic
 //! ```
 
-use bitcoin::Amount;
-use bitcoind::{
-    bitcoincore_rpc::{Auth, RpcApi},
-    BitcoinD,
-};
-use coinswap::{
-    taker::{SwapParams, Taker},
-    wallet::RPCConfig,
-};
-
+#[cfg(feature = "integration-test")]
+fn main() {}
+#[cfg(not(feature = "integration-test"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use bitcoin::Amount;
+    use bitcoind::{
+        bitcoincore_rpc::{Auth, RpcApi},
+        BitcoinD,
+    };
+    use coinswap::{
+        taker::{SwapParams, Taker},
+        wallet::RPCConfig,
+    };
     println!("=== Coinswap Taker Basic Example ===");
     println!("NOTE: When prompted for encryption passphrase, press Enter for no encryption");
 
@@ -93,6 +95,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(rpc_config),                  // rpc_config
         Some(9051),                        //control port
         None,                              // tor_auth_password
+        "tcp://127.0.0.1:3321".to_string(),
+        None, // Encryption Password
     )
     .unwrap();
 

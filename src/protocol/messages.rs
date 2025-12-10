@@ -182,6 +182,8 @@ pub(crate) struct MultisigPrivkey {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PrivKeyHandover {
     pub(crate) multisig_privkeys: Vec<MultisigPrivkey>,
+    /// Unique ID to remove the connection state for a completed swap so watchtowers are not triggered.
+    pub(crate) id: String,
 }
 
 /// All messages sent from Taker to Maker.
@@ -234,23 +236,36 @@ pub(crate) struct MakerHello {
 /// Contains proof data related to fidelity bond.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FidelityProof {
-    pub(crate) bond: FidelityBond,
-    pub(crate) cert_hash: Hash,
-    pub(crate) cert_sig: bitcoin::secp256k1::ecdsa::Signature,
+    /// Details for Fidelity Bond
+    pub bond: FidelityBond,
+    /// Double SHA256 hash of certificate message proving bond ownership and binding to maker address
+    pub cert_hash: Hash,
+    /// ECDSA signature over cert_hash using the bond's private key
+    pub cert_sig: bitcoin::secp256k1::ecdsa::Signature,
 }
 
 /// Represents an offer in the context of the Coinswap protocol.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub(crate) struct Offer {
-    pub(crate) base_fee: u64,                // base fee in sats
-    pub(crate) amount_relative_fee_pct: f64, // % fee on total amount
-    pub(crate) time_relative_fee_pct: f64, // amount * refund_locktime * TRF% = fees for locking the fund.
-    pub(crate) required_confirms: u32,
-    pub(crate) minimum_locktime: u16,
-    pub(crate) max_size: u64,
-    pub(crate) min_size: u64,
-    pub(crate) tweakable_point: PublicKey,
-    pub(crate) fidelity: FidelityProof,
+pub struct Offer {
+    /// Base fee charged per swap in satoshis (fixed cost component)
+    pub base_fee: u64, // base fee in sats
+    /// Percentage fee relative to swap amount
+    pub amount_relative_fee_pct: f64, // % fee on total amount
+    /// Percentage fee for time-locked funds
+    pub time_relative_fee_pct: f64, // amount * refund_locktime * TRF% = fees for locking the fund.
+    /// Minimum confirmations required before proceeding with swap
+    pub required_confirms: u32,
+    /// Minimum timelock duration in blocks for contract transactions
+    pub minimum_locktime: u16,
+    /// Maximum swap amount accepted in sats
+    pub max_size: u64,
+    /// Minimum swap amount accepted in sats
+    pub min_size: u64,
+    /// Displayed public key of makers, for receiving swaps.
+    /// Actual swap addresses are derived from this public key using unique nonces per swap.
+    pub tweakable_point: PublicKey,
+    /// Cryptographic proof of fidelity bond for Sybil resistance
+    pub fidelity: FidelityProof,
 }
 
 /// Contract Tx signatures provided by a Sender of a Coinswap.
@@ -318,79 +333,4 @@ impl Display for MakerToTakerMessage {
             Self::RespPrivKeyHandover(_) => write!(f, "RespPrivKeyHandover"),
         }
     }
-}
-
-/// Metadata shared by the maker with the Directory Server for verifying authenticity.
-#[derive(Serialize, Deserialize, Debug)]
-#[allow(private_interfaces)]
-pub struct TrackerMetadata {
-    /// The maker's URL.
-    pub url: String,
-    /// Proof of the maker's fidelity bond funding.
-    pub proof: FidelityProof,
-}
-
-/// Tracker response
-#[derive(Serialize, Deserialize, Debug)]
-pub enum TrackerServerToClient {
-    /// Address of all makers, tracker currently have.
-    Address {
-        /// list of addresses
-        addresses: Vec<String>,
-    },
-    /// Just to let server know tracker existence and later on for indexing request.
-    Ping {
-        /// Address of tracker
-        address: String,
-        /// Port of tracker
-        port: u16,
-    },
-    /// To watch for particular utxo.
-    WatchResponse {
-        /// Set of mempool transaction with list of transaction spending it.
-        mempool_tx: Vec<MempoolTx>,
-    },
-}
-
-/// Mempool transaction
-#[derive(Serialize, Deserialize, Debug)]
-pub struct MempoolTx {
-    /// Txid of the transaction spending the utxo
-    pub txid: String,
-    /// when its seen on mempool
-    pub seen_at: chrono::NaiveDateTime,
-}
-
-/// These requests and responses are structured using Serde for serialization and deserialization.
-#[derive(Serialize, Deserialize, Debug)]
-#[allow(clippy::large_enum_variant)]
-pub enum TrackerClientToServer {
-    /// A request sent by the maker to register itself with the server and authenticate.
-    Post {
-        /// Metadata containing the maker's URL and fidelity proof.
-        metadata: TrackerMetadata,
-    },
-    /// A request sent by the taker to fetch all valid maker addresses from the Tracker server.
-    Get,
-    /// To gauge server activity
-    Pong {
-        /// Address of the current server
-        address: String,
-    },
-    /// Request tracker to track any UTXO which is spending the
-    /// UTXO
-    Watch {
-        /// Outpoint to watch
-        outpoint: bitcoin::OutPoint,
-    },
-}
-
-/// unified message as maker server can receive any
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", content = "payload")]
-pub(crate) enum MessageToMaker {
-    /// taker to maker variant
-    TakerToMaker(TakerToMakerMessage),
-    /// tracker request variant
-    TrackerMessage(TrackerServerToClient),
 }

@@ -7,10 +7,12 @@
 //!
 use std::{
     collections::{HashMap, HashSet},
+    convert::TryFrom,
     io::BufWriter,
     net::TcpStream,
     path::PathBuf,
-    thread::sleep,
+    sync::mpsc,
+    thread::{self, sleep},
     time::{Duration, Instant},
 };
 
@@ -49,17 +51,24 @@ use crate::{
     taker::{config::TakerConfig, offers::OfferBook},
     utill::*,
     wallet::{
+        ffi::{MakerFeeInfo, SwapReport},
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
         WatchOnlySwapCoin,
     },
+    watch_tower::{
+        registry_storage::FileRegistry,
+        rpc_backend::BitcoinRpc,
+        service::WatchService,
+        watcher::{Role, Watcher, WatcherEvent},
+        zmq_backend::ZmqBackend,
+    },
 };
 
-use crate::taker::offers::fetch_addresses_from_tracker;
 // Default values for Taker configurations
 pub(crate) const REFUND_LOCKTIME: u16 = 20;
 pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
-pub(crate) const FIRST_CONNECT_ATTEMPTS: u32 = 5;
-pub(crate) const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1;
+pub(crate) const FIRST_CONNECT_ATTEMPTS: u32 = 2;
+pub(crate) const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 500;
 pub(crate) const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 30;
 
 // Tries reconnection by variable delay.
@@ -162,6 +171,7 @@ pub struct Taker {
     #[cfg(feature = "integration-test")]
     behavior: TakerBehavior,
     data_dir: PathBuf,
+    watch_service: WatchService,
 }
 
 impl Drop for Taker {
@@ -170,12 +180,14 @@ impl Drop for Taker {
         self.offerbook
             .write_to_disk(&self.data_dir.join("offerbook.json"))
             .unwrap();
+        self.watch_service.shutdown();
         log::info!("offerbook data saved to disk.");
         self.wallet.save_to_disk().unwrap();
         log::info!("Wallet data saved to disk.");
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 impl Taker {
     // ######## MAIN PUBLIC INTERFACE ############
 
@@ -199,6 +211,8 @@ impl Taker {
         #[cfg(feature = "integration-test")] behavior: TakerBehavior,
         control_port: Option<u16>,
         tor_auth_password: Option<String>,
+        zmq_addr: String,
+        password: Option<String>,
     ) -> Result<Taker, TakerError> {
         // Get provided data directory or the default data directory.
         let data_dir = data_dir.unwrap_or(get_taker_dir());
@@ -211,7 +225,24 @@ impl Taker {
         let mut rpc_config = rpc_config.unwrap_or_default();
         rpc_config.wallet_name = wallet_file_name;
 
-        let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config)?;
+        let backend = ZmqBackend::new(&zmq_addr);
+        let rpc_backend = BitcoinRpc::new(rpc_config.clone())?;
+        let blockchain_info = rpc_backend.get_blockchain_info()?;
+        let file_registry = data_dir
+            .join(".taker_watcher")
+            .join(blockchain_info.chain.to_string());
+        let registry = FileRegistry::load(file_registry);
+        let (tx_requests, rx_requests) = mpsc::channel();
+        let (tx_events, rx_responses) = mpsc::channel();
+
+        let mut watcher = Watcher::<Taker>::new(backend, registry, rx_requests, tx_events);
+        _ = thread::Builder::new()
+            .name("Watcher thread".to_string())
+            .spawn(move || watcher.run(rpc_backend));
+
+        let watch_service = WatchService::new(tx_requests, rx_responses);
+
+        let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config, password)?;
 
         // If config file doesn't exist, default config will be loaded.
         let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
@@ -265,6 +296,7 @@ impl Taker {
             #[cfg(feature = "integration-test")]
             behavior,
             data_dir,
+            watch_service,
         })
     }
 
@@ -313,7 +345,10 @@ impl Taker {
     }
 
     ///  Does the coinswap process
-    pub fn do_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
+    pub fn do_coinswap(
+        &mut self,
+        swap_params: SwapParams,
+    ) -> Result<Option<SwapReport>, TakerError> {
         self.send_coinswap(swap_params)
     }
 
@@ -326,7 +361,10 @@ impl Taker {
     /// by executing the contract txs. If that fails too for any reason, user should manually call the [Taker::recover_from_swap].
     ///
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
-    pub(crate) fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
+    pub(crate) fn send_coinswap(
+        &mut self,
+        swap_params: SwapParams,
+    ) -> Result<Option<SwapReport>, TakerError> {
         let swap_start_time = std::time::Instant::now();
         let initial_utxoset = self.wallet.list_all_utxo();
         self.ongoing_swap_state.swap_params = swap_params.clone();
@@ -442,7 +480,7 @@ impl Taker {
                         log::error!("Could not initiate next hop. Error : {e:?}");
                         log::warn!("Starting recovery from existing swap");
                         self.recover_from_swap()?;
-                        return Ok(());
+                        return Ok(None);
                     }
                 };
 
@@ -462,7 +500,7 @@ impl Taker {
                         self.offerbook.add_bad_maker(bad_maker);
                     }
                     self.recover_from_swap()?;
-                    return Ok(());
+                    return Ok(None);
                 }
             }
 
@@ -478,7 +516,7 @@ impl Taker {
                         log::error!("Incoming SwapCoin Generation failed : {e:?}");
                         log::warn!("Starting recovery from existing swap");
                         self.recover_from_swap()?;
-                        return Ok(());
+                        return Ok(None);
                     }
                 }
             }
@@ -488,13 +526,13 @@ impl Taker {
         {
             if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
                 log::error!("Dropping Swap Process after full setup");
-                return Ok(());
+                return Ok(None);
             }
 
             if self.behavior == TakerBehavior::BroadcastContractAfterFullSetup {
                 log::error!("Special Behavior BroadcastContractAfterFullSetup");
                 self.recover_from_swap()?;
-                return Ok(());
+                return Ok(None);
             }
         }
 
@@ -518,28 +556,32 @@ impl Taker {
 
                 // Generate post-swap report
                 self.wallet.sync_and_save()?;
-                self.print_swap_report(prereset_swapstate, swap_start_time, initial_utxoset)?;
+                let swap_report = Some(self.generate_swap_report(
+                    prereset_swapstate,
+                    swap_start_time,
+                    initial_utxoset,
+                )?);
+                log::info!("Successfully Completed Coinswap.");
+                Ok(swap_report)
             }
             Err(e) => {
                 log::error!("Swap Settlement Failed : {e:?}");
                 log::warn!("Starting recovery from existing swap");
                 self.recover_from_swap()?;
-                return Ok(());
+                Ok(None)
             }
         }
-        log::info!("Successfully Completed Coinswap.");
-        Ok(())
     }
 
-    fn print_swap_report(
+    fn generate_swap_report(
         &self,
         prereset_swapstate: &OngoingSwapState,
         start_time: std::time::Instant,
         initial_utxos: Vec<ListUnspentResultEntry>,
-    ) -> Result<(), TakerError> {
+    ) -> Result<SwapReport, TakerError> {
         let swap_state = &prereset_swapstate;
 
-        let mut target_amount = swap_state.swap_params.send_amount.to_sat();
+        let target_amount = swap_state.swap_params.send_amount.to_sat();
         let swap_duration = start_time.elapsed();
 
         let all_regular_utxo = self
@@ -578,7 +620,6 @@ impl Taker {
             .map(|utxo| utxo.amount.to_sat())
             .collect::<Vec<u64>>();
 
-        // Present in current set but not in initial regular set (created)
         let output_regular_utxos = all_regular_utxo
             .iter()
             .filter(|utxo| {
@@ -588,17 +629,50 @@ impl Taker {
                 };
                 !initial_outpoints.contains(&final_outpoint)
             })
+            .collect::<Vec<_>>();
+
+        // Present in current set but not in initial regular set (created)
+        let output_change_amounts = output_regular_utxos
+            .iter()
             .map(|utxo| utxo.amount.to_sat())
             .collect::<Vec<u64>>();
+
+        let network = self.wallet.store.network;
 
         let output_swap_utxos = self
             .wallet
             .list_swept_incoming_swap_utxos()
             .into_iter()
-            .map(|(utxo, _)| utxo.amount.to_sat())
+            .map(|(utxo, _)| {
+                let address = utxo
+                    .address
+                    .as_ref()
+                    .and_then(|addr| addr.clone().require_network(network).ok())
+                    .map(|addr| addr.to_string())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                (utxo.amount.to_sat(), address)
+            })
+            .collect::<Vec<(u64, String)>>();
+
+        let output_swap_amounts = output_swap_utxos
+            .iter()
+            .map(|(amount, _)| *amount)
             .collect::<Vec<u64>>();
 
-        let output_utxos = [output_regular_utxos.clone(), output_swap_utxos.clone()].concat();
+        let output_change_utxos = output_regular_utxos
+            .iter()
+            .map(|utxo| {
+                let address = utxo
+                    .address
+                    .as_ref()
+                    .and_then(|addr| addr.clone().require_network(network).ok())
+                    .map(|addr| addr.to_string())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                (utxo.amount.to_sat(), address)
+            })
+            .collect::<Vec<(u64, String)>>();
+
+        let output_utxos = [output_change_amounts.clone(), output_swap_amounts.clone()].concat();
 
         let total_input_amount = input_utxos.iter().sum::<u64>();
         let total_output_amount = output_utxos.iter().sum::<u64>();
@@ -667,6 +741,10 @@ impl Taker {
         let total_fee = total_input_amount - total_output_amount;
         println!("\x1b[1;37mTotal Fees        :\x1b[0m \x1b[1;31m{total_fee} sats\x1b[0m",);
 
+        // Collect maker fee information
+        let mut maker_fee_info = Vec::new();
+        let mut temp_target_amount = swap_state.swap_params.send_amount.to_sat();
+
         let total_maker_fees = (0..swap_state.swap_params.maker_count)
             .map(|maker_index| {
                 let maker_refund_locktime = REFUND_LOCKTIME
@@ -678,14 +756,14 @@ impl Taker {
                     .peer
                     .offer
                     .amount_relative_fee_pct
-                    * target_amount as f64)
+                    * temp_target_amount as f64)
                     / 1_00.00;
                 let time_rel_fee = (swap_state.peer_infos[maker_index]
                     .peer
                     .offer
                     .time_relative_fee_pct
                     * maker_refund_locktime as f64
-                    * target_amount as f64)
+                    * temp_target_amount as f64)
                     / 1_00.00;
 
                 println!("\n\x1b[1;33mMaker {}:\x1b[0m", maker_index + 1);
@@ -693,14 +771,27 @@ impl Taker {
                 println!("    Amount Relative Fee  : {amount_rel_fee:.2}");
                 println!("    Time Relative Fee    : {time_rel_fee:.2}");
 
-                target_amount -= (base_fee + amount_rel_fee + time_rel_fee) as u64;
-                base_fee + amount_rel_fee + time_rel_fee
+                let total_maker_fee = base_fee + amount_rel_fee + time_rel_fee;
+
+                // Store maker fee info
+                maker_fee_info.push(MakerFeeInfo {
+                    maker_index,
+                    maker_address: swap_state.peer_infos[maker_index].peer.address.to_string(),
+                    base_fee,
+                    amount_relative_fee: amount_rel_fee,
+                    time_relative_fee: time_rel_fee,
+                    total_fee: total_maker_fee,
+                });
+
+                temp_target_amount -= total_maker_fee as u64;
+                total_maker_fee
             })
             .sum::<f64>() as u64;
 
         let mining_fee = total_fee - total_maker_fees;
         println!("\n\x1b[1;37mMining Fees       :\x1b[0m \x1b[36m{mining_fee} sats\x1b[0m",);
-        let fee_percentage = (total_fee as f64 / target_amount as f64) * 100.0;
+        let fee_percentage =
+            (total_fee as f64 / swap_state.swap_params.send_amount.to_sat() as f64) * 100.0;
         println!("\x1b[1;37mTotal Fee Rate    :\x1b[0m \x1b[1;31m{fee_percentage:.2} %\x1b[0m",);
 
         println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
@@ -708,14 +799,55 @@ impl Taker {
         println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
         println!("\x1b[1;37mInput UTXOs:\x1b[0m {input_utxos:?}");
         println!("\x1b[1;37mOutput UTXOs:\x1b[0m");
-        println!("  Seed / Regular : {output_regular_utxos:?}");
+        println!("  Seed / Regular : {output_change_utxos:?}");
         println!("  Swap Coins     : {output_swap_utxos:?}");
 
         println!("\n\x1b[1;36m════════════════════════════════════════════════════════════════════════════════");
         println!("                                END REPORT");
         println!("════════════════════════════════════════════════════════════════════════════════\x1b[0m\n");
 
-        Ok(())
+        // Collect maker addresses
+        let maker_addresses = swap_state
+            .peer_infos
+            .iter()
+            .take(swap_state.swap_params.maker_count)
+            .map(|peer_info| peer_info.peer.address.to_string())
+            .collect::<Vec<_>>();
+
+        // Collect funding txids by hop
+        let funding_txids_by_hop = swap_state
+            .funding_txs
+            .iter()
+            .map(|(txs, _)| {
+                txs.iter()
+                    .map(|tx| tx.compute_txid().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let report = SwapReport {
+            swap_id: swap_state.id.clone(),
+            swap_duration_seconds: swap_duration.as_secs_f64(),
+            target_amount: swap_state.swap_params.send_amount.to_sat(),
+            total_input_amount,
+            total_output_amount,
+            makers_count: swap_state.swap_params.maker_count,
+            maker_addresses,
+            total_funding_txs,
+            funding_txids_by_hop,
+            total_fee,
+            total_maker_fees,
+            mining_fee,
+            fee_percentage,
+            maker_fee_info,
+            input_utxos,
+            output_change_amounts,
+            output_swap_amounts,
+            output_swap_utxos,
+            output_change_utxos,
+        };
+
+        Ok(report)
     }
 
     // ######## PROTOCOL SUBROUTINES ############
@@ -827,7 +959,6 @@ impl Taker {
                 self.ongoing_swap_state.funding_txs.push(stuffs);
             }
             Err(e) => {
-                log::error!("Error: {e:?}");
                 if let TakerError::ContractsBroadcasted(_) = e {
                     self.offerbook.add_bad_maker(&maker);
                 }
@@ -1367,7 +1498,7 @@ impl Taker {
             this_maker.address
         );
         let id = self.ongoing_swap_state.id.clone();
-        send_message_with_prefix(
+        send_message(
             &mut socket,
             &TakerToMakerMessage::RespContractSigsForRecvrAndSender(
                 ContractSigsForRecvrAndSender {
@@ -1943,10 +2074,11 @@ impl Taker {
             ret
         })?;
         log::info!("===> PrivateKeyHandover | {maker_address}");
-        send_message_with_prefix(
+        send_message(
             &mut socket,
             &TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {
                 multisig_privkeys: privkeys_reply,
+                id: self.ongoing_swap_state.id.clone(),
             }),
         )?;
         Ok(())
@@ -2005,6 +2137,14 @@ impl Taker {
                 .find_incoming_swapcoin_mut(&incoming_swapcoin.get_multisig_redeemscript())
                 .expect("Incoming swapcoin expeted")
                 .other_privkey = incoming_swapcoin.other_privkey;
+            let contract_txid = incoming_swapcoin.contract_tx.compute_txid();
+            for (vout, _) in incoming_swapcoin.contract_tx.output.iter().enumerate() {
+                let outpoint = OutPoint {
+                    txid: contract_txid,
+                    vout: vout as u32,
+                };
+                self.watch_service.unwatch(outpoint);
+            }
         }
 
         // Mark outgoing swapcoins as done.
@@ -2013,6 +2153,14 @@ impl Taker {
                 .find_outgoing_swapcoin_mut(&outgoing_swapcoins.get_multisig_redeemscript())
                 .expect("Outgoing swapcoin expected")
                 .hash_preimage = Some(self.ongoing_swap_state.active_preimage);
+            let contract_txid = outgoing_swapcoins.contract_tx.compute_txid();
+            for (vout, _) in outgoing_swapcoins.contract_tx.output.iter().enumerate() {
+                let outpoint = OutPoint {
+                    txid: contract_txid,
+                    vout: vout as u32,
+                };
+                self.watch_service.unwatch(outpoint);
+            }
         }
 
         self.wallet.sync_no_fail();
@@ -2061,21 +2209,21 @@ impl Taker {
     pub fn recover_from_swap(&mut self) -> Result<(), TakerError> {
         let (incomings, outgoings) = self.wallet.find_unfinished_swapcoins();
 
-        //If contract are already established then directly broadcast and spend from hashlock contract else loop for timelock maturity,and spend from the timelock contract instead.
-        if !self.ongoing_swap_state.active_preimage.is_empty() {
-            let incoming_infos = self
-                .get_wallet_mut()
-                .broadcast_incoming_contracts(incomings)?;
-
+        // First try to spend the hashlock contracts.
+        // If fails, then try to spend the timelock contracts.
+        if let Ok(incoming_infos) = self
+            .get_wallet_mut()
+            .broadcast_incoming_contracts(incomings)
+        {
+            log::info!(
+                "Incoming swapcoins are unspent. Trying to recover the incoming swapcoins first."
+            );
             // Start the loop to keep checking for the hashlock contract to broadcast and spend from the contract asap.
             loop {
-                if incoming_infos.is_empty() {
-                    break;
-                }
-
                 //spend from the hashlock contract.
-                let hashlock_broadcasted =
-                    self.wallet.spend_from_hashlock_contract(&incoming_infos)?;
+                let hashlock_broadcasted = self
+                    .wallet
+                    .spend_from_hashlock_contract(&incoming_infos, &self.watch_service)?;
 
                 // If Everything is broadcasted i.e. [`spend_from_hashlock_contract`] works fine,then clear the connectionstate and break the loop
                 log::info!(
@@ -2088,15 +2236,12 @@ impl Taker {
                     self.clear_ongoing_swaps();
                     break;
                 }
-                // Block wait time is varied between prod. and test builds.
-                let block_wait_time = if cfg!(feature = "integration-test") {
-                    Duration::from_secs(10)
-                } else {
-                    Duration::from_secs(10 * 60)
-                };
-                std::thread::sleep(block_wait_time);
+                std::thread::sleep(BLOCK_DELAY);
             }
         } else {
+            log::info!(
+                "Incoming swapcoins are already spent or empty. Trying to recover the outgoing swapcoins."
+            );
             let outgoing_infos = self
                 .get_wallet_mut()
                 .broadcast_outgoing_contracts(outgoings)?;
@@ -2108,8 +2253,9 @@ impl Taker {
                 if outgoing_infos.is_empty() {
                     break;
                 }
-                let timelock_broadcasted =
-                    self.wallet.spend_from_timelock_contract(&outgoing_infos)?;
+                let timelock_broadcasted = self
+                    .wallet
+                    .spend_from_timelock_contract(&outgoing_infos, &self.watch_service)?;
 
                 // Everything is broadcasted. Clear the connectionstate and break the loop
                 log::info!(
@@ -2138,27 +2284,18 @@ impl Taker {
 
     /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
     pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        let tracker_addr = if cfg!(feature = "integration-test") {
-            format!("127.0.0.1:{}", 8080)
-        } else {
-            self.config.tracker_address.clone()
+        self.watch_service.request_maker_address();
+        let watcher_event = self.watch_service.wait_for_event();
+
+        let Some(WatcherEvent::MakerAddresses { maker_addresses }) = watcher_event else {
+            return Err(TakerError::General("No response from watcher".to_string()));
         };
 
-        #[cfg(not(feature = "integration-test"))]
-        let socks_port = Some(self.config.socks_port);
-
-        #[cfg(feature = "integration-test")]
-        let socks_port = None;
-
-        log::info!("Fetching addresses from Tracker: {tracker_addr}");
-
-        let addresses_from_tracker = match fetch_addresses_from_tracker(socks_port, tracker_addr) {
-            Ok(tracker_addrs) => tracker_addrs,
-            Err(e) => {
-                log::error!("Could not connect to Tracker Server: {e:?}");
-                return Err(e);
-            }
-        };
+        let maker_addresses = maker_addresses
+            .into_iter()
+            .map(MakerAddress::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         // Find out addresses that was last updated 30 mins ago.
         let fresh_addrs = self
@@ -2169,7 +2306,7 @@ impl Taker {
             .collect::<HashSet<_>>();
 
         // Fetch only those addresses which are new, or last updated more than 30 mins ago
-        let addrs_to_fetch = addresses_from_tracker
+        let addrs_to_fetch = maker_addresses
             .iter()
             .filter(|tracker_addr| !fresh_addrs.contains(tracker_addr))
             .cloned()
@@ -2234,7 +2371,7 @@ impl Taker {
 
         socket.set_write_timeout(Some(reconnect_timeout))?;
 
-        send_message_with_prefix(&mut socket, &msg)?;
+        send_message(&mut socket, &msg)?;
         log::info!("===> {msg} | {maker_addr}");
 
         Ok(())
@@ -2302,4 +2439,8 @@ impl Taker {
             .cloned()
             .collect()
     }
+}
+
+impl Role for Taker {
+    const RUN_DISCOVERY: bool = true;
 }

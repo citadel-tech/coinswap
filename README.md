@@ -18,43 +18,76 @@
   </p>
 </div>
 
-### ⚠️ Important
-Coinswap v0.1.0 marketplace is now live on Custom Signet. [Check it out here](http://a4ovtjlwiclzy37bjaurcbb6wpl6dtckmlqwrywq7uoajeaz6kth4uyd.onion/) (Tor Browser required).
+## 🚨 Announcements
+ - **Coinswap Protocol V2 with Taproot-Musig2 is NOW LIVE!** : [See Specifications](https://github.com/citadel-tech/Coinswap-Protocol-Specification/tree/main/v2)
+  
+ - **Public Coinswap Marketplace Available On** [Mutinynet](https://github.com/benthecarman/bitcoin/tree/mutinynet-inq-29).
+   - **Block Explorer:** [Mutinynet's mempool.space](https://mutinynet.com/mining)
+   - **Faucet:** [Mutinynet's Facuet](https://faucet.mutinynet.com/)
 
-A Block Explorer is available to check signet blocks and transactions. [Check it out here](http://xlrj7ilheypw67premos73gxlcl7ha77kbhrqys7mydp7jve25olsxyd.onion/)
+- **GUI Coinswap Client available for testing**: [Taker App](https://github.com/citadel-tech/taker-app)
 
-A Faucet is available for getting test coins for the custom signet. [Check it out here](http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/)
+- **One-Click Deployment for Coinswap maker server available here**: [Coinswap Docker](./docs/docker.md)  
 
-### ⚠️ Warning
-This library is currently under beta development and is in an experimental stage. There are known and unknown bugs. **Mainnet use is strictly NOT recommended.** 
+## ⚠️ Warning
+This library is currently under development and is in an experimental stage. **Mainnet use is NOT recommended.**
 
 # About
 
-Coinswap is a decentralized [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol that enables trustless swaps of Bitcoin UTXOs through a decentralized, Sybil-resistant marketplace.
+Coinswap is an [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol that allows trustless atomic-swaps through a decentralized, sybil-resistant marketplace.
 
-Existing atomic swap solutions are centralized, rely on large swap servers, and have service providers as single points of failure for censorship and privacy attacks. This project implements atomic swaps via a decentralized market-based protocol.
+Existing swap solutions are centralized, rely on large swap servers, and have service providers as [single points of failure](https://en.wikipedia.org/wiki/Single_point_of_failure). This project aims at providing a completely trustless, self-custodial, and decentralized atomic-swap protocol, via a marketplace seeded in the Bitcoin blockchain itself. The protocol uses [Fidelity Bonds](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md) to both attain sybil-resistance as well as seeding the marketplace using bitcoin transactions, enhancing censorship-resistance massively. The market doesn't need to be hosted on any particular server. Anyone with a bitcoin node can participate in the market.
 
-The project builds on Chris Belcher's [teleport-transactions](https://github.com/bitcoin-teleport/teleport-transactions) and has significantly matured with complete protocol handling, functional testing, Sybil resistance, and command-line applications.
+The market consists of two actors: the `Makers` and the `Takers`. The `Makers` are *swap service providers*. They earn fees from swaps for providing liquidity. Individual makers can adjust their own fee rates, and open-market competition will ensure fee pressure is kept at the lowest. Individual makers can advertise for better reliability by putting in larger fidelity bonds to attract more swaps from the market.
 
-Anyone can become a swap service provider (**Maker**) by running `makerd` to earn fees. **Takers** use the `taker` app to swap with multiple makers, routing through various makers for privacy. The system uses a *smart-client-dumb-server* philosophy with minimal server requirements, allowing any home node operator to run a maker.
+The `Takers` are the clients, looking for swap services. The takers pay for all the fees, including both mining fees and maker swap fees. The takers don't need fidelity bonds to participate in the market. Takers choose the makers from the market based on their valid fidelity, available liquidity, offered fee rates, and past memory of successful swaps.
 
-The protocol employs [fidelity bonds](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md) for Sybil and DoS resistance. Takers coordinate swaps and handle recovery; makers respond to queries. All communication occurs over Tor.
+Anyone can become a taker or a maker or both. They only need a running bitcoin full node with [specific configurations](/docs/demo.md#create-configuration-file) and enough liquidity to put for the swaps. Running the maker servers is a lucrative way for node-runners to put their nodes to work and earn sats. Unlike lightning nodes, the swap servers do not require active management. It works in an *install-fund-forget* mode, making it much simpler to run it in headless full node systems, like Umbrel, Start9, Mynode, etc. Although the liquidity for fidelity bonds and swap services has to be kept in the node's hot wallet.
 
-For technical details, see the [Coinswap Protocol Specification](https://github.com/citadel-tech/Coinswap-Protocol-Specification).
+Similar to lightning, the swaps can be routed through multiple makers. No single maker in a swap route knows about other makers involved in the route. During a swap, the taker coordinates all messages between makers, reducing the visibility of each individual maker on the complete swap route. All communication occurs over Tor. The taker acts as a relay between makers, and the makers act as just a dumb server, responding to taker queries, providing liquidity, and earning fees. All protocol-level complexities are handled at the client side by the takers. This design allows keeping the maker servers very lightweight, which can be run on any consumer-grade hardware.
+
+The project builds on Chris Belcher's proof-of-concept of [teleport-transactions](https://github.com/bitcoin-teleport/teleport-transactions) and has matured with complete protocol handling, functional testing, sybil resistance, command-line applications, and GUI Apps.
+
+The same protocol can also be extended to support other coins, creating an open decentralized cross-chain swap marketplace.
+
+For all protocol-level details, see the [Coinswap Protocol Specifications](https://github.com/citadel-tech/Coinswap-Protocol-Specification).
+
+# Components
+
+## Crate Binaries
+The crate compiles into following binaries.
+
+**`makerd`**: Coinswap maker server daemon for swap providers. Requires continuous uptime and Bitcoin Core RPC connection. [Demo](./docs/makerd.md)
+
+**`maker-cli`**: RPC controller for the `makerd`. Manage server, access wallet, view swap statistics. [Demo](./docs/maker-cli.md)
+
+**`taker`**: A command-line client to perform Coinswaps. [Demo](./docs/taker.md)
+
+## Dockers
+
+**Coinswap Docker**: A complete coinswap stack with pre configured, bitcoind, tor, makred, maker-cli and taker apps. Useful for one-click-setup. [See the guide](./docs/docker.md) 
+
+## Apps
+**`taker-app(beta)`**: a GUI swap client to perform Coinswaps. [Build from source](https://github.com/citadel-tech/taker-app) 
 
 # Setup & Installation
 
 ## Dependencies
 
+Following dependencies are needed to compile the crate.
+
 ```shell
 sudo apt install build-essential automake libtool
 ```
+To run all the coinswap apps the two more systems are needed.
 
-**Tor Installation**: Required for all operations. Download from torproject.org for your OS. Bitcoin Core automatically detects Tor and creates anonymous services. See the [Tor guide](./docs/tor.md) for configuration details.
+**Bitcoin**: A fully synced bitcoin node with required configurations. Follow the [bitcoind setup guide](./docs/bitcoind.md) for full details.
 
-**Bitcoin Core**: Requires fully synced, non-pruned node with RPC access on Custom Signet with `-txindex` enabled. Follow the [bitcoind setup guide](./docs/bitcoind.md).
+**Tor**: Tor is Required for all network communications. Download from torproject.org for your OS. Bitcoin Core automatically detects Tor and creates anonymous services. See the [Tor guide](./docs/tor.md) for configuration details.
 
 ## Build and Install
+
+### Option 1: Build from Source
 
 ```console
 git clone https://github.com/citadel-tech/coinswap.git
@@ -70,7 +103,24 @@ sudo install ./target/release/makerd /usr/local/bin/
 sudo install ./target/release/maker-cli /usr/local/bin/  
 ```
 
+### Option 2: Using Docker
+
+We provide a helper script to easily configure, build, and run the Coinswap stack (including Bitcoin Core and Tor).
+
+```console
+git clone https://github.com/citadel-tech/coinswap.git
+cd coinswap
+
+# Configure, build, and start
+./docker-setup configure
+./docker-setup start
+```
+
+For advanced usage, manual commands, and architecture details, refer to the [Docker Documentation](./docs/docker.md).
+
 ## Verify Setup
+
+### Native Installation
 
 ```console
 makerd --help
@@ -81,17 +131,16 @@ taker --help
 taker fetch-offers
 ```
 
-# Applications
+### Docker Installation
 
-**`makerd`**: Server daemon for swap providers. Requires continuous uptime and Bitcoin Core RPC connection. [Demo](./docs/makerd.md)
+```console
+# Check binaries
+./docker-setup taker --help
+./docker-setup maker-cli --help
 
-**`maker-cli`**: RPC controller for `makerd`. Manage server, access wallet, view swap statistics. [Demo](./docs/maker-cli.md)
-
-**`taker`**: Swap client acting as a Bitcoin wallet with swap capability. [Demo](./docs/taker.md)
-
-### ❗ Important
-
-Always stop `makerd` with `maker-cli stop` to ensure wallet data integrity. Avoid using `ctrl+c`.
+# Test connection to market
+./docker-setup taker fetch-offers
+```
 
 # Development
 

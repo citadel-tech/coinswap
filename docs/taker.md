@@ -159,7 +159,7 @@ bcrt1qyywgd4we5y7u05lnrgs8runc3j7sspwqhekrdd
 
 This returns a new Bitcoin receiving address from the taker's wallet.
 
-Now we can use the signet faucet to send some coins to this address. Use [this faucet](http://a4ovtjlwiclzy37bjaurcbb6wpl6dtckmlqwrywq7uoajeaz6kth4uyd.onion/)(open in Tor browser) to get some signet coins.
+Now we can use the signet faucet to send some coins to this address. Use [this faucet](http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/)(open in Tor browser) to get some signet coins.
 
 ### Check Wallet Balances
 

@@ -37,9 +37,6 @@ fn test_abort_case_2_recover_if_no_makers_found() {
     warn!(
         "Running test: Maker {naughty} Closes before sending sender's sigs. Taker recovers. Or Swap cancels"
     );
-    warn!(
-        "Running test: Maker {naughty} Closes before sending sender's sigs. Taker recovers. Or Swap cancels"
-    );
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
@@ -110,10 +107,7 @@ fn test_abort_case_2_recover_if_no_makers_found() {
         manually_selected_outpoints: None,
     };
 
-    if let Err(e) = taker.do_coinswap(swap_params) {
-        assert_eq!(format!("{e:?}"), "NotEnoughMakersInOfferBook".to_string());
-        info!("❌ Coinswap failed because the first maker rejected for signature");
-    }
+    taker.do_coinswap(swap_params).unwrap();
 
     // After Swap is done, wait for maker threads to conclude.
     makers

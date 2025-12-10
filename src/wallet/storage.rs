@@ -3,7 +3,7 @@
 //! Wallet data is currently written in unencrypted CBOR files which are not directly human readable.
 
 use crate::{
-    security::{encrypt_struct, load_sensitive_struct_interactive, KeyMaterial, SerdeCbor},
+    security::{encrypt_struct, load_sensitive_struct_from_value, KeyMaterial, SerdeCbor},
     wallet::UTXOSpendInfo,
 };
 
@@ -18,7 +18,10 @@ use std::{
     path::Path,
 };
 
-use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin};
+use super::{
+    swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
+    swapcoin2::{IncomingSwapCoinV2, OutgoingSwapCoinV2},
+};
 
 use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 
@@ -39,11 +42,18 @@ pub(crate) struct WalletStore {
     pub(super) incoming_swapcoins: HashMap<ScriptBuf, IncomingSwapCoin>,
     /// Map of multisig redeemscript to outgoing swapcoins.
     pub(super) outgoing_swapcoins: HashMap<ScriptBuf, OutgoingSwapCoin>,
+    /// Map of taproot contract txid to incoming taproot swapcoins.
+    pub(super) incoming_swapcoins_v2: HashMap<bitcoin::Txid, IncomingSwapCoinV2>,
+    /// Map of taproot contract txid to outgoing taproot swapcoins.
+    pub(super) outgoing_swapcoins_v2: HashMap<bitcoin::Txid, OutgoingSwapCoinV2>,
     /// Map of prevout to contract redeemscript.
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
     /// Map of swept incoming swap coins to prevent mixing with regular UTXOs
     /// Key: ScriptPubKey of swept UTXO, Value: Original multisig redeemscript
-    pub(super) swept_incoming_swapcoins: HashMap<ScriptBuf, ScriptBuf>,
+    pub(crate) swept_incoming_swapcoins: HashMap<ScriptBuf, ScriptBuf>,
+    /// Map of swept incoming taproot swap coins (V2) to track swap balance
+    /// Key: ScriptPubKey of swept UTXO, Value: Original contract txid
+    pub(super) swept_incoming_swapcoins_v2: HashMap<ScriptBuf, bitcoin::Txid>,
     /// Map for all the fidelity bond information.
     pub(crate) fidelity_bond: HashMap<u32, FidelityBond>,
     pub(super) last_synced_height: Option<u64>,
@@ -73,8 +83,11 @@ impl WalletStore {
             offer_maxsize: 0,
             incoming_swapcoins: HashMap::new(),
             outgoing_swapcoins: HashMap::new(),
+            incoming_swapcoins_v2: HashMap::new(),
+            outgoing_swapcoins_v2: HashMap::new(),
             prevout_to_contract_map: HashMap::new(),
             swept_incoming_swapcoins: HashMap::new(),
+            swept_incoming_swapcoins_v2: HashMap::new(),
             fidelity_bond: HashMap::new(),
             last_synced_height: None,
             wallet_birthday,
@@ -97,7 +110,10 @@ impl WalletStore {
         path: &Path,
         store_enc_material: &Option<KeyMaterial>,
     ) -> Result<(), WalletError> {
-        let wallet_file = fs::OpenOptions::new().write(true).open(path)?;
+        let wallet_file = fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(path)?;
         let writer = BufWriter::new(wallet_file);
 
         match store_enc_material {
@@ -120,9 +136,12 @@ impl WalletStore {
     /// Reads from a path (errors if path doesn't exist).
     /// If `store_enc_material` is provided, attempts to decrypt the file using the
     /// provided key. Returns the deserialized `WalletStore` and the nonce.
-    pub(crate) fn read_from_disk(path: &Path) -> Result<(Self, Option<KeyMaterial>), WalletError> {
+    pub(crate) fn read_from_disk(
+        backup_file_path: &Path,
+        password: String,
+    ) -> Result<(Self, Option<KeyMaterial>), WalletError> {
         let (wallet_store, store_enc_material) =
-            load_sensitive_struct_interactive::<Self, SerdeCbor>(path);
+            load_sensitive_struct_from_value::<Self, SerdeCbor>(backup_file_path, password);
 
         Ok((wallet_store, store_enc_material))
     }
@@ -158,7 +177,7 @@ mod tests {
             .write_to_disk(&file_path, &None)
             .unwrap();
 
-        let (read_wallet, _nonce) = WalletStore::read_from_disk(&file_path).unwrap();
+        let (read_wallet, _nonce) = WalletStore::read_from_disk(&file_path, String::new()).unwrap();
         assert_eq!(original_wallet_store, read_wallet);
     }
 }

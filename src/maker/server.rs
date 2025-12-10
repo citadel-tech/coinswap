@@ -4,9 +4,7 @@
 //! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend, and RPC Client Request.
 //! The server listens at two ports: 6102 for P2P, and 6103 for RPC Client requests.
 
-use crate::protocol::messages::{
-    FidelityProof, MessageToMaker, TrackerClientToServer, TrackerServerToClient,
-};
+use crate::protocol::messages::FidelityProof;
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
 
@@ -270,23 +268,6 @@ fn check_connection_with_core(maker: &Maker) -> Result<(), MakerError> {
     Ok(())
 }
 
-fn decode_unified_message(data: &[u8]) -> Result<MessageToMaker, MakerError> {
-    let (prefix, body) = data
-        .split_first()
-        .ok_or_else(|| MakerError::General("Parsing error during decoding"))?;
-    match *prefix {
-        0x01 => {
-            let msg = serde_cbor::from_slice::<TakerToMakerMessage>(body)?;
-            Ok(MessageToMaker::TakerToMaker(msg))
-        }
-        0x02 => {
-            let msg = serde_cbor::from_slice::<TrackerServerToClient>(body)?;
-            Ok(MessageToMaker::TrackerMessage(msg))
-        }
-        _ => Err(MakerError::General("Parsing error during decoding")),
-    }
-}
-
 /// Handle a single client connection.
 fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerError> {
     stream.set_nonblocking(false)?; // Block this thread until message is read.
@@ -310,85 +291,45 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
                 }
             }
         }
+        let taker_msg = serde_cbor::from_slice::<TakerToMakerMessage>(&bytes)?;
 
-        let unified = decode_unified_message(&bytes)?;
+        log::info!("[{}] <=== {}", maker.config.network_port, taker_msg);
 
-        match unified {
-            MessageToMaker::TakerToMaker(taker_msg) => {
-                log::info!("[{}] <=== {}", maker.config.network_port, taker_msg);
+        let reply = handle_message(maker, &mut connection_state, taker_msg);
 
-                let reply = handle_message(maker, &mut connection_state, taker_msg);
-
-                match reply {
-                    Ok(reply) => {
-                        if let Some(message) = reply {
-                            log::info!("[{}] ===> {} ", maker.config.network_port, message);
-                            if let Err(e) = send_message(stream, &message) {
-                                log::error!("Closing due to IO error in sending message: {e:?}");
-                                continue;
-                            }
-                        } else {
-                            continue;
-                        }
-                    }
-                    Err(err) => {
-                        match &err {
-                            // Shutdown server if special behavior is set
-                            MakerError::SpecialBehaviour(sp) => {
-                                log::error!(
-                                    "[{}] Maker Special Behavior : {:?}",
-                                    maker.config.network_port,
-                                    sp
-                                );
-                                maker.shutdown.store(true, Relaxed);
-                            }
-                            e => {
-                                log::error!(
-                                    "[{}] Internal message handling error occurred: {:?}",
-                                    maker.config.network_port,
-                                    e
-                                );
-                            }
-                        }
-                        return Err(err);
-                    }
-                }
-            }
-            MessageToMaker::TrackerMessage(tracker_msg) => match tracker_msg {
-                TrackerServerToClient::Ping { address, port } => {
-                    log::info!(
-                        "[{}] Received a ping from tracker",
-                        maker.config.network_port,
-                    );
-                    if let Ok(mut guard) = maker.tracker.write() {
-                        if guard.is_none() {
-                            let tracker_address = format!("{address}:{port}");
-                            *guard = Some(tracker_address);
-                        }
-                    }
-                    let hostname = if cfg!(feature = "integration-test") {
-                        "127.0.0.1".to_string()
-                    } else {
-                        get_tor_hostname(
-                            maker.get_data_dir(),
-                            maker.config.control_port,
-                            maker.config.network_port,
-                            &maker.config.tor_auth_password,
-                        )?
-                    };
-                    let address = format!("{}:{}", hostname, maker.config.network_port);
-                    let response = TrackerClientToServer::Pong { address };
-                    if let Err(e) = send_message(stream, &response) {
-                        log::error!("Failed to send Pong to tracker: {e:?}. Closing connection.");
+        match reply {
+            Ok(reply) => {
+                if let Some(message) = reply {
+                    log::info!("[{}] ===> {} ", maker.config.network_port, message);
+                    if let Err(e) = send_message(stream, &message) {
+                        log::error!("Closing due to IO error in sending message: {e:?}");
                         continue;
                     }
+                } else {
+                    continue;
                 }
-                _ => {
-                    unimplemented!(
-                        "We gonna handle other messages considering tracker as the server"
-                    );
+            }
+            Err(err) => {
+                match &err {
+                    // Shutdown server if special behavior is set
+                    MakerError::SpecialBehaviour(sp) => {
+                        log::error!(
+                            "[{}] Maker Special Behavior : {:?}",
+                            maker.config.network_port,
+                            sp
+                        );
+                        maker.shutdown.store(true, Relaxed);
+                    }
+                    e => {
+                        log::error!(
+                            "[{}] Internal message handling error occurred: {:?}",
+                            maker.config.network_port,
+                            e
+                        );
+                    }
                 }
-            },
+                return Err(err);
+            }
         }
     }
 

@@ -1,6 +1,6 @@
 //! All Contract related errors.
 
-use bitcoin::{secp256k1, Amount};
+use bitcoin::Amount;
 
 /// Represents errors encountered during protocol operations.
 ///
@@ -9,7 +9,7 @@ use bitcoin::{secp256k1, Amount};
 #[derive(Debug)]
 pub enum ProtocolError {
     /// Error related to Secp256k1 cryptographic operations.
-    Secp(secp256k1::Error),
+    Secp(bitcoin::secp256k1::Error),
     /// Error in Bitcoin script handling.
     Script(bitcoin::blockdata::script::Error),
     /// Error converting from a byte slice to a hash type.
@@ -57,8 +57,24 @@ pub enum ProtocolError {
     ///
     /// The protocol only supports `V0_Segwit` transactions.
     ScriptPubkey(bitcoin::script::witness_program::Error),
+    /// Represents an error with secp256k1::scalar conversion.
+    ScalarOutOfRange(secp256k1::scalar::OutOfRangeError),
     /// General error not covered by other variants.
     General(&'static str),
+    /// Represents an error related to Secp256k1 cryptographic operations.
+    TaprootSecp(secp256k1::Error),
+    ///Repesents an error in Taproot Script handling
+    TaprootScript(bitcoin::taproot::TaprootBuilderError),
+    /// Represents an error in Building a Taproot Tree
+    TaprootBuilder(bitcoin::taproot::TaprootBuilder),
+    /// Represents an error with Tweaking a PublicKey.
+    MusigTweak(secp256k1::musig::InvalidTweakErr),
+    /// Represents an error with computing a Taproot Signature from a slice.
+    ///
+    /// Generally occuring when computing Taproot Signature from a byte array of aggregated signatures.
+    TaprootSigSlice(bitcoin::taproot::SigFromSliceError),
+    /// Error related to calculating or validating Signature hash
+    TaprootSighash(bitcoin::sighash::TaprootError),
 }
 
 impl From<bitcoin::script::witness_program::Error> for ProtocolError {
@@ -67,9 +83,15 @@ impl From<bitcoin::script::witness_program::Error> for ProtocolError {
     }
 }
 
+impl From<bitcoin::secp256k1::Error> for ProtocolError {
+    fn from(value: bitcoin::secp256k1::Error) -> Self {
+        Self::Secp(value)
+    }
+}
+
 impl From<secp256k1::Error> for ProtocolError {
     fn from(value: secp256k1::Error) -> Self {
-        Self::Secp(value)
+        Self::TaprootSecp(value)
     }
 }
 
@@ -94,5 +116,38 @@ impl From<bitcoin::key::FromSliceError> for ProtocolError {
 impl From<bitcoin::transaction::InputsIndexError> for ProtocolError {
     fn from(value: bitcoin::transaction::InputsIndexError) -> Self {
         Self::Sighash(value)
+    }
+}
+
+impl From<bitcoin::taproot::TaprootBuilderError> for ProtocolError {
+    fn from(value: bitcoin::taproot::TaprootBuilderError) -> Self {
+        Self::TaprootScript(value)
+    }
+}
+impl From<bitcoin::taproot::TaprootBuilder> for ProtocolError {
+    fn from(value: bitcoin::taproot::TaprootBuilder) -> Self {
+        Self::TaprootBuilder(value)
+    }
+}
+
+impl From<bitcoin::sighash::TaprootError> for ProtocolError {
+    fn from(value: bitcoin::sighash::TaprootError) -> Self {
+        Self::TaprootSighash(value)
+    }
+}
+impl From<secp256k1::scalar::OutOfRangeError> for ProtocolError {
+    fn from(value: secp256k1::scalar::OutOfRangeError) -> Self {
+        Self::ScalarOutOfRange(value)
+    }
+}
+impl From<secp256k1::musig::InvalidTweakErr> for ProtocolError {
+    fn from(value: secp256k1::musig::InvalidTweakErr) -> Self {
+        Self::MusigTweak(value)
+    }
+}
+
+impl From<bitcoin::taproot::SigFromSliceError> for ProtocolError {
+    fn from(value: bitcoin::taproot::SigFromSliceError) -> Self {
+        Self::TaprootSigSlice(value)
     }
 }

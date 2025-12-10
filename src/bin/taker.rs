@@ -2,7 +2,7 @@ use bitcoin::{Address, Amount};
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
-    taker::{error::TakerError, SwapParams, Taker},
+    taker::{error::TakerError, SwapParams, Taker, TaprootTaker},
     utill::{parse_proxy_auth, setup_taker_logger, MIN_FEE_RATE, UTXO},
     wallet::{Destination, RPCConfig, Wallet},
 };
@@ -17,9 +17,9 @@ use coinswap::taker::TakerBehavior;
 ///
 /// The app works as a regular Bitcoin wallet with the added capability to perform coinswaps. The app
 /// requires a running Bitcoin Core node with RPC access. It currently only runs on Testnet4.
-/// Suggested faucet for getting Signet coins (tor browser required): <http://a4ovtjlwiclzy37bjaurcbb6wpl6dtckmlqwrywq7uoajeaz6kth4uyd.onion/>
+/// Suggested faucet for getting Signet coins (tor browser required): <http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/>
 ///
-/// For more detailed usage information, please refer: <https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/taker.md>
+/// For more detailed usage information, please refer: <https://github.com/citadel-tech/coinswap/blob/master/docs/taker.md>
 ///
 /// This is early beta, and there are known and unknown bugs. Please report issues at: <https://github.com/citadel-tech/coinswap/issues>
 #[derive(Parser, Debug)]
@@ -35,23 +35,40 @@ struct Cli {
         name = "ADDRESS:PORT",
         long,
         short = 'r',
-        default_value = "127.0.0.1:48332"
+        default_value = "127.0.0.1:38332"
     )]
     pub rpc: String,
+
+    /// Bitcoin Core ZMQ address:port value
+    #[clap(
+        name = "ZMQ",
+        long,
+        short = 'z',
+        default_value = "tcp://127.0.0.1:28332"
+    )]
+    pub zmq: String,
 
     /// Bitcoin Core RPC authentication string. Ex: username:password
     #[clap(name="USER:PASSWORD",short='a',long, value_parser = parse_proxy_auth, default_value = "user:password")]
     pub auth: (String, String),
-    #[clap(long, short = 't', default_value = "")]
-    pub tor_auth: String,
+    #[clap(long, short = 't')]
+    pub tor_auth: Option<String>,
 
     /// Sets the taker wallet's name. If the wallet file already exists, it will load that wallet. Default: taker-wallet
     #[clap(name = "WALLET", long, short = 'w')]
     pub wallet_name: Option<String>,
 
+    /// Optional Password for the encryption of the wallet.
+    #[clap(name = "PASSWORD", long, short = 'p')]
+    pub password: Option<String>,
+
     /// Sets the verbosity level of debug.log file
     #[clap(long, short = 'v', possible_values = &["off", "error", "warn", "info", "debug", "trace"], default_value = "info")]
     pub verbosity: String,
+
+    /// Use experimental Taproot-based coinswap protocol
+    #[clap(long)]
+    pub taproot: bool,
 
     /// List of commands for various wallet operations
     #[clap(subcommand)]
@@ -179,10 +196,46 @@ fn main() -> Result<(), TakerError> {
                 backup_file,
             );
         }
+        Commands::Recover if args.taproot => {
+            log::warn!("Using experimental Taproot-based recovery");
+            let mut taproot_taker = TaprootTaker::init(
+                args.data_directory.clone(),
+                args.wallet_name.clone(),
+                Some(rpc_config.clone()),
+                None,
+                args.tor_auth,
+                args.zmq,
+                None,
+            )?;
+            taproot_taker.recover_from_swap()?;
+        }
+        Commands::Coinswap { makers, amount } if args.taproot => {
+            // For taproot coinswap, skip regular Taker initialization
+            log::warn!("Using experimental Taproot-based coinswap protocol");
+            let mut taproot_taker = TaprootTaker::init(
+                args.data_directory.clone(),
+                args.wallet_name.clone(),
+                Some(rpc_config.clone()),
+                None,
+                args.tor_auth,
+                args.zmq,
+                None,
+            )?;
+
+            let taproot_swap_params = coinswap::taker::api2::SwapParams {
+                send_amount: Amount::from_sat(*amount),
+                maker_count: *makers,
+                tx_count: 1,
+                required_confirms: 1,
+                manually_selected_outpoints: None,
+            };
+            taproot_taker.do_coinswap(taproot_swap_params)?;
+        }
         _ => {
-            // Only initialize Taker if the command is NOT Restore.
+            // Only initialize Taker if the command is NOT Restore, taproot Recover, or taproot Coinswap.
             // For Restore, we don't initialize Taker because it tries to load the wallet,
             // which may not exist yet before restoring from the backup.
+
             let mut taker = Taker::init(
                 args.data_directory.clone(),
                 args.wallet_name.clone(),
@@ -190,7 +243,9 @@ fn main() -> Result<(), TakerError> {
                 #[cfg(feature = "integration-test")]
                 TakerBehavior::Normal,
                 None,
-                Some(args.tor_auth),
+                args.tor_auth,
+                args.zmq,
+                args.password,
             )?;
 
             match &args.command {
@@ -384,6 +439,8 @@ fn main() -> Result<(), TakerError> {
                         amount
                     );
 
+                    // Note: taproot coinswap is handled at the top level to avoid
+                    // double Taker initialization. Regular ECDSA coinswap goes here.
                     let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
                         Some(
                             coinswap::utill::interactive_select(
@@ -413,6 +470,8 @@ fn main() -> Result<(), TakerError> {
                     #[cfg(debug_assertions)]
                     log::debug!("[CLI_CMD] Executing Recover command");
 
+                    // Note: taproot recovery is handled at the top level to avoid
+                    // overwriting the wallet file. Regular recovery goes here.
                     taker.recover_from_swap()?;
 
                     #[cfg(debug_assertions)]

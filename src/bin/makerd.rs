@@ -1,7 +1,10 @@
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
-    maker::{start_maker_server, Maker, MakerBehavior, MakerError},
+    maker::{
+        start_maker_server, start_maker_server_taproot, Maker, MakerBehavior, MakerError,
+        TaprootMaker,
+    },
     utill::{parse_proxy_auth, setup_maker_logger},
     wallet::RPCConfig,
 };
@@ -16,7 +19,7 @@ use std::{path::PathBuf, sync::Arc};
 ///
 /// The server is operated with the maker-cli app, for all basic wallet related operations.
 ///
-/// For more detailed usage information, please refer the [Maker Doc]<https://github.com/citadel-tech/coinswap/blob/master/docs/app%20demos/makerd.md>
+/// For more detailed usage information, please refer the [Maker Doc]<https://github.com/citadel-tech/coinswap/blob/master/docs/makerd.md>
 ///
 /// This is early beta, and there are known and unknown bugs. Please report issues in the [Project Issue Board]<https://github.com/citadel-tech/coinswap/issues>
 #[derive(Parser, Debug)]
@@ -31,9 +34,17 @@ struct Cli {
         name = "ADDRESS:PORT",
         long,
         short = 'r',
-        default_value = "127.0.0.1:48332"
+        default_value = "127.0.0.1:38332"
     )]
     pub rpc: String,
+    /// Bitcoin Core ZMQ address:port value
+    #[clap(
+        name = "ZMQ",
+        long,
+        short = 'z',
+        default_value = "tcp://127.0.0.1:28332"
+    )]
+    pub zmq: String,
     /// Bitcoin Core RPC authentication string (username, password).
     #[clap(
         name = "USER:PASSWORD",
@@ -43,11 +54,17 @@ struct Cli {
         default_value = "user:password",
     )]
     pub auth: (String, String),
-    #[clap(long, short = 't', default_value = "")]
-    pub tor_auth: String,
+    #[clap(long, short = 't')]
+    pub tor_auth: Option<String>,
     /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with the given name. Default: maker-wallet
     #[clap(name = "WALLET", long, short = 'w')]
     pub(crate) wallet_name: Option<String>,
+    /// Use experimental Taproot-based coinswap protocol
+    #[clap(long)]
+    pub taproot: bool,
+    /// Optional Password for the encryption of the wallet.
+    #[clap(name = "PASSWORD", long, short = 'p')]
+    pub password: Option<String>,
 }
 
 fn main() -> Result<(), MakerError> {
@@ -60,19 +77,41 @@ fn main() -> Result<(), MakerError> {
         wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
     };
 
-    let maker = Arc::new(Maker::init(
-        args.data_directory,
-        args.wallet_name,
-        Some(rpc_config),
-        None,
-        None,
-        None,
-        Some(args.tor_auth),
-        None,
-        MakerBehavior::Normal,
-    )?);
+    if args.taproot {
+        log::warn!("Using experimental Taproot-based coinswap protocol");
+        let maker = Arc::new(TaprootMaker::init(
+            args.data_directory,
+            args.wallet_name,
+            Some(rpc_config),
+            None,
+            None,
+            None,
+            args.tor_auth.clone(),
+            None,
+            args.zmq,
+            args.password,
+            #[cfg(feature = "integration-test")]
+            None,
+        )?);
 
-    start_maker_server(maker)?;
+        start_maker_server_taproot(maker)?;
+    } else {
+        let maker = Arc::new(Maker::init(
+            args.data_directory,
+            args.wallet_name,
+            Some(rpc_config),
+            None,
+            None,
+            None,
+            args.tor_auth,
+            None,
+            MakerBehavior::Normal,
+            args.zmq,
+            args.password,
+        )?);
+
+        start_maker_server(maker)?;
+    }
 
     Ok(())
 }

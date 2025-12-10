@@ -7,3 +7,7 @@ Cargo.lock
 .ra-target
 bin
 /coverage/reports
+
+docker-compose.generated.yml
+torrc.generated
+.docker-config
