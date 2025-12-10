@@ -1020,56 +1020,6 @@ impl Taker {
         Ok(response)
     }
 
-    /// Send a message to a maker without expecting a response
-    fn send_message_to_maker(
-        &self,
-        maker_addr: &MakerAddress,
-        msg: TakerToMakerMessage,
-    ) -> Result<(), TakerError> {
-        let address = maker_addr.to_string();
-        let mut socket = connect_to_maker(&address, &self.config, TCP_TIMEOUT_SECONDS)?;
-
-        #[cfg(debug_assertions)]
-        log::debug!(
-            "[MSG_EXCHANGE] Direction: sending (no response) | Address: {} | MsgType: {:?}",
-            maker_addr,
-            msg
-        );
-
-        send_message(&mut socket, &msg)?;
-        #[cfg(debug_assertions)]
-        log::debug!(
-            "[MSG_EXCHANGE] Direction: sent (no response) | Address: {} | MsgType: {:?}",
-            maker_addr,
-            msg
-        );
-        log::debug!("Message sent successfully to {}", address);
-
-        // Ensure the message is fully transmitted before closing
-        use std::io::Write;
-        socket.flush()?;
-        #[cfg(debug_assertions)]
-        log::debug!(
-            "[MSG_EXCHANGE] Direction: flushed (no response) | Address: {} | MsgType: {:?}",
-            maker_addr,
-            msg
-        );
-
-        // Add a small delay to ensure message delivery before closing connection
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        #[cfg(debug_assertions)]
-        log::debug!(
-            "[MSG_EXCHANGE] Direction: sleeping (no response) | Address: {} | MsgType: {:?}",
-            maker_addr,
-            msg
-        );
-
-        log::info!("===> {msg} | {maker_addr} (no response expected)");
-
-        // Close connection immediately, no response expected
-        Ok(())
-    }
-
     /// Find suitable makers for the given swap parameters
     pub fn find_suitable_makers(&self, swap_params: &SwapParams) -> Vec<OfferAndAddress> {
         let swap_amount = swap_params.send_amount;
