@@ -1,13 +1,25 @@
+//! Watchtower-related error types.
+
+/// Errors that can occur within the watchtower components.
 #[derive(Debug)]
 pub enum WatcherError {
+    /// Internal server failure.
     ServerError,
+    /// Failure in the mempool indexer.
     MempoolIndexerError,
+    /// Graceful shutdown requested.
     Shutdown,
+    /// Transaction or block parsing failed.
     ParsingError,
+    /// Channel send failed.
     SendError,
+    /// I/O error surfaced from filesystem operations.
     IOError(std::io::Error),
+    /// RPC error from bitcoind.
     RPCError(bitcoind::bitcoincore_rpc::Error),
+    /// Serialization/deserialization error for CBOR.
     SerdeCbor(serde_cbor::Error),
+    /// Represents a general error with a descriptive message.
     General(String),
 }
 
@@ -36,6 +48,7 @@ impl From<serde_cbor::Error> for WatcherError {
 }
 
 impl WatcherError {
+    /// Returns the underlying `ErrorKind` if the error wraps an I/O failure.
     pub fn io_error_kind(&self) -> Option<std::io::ErrorKind> {
         match self {
             WatcherError::IOError(e) => Some(e.kind()),
@@ -43,6 +56,7 @@ impl WatcherError {
         }
     }
 
+    /// Returns a stable string identifier for the error variant.
     pub fn kind(&self) -> &'static str {
         match self {
             WatcherError::ServerError => "ServerError",

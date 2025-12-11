@@ -1,3 +1,5 @@
+//! Utility helpers for parsing watchtower-relevant transactions and updating registry state.
+
 use bitcoin::{
     absolute::{Height, LockTime},
     Block, Transaction,
@@ -5,6 +7,8 @@ use bitcoin::{
 
 use crate::watch_tower::registry_storage::FileRegistry;
 
+/// Attempts to parse an OP_RETURN script and return a valid endpoint string.
+/// Returns `None` if the script structure or endpoint is invalid.
 pub fn extract_onion_address_from_script(script: &[u8]) -> Option<String> {
     if script.is_empty() || script[0] != 0x6a {
         return None;
@@ -86,6 +90,7 @@ fn is_valid_address(s: &str) -> bool {
     matches!(port.parse::<u16>(), Ok(p) if p > 0)
 }
 
+/// Scans a transaction for fidelity announcements and returns the onion endpoint if present.
 pub fn process_fidelity(tx: &Transaction) -> Option<String> {
     if tx.lock_time == LockTime::Blocks(Height::ZERO) {
         return None;
@@ -100,6 +105,7 @@ pub fn process_fidelity(tx: &Transaction) -> Option<String> {
     onion_address
 }
 
+/// Processes each transaction in a block, updating watch entries and recording fidelity data.
 pub fn process_block(block: Block, registry: &mut FileRegistry) {
     for tx in block.txdata.iter() {
         process_transaction(tx, registry, true);
@@ -110,6 +116,7 @@ pub fn process_block(block: Block, registry: &mut FileRegistry) {
     }
 }
 
+/// Updates the registry for a transaction by clearing spent fidelities and marking watched spends.
 pub fn process_transaction(tx: &Transaction, registry: &mut FileRegistry, in_block: bool) {
     let fidelities = registry.list_fidelity();
     let watch_requests = registry.list_watches();
