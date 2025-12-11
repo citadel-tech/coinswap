@@ -1,3 +1,9 @@
+//! Watchtower watcher module.
+//!
+//! Runs the core event loop, processes watcher commands, reacts to ZMQ backend events,
+//! spawns optional RPC-based discovery, and updates the on-disk registry of watches
+//! and fidelity records.
+
 use std::{
     marker::PhantomData,
     sync::mpsc::{Receiver, Sender, TryRecvError},
@@ -13,10 +19,13 @@ use crate::watch_tower::{
     zmq_backend::{BackendEvent, ZmqBackend},
 };
 
+/// Describes watcher behavior.
 pub trait Role {
+    /// Enables or disables discovery.
     const RUN_DISCOVERY: bool;
 }
 
+/// Drives the watchtower event loop, coordinating backend events and client commands.
 pub struct Watcher<R: Role> {
     backend: ZmqBackend,
     registry: FileRegistry,
@@ -25,28 +34,51 @@ pub struct Watcher<R: Role> {
     _role: PhantomData<R>,
 }
 
+/// Events emitted by the watcher to its clients.
 #[derive(Debug, Clone)]
 pub enum WatcherEvent {
+    /// Indicates that a watched outpoint was spent.
     UtxoSpent {
+        /// Monitored outpoint.
         outpoint: OutPoint,
+        /// Transaction that spent the outpoint, if known.
         spending_tx: Option<Transaction>,
     },
+    /// Maker addresses.
     MakerAddresses {
+        /// All maker addresses currently recorded in the registry.
         maker_addresses: Vec<String>,
     },
+    /// Returned when a queried outpoint is not being watched.
     NoOutpoint,
 }
 
+/// Commands accepted by the watcher from clients.
 #[derive(Debug, Clone)]
 pub enum WatcherCommand {
-    RegisterWatchRequest { outpoint: OutPoint },
-    WatchRequest { outpoint: OutPoint },
-    Unwatch { outpoint: OutPoint },
+    /// Store a new watch request.
+    RegisterWatchRequest {
+        /// Outpoint to begin tracking.
+        outpoint: OutPoint,
+    },
+    /// Query whether an outpoint has been spent.
+    WatchRequest {
+        /// Outpoint being queried.
+        outpoint: OutPoint,
+    },
+    /// Remove an existing watch.
+    Unwatch {
+        /// Outpoint to stop tracking.
+        outpoint: OutPoint,
+    },
+    /// Ask for the current maker address list.
     MakerAddress,
+    /// Terminate the watcher loop.
     Shutdown,
 }
 
 impl<R: Role> Watcher<R> {
+    /// Creates a watcher with its backend, registry, and communication channels.
     pub fn new(
         backend: ZmqBackend,
         registry: FileRegistry,
@@ -62,6 +94,7 @@ impl<R: Role> Watcher<R> {
         }
     }
 
+    /// Runs the watcher loop: handles ZMQ events and commands, optionally spawning discovery.
     pub fn run(&mut self, rpc_backend: BitcoinRpc) -> Result<(), WatcherError> {
         log::info!("Watcher initiated");
         let registry = self.registry.clone();
@@ -141,6 +174,7 @@ impl<R: Role> Watcher<R> {
         true
     }
 
+    /// Handles a backend event, updating registry state and checkpoints.
     pub fn handle_event(&mut self, ev: BackendEvent) {
         match ev {
             BackendEvent::TxSeen { raw_tx } => {
