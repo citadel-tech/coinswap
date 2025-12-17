@@ -1,8 +1,7 @@
 //! Watchtower watcher module.
 //!
 //! Runs the core event loop, processes watcher commands, reacts to ZMQ backend events,
-//! spawns optional RPC-based discovery, and updates the on-disk registry of watches
-//! and fidelity records.
+//! spawns optional RPC-based discovery and updates the on-disk registry of watches and fidelity records.
 
 use std::{
     marker::PhantomData,

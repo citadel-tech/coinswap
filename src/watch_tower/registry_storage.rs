@@ -9,7 +9,7 @@ use std::{
 use bitcoin::{BlockHash, OutPoint, Transaction, Txid};
 use serde::{Deserialize, Serialize};
 
-/// A persisted request to monitor a specific outpoint.
+/// Represents a UTXO being watched and records when it gets spent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WatchRequest {
     /// UTXO being watched.
@@ -45,7 +45,7 @@ struct RegistryData {
     checkpoint: Option<Checkpoint>,
 }
 
-/// Thread-safe, CBOR-backed registry stored on disk.
+/// Registry used by the watcher.
 #[derive(Clone)]
 pub struct FileRegistry {
     path: PathBuf,
