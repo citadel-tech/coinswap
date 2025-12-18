@@ -102,11 +102,13 @@ pub struct FidelityProof {
 /// requiring MuSig2 coordination.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PrivateKeyHandover {
+    /// Swap ID being used as an identifier for the swap
+    pub(crate) id: String,
     /// The outgoing contract private key
     pub(crate) secret_key: bitcoin::secp256k1::SecretKey,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum TakerToMakerMessage {
     GetOffer(GetOffer),
@@ -123,8 +125,9 @@ pub(crate) enum MakerToTakerMessage {
     PrivateKeyHandover(PrivateKeyHandover),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct GetOffer {
+    pub(crate) id: String,
     pub(crate) protocol_version_min: u32,
     pub(crate) protocol_version_max: u32,
     pub(crate) number_of_transactions: u32,
@@ -151,8 +154,9 @@ pub struct Offer {
     pub max_size: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SwapDetails {
+    pub(crate) id: String,
     pub(crate) amount: Amount,
     pub(crate) no_of_tx: u8,
     pub(crate) timelock: u16,
@@ -166,6 +170,7 @@ pub(crate) enum AckResponse {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct SendersContract {
+    pub(crate) id: String,
     pub(crate) contract_txs: Vec<Txid>,
     // Below data is used to verify transaction
     pub(crate) pubkeys_a: Vec<PublicKey>,

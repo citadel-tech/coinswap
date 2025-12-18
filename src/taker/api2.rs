@@ -241,6 +241,7 @@ fn download_taproot_offer(address: &MakerAddress, config: &TakerConfig) -> Optio
 
     // Send GetOffer message (taproot protocol)
     let get_offer_msg = GetOffer {
+        id: String::new(),
         protocol_version_min: 1,
         protocol_version_max: 1,
         number_of_transactions: 1,
@@ -787,6 +788,16 @@ impl Taker {
         // Set swap params early so they're available for SwapDetails
         self.ongoing_swap_state.swap_params = swap_params.clone();
 
+        // Generate preimage for the swap
+        let mut preimage = [0u8; 32];
+        OsRng.fill_bytes(&mut preimage);
+
+        let unique_id = preimage[0..8].to_hex_string(bitcoin::hex::Case::Lower);
+        log::info!("Initiating coinswap with id : {}", unique_id);
+
+        self.ongoing_swap_state.active_preimage = preimage;
+        self.ongoing_swap_state.id = unique_id;
+
         // Send SwapDetails message to all the makers
         // Receive the Ack or Nack message from the maker
         for (maker_index, suitable_maker) in suitable_makers.iter_mut().enumerate() {
@@ -818,6 +829,7 @@ impl Taker {
             // Always send GetOffer first to ensure maker has fresh keypair state
             // This is required because offers may be cached but maker might have restarted
             let get_offer_msg = GetOffer {
+                id: self.ongoing_swap_state.id.clone(),
                 protocol_version_min: 1,
                 protocol_version_max: 1,
                 number_of_transactions: 1,
@@ -861,6 +873,7 @@ impl Taker {
             );
 
             let swap_details = SwapDetails {
+                id: self.ongoing_swap_state.id.clone(),
                 amount: self.ongoing_swap_state.swap_params.send_amount,
                 no_of_tx: self.ongoing_swap_state.swap_params.tx_count as u8,
                 timelock: maker_timelock,
@@ -902,16 +915,6 @@ impl Taker {
         // Initialize storage for maker private keys received during handover
         let chosen_makers_count = self.ongoing_swap_state.chosen_makers.len();
         self.ongoing_swap_state.maker_outgoing_privkeys = vec![None; chosen_makers_count];
-
-        // Generate preimage for the swap
-        let mut preimage = [0u8; 32];
-        OsRng.fill_bytes(&mut preimage);
-
-        let unique_id = preimage[0..8].to_hex_string(bitcoin::hex::Case::Lower);
-        log::info!("Initiating coinswap with id : {}", unique_id);
-
-        self.ongoing_swap_state.active_preimage = preimage;
-        self.ongoing_swap_state.id = unique_id;
 
         Ok(())
     }
@@ -1209,6 +1212,7 @@ impl Taker {
             };
 
         let senders_contract = SendersContract {
+            id: self.ongoing_swap_state.id.clone(),
             contract_txs: vec![outgoing_signed_contract_transactions[0].compute_txid()],
             pubkeys_a: vec![self.ongoing_swap_state.outgoing_contract.pubkey()?],
             hashlock_scripts: vec![self
@@ -1289,6 +1293,7 @@ impl Taker {
             };
 
             let forward_contract = SendersContract {
+                id: self.ongoing_swap_state.id.clone(),
                 contract_txs: current_contract.contract_txs.clone(),
                 pubkeys_a: current_contract.pubkeys_a.clone(),
                 hashlock_scripts: current_contract.hashlock_scripts.clone(),
@@ -1442,6 +1447,7 @@ impl Taker {
 
             // Create private key handover message
             let privkey_msg = TakerToMakerMessage::PrivateKeyHandover(PrivateKeyHandover {
+                id: self.ongoing_swap_state.id.clone(),
                 secret_key: outgoing_privkey,
             });
 

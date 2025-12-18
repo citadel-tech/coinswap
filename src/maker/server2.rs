@@ -304,29 +304,6 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         peer_addr.port()
     );
 
-    // Get or create connection state for this IP
-    let mut connection_state = {
-        let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-        let (state, _) = ongoing_swaps.entry(ip.clone()).or_insert_with(|| {
-            log::info!(
-                "[{}] Creating new connection state for {}",
-                maker.config.network_port,
-                ip
-            );
-            (ConnectionState::default(), Instant::now())
-        });
-
-        log::info!(
-            "[{}] Retrieved connection state for {}: swap_amount={}, my_privkey_is_some={}",
-            maker.config.network_port,
-            ip,
-            state.swap_amount,
-            state.incoming_contract.my_privkey.is_some()
-        );
-
-        state.clone()
-    };
-
     loop {
         // Check if we should shutdown
         if maker.shutdown.load(Relaxed) {
@@ -383,6 +360,47 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
             }
         };
 
+        let swap_id = match &message {
+            TakerToMakerMessage::GetOffer(msg) => Some(msg.id.clone()),
+            TakerToMakerMessage::SwapDetails(msg) => Some(msg.id.clone()),
+            TakerToMakerMessage::SendersContract(msg) => Some(msg.id.clone()),
+            TakerToMakerMessage::PrivateKeyHandover(msg) => Some(msg.id.clone()),
+        }
+        .ok_or_else(|| MakerError::General("Message missing swap_id"))?;
+
+        // Get or create connection state for this swap id
+        let mut connection_state = {
+            let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
+
+            match &message {
+                TakerToMakerMessage::GetOffer(_) => {
+                    // TODO: Right now sync_offerbook is sending GetOffer with an empty string swap_id
+                    // Refactor to not create a connection state when swap id is an empty string
+                    // Just return the Offer
+                    let (state, _) = ongoing_swaps.entry(swap_id.clone()).or_insert_with(|| {
+                        log::info!(
+                            "[{}] Creating new connection state for {:?}",
+                            maker.config.network_port,
+                            &swap_id
+                        );
+                        (ConnectionState::default(), Instant::now())
+                    });
+                    state.clone()
+                }
+                _ => match ongoing_swaps.get(&swap_id) {
+                    Some((state, _)) => state.clone(),
+                    None => {
+                        log::info!(
+                                "[{}] No connection state found for swap_id={:?}. GetOffer must be sent first.",
+                                maker.config.network_port,
+                                &swap_id
+                            );
+                        return Err(MakerError::General("No connection state found"));
+                    }
+                },
+            }
+        };
+
         // Handle the message using taproot handlers
         let response = match handle_message_taproot(maker, &mut connection_state, message) {
             Ok(response) => {
@@ -396,7 +414,8 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                         connection_state.swap_amount,
                         connection_state.incoming_contract.my_privkey.is_some()
                     );
-                    ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
+                    ongoing_swaps
+                        .insert(swap_id.clone(), (connection_state.clone(), Instant::now()));
                 }
                 response
             }
@@ -411,7 +430,8 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                 // Always save connection state even if there was an error
                 {
                     let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-                    ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
+                    ongoing_swaps
+                        .insert(swap_id.clone(), (connection_state.clone(), Instant::now()));
                 }
 
                 // Check if this is a behavior-triggered error
@@ -486,7 +506,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                     }
 
                     let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-                    ongoing_swaps.remove(&ip);
+                    ongoing_swaps.remove(&swap_id);
                     // Exit loop - swap is complete
                     break;
                 }
@@ -496,7 +516,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         // Update the connection state in the maker
         {
             let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-            ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
+            ongoing_swaps.insert(swap_id, (connection_state.clone(), Instant::now()));
         }
     }
 
