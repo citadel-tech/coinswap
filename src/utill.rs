@@ -859,7 +859,21 @@ where
 /// Interactive Selection by User for Utxos
 pub fn interactive_select(
     mut choices: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
+    required_amount: Amount,
 ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+    if choices.is_empty() {
+        return Err(WalletError::General("No UTXOs available".to_string()));
+    }
+
+    let total_available: Amount = choices.iter().map(|(utxo, _)| utxo.amount).sum();
+    if total_available < required_amount {
+        return Err(WalletError::General(format!(
+            "Insufficient balance: {} sats available, {} sats required",
+            total_available.to_sat(),
+            required_amount.to_sat()
+        )));
+    }
+
     choices.sort_by_key(|(_, spend_info)| match spend_info {
         UTXOSpendInfo::SeedCoin { .. } => 0,
         UTXOSpendInfo::SweptCoin { .. } => 1,
