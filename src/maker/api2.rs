@@ -936,7 +936,7 @@ impl Maker {
         }
 
         let privkey_handover_message = PrivateKeyHandover {
-            id: String::new(),
+            id: None,
             secret_key: connection_state.outgoing_contract.privkey()?,
         };
 
@@ -1177,8 +1177,8 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
             }
 
             // Remove failed swap entries
-            for ip in failed_swap_id.iter() {
-                lock_on_state.remove(ip);
+            for id in failed_swap_id.iter() {
+                lock_on_state.remove(id);
             }
         }
 
@@ -1191,7 +1191,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
 
 /// Checks for idle connection states and removes them after timeout.
 pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
-    let mut bad_ip = Vec::new();
+    let mut bad_id = Vec::new();
     loop {
         if maker.shutdown.load(Relaxed) {
             break;
@@ -1235,18 +1235,18 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                         maker.thread_pool.add_thread(handle);
                     }
 
-                    bad_ip.push(swap_id.clone());
+                    bad_id.push(swap_id.clone());
                     *state = ConnectionState::default();
                     break;
                 }
             }
 
-            for ip in bad_ip.iter() {
-                lock_on_state.remove(ip);
+            for id in bad_id.iter() {
+                lock_on_state.remove(id);
             }
         }
 
-        bad_ip.clear();
+        bad_id.clear();
         std::thread::sleep(HEART_BEAT_INTERVAL);
     }
 

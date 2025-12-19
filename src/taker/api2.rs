@@ -452,6 +452,17 @@ impl Taker {
         }
 
         self.sync_offerbook()?;
+
+        // Generate preimage for the swap
+        let mut preimage = [0u8; 32];
+        OsRng.fill_bytes(&mut preimage);
+
+        let unique_id = preimage[0..8].to_hex_string(bitcoin::hex::Case::Lower);
+        log::info!("Initiating coinswap with id : {}", unique_id);
+
+        self.ongoing_swap_state.active_preimage = preimage;
+        self.ongoing_swap_state.id = unique_id;
+
         self.choose_makers_for_swap(swap_params)?;
         self.setup_contract_keys_and_scripts()?;
 
@@ -787,16 +798,6 @@ impl Taker {
 
         // Set swap params early so they're available for SwapDetails
         self.ongoing_swap_state.swap_params = swap_params.clone();
-
-        // Generate preimage for the swap
-        let mut preimage = [0u8; 32];
-        OsRng.fill_bytes(&mut preimage);
-
-        let unique_id = preimage[0..8].to_hex_string(bitcoin::hex::Case::Lower);
-        log::info!("Initiating coinswap with id : {}", unique_id);
-
-        self.ongoing_swap_state.active_preimage = preimage;
-        self.ongoing_swap_state.id = unique_id;
 
         // Send SwapDetails message to all the makers
         // Receive the Ack or Nack message from the maker
@@ -1447,7 +1448,7 @@ impl Taker {
 
             // Create private key handover message
             let privkey_msg = TakerToMakerMessage::PrivateKeyHandover(PrivateKeyHandover {
-                id: self.ongoing_swap_state.id.clone(),
+                id: Some(self.ongoing_swap_state.id.clone()),
                 secret_key: outgoing_privkey,
             });
 
