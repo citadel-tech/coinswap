@@ -11,6 +11,8 @@ use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};
 
 #[cfg(feature = "integration-test")]
+use coinswap::taker::api2::TakerBehavior as TaprootTakerBehavior;
+#[cfg(feature = "integration-test")]
 use coinswap::taker::TakerBehavior;
 
 /// A simple command line app to operate as coinswap client.
@@ -201,7 +203,7 @@ fn main() -> Result<(), TakerError> {
                 args.zmq,
                 None,
                 #[cfg(feature = "integration-test")]
-                TakerBehavior::Normal,
+                TaprootTakerBehavior::Normal,
             )?;
             taproot_taker.recover_from_swap()?;
         }
@@ -217,7 +219,7 @@ fn main() -> Result<(), TakerError> {
                 args.zmq,
                 None,
                 #[cfg(feature = "integration-test")]
-                TakerBehavior::Normal,
+                TaprootTakerBehavior::Normal,
             )?;
 
             let taproot_swap_params = coinswap::taker::api2::SwapParams {

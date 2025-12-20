@@ -3,13 +3,9 @@
 
 use bitcoin::Amount;
 use coinswap::{
-    maker::{start_maker_server_taproot, TaprootMaker},
-    taker::{
-        api2::{SwapParams, Taker},
-        TakerBehavior,
-    },
+    maker::start_maker_server_taproot,
+    taker::api2::{SwapParams, TakerBehavior},
 };
-use std::sync::Arc;
 
 mod test_framework;
 use test_framework::*;
@@ -115,8 +111,7 @@ fn test_taproot_multi_taker() {
         actual_maker_spendable_balances.push(balances.spendable);
     }
 
-    log::info!("Starting end-to-end taproot swap test...");
-    log::info!("Initiating taproot coinswap protocol");
+    log::info!("Initiating taproot multi taker test");
 
     // Mine some blocks before the swap to ensure wallet is ready
     generate_blocks(bitcoind, 1);
@@ -179,77 +174,4 @@ fn test_taproot_multi_taker() {
 
     test_framework.stop();
     block_generation_handle.join().unwrap();
-}
-
-/// Fund taproot makers and verify their balances
-fn fund_taproot_makers(
-    makers: &[Arc<TaprootMaker>],
-    bitcoind: &bitcoind::BitcoinD,
-    utxo_count: u32,
-    utxo_value: Amount,
-) -> Vec<Amount> {
-    let mut original_balances = Vec::new();
-
-    for maker in makers {
-        let mut wallet = maker.wallet().write().unwrap();
-
-        // Fund with regular UTXOs
-        for _ in 0..utxo_count {
-            let addr = wallet.get_next_external_address().unwrap();
-            send_to_address(bitcoind, &addr, utxo_value);
-        }
-
-        generate_blocks(bitcoind, 1);
-        wallet.sync().unwrap();
-
-        // Verify balances - for now just check regular balance
-        let balances = wallet.get_balances().unwrap();
-        let expected_regular = utxo_value * utxo_count.into();
-
-        assert_eq!(balances.regular, expected_regular);
-
-        info!(
-            "Taproot Maker funded successfully. Regular: {}, Fidelity: {}",
-            balances.regular, balances.fidelity
-        );
-
-        // Store the original spendable balance (after fidelity bond creation)
-        info!(
-            "Storing original spendable balance for maker: {} (Regular: {}, Fidelity: {})",
-            balances.spendable, balances.regular, balances.fidelity
-        );
-        original_balances.push(balances.spendable);
-    }
-
-    original_balances
-}
-
-/// Fund taproot taker and verify balance
-fn fund_taproot_taker(
-    taker: &mut Taker,
-    bitcoind: &bitcoind::BitcoinD,
-    utxo_count: u32,
-    utxo_value: Amount,
-) -> Amount {
-    // Fund with regular UTXOs
-    for _ in 0..utxo_count {
-        let addr = taker.get_wallet_mut().get_next_external_address().unwrap();
-        send_to_address(bitcoind, &addr, utxo_value);
-    }
-
-    generate_blocks(bitcoind, 1);
-    taker.get_wallet_mut().sync().unwrap();
-
-    // Verify balances
-    let balances = taker.get_wallet().get_balances().unwrap();
-    let expected_regular = utxo_value * utxo_count.into();
-
-    assert_eq!(balances.regular, expected_regular);
-
-    info!(
-        "Taproot Taker funded successfully. Regular: {}, Spendable: {}",
-        balances.regular, balances.spendable
-    );
-
-    balances.spendable
 }

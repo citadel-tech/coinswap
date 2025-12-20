@@ -15,4 +15,6 @@ mod routines;
 pub use self::api::TakerBehavior;
 pub use api::{SwapParams, Taker};
 pub use api2::Taker as TaprootTaker;
+#[cfg(feature = "integration-test")]
+pub use api2::TakerBehavior as TaprootTakerBehavior;
 pub use config::TakerConfig;

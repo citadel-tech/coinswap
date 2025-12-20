@@ -1,9 +1,6 @@
 #![cfg(feature = "integration-test")]
-//! Integration test for Taproot Hashlock Recovery
-//!
-//! This test demonstrates end-to-end hashlock-based recovery when contracts are broadcasted
-//! and one party sweeps via hashlock path, revealing the preimage. The other party should
-//! extract the preimage from the blockchain and recover their funds via hashlock.
+//! This test demonstrates when a taker drops after receiving AckResponse message from maker,
+//! In this case the taker doesn't have anything to recover.
 
 use bitcoin::Amount;
 use coinswap::{
@@ -17,25 +14,18 @@ use test_framework::*;
 use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
-/// Test taproot hashlock recovery - full end-to-end
-///
-/// Scenario:
-/// 1. Taker initiates swap with Maker
-/// 2. Contracts are created and confirmed
-/// 3. Maker sweeps their incoming contract but closes connection before completing handover
-/// 4. Taker's incoming contract (maker's outgoing) is on-chain, not swept by maker
-/// 5. Taker sweeps their incoming contract via hashlock (revealing preimage)
 #[test]
-fn test_taproot_hashlock_recovery_end_to_end() {
+fn test_taproot_taker_abort1() {
     // ---- Setup ----
-    warn!("🧪 Running Test: Taproot Hashlock Recovery - End to End");
+    warn!("🧪 Running Test: Taproot Taker Drop Abort 1");
 
-    // Create one maker that will close connection after sweeping incoming contract
+    //Create Two makers with normal behaviour
     let makers_config_map = vec![
-        (7104, Some(19072), MakerBehavior::CloseAfterSweep),
-        (7105, Some(19073), MakerBehavior::CloseAfterSweep),
+        (7103, Some(19071), MakerBehavior::Normal),
+        (7104, Some(19072), MakerBehavior::Normal),
     ];
-    let taker_behavior = vec![TakerBehavior::Normal];
+    //Create a Taker that drops after receiving AckResponse msg from Maker.
+    let taker_behavior = vec![TakerBehavior::CloseAtAckResponse];
 
     // Initialize test framework
     let (test_framework, mut taproot_taker, taproot_makers, block_generation_handle) =
@@ -95,7 +85,7 @@ fn test_taproot_hashlock_recovery_end_to_end() {
         balances.spendable
     };
 
-    info!("🔄 Initiating taproot coinswap (will fail mid-swap)...");
+    info!("🔄 Initiating taproot taker abort 1");
 
     // Swap params - small amount for faster testing
     let swap_params = SwapParams {
@@ -106,11 +96,11 @@ fn test_taproot_hashlock_recovery_end_to_end() {
         manually_selected_outpoints: None,
     };
 
-    // Attempt the swap - it will fail when maker closes connection
+    // Attempt the swap - it will fail when taker closes connection
     // After recovery, do_coinswap returns Ok(None) to indicate recovery was triggered
     match taproot_taker.do_coinswap(swap_params) {
         Ok(Some(_report)) => {
-            panic!("Swap should have failed due to maker closing connection, but succeeded with report!");
+            panic!("Swap should have failed due to taker closing connection, but succeeded with report!");
         }
         Ok(None) => {
             info!("✅ Taproot coinswap triggered recovery as expected (Ok(None))");
@@ -120,100 +110,51 @@ fn test_taproot_hashlock_recovery_end_to_end() {
         }
     }
 
-    // Mine blocks to confirm any broadcasted transactions
-    // Note: When do_coinswap returns Ok(None), recovery has already been attempted internally,
-    // so contract balance may already be 0 if recovery succeeded
-    info!("⛏️ Mining blocks to confirm contracts...");
-    generate_blocks(bitcoind, 2);
+    // Mine a block to confirm any broadcasted transactions
+    generate_blocks(bitcoind, 1);
     taproot_taker.get_wallet_mut().sync().unwrap();
 
-    info!("📊 Taker balance after failed swap (recovery already attempted):");
+    info!("📊 Taker balance after failed swap:");
     let taker_balances = taproot_taker.get_wallet().get_balances().unwrap();
     info!(
         "  Regular: {}, Contract: {}, Spendable: {}",
         taker_balances.regular, taker_balances.contract, taker_balances.spendable
     );
 
-    // Call recover_from_swap again - should be idempotent if already recovered
-    info!("🔧 Calling recover_from_swap (may be no-op if already recovered)...");
-    match taproot_taker.recover_from_swap() {
-        Ok(()) => {
-            info!("✅ Recovery call completed!");
-        }
-        Err(e) => {
-            panic!("⚠️ Taker recovery failed: {:?}", e);
-        }
-    }
-
-    // Mine blocks to confirm any recovery transactions
-    info!("⛏️ Mining blocks to confirm recovery transactions...");
-    generate_blocks(bitcoind, 2);
     taproot_taker.get_wallet_mut().sync().unwrap();
-
-    info!("📊 Taker balance after recovery:");
     let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
-    info!(
-        "  Regular: {}, Contract: {}, Spendable: {}",
-        taker_balances_after.regular, taker_balances_after.contract, taker_balances_after.spendable
-    );
 
-    // Verify taker recovered their funds via hashlock
-    let max_taker_fees = Amount::from_sat(100000);
+    // Verify taker funds and ensure no fund loss.
     assert!(
-        taker_balances_after.spendable > taproot_taker_original_balance - max_taker_fees,
-        "Taker should have recovered via hashlock. Original: {}, After: {}, Lost: {}",
+        taker_balances_after.spendable == taproot_taker_original_balance,
+        "Taker should have no fund loss. Original: {}, After: {}, Lost: {}",
         taproot_taker_original_balance,
         taker_balances_after.spendable,
         taproot_taker_original_balance - taker_balances_after.spendable
     );
 
-    // Now wait for maker to extract preimage and recover via hashlock
-    info!("⏳ Waiting for maker to extract preimage and recover via hashlock...");
-    std::thread::sleep(std::time::Duration::from_secs(60));
-
-    // Mine more blocks to give maker time to see the hashlock sweep
-    generate_blocks(bitcoind, 2);
-
-    // Wait a bit more for maker's recovery
-    std::thread::sleep(std::time::Duration::from_secs(10));
-
-    // Verify maker recovered their incoming contract via hashlock
+    // Verify maker's final balance
     let maker_balance_after = {
         let mut wallet = taproot_makers[0].wallet().write().unwrap();
         wallet.sync().unwrap();
         let balances = wallet.get_balances().unwrap();
         info!(
-            "📊 Maker balance after hashlock recovery: Regular: {}, Spendable: {}",
+            "📊 Maker balance after failed swap: Regular: {}, Spendable: {}",
             balances.regular, balances.spendable
         );
         balances.spendable
     };
 
-    // Maker should have recovered their outgoing contract via hashlock after extracting preimage
-    // They swept incoming (~500k sats) and should have it confirmed
-    let max_maker_fees = Amount::from_sat(100000); // 0.001 BTC max fees
+    // Maker's balance check
     assert!(
-        maker_balance_after >= maker_balance_before - max_maker_fees,
-        "Maker should have recovered via hashlock. Before: {}, After: {}, Lost: {}",
-        maker_balance_before,
-        maker_balance_after,
-        maker_balance_before - maker_balance_after
-    );
-
-    info!("✅ Hashlock recovery test passed!");
-    info!(
-        "   Taker original balance: {}, Recovered: {}, Fees paid: {}",
-        taproot_taker_original_balance,
-        taker_balances_after.spendable,
-        taproot_taker_original_balance - taker_balances_after.spendable
-    );
-    info!(
-        "   Maker balance before: {}, After: {} (change: {})",
+        maker_balance_after == maker_balance_before,
+        "Maker's balance -: Before: {}, After: {}, Change: {}",
         maker_balance_before,
         maker_balance_after,
         maker_balance_after.to_sat() as i64 - maker_balance_before.to_sat() as i64
     );
 
+    info!("✅ Taker abort 1 recovery test passed!");
     // Shutdown maker
     taproot_makers
         .iter()

@@ -488,9 +488,6 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                         maker.watch_service.unwatch(outpoint);
                     }
                     {
-                        let mut conn_state = maker.ongoing_swap_state.lock()?;
-                        conn_state
-                            .remove(connection_state.outgoing_contract.swap_id.as_ref().unwrap());
                         let mut wallet = maker.wallet.write()?;
                         wallet.remove_outgoing_swapcoin_v2(&outgoing_txid);
                         log::info!(

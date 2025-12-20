@@ -1,16 +1,12 @@
 #![cfg(feature = "integration-test")]
-//! This test demonstrates when a taker drops after setting up the outgoing contract,
-//! In this case the taker will recover it's outgoing swapcoin via timelock after timelock gets mature.
+//! This test demonstrates when the taker closes connection receiving from Senders Contract from maker.
+//! The taker has an outgoing contract created,so it recovers via timelock later.
 
 use bitcoin::Amount;
 use coinswap::{
-    maker::{start_maker_server_taproot, TaprootMaker, TaprootMakerBehavior as MakerBehavior},
-    taker::{
-        api2::{SwapParams, Taker},
-        TakerBehavior,
-    },
+    maker::{start_maker_server_taproot, TaprootMakerBehavior as MakerBehavior},
+    taker::api2::{SwapParams, TakerBehavior},
 };
-use std::sync::Arc;
 
 mod test_framework;
 use test_framework::*;
@@ -20,22 +16,20 @@ use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// Scenario:
 /// 1. Taker initiates swap with Maker
-/// 2. Taker closes connection before sending outgoing contract to Maker.
-/// 3. Maker has no outgoing contract created, neither any incoming swapcoins.
-/// 4. Taker has a outgoing contract stuck, no incoming contract received
-/// 5. Taker wait for timelock to mature and recover via timelock.
+/// 2. Maker sends SenderContractFromMaker message to taker,and the taker closes connection after receiving it.
+/// 3. Both parties are forced to recover via timelock to claim their funds back.
 #[test]
-fn test_taproot_taker_abort() {
+fn test_taproot_taker_abort3() {
     // ---- Setup ----
-    warn!("🧪 Running Test: Taproot Taker Drop after Outgoing Contract Setup");
+    warn!("🧪 Running Test: Taproot Taker abort 3");
 
-    //Create Two makers with normal behaviour
+    // Create both normal maker
     let makers_config_map = vec![
         (7103, Some(19071), MakerBehavior::Normal),
         (7104, Some(19072), MakerBehavior::Normal),
     ];
-    //Create a Taker that drops after Full setup.
-    let taker_behavior = vec![TakerBehavior::DropConnectionAfterFullSetup];
+    // Create a taker with special behavior
+    let taker_behavior = vec![TakerBehavior::CloseAtSendersContractFromMaker];
 
     // Initialize test framework
     let (test_framework, mut taproot_taker, taproot_makers, block_generation_handle) =
@@ -95,7 +89,7 @@ fn test_taproot_taker_abort() {
         balances.spendable
     };
 
-    info!("🔄 Initiating taproot coinswap (will fail mid-swap)...");
+    info!("🔄 Initiating taproot taker abort 3");
 
     // Swap params - small amount for faster testing
     let swap_params = SwapParams {
@@ -133,9 +127,9 @@ fn test_taproot_taker_abort() {
         taker_balances.regular, taker_balances.contract, taker_balances.spendable
     );
 
-    // Mine blocks to mature timelock (30 blocks from swap params)
+    // Mine blocks to mature timelock (20 blocks from swap params)
     info!("⏰ Mining blocks to mature timelock (20+ blocks)...");
-    generate_blocks(bitcoind, 30);
+    generate_blocks(bitcoind, 25);
 
     // Taker recovers via TIMELOCK (may be no-op if already recovered)
     info!("🔧 Taker recovering via timelock...");
@@ -169,7 +163,15 @@ fn test_taproot_taker_abort() {
         taproot_taker_original_balance - taker_balances_after.spendable
     );
 
-    // Verify maker's final balance
+    // Wait for maker's automatic recovery to trigger
+    // The idle-checker detects dropped connections after 60 seconds (IDLE_CONNECTION_TIMEOUT)
+    info!("⏳ Waiting for maker's automatic recovery (65 seconds)...");
+    thread::sleep(Duration::from_secs(65));
+
+    // Mine blocks to confirm maker's recovery transactions
+    generate_blocks(bitcoind, 10);
+
+    // Verify maker's final balance (they never created outgoing contract, no funds gained/lost)
     let maker_balance_after = {
         let mut wallet = taproot_makers[0].wallet().write().unwrap();
         wallet.sync().unwrap();
@@ -181,17 +183,17 @@ fn test_taproot_taker_abort() {
         balances.spendable
     };
 
-    // Maker's balance check
+    // Maker should have approximately same balance (maybe some RPC fees)
     let max_maker_loss = Amount::from_sat(1000); // Small fees only
     assert!(
         maker_balance_after >= maker_balance_before - max_maker_loss,
-        "Maker's balance -: Before: {}, After: {}, Change: {}",
+        "Maker balance shouldn't change much. Before: {}, After: {}, Change: {}",
         maker_balance_before,
         maker_balance_after,
         maker_balance_after.to_sat() as i64 - maker_balance_before.to_sat() as i64
     );
 
-    info!("✅ Taker abort recovery test passed!");
+    info!("✅ Taker abort 3 recovery test passed!");
     info!(
         "   Taker: Original {}, After timelock recovery: {}, Fees paid: {}",
         taproot_taker_original_balance,
@@ -214,66 +216,4 @@ fn test_taproot_taker_abort() {
 
     test_framework.stop();
     block_generation_handle.join().unwrap();
-}
-
-/// Fund taproot makers and verify their balances
-fn fund_taproot_makers(
-    makers: &[Arc<TaprootMaker>],
-    bitcoind: &bitcoind::BitcoinD,
-    utxo_count: u32,
-    utxo_value: Amount,
-) {
-    for maker in makers {
-        let mut wallet = maker.wallet().write().unwrap();
-
-        // Fund with regular UTXOs
-        for _ in 0..utxo_count {
-            let addr = wallet.get_next_external_address().unwrap();
-            send_to_address(bitcoind, &addr, utxo_value);
-        }
-
-        generate_blocks(bitcoind, 1);
-        wallet.sync().unwrap();
-
-        // Verify balances
-        let balances = wallet.get_balances().unwrap();
-        let expected_regular = utxo_value * utxo_count.into();
-
-        assert_eq!(balances.regular, expected_regular);
-
-        info!(
-            "Taproot Maker funded successfully. Regular: {}, Fidelity: {}",
-            balances.regular, balances.fidelity
-        );
-    }
-}
-
-/// Fund taproot taker and verify balance
-fn fund_taproot_taker(
-    taker: &mut Taker,
-    bitcoind: &bitcoind::BitcoinD,
-    utxo_count: u32,
-    utxo_value: Amount,
-) -> Amount {
-    // Fund with regular UTXOs
-    for _ in 0..utxo_count {
-        let addr = taker.get_wallet_mut().get_next_external_address().unwrap();
-        send_to_address(bitcoind, &addr, utxo_value);
-    }
-
-    generate_blocks(bitcoind, 1);
-    taker.get_wallet_mut().sync().unwrap();
-
-    // Verify balances
-    let balances = taker.get_wallet().get_balances().unwrap();
-    let expected_regular = utxo_value * utxo_count.into();
-
-    assert_eq!(balances.regular, expected_regular);
-
-    info!(
-        "Taproot Taker funded successfully. Regular: {}, Spendable: {}",
-        balances.regular, balances.spendable
-    );
-
-    balances.spendable
 }

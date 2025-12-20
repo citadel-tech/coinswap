@@ -119,6 +119,18 @@ fn handle_swap_details(
         our_fee
     );
 
+    // Check for CloseAfterAckResponse behavior
+    #[cfg(feature = "integration-test")]
+    if maker.behavior == super::api2::MakerBehavior::CloseAfterAckResponse {
+        log::warn!(
+            "[{}] Maker behavior: CloseAfterAckResponse - Closing connection after sending Ack Response message to taker",
+            maker.config.network_port
+        );
+        return Err(MakerError::General(
+            "Maker closing connection after sending AckResponse to taker (test behavior)",
+        ));
+    }
+
     // Send acknowledgment
     Ok(Some(MakerToTakerMessage::AckResponse(AckResponse::Ack)))
 }

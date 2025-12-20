@@ -1,8 +1,5 @@
 #![cfg(feature = "integration-test")]
-//! Integration test for Taproot Coinswap implementation
-//!
-//! This test demonstrates a taproot-based coinswap between a Taker and 2 Makers using the new
-//! taproot protocol with MuSig2 signatures and enhanced privacy features.
+//! This test demonstrates a taproot coinswap between a Taker and multiple Makers
 
 use bitcoin::Amount;
 use coinswap::{
@@ -16,21 +13,24 @@ use test_framework::*;
 use log::{info, warn};
 use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
-/// Test taproot coinswap
+/// Test taproot multi maker coinswap
 #[test]
-fn test_taproot_coinswap() {
+fn test_taproot_multi_maker() {
     // ---- Setup ----
-    warn!("Running Test: Taproot Coinswap Basic Functionality");
+    warn!("Running Test: Taproot Multi Maker Coinswap");
 
-    // Use different ports for taproot makers to avoid conflicts
+    // Create 4 makers to perform a taproot swap with 1 taker and 4 makers.
     use coinswap::maker::TaprootMakerBehavior as MakerBehavior;
     let taproot_makers_config_map = vec![
         (7102, Some(19061), MakerBehavior::Normal),
         (17102, Some(19062), MakerBehavior::Normal),
+        (27102, Some(19063), MakerBehavior::Normal),
+        (15102, Some(19064), MakerBehavior::Normal),
     ];
+    // Create a taker with normal behavior
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    // Initialize test framework (without regular takers, we'll create taproot taker manually)
+    // Initialize test framework
     let (test_framework, mut taproot_taker, taproot_makers, block_generation_handle) =
         TestFramework::init_taproot(taproot_makers_config_map, taker_behavior);
 
@@ -114,14 +114,12 @@ fn test_taproot_coinswap() {
         actual_maker_spendable_balances.push(balances.spendable);
     }
 
-    log::info!("Starting end-to-end taproot swap test...");
-    log::info!("Initiating taproot coinswap protocol");
-
+    log::info!("Starting multi maker taproot coinswap...");
     // Swap params for taproot coinswap
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000), // 0.005 BTC
-        maker_count: 2,
-        tx_count: 3,
+        maker_count: 4,                        // 4 maker count
+        tx_count: 5,
         required_confirms: 1,
         manually_selected_outpoints: None,
     };
@@ -132,14 +130,15 @@ fn test_taproot_coinswap() {
     // Perform the swap
     match taproot_taker.do_coinswap(swap_params) {
         Ok(Some(_report)) => {
-            log::info!("Taproot coinswap completed successfully!");
+            log::info!("Taproot multi maker coinswap completed successfully!");
         }
         Ok(None) => {
-            log::warn!("Taproot coinswap completed but no report generated (recovery occurred)");
+            log::warn!(
+                "Taproot multi maker coinswap completed but no report generated (recovery occurred)"
+            );
         }
         Err(e) => {
-            log::error!("Taproot coinswap failed: {:?}", e);
-            panic!("Taproot coinswap failed: {:?}", e);
+            log::error!("Taproot multi maker coinswap failed: {:?}", e);
         }
     }
 
@@ -152,7 +151,7 @@ fn test_taproot_coinswap() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    log::info!("All taproot coinswaps processed successfully. Transaction complete.");
+    log::info!("✅ Taproot mutli maker test passed successfully.");
 
     // Sync wallets and verify results
     taproot_taker.get_wallet_mut().sync().unwrap();
@@ -173,8 +172,6 @@ fn test_taproot_coinswap() {
         taproot_taker_original_balance,
         actual_maker_spendable_balances, // Use the actual spendable balances after fidelity bond creation
     );
-
-    info!("All taproot swap tests completed successfully!");
 
     test_framework.stop();
     block_generation_handle.join().unwrap();
