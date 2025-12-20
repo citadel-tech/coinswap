@@ -2163,9 +2163,7 @@ impl Taker {
             }
         }
 
-        self.wallet.sync_no_fail();
-
-        self.wallet.save_to_disk()?;
+        self.wallet.sync_and_save()?;
 
         self.clear_ongoing_swaps();
 

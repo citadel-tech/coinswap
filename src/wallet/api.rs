@@ -2035,7 +2035,7 @@ impl Wallet {
             completed_swapcoins.len()
         );
 
-        self.sync_no_fail();
+        self.sync_and_save()?;
 
         for (multisig_redeemscript, _) in completed_swapcoins {
             let utxo_info = self
@@ -2128,7 +2128,7 @@ impl Wallet {
             }
             let reedem_script = incoming.get_multisig_redeemscript();
             let next_internal = &self.get_next_internal_addresses(1)?[0];
-            self.sync()?;
+            self.sync_and_save()?;
 
             let hashlock_spend =
                 self.create_hashlock_spend(&incoming, next_internal, MIN_FEE_RATE)?;
@@ -2159,7 +2159,7 @@ impl Wallet {
             let reedem_script = outgoing.get_multisig_redeemscript();
             let timelock = outgoing.get_timelock()?;
             let next_internal = &self.get_next_internal_addresses(1)?[0];
-            self.sync()?;
+            self.sync_and_save()?;
 
             let timelock_spend =
                 self.create_timelock_spend(&outgoing, next_internal, MIN_FEE_RATE)?;

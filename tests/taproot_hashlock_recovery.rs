@@ -85,7 +85,7 @@ fn test_taproot_hashlock_recovery_end_to_end() {
 
     // Sync wallets after setup
     for maker in &taproot_makers {
-        maker.wallet().write().unwrap().sync().unwrap();
+        maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
 
     // Get balances before swap
@@ -129,7 +129,7 @@ fn test_taproot_hashlock_recovery_end_to_end() {
     // so contract balance may already be 0 if recovery succeeded
     info!("⛏️ Mining blocks to confirm contracts...");
     generate_blocks(bitcoind, 2);
-    taproot_taker.get_wallet_mut().sync().unwrap();
+    taproot_taker.get_wallet_mut().sync_and_save().unwrap();
 
     info!("📊 Taker balance after failed swap (recovery already attempted):");
     let taker_balances = taproot_taker.get_wallet().get_balances().unwrap();
@@ -152,7 +152,7 @@ fn test_taproot_hashlock_recovery_end_to_end() {
     // Mine blocks to confirm any recovery transactions
     info!("⛏️ Mining blocks to confirm recovery transactions...");
     generate_blocks(bitcoind, 2);
-    taproot_taker.get_wallet_mut().sync().unwrap();
+    taproot_taker.get_wallet_mut().sync_and_save().unwrap();
 
     info!("📊 Taker balance after recovery:");
     let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
@@ -184,7 +184,7 @@ fn test_taproot_hashlock_recovery_end_to_end() {
     // Verify maker recovered their incoming contract via hashlock
     let maker_balance_after = {
         let mut wallet = taproot_makers[0].wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
         let balances = wallet.get_balances().unwrap();
         info!(
             "📊 Maker balance after hashlock recovery: Regular: {}, Spendable: {}",
@@ -248,7 +248,7 @@ fn fund_taproot_makers(
         }
 
         generate_blocks(bitcoind, 1);
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
 
         // Verify balances
         let balances = wallet.get_balances().unwrap();
@@ -277,7 +277,7 @@ fn fund_taproot_taker(
     }
 
     generate_blocks(bitcoind, 1);
-    taker.get_wallet_mut().sync().unwrap();
+    taker.get_wallet_mut().sync_and_save().unwrap();
 
     // Verify balances
     let balances = taker.get_wallet().get_balances().unwrap();

@@ -330,7 +330,7 @@ fn main() -> Result<(), TakerError> {
 
                     println!("{txid}");
 
-                    taker.get_wallet_mut().sync_no_fail();
+                    taker.get_wallet_mut().sync_and_save()?;
                 }
                 Commands::FetchOffers => {
                     let all_offers = {

@@ -236,7 +236,7 @@ pub fn fund_and_verify_taker(
 
     // Get initial state before funding
     let wallet = taker.get_wallet_mut();
-    wallet.sync_no_fail();
+    wallet.sync_and_save().unwrap();
     let initial_utxo_set = wallet.list_all_utxo();
     let initial_balances = wallet.get_balances().unwrap();
     let initial_external_index = *wallet.get_external_index();
@@ -261,7 +261,7 @@ pub fn fund_and_verify_taker(
         wallet.get_external_index()
     );
 
-    wallet.sync_no_fail();
+    wallet.sync_and_save().unwrap();
 
     let new_utxo_set = wallet.list_all_utxo();
     let expected_total = initial_balances.regular + utxo_value * u64::from(utxo_count);
@@ -468,7 +468,7 @@ pub fn verify_swap_results(
         .enumerate()
         .for_each(|(maker_index, (maker, org_spend_balance))| {
             let mut wallet = maker.get_wallet().write().unwrap();
-            wallet.sync_no_fail();
+            wallet.sync_and_save().unwrap();
             let balances = wallet.get_balances().unwrap();
 
             // Debug logging for makers

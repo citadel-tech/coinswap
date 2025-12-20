@@ -75,7 +75,7 @@ impl Wallet {
             "Initializing wallet sync and save for {:?}",
             &self.store.file_name
         );
-        self.sync()?;
+        self.sync_no_fail();
         self.save_to_disk()?;
         log::info!(
             "Completed wallet sync and save for {:?}",
@@ -94,7 +94,7 @@ impl Wallet {
     }
 
     /// Sync the wallet with the configured Bitcoin Core RPC.
-    pub fn sync(&mut self) -> Result<(), WalletError> {
+    fn sync(&mut self) -> Result<(), WalletError> {
         // Create or load the watch-only bitcoin core wallet
         let wallet_name = &self.store.file_name;
         if self.rpc.list_wallets()?.contains(wallet_name) {
@@ -175,8 +175,8 @@ impl Wallet {
 
     /// Keep retrying sync until success and log failure.
     // This is useful to handle transient RPC errors.
-    pub fn sync_no_fail(&mut self) {
-        while let Err(e) = self.sync_and_save() {
+    fn sync_no_fail(&mut self) {
+        while let Err(e) = self.sync() {
             log::error!("Blockchain sync failed. Retrying. | {e:?}");
         }
     }
