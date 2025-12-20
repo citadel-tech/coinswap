@@ -16,6 +16,9 @@ DEFAULT_MAKERD_PORT="6012"
 DEFAULT_MAKERD_RPC_PORT="6013"
 DEFAULT_TOR_SOCKS_PORT="9050"
 DEFAULT_TOR_CONTROL_PORT="9051"
+DEFAULT_RPC_USER="user"
+DEFAULT_RPC_PASSWORD="password"
+DEFAULT_TOR_AUTH="coinswap"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -52,11 +55,14 @@ BITCOIN_DATADIR="$BITCOIN_DATADIR"
 BITCOIN_NETWORK="$BITCOIN_NETWORK"
 BITCOIN_RPC_PORT="$BITCOIN_RPC_PORT"
 BITCOIN_ZMQ_PORT="$BITCOIN_ZMQ_PORT"
+BITCOIN_RPC_USER="$BITCOIN_RPC_USER"
+BITCOIN_RPC_PASSWORD="$BITCOIN_RPC_PASSWORD"
 MAKERD_PORT="$MAKERD_PORT"
 MAKERD_RPC_PORT="$MAKERD_RPC_PORT"
 USE_TAPROOT="$USE_TAPROOT"
 TOR_SOCKS_PORT="$TOR_SOCKS_PORT"
 TOR_CONTROL_PORT="$TOR_CONTROL_PORT"
+TOR_AUTH_PASSWORD="$TOR_AUTH_PASSWORD"
 USE_EXTERNAL_BITCOIND="$USE_EXTERNAL_BITCOIND"
 USE_EXTERNAL_TOR="$USE_EXTERNAL_TOR"
 EXTERNAL_BITCOIND_HOST="$EXTERNAL_BITCOIND_HOST"
@@ -89,6 +95,80 @@ check_bitcoind_running() {
     else
         return 0
     fi
+}
+
+setup_env() {
+    # load configuration
+    load_config
+    
+    # set defaults for any unset variables
+    BITCOIN_DATADIR="${BITCOIN_DATADIR:-$DEFAULT_BITCOIN_DATADIR}"
+    BITCOIN_NETWORK="${BITCOIN_NETWORK:-$DEFAULT_BITCOIN_NETWORK}"
+    BITCOIN_RPC_PORT="${BITCOIN_RPC_PORT:-$DEFAULT_BITCOIN_RPC_PORT}"
+    BITCOIN_ZMQ_PORT="${BITCOIN_ZMQ_PORT:-$DEFAULT_BITCOIN_ZMQ_PORT}"
+    BITCOIN_RPC_USER="${BITCOIN_RPC_USER:-$DEFAULT_RPC_USER}"
+    BITCOIN_RPC_PASSWORD="${BITCOIN_RPC_PASSWORD:-$DEFAULT_RPC_PASSWORD}"
+    MAKERD_PORT="${MAKERD_PORT:-$DEFAULT_MAKERD_PORT}"
+    MAKERD_RPC_PORT="${MAKERD_RPC_PORT:-$DEFAULT_MAKERD_RPC_PORT}"
+    USE_TAPROOT="${USE_TAPROOT:-true}"
+    TOR_SOCKS_PORT="${TOR_SOCKS_PORT:-$DEFAULT_TOR_SOCKS_PORT}"
+    TOR_CONTROL_PORT="${TOR_CONTROL_PORT:-$DEFAULT_TOR_CONTROL_PORT}"
+    TOR_AUTH_PASSWORD="${TOR_AUTH_PASSWORD:-$DEFAULT_TOR_AUTH}"
+    USE_EXTERNAL_BITCOIND="${USE_EXTERNAL_BITCOIND:-false}"
+    USE_EXTERNAL_TOR="${USE_EXTERNAL_TOR:-false}"
+    
+    # export variables for docker-compose
+    export IMAGE_NAME="${IMAGE_NAME}"
+    export BITCOIN_IMAGE_NAME="${BITCOIN_IMAGE_NAME}"
+    export BITCOIN_TAG="latest"
+    if [ -f "$VERSION_FILE" ]; then
+        export BITCOIN_TAG=$(grep "^TAG=" "$VERSION_FILE" | cut -d'=' -f2)
+    fi
+
+    export BITCOIN_RPC_PORT
+    export BITCOIN_ZMQ_PORT
+    export BITCOIN_RPC_USER
+    export BITCOIN_RPC_PASSWORD
+    export BITCOIN_RPC_AUTH="${BITCOIN_RPC_USER}:${BITCOIN_RPC_PASSWORD}"
+    export MAKERD_PORT
+    export MAKERD_RPC_PORT
+    export TOR_SOCKS_PORT
+    export TOR_CONTROL_PORT
+    
+    # bitcoin args
+    export BITCOIN_EXTRA_ARGS=""
+    if [[ "$BITCOIN_NETWORK" == "signet" ]]; then
+        export BITCOIN_EXTRA_ARGS="-signet=1 -signetchallenge=512102f7561d208dd9ae99bf497273e16f389bdbd6c4742ddb8e6b216e64fa2928ad8f51ae -addnode=45.79.52.207:38333 -dnsseed=0 -signetblocktime=30"
+    else
+        export BITCOIN_EXTRA_ARGS="-regtest=1 -fallbackfee=0.00001000"
+    fi
+
+    # makerd args
+    export MAKERD_EXTRA_ARGS=""
+    if [[ "$USE_TAPROOT" == "true" ]]; then
+        export MAKERD_EXTRA_ARGS="--taproot"
+    fi
+
+    # profiles and hosts
+    local profiles=""
+    
+    if [[ "$USE_EXTERNAL_BITCOIND" == "true" ]]; then
+        export BITCOIN_RPC_HOST="$EXTERNAL_BITCOIND_HOST"
+    else
+        profiles="${profiles}internal-bitcoind,"
+        export BITCOIN_RPC_HOST="bitcoind:$BITCOIN_RPC_PORT"
+    fi
+
+    if [[ "$USE_EXTERNAL_TOR" == "true" ]]; then
+        profiles="${profiles}external-tor"
+    else
+        profiles="${profiles}internal-tor"
+        # internal tor uses static torrc with hardcoded hash for "coinswap"
+        TOR_AUTH_PASSWORD="coinswap"
+    fi
+    
+    export TOR_AUTH_PASSWORD
+    export COMPOSE_PROFILES="${profiles%,}"
 }
 
 configure_setup() {
@@ -131,11 +211,19 @@ configure_setup() {
         USE_EXTERNAL_BITCOIND="true"
         EXTERNAL_BITCOIND_HOST="172.81.178.3:48332"
         BITCOIN_ZMQ_PORT="58332"
+        BITCOIN_RPC_USER="user"
+        BITCOIN_RPC_PASSWORD="password"
         print_info "Using Coinswap Public Node at $EXTERNAL_BITCOIND_HOST"
     elif [ "${source_choice:-1}" == "3" ] || ([ "$BITCOIN_NETWORK" != "signet" ] && [ "${source_choice:-1}" == "2" ]); then
          USE_EXTERNAL_BITCOIND="true"
          read -p "Bitcoin RPC host [localhost:$BITCOIN_RPC_PORT]: " btc_host
          EXTERNAL_BITCOIND_HOST="${btc_host:-localhost:$BITCOIN_RPC_PORT}"
+         
+         read -p "Bitcoin RPC user [${DEFAULT_RPC_USER}]: " rpc_user
+         BITCOIN_RPC_USER="${rpc_user:-$DEFAULT_RPC_USER}"
+         
+         read -p "Bitcoin RPC password [${DEFAULT_RPC_PASSWORD}]: " rpc_pass
+         BITCOIN_RPC_PASSWORD="${rpc_pass:-$DEFAULT_RPC_PASSWORD}"
     else
         if check_bitcoind_running "$BITCOIN_RPC_PORT"; then
             print_warning "Detected Bitcoin Core running on port $BITCOIN_RPC_PORT"
@@ -143,6 +231,12 @@ configure_setup() {
             if [[ "${use_existing:-Y}" =~ ^[Yy]$ ]]; then
                 USE_EXTERNAL_BITCOIND="true"
                 EXTERNAL_BITCOIND_HOST="localhost:$BITCOIN_RPC_PORT"
+                
+                read -p "Bitcoin RPC user [${DEFAULT_RPC_USER}]: " rpc_user
+                BITCOIN_RPC_USER="${rpc_user:-$DEFAULT_RPC_USER}"
+                
+                read -p "Bitcoin RPC password [${DEFAULT_RPC_PASSWORD}]: " rpc_pass
+                BITCOIN_RPC_PASSWORD="${rpc_pass:-$DEFAULT_RPC_PASSWORD}"
             else
                 print_warning "Continuing with local node configuration. Startup may fail if port is bound."
             fi
@@ -153,6 +247,12 @@ configure_setup() {
             BITCOIN_RPC_PORT="${btc_port:-$BITCOIN_RPC_PORT}"
             read -p "Bitcoin ZMQ port [$BITCOIN_ZMQ_PORT]: " btc_zmq_port
             BITCOIN_ZMQ_PORT="${btc_zmq_port:-$BITCOIN_ZMQ_PORT}"
+            
+            read -p "Bitcoin RPC user [${DEFAULT_RPC_USER}]: " rpc_user
+            BITCOIN_RPC_USER="${rpc_user:-$DEFAULT_RPC_USER}"
+            
+            read -p "Bitcoin RPC password [${DEFAULT_RPC_PASSWORD}]: " rpc_pass
+            BITCOIN_RPC_PASSWORD="${rpc_pass:-$DEFAULT_RPC_PASSWORD}"
         fi
     fi
     
@@ -182,6 +282,13 @@ configure_setup() {
         TOR_CONTROL_PORT="${tor_control:-$DEFAULT_TOR_CONTROL_PORT}"
     fi
     
+    if [[ "$USE_EXTERNAL_TOR" == "true" ]]; then
+        read -p "Tor Auth Password [${DEFAULT_TOR_AUTH}]: " tor_auth
+        TOR_AUTH_PASSWORD="${tor_auth:-$DEFAULT_TOR_AUTH}"
+    else
+        TOR_AUTH_PASSWORD="coinswap"
+    fi
+    
     echo ""
     print_info "Coinswap Maker Ports"
     echo "----------------------------------------"
@@ -203,6 +310,7 @@ configure_setup() {
     echo "Bitcoin Data Dir: $BITCOIN_DATADIR"
     echo "Bitcoin RPC Port: $BITCOIN_RPC_PORT"
     echo "Bitcoin ZMQ Port: $BITCOIN_ZMQ_PORT"
+    echo "Bitcoin RPC User: $BITCOIN_RPC_USER"
     echo "Use External Bitcoin: $USE_EXTERNAL_BITCOIND"
     if [[ "$USE_EXTERNAL_BITCOIND" == "true" ]]; then
         echo "External Bitcoin Host: $EXTERNAL_BITCOIND_HOST"
@@ -214,6 +322,7 @@ configure_setup() {
         echo "Tor SOCKS Port: $TOR_SOCKS_PORT"
         echo "Tor Control Port: $TOR_CONTROL_PORT"
     fi
+    echo "Tor Auth Password: $TOR_AUTH_PASSWORD"
     echo "Makerd Port: $MAKERD_PORT"
     echo "Makerd RPC Port: $MAKERD_RPC_PORT"
     echo "Use Taproot: $USE_TAPROOT"
@@ -237,189 +346,6 @@ check_docker() {
     fi
     
     print_success "Docker is available and running"
-}
-
-generate_torrc() {
-    local torrc_file="$SCRIPT_DIR/torrc.generated"
-    print_info "Generating torrc configuration..."
-
-    cat > "$torrc_file" << EOF
-SocksPort 0.0.0.0:${TOR_SOCKS_PORT}
-ControlPort 0.0.0.0:${TOR_CONTROL_PORT}
-HashedControlPassword 16:16E946B27E1A526E60A2B64061EC3F140ACA991F1B705ACD35374D6730
-DataDirectory /var/lib/tor
-EOF
-    print_success "Generated torrc: $torrc_file"
-}
-
-generate_compose_file() {
-    local compose_file="$SCRIPT_DIR/docker-compose.generated.yml"
-    
-    # Generate torrc first if using internal Tor
-    if [[ "$USE_EXTERNAL_TOR" != "true" ]]; then
-        generate_torrc
-    fi
-    
-    # Read Bitcoin version tag
-    local bitcoin_tag="latest"
-    if [ -f "$VERSION_FILE" ]; then
-        # Extract TAG value
-        bitcoin_tag=$(grep "^TAG=" "$VERSION_FILE" | cut -d'=' -f2)
-    fi
-    
-    print_info "Generating docker-compose configuration..."
-    
-    local rpc_host="bitcoind:$BITCOIN_RPC_PORT"
-    if [[ "$USE_EXTERNAL_BITCOIND" == "true" ]]; then
-        rpc_host="$EXTERNAL_BITCOIND_HOST"
-    fi
-
-    local makerd_args_cmd="makerd -r \${BITCOIN_RPC_HOST:-$rpc_host} -a \${BITCOIN_RPC_AUTH:-user:password}"
-    if [[ "$USE_TAPROOT" == "true" ]]; then
-        makerd_args_cmd="$makerd_args_cmd --taproot"
-    fi
-    
-    cat > "$compose_file" << EOF
-services:
-EOF
-
-    if [[ "$USE_EXTERNAL_BITCOIND" != "true" ]]; then
-        # construct bitcoind command
-        local btc_cmd="bitcoind -datadir=/home/bitcoin/.bitcoin -server=1 -rpcuser=user -rpcpassword=password -rpcallowip=0.0.0.0/0 -txindex=1 -blockfilterindex=1"
-        
-        if [[ "$BITCOIN_NETWORK" == "signet" ]]; then
-            btc_cmd="$btc_cmd -signet=1 -signetchallenge=512102f7561d208dd9ae99bf497273e16f389bdbd6c4742ddb8e6b216e64fa2928ad8f51ae -addnode=45.79.52.207:38333 -dnsseed=0 -signetblocktime=30"
-        else
-            btc_cmd="$btc_cmd -regtest=1 -fallbackfee=0.00001000"
-        fi
-        
-        btc_cmd="$btc_cmd -rpcbind=0.0.0.0 -rpcport=$BITCOIN_RPC_PORT -zmqpubrawblock=tcp://0.0.0.0:$BITCOIN_ZMQ_PORT -zmqpubrawtx=tcp://0.0.0.0:$BITCOIN_ZMQ_PORT"
-
-        cat >> "$compose_file" << EOF
-  bitcoind:
-    image: coinswap/${BITCOIN_IMAGE_NAME}:${bitcoin_tag}
-    container_name: coinswap-bitcoind
-    user: "0:0"
-    command: $btc_cmd
-    ports:
-      - "$BITCOIN_RPC_PORT:$BITCOIN_RPC_PORT"
-      - "$BITCOIN_ZMQ_PORT:$BITCOIN_ZMQ_PORT"
-    volumes:
-      - bitcoin-data:/home/bitcoin/.bitcoin
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "bitcoin-cli", "-rpcuser=user", "-rpcpassword=password", "getblockchaininfo"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
-EOF
-    fi
-
-    if [[ "$USE_EXTERNAL_TOR" != "true" ]]; then
-        cat >> "$compose_file" << EOF
-  tor:
-    image: osminogin/tor-simple
-    container_name: coinswap-tor
-    volumes:
-      - tor-data:/var/lib/tor
-      - ./torrc.generated:/etc/tor/torrc:ro
-    ports:
-      - "\${TOR_SOCKS_PORT:-$TOR_SOCKS_PORT}:\${TOR_SOCKS_PORT:-$TOR_SOCKS_PORT}"
-      - "\${TOR_CONTROL_PORT:-$TOR_CONTROL_PORT}:\${TOR_CONTROL_PORT:-$TOR_CONTROL_PORT}"
-      - "\${MAKER_RPC_PORT:-$MAKERD_RPC_PORT}:\${MAKER_RPC_PORT:-$MAKERD_RPC_PORT}"
-    restart: unless-stopped
-
-EOF
-    fi
-
-    cat >> "$compose_file" << EOF
-  makerd:
-    image: coinswap/${IMAGE_NAME}:master
-    container_name: coinswap-makerd
-EOF
-
-    if [[ "$USE_EXTERNAL_TOR" != "true" ]]; then
-        echo "    network_mode: \"service:tor\"" >> "$compose_file"
-    else
-        cat >> "$compose_file" << EOF
-    ports:
-      - "$MAKERD_RPC_PORT:$MAKERD_RPC_PORT"
-EOF
-    fi
-
-    cat >> "$compose_file" << EOF
-    command:
-      - sh
-      - -c
-      - |
-        sleep 15
-        mkdir -p /home/coinswap/.coinswap/maker
-
-        RAND_SUFFIX=\$\$(date +%s)
-        WALLET_NAME="maker-wallet-\$\$RAND_SUFFIX"
-
-        echo "Wallet Name: \$\$WALLET_NAME"
-
-        printf '%s\n' \\
-          "network_port = \${MAKER_NETWORK_PORT:-$MAKERD_PORT}" \\
-          "rpc_port = \${MAKER_RPC_PORT:-$MAKERD_RPC_PORT}" \\
-          "socks_port = \${TOR_SOCKS_PORT:-$TOR_SOCKS_PORT}" \\
-          "control_port = \${TOR_CONTROL_PORT:-$TOR_CONTROL_PORT}" \\
-          "tor_auth_password = \${TOR_AUTH_PASSWORD:-coinswap}" \\
-          "min_swap_amount = \${MIN_SWAP_AMOUNT:-10000}" \\
-          "fidelity_amount = \${FIDELITY_AMOUNT:-50000}" \\
-          "fidelity_timelock = \${FIDELITY_TIMELOCK:-13104}" \\
-          "connection_type = TOR" \\
-          "base_fee = \${BASE_FEE:-100}" \\
-          "amount_relative_fee_ppt = \${AMOUNT_RELATIVE_FEE_PPT:-1000}" \\
-          > /home/coinswap/.coinswap/maker/config.toml
-        $makerd_args_cmd -w "\$\$WALLET_NAME"
-    volumes:
-      - maker-data:/home/coinswap/.coinswap
-    environment:
-      - RUST_LOG=\${RUST_LOG:-info}
-      - TOR_SOCKS_PORT=\${TOR_SOCKS_PORT:-${DEFAULT_TOR_SOCKS_PORT}}
-      - TOR_CONTROL_PORT=\${TOR_CONTROL_PORT:-${DEFAULT_TOR_CONTROL_PORT}}
-      - MAKER_NETWORK_PORT=\${MAKER_NETWORK_PORT:-${DEFAULT_MAKERD_PORT}}
-      - MAKER_RPC_PORT=\${MAKER_RPC_PORT:-${DEFAULT_MAKERD_RPC_PORT}}
-      - TOR_AUTH_PASSWORD=\${TOR_AUTH_PASSWORD:-coinswap}
-      - MIN_SWAP_AMOUNT=\${MIN_SWAP_AMOUNT:-10000}
-      - FIDELITY_AMOUNT=\${FIDELITY_AMOUNT:-50000}
-      - FIDELITY_TIMELOCK=\${FIDELITY_TIMELOCK:-13104}
-      - BASE_FEE=\${BASE_FEE:-100}
-      - AMOUNT_RELATIVE_FEE_PPT=\${AMOUNT_RELATIVE_FEE_PPT:-1000}
-      - BITCOIN_RPC_HOST=\${BITCOIN_RPC_HOST:-172.81.178.3:48332}
-      - BITCOIN_RPC_AUTH=\${BITCOIN_RPC_AUTH:-user:password}
-    restart: unless-stopped
-
-volumes:
-EOF
-
-    if [[ "$USE_EXTERNAL_BITCOIND" != "true" ]]; then
-        cat >> "$compose_file" << EOF
-  bitcoin-data:
-    driver: local
-EOF
-    fi
-    
-    if [[ "$USE_EXTERNAL_TOR" != "true" ]]; then
-        cat >> "$compose_file" << EOF
-  tor-data:
-    driver: local
-EOF
-    fi
-
-    cat >> "$compose_file" << EOF
-  maker-data:
-    driver: local
-
-networks:
-  default:
-    name: coinswap-network
-EOF
-
-    print_success "Generated docker-compose configuration: $compose_file"
 }
 
 # Build the Docker image
@@ -569,29 +495,16 @@ start_stack() {
         fi
     fi
     
-    # Set defaults for any unset variables
-    BITCOIN_DATADIR="${BITCOIN_DATADIR:-$DEFAULT_BITCOIN_DATADIR}"
-    BITCOIN_NETWORK="${BITCOIN_NETWORK:-$DEFAULT_BITCOIN_NETWORK}"
-    BITCOIN_RPC_PORT="${BITCOIN_RPC_PORT:-$DEFAULT_BITCOIN_RPC_PORT}"
-    BITCOIN_ZMQ_PORT="${BITCOIN_ZMQ_PORT:-$DEFAULT_BITCOIN_ZMQ_PORT}"
-    MAKERD_PORT="${MAKERD_PORT:-$DEFAULT_MAKERD_PORT}"
-    MAKERD_RPC_PORT="${MAKERD_RPC_PORT:-$DEFAULT_MAKERD_RPC_PORT}"
-    USE_TAPROOT="${USE_TAPROOT:-true}"
-    TOR_SOCKS_PORT="${TOR_SOCKS_PORT:-$DEFAULT_TOR_SOCKS_PORT}"
-    TOR_CONTROL_PORT="${TOR_CONTROL_PORT:-$DEFAULT_TOR_CONTROL_PORT}"
-    USE_EXTERNAL_BITCOIND="${USE_EXTERNAL_BITCOIND:-false}"
-    USE_EXTERNAL_TOR="${USE_EXTERNAL_TOR:-false}"
-    
-    # Generate dynamic docker-compose file
-    generate_compose_file
+    setup_env
     
     print_info "Starting Coinswap stack with docker-compose..."
+    print_info "Active Profiles: $COMPOSE_PROFILES"
     cd "$SCRIPT_DIR"
     
-    if docker compose -f docker-compose.generated.yml up -d; then
+    if docker compose up -d; then
         print_success "Coinswap stack started successfully"
         print_info "Services running:"
-        docker compose -f docker-compose.generated.yml ps
+        docker compose ps
     else
         print_error "Failed to start Coinswap stack"
         exit 1
@@ -601,35 +514,28 @@ start_stack() {
 stop_stack() {
     print_info "Stopping Coinswap stack..."
     cd "$SCRIPT_DIR"
+    setup_env
     
-    # Use generated compose file if it exists, otherwise fall back to default
-    if [ -f "docker-compose.generated.yml" ]; then
-        docker compose -f docker-compose.generated.yml down
-    else
-        docker compose down
-    fi
+    docker compose down
     
     print_success "Coinswap stack stopped"
 }
 
 show_logs() {
     cd "$SCRIPT_DIR"
-    
-    local compose_file="docker-compose.generated.yml"
-    if [ ! -f "$compose_file" ]; then
-        compose_file="docker-compose.yml"
-    fi
+    setup_env
     
     if [ -n "$1" ]; then
-        docker compose -f "$compose_file" logs -f "$1"
+        docker compose logs -f "$1"
     else
-        docker compose -f "$compose_file" logs -f
+        docker compose logs -f
     fi
 }
 
 run_command() {
     local cmd="$1"
     shift
+    setup_env
     docker run --rm -it --network coinswap-network "${IMAGE_NAME}:latest" "$cmd" "$@"
 }
 
@@ -707,13 +613,11 @@ case "${1:-}" in
         ;;
     "status")
         cd "$SCRIPT_DIR"
-        compose_file="docker-compose.generated.yml"
-        if [ ! -f "$compose_file" ]; then
-            compose_file="docker-compose.yml"
-        fi
-        docker compose -f "$compose_file" ps
+        setup_env
+        docker compose ps
         ;;
     "shell")
+        setup_env
         docker run --rm -it --network coinswap-network "coinswap/${IMAGE_NAME}:latest" /bin/sh
         ;;
     "makerd"|"maker-cli"|"taker"|"bitcoin-cli")
