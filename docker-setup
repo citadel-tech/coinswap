@@ -430,6 +430,15 @@ publish_image() {
 
 # Publish the Bitcoin Docker image
 publish_bitcoin_image() {
+    local presynced="false"
+    
+    for arg in "$@"; do
+        if [[ "$arg" == "--pre-sync" ]]; then
+            presynced="true"
+            break
+        fi
+    done
+    
     local username="${DOCKERHUB_USERNAME}"
     
     if [ -z "$username" ]; then
@@ -445,19 +454,50 @@ publish_bitcoin_image() {
     local repo_name=$(echo "$BITCOIN_IMAGE_NAME" | awk -F/ '{print $NF}')
     local target_repo="${username}/${repo_name}"
     
-    # Ensure image is built
-    build_bitcoin_image
+    local tag="latest"
+    if [ -f "$VERSION_FILE" ]; then
+        tag=$(grep "^TAG=" "$VERSION_FILE" | cut -d'=' -f2)
+    fi
     
-    # Get tag from version file
-    local tag=$(grep "^TAG=" "$VERSION_FILE" | cut -d'=' -f2)
+    if [[ "$presynced" == "true" ]]; then
+        print_info "Preparing to publish pre-synced image to ${target_repo}:presynced-latest"
+        print_warning "This process will build a Docker image that syncs the Bitcoin node during build."
+        print_warning "This may take a significant amount of time."
+        read -p "Are you sure? [y/N]: " confirm
+        if [[ ! "${confirm}" =~ ^[Yy]$ ]]; then
+            exit 0
+        fi
+        
+        print_info "Building pre-synced image using Dockerfile..."
+        
+        if docker build \
+        --build-arg TAG="$tag" \
+        --network=host \
+        -f docker/Dockerfile.bitcoin-mutinynet.presynced \
+        -t "${target_repo}:presynced-latest" .; then
+            
+            if [ -n "$tag" ]; then
+                docker tag "${target_repo}:presynced-latest" "${target_repo}:presynced-${tag}"
+            fi
+            
+            print_info "Pushing images..."
+            docker push "${target_repo}:presynced-latest"
+            if [ -n "$tag" ]; then
+                docker push "${target_repo}:presynced-${tag}"
+            fi
+            print_success "Published pre-synced images successfully"
+        else
+            print_error "Failed to build pre-synced image"
+            exit 1
+        fi
+    else
+        build_bitcoin_image
     
     print_info "Tagging and pushing image to $target_repo..."
     
-    # Tag and push latest
     docker tag "${BITCOIN_IMAGE_NAME}:latest" "${target_repo}:latest"
     docker push "${target_repo}:latest"
     
-    # Tag and push version
     if [ -n "$tag" ]; then
         docker tag "${BITCOIN_IMAGE_NAME}:${tag}" "${target_repo}:${tag}"
         docker push "${target_repo}:${tag}"
@@ -465,6 +505,7 @@ publish_bitcoin_image() {
     fi
     
     print_success "Published ${target_repo}:latest"
+    fi
 }
 
 # Start the full stack using docker-compose
@@ -549,7 +590,9 @@ show_help() {
     echo "  build            Build the Docker image"
     echo "  build-bitcoin    Build the Bitcoin Mutinynet Docker image"
     echo "  publish [ver]    Publish image to Docker Hub (optional version tag)"
-    echo "  publish-bitcoin  Publish Bitcoin Mutinynet image to Docker Hub"
+    echo "  publish-bitcoin [options] Publish Bitcoin Mutinynet image to Docker Hub"
+    echo "                   Options:"
+    echo "                     --pre-sync       Publish pre-synced Bitcoin image (presynced-latest)"
     echo "  start [options]  Start the full Coinswap stack"
     echo "                   Options:"
     echo "                     -d, --default   Use default configuration without prompting"
@@ -594,7 +637,7 @@ case "${1:-}" in
         ;;
     "publish-bitcoin")
         check_docker
-        publish_bitcoin_image
+        publish_bitcoin_image "${@:2}"
         ;;
     "start")
         check_docker
