@@ -260,32 +260,46 @@ configure_setup() {
     print_info "Tor Configuration"
     echo "----------------------------------------"
     
+    USE_EXTERNAL_TOR="false"
+    TOR_CONFIGURED="false"
+    
     if check_tor_running; then
         print_info "Detected Tor running on port 9050"
-        read -p "Use existing Tor instance? [Y/n]: " use_existing_tor
-        if [[ "${use_existing_tor:-Y}" =~ ^[Yy]$ ]]; then
+        echo ""
+        read -p "Do you want to use this existing Tor instance? [y/N]: " use_existing_tor
+        if [[ "${use_existing_tor}" =~ ^[Yy]$ ]]; then
+            echo ""
+            print_warning "============================================"
+            print_warning "Your Tor must be configured correctly for makerd!"
+            print_warning "Required: ControlPort enabled with authentication"
+            print_warning "See: docs/tor.md for configuration details"
+            print_warning "============================================"
+            echo ""
+            read -p "Are you sure your Tor is configured properly? [y/N]: " confirm_tor
+            if [[ "${confirm_tor}" =~ ^[Yy]$ ]]; then
             USE_EXTERNAL_TOR="true"
+                TOR_CONFIGURED="true"
+                
             read -p "Tor SOCKS host [localhost:9050]: " tor_host
             EXTERNAL_TOR_HOST="${tor_host:-localhost:9050}"
-        else
-            USE_EXTERNAL_TOR="false"
-            read -p "Tor SOCKS port [${DEFAULT_TOR_SOCKS_PORT}]: " tor_socks
-            TOR_SOCKS_PORT="${tor_socks:-$DEFAULT_TOR_SOCKS_PORT}"
-            read -p "Tor control port [${DEFAULT_TOR_CONTROL_PORT}]: " tor_control
-            TOR_CONTROL_PORT="${tor_control:-$DEFAULT_TOR_CONTROL_PORT}"
+                
+                read -p "Tor Auth Password [${DEFAULT_TOR_AUTH}]: " tor_auth
+                TOR_AUTH_PASSWORD="${tor_auth:-$DEFAULT_TOR_AUTH}"
+            else
+                print_info "Using internal Tor container instead..."
+            fi
         fi
-    else
-        USE_EXTERNAL_TOR="false"
-        read -p "Tor SOCKS port [${DEFAULT_TOR_SOCKS_PORT}]: " tor_socks
-        TOR_SOCKS_PORT="${tor_socks:-$DEFAULT_TOR_SOCKS_PORT}"
-        read -p "Tor control port [${DEFAULT_TOR_CONTROL_PORT}]: " tor_control
-        TOR_CONTROL_PORT="${tor_control:-$DEFAULT_TOR_CONTROL_PORT}"
     fi
     
-    if [[ "$USE_EXTERNAL_TOR" == "true" ]]; then
-        read -p "Tor Auth Password [${DEFAULT_TOR_AUTH}]: " tor_auth
-        TOR_AUTH_PASSWORD="${tor_auth:-$DEFAULT_TOR_AUTH}"
-    else
+    if [ "$TOR_CONFIGURED" == "false" ]; then
+        USE_EXTERNAL_TOR="false"
+        echo ""
+        print_info "Using internal Tor container with default configuration:"
+        echo "  SOCKS Port: ${DEFAULT_TOR_SOCKS_PORT}"
+        echo "  Control Port: ${DEFAULT_TOR_CONTROL_PORT}"
+        echo "  Auth Password: coinswap (hardcoded)"
+        TOR_SOCKS_PORT="$DEFAULT_TOR_SOCKS_PORT"
+        TOR_CONTROL_PORT="$DEFAULT_TOR_CONTROL_PORT"
         TOR_AUTH_PASSWORD="coinswap"
     fi
     
