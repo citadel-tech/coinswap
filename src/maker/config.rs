@@ -182,7 +182,7 @@ amount_relative_fee_pct = {}
         file.flush()?;
         Ok(())
     }
-    
+
     /// Validates the MakerConfig parameters with bound checks.
     pub(crate) fn validate(&self) -> Result<(), String> {
         if self.fidelity_timelock < MIN_FIDELITY_TIMELOCK {

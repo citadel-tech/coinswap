@@ -17,7 +17,7 @@ pub use api::{Balances, UTXOSpendInfo, Wallet};
 pub use backup::WalletBackup;
 pub use error::WalletError;
 pub use fidelity::FidelityBond;
-pub(crate) use fidelity::{fidelity_redeemscript, FidelityError};
+pub(crate) use fidelity::FidelityError;
 pub use rpc::RPCConfig;
 pub use spend::Destination;
 pub(crate) use swapcoin::{
