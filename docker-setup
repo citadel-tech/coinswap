@@ -229,7 +229,7 @@ configure_setup() {
         1)
             echo ""
             print_warning "Your node must be configured correctly as per: docs/bitcoind.md"
-            print_warning "Required: server=1, txindex=1, blockfilterindex=1, and correct RPC/ZMQ settings"
+            print_warning "Refrence bitcoin configuration: docs/bitcoin.conf"
             echo ""
             read -p "Are you sure your node is configured properly? [y/N]: " confirm_existing
             if [[ ! "${confirm_existing}" =~ ^[Yy]$ ]]; then
