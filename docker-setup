@@ -361,12 +361,34 @@ configure_setup() {
     if [ "$TOR_CONFIGURED" == "false" ]; then
         USE_EXTERNAL_TOR="false"
         echo ""
-        print_info "Using internal Tor container with default configuration:"
-        echo "  SOCKS Port: ${DEFAULT_TOR_SOCKS_PORT}"
-        echo "  Control Port: ${DEFAULT_TOR_CONTROL_PORT}"
+        
+        if check_tor_running; then
+            print_warning "Default Tor port 9050 is already in use."
+            print_info "You must specify custom ports for the internal Tor container."
+            echo ""
+            
+            read -p "Tor SOCKS port (must not be 9050): " tor_socks
+            while [ -z "$tor_socks" ] || [ "$tor_socks" == "9050" ]; do
+                print_error "Please enter a valid port that is not 9050"
+                read -p "Tor SOCKS port: " tor_socks
+            done
+            TOR_SOCKS_PORT="$tor_socks"
+            
+            read -p "Tor Control port (must not be 9051): " tor_control
+            while [ -z "$tor_control" ] || [ "$tor_control" == "9051" ]; do
+                print_error "Please enter a valid port that is not 9051"
+                read -p "Tor Control port: " tor_control
+            done
+            TOR_CONTROL_PORT="$tor_control"
+        else
+            TOR_SOCKS_PORT="$DEFAULT_TOR_SOCKS_PORT"
+            TOR_CONTROL_PORT="$DEFAULT_TOR_CONTROL_PORT"
+        fi
+        
+        print_info "Using internal Tor container with configuration:"
+        echo "  SOCKS Port: ${TOR_SOCKS_PORT}"
+        echo "  Control Port: ${TOR_CONTROL_PORT}"
         echo "  Auth Password: coinswap (hardcoded)"
-        TOR_SOCKS_PORT="$DEFAULT_TOR_SOCKS_PORT"
-        TOR_CONTROL_PORT="$DEFAULT_TOR_CONTROL_PORT"
         TOR_AUTH_PASSWORD="coinswap"
     fi
     
