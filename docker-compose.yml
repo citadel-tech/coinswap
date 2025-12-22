@@ -89,8 +89,25 @@ services:
         amount_relative_fee_ppt = $${AMOUNT_RELATIVE_FEE_PPT:-1000}
         EOM
         
-        RAND_SUFFIX=$$(date +%s)
-        WALLET_NAME="maker-wallet-$$RAND_SUFFIX"
+        WALLET_DIR="/home/coinswap/.coinswap/maker/wallets"
+        EXISTING_WALLET=""
+        
+        if [ -d "$$WALLET_DIR" ]; then
+          for dir in "$$WALLET_DIR"/*; do
+              EXISTING_WALLET=$$(basename "$$dir")
+              echo "Found existing wallet: $$EXISTING_WALLET"
+              break
+          done
+        fi
+        
+        if [ -n "$$EXISTING_WALLET" ]; then
+          WALLET_NAME="$$EXISTING_WALLET"
+          echo "Using existing wallet: $$WALLET_NAME"
+        else
+          RAND_SUFFIX=$$(date +%s)
+          WALLET_NAME="maker-wallet-$$RAND_SUFFIX"
+          echo "No existing wallet found. Creating new wallet: $$WALLET_NAME"
+        fi
         
         makerd -t $${TOR_AUTH_PASSWORD} -r $${BITCOIN_RPC_HOST} -a $${BITCOIN_RPC_AUTH} $${MAKERD_EXTRA_ARGS} -w "$$WALLET_NAME"
     ports:
