@@ -18,7 +18,7 @@ DEFAULT_TOR_SOCKS_PORT="9050"
 DEFAULT_TOR_CONTROL_PORT="9051"
 DEFAULT_RPC_USER="user"
 DEFAULT_RPC_PASSWORD="password"
-DEFAULT_TOR_AUTH="coinswap"
+DEFAULT_TOR_AUTH=""
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -169,8 +169,7 @@ setup_env() {
         profiles="${profiles}external-tor"
     else
         profiles="${profiles}internal-tor"
-        # internal tor uses static torrc with hardcoded hash for "coinswap"
-        TOR_AUTH_PASSWORD="coinswap"
+        TOR_AUTH_PASSWORD=$DEFAULT_TOR_AUTH
     fi
     
     export TOR_AUTH_PASSWORD
@@ -388,8 +387,8 @@ configure_setup() {
         print_info "Using internal Tor container with configuration:"
         echo "  SOCKS Port: ${TOR_SOCKS_PORT}"
         echo "  Control Port: ${TOR_CONTROL_PORT}"
-        echo "  Auth Password: coinswap (hardcoded)"
-        TOR_AUTH_PASSWORD="coinswap"
+        echo "  Auth Password: (empty)"
+        TOR_AUTH_PASSWORD=$DEFAULT_TOR_AUTH
     fi
     
     echo ""
