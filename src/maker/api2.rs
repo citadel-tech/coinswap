@@ -1529,7 +1529,11 @@ fn recover_via_hashlock(maker: Arc<Maker>, incoming: IncomingSwapCoinV2) -> Resu
                 );
                 None
             } else {
-                let preimage = incoming.hash_preimage.unwrap();
+                let preimage = if let Some(preimage) = incoming.hash_preimage {
+                    preimage
+                } else {
+                    return Err(MakerError::General("Preimage missing for hashlock recovery"));
+                };
                 let mut wallet = maker.wallet.write()?;
 
                 // Attempt to spend via hashlock

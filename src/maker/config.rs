@@ -12,6 +12,11 @@ use crate::utill::{get_maker_dir, parse_field};
 
 use super::api::MIN_SWAP_AMOUNT;
 
+/// Maximum and Minimum allowed timelocks for Fidelity Bonds
+/// 1 block = ~10 minutes
+const MIN_FIDELITY_TIMELOCK: u32 = 12_960;
+const MAX_FIDELITY_TIMELOCK: u32 = 25_920;
+
 /// Maker Configuration
 ///
 /// This struct defines all configurable parameters for the Maker module, including:
@@ -100,8 +105,7 @@ impl MakerConfig {
             "Successfully loaded config file from : {}",
             config_path.display()
         );
-
-        Ok(MakerConfig {
+        let config = MakerConfig {
             rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
             min_swap_amount: parse_field(
                 config_map.get("min_swap_amount"),
@@ -127,7 +131,11 @@ impl MakerConfig {
                 config_map.get("amount_relative_fee_pct"),
                 default_config.amount_relative_fee_pct,
             ),
-        })
+        };
+        config
+            .validate()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        Ok(config)
     }
 
     /// This function serializes the MakerConfig into a TOML format and writes it to disk.
@@ -172,6 +180,23 @@ amount_relative_fee_pct = {}
         let mut file = std::fs::File::create(path)?;
         file.write_all(toml_data.as_bytes())?;
         file.flush()?;
+        Ok(())
+    }
+    
+    /// Validates the MakerConfig parameters with bound checks.
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.fidelity_timelock < MIN_FIDELITY_TIMELOCK {
+            return Err(format!(
+                "Fidelity timelock too low: {}. Minimum is {} blocks.",
+                self.fidelity_timelock, MIN_FIDELITY_TIMELOCK
+            ));
+        }
+        if self.fidelity_timelock > MAX_FIDELITY_TIMELOCK {
+            return Err(format!(
+                "Fidelity timelock too high: {}. Maximum is {} blocks.",
+                self.fidelity_timelock, MAX_FIDELITY_TIMELOCK
+            ));
+        }
         Ok(())
     }
 }
@@ -251,5 +276,31 @@ mod tests {
         let config = MakerConfig::new(Some(&config_path)).unwrap();
         remove_temp_config(&config_path);
         assert_eq!(config, MakerConfig::default());
+    }
+    #[test]
+    fn test_fidelity_timelock_validation_cases() {
+        let cases = vec![
+            (12_960, true),
+            (15_000, true),
+            (25_920, true),
+            (12_000, false),
+            (30_000, false),
+        ];
+
+        for (timelock, should_pass) in cases {
+            let contents = format!("fidelity_timelock = {}", timelock);
+            let path = create_temp_config(&contents, "timelock_test.toml");
+
+            let result = MakerConfig::new(Some(&path));
+
+            assert_eq!(
+                result.is_ok(),
+                should_pass,
+                "timelock {} validation mismatch",
+                timelock
+            );
+
+            remove_temp_config(&path);
+        }
     }
 }
