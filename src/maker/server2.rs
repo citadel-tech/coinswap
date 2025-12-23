@@ -304,29 +304,6 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         peer_addr.port()
     );
 
-    // Get or create connection state for this IP
-    let mut connection_state = {
-        let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-        let (state, _) = ongoing_swaps.entry(ip.clone()).or_insert_with(|| {
-            log::info!(
-                "[{}] Creating new connection state for {}",
-                maker.config.network_port,
-                ip
-            );
-            (ConnectionState::default(), Instant::now())
-        });
-
-        log::info!(
-            "[{}] Retrieved connection state for {}: swap_amount={}, my_privkey_is_some={}",
-            maker.config.network_port,
-            ip,
-            state.swap_amount,
-            state.incoming_contract.my_privkey.is_some()
-        );
-
-        state.clone()
-    };
-
     loop {
         // Check if we should shutdown
         if maker.shutdown.load(Relaxed) {
@@ -383,23 +360,50 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
             }
         };
 
+        let swap_id = match &message {
+            TakerToMakerMessage::GetOffer(msg) => Some(msg.id.clone()),
+            TakerToMakerMessage::SwapDetails(msg) => Some(msg.id.clone()),
+            TakerToMakerMessage::SendersContract(msg) => Some(msg.id.clone()),
+            TakerToMakerMessage::PrivateKeyHandover(msg) => msg.id.clone(),
+        }
+        .ok_or_else(|| MakerError::General("Message missing swap_id"))?;
+
+        // Get or create connection state for this swap id
+        let mut connection_state = {
+            let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
+
+            match &message {
+                TakerToMakerMessage::GetOffer(_) => {
+                    // TODO: Right now sync_offerbook is sending GetOffer with an empty string swap_id
+                    // Refactor to not create a connection state when swap id is an empty string
+                    // Just return the Offer
+                    let (state, _) = ongoing_swaps.entry(swap_id.clone()).or_insert_with(|| {
+                        log::info!(
+                            "[{}] Creating new connection state for {:?}",
+                            maker.config.network_port,
+                            &swap_id
+                        );
+                        (ConnectionState::default(), Instant::now())
+                    });
+                    state.clone()
+                }
+                _ => match ongoing_swaps.get(&swap_id) {
+                    Some((state, _)) => state.clone(),
+                    None => {
+                        log::info!(
+                                "[{}] No connection state found for swap_id={:?}. GetOffer must be sent first.",
+                                maker.config.network_port,
+                                &swap_id
+                            );
+                        return Err(MakerError::General("No connection state found"));
+                    }
+                },
+            }
+        };
+
         // Handle the message using taproot handlers
         let response = match handle_message_taproot(maker, &mut connection_state, message) {
-            Ok(response) => {
-                // Save connection state immediately after successful message handling
-                {
-                    let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-                    log::info!(
-                        "[{}] Saving connection state for {}: swap_amount={}, my_privkey_is_some={}",
-                        maker.config.network_port,
-                        ip,
-                        connection_state.swap_amount,
-                        connection_state.incoming_contract.my_privkey.is_some()
-                    );
-                    ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
-                }
-                response
-            }
+            Ok(response) => response,
             Err(e) => {
                 log::error!(
                     "[{}] Error handling message from {}: {:?}",
@@ -407,12 +411,6 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                     ip,
                     e
                 );
-
-                // Always save connection state even if there was an error
-                {
-                    let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-                    ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
-                }
 
                 // Check if this is a behavior-triggered error
                 match &e {
@@ -427,7 +425,17 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                 break;
             }
         };
-
+        {
+            let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
+            log::info!(
+                "[{}] Saving connection state for {}: swap_amount={}, my_privkey_is_some={}",
+                maker.config.network_port,
+                ip,
+                connection_state.swap_amount,
+                connection_state.incoming_contract.my_privkey.is_some()
+            );
+            ongoing_swaps.insert(swap_id.clone(), (connection_state.clone(), Instant::now()));
+        }
         // Send response if we have one (only applies to taker messages)
         if let Some(response_msg) = response {
             log::info!("[{}] Sending response", maker.config.network_port,);
@@ -448,55 +456,35 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                 ip
             );
 
-            // For certain message types, handle cleanup
-            match &response_msg {
-                MakerToTakerMessage::RespOffer(_) => {
-                    // Keep connection open for SwapDetails
-                }
-                MakerToTakerMessage::AckResponse(_) => {
-                    // Keep connection open for SendersContract
-                    log::debug!(
-                        "[{}] Keeping connection open after AckResponse for SendersContract",
-                        maker.config.network_port
-                    );
-                }
-                MakerToTakerMessage::SenderContractFromMaker(_) => {}
-                MakerToTakerMessage::PrivateKeyHandover(_) => {
-                    // Swap completed successfully - remove outgoing swapcoin and ongoing swap state
+            if let MakerToTakerMessage::PrivateKeyHandover(_) = &response_msg {
+                // Swap completed successfully - remove outgoing swapcoin and ongoing swap state
+                log::info!(
+                    "[{}] Swap completed successfully with {}, removing from ongoing swaps",
+                    maker.config.network_port,
+                    ip
+                );
+
+                // Remove the outgoing swapcoin now that PrivateKeyHandover was sent
+                let outgoing_txid = connection_state
+                    .outgoing_contract
+                    .contract_tx
+                    .compute_txid();
+                {
+                    let mut wallet = maker.wallet.write()?;
+                    wallet.remove_outgoing_swapcoin_v2(&outgoing_txid);
                     log::info!(
-                        "[{}] Swap completed successfully with {}, removing from ongoing swaps",
+                        "[{}] Removed outgoing swapcoin {} after PrivateKeyHandover sent",
                         maker.config.network_port,
-                        ip
+                        outgoing_txid
                     );
-
-                    // Remove the outgoing swapcoin now that PrivateKeyHandover was sent
-                    let outgoing_txid = connection_state
-                        .outgoing_contract
-                        .contract_tx
-                        .compute_txid();
-                    {
-                        let mut wallet = maker.wallet.write()?;
-                        wallet.remove_outgoing_swapcoin_v2(&outgoing_txid);
-                        log::info!(
-                            "[{}] Removed outgoing swapcoin {} after PrivateKeyHandover sent",
-                            maker.config.network_port,
-                            outgoing_txid
-                        );
-                        wallet.save_to_disk()?;
-                    }
-
-                    let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-                    ongoing_swaps.remove(&ip);
-                    // Exit loop - swap is complete
-                    break;
+                    wallet.save_to_disk()?;
                 }
-            }
-        }
 
-        // Update the connection state in the maker
-        {
-            let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-            ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
+                let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
+                ongoing_swaps.remove(&swap_id);
+                // Exit loop - swap is complete
+                break;
+            }
         }
     }
 

@@ -935,11 +935,12 @@ impl Maker {
             wallet.save_to_disk()?;
         }
 
-        let privkey_handover_message = PrivateKeyHandover {
+        let outgoing_privkey_handover_message = PrivateKeyHandover {
+            id: privkey_handover_message.id.clone(),
             secret_key: connection_state.outgoing_contract.privkey()?,
         };
 
-        Ok(privkey_handover_message)
+        Ok(outgoing_privkey_handover_message)
     }
 
     /// Create an unsigned transaction to spend from the incoming contract
@@ -1058,7 +1059,7 @@ impl MakerRpc for Maker {
 /// This detects when contract outputs are spent via hashlock or timelock paths,
 /// indicating protocol violations or adjacent maker failures that require recovery.
 pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerError> {
-    let mut failed_swap_ip = Vec::new();
+    let mut failed_swap_id = Vec::new();
     loop {
         if maker.shutdown.load(Relaxed) {
             break;
@@ -1066,7 +1067,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
 
         {
             let mut lock_on_state = maker.ongoing_swap_state.lock()?;
-            for (ip, (connection_state, _)) in lock_on_state.iter_mut() {
+            for (swap_id, (connection_state, _)) in lock_on_state.iter_mut() {
                 // Skip if no contracts have been exchanged yet
                 let Some(incoming_txid) = connection_state.incoming_contract.contract_txid else {
                     continue;
@@ -1096,12 +1097,12 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
 
                 if outgoing_spent {
                     log::warn!(
-                        "[{}] Outgoing contract {} has been SPENT! Triggering recovery for swap with {}",
+                        "[{}] Outgoing contract {} has been SPENT! Triggering recovery for swap {}",
                         maker.config.network_port,
                         outgoing_txid,
-                        ip
+                        swap_id
                     );
-                    failed_swap_ip.push(ip.clone());
+                    failed_swap_id.push(swap_id.clone());
 
                     let incoming = connection_state.incoming_contract.clone();
                     let outgoing = connection_state.outgoing_contract.clone();
@@ -1148,9 +1149,9 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                         "[{}] Incoming contract {} has been SPENT! Triggering recovery for swap with {}",
                         maker.config.network_port,
                         incoming_txid,
-                        ip
+                        swap_id
                     );
-                    failed_swap_ip.push(ip.clone());
+                    failed_swap_id.push(swap_id.clone());
 
                     let incoming = connection_state.incoming_contract.clone();
                     let outgoing = connection_state.outgoing_contract.clone();
@@ -1176,12 +1177,12 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
             }
 
             // Remove failed swap entries
-            for ip in failed_swap_ip.iter() {
-                lock_on_state.remove(ip);
+            for id in failed_swap_id.iter() {
+                lock_on_state.remove(id);
             }
         }
 
-        failed_swap_ip.clear();
+        failed_swap_id.clear();
         std::thread::sleep(HEART_BEAT_INTERVAL);
     }
 
@@ -1190,7 +1191,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
 
 /// Checks for idle connection states and removes them after timeout.
 pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
-    let mut bad_ip = Vec::new();
+    let mut bad_id = Vec::new();
     loop {
         if maker.shutdown.load(Relaxed) {
             break;
@@ -1198,12 +1199,12 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
 
         {
             let mut lock_on_state = maker.ongoing_swap_state.lock()?;
-            for (ip, (state, instant)) in lock_on_state.iter_mut() {
+            for (swap_id, (state, instant)) in lock_on_state.iter_mut() {
                 if instant.elapsed() > IDLE_CONNECTION_TIMEOUT {
                     log::error!(
                         "[{}] Potential dropped connection from taker {}. No response since {} secs. Recovering from swap.",
                         maker.config.network_port,
-                        ip,
+                        swap_id,
                         instant.elapsed().as_secs()
                     );
 
@@ -1219,7 +1220,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                         log::info!(
                             "[{}] Spawning recovery thread after taker {} dropped",
                             maker.config.network_port,
-                            ip
+                            swap_id
                         );
 
                         // Spawn recovery thread
@@ -1234,18 +1235,18 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                         maker.thread_pool.add_thread(handle);
                     }
 
-                    bad_ip.push(ip.clone());
+                    bad_id.push(swap_id.clone());
                     *state = ConnectionState::default();
                     break;
                 }
             }
 
-            for ip in bad_ip.iter() {
-                lock_on_state.remove(ip);
+            for id in bad_id.iter() {
+                lock_on_state.remove(id);
             }
         }
 
-        bad_ip.clear();
+        bad_id.clear();
         std::thread::sleep(HEART_BEAT_INTERVAL);
     }
 
