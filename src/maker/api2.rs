@@ -935,12 +935,12 @@ impl Maker {
             wallet.save_to_disk()?;
         }
 
-        let privkey_handover_message = PrivateKeyHandover {
-            id: None,
+        let outgoing_privkey_handover_message = PrivateKeyHandover {
+            id: privkey_handover_message.id.clone(),
             secret_key: connection_state.outgoing_contract.privkey()?,
         };
 
-        Ok(privkey_handover_message)
+        Ok(outgoing_privkey_handover_message)
     }
 
     /// Create an unsigned transaction to spend from the incoming contract
