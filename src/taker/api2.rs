@@ -408,7 +408,7 @@ impl Taker {
         };
 
         log::info!("Initializing wallet sync...");
-        wallet.sync()?;
+        wallet.sync_and_save()?;
         log::info!("Completed wallet sync");
 
         Ok(Self {

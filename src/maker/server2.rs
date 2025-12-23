@@ -163,7 +163,7 @@ fn setup_fidelity_bond_taproot(
     while !maker.shutdown.load(Relaxed) {
         sleep_multiplier += 1;
         // sync the wallet
-        maker.wallet().write()?.sync_no_fail();
+        maker.wallet().write()?.sync_and_save()?;
 
         let fidelity_result = maker.wallet().write()?.create_fidelity(
             amount,
@@ -225,8 +225,7 @@ fn setup_fidelity_bond_taproot(
                 };
 
                 // sync and save the wallet data to disk
-                maker.wallet().write()?.sync_no_fail();
-                maker.wallet().read()?.save_to_disk()?;
+                maker.wallet().write()?.sync_and_save()?;
 
                 // Store the fidelity proof in maker
                 *maker.highest_fidelity_proof.write()? = Some(highest_proof.clone());
