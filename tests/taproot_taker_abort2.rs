@@ -20,7 +20,7 @@ use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 /// 2. Taker sends outgoing contract to Maker and closes connection.
 /// 3. Maker receiving incoming contract,but unable to connect with taker as it has closed the connection.
 /// 4. Taker has it's outgoing contract stuck.
-/// 5. Taker will wait for timelock to mature, and recover via it.
+/// 5. Taker when connects back will wait for timelock to mature, and claim it's fund via it.
 #[test]
 fn test_taproot_taker_abort2() {
     // ---- Setup ----
@@ -78,7 +78,7 @@ fn test_taproot_taker_abort2() {
 
     // Sync wallets after setup
     for maker in &taproot_makers {
-        maker.wallet().write().unwrap().sync().unwrap();
+        maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
 
     // Get balances before swap
@@ -119,7 +119,7 @@ fn test_taproot_taker_abort2() {
 
     // Mine a block to confirm any broadcasted transactions
     generate_blocks(bitcoind, 1);
-    taproot_taker.get_wallet_mut().sync().unwrap();
+    taproot_taker.get_wallet_mut().sync_and_save().unwrap();
 
     info!("📊 Taker balance after failed swap:");
     let taker_balances = taproot_taker.get_wallet().get_balances().unwrap();
@@ -145,7 +145,7 @@ fn test_taproot_taker_abort2() {
 
     // Mine blocks to confirm taker's recovery
     generate_blocks(bitcoind, 2);
-    taproot_taker.get_wallet_mut().sync().unwrap();
+    taproot_taker.get_wallet_mut().sync_and_save().unwrap();
 
     info!("📊 Taker balance after timelock recovery:");
     let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
@@ -164,17 +164,10 @@ fn test_taproot_taker_abort2() {
         taproot_taker_original_balance - taker_balances_after.spendable
     );
 
-    // Wait for maker's automatic recovery to trigger
-    // The idle-checker detects dropped connections after 60 seconds (IDLE_CONNECTION_TIMEOUT)
-    info!("⏳ Waiting for maker's automatic recovery (65 seconds)...");
-    thread::sleep(Duration::from_secs(65));
-    // Mine blocks to confirm maker's recovery transactions
-    generate_blocks(bitcoind, 10);
-
     // Verify maker's final balance (they never created outgoing contract, no funds gained/lost)
     let maker_balance_after = {
         let mut wallet = taproot_makers[0].wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
         let balances = wallet.get_balances().unwrap();
         info!(
             "📊 Maker balance after swap: Regular: {}, Spendable: {}",
@@ -183,10 +176,9 @@ fn test_taproot_taker_abort2() {
         balances.spendable
     };
 
-    let max_maker_loss = Amount::from_sat(1000); // Small fees only
     assert!(
-        maker_balance_after >= maker_balance_before - max_maker_loss,
-        "Maker balance shouldn't change much. Before: {}, After: {}, Change: {}",
+        maker_balance_after == maker_balance_before,
+        "Maker balance shouldn't change. Before: {}, After: {}, Change: {}",
         maker_balance_before,
         maker_balance_after,
         maker_balance_after.to_sat() as i64 - maker_balance_before.to_sat() as i64

@@ -1,3 +1,5 @@
+//! File-backed registry for watch requests, fidelity bonds, and chain checkpoints.
+
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -7,22 +9,32 @@ use std::{
 use bitcoin::{BlockHash, OutPoint, Transaction, Txid};
 use serde::{Deserialize, Serialize};
 
+/// Represents a UTXO being watched and records when it gets spent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WatchRequest {
+    /// UTXO being watched.
     pub outpoint: OutPoint,
+    /// Whether the spend was seen in a block (`true`) or only in the mempool.
     pub in_block: bool,
+    /// Optional full transaction that spent the outpoint.
     pub spent_tx: Option<Transaction>,
 }
 
+/// Fidelity records used to discover Makers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Fidelity {
+    /// Transaction ID of the maker's fidelity bond.
     pub txid: Txid,
+    /// Maker's advertised onion address.
     pub onion_address: String,
 }
 
+/// Last processed chain tip so scanning can resume efficiently.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Checkpoint {
+    /// Block height recorded.
     pub height: u64,
+    /// Block hash recorded.
     pub hash: BlockHash,
 }
 
@@ -33,6 +45,7 @@ struct RegistryData {
     checkpoint: Option<Checkpoint>,
 }
 
+/// Registry used by the watcher.
 #[derive(Clone)]
 pub struct FileRegistry {
     path: PathBuf,
@@ -40,6 +53,7 @@ pub struct FileRegistry {
 }
 
 impl FileRegistry {
+    /// Loads registry data from disk, creating the file and parent directories if missing.
     pub fn load<P: Into<PathBuf>>(path: P) -> Self {
         let path = path.into();
         let data = if path.exists() {
@@ -77,6 +91,7 @@ impl FileRegistry {
         Self { path, data }
     }
 
+    /// Flushes the in-memory registry to the persistent CBOR file on disk.
     fn flush(&self) {
         // Ensure parent directory exists
         if let Some(parent) = self.path.parent() {
@@ -113,24 +128,29 @@ impl FileRegistry {
 }
 
 impl FileRegistry {
+    /// Inserts a watch request and flushes the registry to disk.
     pub fn upsert_watch(&mut self, req: &WatchRequest) {
         self.with_data(|data| data.watches.insert(req.outpoint, req.clone()));
         self.flush();
     }
 
+    /// Removes a watch request for the given outpoint and flushes the registry to disk.
     pub fn remove_watch(&mut self, outpoint: OutPoint) {
         self.with_data(|data| data.watches.remove(&outpoint));
         self.flush();
     }
 
+    /// Returns all current watch requests.
     pub fn list_watches(&self) -> Vec<WatchRequest> {
         self.with_data(|data| data.watches.values().cloned().collect())
     }
 
+    /// Returns all stored maker fidelity records.
     pub fn list_fidelity(&self) -> Vec<Fidelity> {
         self.with_data(|data| data.fidelity.clone())
     }
 
+    /// Inserts a new fidelity record.
     pub fn insert_fidelity(&mut self, txid: Txid, onion_address: String) {
         let fidelity = Fidelity {
             txid,
@@ -139,15 +159,18 @@ impl FileRegistry {
         self.with_data(|data| data.fidelity.push(fidelity));
     }
 
+    /// Removes fidelity records matching the given txid.
     pub fn remove_fidelity(&mut self, txid: Txid) {
         self.with_data(|data| data.fidelity.retain(|f| f.txid != txid));
     }
 
+    /// Persists the latest processed checkpoint to disk.
     pub fn save_checkpoint(&mut self, cp: Checkpoint) {
         self.with_data(|data| data.checkpoint = Some(cp));
         self.flush();
     }
 
+    /// Loads the most recently saved checkpoint, if any.
     pub fn load_checkpoint(&self) -> Option<Checkpoint> {
         self.data.lock().unwrap().checkpoint.clone()
     }

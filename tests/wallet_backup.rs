@@ -90,7 +90,7 @@ fn plainwallet_plainbackup_plainrestore() {
     let addr = wallet.get_next_external_address().unwrap();
     send_and_mine(&mut bitcoind, &addr, 0.05, 1).unwrap();
 
-    wallet.sync().unwrap();
+    wallet.sync_and_save().unwrap();
 
     let (backup, _) =
         load_sensitive_struct_interactive::<WalletBackup, SerdeJson>(&wallet_backup_file);
@@ -124,7 +124,7 @@ fn encwallet_encbackup_encrestore() {
     let addr = wallet.get_next_external_address().unwrap();
     send_and_mine(&mut bitcoind, &addr, 0.05, 1).unwrap();
 
-    wallet.sync().unwrap();
+    wallet.sync_and_save().unwrap();
 
     let (backup, _) =
         load_sensitive_struct_interactive::<WalletBackup, SerdeJson>(&wallet_backup_file);

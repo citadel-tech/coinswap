@@ -71,7 +71,7 @@ fn test_taproot_taker_abort1() {
 
     // Sync wallets after setup
     for maker in &taproot_makers {
-        maker.wallet().write().unwrap().sync().unwrap();
+        maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
 
     // Get balances before swap
@@ -112,18 +112,9 @@ fn test_taproot_taker_abort1() {
 
     // Mine a block to confirm any broadcasted transactions
     generate_blocks(bitcoind, 1);
-    taproot_taker.get_wallet_mut().sync().unwrap();
 
-    info!("📊 Taker balance after failed swap:");
-    let taker_balances = taproot_taker.get_wallet().get_balances().unwrap();
-    info!(
-        "  Regular: {}, Contract: {}, Spendable: {}",
-        taker_balances.regular, taker_balances.contract, taker_balances.spendable
-    );
-
-    taproot_taker.get_wallet_mut().sync().unwrap();
+    taproot_taker.get_wallet_mut().sync_and_save().unwrap();
     let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
-
     // Verify taker funds and ensure no fund loss.
     assert!(
         taker_balances_after.spendable == taproot_taker_original_balance,
@@ -136,7 +127,7 @@ fn test_taproot_taker_abort1() {
     // Verify maker's final balance
     let maker_balance_after = {
         let mut wallet = taproot_makers[0].wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
         let balances = wallet.get_balances().unwrap();
         info!(
             "📊 Maker balance after failed swap: Regular: {}, Spendable: {}",

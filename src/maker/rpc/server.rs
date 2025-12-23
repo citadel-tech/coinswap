@@ -105,7 +105,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
 
             let txid = maker.wallet().read()?.send_tx(&tx)?;
 
-            maker.wallet().write()?.sync_no_fail();
+            maker.wallet().write()?.sync_and_save()?;
 
             RpcMsgResp::SendToAddressResp(txid.to_string())
         }
@@ -136,11 +136,10 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
         RpcMsgReq::SyncWallet => {
             log::info!("Initializing wallet sync");
             let mut wallet = maker.wallet().write()?;
-            if let Err(e) = wallet.sync() {
+            if let Err(e) = wallet.sync_and_save() {
                 RpcMsgResp::ServerError(format!("{e:?}"))
             } else {
                 log::info!("Completed wallet sync");
-                wallet.save_to_disk()?;
                 RpcMsgResp::Pong
             }
         }

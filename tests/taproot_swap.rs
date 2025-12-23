@@ -72,7 +72,7 @@ fn test_taproot_coinswap() {
 
     // Sync wallets after setup to ensure fidelity bonds are accounted for
     for maker in &taproot_makers {
-        maker.wallet().write().unwrap().sync().unwrap();
+        maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
 
     // Get the actual spendable balances AFTER fidelity bond creation
@@ -155,7 +155,7 @@ fn test_taproot_coinswap() {
     log::info!("All taproot coinswaps processed successfully. Transaction complete.");
 
     // Sync wallets and verify results
-    taproot_taker.get_wallet_mut().sync().unwrap();
+    taproot_taker.get_wallet_mut().sync_and_save().unwrap();
 
     // Mine a block to confirm the sweep transactions
     generate_blocks(bitcoind, 1);
@@ -163,7 +163,7 @@ fn test_taproot_coinswap() {
     // Synchronize each taproot maker's wallet multiple times to ensure all UTXOs are discovered
     for maker in taproot_makers.iter() {
         let mut wallet = maker.wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
     }
 
     // Verify swap results

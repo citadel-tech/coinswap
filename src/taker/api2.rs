@@ -53,17 +53,17 @@ use std::{
 };
 
 /// Represents different behaviors taker can have during the swap.
-/// Used for testing various failure scenarios.
+/// Used for testing various possible scenarios that can happen during a swap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg(feature = "integration-test")]
 pub enum TakerBehavior {
     /// Normal behaviour
     Normal,
-    /// Close connection after receiving AckResponse message from the maker. (no contract created)
+    /// Close connection after receiving AckResponse message from the maker. (no outgoing/incoming contract created)
     CloseAtAckResponse,
-    /// Close connection after sending SendersContract (afer creating outgoing contract)
+    /// Close connection after sending SendersContract (outgoing contract created)
     CloseAtSendersContract,
-    /// Close connection after receiving SendersContract from maker.
+    /// Close connection after receiving SendersContract from maker (outgoing contract created).
     CloseAtSendersContractFromMaker,
 }
 
@@ -255,6 +255,7 @@ fn download_taproot_offer(address: &MakerAddress, config: &TakerConfig) -> Optio
 
     // Send GetOffer message (taproot protocol)
     let get_offer_msg = GetOffer {
+        id: String::new(),
         protocol_version_min: 1,
         protocol_version_max: 1,
         number_of_transactions: 1,
@@ -425,7 +426,7 @@ impl Taker {
         };
 
         log::info!("Initializing wallet sync...");
-        wallet.sync()?;
+        wallet.sync_and_save()?;
         log::info!("Completed wallet sync");
 
         Ok(Self {
@@ -471,15 +472,27 @@ impl Taker {
         }
 
         self.sync_offerbook()?;
+
+        // Generate preimage for the swap
+        let mut preimage = [0u8; 32];
+        OsRng.fill_bytes(&mut preimage);
+
+        let unique_id = preimage[0..8].to_hex_string(bitcoin::hex::Case::Lower);
+        log::info!("Initiating coinswap with id : {}", unique_id);
+
+        self.ongoing_swap_state.active_preimage = preimage;
+        self.ongoing_swap_state.id = unique_id;
+
         self.choose_makers_for_swap(swap_params)?;
         self.setup_contract_keys_and_scripts()?;
 
         #[cfg(feature = "integration-test")]
         {
             if self.behavior == TakerBehavior::CloseAtAckResponse {
-                log::error!("Dropping Swap Process after full setup");
-                self.recover_from_swap()?;
-                return Ok(None);
+                log::error!(
+                    "Dropping Swap Process after receiving Ack Response message from maker"
+                );
+                return Err(TakerError::General("Taker Dropping after receiving AckResponse message from maker. (Test behavior)".to_string(),));
             }
         }
 
@@ -525,7 +538,7 @@ impl Taker {
 
                 // Store swap state before reset for report generation
                 let prereset_swapstate = self.ongoing_swap_state.clone();
-                self.save_and_reset_swap_round()?;
+                self.ongoing_swap_state = OngoingSwapState::default();
 
                 // Sync wallet and generate report
                 self.wallet.sync_and_save()?;
@@ -545,44 +558,6 @@ impl Taker {
                 Ok(None)
             }
         }
-    }
-
-    /// Save all the finalized swap data and reset the [`OngoingSwapState`].
-    fn save_and_reset_swap_round(&mut self) -> Result<(), TakerError> {
-        // Mark incoiming swapcoins as done
-        let incoming_swapcoin = &self.ongoing_swap_state.incoming_contract;
-        let contract_txid = incoming_swapcoin.contract_tx.compute_txid();
-        for (vout, _) in incoming_swapcoin.contract_tx.output.iter().enumerate() {
-            let outpoint = OutPoint {
-                txid: contract_txid,
-                vout: vout as u32,
-            };
-            self.watch_service.unwatch(outpoint);
-        }
-
-        // Mark outgoing swapcoins as done.
-        let outgoing_swapcoin = &self.ongoing_swap_state.outgoing_contract;
-        let contract_txid = outgoing_swapcoin.contract_tx.compute_txid();
-        for (vout, _) in outgoing_swapcoin.contract_tx.output.iter().enumerate() {
-            let outpoint = OutPoint {
-                txid: contract_txid,
-                vout: vout as u32,
-            };
-            self.watch_service.unwatch(outpoint);
-        }
-
-        self.wallet.sync_no_fail();
-
-        self.wallet.save_to_disk()?;
-
-        self.clear_ongoing_swaps();
-
-        Ok(())
-    }
-
-    /// Clear the [`OngoingSwapState`].
-    fn clear_ongoing_swaps(&mut self) {
-        self.ongoing_swap_state = OngoingSwapState::default();
     }
 
     /// Generate a swap report after successful completion of a taproot coinswap
@@ -885,6 +860,7 @@ impl Taker {
             // Always send GetOffer first to ensure maker has fresh keypair state
             // This is required because offers may be cached but maker might have restarted
             let get_offer_msg = GetOffer {
+                id: self.ongoing_swap_state.id.clone(),
                 protocol_version_min: 1,
                 protocol_version_max: 1,
                 number_of_transactions: 1,
@@ -928,6 +904,7 @@ impl Taker {
             );
 
             let swap_details = SwapDetails {
+                id: self.ongoing_swap_state.id.clone(),
                 amount: self.ongoing_swap_state.swap_params.send_amount,
                 no_of_tx: self.ongoing_swap_state.swap_params.tx_count as u8,
                 timelock: maker_timelock,
@@ -969,16 +946,6 @@ impl Taker {
         // Initialize storage for maker private keys received during handover
         let chosen_makers_count = self.ongoing_swap_state.chosen_makers.len();
         self.ongoing_swap_state.maker_outgoing_privkeys = vec![None; chosen_makers_count];
-
-        // Generate preimage for the swap
-        let mut preimage = [0u8; 32];
-        OsRng.fill_bytes(&mut preimage);
-
-        let unique_id = preimage[0..8].to_hex_string(bitcoin::hex::Case::Lower);
-        log::info!("Initiating coinswap with id : {}", unique_id);
-
-        self.ongoing_swap_state.active_preimage = preimage;
-        self.ongoing_swap_state.id = unique_id;
 
         Ok(())
     }
@@ -1276,6 +1243,7 @@ impl Taker {
             };
 
         let senders_contract = SendersContract {
+            id: self.ongoing_swap_state.id.clone(),
             contract_txs: vec![outgoing_signed_contract_transactions[0].compute_txid()],
             pubkeys_a: vec![self.ongoing_swap_state.outgoing_contract.pubkey()?],
             hashlock_scripts: vec![self
@@ -1366,6 +1334,7 @@ impl Taker {
             };
 
             let forward_contract = SendersContract {
+                id: self.ongoing_swap_state.id.clone(),
                 contract_txs: current_contract.contract_txs.clone(),
                 pubkeys_a: current_contract.pubkeys_a.clone(),
                 hashlock_scripts: current_contract.hashlock_scripts.clone(),
@@ -1530,12 +1499,12 @@ impl Taker {
 
             // Create private key handover message
             let privkey_msg = TakerToMakerMessage::PrivateKeyHandover(PrivateKeyHandover {
+                id: Some(self.ongoing_swap_state.id.clone()),
                 secret_key: outgoing_privkey,
             });
 
             // Send to maker and get their outgoing key in response
             let response = self.send_to_maker_and_get_response(&maker_address, privkey_msg)?;
-
             // remove taker's outgoing swapcoin since we've handed over the key
             if maker_index == 0 {
                 let outgoing_txid = self
@@ -1543,6 +1512,20 @@ impl Taker {
                     .outgoing_contract
                     .contract_tx
                     .compute_txid();
+                for (vout, _) in self
+                    .ongoing_swap_state
+                    .outgoing_contract
+                    .contract_tx
+                    .output
+                    .iter()
+                    .enumerate()
+                {
+                    let outpoint = OutPoint {
+                        txid: outgoing_txid,
+                        vout: vout as u32,
+                    };
+                    self.watch_service.unwatch(outpoint);
+                }
                 self.wallet.remove_outgoing_swapcoin_v2(&outgoing_txid);
                 log::info!(
                     "Removed taker's outgoing swapcoin {} after sending PrivateKeyHandover",
@@ -1773,6 +1756,21 @@ impl Taker {
             "Recorded swept incoming swapcoin V2: {}",
             incoming_contract_txid
         );
+
+        for (vout, _) in self
+            .ongoing_swap_state
+            .incoming_contract
+            .contract_tx
+            .output
+            .iter()
+            .enumerate()
+        {
+            let outpoint = OutPoint {
+                txid: incoming_contract_txid,
+                vout: vout as u32,
+            };
+            self.watch_service.unwatch(outpoint);
+        }
 
         // Remove the incoming swapcoin since we've successfully swept it
         self.wallet

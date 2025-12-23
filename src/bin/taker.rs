@@ -304,8 +304,8 @@ fn main() -> Result<(), TakerError> {
                         Some(
                             coinswap::utill::interactive_select(
                                 taker.get_wallet().list_all_utxo_spend_info(),
-                            )
-                            .unwrap()
+                                amount,
+                            )?
                             .iter()
                             .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
                             .collect::<Vec<_>>(),
@@ -336,7 +336,7 @@ fn main() -> Result<(), TakerError> {
 
                     println!("{txid}");
 
-                    taker.get_wallet_mut().sync_no_fail();
+                    taker.get_wallet_mut().sync_and_save()?;
                 }
                 Commands::FetchOffers => {
                     let all_offers = {
@@ -362,11 +362,13 @@ fn main() -> Result<(), TakerError> {
                     // Note: taproot coinswap is handled at the top level to avoid
                     // double Taker initialization. Regular ECDSA coinswap goes here.
                     let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
+                        let target_amount = Amount::from_sat(*amount);
+
                         Some(
                             coinswap::utill::interactive_select(
                                 taker.get_wallet().list_all_utxo_spend_info(),
-                            )
-                            .unwrap()
+                                target_amount,
+                            )?
                             .iter()
                             .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
                             .collect::<Vec<_>>(),

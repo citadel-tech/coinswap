@@ -229,7 +229,7 @@ impl Wallet {
         )?;
 
         let txid = self.send_tx(&tx).unwrap();
-        self.sync_no_fail();
+        self.sync_and_save()?;
         println!("Send to Address TxId: {txid}");
 
         Ok(txid)

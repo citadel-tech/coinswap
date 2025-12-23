@@ -67,7 +67,7 @@ fn test_taproot_maker_abort1() {
 
     // Sync wallets after setup
     for maker in &taproot_makers {
-        maker.wallet().write().unwrap().sync().unwrap();
+        maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
 
     // Get balances before swap
@@ -105,15 +105,13 @@ fn test_taproot_maker_abort1() {
         }
     }
 
-    taproot_taker.get_wallet_mut().sync().unwrap();
-    info!("📊 Taker balance after failed swap:");
-    let taker_balances = taproot_taker.get_wallet().get_balances().unwrap();
+    taproot_taker.get_wallet_mut().sync_and_save().unwrap();
+    let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
+    info!("📊 Taker balance after attempting swap:");
     info!(
         "  Regular: {}, Contract: {}, Spendable: {}",
-        taker_balances.regular, taker_balances.contract, taker_balances.spendable
+        taker_balances_after.regular, taker_balances_after.contract, taker_balances_after.spendable
     );
-
-    let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
     // Verify taker funds
     assert!(
         taker_balances_after.spendable == taproot_taker_original_balance,
@@ -126,7 +124,7 @@ fn test_taproot_maker_abort1() {
     // Verify maker's final balance
     let maker_balance_after = {
         let mut wallet = taproot_makers[0].wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
         let balances = wallet.get_balances().unwrap();
         info!(
             "📊 Maker balance after swap: Regular: {}, Spendable: {}",

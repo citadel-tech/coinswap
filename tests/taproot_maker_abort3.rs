@@ -1,6 +1,6 @@
 #![cfg(feature = "integration-test")]
-//! This test demonstrates the scenario when a maker closes connection after sending AckRespnse message to the taker that is it accepts the swap details.
-//! Nothing to recover for taker here as now outgoing/incoming contract are created.
+//! This test demonstrates the scenario when a maker closes connection after sending AckRespnse message to the taker that it accepts the swap details.
+//! Nothing to recover for taker here as no outgoing/incoming contract are created.
 
 use bitcoin::Amount;
 use coinswap::{
@@ -71,7 +71,7 @@ fn test_taproot_maker_abort3() {
 
     // Sync wallets after setup
     for maker in &taproot_makers {
-        maker.wallet().write().unwrap().sync().unwrap();
+        maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
 
     // Get balances before swap
@@ -96,7 +96,7 @@ fn test_taproot_maker_abort3() {
         manually_selected_outpoints: None,
     };
 
-    // Attempt the swap - it will fail when taker discovers there are not enough makers.
+    // Attempt the swap
     match taproot_taker.do_coinswap(swap_params) {
         Ok(Some(_report)) => {
             panic!("Swap should have failed due to one maker closing connection, but succeeded with report!");
@@ -109,15 +109,7 @@ fn test_taproot_maker_abort3() {
         }
     }
 
-    taproot_taker.get_wallet_mut().sync().unwrap();
-    info!("📊 Taker balance before swap:");
-    let taker_balances = taproot_taker.get_wallet().get_balances().unwrap();
-    info!(
-        "  Regular: {}, Contract: {}, Spendable: {}",
-        taker_balances.regular, taker_balances.contract, taker_balances.spendable
-    );
-
-    taproot_taker.get_wallet_mut().sync().unwrap();
+    taproot_taker.get_wallet_mut().sync_and_save().unwrap();
     info!("📊 Taker balance after failed swap:");
     let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
     info!(
@@ -136,7 +128,7 @@ fn test_taproot_maker_abort3() {
     // Verify maker's final balance
     let maker_balance_after = {
         let mut wallet = taproot_makers[0].wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
         let balances = wallet.get_balances().unwrap();
         info!(
             "📊 Maker balance after swap: Regular: {}, Spendable: {}",

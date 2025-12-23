@@ -282,14 +282,14 @@ fn test_fidelity_spending() {
     };
 
     generate_blocks(bitcoind, 1);
-    maker.get_wallet().write().unwrap().sync_no_fail();
+    maker.get_wallet().write().unwrap().sync_and_save().unwrap();
 
     // Make fidelity bond expire
     while (bitcoind.client.get_block_count().unwrap() as u32) < short_timelock_height {
         generate_blocks(bitcoind, 10);
     }
     generate_blocks(bitcoind, 5);
-    maker.get_wallet().write().unwrap().sync_no_fail();
+    maker.get_wallet().write().unwrap().sync_and_save().unwrap();
 
     // Assert UTXO shows up in list and track the specific fidelity UTXO
     let fidelity_utxo_info = {
@@ -385,7 +385,7 @@ fn test_fidelity_spending() {
             Ok(Some(tx)) => {
                 bitcoind.client.send_raw_transaction(&tx).unwrap();
                 generate_blocks(bitcoind, 1);
-                maker.get_wallet().write().unwrap().sync_no_fail();
+                maker.get_wallet().write().unwrap().sync_and_save().unwrap();
                 log::info!("✅ Regular transaction #{} completed successfully", i + 1);
             }
             Ok(None) => {
@@ -415,7 +415,7 @@ fn test_fidelity_spending() {
     }
 
     generate_blocks(bitcoind, 1);
-    maker.get_wallet().write().unwrap().sync_no_fail();
+    maker.get_wallet().write().unwrap().sync_and_save().unwrap();
 
     // Verify the specific UTXO is now consumed and bond is spent
     {
@@ -463,7 +463,7 @@ fn test_fidelity_spending() {
     };
 
     generate_blocks(bitcoind, 1);
-    maker.get_wallet().write().unwrap().sync_no_fail();
+    maker.get_wallet().write().unwrap().sync_and_save().unwrap();
 
     {
         let wallet = maker.get_wallet().read().unwrap();

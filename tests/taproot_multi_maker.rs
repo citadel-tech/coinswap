@@ -11,7 +11,7 @@ mod test_framework;
 use test_framework::*;
 
 use log::{info, warn};
-use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
+use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// Test taproot multi maker coinswap
 #[test]
@@ -72,7 +72,7 @@ fn test_taproot_multi_maker() {
 
     // Sync wallets after setup to ensure fidelity bonds are accounted for
     for maker in &taproot_makers {
-        maker.wallet().write().unwrap().sync().unwrap();
+        maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
 
     // Get the actual spendable balances AFTER fidelity bond creation
@@ -154,7 +154,7 @@ fn test_taproot_multi_maker() {
     log::info!("✅ Taproot mutli maker test passed successfully.");
 
     // Sync wallets and verify results
-    taproot_taker.get_wallet_mut().sync().unwrap();
+    taproot_taker.get_wallet_mut().sync_and_save().unwrap();
 
     // Mine a block to confirm the sweep transactions
     generate_blocks(bitcoind, 1);
@@ -162,7 +162,7 @@ fn test_taproot_multi_maker() {
     // Synchronize each taproot maker's wallet multiple times to ensure all UTXOs are discovered
     for maker in taproot_makers.iter() {
         let mut wallet = maker.wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
     }
 
     // Verify swap results

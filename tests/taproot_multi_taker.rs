@@ -1,5 +1,6 @@
 #![cfg(feature = "integration-test")]
-//! This test demonstrates a taproot-based coinswap between 2 Taker and 2 Makers.
+//! This test demonstrates a taproot-based coinswap between 2 Taker and 2 Makers,and it's purpose is
+//! to ensure that maker's works fine when performing a taproot based swap with multiple taker a time.
 
 use bitcoin::Amount;
 use coinswap::{
@@ -11,9 +12,8 @@ mod test_framework;
 use test_framework::*;
 
 use log::{info, warn};
-use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
+use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
-/// Test taproot coinswap
 #[test]
 fn test_taproot_multi_taker() {
     // ---- Setup ----
@@ -24,7 +24,7 @@ fn test_taproot_multi_taker() {
         (7102, Some(19061), MakerBehavior::Normal),
         (17102, Some(19062), MakerBehavior::Normal),
     ];
-    // Create two taker's to test a multi taker taproot swap,i.e. ensuring the taproot maker's works fine when performing a taproot based swap with multiple taker a time.
+    // Create two taker with normal behavior
     let taker_behavior = vec![TakerBehavior::Normal, TakerBehavior::Normal];
 
     // Initialize test framework
@@ -69,49 +69,35 @@ fn test_taproot_multi_taker() {
 
     // Sync wallets after setup to ensure fidelity bonds are accounted for
     for maker in &taproot_makers {
-        maker.wallet().write().unwrap().sync().unwrap();
+        maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
-
-    // Get the actual spendable balances AFTER fidelity bond creation
+    // Get balances before swap
     let mut actual_maker_spendable_balances = Vec::new();
 
-    // Test taproot maker balance verification
-    log::info!("Testing taproot maker balance verification");
-    for (i, maker) in taproot_makers.iter().enumerate() {
+    for maker in &taproot_makers {
         let wallet = maker.wallet().read().unwrap();
         let balances = wallet.get_balances().unwrap();
-
         info!(
-            "Taproot Maker {} balances: Regular: {}, Swap: {}, Contract: {}, Fidelity: {}",
-            i, balances.regular, balances.swap, balances.contract, balances.fidelity
+            "Maker balance before swap: Regular: {}, Spendable: {}",
+            balances.regular, balances.spendable
         );
 
-        // With real fidelity bonds, regular balance should be 0.40 BTC minus 0.05 BTC fidelity bond minus small fee
-        assert!(
-            balances.regular >= Amount::from_btc(0.30).unwrap(),
-            "Regular balance should be around 0.3489 BTC after fidelity bond creation"
-        );
-        assert!(
-            balances.regular <= Amount::from_btc(0.35).unwrap(),
-            "Regular balance should not exceed 0.30 BTC"
-        );
-        assert_eq!(balances.swap, Amount::ZERO);
-        assert_eq!(balances.contract, Amount::ZERO);
-        assert_eq!(
-            balances.fidelity,
-            Amount::from_btc(0.05).unwrap(),
-            "Fidelity bond should be 0.05 BTC"
-        );
-        assert!(
-            balances.spendable > Amount::ZERO,
-            "Maker should have spendable balance"
-        );
-
-        // Store the actual spendable balance AFTER fidelity bond creation
         actual_maker_spendable_balances.push(balances.spendable);
     }
 
-    log::info!("Initiating taproot multi taker test");
+    let mut taker_balance_before = Vec::new();
+    for taker in &mut taproot_takers {
+        taker.get_wallet_mut().sync_and_save().unwrap();
+        info!("📊 Taker balance before attempting swap:");
+        let taker_balances = taker.get_wallet().get_balances().unwrap();
+        info!(
+            "  Regular: {}, Contract: {}, Spendable: {}",
+            taker_balances.regular, taker_balances.contract, taker_balances.spendable
+        );
+        taker_balance_before.push(taker_balances.spendable);
+    }
+
+    log::info!("Initiating taproot multi taker test...");
 
     // Mine some blocks before the swap to ensure wallet is ready
     generate_blocks(bitcoind, 1);
@@ -158,7 +144,7 @@ fn test_taproot_multi_taker() {
 
     // Sync wallets and verify results
     for taker in &mut taproot_takers {
-        taker.get_wallet_mut().sync().unwrap();
+        taker.get_wallet_mut().sync_and_save().unwrap();
     }
 
     // Mine a block to confirm the sweep transactions
@@ -167,9 +153,18 @@ fn test_taproot_multi_taker() {
     // Synchronize each taproot maker's wallet multiple times to ensure all UTXOs are discovered
     for maker in taproot_makers.iter() {
         let mut wallet = maker.wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
     }
 
+    for (i, taproot_taker) in taproot_takers.into_iter().enumerate() {
+        // Verify swap results
+        verify_taproot_swap_results(
+            taproot_taker.get_wallet(),
+            &taproot_makers,
+            taker_balance_before[i],
+            actual_maker_spendable_balances.clone(), // Use the actual spendable balances after fidelity bond creation
+        );
+    }
     info!("✅ Multi Taker test passed!");
 
     test_framework.stop();

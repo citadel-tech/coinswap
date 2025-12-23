@@ -77,7 +77,7 @@ fn test_taproot_maker_abort2() {
 
     // Sync wallets after setup
     for maker in &taproot_makers {
-        maker.wallet().write().unwrap().sync().unwrap();
+        maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
 
     // Get balances before swap
@@ -116,19 +116,10 @@ fn test_taproot_maker_abort2() {
         }
     }
 
-    // Mine a block to confirm any broadcasted transactions
-    generate_blocks(bitcoind, 1);
-    taproot_taker.get_wallet_mut().sync().unwrap();
-
-    info!("📊 Taker balance after failed swap:");
-    let taker_balances = taproot_taker.get_wallet().get_balances().unwrap();
-    info!(
-        "  Regular: {}, Contract: {}, Spendable: {}",
-        taker_balances.regular, taker_balances.contract, taker_balances.spendable
-    );
-    // Mine blocks to confirm taker's recovery
+    // Mine blocks to confirm any recovery transactions
+    info!("⛏️ Mining blocks to confirm recovery transactions...");
     generate_blocks(bitcoind, 2);
-    taproot_taker.get_wallet_mut().sync().unwrap();
+    taproot_taker.get_wallet_mut().sync_and_save().unwrap();
 
     info!("📊 Taker balance after hashlock recovery:");
     let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
@@ -136,17 +127,6 @@ fn test_taproot_maker_abort2() {
         "  Regular: {}, Contract: {}, Spendable: {}",
         taker_balances_after.regular, taker_balances_after.contract, taker_balances_after.spendable
     );
-
-    taproot_taker.get_wallet_mut().sync().unwrap();
-
-    info!("📊 Taker balance after recovery:");
-
-    let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
-    info!(
-        "  Regular: {}, Contract: {}, Spendable: {}",
-        taker_balances_after.regular, taker_balances_after.contract, taker_balances_after.spendable
-    );
-
     // Verify taker recovered their funds via hashlock
     let max_taker_fees = Amount::from_sat(100000);
     assert!(
@@ -170,7 +150,7 @@ fn test_taproot_maker_abort2() {
     // Verify maker recovered their incoming contract via hashlock
     let maker_balance_after = {
         let mut wallet = taproot_makers[0].wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
         let balances = wallet.get_balances().unwrap();
         info!(
             "📊 Maker balance after hashlock recovery: Regular: {}, Spendable: {}",
@@ -202,17 +182,6 @@ fn test_taproot_maker_abort2() {
         maker_balance_before,
         maker_balance_after,
         maker_balance_after.to_sat() as i64 - maker_balance_before.to_sat() as i64
-    );
-
-    info!(
-        "   Taker: Original {}, After hashlock recovery: {}, Fees paid: {}",
-        taproot_taker_original_balance,
-        taker_balances_after.spendable,
-        taproot_taker_original_balance - taker_balances_after.spendable
-    );
-    info!(
-        "   Maker: Before {}, After: {}, No change (swap never completed)",
-        maker_balance_before, maker_balance_after
     );
 
     // Shutdown maker

@@ -859,7 +859,21 @@ where
 /// Interactive Selection by User for Utxos
 pub fn interactive_select(
     mut choices: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>,
+    required_amount: Amount,
 ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
+    if choices.is_empty() {
+        return Err(WalletError::General("No UTXOs available".to_string()));
+    }
+
+    let total_available: Amount = choices.iter().map(|(utxo, _)| utxo.amount).sum();
+    if total_available < required_amount {
+        return Err(WalletError::General(format!(
+            "Insufficient balance: {} sats available, {} sats required",
+            total_available.to_sat(),
+            required_amount.to_sat()
+        )));
+    }
+
     choices.sort_by_key(|(_, spend_info)| match spend_info {
         UTXOSpendInfo::SeedCoin { .. } => 0,
         UTXOSpendInfo::SweptCoin { .. } => 1,
@@ -913,17 +927,24 @@ pub fn interactive_select(
                             selected: &[bool],
                             scroll_offset: usize|
      -> Result<(), WalletError> {
+        let selected_total = choices
+            .iter()
+            .zip(selected)
+            .filter(|(_, sel)| **sel)
+            .map(|((selected_choice, _), _)| selected_choice.amount.to_btc())
+            .collect::<Vec<_>>();
         if max_scroll > 0 {
             queue!(
                 stdout,
                 MoveTo(0, 2),
                 Print(format!(
-                    "\x1b[90mScrolling: {} / {} (showing rows {}-{})\x1b[0m",
-                    scroll_offset + 1,
-                    max_scroll + 1,
-                    scroll_offset + 1,
-                    (scroll_offset + visible_rows).min(total_rows)
-                ))
+                                "\x1b[90mScrolling: {} / {} (showing rows {}-{})\x1b[0m   Total Selected (In BTC) : {:.8}",
+                                scroll_offset + 1,
+                                max_scroll + 1,
+                                scroll_offset + 1,
+                                (scroll_offset + visible_rows).min(total_rows),
+                                selected_total.iter().sum::<f64>()
+                            ))
             )?;
         }
         // Clear only the grid area, not the entire screen

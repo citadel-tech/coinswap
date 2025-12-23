@@ -17,7 +17,7 @@ use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 /// Scenario:
 /// 1. Taker initiates swap with Maker
 /// 2. Maker sends SenderContractFromMaker message to taker,and the taker closes connection after receiving it.
-/// 3. Both parties are forced to recover via timelock to claim their funds back.
+/// 3. Both parties are forced to wait for timelock to mature, and claim it's fund via it.
 #[test]
 fn test_taproot_taker_abort3() {
     // ---- Setup ----
@@ -75,7 +75,7 @@ fn test_taproot_taker_abort3() {
 
     // Sync wallets after setup
     for maker in &taproot_makers {
-        maker.wallet().write().unwrap().sync().unwrap();
+        maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
 
     // Get balances before swap
@@ -118,7 +118,7 @@ fn test_taproot_taker_abort3() {
     // Note: do_coinswap may have already attempted recovery internally, but timelock
     // recovery requires waiting for blocks, so funds may still be in contract
     generate_blocks(bitcoind, 1);
-    taproot_taker.get_wallet_mut().sync().unwrap();
+    taproot_taker.get_wallet_mut().sync_and_save().unwrap();
 
     info!("📊 Taker balance after failed swap:");
     let taker_balances = taproot_taker.get_wallet().get_balances().unwrap();
@@ -144,7 +144,7 @@ fn test_taproot_taker_abort3() {
 
     // Mine blocks to confirm taker's recovery
     generate_blocks(bitcoind, 2);
-    taproot_taker.get_wallet_mut().sync().unwrap();
+    taproot_taker.get_wallet_mut().sync_and_save().unwrap();
 
     info!("📊 Taker balance after timelock recovery:");
     let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
@@ -171,10 +171,10 @@ fn test_taproot_taker_abort3() {
     // Mine blocks to confirm maker's recovery transactions
     generate_blocks(bitcoind, 10);
 
-    // Verify maker's final balance (they never created outgoing contract, no funds gained/lost)
+    // Verify maker's final balance (They created outgoing contract, some funds lost)
     let maker_balance_after = {
         let mut wallet = taproot_makers[0].wallet().write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
         let balances = wallet.get_balances().unwrap();
         info!(
             "📊 Maker balance after swap: Regular: {}, Spendable: {}",

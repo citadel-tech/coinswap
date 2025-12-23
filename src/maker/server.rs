@@ -147,7 +147,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
         while !maker.shutdown.load(Relaxed) {
             sleep_multiplier += 1;
             // sync the wallet
-            maker.get_wallet().write()?.sync_no_fail();
+            maker.get_wallet().write()?.sync_and_save()?;
 
             let fidelity_result = maker.get_wallet().write()?.create_fidelity(
                 amount,
@@ -196,8 +196,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
                     *proof = Some(highest_proof);
 
                     // sync and save the wallet data to disk
-                    maker.get_wallet().write()?.sync_no_fail();
-                    maker.get_wallet().read()?.save_to_disk()?;
+                    maker.get_wallet().write()?.sync_and_save()?;
                     break;
                 }
             }
@@ -217,7 +216,7 @@ fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
     let mut sleep_duration = 0;
     let addr = maker.get_wallet().write()?.get_next_external_address()?;
     while !maker.shutdown.load(Relaxed) {
-        maker.get_wallet().write()?.sync_no_fail();
+        maker.get_wallet().write()?.sync_and_save()?;
         let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;
 
         let min_required = maker.config.min_swap_amount;
@@ -501,9 +500,8 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     maker.thread_pool.join_all_threads()?;
 
     log::info!("Shutdown wallet sync initiated.");
-    maker.get_wallet().write()?.sync_no_fail();
+    maker.get_wallet().write()?.sync_and_save()?;
     log::info!("Shutdown wallet syncing completed.");
-    maker.get_wallet().read()?.save_to_disk()?;
     log::info!("Wallet file saved to disk.");
     log::info!("Maker Server is shut down successfully.");
     Ok(())
