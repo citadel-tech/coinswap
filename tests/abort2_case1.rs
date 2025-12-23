@@ -1,10 +1,14 @@
 #![cfg(feature = "integration-test")]
 use bitcoin::Amount;
-use bitcoind::bitcoincore_rpc::RpcApi;
+use bitcoind::bitcoincore_rpc::{
+    RpcApi,
+    json::{ListUnspentResultEntry}
+};
 use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
     utill::MIN_FEE_RATE,
+    wallet::UTXOSpendInfo,
 };
 use std::sync::Arc;
 mod test_framework;
@@ -306,8 +310,13 @@ fn maker_abort2_case1() {
         .unwrap()[0]
         .to_owned();
 
+    let swap_utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)> =
+        swap_coins
+            .iter()
+            .map(|(e, s)| ((*e).clone(), (*s).clone()))
+            .collect();
     let tx = taker_wallet_mut
-        .spend_from_wallet(MIN_FEE_RATE, Destination::Sweep(addr), &swap_coins)
+        .spend_from_wallet(MIN_FEE_RATE, Destination::Sweep(addr), &swap_utxos)
         .unwrap();
 
     assert_eq!(

@@ -415,10 +415,11 @@ pub struct UTXO {
 
 impl UTXO {
     /// Creates an UTXO from detailed internal utxo data
-    pub fn from_utxo_data(data: (ListUnspentResultEntry, UTXOSpendInfo)) -> Self {
+    pub fn from_utxo_data(data: (&ListUnspentResultEntry, &UTXOSpendInfo)) -> Self {
         let addr = data
             .0
             .address
+            .clone()
             .expect("address always expected")
             .assume_checked()
             .to_string();
@@ -1089,7 +1090,7 @@ pub fn interactive_select(
     let total_selected: Amount = selected_utxo.iter().map(|(u, _)| u.amount).sum();
     println!("Total selected amount: {} BTC", total_selected.to_btc());
 
-    Ok(selected_utxo)
+    Ok(selected_utxo.into_iter().map(|(a, b)| (a.clone(), b.clone())).collect())
 }
 
 #[cfg(test)]

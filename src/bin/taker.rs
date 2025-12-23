@@ -305,7 +305,10 @@ fn main() -> Result<(), TakerError> {
                     let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
                         Some(
                             coinswap::utill::interactive_select(
-                                taker.get_wallet().list_all_utxo_spend_info(),
+                                taker.get_wallet().list_all_utxo_spend_info()
+                                    .into_iter()
+                                    .map(|(utxo, info)| (utxo.clone(), info.clone()))
+                                    .collect::<Vec<_>>(),
                                 amount,
                             )?
                             .iter()
@@ -394,7 +397,10 @@ fn main() -> Result<(), TakerError> {
 
                         Some(
                             coinswap::utill::interactive_select(
-                                taker.get_wallet().list_all_utxo_spend_info(),
+                                taker.get_wallet().list_all_utxo_spend_info()
+                                    .into_iter()
+                                    .map(|(utxo, info)| (utxo.clone(), info.clone()))
+                                    .collect::<Vec<_>>(),
                                 target_amount,
                             )?
                             .iter()
