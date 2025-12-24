@@ -33,6 +33,7 @@ services:
     image: osminogin/tor-simple
     container_name: coinswap-tor
     profiles: ["internal-tor"]
+    network_mode: "host"
     entrypoint: /bin/sh
     command:
       - -c
@@ -67,6 +68,7 @@ services:
     image: coinswap/${IMAGE_NAME:-coinswap}:latest
     container_name: coinswap-makerd
     profiles: ["external-tor"]
+    network_mode: "host"
     command: &makerd-command
       - sh
       - -c
@@ -112,6 +114,7 @@ services:
 
         makerd -t "$${TOR_AUTH_PASSWORD}" -r $${BITCOIN_RPC_HOST} -a $${BITCOIN_RPC_AUTH} $${MAKERD_EXTRA_ARGS} -w "$$WALLET_NAME"
     ports:
+      - "${MAKERD_PORT:-6012}:${MAKERD_PORT:-6012}"
       - "${MAKERD_RPC_PORT:-6013}:${MAKERD_RPC_PORT:-6013}"
     volumes:
       - maker-data:/home/coinswap/.coinswap
@@ -136,7 +139,7 @@ services:
     image: coinswap/${IMAGE_NAME:-coinswap}:latest
     container_name: coinswap-makerd
     profiles: ["internal-tor"]
-    network_mode: "service:tor"
+    network_mode: "host"
     command: *makerd-command
     volumes:
       - maker-data:/home/coinswap/.coinswap
