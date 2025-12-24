@@ -52,7 +52,7 @@ impl Default for MakerConfig {
     fn default() -> Self {
         let (fidelity_amount, fidelity_timelock, base_fee, amount_relative_fee_pct) =
             if cfg!(feature = "integration-test") {
-                (5_000_000, 26_000, 1000, 2.50) // Test values
+                (5_000_000, 25_000, 1000, 2.50) // Test values
             } else {
                 (50_000, 13104, 100, 0.1) // Production values
             };
