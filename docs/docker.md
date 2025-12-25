@@ -27,7 +27,7 @@ This is an overview for the docker stack with default settings for all nodes:
 graph TD
     bitcoind["<b>Bitcoind</b><br/>Bitcoin Node<br/>RPC Port (Default: 38332)<br/>ZMQ Port (Default: 28332)"]
     tor["<b>Tor</b><br/>Tor Proxy<br/>SOCKS Port (Default: 9050)<br/>Control Port (Default: 9051)"]
-    makerd["<b>Makerd</b><br/>Network Port (Default: 6012) <br/>RPC Port (Default: 6013)"]
+    makerd["<b>Makerd</b><br/>Network Port (Default: 6102) <br/>RPC Port (Default: 6103)"]
     
     bitcoin_vol["bitcoin-data"]
     tor_vol["tor-data"]
@@ -108,8 +108,8 @@ The setup script will prompt for:
    - Custom SOCKS and control ports
 
 3. **Service Ports**:
-   - Makerd network port (default: 6012)
-   - Makerd RPC port (default: 6013)
+   - Makerd network port (default: 6102)
+   - Makerd RPC port (default: 6103)
 
 Configuration is saved to `.docker-config` and reused on subsequent runs.
 
@@ -149,16 +149,16 @@ Run the maker daemon with persistent data storage:
 # Or manually with specific image
 docker run -d \
   --name coinswap-makerd \
-  -p 6012:6012 \
-  -p 6013:6013 \
+  -p 6102:6102 \
+  -p 6103:6103 \
   -v coinswap-maker-data:/home/coinswap/.coinswap \
   --network coinswap-network \
   coinswap:latest makerd
 ```
 
 **Port mappings:**
-- `6012`: Maker network port for coinswap protocol
-- `6013`: Maker RPC port for `maker-cli` commands
+- `6102`: Maker network port for coinswap protocol
+- `6103`: Maker RPC port for `maker-cli` commands
 
 ### Maker CLI
 

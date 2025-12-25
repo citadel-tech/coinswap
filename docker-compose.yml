@@ -57,7 +57,7 @@ services:
     ports:
       - "127.0.0.1:${TOR_SOCKS_PORT:-9050}:${TOR_SOCKS_PORT:-9050}"
       - "127.0.0.1:${TOR_CONTROL_PORT:-9051}:${TOR_CONTROL_PORT:-9051}"
-      - "${MAKERD_RPC_PORT:-6013}:${MAKERD_RPC_PORT:-6013}"
+      - "${MAKERD_RPC_PORT:-6103}:${MAKERD_RPC_PORT:-6103}"
     environment:
       - TOR_SOCKS_PORT=${TOR_SOCKS_PORT:-9050}
       - TOR_CONTROL_PORT=${TOR_CONTROL_PORT:-9051}
@@ -77,8 +77,8 @@ services:
         mkdir -p /home/coinswap/.coinswap/maker
         
         cat > /home/coinswap/.coinswap/maker/config.toml << EOM
-        network_port = $${MAKER_NETWORK_PORT:-6012}
-        rpc_port = $${MAKER_RPC_PORT:-6013}
+        network_port = $${MAKER_NETWORK_PORT:-6102}
+        rpc_port = $${MAKER_RPC_PORT:-6103}
         socks_port = $${TOR_SOCKS_PORT:-9050}
         control_port = $${TOR_CONTROL_PORT:-9051}
         tor_auth_password = "$${TOR_AUTH_PASSWORD}"
@@ -114,14 +114,14 @@ services:
 
         makerd -t "$${TOR_AUTH_PASSWORD}" -r $${BITCOIN_RPC_HOST} -a $${BITCOIN_RPC_AUTH} $${MAKERD_EXTRA_ARGS} -w "$$WALLET_NAME"
     ports:
-      - "${MAKERD_PORT:-6012}:${MAKERD_PORT:-6012}"
-      - "${MAKERD_RPC_PORT:-6013}:${MAKERD_RPC_PORT:-6013}"
+      - "${MAKERD_PORT:-6102}:${MAKERD_PORT:-6102}"
+      - "${MAKERD_RPC_PORT:-6103}:${MAKERD_RPC_PORT:-6103}"
     volumes:
       - maker-data:/home/coinswap/.coinswap
     environment: &makerd-env
       - RUST_LOG=${RUST_LOG:-info}
-      - MAKER_NETWORK_PORT=${MAKERD_PORT:-6012}
-      - MAKER_RPC_PORT=${MAKERD_RPC_PORT:-6013}
+      - MAKER_NETWORK_PORT=${MAKERD_PORT:-6102}
+      - MAKER_RPC_PORT=${MAKERD_RPC_PORT:-6103}
       - TOR_SOCKS_PORT=${TOR_SOCKS_PORT:-9050}
       - TOR_CONTROL_PORT=${TOR_CONTROL_PORT:-9051}
       - TOR_AUTH_PASSWORD=${TOR_AUTH_PASSWORD}
