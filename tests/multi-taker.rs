@@ -90,7 +90,7 @@ fn multi_taker_single_maker_swap() {
 
             let balances = wallet.get_balances().unwrap();
 
-            verify_maker_pre_swap_balances(&balances, 24999508);
+            verify_maker_pre_swap_balances(&balances, 24999500);
 
             balances.spendable
         })

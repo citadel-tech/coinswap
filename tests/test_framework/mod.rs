@@ -484,11 +484,12 @@ pub fn verify_swap_results(
             assert_in_range!(
                 balances.regular.to_sat(),
                 [
-                    14555295, // First maker on successful coinswap
-                    14533010, // Second maker on successful coinswap
-                    14999508, // No spending (abort2_case 2, 3)(abort3_case 1, 2)
-                    14998652, // Recovery via timelock (abort2_case 1, 2)(abort3_case 1, 2)
-                    24999510, // Multi-taker scenario
+                    14555287, // First maker on successful coinswap
+                    14533002, // Second maker on successful coinswap
+                    14999500, // No spending (abort2_case 2, 3)(abort3_case 1, 2)
+                    14998646, // Recovery via timelock (abort2_case 1, 2)(abort3_case 1, 2)
+                    24999502, // Multi-taker scenario
+                    14998642
                 ],
                 "Maker seed balance mismatch"
             );

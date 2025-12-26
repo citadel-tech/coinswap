@@ -152,7 +152,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
             let fidelity_result = maker.get_wallet().write()?.create_fidelity(
                 amount,
                 locktime,
-                Some(maker_address.as_bytes()),
+                Some(maker_address),
                 MIN_FEE_RATE,
             );
 

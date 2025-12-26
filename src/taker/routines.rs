@@ -6,9 +6,7 @@
 //! It also handles downloading maker offers with retry mechanisms and implements the necessary message structures
 //! for communication between taker and maker.
 
-use chrono::Utc;
-use socks::Socks5Stream;
-use std::{net::TcpStream, thread::sleep, time::Duration};
+use std::net::TcpStream;
 
 use crate::{
     protocol::{
@@ -19,10 +17,9 @@ use crate::{
         error::ProtocolError,
         messages::{
             ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForSender,
-            ContractTxInfoForRecvr, ContractTxInfoForSender, FundingTxInfo, GiveOffer,
-            HashPreimage, MakerToTakerMessage, NextHopInfo, Offer, Preimage, PrivKeyHandover,
-            ProofOfFunding, ReqContractSigsForRecvr, ReqContractSigsForSender, TakerHello,
-            TakerToMakerMessage,
+            ContractTxInfoForRecvr, ContractTxInfoForSender, FundingTxInfo, HashPreimage,
+            MakerToTakerMessage, NextHopInfo, Preimage, PrivKeyHandover, ProofOfFunding,
+            ReqContractSigsForRecvr, ReqContractSigsForSender, TakerHello, TakerToMakerMessage,
         },
         Hash160,
     },
@@ -31,15 +28,7 @@ use crate::{
 };
 use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
 
-use super::{
-    config::TakerConfig,
-    error::TakerError,
-    offers::{MakerAddress, OfferAndAddress},
-};
-
-use crate::taker::api::{
-    FIRST_CONNECT_ATTEMPTS, FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC, FIRST_CONNECT_SLEEP_DELAY_SEC,
-};
+use super::{error::TakerError, offers::OfferAndAddress};
 
 use crate::wallet::SwapCoin;
 
@@ -416,79 +405,4 @@ pub(crate) fn send_hash_preimage_and_get_private_keys(
     };
 
     Ok(privkey_handover)
-}
-
-fn download_maker_offer_attempt_once(
-    addr: &MakerAddress,
-    config: &TakerConfig,
-) -> Result<Offer, TakerError> {
-    let maker_addr = addr.to_string();
-    log::info!("Downloading offer from {maker_addr}");
-    let mut socket = if cfg!(feature = "integration-test") {
-        TcpStream::connect(&maker_addr)?
-    } else {
-        Socks5Stream::connect(
-            format!("127.0.0.1:{}", config.socks_port).as_str(),
-            maker_addr.as_ref(),
-        )?
-        .into_inner()
-    };
-
-    socket.set_read_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
-    socket.set_write_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
-
-    handshake_maker(&mut socket)?;
-
-    send_message(&mut socket, &TakerToMakerMessage::ReqGiveOffer(GiveOffer))?;
-
-    let msg_bytes = read_message(&mut socket)?;
-    let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
-    let offer = match msg {
-        MakerToTakerMessage::RespOffer(offer) => offer,
-        msg => {
-            return Err(ProtocolError::WrongMessage {
-                expected: "RespOffer".to_string(),
-                received: format!("{msg}"),
-            }
-            .into());
-        }
-    };
-
-    log::info!("Downloaded offer from : {maker_addr} ");
-
-    Ok(*offer)
-}
-
-pub(crate) fn download_maker_offer(
-    address: MakerAddress,
-    config: TakerConfig,
-) -> Option<OfferAndAddress> {
-    let mut ii = 0;
-
-    loop {
-        ii += 1;
-        match download_maker_offer_attempt_once(&address, &config) {
-            Ok(offer) => {
-                return Some(OfferAndAddress {
-                    offer,
-                    address,
-                    timestamp: Utc::now(),
-                })
-            }
-            Err(e) => {
-                if ii <= FIRST_CONNECT_ATTEMPTS {
-                    log::warn!(
-                        "Failed to request offer from maker {address}, with error: {e:?} reattempting {ii} of {FIRST_CONNECT_ATTEMPTS}"
-                    );
-                    sleep(Duration::from_millis(FIRST_CONNECT_SLEEP_DELAY_SEC));
-                    continue;
-                } else {
-                    log::error!(
-                        "Connection attempt exceeded for request offer from maker {address}"
-                    );
-                    return None;
-                }
-            }
-        }
-    }
 }

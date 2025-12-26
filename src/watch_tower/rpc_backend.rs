@@ -1,6 +1,11 @@
 //! Watchtower RPC backend: querying bitcoind, scanning mempool, and running discovery.
 
-use bitcoin::Network;
+use std::{
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
+};
+
 use bitcoincore_rpc::{
     bitcoin::{Block, BlockHash, Transaction, Txid},
     json::GetBlockchainInfoResult,
@@ -11,12 +16,13 @@ use bitcoind::bitcoincore_rpc;
 use crate::{
     wallet::RPCConfig,
     watch_tower::{
-        constants::{BITCOIN, REGTEST, SIGNET, TESTNET, TESTNET4},
-        registry_storage::FileRegistry,
+        registry_storage::{Checkpoint, FileRegistry},
         utils::{process_fidelity, process_transaction},
         watcher_error::WatcherError,
     },
 };
+
+const SIX_MONTHS_SECS: u64 = 6 * 30 * 24 * 60 * 60;
 
 /// Lightweight wrapper around bitcoind RPC calls used by the watchtower.
 pub struct BitcoinRpc {
@@ -60,6 +66,12 @@ impl BitcoinRpc {
     }
 
     /// Fetches a block by hash.
+    pub fn get_block_count(&self) -> Result<u64, WatcherError> {
+        let height = self.client.get_block_count()?;
+        Ok(height)
+    }
+
+    /// Fetches a block by hash.
     pub fn get_block(&self, hash: BlockHash) -> Result<Block, WatcherError> {
         let block = self.client.get_block(&hash)?;
         Ok(block)
@@ -76,54 +88,109 @@ impl BitcoinRpc {
     }
 
     /// Discovers maker fidelity bonds by scanning historical blocks.
-    pub fn run_discovery(self, mut registry: FileRegistry) -> Result<(), WatcherError> {
+    pub fn run_discovery(self, registry: FileRegistry) -> Result<(), WatcherError> {
         log::info!("Starting with market discovery");
+
         let blockchain_info = self.get_blockchain_info()?;
-        let coinswap_height = match blockchain_info.chain {
-            Network::Bitcoin => BITCOIN,
-            Network::Regtest => REGTEST,
-            Network::Signet => SIGNET,
-            Network::Testnet => TESTNET,
-            Network::Testnet4 => TESTNET4,
-        };
-        let last_tip = registry
-            .load_checkpoint()
-            .map(|checkpoint| checkpoint.height)
-            .unwrap_or(coinswap_height);
-        let tip_height = blockchain_info.blocks + 1;
-        let total_blocks = tip_height.saturating_sub(last_tip);
+        let block_hash = blockchain_info.best_block_hash;
+        let tip_height = blockchain_info.blocks;
+        let now = blockchain_info.median_time;
+        let cutoff_time = now - SIX_MONTHS_SECS;
+
+        let checkpoint = registry.load_checkpoint();
+        let lowest_scanned = checkpoint.map(|c| c.height).unwrap_or(1);
+
+        let threads = thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+
         log::info!(
-            "Scanning {} blocks for fidelity bonds (height {} to {})",
-            total_blocks,
-            last_tip,
-            tip_height.saturating_sub(1)
+            "Running discovery with {} threads (heights {}..={})",
+            threads,
+            lowest_scanned,
+            tip_height
         );
-        let mut makers_found = 0;
-        for (i, height) in (last_tip..tip_height).enumerate() {
-            if total_blocks > 100 {
-                log::info!(
-                    "Discovery progress: {}/{} blocks scanned ({:.1}%)",
-                    i + 1,
-                    total_blocks,
-                    ((i + 1) as f64 / total_blocks as f64) * 100.0
-                );
-            }
-            let block_hash = self.get_block_hash(height)?;
-            let block = self.get_block(block_hash)?;
-            for tx in block.txdata {
-                let onion_address = process_fidelity(&tx);
-                if let Some(onion_address) = onion_address {
-                    makers_found += 1;
-                    log::info!("Maker found in the market: {:?}", onion_address);
-                    registry.insert_fidelity(tx.compute_txid(), onion_address);
+
+        let registry = Arc::new(Mutex::new(registry));
+        let this = Arc::new(self);
+
+        let mut handles = Vec::with_capacity(threads);
+
+        for thread_id in 0..threads {
+            let registry = Arc::clone(&registry);
+            let this = Arc::clone(&this);
+
+            let handle = thread::spawn(move || {
+                let mut local_found = 0;
+
+                let mut height = tip_height as i64 - thread_id as i64;
+                let step = threads as i64;
+
+                while height >= lowest_scanned as i64 {
+                    let h = height as u64;
+
+                    let block_hash = match this.get_block_hash(h) {
+                        Ok(bh) => bh,
+                        Err(e) => {
+                            log::warn!("Failed to get block hash at height {}: {}", h, e);
+                            std::thread::sleep(Duration::from_millis(200));
+                            continue;
+                        }
+                    };
+
+                    let block = match this.get_block(block_hash) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            log::warn!("Failed to get block at height {}: {}", h, e);
+                            std::thread::sleep(Duration::from_millis(200));
+                            continue;
+                        }
+                    };
+
+                    if block.header.time < cutoff_time as u32 {
+                        break;
+                    }
+
+                    for tx in block.txdata {
+                        if let Some(fidelity_announcement) = process_fidelity(&tx) {
+                            local_found += 1;
+                            registry
+                                .lock()
+                                .unwrap()
+                                .insert_fidelity(tx.compute_txid(), fidelity_announcement);
+                        }
+                    }
+
+                    height -= step;
                 }
-            }
+
+                local_found
+            });
+
+            handles.push(handle);
         }
+
+        let mut makers_found = 0;
+        for handle in handles {
+            makers_found += handle.join().expect("discovery thread panicked");
+        }
+
+        let checkpoint = registry.lock().unwrap().load_checkpoint();
+        let lowest_scanned = checkpoint.map(|c| c.height).unwrap_or(1);
+
+        if lowest_scanned < tip_height {
+            log::info!("Saved checkpoint after scan completion height: {tip_height}.");
+            registry.lock().unwrap().save_checkpoint(Checkpoint {
+                height: tip_height,
+                hash: block_hash,
+            });
+        }
+
         log::info!(
-            "Market discovery completed: scanned {} blocks, found {} makers",
-            total_blocks,
+            "Market discovery completed: scanned shards up to cutoff, found {} makers",
             makers_found
         );
+
         Ok(())
     }
 }

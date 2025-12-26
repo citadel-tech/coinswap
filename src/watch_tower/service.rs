@@ -9,6 +9,7 @@ use std::sync::{
 use crate::watch_tower::watcher::{WatcherCommand, WatcherEvent};
 
 /// Client-facing service for sending watcher commands and receiving events.
+#[derive(Clone)]
 pub struct WatchService {
     tx: Sender<WatcherCommand>,
     rx: Arc<Mutex<Receiver<WatcherEvent>>>,

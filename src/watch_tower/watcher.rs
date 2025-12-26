@@ -10,12 +10,15 @@ use std::{
 
 use bitcoin::{consensus::deserialize, Block, OutPoint, Transaction};
 
-use crate::watch_tower::{
-    registry_storage::{Checkpoint, FileRegistry, WatchRequest},
-    rpc_backend::BitcoinRpc,
-    utils::{process_block, process_transaction},
-    watcher_error::WatcherError,
-    zmq_backend::{BackendEvent, ZmqBackend},
+use crate::{
+    wallet::RPCConfig,
+    watch_tower::{
+        registry_storage::{Checkpoint, FileRegistry, WatchRequest},
+        rpc_backend::BitcoinRpc,
+        utils::{process_block, process_transaction},
+        watcher_error::WatcherError,
+        zmq_backend::{BackendEvent, ZmqBackend},
+    },
 };
 
 /// Describes watcher behavior.
@@ -94,13 +97,15 @@ impl<R: Role> Watcher<R> {
     }
 
     /// Runs the watcher loop: handles ZMQ events and commands, optionally spawning discovery.
-    pub fn run(&mut self, rpc_backend: BitcoinRpc) -> Result<(), WatcherError> {
+    pub fn run(&mut self, rpc_config: RPCConfig) -> Result<(), WatcherError> {
         log::info!("Watcher initiated");
+        let rpc_backend_1 = BitcoinRpc::new(rpc_config.clone())?;
+        let rpc_backend_2 = BitcoinRpc::new(rpc_config)?;
         let registry = self.registry.clone();
         std::thread::scope(move |s| {
             if R::RUN_DISCOVERY {
                 s.spawn(move || {
-                    if let Err(e) = rpc_backend.run_discovery(registry) {
+                    if let Err(e) = rpc_backend_1.run_discovery(registry) {
                         log::error!("Discovery thread failed: {:?}", e);
                     }
                 });
@@ -108,7 +113,7 @@ impl<R: Role> Watcher<R> {
             loop {
                 match self.rx_requests.try_recv() {
                     Ok(cmd) => {
-                        if !self.handle_command(cmd) {
+                        if !self.handle_command(cmd, &rpc_backend_2) {
                             break;
                         }
                     }
@@ -124,7 +129,7 @@ impl<R: Role> Watcher<R> {
         Ok(())
     }
 
-    fn handle_command(&mut self, cmd: WatcherCommand) -> bool {
+    fn handle_command(&mut self, cmd: WatcherCommand, rpc_backend: &BitcoinRpc) -> bool {
         match cmd {
             WatcherCommand::RegisterWatchRequest { outpoint } => {
                 log::info!("Intercepted register watch request: {outpoint}");
@@ -153,14 +158,19 @@ impl<R: Role> Watcher<R> {
                 }
             }
             WatcherCommand::Unwatch { outpoint } => {
-                log::info!("Intercepted unwatch : {outpoint}");
+                log::info!("Intercepted unwatch request : {outpoint}");
                 self.registry.remove_watch(outpoint);
             }
             WatcherCommand::MakerAddress => {
-                log::info!("Intercepted maker address");
+                log::debug!("Intercepted maker address request");
+                let height = rpc_backend
+                    .get_blockchain_info()
+                    .ok()
+                    .map(|v| v.blocks)
+                    .unwrap_or(0);
                 let maker_addresses: Vec<String> = self
                     .registry
-                    .list_fidelity()
+                    .list_fidelity(height as u32)
                     .into_iter()
                     .map(|fidelity| fidelity.onion_address)
                     .collect();
