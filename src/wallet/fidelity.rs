@@ -1,6 +1,6 @@
 use crate::{
     protocol::messages::FidelityProof,
-    utill::{redeemscript_to_scriptpubkey, verify_fidelity_checks, MIN_FEE_RATE},
+    utill::{redeemscript_to_scriptpubkey, MIN_FEE_RATE},
     wallet::Wallet,
 };
 use bitcoin::{
@@ -331,16 +331,22 @@ impl Wallet {
         &mut self,
         amount: Amount,
         locktime: LockTime,
-        maker_address: Option<&[u8]>,
+        maker_address: Option<&str>,
         feerate: f64,
     ) -> Result<u32, WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
 
         let coins = self.coin_select(amount, feerate, None)?;
         let outputs = vec![(fidelity_addr, amount)];
+
+        let op_return_data = match maker_address {
+            Some(onion) => Some(self.encode_fidelity_op_return(onion, locktime)?),
+            None => None,
+        };
+
         let destination = Destination::Multi {
             outputs,
-            op_return_data: maker_address.map(|addr| addr.to_vec().into_boxed_slice()),
+            op_return_data,
         };
 
         let tx = self.spend_coins(&coins, destination, feerate)?;
@@ -450,17 +456,22 @@ impl Wallet {
         })
     }
 
-    /// Verify a [`FidelityProof`] received from the directory servers.
-    pub(crate) fn verify_fidelity_proof(
+    fn encode_fidelity_op_return(
         &self,
-        proof: &FidelityProof,
-        onion_addr: &str,
-    ) -> Result<(), WalletError> {
-        let txid = proof.bond.outpoint.txid;
-        let transaction = self.rpc.get_raw_transaction(&txid, None)?;
-        let current_height = self.rpc.get_block_count()?;
+        onion: &str,
+        locktime: LockTime,
+    ) -> Result<Box<[u8]>, WalletError> {
+        let locktime_height = match locktime {
+            LockTime::Blocks(h) => h.to_consensus_u32(),
+            LockTime::Seconds(_) => {
+                return Err(WalletError::General(
+                    "fidelity locktime must be height-based".to_string(),
+                ))
+            }
+        };
 
-        verify_fidelity_checks(proof, onion_addr, transaction, current_height)
+        let payload = format!("{onion}#{locktime_height}");
+        Ok(payload.into_bytes().into_boxed_slice())
     }
 }
 

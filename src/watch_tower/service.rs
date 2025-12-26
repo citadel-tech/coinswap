@@ -9,6 +9,7 @@ use std::sync::{
 use crate::watch_tower::watcher::{WatcherCommand, WatcherEvent};
 
 /// Client-facing service for sending watcher commands and receiving events.
+#[derive(Clone)]
 pub struct WatchService {
     tx: Sender<WatcherCommand>,
     rx: Arc<Mutex<Receiver<WatcherEvent>>>,
@@ -51,8 +52,9 @@ impl WatchService {
     }
 
     /// Requests the list of maker addresses.
-    pub fn request_maker_address(&self) {
+    pub fn request_maker_address(&self) -> Option<WatcherEvent> {
         _ = self.tx.send(WatcherCommand::MakerAddress);
+        self.rx.lock().ok()?.recv().ok()
     }
 
     /// Signals the watcher to shut down gracefully.

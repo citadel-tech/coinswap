@@ -7,8 +7,6 @@
 //!
 use std::{
     collections::{HashMap, HashSet},
-    convert::TryFrom,
-    io::BufWriter,
     net::TcpStream,
     path::PathBuf,
     sync::mpsc,
@@ -35,7 +33,7 @@ use bitcoin::{
 
 use super::{
     error::TakerError,
-    offers::{fetch_offer_from_makers, MakerAddress, OfferAndAddress},
+    offers::{MakerAddress, OfferAndAddress},
     routines::*,
 };
 use crate::{
@@ -48,7 +46,10 @@ use crate::{
             TakerToMakerMessage,
         },
     },
-    taker::{config::TakerConfig, offers::OfferBook},
+    taker::{
+        config::TakerConfig,
+        offers::{OfferBook, OfferBookHandle, OfferSyncHandle, OfferSyncService},
+    },
     utill::*,
     wallet::{
         ffi::{MakerFeeInfo, SwapReport},
@@ -59,7 +60,7 @@ use crate::{
         registry_storage::FileRegistry,
         rpc_backend::BitcoinRpc,
         service::WatchService,
-        watcher::{Role, Watcher, WatcherEvent},
+        watcher::{Role, Watcher},
         zmq_backend::ZmqBackend,
     },
 };
@@ -166,20 +167,22 @@ pub struct Taker {
     wallet: Wallet,
     /// Taker configuration with refund, connection, and sleep settings.
     pub config: TakerConfig,
-    offerbook: OfferBook,
+    offerbook: OfferBookHandle,
     ongoing_swap_state: OngoingSwapState,
     #[cfg(feature = "integration-test")]
     behavior: TakerBehavior,
-    data_dir: PathBuf,
-    watch_service: WatchService,
+    /// iyiib
+    pub watch_service: WatchService,
+    offer_sync_handle: OfferSyncHandle,
 }
 
 impl Drop for Taker {
     fn drop(&mut self) {
         log::info!("Shutting down taker.");
-        self.offerbook
-            .write_to_disk(&self.data_dir.join("offerbook.json"))
-            .unwrap();
+        self.offerbook.persist().unwrap();
+        log::info!("shutting the offer sync background job");
+        self.offer_sync_handle.shutdown();
+        log::info!("shutting the watch service background job");
         self.watch_service.shutdown();
         log::info!("offerbook data saved to disk.");
         self.wallet.save_to_disk().unwrap();
@@ -234,11 +237,12 @@ impl Taker {
         let registry = FileRegistry::load(file_registry);
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = mpsc::channel();
+        let rpc_config_watcher = rpc_config.clone();
 
         let mut watcher = Watcher::<Taker>::new(backend, registry, rx_requests, tx_events);
         _ = thread::Builder::new()
             .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(rpc_backend));
+            .spawn(move || watcher.run(rpc_config_watcher));
 
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
@@ -261,32 +265,17 @@ impl Taker {
 
         config.write_to_file(&data_dir.join("config.toml"))?;
 
-        // Load offerbook. If it doesn't exist, creates fresh file.
-        let offerbook_path = data_dir.join("offerbook.json");
-        let offerbook = if offerbook_path.exists() {
-            // If read fails, recreate a fresh offerbook.
-            match OfferBook::read_from_disk(&offerbook_path) {
-                Ok(offerbook) => {
-                    log::info!("Succesfully loaded offerbook at : {offerbook_path:?}");
-                    offerbook
-                }
-                Err(e) => {
-                    log::error!("Offerbook data corrupted. Recreating. {e:?}");
-                    let empty_book = OfferBook::default();
-                    empty_book.write_to_disk(&offerbook_path)?;
-                    empty_book
-                }
-            }
-        } else {
-            // Create a new offer book
-            let empty_book = OfferBook::default();
-            let file = std::fs::File::create(&offerbook_path)?;
-            let writer = BufWriter::new(file);
-            serde_json::to_writer_pretty(writer, &empty_book)?;
-            empty_book
-        };
+        let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
 
-        wallet.sync_and_save()?;
+        let offer_sync_handle = OfferSyncService::new(
+            offerbook.clone(),
+            watch_service.clone(),
+            config.socks_port,
+            rpc_backend,
+        )
+        .start_legacy();
+
+        // wallet.sync_and_save()?;
 
         Ok(Self {
             wallet,
@@ -295,8 +284,8 @@ impl Taker {
             ongoing_swap_state: OngoingSwapState::default(),
             #[cfg(feature = "integration-test")]
             behavior,
-            data_dir,
             watch_service,
+            offer_sync_handle,
         })
     }
 
@@ -391,8 +380,6 @@ impl Taker {
             log::error!("Not enough balance to do swap : {err:?}");
             return Err(err.into());
         }
-        log::info!("Syncing Offerbook");
-        self.sync_offerbook()?;
 
         // Error early if there aren't enough suitable makers for the given amount
         let suitable_makers = self.find_suitable_makers();
@@ -2104,7 +2091,7 @@ impl Taker {
                     .iter()
                     .map(|pi| &pi.peer)
                     .any(|noa| noa == *oa)
-                    && !self.offerbook.bad_makers.contains(oa)
+                    && !self.offerbook.is_bad_maker(oa)
             })
             .ok_or(TakerError::NotEnoughMakersInOfferBook)
     }
@@ -2125,7 +2112,7 @@ impl Taker {
     }
 
     /// Get all the bad makers
-    pub fn get_bad_makers(&self) -> Vec<&OfferAndAddress> {
+    pub fn get_bad_makers(&self) -> Vec<OfferAndAddress> {
         self.offerbook.get_bad_makers()
     }
 
@@ -2280,71 +2267,9 @@ impl Taker {
         Ok(())
     }
 
-    /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
-    pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        self.watch_service.request_maker_address();
-        let watcher_event = self.watch_service.wait_for_event();
-
-        let Some(WatcherEvent::MakerAddresses { maker_addresses }) = watcher_event else {
-            return Err(TakerError::General("No response from watcher".to_string()));
-        };
-
-        let maker_addresses = maker_addresses
-            .into_iter()
-            .map(MakerAddress::try_from)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-
-        // Find out addresses that was last updated 30 mins ago.
-        let fresh_addrs = self
-            .offerbook
-            .get_fresh_addrs()
-            .iter()
-            .map(|oa| &oa.address)
-            .collect::<HashSet<_>>();
-
-        // Fetch only those addresses which are new, or last updated more than 30 mins ago
-        let addrs_to_fetch = maker_addresses
-            .iter()
-            .filter(|tracker_addr| !fresh_addrs.contains(tracker_addr))
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let new_offers = fetch_offer_from_makers(addrs_to_fetch, &self.config)?;
-
-        for new_offer in new_offers {
-            log::info!(
-                "Found offer from {}. Verifying Fidelity Proof",
-                new_offer.address
-            );
-            if let Err(e) = self
-                .wallet
-                .verify_fidelity_proof(&new_offer.offer.fidelity, &new_offer.address.to_string())
-            {
-                log::warn!(
-                    "Fidelity Proof Verification failed with error: {:?}. Adding this to bad maker list: {}",
-                    e,
-                    new_offer.address
-                );
-                self.offerbook.add_bad_maker(&new_offer);
-            } else {
-                log::info!("Fidelity Bond verification success. Adding offer to our OfferBook");
-                self.offerbook.add_new_offer(&new_offer);
-            }
-        }
-
-        // Save the updated cache back to disk.
-        self.offerbook
-            .write_to_disk(&self.data_dir.join("offerbook.json"))?;
-
-        Ok(())
-    }
-
-    /// fetches only the offer data from Tracker and returns the updated Offerbook.
-    /// Used for taker cli app, in `fetch-offers` command.
-    pub fn fetch_offers(&mut self) -> Result<&OfferBook, TakerError> {
-        self.sync_offerbook()?;
-        Ok(&self.offerbook)
+    /// Returns the OfferBook.
+    pub fn fetch_offers(&mut self) -> Result<OfferBook, TakerError> {
+        Ok(self.offerbook.snapshot())
     }
 
     /// Send any message to a maker
@@ -2434,7 +2359,6 @@ impl Taker {
                 swap_amount >= min_size_with_fee
                     && swap_amount <= bitcoin::Amount::from_sat(oa.offer.max_size)
             })
-            .cloned()
             .collect()
     }
 }

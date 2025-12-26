@@ -306,11 +306,12 @@ impl Maker {
         let registry = FileRegistry::load(file_registry);
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = mpsc::channel();
+        let rpc_config_watcher = rpc_config.clone();
 
         let mut watcher = Watcher::<Maker>::new(backend, registry, rx_requests, tx_events);
         _ = thread::Builder::new()
             .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(rpc_backend));
+            .spawn(move || watcher.run(rpc_config_watcher));
 
         let watch_service = WatchService::new(tx_requests, rx_responses);
 

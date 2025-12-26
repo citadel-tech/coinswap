@@ -9,6 +9,8 @@ use std::{
 use bitcoin::{BlockHash, OutPoint, Transaction, Txid};
 use serde::{Deserialize, Serialize};
 
+use crate::watch_tower::utils::FidelityAnnouncement;
+
 /// Represents a UTXO being watched and records when it gets spent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WatchRequest {
@@ -27,6 +29,8 @@ pub struct Fidelity {
     pub txid: Txid,
     /// Maker's advertised onion address.
     pub onion_address: String,
+    /// Fidelity expiry height used later for pruning.
+    pub expire_height: u32,
 }
 
 /// Last processed chain tip so scanning can resume efficiently.
@@ -146,15 +150,24 @@ impl FileRegistry {
     }
 
     /// Returns all stored maker fidelity records.
-    pub fn list_fidelity(&self) -> Vec<Fidelity> {
-        self.with_data(|data| data.fidelity.clone())
+    pub fn list_fidelity(&self, height: u32) -> Vec<Fidelity> {
+        self.with_data(|data| {
+            data.fidelity = data
+                .fidelity
+                .iter()
+                .filter(|v| v.expire_height > height)
+                .cloned()
+                .collect::<Vec<_>>();
+            data.fidelity.clone()
+        })
     }
 
     /// Inserts a new fidelity record.
-    pub fn insert_fidelity(&mut self, txid: Txid, onion_address: String) {
+    pub fn insert_fidelity(&mut self, txid: Txid, fidelity_announcement: FidelityAnnouncement) {
         let fidelity = Fidelity {
             txid,
-            onion_address,
+            onion_address: fidelity_announcement.onion,
+            expire_height: fidelity_announcement.expires_at_height,
         };
         self.with_data(|data| data.fidelity.push(fidelity));
     }
@@ -275,15 +288,25 @@ mod tests {
         let txid1 = dummy_txid(1);
         let txid2 = dummy_txid(2);
 
-        reg.insert_fidelity(txid1, "abc.onion".into());
-        reg.insert_fidelity(txid2, "def.onion".into());
+        let fidelity_announcement_1 = FidelityAnnouncement {
+            onion: "abc.onion".to_string(),
+            expires_at_height: 212,
+        };
 
-        let list = reg.list_fidelity();
+        let fidelity_announcement_2 = FidelityAnnouncement {
+            onion: "def.onion".to_string(),
+            expires_at_height: 232,
+        };
+
+        reg.insert_fidelity(txid1, fidelity_announcement_1);
+        reg.insert_fidelity(txid2, fidelity_announcement_2);
+
+        let list = reg.list_fidelity(0);
         assert_eq!(list.len(), 2);
 
         reg.remove_fidelity(txid1);
 
-        let list2 = reg.list_fidelity();
+        let list2 = reg.list_fidelity(0);
         assert_eq!(list2.len(), 0);
     }
 
