@@ -911,19 +911,20 @@ impl Taker {
             };
 
             let msg = TakerToMakerMessage::SwapDetails(swap_details);
-            let response = self.send_to_maker_and_get_response(&suitable_maker.address, msg)?;
+            let response = self.send_to_maker_and_get_response(&suitable_maker.address, msg);
             match response {
-                MakerToTakerMessage::AckResponse(AckResponse::Ack) => {
+                Ok(MakerToTakerMessage::AckResponse(AckResponse::Ack)) => {
                     log::info!("Received AckResponse from maker: {:?}", suitable_maker);
                     self.ongoing_swap_state
                         .chosen_makers
                         .push(suitable_maker.clone());
                 }
-                MakerToTakerMessage::AckResponse(AckResponse::Nack) => {
+                Ok(MakerToTakerMessage::AckResponse(AckResponse::Nack)) => {
                     log::warn!("Maker {:?} did not accept the swap request", suitable_maker);
                     continue;
                 }
                 _ => {
+                    self.offerbook.add_bad_maker(suitable_maker);
                     log::warn!("Received unexpected message from maker: {:?}", response);
                     continue;
                 }
@@ -1083,6 +1084,10 @@ impl Taker {
         );
 
         suitable_makers
+    }
+    /// Get all the bad makers
+    pub fn get_bad_makers(&self) -> Vec<&OfferAndAddress> {
+        self.offerbook.get_bad_makers()
     }
 
     /// Setup contract keys and scripts for the swap
@@ -1263,7 +1268,7 @@ impl Taker {
         };
 
         let msg = TakerToMakerMessage::SendersContract(senders_contract.clone());
-        let response = self.send_to_maker_and_get_response(&first_maker.address, msg)?;
+        let response = self.send_to_maker_and_get_response(&first_maker.address, msg);
         #[cfg(feature = "integration-test")]
         {
             if self.behavior == TakerBehavior::CloseAtSendersContract {
@@ -1276,10 +1281,11 @@ impl Taker {
         }
 
         match response {
-            MakerToTakerMessage::SenderContractFromMaker(incoming_contract) => {
+            Ok(MakerToTakerMessage::SenderContractFromMaker(incoming_contract)) => {
                 self.forward_contracts_and_coordinate_sweep(incoming_contract)?;
             }
             _ => {
+                self.offerbook.add_bad_maker(first_maker);
                 return Err(TakerError::General(
                     "Unexpected response from first maker".to_string(),
                 ));
@@ -1345,11 +1351,10 @@ impl Taker {
             };
 
             let forward_msg = TakerToMakerMessage::SendersContract(forward_contract);
-            let maker_response =
-                self.send_to_maker_and_get_response(&maker.address, forward_msg)?;
+            let maker_response = self.send_to_maker_and_get_response(&maker.address, forward_msg);
 
             match maker_response {
-                MakerToTakerMessage::SenderContractFromMaker(maker_contract) => {
+                Ok(MakerToTakerMessage::SenderContractFromMaker(maker_contract)) => {
                     #[cfg(feature = "integration-test")]
                     {
                         if self.behavior == TakerBehavior::CloseAtSendersContractFromMaker {
@@ -1372,6 +1377,7 @@ impl Taker {
                     }
                 }
                 _ => {
+                    self.offerbook.add_bad_maker(maker);
                     return Err(TakerError::General(format!(
                         "Unexpected response from maker {}",
                         maker_index
@@ -1504,7 +1510,7 @@ impl Taker {
             });
 
             // Send to maker and get their outgoing key in response
-            let response = self.send_to_maker_and_get_response(&maker_address, privkey_msg)?;
+            let response = self.send_to_maker_and_get_response(&maker_address, privkey_msg);
             // remove taker's outgoing swapcoin since we've handed over the key
             if maker_index == 0 {
                 let outgoing_txid = self
@@ -1536,7 +1542,7 @@ impl Taker {
 
             // Extract maker's outgoing key from response
             match response {
-                MakerToTakerMessage::PrivateKeyHandover(maker_privkey_handover) => {
+                Ok(MakerToTakerMessage::PrivateKeyHandover(maker_privkey_handover)) => {
                     let maker_outgoing_privkey = maker_privkey_handover.secret_key;
 
                     log::info!("  [Maker {}] Received outgoing private key", maker_index);
@@ -1546,6 +1552,8 @@ impl Taker {
                         Some(maker_outgoing_privkey);
                 }
                 _ => {
+                    self.offerbook
+                        .add_bad_maker(&self.ongoing_swap_state.chosen_makers[maker_index]);
                     return Err(TakerError::General(format!(
                         "Unexpected response from maker {}: expected PrivateKeyHandover",
                         maker_index

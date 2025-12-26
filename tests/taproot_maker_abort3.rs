@@ -5,7 +5,10 @@
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_maker_server_taproot, TaprootMakerBehavior as MakerBehavior},
-    taker::api2::{SwapParams, TakerBehavior},
+    taker::{
+        api2::{SwapParams, TakerBehavior},
+        error::TakerError,
+    },
 };
 
 mod test_framework;
@@ -20,9 +23,10 @@ fn test_taproot_maker_abort3() {
     warn!("🧪 Running Test: Taproot Maker Abort 3");
 
     //Create a maker with normal behaviour and another maker with CloseAtAckResponse behaviour.
+    let naughty = 17102;
     let makers_config_map = vec![
         (7102, Some(19071), MakerBehavior::Normal),
-        (17102, Some(19072), MakerBehavior::CloseAfterAckResponse),
+        (naughty, Some(19072), MakerBehavior::CloseAfterAckResponse),
     ];
     //Create a Taker
     let taker_behavior = vec![TakerBehavior::Normal];
@@ -74,17 +78,7 @@ fn test_taproot_maker_abort3() {
         maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
 
-    // Get balances before swap
-    let maker_balance_before = {
-        let wallet = taproot_makers[0].wallet().read().unwrap();
-        let balances = wallet.get_balances().unwrap();
-        info!(
-            "Maker balance before swap: Regular: {}, Spendable: {}",
-            balances.regular, balances.spendable
-        );
-        balances.spendable
-    };
-
+    let maker_spendable_balance = verify_maker_pre_swap_balance_taproot(&taproot_makers);
     info!("🔄 Initiating taproot abort 3 case (will fail due to one maker closing after accpeting swap details)");
 
     // Swap params - small amount for faster testing
@@ -106,45 +100,92 @@ fn test_taproot_maker_abort3() {
         }
         Err(e) => {
             info!("✅ Taproot coinswap failed as expected: {:?}", e);
+            assert!(
+                matches!(e, TakerError::NotEnoughMakersInOfferBook),
+                "The swap should have failed due to NotEnoughMakersInOfferBook, got: {:?}",
+                e
+            );
         }
     }
 
     taproot_taker.get_wallet_mut().sync_and_save().unwrap();
-    info!("📊 Taker balance after failed swap:");
     let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
     info!(
-        "  Regular: {}, Contract: {}, Spendable: {}",
-        taker_balances_after.regular, taker_balances_after.contract, taker_balances_after.spendable
-    );
-
-    assert!(
-        taker_balances_after.spendable == taproot_taker_original_balance,
-        "Taker should have no fund loss. Original: {}, After: {}, Lost: {}",
-        taproot_taker_original_balance,
+         "📊 Taproot Taker balance after failed swap: Regular: {}, Contract: {}, Spendable: {}, Swap: {}",
+        taker_balances_after.regular,
+        taker_balances_after.contract,
         taker_balances_after.spendable,
-        taproot_taker_original_balance - taker_balances_after.spendable
+        taker_balances_after.swap,
     );
 
-    // Verify maker's final balance
-    let maker_balance_after = {
-        let mut wallet = taproot_makers[0].wallet().write().unwrap();
-        wallet.sync_and_save().unwrap();
-        let balances = wallet.get_balances().unwrap();
-        info!(
-            "📊 Maker balance after swap: Regular: {}, Spendable: {}",
-            balances.regular, balances.spendable
-        );
-        balances.spendable
-    };
-
+    info!("🚫 Verifying naughty maker gets banned");
+    // Maker gets banned for being naughty.
+    assert_eq!(
+        format!("127.0.0.1:{naughty}"),
+        taproot_taker.get_bad_makers()[0].address.to_string()
+    );
+    // Verify swap results
+    let taker_wallet = taproot_taker.get_wallet();
+    let taker_balances = taker_wallet.get_balances().unwrap();
+    // Use spendable balance (regular + swap) since swept coins from V2 swaps
+    // are tracked as SweptCoinV2 and appear in swap balance
+    let taker_total_after = taker_balances.spendable;
     assert!(
-        maker_balance_after == maker_balance_before,
-        "Maker's balance -: Before: {}, After: {}, Change: {}",
-        maker_balance_before,
-        maker_balance_after,
-        maker_balance_after.to_sat() as i64 - maker_balance_before.to_sat() as i64
+        taker_total_after.to_sat() == 15000000, // swap never happen so no fund spent
+        "Taproot Taker Balance should remain unchanged. Original: {}, After: {}",
+        taproot_taker_original_balance,
+        taker_total_after
     );
 
+    // Taker should not loss any fund in this case
+    let balance_diff = taproot_taker_original_balance - taker_total_after;
+    assert!(
+        balance_diff.to_sat() == 0, // here no fund loss because swap never happen
+        "Taproot Taker shouldn't have paid any fees. Original: {}, After: {},fees paid: {}",
+        taproot_taker_original_balance,
+        taker_total_after,
+        balance_diff
+    );
+    info!(
+        "Taproot Taker balance verification passed. Original spendable: {}, After spendable: {} (fees paid: {})",
+        taproot_taker_original_balance,
+        taker_total_after,
+        balance_diff
+    );
+
+    // Verify makers earned fees
+    for (i, (maker, original_spendable)) in taproot_makers
+        .iter()
+        .zip(maker_spendable_balance)
+        .enumerate()
+    {
+        let wallet = maker.wallet().read().unwrap();
+        let balances = wallet.get_balances().unwrap();
+
+        info!(
+            "Taproot Maker {} final balances - Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Spendable: {},Swap:{}",
+            i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable,balances.swap,
+        );
+
+        // Use spendable (regular + swap) for comparison
+        assert_in_range!(
+            balances.spendable.to_sat(),
+            [14999510], // here no fund loss because swap never happened
+            "Taproot Maker after balance check."
+        );
+
+        let balance_diff = balances.spendable.to_sat() - original_spendable.to_sat();
+        // maker gained no fee here as swap didn't happen
+        assert!(
+            balance_diff == 0,
+            "Taproot Maker shouldn't have any fee gain"
+        );
+
+        info!(
+            "Taproot Maker {} balance verification passed. Original spendable: {}, Current spendable: {}, fee gained: {}",
+            i, original_spendable, balances.spendable, balance_diff
+        );
+    }
     info!("✅ Taproot maker abort 3 recovery test passed!");
     // Shutdown maker
     taproot_makers

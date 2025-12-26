@@ -54,7 +54,7 @@ use coinswap::{
     maker::{Maker, MakerBehavior, TaprootMaker, TaprootMakerBehavior},
     taker::{api2::TakerBehavior as TaprootTakerBehavior, Taker, TakerBehavior, TaprootTaker},
     utill::setup_logger,
-    wallet::{Balances, RPCConfig, Wallet},
+    wallet::{Balances, RPCConfig},
 };
 use log::info;
 
@@ -614,77 +614,6 @@ pub fn verify_swap_results(
 }
 
 #[allow(dead_code)]
-/// Verify the results of a taproot swap
-pub fn verify_taproot_swap_results(
-    taker_wallet: &Wallet,
-    makers: &[Arc<TaprootMaker>],
-    org_taker_spend_balance: Amount,
-    org_maker_spend_balances: Vec<Amount>,
-) {
-    let taker_balances = taker_wallet.get_balances().unwrap();
-
-    // Use spendable balance (regular + swap) since swept coins from V2 swaps
-    // are tracked as SweptCoinV2 and appear in swap balance
-    let taker_total_after = taker_balances.spendable;
-    assert!(
-        taker_total_after < org_taker_spend_balance,
-        "Taker should have paid fees for the taproot swap. Original: {}, After: {}",
-        org_taker_spend_balance,
-        taker_total_after
-    );
-
-    // But the taker should still have a reasonable amount left (not all spent on fees)
-    let max_expected_fees = Amount::from_sat(500000); // 0.0005 BTC max fees
-    assert!(
-        taker_total_after > org_taker_spend_balance - max_expected_fees,
-        "Taker fees should be reasonable. Original: {}, After: {}, Max expected fees: {}",
-        org_taker_spend_balance,
-        taker_total_after,
-        max_expected_fees
-    );
-
-    info!(
-        "Taker balance verification passed. Original spendable: {}, After spendable: {} (fees paid: {})",
-        org_taker_spend_balance,
-        taker_total_after,
-        org_taker_spend_balance - taker_total_after
-    );
-
-    // Verify makers earned fees
-    for (i, (maker, original_spendable)) in makers.iter().zip(org_maker_spend_balances).enumerate()
-    {
-        let wallet = maker.wallet().read().unwrap();
-        let balances = wallet.get_balances().unwrap();
-
-        info!(
-            "Taproot Maker {} final balances - Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Spendable: {}",
-            i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable
-        );
-
-        // In taproot swaps, makers sweep their incoming contracts
-        // Swept coins are tracked as SweptCoinV2 and appear in swap balance
-        // Use spendable (regular + swap) for comparison
-        let max_fees = Amount::from_sat(100000); // Maximum expected mining fees
-
-        // The maker's spendable balance should be at least (original - max_fees + min_earned_fees)
-        let expected_minimum = original_spendable - max_fees;
-        assert!(
-            balances.spendable >= expected_minimum,
-            "Taproot Maker {} balance should not decrease significantly. Original spendable: {}, Current spendable: {}, Expected minimum: {}",
-            i,
-            original_spendable,
-            balances.spendable,
-            expected_minimum
-        );
-
-        info!(
-            "Taproot Maker {} balance verification passed. Original spendable: {}, Current spendable: {}",
-            i, original_spendable, balances.spendable
-        );
-    }
-}
-
-#[allow(dead_code)]
 pub fn verify_maker_pre_swap_balances(balances: &Balances, assert_regular_balance: u64) {
     assert_in_range!(
         balances.regular.to_sat(),
@@ -696,13 +625,62 @@ pub fn verify_maker_pre_swap_balances(balances: &Balances, assert_regular_balanc
     assert_eq!(balances.contract, Amount::ZERO);
 }
 
+// Pre swap funded balance is same for all makers so it's a common function to verify it.
+#[allow(dead_code)]
+pub fn verify_maker_pre_swap_balance_taproot(taproot_makers: &[Arc<TaprootMaker>]) -> Vec<Amount> {
+    let mut maker_spendable_balance = Vec::new();
+
+    info!("Testing taproot maker balance verification");
+
+    for (i, maker) in taproot_makers.iter().enumerate() {
+        let wallet = maker.wallet().read().unwrap();
+        let balances = wallet.get_balances().unwrap();
+
+        info!(
+            "Taproot Maker {} balances: Regular: {}, Swap: {}, Contract: {}, Fidelity: {}",
+            i, balances.regular, balances.swap, balances.contract, balances.fidelity
+        );
+
+        // Regular balance after fidelity bond (allow small fee variance)
+        // eg for 0.20 btc as funded, 0.05 btc will be spent due to fidelity bond creation and some small fee,so regular balance will be around 0.1499
+        assert_in_range!(
+            balances.regular.to_sat(),
+            [
+                14999510, // maker (normal case)
+                34999510, // maker multi taker case (8 utxo funded)]
+            ],
+            "Taproot Maker regular balance check after fidelity bond creation."
+        );
+
+        assert_eq!(balances.swap, Amount::ZERO);
+        assert_eq!(balances.contract, Amount::ZERO);
+
+        assert_eq!(
+            balances.fidelity,
+            Amount::from_btc(0.05).unwrap(),
+            "Fidelity bond should be exactly 0.05 BTC"
+        );
+
+        assert!(
+            balances.spendable > Amount::ZERO,
+            "Taproot Maker {} should have spendable balance",
+            i
+        );
+
+        // Store spendable balance
+        maker_spendable_balance.push(balances.spendable);
+    }
+
+    maker_spendable_balance
+}
+
 /// The Test Framework.
 ///
 /// Handles initializing, operating and cleaning up of all backend processes. Bitcoind, Taker and Makers.
 #[allow(dead_code)]
 pub struct TestFramework {
     pub(super) bitcoind: BitcoinD,
-    temp_dir: PathBuf,
+    pub(super) temp_dir: PathBuf,
     shutdown: AtomicBool,
 }
 

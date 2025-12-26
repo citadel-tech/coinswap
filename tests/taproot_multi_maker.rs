@@ -75,45 +75,7 @@ fn test_taproot_multi_maker() {
         maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
 
-    // Get the actual spendable balances AFTER fidelity bond creation
-    let mut actual_maker_spendable_balances = Vec::new();
-
-    // Test taproot maker balance verification
-    log::info!("Testing taproot maker balance verification");
-    for (i, maker) in taproot_makers.iter().enumerate() {
-        let wallet = maker.wallet().read().unwrap();
-        let balances = wallet.get_balances().unwrap();
-
-        info!(
-            "Taproot Maker {} balances: Regular: {}, Swap: {}, Contract: {}, Fidelity: {}",
-            i, balances.regular, balances.swap, balances.contract, balances.fidelity
-        );
-
-        // With real fidelity bonds, regular balance should be 0.20 BTC minus 0.05 BTC fidelity bond minus small fee
-        assert!(
-            balances.regular >= Amount::from_btc(0.14).unwrap(),
-            "Regular balance should be around 0.14999 BTC after fidelity bond creation"
-        );
-        assert!(
-            balances.regular <= Amount::from_btc(0.15).unwrap(),
-            "Regular balance should not exceed 0.15 BTC"
-        );
-        assert_eq!(balances.swap, Amount::ZERO);
-        assert_eq!(balances.contract, Amount::ZERO);
-        assert_eq!(
-            balances.fidelity,
-            Amount::from_btc(0.05).unwrap(),
-            "Fidelity bond should be 0.05 BTC"
-        );
-        assert!(
-            balances.spendable > Amount::ZERO,
-            "Maker should have spendable balance"
-        );
-
-        // Store the actual spendable balance AFTER fidelity bond creation
-        actual_maker_spendable_balances.push(balances.spendable);
-    }
-
+    let maker_spendable_balance = verify_maker_pre_swap_balance_taproot(&taproot_makers);
     log::info!("Starting multi maker taproot coinswap...");
     // Swap params for taproot coinswap
     let swap_params = SwapParams {
@@ -151,8 +113,6 @@ fn test_taproot_multi_maker() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    log::info!("✅ Taproot mutli maker test passed successfully.");
-
     // Sync wallets and verify results
     taproot_taker.get_wallet_mut().sync_and_save().unwrap();
 
@@ -164,15 +124,80 @@ fn test_taproot_multi_maker() {
         let mut wallet = maker.wallet().write().unwrap();
         wallet.sync_and_save().unwrap();
     }
-
-    // Verify swap results
-    verify_taproot_swap_results(
-        taproot_taker.get_wallet(),
-        &taproot_makers,
-        taproot_taker_original_balance,
-        actual_maker_spendable_balances, // Use the actual spendable balances after fidelity bond creation
+    let taker_wallet = taproot_taker.get_wallet();
+    let taker_balances = taker_wallet.get_balances().unwrap();
+    info!(
+        "📊 Taproot Taker balance after swap: Regular: {}, Contract: {}, Spendable: {}, Swap: {}",
+        taker_balances.regular,
+        taker_balances.contract,
+        taker_balances.spendable,
+        taker_balances.swap,
     );
 
+    // Use spendable balance (regular + swap) since swept coins from V2 swaps
+    // are tracked as SweptCoinV2 and appear in swap balance
+    let taker_total_after = taker_balances.spendable;
+    assert!(
+        taker_total_after.to_sat() == 14860649, // Multi maker case (less spendable balance due to higher no. of makers,more fee paid)
+        "Taproot Taker spendable balance check. Original: {}, After: {}",
+        taproot_taker_original_balance,
+        taker_total_after
+    );
+
+    let balance_diff = taproot_taker_original_balance - taker_total_after;
+    assert!(
+        // This balance diff(fee paid) consist of Maker fee's paid + mining fees.
+        balance_diff.to_sat() == 139351, // amount spended as fee (multi maker case,more no. of maker so more fee)
+        "Taproot taker spent on fees check. Original: {}, After: {}, Max expected fees: {}",
+        taproot_taker_original_balance,
+        taker_total_after,
+        balance_diff
+    );
+
+    info!(
+        "Taproot Taker balance verification passed. Original spendable: {}, After spendable: {} (fees paid: {})",
+        taproot_taker_original_balance,
+        taker_total_after,
+        balance_diff
+    );
+
+    // Verify makers earned fees
+    for (i, (maker, original_spendable)) in taproot_makers
+        .iter()
+        .zip(maker_spendable_balance)
+        .enumerate()
+    {
+        let wallet = maker.wallet().read().unwrap();
+        let balances = wallet.get_balances().unwrap();
+
+        info!(
+            "Taproot Maker {} final balances - Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Spendable: {},Swap:{}",
+            i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable,balances.swap,
+        );
+
+        assert_in_range!(
+            balances.spendable.to_sat(),
+            [
+                // Here it's arranged in the increasing order of maker's spendable balance, as maker's order is random during swap.
+                15016309, 15025695, 15037157, 15051704,
+            ],
+            "Taproot Maker spendable balance check for multi maker test case"
+        );
+
+        let balance_diff = balances.spendable.to_sat() - original_spendable.to_sat();
+        assert_in_range!(
+            balance_diff,
+            // These maker gained fee are arranged as per the corresponding spendable balance in the above assertion list.
+            [16799, 26187, 37649, 52196,],
+            "Taproot Maker fee gained check"
+        );
+        info!(
+            "Taproot Maker {} balance verification passed. Original spendable: {}, Current spendable: {}, fee gained: {}",
+            i, original_spendable, balances.spendable,balance_diff
+        );
+    }
+
+    log::info!("✅ Taproot mutli maker test passed successfully.");
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

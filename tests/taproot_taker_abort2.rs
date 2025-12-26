@@ -81,17 +81,7 @@ fn test_taproot_taker_abort2() {
         maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
 
-    // Get balances before swap
-    let maker_balance_before = {
-        let wallet = taproot_makers[0].wallet().read().unwrap();
-        let balances = wallet.get_balances().unwrap();
-        info!(
-            "Maker balance before swap: Regular: {}, Spendable: {}",
-            balances.regular, balances.spendable
-        );
-        balances.spendable
-    };
-
+    let maker_spendable_balance = verify_maker_pre_swap_balance_taproot(&taproot_makers);
     info!("🔄 Initiating taproot taker abort 2");
 
     // Swap params - small amount for faster testing
@@ -147,55 +137,76 @@ fn test_taproot_taker_abort2() {
     generate_blocks(bitcoind, 2);
     taproot_taker.get_wallet_mut().sync_and_save().unwrap();
 
-    info!("📊 Taker balance after timelock recovery:");
     let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
     info!(
-        "  Regular: {}, Contract: {}, Spendable: {}",
-        taker_balances_after.regular, taker_balances_after.contract, taker_balances_after.spendable
-    );
-
-    // Verify taker recovered their funds via timelock
-    let max_taker_fees = Amount::from_sat(10000); // Small fee for timelock tx
-    assert!(
-        taker_balances_after.spendable >= taproot_taker_original_balance - max_taker_fees,
-        "Taker should have recovered via timelock. Original: {}, After: {}, Lost: {}",
-        taproot_taker_original_balance,
+         "📊 Taproot Taker balance after timelock recovery: Regular: {}, Contract: {}, Spendable: {}, Swap: {}",
+        taker_balances_after.regular,
+        taker_balances_after.contract,
         taker_balances_after.spendable,
-        taproot_taker_original_balance - taker_balances_after.spendable
+        taker_balances_after.swap,
     );
 
-    // Verify maker's final balance (they never created outgoing contract, no funds gained/lost)
-    let maker_balance_after = {
-        let mut wallet = taproot_makers[0].wallet().write().unwrap();
-        wallet.sync_and_save().unwrap();
-        let balances = wallet.get_balances().unwrap();
-        info!(
-            "📊 Maker balance after swap: Regular: {}, Spendable: {}",
-            balances.regular, balances.spendable
-        );
-        balances.spendable
-    };
-
+    // Verify swap results
+    let taker_wallet = taproot_taker.get_wallet();
+    let taker_balances = taker_wallet.get_balances().unwrap();
+    // Use spendable balance (regular + swap) since swept coins from V2 swaps
+    // are tracked as SweptCoinV2 and appear in swap balance
+    let taker_total_after = taker_balances.spendable;
     assert!(
-        maker_balance_after == maker_balance_before,
-        "Maker balance shouldn't change. Before: {}, After: {}, Change: {}",
-        maker_balance_before,
-        maker_balance_after,
-        maker_balance_after.to_sat() as i64 - maker_balance_before.to_sat() as i64
+        taker_total_after.to_sat() == 14999496, // swap never happened, funds recovered via timelock
+        "Taproot Taker Balance should decrease a little. Original: {}, After: {}",
+        taproot_taker_original_balance,
+        taker_total_after
     );
+
+    // But the taker should still have a reasonable amount left (not all spent on fees)
+    let balance_diff = taproot_taker_original_balance - taker_total_after;
+    assert!(
+        balance_diff.to_sat() == 504, // here a little fund loss because of outgoing contract creation, timelock recovery transaction.
+        "Taproot Taker should have paid a little fees. Original: {}, After: {},fees paid: {}",
+        taproot_taker_original_balance,
+        taker_total_after,
+        balance_diff
+    );
+    info!(
+        "Taproot Taker balance verification passed. Original spendable: {}, After spendable: {} (fees paid: {})",
+        taproot_taker_original_balance,
+        taker_total_after,
+        balance_diff
+    );
+
+    // Verify makers earned fees
+    for (i, (maker, original_spendable)) in taproot_makers
+        .iter()
+        .zip(maker_spendable_balance)
+        .enumerate()
+    {
+        let wallet = maker.wallet().read().unwrap();
+        let balances = wallet.get_balances().unwrap();
+
+        info!(
+            "Taproot Maker {} final balances - Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Spendable: {},Swap:{}",
+            i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable,balances.swap,
+        );
+
+        // Use spendable (regular + swap) for comparison
+        assert_in_range!(
+            balances.spendable.to_sat(),
+            [14999510], // here no fund loss because no contract were created by makers
+            "Taproot Maker after balance check."
+        );
+
+        let balance_diff = balances.spendable.to_sat() - original_spendable.to_sat();
+        // maker didn't gain anything here,as no swap happened.
+        assert!(balance_diff == 0, "Taproot Maker shouldn't gain any fee");
+
+        info!(
+            "Taproot Maker {} balance verification passed. Original spendable: {}, Current spendable: {}, fee gained: {}",
+            i, original_spendable, balances.spendable, balance_diff
+        );
+    }
 
     info!("✅ Taker abort 2 recovery test passed!");
-    info!(
-        "   Taker: Original {}, After timelock recovery: {}, Fees paid: {}",
-        taproot_taker_original_balance,
-        taker_balances_after.spendable,
-        taproot_taker_original_balance - taker_balances_after.spendable
-    );
-    info!(
-        "   Maker: Before {}, After: {}, No change (swap never completed)",
-        maker_balance_before, maker_balance_after
-    );
-
     // Shutdown maker
     taproot_makers
         .iter()
