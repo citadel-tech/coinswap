@@ -580,6 +580,7 @@ publish_bitcoin_image() {
         
         if docker build \
         --build-arg TAG="$tag" \
+        --progress=plain \
         --network=host \
         -f docker/Dockerfile.bitcoin-mutinynet.presynced \
         -t "${target_repo}:presynced-latest" .; then
