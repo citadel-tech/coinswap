@@ -14,8 +14,9 @@ The Docker setup provides a complete environment for running any Coinswap applic
 - **Alpine Linux 3.20** base image for minimal size
 - **Rust 1.90.0** for building the applications
 - **Custom Bitcoin Mutinynet image** for Signet testing
-- **External Tor image** (`leplusorg/tor`)
+- **External Tor image** (`osminogin/tor-simple`)
 - **Interactive configuration** with automatic service detection
+- **Docker Compose Profiles** for flexible deployment
 - **Coinswap binaries:** `makerd`, `maker-cli`, `taker`
 
 ## Architecture
@@ -24,7 +25,7 @@ This is an overview for the docker stack with default settings for all nodes:
 
 ```mermaid
 graph TD
-    bitcoind["<b>Bitcoind</b><br/>Bitcoin Node<br/>RPC Port (Default: 18332)<br/>ZMQ Port (Default: 28332)"]
+    bitcoind["<b>Bitcoind</b><br/>Bitcoin Node<br/>RPC Port (Default: 38332)<br/>ZMQ Port (Default: 28332)"]
     tor["<b>Tor</b><br/>Tor Proxy<br/>SOCKS Port (Default: 9050)<br/>Control Port (Default: 9051)"]
     makerd["<b>Makerd</b><br/>Network Port (Default: 6102) <br/>RPC Port (Default: 6103)"]
     
@@ -59,7 +60,8 @@ The Docker setup uses:
 
 - `docker/Dockerfile` - Unified image containing `makerd`, `maker-cli`, and `taker`
 - `docker/Dockerfile.bitcoin-mutinynet` - Custom Bitcoin Core image for Mutinynet
-- External images: `leplusorg/tor` for Tor
+- `docker-compose.yml` - Single parameterized compose file
+- External images: `osminogin/tor-simple` for Tor
 
 ## Quick Start
 
@@ -191,14 +193,14 @@ docker run --rm -it \
 
 ## Docker Compose Setup
 
-The setup script automatically generates `docker-compose.generated.yml` based on your configuration. For a complete setup with all services:
+The setup script uses a standard `docker-compose.yml` with environment variables and profiles. For a complete setup with all services:
 
 ```bash
 # Start all services (Bitcoin Core, Tor, Makerd)
 ./docker-setup start
 
-# Or use docker-compose directly
-docker compose -f docker-compose.generated.yml up -d
+# Note: Running docker compose directly requires setting environment variables.
+# It is recommended to use the setup script which handles this for you.
 
 # Check status
 ./docker-setup status
@@ -223,8 +225,8 @@ All application data is stored in Docker volumes:
 # using setup script
 ./docker-setup logs makerd
 
-# or directly with docker-compose
-docker compose -f docker-compose.generated.yml logs -f makerd
+# or directly with docker-compose (requires env vars)
+docker compose logs -f makerd
 ```
 
 ### Interactive debugging

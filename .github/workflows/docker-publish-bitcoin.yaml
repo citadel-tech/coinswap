@@ -5,7 +5,14 @@ on:
     paths:
       - 'docker/bitcoin-mutinynet.version'
       - 'docker/Dockerfile.bitcoin-mutinynet'
+      - 'docker/Dockerfile.bitcoin-mutinynet.presynced'
   workflow_dispatch:
+    inputs:
+      skip_presynced:
+        description: 'Skip pre-synced image build'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build-and-push:
@@ -34,7 +41,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push base image
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -50,3 +57,17 @@ jobs:
             SHA256_AMD64=${{ steps.version.outputs.SHA256_AMD64 }}
             FILENAME_ARM64=${{ steps.version.outputs.FILENAME_ARM64 }}
             SHA256_ARM64=${{ steps.version.outputs.SHA256_ARM64 }}
+
+      - name: Build and push pre-synced image
+        if: ${{ inputs.skip_presynced != true }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.bitcoin-mutinynet.presynced
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/bitcoin-mutinynet:presynced-${{ steps.version.outputs.TAG }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/bitcoin-mutinynet:presynced-latest
+          build-args: |
+            TAG=${{ steps.version.outputs.TAG }}

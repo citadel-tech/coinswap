@@ -1,0 +1,34 @@
+ARG TAG=latest
+FROM coinswap/bitcoin-mutinynet:${TAG}
+
+USER root
+
+COPY docs/bitcoin.conf /home/bitcoin/.bitcoin/bitcoin.conf
+RUN chown bitcoin:bitcoin /home/bitcoin/.bitcoin/bitcoin.conf
+
+USER bitcoin
+
+RUN bitcoind -signet -daemon && \
+    echo "Waiting for Bitcoin to start..." && \
+    ( for i in {1..60}; do bitcoin-cli -signet -rpcwait getblockchaininfo >/dev/null 2>&1 && break || sleep 1; done ) && \
+    echo "Bitcoin started. Syncing..." && \
+    ( \
+        while true; do \
+            INFO=$(bitcoin-cli -signet getblockchaininfo); \
+            echo "[DEBUG]" $INFO \ 
+            PEERS=$(bitcoin-cli -signet getconnectioncount); \
+            BLOCKS=$(echo "$INFO" | grep '"blocks":' | awk '{print $2}' | tr -d ','); \
+            HEADERS=$(echo "$INFO" | grep '"headers":' | awk '{print $2}' | tr -d ','); \
+            IBD=$(echo "$INFO" | grep '"initialblockdownload":' | awk '{print $2}' | tr -d ','); \
+            PROGRESS=$(echo "$INFO" | grep '"verificationprogress":' | awk '{print $2}' | tr -d ','); \
+            echo "Progress: $BLOCKS / $HEADERS (IBD: $IBD, Peers: $PEERS, Verification: $PROGRESS)"; \
+            if [ "$IBD" = "false" ] && [ "$BLOCKS" -gt 0 ]; then \
+                echo "Sync complete!"; \
+                break; \
+            fi; \
+            sleep 10; \
+        done \
+    ) && \
+    bitcoin-cli -signet stop && \
+    ( while pidof bitcoind >/dev/null; do sleep 1; done ) && \
+    echo "Bitcoin stopped gracefully."
