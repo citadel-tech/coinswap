@@ -193,10 +193,10 @@ impl<R: Role> Watcher<R> {
             }
             BackendEvent::BlockConnected(b) => {
                 if let Ok(block) = deserialize::<Block>(&b.hash) {
-                    self.registry.save_checkpoint(Checkpoint {
-                        height: block.bip34_block_height().unwrap(),
-                        hash: block.block_hash(),
-                    });
+                    // self.registry.save_checkpoint(Checkpoint {
+                    //     height: block.bip34_block_height().unwrap(),
+                    //     hash: block.block_hash(),
+                    // });
                     process_block(block, &mut self.registry);
                 }
             }

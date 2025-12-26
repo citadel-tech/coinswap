@@ -1,7 +1,7 @@
 //! Watchtower RPC backend: querying bitcoind, scanning mempool, and running discovery.
 
 use std::{
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}},
     thread,
     time::Duration,
 };
@@ -90,6 +90,7 @@ impl BitcoinRpc {
     /// Discovers maker fidelity bonds by scanning historical blocks.
     pub fn run_discovery(self, registry: FileRegistry) -> Result<(), WatcherError> {
         log::info!("Starting with market discovery");
+        let scanned_blocks = Arc::new(AtomicU64::new(0));
 
         let blockchain_info = self.get_blockchain_info()?;
         let block_hash = blockchain_info.best_block_hash;
@@ -117,6 +118,7 @@ impl BitcoinRpc {
         let mut handles = Vec::with_capacity(threads);
 
         for thread_id in 0..threads {
+            let scanned_blocks = Arc::clone(&scanned_blocks);
             let registry = Arc::clone(&registry);
             let this = Arc::clone(&this);
 
@@ -147,6 +149,17 @@ impl BitcoinRpc {
                         }
                     };
 
+                    let prev = scanned_blocks.fetch_add(1, Ordering::Relaxed) + 1;
+
+                    if prev % 100 == 0 {
+                        log::info!(
+                            "Market discovery progress: scanned {} blocks (tip={}, cutoff_height~{})",
+                            prev,
+                            tip_height,
+                            lowest_scanned,
+                        );
+                    }
+
                     if block.header.time < cutoff_time as u32 {
                         break;
                     }
@@ -154,6 +167,7 @@ impl BitcoinRpc {
                     for tx in block.txdata {
                         if let Some(fidelity_announcement) = process_fidelity(&tx) {
                             local_found += 1;
+                            log::info!("Fidelity found: {fidelity_announcement:#?}");
                             registry
                                 .lock()
                                 .unwrap()
@@ -186,10 +200,14 @@ impl BitcoinRpc {
             });
         }
 
+        let total_scanned = scanned_blocks.load(Ordering::Relaxed);
+
         log::info!(
-            "Market discovery completed: scanned shards up to cutoff, found {} makers",
+            "Market discovery completed: scanned {} blocks, found {} makers",
+            total_scanned,
             makers_found
         );
+
 
         Ok(())
     }

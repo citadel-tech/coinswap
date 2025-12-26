@@ -46,7 +46,7 @@ use crate::{
 use super::error::TakerError;
 
 #[cfg(not(feature = "integration-test"))]
-const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(30 * 60);
+const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
 #[cfg(feature = "integration-test")]
 const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(2);
@@ -255,10 +255,9 @@ impl OfferSyncService {
     where
         F: FnOnce(Vec<MakerAddress>, u16) -> Result<Vec<OfferAndAddress>, TakerError>,
     {
-        self.watch_service.request_maker_address();
-
+        
         let Some(WatcherEvent::MakerAddresses { maker_addresses }) =
-            self.watch_service.wait_for_event()
+            self.watch_service.request_maker_address()
         else {
             return Ok(());
         };

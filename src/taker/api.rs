@@ -171,7 +171,8 @@ pub struct Taker {
     ongoing_swap_state: OngoingSwapState,
     #[cfg(feature = "integration-test")]
     behavior: TakerBehavior,
-    watch_service: WatchService,
+    /// iyiib
+    pub watch_service: WatchService,
     offer_sync_handle: OfferSyncHandle,
 }
 
@@ -274,7 +275,7 @@ impl Taker {
         )
         .start_legacy();
 
-        wallet.sync_and_save()?;
+        // wallet.sync_and_save()?;
 
         Ok(Self {
             wallet,

@@ -8,7 +8,7 @@ use coinswap::{
 };
 use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
-use std::{path::PathBuf, str::FromStr};
+use std::{path::PathBuf, str::FromStr, thread, time::Duration};
 
 #[cfg(feature = "integration-test")]
 use coinswap::taker::TakerBehavior;
@@ -35,7 +35,7 @@ struct Cli {
         name = "ADDRESS:PORT",
         long,
         short = 'r',
-        default_value = "127.0.0.1:38332"
+        default_value = "172.81.178.3:48332"
     )]
     pub rpc: String,
 
@@ -44,7 +44,7 @@ struct Cli {
         name = "ZMQ",
         long,
         short = 'z',
-        default_value = "tcp://127.0.0.1:28332"
+        default_value = "tcp://172.81.178.3:58332"
     )]
     pub zmq: String,
 
@@ -178,7 +178,7 @@ fn main() -> Result<(), TakerError> {
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
-        wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
+        wallet_name: "random_1".to_string(), // we can put anything here as it will get updated in the init.
     };
 
     match &args.command {
@@ -332,7 +332,10 @@ fn main() -> Result<(), TakerError> {
 
                     taker.get_wallet_mut().sync_and_save()?;
                 }
-                Commands::FetchOffers => {
+                Commands::FetchOffers => loop {
+                    // println!("I am here");
+                    // let makers=  taker.watch_service.request_maker_address();
+                    // println!("{makers:#?}");
                     let all_offers = {
                         let offerbook = taker.fetch_offers()?;
                         offerbook
@@ -343,15 +346,15 @@ fn main() -> Result<(), TakerError> {
                             .collect::<Vec<_>>()
                     };
                     if all_offers.is_empty() {
-                        println!("NO LIVE OFFERS FOUND!! You should run a maker!!");
-                        return Ok(());
+                        // println!("NO LIVE OFFERS FOUND!! You should run a maker!!");
+                        thread::sleep(Duration::from_secs(5));
                     } else {
                         all_offers.iter().try_for_each(|offer| {
                             println!("{}", taker.display_offer(offer)?);
                             Ok::<_, TakerError>(())
                         })?;
                     }
-                }
+                },
                 Commands::Coinswap { makers, amount } => {
                     // Note: taproot coinswap is handled at the top level to avoid
                     // double Taker initialization. Regular ECDSA coinswap goes here.
