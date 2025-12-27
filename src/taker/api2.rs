@@ -1,3 +1,4 @@
+use super::error::TakerError;
 use crate::{
     protocol::{
         contract2::{
@@ -51,7 +52,20 @@ use std::{
     time::Duration,
 };
 
-use super::error::TakerError;
+/// Represents different behaviors taker can have during the swap.
+/// Used for testing various possible scenarios that can happen during a swap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "integration-test")]
+pub enum TakerBehavior {
+    /// Normal behaviour
+    Normal,
+    /// Close connection after receiving AckResponse message from the maker. (no outgoing/incoming contract created)
+    CloseAtAckResponse,
+    /// Close connection after sending SendersContract (outgoing contract created)
+    CloseAtSendersContract,
+    /// Close connection after receiving SendersContract from maker (outgoing contract created).
+    CloseAtSendersContractFromMaker,
+}
 
 /// Represents how a taproot contract output was spent
 #[derive(Debug, Clone)]
@@ -321,10 +335,13 @@ pub struct Taker {
     ongoing_swap_state: OngoingSwapState,
     data_dir: PathBuf,
     watch_service: WatchService,
+    #[cfg(feature = "integration-test")]
+    behavior: TakerBehavior,
 }
 
 impl Taker {
     /// Initialize a new Taker instance
+    #[allow(clippy::too_many_arguments)]
     pub fn init(
         data_dir: Option<PathBuf>,
         wallet_file_name: Option<String>,
@@ -333,6 +350,7 @@ impl Taker {
         tor_auth_password: Option<String>,
         zmq_addr: String,
         password: Option<String>,
+        #[cfg(feature = "integration-test")] behavior: TakerBehavior,
     ) -> Result<Taker, TakerError> {
         let data_dir = data_dir.unwrap_or_else(get_taker_dir);
 
@@ -418,6 +436,8 @@ impl Taker {
             ongoing_swap_state: OngoingSwapState::default(),
             data_dir,
             watch_service,
+            #[cfg(feature = "integration-test")]
+            behavior,
         })
     }
 
@@ -466,6 +486,16 @@ impl Taker {
         self.choose_makers_for_swap(swap_params)?;
         self.setup_contract_keys_and_scripts()?;
 
+        #[cfg(feature = "integration-test")]
+        {
+            if self.behavior == TakerBehavior::CloseAtAckResponse {
+                log::error!(
+                    "Dropping Swap Process after receiving Ack Response message from maker"
+                );
+                return Err(TakerError::General("Taker Dropping after receiving AckResponse message from maker. (Test behavior)".to_string(),));
+            }
+        }
+
         let outgoing_signed_contract_transactions = self.create_outgoing_contract_transactions()?;
         let tx = match outgoing_signed_contract_transactions.first() {
             Some(tx) => tx,
@@ -498,7 +528,6 @@ impl Taker {
         for tx in &outgoing_signed_contract_transactions {
             self.wallet.wait_for_tx_confirmation(tx.compute_txid())?;
         }
-
         match self
             .negotiate_with_makers_and_coordinate_sweep(&outgoing_signed_contract_transactions)
         {
@@ -509,6 +538,7 @@ impl Taker {
 
                 // Store swap state before reset for report generation
                 let prereset_swapstate = self.ongoing_swap_state.clone();
+                self.ongoing_swap_state = OngoingSwapState::default();
 
                 // Sync wallet and generate report
                 self.wallet.sync_and_save()?;
@@ -1234,6 +1264,16 @@ impl Taker {
 
         let msg = TakerToMakerMessage::SendersContract(senders_contract.clone());
         let response = self.send_to_maker_and_get_response(&first_maker.address, msg)?;
+        #[cfg(feature = "integration-test")]
+        {
+            if self.behavior == TakerBehavior::CloseAtSendersContract {
+                log::error!("Dropping connection after sending SendersContract to Maker");
+                return Err(TakerError::General(
+                    "Taker dropping of after sending Senders Contract to Maker (test behavior) "
+                        .to_string(),
+                ));
+            }
+        }
 
         match response {
             MakerToTakerMessage::SenderContractFromMaker(incoming_contract) => {
@@ -1310,6 +1350,17 @@ impl Taker {
 
             match maker_response {
                 MakerToTakerMessage::SenderContractFromMaker(maker_contract) => {
+                    #[cfg(feature = "integration-test")]
+                    {
+                        if self.behavior == TakerBehavior::CloseAtSendersContractFromMaker {
+                            log::error!(
+                                "Dropping connection after receiving Sender Contract from Maker"
+                            );
+                            return Err(TakerError::General(
+                                "Taker dropping of after receiving Senders Contract from Maker (test behavior) ".to_string(),));
+                        }
+                    }
+
                     if maker_index == maker_count - 1 {
                         // This is the last maker - store its response as final contract data
                         self.store_final_contract_data(&maker_contract)?;
@@ -1454,7 +1505,6 @@ impl Taker {
 
             // Send to maker and get their outgoing key in response
             let response = self.send_to_maker_and_get_response(&maker_address, privkey_msg)?;
-
             // remove taker's outgoing swapcoin since we've handed over the key
             if maker_index == 0 {
                 let outgoing_txid = self
@@ -1462,6 +1512,20 @@ impl Taker {
                     .outgoing_contract
                     .contract_tx
                     .compute_txid();
+                for (vout, _) in self
+                    .ongoing_swap_state
+                    .outgoing_contract
+                    .contract_tx
+                    .output
+                    .iter()
+                    .enumerate()
+                {
+                    let outpoint = OutPoint {
+                        txid: outgoing_txid,
+                        vout: vout as u32,
+                    };
+                    self.watch_service.unwatch(outpoint);
+                }
                 self.wallet.remove_outgoing_swapcoin_v2(&outgoing_txid);
                 log::info!(
                     "Removed taker's outgoing swapcoin {} after sending PrivateKeyHandover",
@@ -1692,6 +1756,21 @@ impl Taker {
             "Recorded swept incoming swapcoin V2: {}",
             incoming_contract_txid
         );
+
+        for (vout, _) in self
+            .ongoing_swap_state
+            .incoming_contract
+            .contract_tx
+            .output
+            .iter()
+            .enumerate()
+        {
+            let outpoint = OutPoint {
+                txid: incoming_contract_txid,
+                vout: vout as u32,
+            };
+            self.watch_service.unwatch(outpoint);
+        }
 
         // Remove the incoming swapcoin since we've successfully swept it
         self.wallet
