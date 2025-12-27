@@ -72,7 +72,7 @@ impl Wallet {
             }
         }
 
-        let tx = self.spend_coins(&coins, destination, feerate)?;
+        let tx = self.spend_coins(&coins[..], destination, feerate)?;
 
         Ok(tx)
     }
@@ -104,7 +104,7 @@ impl Wallet {
         let utxo = match self
             .list_fidelity_spend_info()
             .iter()
-            .find(|(_, spend_info)| *spend_info == expired_fidelity_spend_info)
+            .find(|(_, spend_info)| **spend_info == expired_fidelity_spend_info)
         {
             Some((utxo, _)) => utxo,
             None => {
@@ -124,9 +124,9 @@ impl Wallet {
                 return Ok(());
             }
         }
-        .clone();
+        .to_owned();
 
-        let tx = self.spend_coins(&[(utxo, expired_fidelity_spend_info)], destination, feerate)?;
+        let tx = self.spend_coins(&[(utxo.clone(), expired_fidelity_spend_info)], destination, feerate)?;
         let txid = self.send_tx(&tx)?;
 
         log::info!("Fidelity redeem transaction broadcasted. txid: {txid}");
@@ -165,8 +165,9 @@ impl Wallet {
                     && input_value == og_sc.contract_tx.output[0].value
                 {
                     let destination = Destination::Sweep(destination_address.clone());
-                    let coins = vec![(utxo, spend_info)];
-                    let tx = self.spend_coins(&coins, destination, feerate)?;
+                    let coin = (utxo.clone(), spend_info.clone());
+                    let coins = [coin];
+                    let tx = self.spend_coins(&coins[..], destination, feerate)?;
                     return Ok(tx);
                 }
             }
@@ -193,9 +194,9 @@ impl Wallet {
                     && input_value == ic_sc.contract_tx.output[0].value
                 {
                     let destination = Destination::Sweep(destination_address.clone());
-                    let coin = (utxo, spend_info);
-                    let coins = vec![coin];
-                    let tx = self.spend_coins(&coins, destination, feerate)?;
+                    let coin = (utxo.clone(), spend_info.clone());
+                    let coins = [coin];
+                    let tx = self.spend_coins(&coins[..], destination, feerate)?;
                     return Ok(tx);
                 }
             }
