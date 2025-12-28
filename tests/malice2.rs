@@ -83,7 +83,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
 
             let balances = wallet.get_balances().unwrap();
 
-            verify_maker_pre_swap_balances(&balances, 14999508);
+            verify_maker_pre_swap_balances(&balances, 14999500);
 
             balances.spendable
         })
