@@ -108,36 +108,141 @@ fn test_standard_coinswap() {
 
     //-------- Fee Tracking and Workflow:------------
     //
-    // | Participant    | Amount Received (Sats) | Amount Forwarded (Sats) | Fee (Sats) | Funding Mining Fees (Sats) | Total Fees (Sats) |
-    // |----------------|------------------------|-------------------------|------------|----------------------------|-------------------|
-    // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
-    // | **Maker16102** | 500,000                | 463,500                 | 33,500     | 3,000                      | 36,500            |
-    // | **Maker6102**  | 463,500                | 438,642                 | 21,858     | 3,000                      | 24,858            |
-    //
+    // | Participant    | Amount Received (Sats) | Amount Forwarded (Sats) | Fee (Sats) | Total Fees (Sats) |
+    // |----------------|------------------------|-------------------------|------------|-------------------|
+    // | **Taker**      | _                      | 500,000                 | _          | 1,179(mining fees)|
+    // | **Maker16102** | 500,000                | 478,007                 | 21,992     | 21,992            |
+    // | **Maker6102**  | 478,007                | 443,633                 | 33,500     | 33,500            |
+
+    //| Component        | Fees (sats) |
+    //|------------------|-------------|
+    //| **Total**        | 56,671      |
+
     // ## 3. Final Outcome for Taker (Successful Coinswap):
     //
-    // | Participant   | Coinswap Outcome (Sats)                                                   |
-    // |---------------|---------------------------------------------------------------------------|
-    // | **Taker**     | 438,642= 500,000 - (Total Fees for Maker16102 + Total Fees for Maker6102) |
+    // | Participant   | Coinswap Outcome (Sats)                                                                 |
+    // |---------------|-----------------------------------------------------------------------------------------|
+    // | **Taker**     | 443,633 = 500,000 - (Total Fees for Maker16102 + Total Fees for Maker6102 + mining fees)|
     //
     // ## 4. Final Outcome for Makers:
     //
     // | Participant    | Coinswap Outcome (Sats)                                           |
     // |----------------|-------------------------------------------------------------------|
-    // | **Maker16102** | 500,000 - 463,500 - 3,000 = +33,500                               |
-    // | **Maker6102**  | 465,384 - 438,642 - 3,000 = +21,858                               |
+    // | **Maker16102** | 500,000 − 478,007 = +21,992                                       |
+    // | **Maker6102**  | 479,859 − 443,633 = +33,500                                       |
 
     info!("📊 Verifying swap results");
-    //  After Swap Asserts
-    verify_swap_results(
-        taker,
-        &makers,
-        org_taker_spend_balance,
-        org_maker_spend_balances,
-    );
+    // Check Taker balances
+    {
+        let wallet = taker.get_wallet();
+        let balances = wallet.get_balances().unwrap();
 
-    info!("✅ Balance check successful");
+        // Debug logging for taker
+        log::info!(
+            "🔍 DEBUG Taker - Regular: {}, Swap: {}, Spendable: {},Contract: {}",
+            balances.regular.to_btc(),
+            balances.swap.to_btc(),
+            balances.spendable.to_btc(),
+            balances.contract.to_btc()
+        );
+        assert_in_range!(
+            balances.regular.to_sat(),
+            [
+                14499696 // Successful coinswap
+            ],
+            "Taker seed balance mismatch"
+        );
 
+        assert_in_range!(
+            balances.swap.to_sat(),
+            [
+                443633 // Successful coinswap
+            ],
+            "Taker swapcoin balance mismatch"
+        );
+
+        assert_in_range!(balances.contract.to_sat(), [0], "Contract balance mismatch");
+        assert_eq!(balances.fidelity, Amount::ZERO);
+
+        // Check balance difference
+        let balance_diff = org_taker_spend_balance
+            .checked_sub(balances.spendable)
+            .unwrap();
+
+        log::info!(
+            "🔍 DEBUG Taker balance diff: {} sats",
+            balance_diff.to_sat()
+        );
+        assert_in_range!(
+            balance_diff.to_sat(),
+            [
+                56671  // Fee spent on successful coinswap
+            ],
+            "Taker spendable balance change mismatch"
+        );
+    }
+
+    // Check Maker balances
+    makers
+        .iter()
+        .zip(org_maker_spend_balances.iter())
+        .enumerate()
+        .for_each(|(maker_index, (maker, org_spend_balance))| {
+            let mut wallet = maker.get_wallet().write().unwrap();
+            wallet.sync_and_save().unwrap();
+            let balances = wallet.get_balances().unwrap();
+
+            // Debug logging for makers
+            log::info!(
+                "🔍 DEBUG Maker {} - Regular: {}, Swap: {}, Contract: {}, Spendable: {}",
+                maker_index,
+                balances.regular.to_btc(),
+                balances.swap.to_btc(),
+                balances.contract.to_btc(),
+                balances.spendable.to_btc()
+            );
+
+            assert_in_range!(
+                balances.regular.to_sat(),
+                [
+                    14555295, // First maker on successful coinswap
+                    14533010, // Second maker on successful coinswap
+                ],
+                "Maker seed balance mismatch"
+            );
+
+            assert_in_range!(
+                balances.swap.to_sat(),
+                [
+                    465918, // First maker
+                    499724, // Second maker
+                ],
+                "Maker swapcoin balance mismatch"
+            );
+            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
+            // Check spendable balance difference.
+            let balance_diff = match org_spend_balance.checked_sub(balances.spendable) {
+                None => balances.spendable.checked_sub(*org_spend_balance).unwrap(), // Successful swap as Makers balance increase by Coinswap fee.
+                Some(diff) => diff, // No spending or unsuccessful swap , Maker may have lost some funds here, generally due to timelock recovery transaction
+            };
+
+            log::info!(
+                "🔍 DEBUG Maker {} balance diff: {} sats",
+                maker_index,
+                balance_diff.to_sat()
+            );
+
+            assert_in_range!(
+                balance_diff.to_sat(),
+                [
+                    21705, // First maker fee gained
+                    33226, // Second maker fee gained
+                ],
+                "Maker spendable balance change mismatch"
+            );
+        });
+
+    log::info!("✅ Swap results verification complete");
     // Check spending from swapcoins.
     info!("💸 Checking spend from swapcoins");
 

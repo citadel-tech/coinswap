@@ -475,14 +475,12 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
             }
             Err(err) => {
                 match &err {
-                    // Shutdown server if special behavior is set
                     MakerError::SpecialBehaviour(sp) => {
                         log::error!(
-                            "[{}] Maker Special Behavior : {:?}",
+                            "[{}] Maker Special Behavior Triggered Disconnection : {:?}",
                             maker.config.network_port,
                             sp
                         );
-                        maker.shutdown.store(true, Relaxed);
                     }
                     e => {
                         log::error!(
@@ -492,7 +490,7 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
                         );
                     }
                 }
-                return Err(err);
+                break;
             }
         }
     }
