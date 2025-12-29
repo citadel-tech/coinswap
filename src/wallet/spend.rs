@@ -15,7 +15,9 @@ use crate::{
     wallet::{api::UTXOSpendInfo, FidelityError},
 };
 
-use super::{error::WalletError, swapcoin::SwapCoin, IncomingSwapCoin, OutgoingSwapCoin, Wallet};
+use super::{
+    error::WalletError, swapcoin::SwapCoin, AddressType, IncomingSwapCoin, OutgoingSwapCoin, Wallet,
+};
 
 /// Represents different destination options for a transaction.
 #[derive(Debug, Clone, PartialEq)]
@@ -28,6 +30,8 @@ pub enum Destination {
         outputs: Vec<(Address, Amount)>,
         /// OP_RETURN data, used to create a OP_RETURN TxOut
         op_return_data: Option<Box<[u8]>>,
+        /// Address type for change output (defaults to P2WPKH if None)
+        change_address_type: Option<AddressType>,
     },
     /// Send Dynamic Random Amounts to Multiple Addresses
     MultiDynamic(Amount, Vec<Address>),
@@ -80,7 +84,12 @@ impl Wallet {
     /// Redeem a Fidelity Bond.
     /// This function creates a spending transaction from the fidelity bond, signs and broadcasts it.
     /// Returns the txid of the spending tx, and mark the bond as spent.
-    pub fn redeem_fidelity(&mut self, idx: u32, feerate: f64) -> Result<(), WalletError> {
+    pub fn redeem_fidelity(
+        &mut self,
+        idx: u32,
+        feerate: f64,
+        destination_address_type: AddressType,
+    ) -> Result<(), WalletError> {
         let bond = self
             .store
             .fidelity_bond
@@ -97,7 +106,7 @@ impl Wallet {
             input_value: bond.amount,
         };
 
-        let change_addr = &self.get_next_internal_addresses(1)?[0];
+        let change_addr = &self.get_next_internal_addresses(1, destination_address_type)?[0];
         let destination = Destination::Sweep(change_addr.clone());
 
         // Find utxo corresponding to expired fidelity bond.
@@ -334,6 +343,7 @@ impl Wallet {
             Destination::Multi {
                 outputs,
                 op_return_data,
+                change_address_type,
             } => {
                 let mut total_output_value = Amount::ZERO;
                 for (address, amount) in outputs {
@@ -358,7 +368,10 @@ impl Wallet {
                     };
                     tx.output.push(txout);
                 }
-                let internal_spk = self.get_next_internal_addresses(1)?[0].script_pubkey();
+                // Use specified change address type, default to P2WPKH
+                let change_type = change_address_type.unwrap_or(AddressType::P2WPKH);
+                let internal_spk =
+                    self.get_next_internal_addresses(1, change_type)?[0].script_pubkey();
                 let minimal_nondust = internal_spk.minimal_non_dust();
 
                 let mut tx_wchange = tx.clone();
@@ -450,7 +463,8 @@ impl Wallet {
                     tx.output.push(txout);
                 }
 
-                let internal_spks = self.get_next_internal_addresses(change_chunks.len() as u32)?;
+                let internal_spks = self
+                    .get_next_internal_addresses(change_chunks.len() as u32, AddressType::P2WPKH)?;
 
                 // Add dummy changes to calculate the final weight of the transactions.
                 let mut tx_wchange = tx.clone();

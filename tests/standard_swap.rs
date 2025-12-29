@@ -4,7 +4,7 @@ use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
     utill::MIN_FEE_RATE,
-    wallet::Destination,
+    wallet::{AddressType, Destination},
 };
 use std::sync::Arc;
 
@@ -144,7 +144,10 @@ fn test_standard_coinswap() {
     let taker_wallet_mut = taker.get_wallet_mut();
     let swap_coins = taker_wallet_mut.list_swept_incoming_swap_utxos();
 
-    let addr = taker_wallet_mut.get_next_internal_addresses(1).unwrap()[0].to_owned();
+    let addr = taker_wallet_mut
+        .get_next_internal_addresses(1, AddressType::P2WPKH)
+        .unwrap()[0]
+        .to_owned();
 
     let tx = taker_wallet_mut
         .spend_from_wallet(MIN_FEE_RATE, Destination::Sweep(addr), &swap_coins)

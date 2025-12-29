@@ -24,7 +24,7 @@ use crate::{
     utill::{check_tor_status, get_taker_dir, read_message, send_message},
     wallet::{
         ffi::{MakerFeeInfo, SwapReport},
-        IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError,
+        AddressType, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError,
     },
     watch_tower::{
         registry_storage::FileRegistry,
@@ -997,6 +997,7 @@ impl Taker {
                         self.ongoing_swap_state.swap_params.send_amount,
                     )],
                     op_return_data: None,
+                    change_address_type: Some(AddressType::P2TR),
                 },
                 &selected_utxos,
             )?
@@ -1369,7 +1370,7 @@ impl Taker {
 
         let destination_address = self
             .wallet
-            .get_next_internal_addresses(1)
+            .get_next_internal_addresses(1, AddressType::P2TR)
             .map_err(TakerError::Wallet)?
             .into_iter()
             .next()

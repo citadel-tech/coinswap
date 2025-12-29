@@ -25,6 +25,16 @@ use super::{
 
 use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 
+/// Address type supported by the wallet for HD address generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum AddressType {
+    /// BIP-84 Native SegWit (P2WPKH)
+    #[default]
+    P2WPKH,
+    /// BIP-86 Taproot key-path only (P2TR)
+    P2TR,
+}
+
 /// Represents the internal data store for a Bitcoin wallet.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct WalletStore {
@@ -51,9 +61,6 @@ pub(crate) struct WalletStore {
     /// Map of swept incoming swap coins to prevent mixing with regular UTXOs
     /// Key: ScriptPubKey of swept UTXO, Value: Original multisig redeemscript
     pub(crate) swept_incoming_swapcoins: HashMap<ScriptBuf, ScriptBuf>,
-    /// Map of swept incoming taproot swap coins (V2) to track swap balance
-    /// Key: ScriptPubKey of swept UTXO, Value: Original contract txid
-    pub(super) swept_incoming_swapcoins_v2: HashMap<ScriptBuf, bitcoin::Txid>,
     /// Map for all the fidelity bond information.
     pub(crate) fidelity_bond: HashMap<u32, FidelityBond>,
     pub(super) last_synced_height: Option<u64>,
@@ -87,7 +94,6 @@ impl WalletStore {
             outgoing_swapcoins_v2: HashMap::new(),
             prevout_to_contract_map: HashMap::new(),
             swept_incoming_swapcoins: HashMap::new(),
-            swept_incoming_swapcoins_v2: HashMap::new(),
             fidelity_bond: HashMap::new(),
             last_synced_height: None,
             wallet_birthday,

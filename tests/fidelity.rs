@@ -5,6 +5,7 @@ use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::TakerBehavior,
     utill::MIN_FEE_RATE,
+    wallet::AddressType,
 };
 mod test_framework;
 use test_framework::*;
@@ -139,6 +140,7 @@ fn test_fidelity() {
                     .unwrap(),
                 None,
                 MIN_FEE_RATE,
+                Some(AddressType::P2WPKH),
             )
             .unwrap();
 
@@ -185,7 +187,9 @@ fn test_fidelity() {
             if required_height == first_maturity_height {
                 log::info!("🔓 First Fidelity Bond is matured. Sending redemption transaction");
 
-                wallet_write.redeem_fidelity(0, MIN_FEE_RATE).unwrap();
+                wallet_write
+                    .redeem_fidelity(0, MIN_FEE_RATE, AddressType::P2WPKH)
+                    .unwrap();
 
                 log::info!("✅ First Fidelity Bond is successfully redeemed");
 
@@ -199,7 +203,9 @@ fn test_fidelity() {
             } else {
                 log::info!("🔓 Second Fidelity Bond is matured. Sending redemption transaction");
 
-                wallet_write.redeem_fidelity(1, MIN_FEE_RATE).unwrap();
+                wallet_write
+                    .redeem_fidelity(1, MIN_FEE_RATE, AddressType::P2WPKH)
+                    .unwrap();
 
                 log::info!("✅ Second Fidelity Bond is successfully redeemed");
 
@@ -281,6 +287,7 @@ fn test_fidelity_spending() {
                 LockTime::from_height(short_timelock_height).unwrap(),
                 None,
                 MIN_FEE_RATE,
+                Some(AddressType::P2WPKH),
             )
             .unwrap()
     };
@@ -377,6 +384,7 @@ fn test_fidelity_spending() {
                 let destination = coinswap::wallet::Destination::Multi {
                     outputs: vec![(external_addr, Amount::from_sat(REGULAR_TX_AMOUNT))],
                     op_return_data: None,
+                    change_address_type: None,
                 };
                 match wallet.spend_from_wallet(MIN_FEE_RATE, destination, &selected_utxos) {
                     Ok(tx) => Ok(Some(tx)),
@@ -414,7 +422,7 @@ fn test_fidelity_spending() {
     {
         let mut wallet = maker.get_wallet().write().unwrap();
         wallet
-            .redeem_fidelity(fidelity_index, MIN_FEE_RATE)
+            .redeem_fidelity(fidelity_index, MIN_FEE_RATE, AddressType::P2WPKH)
             .unwrap();
     }
 
@@ -462,6 +470,7 @@ fn test_fidelity_spending() {
                     .unwrap(),
                 None,
                 MIN_FEE_RATE,
+                Some(AddressType::P2WPKH),
             )
             .unwrap()
     };

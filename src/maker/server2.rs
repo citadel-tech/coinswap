@@ -36,7 +36,7 @@ use crate::{
         get_tor_hostname, read_message, send_message, COINSWAP_KIND, HEART_BEAT_INTERVAL,
         MIN_FEE_RATE, NOSTR_RELAYS,
     },
-    wallet::WalletError,
+    wallet::{AddressType, WalletError},
 };
 
 use crate::maker::error::MakerError;
@@ -73,7 +73,10 @@ fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<String, MakerError> {
 /// Setup's maker fidelity
 fn manage_fidelity_bonds_taproot(maker: &Maker, maker_addr: &str) -> Result<(), MakerError> {
     // Redeem expired fidelity bonds first
-    maker.wallet().write()?.redeem_expired_fidelity_bonds()?;
+    maker
+        .wallet()
+        .write()?
+        .redeem_expired_fidelity_bonds(AddressType::P2TR)?;
 
     // Create or get existing fidelity proof for taproot maker
     let fidelity_proof = setup_fidelity_bond_taproot(maker, maker_addr)?;
@@ -272,6 +275,7 @@ fn setup_fidelity_bond_taproot(
             locktime,
             Some(maker_address),
             MIN_FEE_RATE,
+            Some(AddressType::P2TR),
         );
 
         match fidelity_result {
@@ -288,7 +292,10 @@ fn setup_fidelity_bond_taproot(
                         maker.config.network_port
                     );
                     let amount = required - available;
-                    let addr = maker.wallet().write()?.get_next_external_address()?;
+                    let addr = maker
+                        .wallet()
+                        .write()?
+                        .get_next_external_address(AddressType::P2TR)?;
 
                     log::info!("[{}] Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", maker.config.network_port, Amount::from_sat(amount).to_btc(), addr);
 

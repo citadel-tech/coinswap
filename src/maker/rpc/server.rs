@@ -15,7 +15,7 @@ use super::messages::RpcMsgReq;
 use crate::{
     maker::{config::MakerConfig, error::MakerError, rpc::messages::RpcMsgResp},
     utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, UTXO},
-    wallet::{Destination, Wallet},
+    wallet::{AddressType, Destination, Wallet},
 };
 use std::{path::Path, str::FromStr, sync::RwLock};
 
@@ -78,7 +78,10 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
             RpcMsgResp::TotalBalanceResp(balances)
         }
         RpcMsgReq::NewAddress => {
-            let new_address = maker.wallet().write()?.get_next_external_address()?;
+            let new_address = maker
+                .wallet()
+                .write()?
+                .get_next_external_address(AddressType::P2WPKH)?;
             RpcMsgResp::NewAddressResp(new_address.to_string())
         }
         RpcMsgReq::SendToAddress {
@@ -94,6 +97,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
             let destination = Destination::Multi {
                 outputs,
                 op_return_data: None,
+                change_address_type: None,
             };
 
             let coins_to_send = maker.wallet().read()?.coin_select(amount, feerate, None)?;

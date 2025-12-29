@@ -1,7 +1,7 @@
 #![cfg(feature = "integration-test")]
 mod test_framework;
 use bitcoin::{Address, Amount};
-use coinswap::{taker::TakerBehavior, utill::MIN_FEE_RATE};
+use coinswap::{taker::TakerBehavior, utill::MIN_FEE_RATE, wallet::AddressType};
 use test_framework::*;
 
 const UTXO_SETS: &[&[u64]] = &[
@@ -60,7 +60,10 @@ fn test_create_funding_txn_with_varied_distributions() {
     // Generate 5 random addresses from the taker's wallet
     let mut destinations: Vec<Address> = Vec::with_capacity(5);
     for _ in 0..5 {
-        let addr = taker.get_wallet_mut().get_next_external_address().unwrap();
+        let addr = taker
+            .get_wallet_mut()
+            .get_next_external_address(AddressType::P2WPKH)
+            .unwrap();
         destinations.push(addr);
     }
 

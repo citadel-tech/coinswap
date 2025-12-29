@@ -220,6 +220,7 @@ impl Wallet {
         let destination = Destination::Multi {
             outputs,
             op_return_data: None,
+            change_address_type: None,
         };
 
         let tx = self.spend_from_wallet(

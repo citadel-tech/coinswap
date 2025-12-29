@@ -43,7 +43,7 @@ use crate::{
     },
     protocol::messages::TakerToMakerMessage,
     utill::{read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
-    wallet::WalletError,
+    wallet::{AddressType, WalletError},
 };
 
 use crate::maker::error::MakerError;
@@ -84,7 +84,10 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<String, MakerError> {
 /// 1. Redeems all expired fidelity bonds in the maker's wallet, if any are found.
 /// 2. Creates a new fidelity bond if no valid bonds remain after redemption.
 fn manage_fidelity_bonds(maker: &Maker, maker_addr: &str) -> Result<(), MakerError> {
-    maker.wallet.write()?.redeem_expired_fidelity_bonds()?;
+    maker
+        .wallet
+        .write()?
+        .redeem_expired_fidelity_bonds(AddressType::P2WPKH)?;
     let fidelity = setup_fidelity_bond(maker, maker_addr)?;
     broadcast_bond_on_nostr(fidelity)?;
     Ok(())
@@ -256,6 +259,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
                 locktime,
                 Some(maker_address),
                 MIN_FEE_RATE,
+                Some(AddressType::P2WPKH),
             );
 
             match fidelity_result {
@@ -269,7 +273,10 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
                     {
                         log::warn!("Insufficient fund to create fidelity bond.");
                         let amount = required - available;
-                        let addr = maker.get_wallet().write()?.get_next_external_address()?;
+                        let addr = maker
+                            .get_wallet()
+                            .write()?
+                            .get_next_external_address(AddressType::P2WPKH)?;
 
                         log::info!("Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", Amount::from_sat(amount).to_btc(), addr);
 
@@ -316,7 +323,10 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
 fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
     let sleep_incremental = 10;
     let mut sleep_duration = 0;
-    let addr = maker.get_wallet().write()?.get_next_external_address()?;
+    let addr = maker
+        .get_wallet()
+        .write()?
+        .get_next_external_address(AddressType::P2WPKH)?;
     while !maker.shutdown.load(Relaxed) {
         maker.get_wallet().write()?.sync_and_save()?;
         let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;

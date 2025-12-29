@@ -56,7 +56,7 @@ use coinswap::{
     maker::{Maker, MakerBehavior, TaprootMaker, TaprootMakerBehavior},
     taker::{Taker, TakerBehavior, TaprootTaker},
     utill::setup_logger,
-    wallet::{Balances, RPCConfig},
+    wallet::{AddressType, Balances, RPCConfig},
 };
 
 const BITCOIN_VERSION: &str = "28.1";
@@ -245,7 +245,9 @@ pub fn fund_and_verify_taker(
     let mut new_txids = Vec::new();
 
     for _ in 0..utxo_count {
-        let taker_address = wallet.get_next_external_address().unwrap();
+        let taker_address = wallet
+            .get_next_external_address(AddressType::P2WPKH)
+            .unwrap();
         new_txids.push(send_to_address(bitcoind, &taker_address, utxo_value));
     }
 
@@ -337,7 +339,7 @@ pub fn fund_and_verify_maker(
         let mut new_txids = Vec::new();
 
         for _ in 0..utxo_count {
-            let maker_addr = wallet.get_next_external_address().unwrap();
+            let maker_addr = wallet.get_next_external_address(AddressType::P2WPKH).unwrap();
             new_txids.push(send_to_address(bitcoind, &maker_addr, utxo_value));
         }
 

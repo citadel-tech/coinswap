@@ -20,7 +20,10 @@ use crate::{
         },
     },
     utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
-    wallet::{Destination, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError},
+    wallet::{
+        AddressType, Destination, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet,
+        WalletError,
+    },
     watch_tower::{
         registry_storage::FileRegistry,
         rpc_backend::BitcoinRpc,
@@ -626,6 +629,7 @@ impl Maker {
                 Destination::Multi {
                     outputs: vec![(contract_address, outgoing_contract_amount)],
                     op_return_data: None,
+                    change_address_type: Some(AddressType::P2TR),
                 },
                 &selected_utxos,
             )?;
@@ -681,7 +685,7 @@ impl Maker {
                 script_pubkey: self
                     .wallet
                     .read()?
-                    .get_next_internal_addresses(1)
+                    .get_next_internal_addresses(1, AddressType::P2TR)
                     .map_err(MakerError::Wallet)?[0]
                     .script_pubkey(),
             }],
@@ -976,7 +980,7 @@ impl Maker {
         let destination_address = {
             let wallet = self.wallet.read()?;
             wallet
-                .get_next_internal_addresses(1)
+                .get_next_internal_addresses(1, AddressType::P2TR)
                 .map_err(MakerError::Wallet)?[0]
                 .clone()
         };
