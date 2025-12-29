@@ -6,7 +6,14 @@
 //! It uses asynchronous channels for concurrent processing of maker offers.
 
 use std::{
-    convert::TryFrom, fmt, io::BufWriter, net::TcpStream, path::Path, sync::mpsc, thread::Builder,
+    convert::TryFrom,
+    fmt,
+    io::BufWriter,
+    net::TcpStream,
+    path::Path,
+    sync::{mpsc, Arc, Mutex},
+    thread::Builder,
+    time::Duration,
 };
 
 use chrono::{DateTime, Utc};
@@ -56,7 +63,7 @@ impl TryFrom<&mut TcpStream> for MakerAddress {
 
 /// An ephemeral Offerbook tracking good and bad makers. Currently, Offerbook is initiated
 /// at the start of every swap. So good and bad maker list will not be persisted.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OfferBook {
     pub(super) all_makers: Vec<OfferAndAddress>,
     pub(super) bad_makers: Vec<OfferAndAddress>,
@@ -189,5 +196,72 @@ impl TryFrom<String> for MakerAddress {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         let onion = OnionAddress::try_from(value)?;
         Ok(MakerAddress(onion))
+    }
+}
+
+/// Background offer book updater that continuously refreshes maker offers
+pub struct OfferBookUpdater {
+    offerbook: Arc<Mutex<OfferBook>>,
+    maker_addresses: Vec<MakerAddress>,
+    config: TakerConfig,
+}
+
+impl OfferBookUpdater {
+    /// Create a new offer book updater
+    pub fn new(
+        offerbook: Arc<Mutex<OfferBook>>,
+        maker_addresses: Vec<MakerAddress>,
+        config: TakerConfig,
+    ) -> Self {
+        Self {
+            offerbook,
+            maker_addresses,
+            config,
+        }
+    }
+
+    /// Start background updates with 60 second intervals
+    pub fn start_background_updates(self) {
+        Builder::new()
+            .name("offer_book_updater".to_string())
+            .spawn(move || loop {
+                log::info!("Background offer update cycle starting");
+
+                match fetch_offer_from_makers(self.maker_addresses.clone(), &self.config) {
+                    Ok(new_offers) => {
+                        if let Ok(mut book) = self.offerbook.lock() {
+                            for offer in new_offers {
+                                book.add_new_offer(&offer);
+                            }
+                            log::info!(
+                                "Background update: {} total offers in book",
+                                book.all_makers().len()
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Background offer update failed: {:?}", e);
+                    }
+                }
+
+                std::thread::sleep(Duration::from_secs(60));
+            })
+            .expect("Failed to spawn offer book updater thread");
+    }
+
+    /// Perform a single synchronous update of all makers
+    pub fn update_offers(&self) -> Result<(), TakerError> {
+        let new_offers = fetch_offer_from_makers(self.maker_addresses.clone(), &self.config)?;
+
+        let mut book = self
+            .offerbook
+            .lock()
+            .map_err(|e| TakerError::General(format!("Failed to lock offerbook: {}", e)))?;
+
+        for offer in new_offers {
+            book.add_new_offer(&offer);
+        }
+
+        Ok(())
     }
 }

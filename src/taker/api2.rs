@@ -16,7 +16,7 @@ use crate::{
     },
     taker::{
         config::TakerConfig,
-        offers::{MakerAddress, OfferAndAddress, OfferBook},
+        offers::{MakerAddress, OfferAndAddress, OfferBook, OfferBookUpdater},
     },
     utill::{check_tor_status, get_taker_dir, read_message, send_message},
     wallet::{
@@ -47,7 +47,12 @@ use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Ra
 use chrono::Utc;
 use socks::Socks5Stream;
 use std::{
-    collections::HashSet, convert::TryFrom, net::TcpStream, path::PathBuf, sync::mpsc, thread,
+    collections::HashSet,
+    convert::TryFrom,
+    net::TcpStream,
+    path::PathBuf,
+    sync::{mpsc, Arc, Mutex},
+    thread,
     time::Duration,
 };
 
@@ -317,7 +322,8 @@ fn download_taproot_offer(address: &MakerAddress, config: &TakerConfig) -> Optio
 pub struct Taker {
     wallet: Wallet,
     config: TakerConfig,
-    offerbook: OfferBook,
+    offerbook: Arc<Mutex<OfferBook>>,
+    offerbook_updater: Option<OfferBookUpdater>,
     ongoing_swap_state: OngoingSwapState,
     data_dir: PathBuf,
     watch_service: WatchService,
@@ -414,7 +420,8 @@ impl Taker {
         Ok(Self {
             wallet,
             config,
-            offerbook,
+            offerbook: Arc::new(Mutex::new(offerbook)),
+            offerbook_updater: None,
             ongoing_swap_state: OngoingSwapState::default(),
             data_dir,
             watch_service,
@@ -938,12 +945,16 @@ impl Taker {
             })?;
 
         // Find out addresses that was last updated 30 mins ago.
-        let fresh_addrs = self
-            .offerbook
-            .get_fresh_addrs()
-            .iter()
-            .map(|oa| &oa.address)
-            .collect::<HashSet<_>>();
+        let fresh_addrs = {
+            let book = self
+                .offerbook
+                .lock()
+                .map_err(|e| TakerError::General(format!("Failed to lock offerbook: {}", e)))?;
+            book.get_fresh_addrs()
+                .iter()
+                .map(|oa| oa.address.clone())
+                .collect::<HashSet<_>>()
+        };
 
         // Fetch only those addresses which are new, or last updated more than 30 mins ago
         let addrs_to_fetch = maker_addresses
@@ -968,25 +979,58 @@ impl Taker {
                     e,
                     new_offer.address
                 );
-                self.offerbook.add_bad_maker(&new_offer);
+                let mut book = self
+                    .offerbook
+                    .lock()
+                    .map_err(|e| TakerError::General(format!("Failed to lock offerbook: {}", e)))?;
+                book.add_bad_maker(&new_offer);
             } else {
                 log::info!("Fidelity Bond verification success. Adding offer to our OfferBook");
-                self.offerbook.add_new_offer(&new_offer);
+                let mut book = self
+                    .offerbook
+                    .lock()
+                    .map_err(|e| TakerError::General(format!("Failed to lock offerbook: {}", e)))?;
+                book.add_new_offer(&new_offer);
             }
         }
 
         // Save the updated cache back to disk.
-        self.offerbook
-            .write_to_disk(&self.data_dir.join("offerbook.json"))?;
+        {
+            let book = self
+                .offerbook
+                .lock()
+                .map_err(|e| TakerError::General(format!("Failed to lock offerbook: {}", e)))?;
+            book.write_to_disk(&self.data_dir.join("offerbook.json"))?;
+        }
+
+        // Start background updater if not already running
+        if self.offerbook_updater.is_none() {
+            log::info!("Starting background offer book updater");
+            let updater = OfferBookUpdater::new(
+                Arc::clone(&self.offerbook),
+                maker_addresses,
+                self.config.clone(),
+            );
+            updater.start_background_updates();
+            self.offerbook_updater = Some(OfferBookUpdater::new(
+                Arc::clone(&self.offerbook),
+                Vec::new(),
+                self.config.clone(),
+            ));
+        }
 
         Ok(())
     }
 
     /// Fetch offers from available makers
-    /// This syncs the offerbook first and then returns a reference to it
-    pub fn fetch_offers(&mut self) -> Result<&OfferBook, TakerError> {
+    /// This syncs the offerbook first and then returns a cloned copy of it
+    pub fn fetch_offers(&mut self) -> Result<OfferBook, TakerError> {
         self.sync_offerbook()?;
-        Ok(&self.offerbook)
+        let book = self
+            .offerbook
+            .lock()
+            .map_err(|e| TakerError::General(format!("Failed to lock offerbook: {}", e)))?;
+        Ok((*book).clone())
     }
 
     /// Send a message to a maker and get response
@@ -1020,8 +1064,15 @@ impl Taker {
             max_refund_locktime
         );
 
-        let suitable_makers: Vec<OfferAndAddress> = self
-            .offerbook
+        let book = match self.offerbook.lock() {
+            Ok(book) => book,
+            Err(e) => {
+                log::error!("Failed to lock offerbook: {}", e);
+                return Vec::new();
+            }
+        };
+
+        let suitable_makers: Vec<OfferAndAddress> = book
             .all_good_makers()
             .into_iter()
             .filter(|oa| {
@@ -1049,7 +1100,7 @@ impl Taker {
         log::info!(
             "Found {} suitable makers out of {} total makers",
             suitable_makers.len(),
-            self.offerbook.all_good_makers().len()
+            book.all_good_makers().len()
         );
 
         suitable_makers
