@@ -77,7 +77,7 @@ The crate compiles into following binaries.
 Following dependencies are needed to compile the crate.
 
 ```shell
-sudo apt install build-essential automake libtool
+sudo apt install build-essential automake libtool protobuf-compiler
 ```
 To run all the coinswap apps the two more systems are needed.
 

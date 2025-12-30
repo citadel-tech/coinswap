@@ -2,7 +2,7 @@ use bitcoin::{Address, Amount};
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
-    taker::{error::TakerError, SwapParams, Taker, TaprootTaker},
+    taker::{error::TakerError, offers::MakerState, SwapParams, Taker, TaprootTaker},
     utill::{parse_proxy_auth, setup_taker_logger, MIN_FEE_RATE, UTXO},
     wallet::{Destination, RPCConfig, Wallet},
 };
@@ -178,7 +178,7 @@ fn main() -> Result<(), TakerError> {
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
-        wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
+        wallet_name: "random_1".to_string(), // we can put anything here as it will get updated in the init.
     };
 
     match &args.command {
@@ -333,24 +333,49 @@ fn main() -> Result<(), TakerError> {
                     taker.get_wallet_mut().sync_and_save()?;
                 }
                 Commands::FetchOffers => {
-                    let all_offers = {
-                        let offerbook = taker.fetch_offers()?;
-                        offerbook
-                            .all_makers()
-                            .iter()
-                            .cloned()
-                            .cloned()
-                            .collect::<Vec<_>>()
-                    };
-                    if all_offers.is_empty() {
-                        println!("NO LIVE OFFERS FOUND!! You should run a maker!!");
-                        return Ok(());
-                    } else {
-                        all_offers.iter().try_for_each(|offer| {
-                            println!("{}", taker.display_offer(offer)?);
-                            Ok::<_, TakerError>(())
-                        })?;
+                    use std::time::{Duration, Instant};
+
+                    println!("Waiting for offerbook synchronization to complete…");
+                    let sync_start = Instant::now();
+
+                    while taker.is_offerbook_syncing() {
+                        println!("Offerbook sync in progress...");
+                        std::thread::sleep(Duration::from_secs(2));
                     }
+
+                    println!("Offerbook synchronized in {:.2?}", sync_start.elapsed());
+
+                    let offerbook = taker.fetch_offers()?;
+                    let makers = offerbook.all_makers();
+
+                    if makers.is_empty() {
+                        println!("No makers found in offerbook");
+                        return Ok(());
+                    }
+
+                    let mut good = 0;
+                    let mut bad = 0;
+                    let mut unresponsive = 0;
+
+                    println!("\nDiscovered {} makers\n", makers.len());
+
+                    for maker in &makers {
+                        match maker.state {
+                            MakerState::Good => good += 1,
+                            MakerState::Bad => bad += 1,
+                            MakerState::Unresponsive { .. } => unresponsive += 1,
+                        }
+
+                        println!("{}", taker.display_offer(maker)?);
+                    }
+
+                    println!(
+                        "\nOfferbook summary → good: {}, bad: {}, unresponsive: {} (total: {})",
+                        good,
+                        bad,
+                        unresponsive,
+                        makers.len()
+                    );
                 }
                 Commands::Coinswap { makers, amount } => {
                     // Note: taproot coinswap is handled at the top level to avoid

@@ -35,10 +35,13 @@ sha2 = "0.10.9"
 rust-coinselect = "0.1.6"
 crossterm = "0.29.0"
 zmq = "0.10.0"
+tungstenite = { version = "0.28.0", features = ["native-tls"]}
+nostr = "0.44.2"
 
 [dev-dependencies]
 flate2 = {version = "1.0.35"}
 tar = {version = "0.4.43"}
+nostr-rs-relay = "0.8.12"
 
 #Empty default feature set, (helpful to generalise in github actions)
 [features]

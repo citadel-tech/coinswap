@@ -6,6 +6,7 @@ FROM rust:1.90-alpine3.20 AS builder
 
 RUN apk add --no-cache \
     build-base \
+    protobuf \
     cmake \
     git \
     curl \
@@ -13,7 +14,11 @@ RUN apk add --no-cache \
     openssl-dev \
     sqlite-dev \
     sqlite-static \
-    zeromq-dev
+    zeromq-dev \
+    ca-certificates \
+    openssl-libs-static \
+    libgcc \
+    musl-dev
 
 WORKDIR /usr/src/coinswap
 COPY . .
@@ -26,11 +31,20 @@ FROM alpine:3.20
 
 RUN --mount=type=cache,target=/var/cache/apk \
     apk add --no-cache \
+    build-base \
+    protobuf \
+    cmake \
+    git \
+    curl \
+    pkgconfig \
+    openssl-dev \
+    sqlite-dev \
+    sqlite-static \
+    zeromq-dev \
     ca-certificates \
-    openssl \
+    openssl-libs-static \
     libgcc \
-    sqlite \
-    zeromq
+    musl-dev
 
 RUN adduser -D -u 1001 coinswap
 
