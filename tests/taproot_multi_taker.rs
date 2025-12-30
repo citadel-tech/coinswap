@@ -202,7 +202,7 @@ fn test_taproot_multi_taker() {
             // Use spendable (regular + swap) for comparison
             assert_in_range!(
                 balances.spendable.to_sat(),
-                [35040888, 35063900], // 8 utxos were funded to makers in this case,that's why more spendable balance
+                [35040880, 35063890], // 8 utxos were funded to makers in this case,that's why more spendable balance
                 "Taproot Maker after balance check."
             );
 

@@ -179,7 +179,7 @@ fn test_taproot_multi_maker() {
             balances.spendable.to_sat(),
             [
                 // Here it's arranged in the increasing order of maker's spendable balance, as maker's order is random during swap.
-                15016309, 15025695, 15037157, 15051704,
+                15016299, 15025685, 15037147, 15051694,
             ],
             "Taproot Maker spendable balance check for multi maker test case"
         );

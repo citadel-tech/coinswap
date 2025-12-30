@@ -16,6 +16,9 @@ jobs:
 
       - name: Set profile
         run: rustup set profile minimal
+      
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Install nightly toolchain
         run: rustup toolchain install nightly

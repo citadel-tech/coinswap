@@ -40,6 +40,15 @@ use crossterm::{
 use std::str::FromStr;
 
 static LOGGER: OnceLock<()> = OnceLock::new();
+/// nost url for coinswap
+#[cfg(not(feature = "integration-test"))]
+pub const NOSTR_RELAYS: &[&str] = &["wss://nos.lol"];
+/// nostr url for coinswap
+#[cfg(feature = "integration-test")]
+pub const NOSTR_RELAYS: &[&str] = &["ws://127.0.0.1:8000"];
+
+/// coinswap nostr event kind
+pub const COINSWAP_KIND: u16 = 37777;
 
 use crate::{
     error::NetError,

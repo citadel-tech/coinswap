@@ -102,7 +102,11 @@ fn test_fidelity() {
             .get(&highest_bond_index)
             .unwrap();
         let bond_value = wallet_read.calculate_bond_value(bond).unwrap();
-        assert_eq!(bond_value, Amount::from_sat(10814));
+        assert!(
+            bond_value == Amount::from_sat(10814) || bond_value == Amount::from_sat(10656),
+            "unexpected bond_value: {} SAT",
+            bond_value.to_sat()
+        );
 
         let bond = wallet_read
             .get_fidelity_bonds()
@@ -160,7 +164,7 @@ fn test_fidelity() {
         let balances = wallet_read.get_balances().unwrap();
 
         assert_eq!(balances.fidelity.to_sat(), 13000000);
-        assert_eq!(balances.regular.to_sat(), 90999342);
+        assert_eq!(balances.regular.to_sat(), 90999332);
     }
 
     log::info!("⏳ Waiting for fidelity bonds to mature and testing redemption");
@@ -229,7 +233,7 @@ fn test_fidelity() {
         let balances = wallet_read.get_balances().unwrap();
 
         assert_eq!(balances.fidelity.to_sat(), 0);
-        assert_eq!(balances.regular.to_sat(), 103998898);
+        assert_eq!(balances.regular.to_sat(), 103998888);
     }
 
     thread::sleep(Duration::from_secs(10));

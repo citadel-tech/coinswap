@@ -17,7 +17,10 @@ use crate::{
     },
     taker::{
         config::TakerConfig,
-        offers::{MakerAddress, OfferAndAddress, OfferBook},
+        offers::{
+            MakerAddress, MakerProtocol, OfferAndAddress, OfferBook, OfferBookHandle,
+            OfferSyncHandle, OfferSyncService,
+        },
     },
     utill::{check_tor_status, get_taker_dir, read_message, send_message},
     wallet::{
@@ -45,11 +48,9 @@ use bitcoin::{
     Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, RawTx, RpcApi};
-use chrono::Utc;
 use socks::Socks5Stream;
 use std::{
-    collections::HashSet, convert::TryFrom, net::TcpStream, path::PathBuf, sync::mpsc, thread,
-    time::Duration,
+    collections::HashSet, net::TcpStream, path::PathBuf, sync::mpsc, thread, time::Duration,
 };
 
 /// Represents different behaviors taker can have during the swap.
@@ -174,9 +175,9 @@ pub(crate) const REFUND_LOCKTIME: u16 = 20;
 pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
 
 /// Helper function to establish a connection to a maker
-fn connect_to_maker(
+pub fn connect_to_maker(
     maker_addr: &str,
-    config: &TakerConfig,
+    socks_port: u16,
     timeout_secs: u64,
 ) -> Result<TcpStream, TakerError> {
     let socket = if cfg!(feature = "integration-test") {
@@ -187,17 +188,14 @@ fn connect_to_maker(
             ))
         })?
     } else {
-        Socks5Stream::connect(
-            format!("127.0.0.1:{}", config.socks_port).as_str(),
-            maker_addr,
-        )
-        .map_err(|e| {
-            TakerError::General(format!(
-                "Failed to connect to maker {} via Tor: {:?}",
-                maker_addr, e
-            ))
-        })?
-        .into_inner()
+        Socks5Stream::connect(format!("127.0.0.1:{socks_port}").as_str(), maker_addr)
+            .map_err(|e| {
+                TakerError::General(format!(
+                    "Failed to connect to maker {} via Tor: {:?}",
+                    maker_addr, e
+                ))
+            })?
+            .into_inner()
     };
 
     let timeout = Duration::from_secs(timeout_secs);
@@ -209,134 +207,30 @@ fn connect_to_maker(
     Ok(socket)
 }
 
-/// Fetch offers from taproot makers using taproot protocol messages
-fn fetch_taproot_offers(
-    maker_addresses: &[MakerAddress],
-    config: &TakerConfig,
-) -> Result<Vec<OfferAndAddress>, TakerError> {
-    use std::sync::mpsc;
-
-    let (offers_writer, offers_reader) = mpsc::channel::<Option<OfferAndAddress>>();
-    let maker_addresses_len = maker_addresses.len();
-
-    thread::scope(|s| {
-        for address in maker_addresses {
-            let offers_writer = offers_writer.clone();
-            s.spawn(move || {
-                let offer = download_taproot_offer(address, config);
-                let _ = offers_writer.send(offer);
-            });
-        }
-    });
-
-    let mut result = Vec::new();
-    for _ in 0..maker_addresses_len {
-        if let Some(offer_addr) = offers_reader.recv()? {
-            result.push(offer_addr);
-        }
-    }
-
-    Ok(result)
-}
-
-/// Download a single offer from a taproot maker
-fn download_taproot_offer(address: &MakerAddress, config: &TakerConfig) -> Option<OfferAndAddress> {
-    let maker_addr = address.to_string();
-    log::info!("Downloading offer from taproot maker: {}", maker_addr);
-
-    // Try connecting to the maker using the helper function
-    let mut socket = match connect_to_maker(&maker_addr, config, 30) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("Failed to connect to taproot maker {}: {:?}", maker_addr, e);
-            return None;
-        }
-    };
-
-    // Send GetOffer message (taproot protocol)
-    let get_offer_msg = GetOffer {
-        id: String::new(),
-        protocol_version_min: 1,
-        protocol_version_max: 1,
-        number_of_transactions: 1,
-    };
-
-    let msg = TakerToMakerMessage::GetOffer(get_offer_msg);
-    if let Err(e) = send_message(&mut socket, &msg) {
-        log::error!("Failed to send GetOffer message to {}: {:?}", maker_addr, e);
-        return None;
-    }
-
-    // Read the response
-    let response_bytes = match read_message(&mut socket) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            log::error!("Failed to read response from {}: {:?}", maker_addr, e);
-            return None;
-        }
-    };
-
-    // Parse the response
-    let response: MakerToTakerMessage = match serde_cbor::from_slice(&response_bytes) {
-        Ok(msg) => msg,
-        Err(e) => {
-            log::error!("Failed to parse response from {}: {:?}", maker_addr, e);
-            return None;
-        }
-    };
-
-    // Extract the offer
-    let taproot_offer = match response {
-        MakerToTakerMessage::RespOffer(offer) => *offer,
-        _ => {
-            log::error!(
-                "Unexpected response from {}: expected RespOffer",
-                maker_addr
-            );
-            return None;
-        }
-    };
-
-    let offer = crate::protocol::messages::Offer {
-        base_fee: taproot_offer.base_fee,
-        amount_relative_fee_pct: taproot_offer.amount_relative_fee,
-        time_relative_fee_pct: taproot_offer.time_relative_fee,
-        required_confirms: 1, // Default value for taproot
-        minimum_locktime: taproot_offer.minimum_locktime,
-        max_size: taproot_offer.max_size,
-        min_size: taproot_offer.min_size,
-        tweakable_point: taproot_offer.tweakable_point,
-        fidelity: crate::protocol::messages::FidelityProof {
-            bond: taproot_offer.fidelity.bond,
-            cert_hash: bitcoin::hashes::sha256d::Hash::from_slice(
-                taproot_offer.fidelity.cert_hash.as_ref(),
-            )
-            .ok()?,
-            cert_sig: taproot_offer.fidelity.cert_sig,
-        },
-    };
-
-    log::info!(
-        "Successfully downloaded offer from taproot maker: {}",
-        maker_addr
-    );
-
-    Some(OfferAndAddress {
-        offer,
-        address: address.clone(),
-        timestamp: Utc::now(),
-    })
-}
 /// Taker implementation for coinswap protocol
 pub struct Taker {
     wallet: Wallet,
     config: TakerConfig,
-    offerbook: OfferBook,
+    offerbook: OfferBookHandle,
     ongoing_swap_state: OngoingSwapState,
-    data_dir: PathBuf,
     watch_service: WatchService,
+    offer_sync_handle: OfferSyncHandle,
     #[cfg(feature = "integration-test")]
     behavior: TakerBehavior,
+}
+
+impl Drop for Taker {
+    fn drop(&mut self) {
+        log::info!("Shutting down taker.");
+        self.offerbook.persist().unwrap();
+        log::info!("shutting the offer sync background job");
+        self.offer_sync_handle.shutdown();
+        log::info!("shutting the watch service background job");
+        self.watch_service.shutdown();
+        log::info!("offerbook data saved to disk.");
+        self.wallet.save_to_disk().unwrap();
+        log::info!("Wallet data saved to disk.");
+    }
 }
 
 impl Taker {
@@ -374,11 +268,12 @@ impl Taker {
         let registry = FileRegistry::load(file_registry);
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = mpsc::channel();
+        let rpc_config_watcher = rpc_config.clone();
 
         let mut watcher = Watcher::<Taker>::new(backend, registry, rx_requests, tx_events);
         _ = thread::Builder::new()
             .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(rpc_backend));
+            .spawn(move || watcher.run(rpc_config_watcher));
 
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
@@ -404,26 +299,15 @@ impl Taker {
 
         config.write_to_file(&data_dir.join("config.toml"))?;
 
-        let offerbook_path = data_dir.join("offerbook.json");
-        let offerbook = if offerbook_path.exists() {
-            match OfferBook::read_from_disk(&offerbook_path) {
-                Ok(offerbook) => {
-                    log::info!("Successfully loaded offerbook at : {:?}", offerbook_path);
-                    offerbook
-                }
-                Err(e) => {
-                    log::error!("Offerbook data corrupted. Recreating. {:?}", e);
-                    let empty_book = OfferBook::default();
-                    empty_book.write_to_disk(&offerbook_path)?;
-                    empty_book
-                }
-            }
-        } else {
-            let empty_book = OfferBook::default();
-            std::fs::File::create(&offerbook_path)?;
-            empty_book.write_to_disk(&offerbook_path)?;
-            empty_book
-        };
+        let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
+
+        let offer_sync_handle = OfferSyncService::new(
+            offerbook.clone(),
+            watch_service.clone(),
+            config.socks_port,
+            rpc_backend,
+        )
+        .start();
 
         log::info!("Initializing wallet sync...");
         wallet.sync_and_save()?;
@@ -434,8 +318,8 @@ impl Taker {
             config,
             offerbook,
             ongoing_swap_state: OngoingSwapState::default(),
-            data_dir,
             watch_service,
+            offer_sync_handle,
             #[cfg(feature = "integration-test")]
             behavior,
         })
@@ -470,8 +354,6 @@ impl Taker {
             };
             return Err(err.into());
         }
-
-        self.sync_offerbook()?;
 
         // Generate preimage for the swap
         let mut preimage = [0u8; 32];
@@ -951,73 +833,10 @@ impl Taker {
         Ok(())
     }
 
-    /// Sync the offer book with directory servers
-    pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        self.watch_service.request_maker_address();
-        let watcher_event = self.watch_service.wait_for_event();
-
-        let Some(WatcherEvent::MakerAddresses { maker_addresses }) = watcher_event else {
-            return Err(TakerError::General("No response from watcher".to_string()));
-        };
-
-        let maker_addresses = maker_addresses
-            .into_iter()
-            .map(MakerAddress::try_from)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| {
-                TakerError::General(format!("Failed to parse maker addresses: {:?}", e))
-            })?;
-
-        // Find out addresses that was last updated 30 mins ago.
-        let fresh_addrs = self
-            .offerbook
-            .get_fresh_addrs()
-            .iter()
-            .map(|oa| &oa.address)
-            .collect::<HashSet<_>>();
-
-        // Fetch only those addresses which are new, or last updated more than 30 mins ago
-        let addrs_to_fetch = maker_addresses
-            .iter()
-            .filter(|tracker_addr| !fresh_addrs.contains(tracker_addr))
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let new_offers = fetch_taproot_offers(&addrs_to_fetch, &self.config)?;
-
-        for new_offer in new_offers {
-            log::info!(
-                "Found offer from {}. Verifying Fidelity Proof",
-                new_offer.address
-            );
-            if let Err(e) = self
-                .wallet
-                .verify_fidelity_proof(&new_offer.offer.fidelity, &new_offer.address.to_string())
-            {
-                log::warn!(
-                    "Fidelity Proof Verification failed with error: {:?}. Adding this to bad maker list: {}",
-                    e,
-                    new_offer.address
-                );
-                self.offerbook.add_bad_maker(&new_offer);
-            } else {
-                log::info!("Fidelity Bond verification success. Adding offer to our OfferBook");
-                self.offerbook.add_new_offer(&new_offer);
-            }
-        }
-
-        // Save the updated cache back to disk.
-        self.offerbook
-            .write_to_disk(&self.data_dir.join("offerbook.json"))?;
-
-        Ok(())
-    }
-
     /// Fetch offers from available makers
     /// This syncs the offerbook first and then returns a reference to it
-    pub fn fetch_offers(&mut self) -> Result<&OfferBook, TakerError> {
-        self.sync_offerbook()?;
-        Ok(&self.offerbook)
+    pub fn fetch_offers(&mut self) -> Result<OfferBook, TakerError> {
+        Ok(self.offerbook.snapshot())
     }
 
     /// Send a message to a maker and get response
@@ -1027,7 +846,7 @@ impl Taker {
         msg: TakerToMakerMessage,
     ) -> Result<MakerToTakerMessage, TakerError> {
         let address = maker_addr.to_string();
-        let mut socket = connect_to_maker(&address, &self.config, TCP_TIMEOUT_SECONDS)?;
+        let mut socket = connect_to_maker(&address, self.config.socks_port, TCP_TIMEOUT_SECONDS)?;
 
         send_message(&mut socket, &msg)?;
         log::info!("===> {msg} | {maker_addr}");
@@ -1053,7 +872,7 @@ impl Taker {
 
         let suitable_makers: Vec<OfferAndAddress> = self
             .offerbook
-            .all_good_makers()
+            .active_makers(&MakerProtocol::Taproot)
             .into_iter()
             .filter(|oa| {
                 let maker_fee = calculate_coinswap_fee(
@@ -1074,20 +893,19 @@ impl Taker {
 
                 is_suitable
             })
-            .cloned()
             .collect();
 
         log::info!(
             "Found {} suitable makers out of {} total makers",
             suitable_makers.len(),
-            self.offerbook.all_good_makers().len()
+            self.offerbook.active_makers(&MakerProtocol::Taproot).len()
         );
 
         suitable_makers
     }
     /// Get all the bad makers
-    pub fn get_bad_makers(&self) -> Vec<&OfferAndAddress> {
-        self.offerbook.get_bad_makers()
+    pub fn get_bad_makers(&self) -> Vec<OfferAndAddress> {
+        self.offerbook.get_bad_makers(&MakerProtocol::Taproot)
     }
 
     /// Setup contract keys and scripts for the swap

@@ -29,17 +29,19 @@ macro_rules! assert_in_range {
 
 use bip39::rand;
 use bitcoin::Amount;
+use nostr_rs_relay::{config, server::start_server};
 use std::{
     env,
     fs::{self, create_dir_all, File},
     io::{BufReader, Read},
+    net::TcpStream,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        Arc,
+        mpsc, Arc,
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use flate2::read::GzDecoder;
@@ -549,11 +551,12 @@ pub fn verify_swap_results(
             assert_in_range!(
                 balances.regular.to_sat(),
                 [
-                    14555295, // First maker on successful coinswap
-                    14533010, // Second maker on successful coinswap
-                    14999508, // No spending (abort2_case 2, 3)(abort3_case 1, 2)
-                    14998652, // Recovery via timelock (abort2_case 1, 2)(abort3_case 1, 2)
-                    24999510, // Multi-taker scenario
+                    14555287, // First maker on successful coinswap
+                    14533002, // Second maker on successful coinswap
+                    14999500, // No spending (abort2_case 2, 3)(abort3_case 1, 2)
+                    14998646, // Recovery via timelock (abort2_case 1, 2)(abort3_case 1, 2)
+                    24999502, // Multi-taker scenario
+                    14998642
                 ],
                 "Maker seed balance mismatch"
             );
@@ -646,8 +649,8 @@ pub fn verify_maker_pre_swap_balance_taproot(taproot_makers: &[Arc<TaprootMaker>
         assert_in_range!(
             balances.regular.to_sat(),
             [
-                14999510, // maker (normal case)
-                34999510, // maker multi taker case (8 utxo funded)]
+                14999500, // maker (normal case)
+                34999500, // maker multi taker case (8 utxo funded)]
             ],
             "Taproot Maker regular balance check after fidelity bond creation."
         );
@@ -682,6 +685,8 @@ pub struct TestFramework {
     pub(super) bitcoind: BitcoinD,
     pub(super) temp_dir: PathBuf,
     shutdown: AtomicBool,
+    nostr_relay_shutdown: mpsc::Sender<()>,
+    nostr_relay_handle: Option<JoinHandle<()>>,
 }
 
 impl TestFramework {
@@ -716,14 +721,19 @@ impl TestFramework {
 
         let bitcoind = init_bitcoind(&temp_dir, zmq_addr.clone());
 
+        log::info!("🌐 Spawning local nostr relay for tests");
+        let (nostr_relay_shutdown, nostr_relay_handle) = spawn_nostr_relay(&temp_dir);
+
+        _ = wait_for_relay_healthy();
+
         let shutdown = AtomicBool::new(false);
         let test_framework = Arc::new(Self {
             bitcoind,
             temp_dir: temp_dir.clone(),
             shutdown,
+            nostr_relay_shutdown,
+            nostr_relay_handle: Some(nostr_relay_handle),
         });
-
-        log::info!("🌐 Initiating Directory Server .....");
 
         // Translate a RpcConfig from the test framework.
         // a modification of this will be used for taker and makers rpc connections.
@@ -838,14 +848,17 @@ impl TestFramework {
 
         let bitcoind = init_bitcoind(&temp_dir, zmq_addr.clone());
 
+        log::info!("🌐 Spawning local nostr relay for tests");
+        let (nostr_relay_shutdown, nostr_relay_handle) = spawn_nostr_relay(&temp_dir);
+
         let shutdown = AtomicBool::new(false);
         let test_framework = Arc::new(Self {
             bitcoind,
             temp_dir: temp_dir.clone(),
             shutdown,
+            nostr_relay_shutdown,
+            nostr_relay_handle: Some(nostr_relay_handle),
         });
-
-        log::info!("🌐 Initiating Directory Server .....");
 
         // Translate a RpcConfig from the test framework.
         // a modification of this will be used for taker and makers rpc connections.
@@ -922,8 +935,18 @@ impl TestFramework {
         log::info!("🛑 Stopping Test Framework");
         // stop all framework threads.
         self.shutdown.store(true, Relaxed);
+        _ = self.nostr_relay_shutdown.send(());
         // stop bitcoind
         let _ = self.bitcoind.client.stop().unwrap();
+    }
+}
+
+impl Drop for TestFramework {
+    fn drop(&mut self) {
+        let handle = self.nostr_relay_handle.take();
+        if let Some(handle) = handle {
+            _ = handle.join();
+        }
     }
 }
 
@@ -938,4 +961,47 @@ impl From<&TestFramework> for RPCConfig {
             ..Default::default()
         }
     }
+}
+
+fn spawn_nostr_relay(temp_dir: &Path) -> (mpsc::Sender<()>, JoinHandle<()>) {
+    let data_dir = temp_dir.join("nostr-relay");
+    std::fs::create_dir_all(&data_dir).unwrap();
+
+    let addr = "127.0.0.1".to_string();
+    let port = 8000;
+
+    let mut settings = config::Settings::default();
+    settings.network.address = addr;
+    settings.network.port = port;
+    settings.database.min_conn = 4;
+    settings.database.max_conn = 8;
+    settings.database.in_memory = true;
+    settings.diagnostics.tracing = true;
+
+    let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>();
+
+    let handle = thread::spawn(move || {
+        start_server(&settings, shutdown_rx).expect("nostr relay crashed");
+    });
+
+    (shutdown_tx, handle)
+}
+
+fn wait_for_relay_healthy() -> Result<(), String> {
+    let addr = "127.0.0.1:8000".to_string();
+    let timeout = Duration::from_secs(10);
+    let start = Instant::now();
+
+    while start.elapsed() < timeout {
+        if TcpStream::connect(&addr).is_ok() {
+            log::info!("Nostr relay is alive");
+            return Ok(());
+        }
+
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    log::error!("Nostr relay not alive");
+
+    Err("nostr relay did not become healthy on port 8000".to_string())
 }

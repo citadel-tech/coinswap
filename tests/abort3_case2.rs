@@ -85,7 +85,7 @@ fn abort3_case2_close_at_contract_sigs_for_recvr() {
 
             let balances = wallet.get_balances().unwrap();
 
-            verify_maker_pre_swap_balances(&balances, 14999508);
+            verify_maker_pre_swap_balances(&balances, 14999500);
 
             balances.spendable
         })

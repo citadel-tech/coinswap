@@ -7,8 +7,6 @@
 //!
 use std::{
     collections::{HashMap, HashSet},
-    convert::TryFrom,
-    io::BufWriter,
     net::TcpStream,
     path::PathBuf,
     sync::mpsc,
@@ -18,11 +16,9 @@ use std::{
 
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
 
-use serde::{Deserialize, Serialize};
 use socks::Socks5Stream;
 
 use bitcoin::{
-    absolute::LockTime,
     consensus::encode::deserialize,
     hashes::{hash160::Hash as Hash160, Hash},
     hex::{Case, DisplayHex},
@@ -35,7 +31,7 @@ use bitcoin::{
 
 use super::{
     error::TakerError,
-    offers::{fetch_offer_from_makers, MakerAddress, OfferAndAddress},
+    offers::{MakerAddress, OfferAndAddress},
     routines::*,
 };
 use crate::{
@@ -48,7 +44,13 @@ use crate::{
             TakerToMakerMessage,
         },
     },
-    taker::{config::TakerConfig, offers::OfferBook},
+    taker::{
+        config::TakerConfig,
+        offers::{
+            format_state, MakerOfferCandidate, MakerProtocol, OfferBook, OfferBookHandle,
+            OfferSyncHandle, OfferSyncService,
+        },
+    },
     utill::*,
     wallet::{
         ffi::{MakerFeeInfo, SwapReport},
@@ -59,7 +61,7 @@ use crate::{
         registry_storage::FileRegistry,
         rpc_backend::BitcoinRpc,
         service::WatchService,
-        watcher::{Role, Watcher, WatcherEvent},
+        watcher::{Role, Watcher},
         zmq_backend::ZmqBackend,
     },
 };
@@ -166,20 +168,22 @@ pub struct Taker {
     wallet: Wallet,
     /// Taker configuration with refund, connection, and sleep settings.
     pub config: TakerConfig,
-    offerbook: OfferBook,
+    offerbook: OfferBookHandle,
     ongoing_swap_state: OngoingSwapState,
     #[cfg(feature = "integration-test")]
     behavior: TakerBehavior,
-    data_dir: PathBuf,
-    watch_service: WatchService,
+    /// iyiib
+    pub watch_service: WatchService,
+    offer_sync_handle: OfferSyncHandle,
 }
 
 impl Drop for Taker {
     fn drop(&mut self) {
         log::info!("Shutting down taker.");
-        self.offerbook
-            .write_to_disk(&self.data_dir.join("offerbook.json"))
-            .unwrap();
+        self.offerbook.persist().unwrap();
+        log::info!("shutting the offer sync background job");
+        self.offer_sync_handle.shutdown();
+        log::info!("shutting the watch service background job");
         self.watch_service.shutdown();
         log::info!("offerbook data saved to disk.");
         self.wallet.save_to_disk().unwrap();
@@ -234,11 +238,12 @@ impl Taker {
         let registry = FileRegistry::load(file_registry);
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = mpsc::channel();
+        let rpc_config_watcher = rpc_config.clone();
 
         let mut watcher = Watcher::<Taker>::new(backend, registry, rx_requests, tx_events);
         _ = thread::Builder::new()
             .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(rpc_backend));
+            .spawn(move || watcher.run(rpc_config_watcher));
 
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
@@ -261,30 +266,15 @@ impl Taker {
 
         config.write_to_file(&data_dir.join("config.toml"))?;
 
-        // Load offerbook. If it doesn't exist, creates fresh file.
-        let offerbook_path = data_dir.join("offerbook.json");
-        let offerbook = if offerbook_path.exists() {
-            // If read fails, recreate a fresh offerbook.
-            match OfferBook::read_from_disk(&offerbook_path) {
-                Ok(offerbook) => {
-                    log::info!("Succesfully loaded offerbook at : {offerbook_path:?}");
-                    offerbook
-                }
-                Err(e) => {
-                    log::error!("Offerbook data corrupted. Recreating. {e:?}");
-                    let empty_book = OfferBook::default();
-                    empty_book.write_to_disk(&offerbook_path)?;
-                    empty_book
-                }
-            }
-        } else {
-            // Create a new offer book
-            let empty_book = OfferBook::default();
-            let file = std::fs::File::create(&offerbook_path)?;
-            let writer = BufWriter::new(file);
-            serde_json::to_writer_pretty(writer, &empty_book)?;
-            empty_book
-        };
+        let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
+
+        let offer_sync_handle = OfferSyncService::new(
+            offerbook.clone(),
+            watch_service.clone(),
+            config.socks_port,
+            rpc_backend,
+        )
+        .start();
 
         wallet.sync_and_save()?;
 
@@ -295,8 +285,8 @@ impl Taker {
             ongoing_swap_state: OngoingSwapState::default(),
             #[cfg(feature = "integration-test")]
             behavior,
-            data_dir,
             watch_service,
+            offer_sync_handle,
         })
     }
 
@@ -391,8 +381,6 @@ impl Taker {
             log::error!("Not enough balance to do swap : {err:?}");
             return Err(err.into());
         }
-        log::info!("Syncing Offerbook");
-        self.sync_offerbook()?;
 
         // Error early if there aren't enough suitable makers for the given amount
         let suitable_makers = self.find_suitable_makers();
@@ -2104,7 +2092,7 @@ impl Taker {
                     .iter()
                     .map(|pi| &pi.peer)
                     .any(|noa| noa == *oa)
-                    && !self.offerbook.bad_makers.contains(oa)
+                    && !self.offerbook.is_bad_maker(oa)
             })
             .ok_or(TakerError::NotEnoughMakersInOfferBook)
     }
@@ -2125,8 +2113,8 @@ impl Taker {
     }
 
     /// Get all the bad makers
-    pub fn get_bad_makers(&self) -> Vec<&OfferAndAddress> {
-        self.offerbook.get_bad_makers()
+    pub fn get_bad_makers(&self) -> Vec<OfferAndAddress> {
+        self.offerbook.get_bad_makers(&MakerProtocol::Legacy)
     }
 
     /// Save all the finalized swap data and reset the [`OngoingSwapState`].
@@ -2280,71 +2268,9 @@ impl Taker {
         Ok(())
     }
 
-    /// Synchronizes the offer book with addresses obtained from directory servers and local configurations.
-    pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        self.watch_service.request_maker_address();
-        let watcher_event = self.watch_service.wait_for_event();
-
-        let Some(WatcherEvent::MakerAddresses { maker_addresses }) = watcher_event else {
-            return Err(TakerError::General("No response from watcher".to_string()));
-        };
-
-        let maker_addresses = maker_addresses
-            .into_iter()
-            .map(MakerAddress::try_from)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-
-        // Find out addresses that was last updated 30 mins ago.
-        let fresh_addrs = self
-            .offerbook
-            .get_fresh_addrs()
-            .iter()
-            .map(|oa| &oa.address)
-            .collect::<HashSet<_>>();
-
-        // Fetch only those addresses which are new, or last updated more than 30 mins ago
-        let addrs_to_fetch = maker_addresses
-            .iter()
-            .filter(|tracker_addr| !fresh_addrs.contains(tracker_addr))
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let new_offers = fetch_offer_from_makers(addrs_to_fetch, &self.config)?;
-
-        for new_offer in new_offers {
-            log::info!(
-                "Found offer from {}. Verifying Fidelity Proof",
-                new_offer.address
-            );
-            if let Err(e) = self
-                .wallet
-                .verify_fidelity_proof(&new_offer.offer.fidelity, &new_offer.address.to_string())
-            {
-                log::warn!(
-                    "Fidelity Proof Verification failed with error: {:?}. Adding this to bad maker list: {}",
-                    e,
-                    new_offer.address
-                );
-                self.offerbook.add_bad_maker(&new_offer);
-            } else {
-                log::info!("Fidelity Bond verification success. Adding offer to our OfferBook");
-                self.offerbook.add_new_offer(&new_offer);
-            }
-        }
-
-        // Save the updated cache back to disk.
-        self.offerbook
-            .write_to_disk(&self.data_dir.join("offerbook.json"))?;
-
-        Ok(())
-    }
-
-    /// fetches only the offer data from Tracker and returns the updated Offerbook.
-    /// Used for taker cli app, in `fetch-offers` command.
-    pub fn fetch_offers(&mut self) -> Result<&OfferBook, TakerError> {
-        self.sync_offerbook()?;
-        Ok(&self.offerbook)
+    /// Returns the OfferBook.
+    pub fn fetch_offers(&mut self) -> Result<OfferBook, TakerError> {
+        Ok(self.offerbook.snapshot())
     }
 
     /// Send any message to a maker
@@ -2374,41 +2300,69 @@ impl Taker {
 
         Ok(())
     }
-    /// Displays offer
-    pub fn display_offer(&self, offer_and_address: &OfferAndAddress) -> Result<String, TakerError> {
-        #[derive(Serialize, Deserialize, Debug)]
-        struct Offer {
-            base_fee: u64,
-            amount_relative_fee_pct: f64,
-            time_relative_fee_pct: f64,
-            required_confirms: u32,
-            minimum_locktime: u16,
-            max_size: u64,
-            min_size: u64,
-            bond_outpoint: OutPoint,
-            bond_value: Amount,
-            bond_expiry: LockTime,
-            tor_address: String,
-        }
 
-        let bond = offer_and_address.offer.fidelity.bond.clone();
-        let bond_value = self.get_wallet().calculate_bond_value(&bond).unwrap();
+    /// Displays a maker offer candidate in a human-readable format.
+    /// If the maker does not yet have an offer, a partial view is shown.
+    pub fn display_offer(&self, candidate: &MakerOfferCandidate) -> Result<String, TakerError> {
+        let header = format!(
+            r#"
+    Maker
+    ─────
+    Address        : {address}
+    Protocol       : {protocol}
+    State          : {state}
+    "#,
+            address = candidate.address,
+            protocol = candidate
+                .protocol
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "Unknown".into()),
+            state = format_state(&candidate.state),
+        );
 
-        let offer = Offer {
-            base_fee: offer_and_address.offer.base_fee,
-            amount_relative_fee_pct: offer_and_address.offer.amount_relative_fee_pct,
-            time_relative_fee_pct: offer_and_address.offer.time_relative_fee_pct,
-            required_confirms: offer_and_address.offer.required_confirms,
-            minimum_locktime: offer_and_address.offer.minimum_locktime,
-            max_size: offer_and_address.offer.max_size,
-            min_size: offer_and_address.offer.min_size,
-            bond_outpoint: bond.outpoint,
-            bond_value,
-            bond_expiry: bond.lock_time,
-            tor_address: offer_and_address.address.to_string(),
+        // If no offer yet, return early with partial info
+        let Some(offer) = &candidate.offer else {
+            return Ok(header);
         };
 
-        Ok(serde_json::to_string_pretty(&offer)?)
+        let bond = &offer.fidelity.bond;
+        let bond_value = self.get_wallet().calculate_bond_value(bond)?;
+
+        Ok(format!(
+            r#"{header}
+
+    Offer
+    ─────
+    Base Fee       : {base_fee}
+    Amount Fee %   : {amount_fee:.4}
+    Time Fee %     : {time_fee:.4}
+
+    Limits
+    ──────
+    Min Size       : {min_size}
+    Max Size       : {max_size}
+    Required Conf. : {confirms}
+    Min Locktime   : {locktime}
+
+    Fidelity Bond
+    ─────────────
+    Outpoint       : {outpoint}
+    Value          : {bond_value}
+    Expiry         : {expiry}
+    "#,
+            header = header.trim_end(),
+            base_fee = offer.base_fee,
+            amount_fee = offer.amount_relative_fee_pct,
+            time_fee = offer.time_relative_fee_pct,
+            min_size = offer.min_size,
+            max_size = offer.max_size,
+            confirms = offer.required_confirms,
+            locktime = offer.minimum_locktime,
+            outpoint = bond.outpoint,
+            bond_value = bond_value,
+            expiry = bond.lock_time,
+        ))
     }
 
     /// Gets all good makers that can handle a specific amount.
@@ -2418,7 +2372,7 @@ impl Taker {
         let max_refund_locktime =
             REFUND_LOCKTIME * (self.ongoing_swap_state.swap_params.maker_count + 1) as u16;
         self.offerbook
-            .all_good_makers()
+            .active_makers(&MakerProtocol::Legacy)
             .into_iter()
             .filter(|oa| {
                 let maker_fee = calculate_coinswap_fee(
@@ -2434,8 +2388,12 @@ impl Taker {
                 swap_amount >= min_size_with_fee
                     && swap_amount <= bitcoin::Amount::from_sat(oa.offer.max_size)
             })
-            .cloned()
             .collect()
+    }
+
+    /// Indicates if offerbook syncing is in progress or not.
+    pub fn is_offerbook_syncing(&self) -> bool {
+        self.offer_sync_handle.is_syncing()
     }
 }
 

@@ -129,12 +129,6 @@ fn test_taproot_maker_abort2() {
     // Mine more blocks to give maker time to see the hashlock sweep
     generate_blocks(bitcoind, 2);
 
-    info!("🚫 Verifying naughty maker gets banned");
-    // Maker gets banned for being naughty.
-    assert_eq!(
-        format!("127.0.0.1:{naughty}"),
-        taproot_taker.get_bad_makers()[0].address.to_string()
-    );
     // Verify swap results
     let taker_wallet = taproot_taker.get_wallet();
     let taker_balances = taker_wallet.get_balances().unwrap();
@@ -189,9 +183,9 @@ fn test_taproot_maker_abort2() {
         assert_in_range!(
             balances.spendable.to_sat(),
             [
-                14999510, // No fund loss,it occurs for a maker when it was not having any incoming contract (less likely to occur)
-                15020999, // 1st Maker completed the swap via hashlock path spending and earned some sats.
-                15032506, // 2nd Maker completed the swap via hashlock path spending and earned some sats.
+                14999500, // No fund loss,it occurs for a maker when it was not having any incoming contract (less likely to occur)
+                15020989, // 1st Maker completed the swap via hashlock path spending and earned some sats.
+                15032496, // 2nd Maker completed the swap via hashlock path spending and earned some sats.
             ],
             "Taproot Maker after hashlock recovery balance check."
         );
@@ -222,6 +216,13 @@ fn test_taproot_maker_abort2() {
     taproot_maker_threads
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
+
+    info!("🚫 Verifying naughty maker gets banned");
+    // Maker gets banned for being naughty.
+    assert_eq!(
+        format!("127.0.0.1:{naughty}"),
+        taproot_taker.get_bad_makers()[0].address.to_string()
+    );
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

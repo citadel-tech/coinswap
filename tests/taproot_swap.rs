@@ -182,7 +182,7 @@ fn test_taproot_coinswap() {
         // The spendable contains maker's regular balance + maker's swap balance,therefore used spendable balance for comparision.
         assert_in_range!(
             balances.spendable.to_sat(),
-            [15020199, 15031704], // Normal swap spendable balance for makers
+            [15020189, 15031694], // Normal swap spendable balance for makers
             "Taproot Maker after balance check."
         );
 

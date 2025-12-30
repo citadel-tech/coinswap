@@ -5,17 +5,24 @@
 
 use std::{
     marker::PhantomData,
-    sync::mpsc::{Receiver, Sender, TryRecvError},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{Receiver, Sender, TryRecvError},
+        Arc,
+    },
 };
 
 use bitcoin::{consensus::deserialize, Block, OutPoint, Transaction};
 
-use crate::watch_tower::{
-    registry_storage::{Checkpoint, FileRegistry, WatchRequest},
-    rpc_backend::BitcoinRpc,
-    utils::{process_block, process_transaction},
-    watcher_error::WatcherError,
-    zmq_backend::{BackendEvent, ZmqBackend},
+use crate::{
+    wallet::RPCConfig,
+    watch_tower::{
+        registry_storage::{Checkpoint, FileRegistry, WatchRequest},
+        rpc_backend::BitcoinRpc,
+        utils::{process_block, process_transaction},
+        watcher_error::WatcherError,
+        zmq_backend::{BackendEvent, ZmqBackend},
+    },
 };
 
 /// Describes watcher behavior.
@@ -93,14 +100,22 @@ impl<R: Role> Watcher<R> {
         }
     }
 
+    // #TODO: When watcher starts index the mempool, to check if watch request is present there
+    //        or not.
     /// Runs the watcher loop: handles ZMQ events and commands, optionally spawning discovery.
-    pub fn run(&mut self, rpc_backend: BitcoinRpc) -> Result<(), WatcherError> {
+    pub fn run(&mut self, rpc_config: RPCConfig) -> Result<(), WatcherError> {
         log::info!("Watcher initiated");
+        let rpc_backend_1 = BitcoinRpc::new(rpc_config.clone())?;
+        let rpc_backend_2 = BitcoinRpc::new(rpc_config)?;
+        let discovery_shutdown = Arc::new(AtomicBool::new(false));
         let registry = self.registry.clone();
         std::thread::scope(move |s| {
+            let discovery_clone = discovery_shutdown.clone();
             if R::RUN_DISCOVERY {
                 s.spawn(move || {
-                    if let Err(e) = rpc_backend.run_discovery(registry) {
+                    if let Err(e) =
+                        rpc_backend_1.run_discovery(registry, discovery_shutdown.clone())
+                    {
                         log::error!("Discovery thread failed: {:?}", e);
                     }
                 });
@@ -108,7 +123,8 @@ impl<R: Role> Watcher<R> {
             loop {
                 match self.rx_requests.try_recv() {
                     Ok(cmd) => {
-                        if !self.handle_command(cmd) {
+                        if !self.handle_command(cmd, &rpc_backend_2) {
+                            discovery_clone.store(true, Ordering::SeqCst);
                             break;
                         }
                     }
@@ -124,7 +140,7 @@ impl<R: Role> Watcher<R> {
         Ok(())
     }
 
-    fn handle_command(&mut self, cmd: WatcherCommand) -> bool {
+    fn handle_command(&mut self, cmd: WatcherCommand, rpc_backend: &BitcoinRpc) -> bool {
         match cmd {
             WatcherCommand::RegisterWatchRequest { outpoint } => {
                 log::info!("Intercepted register watch request: {outpoint}");
@@ -153,14 +169,19 @@ impl<R: Role> Watcher<R> {
                 }
             }
             WatcherCommand::Unwatch { outpoint } => {
-                log::info!("Intercepted unwatch : {outpoint}");
+                log::info!("Intercepted unwatch request : {outpoint}");
                 self.registry.remove_watch(outpoint);
             }
             WatcherCommand::MakerAddress => {
-                log::info!("Intercepted maker address");
+                log::debug!("Intercepted maker address request");
+                let height = rpc_backend
+                    .get_blockchain_info()
+                    .ok()
+                    .map(|v| v.blocks)
+                    .unwrap_or(0);
                 let maker_addresses: Vec<String> = self
                     .registry
-                    .list_fidelity()
+                    .list_fidelity(height as u32)
                     .into_iter()
                     .map(|fidelity| fidelity.onion_address)
                     .collect();
@@ -187,7 +208,7 @@ impl<R: Role> Watcher<R> {
                         height: block.bip34_block_height().unwrap(),
                         hash: block.block_hash(),
                     });
-                    process_block(block, &mut self.registry);
+                    process_block::<R>(block, &mut self.registry);
                 }
             }
         }

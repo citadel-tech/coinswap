@@ -210,9 +210,9 @@ fn test_taproot_hashlock_recovery_end_to_end() {
         assert_in_range!(
             balances.spendable.to_sat(),
             [
-                14999510, // No fund loss,it occurs for a maker when it was not having any incoming contract (less likely to occur)
-                15020999, // 1st Maker completed the swap via hashlock path spending and earned some sats.
-                15032506, // 2nd Maker completed the swap via hashlock path spending and earned some sats.
+                14999500, // No fund loss,it occurs for a maker when it was not having any incoming contract (less likely to occur)
+                15020989, // 1st Maker completed the swap via hashlock path spending and earned some sats.
+                15032496, // 2nd Maker completed the swap via hashlock path spending and earned some sats.
             ],
             "Taproot Maker after hashlock recovery balance check."
         );

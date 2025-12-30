@@ -7,6 +7,12 @@
 
 use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::RpcApi;
+use nostr::{
+    event::{EventBuilder, Kind},
+    key::{Keys, SecretKey},
+    message::{ClientMessage, RelayMessage},
+    util::JsonUtil,
+};
 use std::{
     io::ErrorKind,
     net::{Ipv4Addr, TcpListener, TcpStream},
@@ -14,6 +20,7 @@ use std::{
     thread::{self, sleep},
     time::{Duration, Instant},
 };
+use tungstenite::Message;
 
 pub(crate) use super::api2::{Maker, RPC_PING_INTERVAL};
 
@@ -24,8 +31,11 @@ use crate::{
         handlers2::handle_message_taproot,
         rpc::start_rpc_server,
     },
-    protocol::messages2::{MakerToTakerMessage, TakerToMakerMessage},
-    utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
+    protocol::messages2::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
+    utill::{
+        get_tor_hostname, read_message, send_message, COINSWAP_KIND, HEART_BEAT_INTERVAL,
+        MIN_FEE_RATE, NOSTR_RELAYS,
+    },
     wallet::WalletError,
 };
 
@@ -66,9 +76,101 @@ fn manage_fidelity_bonds_taproot(maker: &Maker, maker_addr: &str) -> Result<(), 
     maker.wallet().write()?.redeem_expired_fidelity_bonds()?;
 
     // Create or get existing fidelity proof for taproot maker
-    let _ = setup_fidelity_bond_taproot(maker, maker_addr)?;
+    let fidelity_proof = setup_fidelity_bond_taproot(maker, maker_addr)?;
+
+    broadcast_bond_on_nostr(fidelity_proof)?;
 
     Ok(())
+}
+
+// ##TODO: Make this part of nostr module and improve error handing
+// ##TODO: Try retry in case relay doesn't accept the event
+fn broadcast_bond_on_nostr(fidelity: FidelityProof) -> Result<(), MakerError> {
+    let outpoint = fidelity.bond.outpoint;
+    let content = format!("{}:{}", outpoint.txid, outpoint.vout);
+
+    let secret_key = SecretKey::generate();
+    let keys = Keys::new(secret_key);
+
+    let event = EventBuilder::new(Kind::Custom(COINSWAP_KIND), content)
+        .build(keys.public_key)
+        .sign_with_keys(&keys)
+        .expect("Event should be signed");
+
+    let msg = ClientMessage::Event(std::borrow::Cow::Owned(event));
+
+    log::debug!("nostr wire msg: {}", msg.as_json());
+
+    let mut success = false;
+
+    for relay in NOSTR_RELAYS {
+        match broadcast_to_relay(relay, &msg) {
+            Ok(()) => {
+                success = true;
+            }
+            Err(e) => {
+                log::warn!("failed to broadcast to {}: {:?}", relay, e);
+            }
+        }
+    }
+
+    if !success {
+        log::warn!("nostr event was not accepted by any relay");
+    }
+
+    Ok(())
+}
+
+fn broadcast_to_relay(relay: &str, msg: &ClientMessage) -> Result<(), MakerError> {
+    let (mut socket, _) = tungstenite::connect(relay).map_err(|e| {
+        log::warn!("failed to connect to nostr relay {}: {}", relay, e);
+        MakerError::General("failed to connect to nostr relay")
+    })?;
+
+    socket
+        .write(Message::Text(msg.as_json().into()))
+        .map_err(|e| {
+            log::warn!("nostr relay write failed: {}", e);
+            MakerError::General("failed to write to nostr relay")
+        })?;
+    socket.flush().ok();
+
+    match socket.read() {
+        Ok(Message::Text(text)) => {
+            if let Ok(relay_msg) = RelayMessage::from_json(&text) {
+                match relay_msg {
+                    RelayMessage::Ok {
+                        event_id,
+                        status: true,
+                        ..
+                    } => {
+                        log::info!("nostr relay {} accepted event {}", relay, event_id);
+                        return Ok(());
+                    }
+                    RelayMessage::Ok {
+                        event_id,
+                        status: false,
+                        message,
+                    } => {
+                        log::warn!(
+                            "nostr relay {} rejected event {}: {}",
+                            relay,
+                            event_id,
+                            message
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(_) => {}
+        Err(e) => {
+            log::warn!("nostr relay {} read error: {}", relay, e);
+        }
+    }
+    log::warn!("nostr relay {} did not confirm event", relay);
+
+    Err(MakerError::General("nostr relay did not confirm event"))
 }
 
 /// Ensures the wallet has a valid fidelity bond for taproot operations.
@@ -168,7 +270,7 @@ fn setup_fidelity_bond_taproot(
         let fidelity_result = maker.wallet().write()?.create_fidelity(
             amount,
             locktime,
-            Some(maker_address.as_bytes()),
+            Some(maker_address),
             MIN_FEE_RATE,
         );
 

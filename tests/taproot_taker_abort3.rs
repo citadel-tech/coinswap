@@ -200,8 +200,8 @@ fn test_taproot_taker_abort3() {
         assert_in_range!(
             balances.spendable.to_sat(),
             [
-                14999510, // The corresponding maker didn't had any outgoing contract,so no need of recovery, hence no fund loss.
-                14999006, // Here a little fund loss because of outgoing contract creation, and therefore a timelock recovery transaction for recovering it.
+                14999500, // The corresponding maker didn't had any outgoing contract,so no need of recovery, hence no fund loss.
+                14998996, // Here a little fund loss because of outgoing contract creation, and therefore a timelock recovery transaction for recovering it.
             ],
             "Taproot Maker after balance check."
         );
