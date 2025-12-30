@@ -318,6 +318,7 @@ fn setup_fidelity_bond_taproot(
     while !maker.shutdown.load(Relaxed) {
         sleep_multiplier += 1;
         // sync the wallet
+        log::info!("Sync at:----setup_fidelity_bond----");
         maker.wallet().write()?.sync_and_save()?;
 
         let fidelity_result = maker.wallet().write()?.create_fidelity(
@@ -384,6 +385,7 @@ fn setup_fidelity_bond_taproot(
                 };
 
                 // sync and save the wallet data to disk
+                log::info!("Sync at end:----setup_fidelity_bond----");
                 maker.wallet().write()?.sync_and_save()?;
 
                 // Store the fidelity proof in maker
@@ -401,6 +403,10 @@ fn setup_fidelity_bond_taproot(
 
 /// Checks swap liquidity for taproot swaps
 fn check_swap_liquidity_taproot(maker: &Maker) -> Result<(), MakerError> {
+    {
+        let mut wallet = maker.wallet().write()?;
+        wallet.refresh_offer_maxsize_cache()?;
+    }
     let wallet_read = maker.wallet().read()?;
     let balances = wallet_read.get_balances()?;
 
@@ -797,6 +803,8 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
     // Join all threads
     maker.thread_pool.join_all_threads()?;
 
+    log::info!("sync at:----Taproot server shutdown----");
+    maker.wallet().write()?.sync_and_save()?;
     log::info!(
         "[{}] Taproot maker server stopped",
         maker.config.network_port

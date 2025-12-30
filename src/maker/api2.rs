@@ -336,9 +336,8 @@ impl Maker {
 
         config.write_to_file(&data_dir.join("config.toml"))?;
 
-        log::info!("Initializing wallet sync");
+        log::info!("Sync at:----Maker init----");
         wallet.sync_and_save()?;
-        log::info!("Completed wallet sync");
 
         let network_port = config.network_port;
 
@@ -491,6 +490,7 @@ impl Maker {
             let mut wallet = self.wallet.write()?;
 
             // Sync wallet to get latest UTXO state
+            log::info!("Sync at:----verify_and_process_senders_contract----");
             wallet.sync_and_save()?;
 
             let balance = wallet.get_balances()?;

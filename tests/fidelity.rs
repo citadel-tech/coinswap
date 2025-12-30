@@ -161,6 +161,7 @@ fn test_fidelity() {
     log::info!("📊 Verifying balances with both fidelity bonds");
     // Verify balances
     {
+        maker.get_wallet().write().unwrap().sync_and_save().unwrap();
         let wallet_read = maker.get_wallet().read().unwrap();
 
         let balances = wallet_read.get_balances().unwrap();

@@ -4,7 +4,7 @@
 //! In the future, takers might adopt alternative synchronization methods, such as lightweight wallet solutions.
 
 use std::{
-    convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr, thread, thread::sleep,
+    cmp::max, convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr, thread, thread::sleep,
     time::Duration,
 };
 
@@ -292,6 +292,16 @@ impl Wallet {
             Some(wallet_birthday),
             &store_enc_material,
         )?;
+        let last_synced_height_val = match store.last_synced_height {
+            Some(height) => height.to_string(),
+            None => "None".to_string(),
+        };
+
+        log::info!(
+            "Wallet birth_height = {}, wallet last_sync_height = {}",
+            wallet_birthday,
+            last_synced_height_val
+        );
 
         Ok(Self {
             rpc,
@@ -1270,8 +1280,8 @@ impl Wallet {
 
     /// Refreshes the offer maximum size cache based on the current wallet's unspent transaction outputs (UTXOs).
     pub(crate) fn refresh_offer_maxsize_cache(&mut self) -> Result<(), WalletError> {
-        let balance = self.get_balances()?.spendable;
-        self.store.offer_maxsize = balance.to_sat();
+        let Balances { swap, regular, .. } = self.get_balances()?;
+        self.store.offer_maxsize = max(swap, regular).to_sat();
         Ok(())
     }
 

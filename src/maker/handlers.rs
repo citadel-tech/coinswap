@@ -303,6 +303,7 @@ impl Maker {
                 .get(funding_output_index as usize)
                 .expect("funding output expected at this index");
 
+            log::info!("Sync at:----handle_proof_of_funding----");
             self.wallet.write()?.sync_and_save()?;
 
             let receiver_contract_tx = create_receivers_contract_tx(
@@ -706,6 +707,7 @@ impl Maker {
             }
         }
 
+        log::info!("Sync at:----handle_private_key_handover----");
         self.wallet.write()?.sync_and_save()?;
 
         log::info!("Successfully Completed Coinswap");
@@ -725,6 +727,7 @@ impl Maker {
                 swept_txids
             );
         }
+        log::info!("Sync at:----sweep_after_successful_coinswap----");
         self.wallet.write()?.sync_and_save()?;
         // For tests, terminate the maker at this stage.
         #[cfg(feature = "integration-test")]

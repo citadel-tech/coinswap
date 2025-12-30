@@ -2,7 +2,10 @@
 //!
 use std::{convert::TryFrom, thread};
 
-use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Auth, Client, RpcApi};
+use bitcoind::bitcoincore_rpc::{
+    json::{ListUnspentResultEntry, ScanningDetails},
+    Auth, Client, RpcApi,
+};
 use serde_json::{json, Value};
 
 use crate::{utill::HEART_BEAT_INTERVAL, wallet::api::KeychainKind};
@@ -70,16 +73,10 @@ impl Wallet {
     /// This method first synchronizes the wallet with the Bitcoin Core node,
     /// then persists the wallet state in the disk.
     pub fn sync_and_save(&mut self) -> Result<(), WalletError> {
-        log::info!(
-            "Initializing wallet sync and save for {:?}",
-            &self.store.file_name
-        );
+        log::info!("Sync Started for {:?}", &self.store.file_name);
         self.sync_no_fail();
         self.save_to_disk()?;
-        log::info!(
-            "Completed wallet sync and save for {:?}",
-            &self.store.file_name
-        );
+        log::info!("Synced & Saved {:?}", &self.store.file_name);
         Ok(())
     }
 
@@ -130,40 +127,43 @@ impl Wallet {
             return Ok(());
         }
 
-        log::debug!("Importing Wallet spks/descriptors");
-
         self.import_descriptors(&descriptors_to_import, None)?;
 
-        // Now run the scan
-        log::debug!("Initializing TxOut scan. This may take a while.");
-
         // Sometimes in test multiple wallet scans can occur at same time, resulting in error.
-        // Just retry after 3 sec.
-        loop {
-            let last_synced_height = self
-                .store
-                .last_synced_height
-                .unwrap_or(0)
-                .max(self.store.wallet_birthday.unwrap_or(0));
-            let node_synced = self.rpc.get_block_count()?;
-            log::debug!("Re-scanning Blockchain from:{last_synced_height} to:{node_synced}");
-            match self.rpc.rescan_blockchain(
-                Some(last_synced_height as usize),
-                Some(node_synced as usize),
-            ) {
-                Ok(_) => {
-                    self.store.last_synced_height = Some(node_synced);
-                    break;
-                }
+        let last_synced_height = self
+            .store
+            .last_synced_height
+            .unwrap_or(0)
+            .max(self.store.wallet_birthday.unwrap_or(0));
+        let node_synced = self.rpc.get_block_count()?;
+        log::info!("Re-scanning Blockchain from:{last_synced_height} to:{node_synced}");
 
-                Err(e) => {
-                    log::warn!("Sync Error, Retrying: {e}");
+        let _ = self.rpc.rescan_blockchain(
+            Some(last_synced_height as usize),
+            Some(node_synced as usize),
+        );
+
+        // Returns when the scanning is completed
+        loop {
+            let wallet_info = self.rpc.get_wallet_info()?;
+            match wallet_info.scanning {
+                Some(ScanningDetails::Scanning { duration, .. }) => {
+                    // Todo: Show scan progress
+                    log::info!("Scanning for {}s", duration);
                     thread::sleep(HEART_BEAT_INTERVAL);
                     continue;
                 }
+                Some(ScanningDetails::NotScanning(_)) => {
+                    log::info!("Scanning completed");
+                    break;
+                }
+                None => {
+                    log::info!("No scan is in progress or Scanning completed");
+                    break;
+                }
             }
         }
-
+        self.store.last_synced_height = Some(node_synced);
         self.update_utxo_cache(self.get_all_utxo_from_rpc()?);
 
         let max_external_index = self.find_hd_next_index(KeychainKind::External)?;
@@ -177,6 +177,7 @@ impl Wallet {
     fn sync_no_fail(&mut self) {
         while let Err(e) = self.sync() {
             log::error!("Blockchain sync failed. Retrying. | {e:?}");
+            thread::sleep(HEART_BEAT_INTERVAL);
         }
     }
 
