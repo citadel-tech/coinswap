@@ -189,8 +189,6 @@ pub enum UTXOSpendInfo {
         path: String,
         /// UTXO value in satoshis
         input_value: Amount,
-        /// Original multisig script before sweeping
-        original_multisig_redeemscript: ScriptBuf,
         /// Address type (P2WPKH or P2TR)
         #[serde(default)]
         address_type: AddressType,
@@ -793,10 +791,10 @@ impl Wallet {
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Option<UTXOSpendInfo> {
-        if let Some(original_multisig_redeemscript) = self
+        if self
             .store
             .swept_incoming_swapcoins
-            .get(&utxo.script_pub_key)
+            .contains(&utxo.script_pub_key)
         {
             if let Some(descriptor) = &utxo.descriptor {
                 if let Some((_, addr_type, index)) = get_hd_path_from_descriptor(descriptor) {
@@ -809,7 +807,6 @@ impl Wallet {
                     return Some(UTXOSpendInfo::SweptCoin {
                         input_value: utxo.amount,
                         path,
-                        original_multisig_redeemscript: original_multisig_redeemscript.clone(),
                         address_type,
                     });
                 }
@@ -2247,7 +2244,7 @@ impl Wallet {
                 let output_scriptpubkey = internal_address.script_pubkey();
                 self.store
                     .swept_incoming_swapcoins
-                    .insert(output_scriptpubkey, multisig_redeemscript.clone());
+                    .insert(output_scriptpubkey);
             } else {
                 log::warn!("Could not find UTXO for completed incoming swap coin");
             }
@@ -2378,7 +2375,7 @@ impl Wallet {
             // Add them as part of swapcoins, because they are technically output of a swap.
             self.store
                 .swept_incoming_swapcoins
-                .insert(hashlock_tx.output[0].script_pubkey.clone(), ic_rs.clone());
+                .insert(hashlock_tx.output[0].script_pubkey.clone());
 
             let removed = self
                 .remove_incoming_swapcoin(ic_rs)?
@@ -2584,7 +2581,7 @@ impl Wallet {
 
         self.store
             .swept_incoming_swapcoins
-            .insert(output.script_pubkey.clone(), output.script_pubkey);
+            .insert(output.script_pubkey.clone());
 
         // Remove from wallet storage
         self.store

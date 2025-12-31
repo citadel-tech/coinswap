@@ -927,11 +927,10 @@ impl Maker {
 
             // Record the swept coin to track swap balance
             let output_scriptpubkey = spending_tx.output[0].script_pubkey.clone();
-            // [TODO] Look into the key value pair later, it shouldn't be both sriptpubkey
             wallet
                 .store
                 .swept_incoming_swapcoins
-                .insert(output_scriptpubkey.clone(), output_scriptpubkey);
+                .insert(output_scriptpubkey);
 
             wallet.remove_incoming_swapcoin_v2(&incoming_txid);
             log::info!(

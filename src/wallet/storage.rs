@@ -12,7 +12,7 @@ use super::{error::WalletError, fidelity::FidelityBond};
 use bitcoin::{bip32::Xpriv, Network, OutPoint, ScriptBuf};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::BufWriter,
     path::Path,
@@ -58,9 +58,8 @@ pub(crate) struct WalletStore {
     pub(super) outgoing_swapcoins_v2: HashMap<bitcoin::Txid, OutgoingSwapCoinV2>,
     /// Map of prevout to contract redeemscript.
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
-    /// Map of swept incoming swap coins to prevent mixing with regular UTXOs
-    /// Key: ScriptPubKey of swept UTXO, Value: Original multisig redeemscript
-    pub(crate) swept_incoming_swapcoins: HashMap<ScriptBuf, ScriptBuf>,
+    /// Set of swept incoming swap coin scriptpubkeys to prevent mixing with regular UTXOs
+    pub(crate) swept_incoming_swapcoins: HashSet<ScriptBuf>,
     /// Map for all the fidelity bond information.
     pub(crate) fidelity_bond: HashMap<u32, FidelityBond>,
     pub(super) last_synced_height: Option<u64>,
@@ -93,7 +92,7 @@ impl WalletStore {
             incoming_swapcoins_v2: HashMap::new(),
             outgoing_swapcoins_v2: HashMap::new(),
             prevout_to_contract_map: HashMap::new(),
-            swept_incoming_swapcoins: HashMap::new(),
+            swept_incoming_swapcoins: HashSet::new(),
             fidelity_bond: HashMap::new(),
             last_synced_height: None,
             wallet_birthday,

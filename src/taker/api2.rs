@@ -1506,7 +1506,7 @@ impl Taker {
         self.wallet
             .store
             .swept_incoming_swapcoins
-            .insert(output_scriptpubkey.clone(), output_scriptpubkey);
+            .insert(output_scriptpubkey);
         log::info!(
             "Recorded swept incoming swapcoin V2: {}",
             incoming_contract_txid
