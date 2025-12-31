@@ -12,6 +12,7 @@ use coinswap::{
         api2::{SwapParams, Taker},
         TakerBehavior,
     },
+    wallet::AddressType,
 };
 use std::sync::Arc;
 
@@ -243,7 +244,9 @@ fn fund_taproot_makers(
 
         // Fund with regular UTXOs
         for _ in 0..utxo_count {
-            let addr = wallet.get_next_external_address().unwrap();
+            let addr = wallet
+                .get_next_external_address(AddressType::P2WPKH)
+                .unwrap();
             send_to_address(bitcoind, &addr, utxo_value);
         }
 
@@ -272,7 +275,10 @@ fn fund_taproot_taker(
 ) -> Amount {
     // Fund with regular UTXOs
     for _ in 0..utxo_count {
-        let addr = taker.get_wallet_mut().get_next_external_address().unwrap();
+        let addr = taker
+            .get_wallet_mut()
+            .get_next_external_address(AddressType::P2WPKH)
+            .unwrap();
         send_to_address(bitcoind, &addr, utxo_value);
     }
 

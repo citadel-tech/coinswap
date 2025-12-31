@@ -22,7 +22,7 @@ use crate::{
 
 use super::Wallet;
 
-use super::error::WalletError;
+use super::{error::WalletError, AddressType};
 
 #[derive(Debug)]
 pub struct CreateFundingTxesResult {
@@ -179,6 +179,7 @@ impl Wallet {
                 Destination::Multi {
                     outputs: vec![(destinations[0].clone(), coinswap_amount)],
                     op_return_data: None,
+                    change_address_type: AddressType::P2WPKH,
                 }
             } else {
                 Destination::MultiDynamic(coinswap_amount, destinations)
@@ -256,6 +257,7 @@ impl Wallet {
                 let destination = Destination::Multi {
                     outputs,
                     op_return_data: None,
+                    change_address_type: AddressType::P2WPKH,
                 };
 
                 // Creates and Signs Transactions via the spend_coins API
@@ -452,7 +454,7 @@ impl Wallet {
 
         let mut outputs = HashMap::<&Address, u64>::new();
         outputs.insert(&destinations[0], coinswap_amount.to_sat());
-        let change_address = self.get_next_internal_addresses(1)?[0].clone();
+        let change_address = self.get_next_internal_addresses(1, AddressType::P2WPKH)?[0].clone();
 
         self.lock_unspendable_utxos()?;
 
@@ -581,7 +583,7 @@ impl Wallet {
         } else {
             //at most one utxo bigger than the coinswap amount
 
-            let change_address = &self.get_next_internal_addresses(1)?[0];
+            let change_address = &self.get_next_internal_addresses(1, AddressType::P2WPKH)?[0];
             self.create_mostly_sweep_txes_with_one_tx_having_change(
                 coinswap_amount,
                 destinations,

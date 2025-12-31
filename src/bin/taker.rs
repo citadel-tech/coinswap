@@ -4,7 +4,7 @@ use clap::Parser;
 use coinswap::{
     taker::{error::TakerError, offers::MakerState, SwapParams, Taker, TaprootTaker},
     utill::{parse_proxy_auth, setup_taker_logger, MIN_FEE_RATE, UTXO},
-    wallet::{Destination, RPCConfig, Wallet},
+    wallet::{AddressType, Destination, RPCConfig, Wallet},
 };
 use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
@@ -284,7 +284,9 @@ fn main() -> Result<(), TakerError> {
                     );
                 }
                 Commands::GetNewAddress => {
-                    let address = taker.get_wallet_mut().get_next_external_address()?;
+                    let address = taker
+                        .get_wallet_mut()
+                        .get_next_external_address(AddressType::P2WPKH)?;
                     println!("{address:?}");
                 }
                 Commands::SendToAddress {
@@ -318,6 +320,7 @@ fn main() -> Result<(), TakerError> {
                     let destination = Destination::Multi {
                         outputs,
                         op_return_data: None,
+                        change_address_type: AddressType::P2WPKH,
                     };
 
                     let tx = taker.get_wallet_mut().spend_from_wallet(

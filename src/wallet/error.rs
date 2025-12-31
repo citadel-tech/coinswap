@@ -150,6 +150,12 @@ impl From<bitcoin::sighash::P2wpkhError> for WalletError {
     }
 }
 
+impl From<bitcoin::sighash::TaprootError> for WalletError {
+    fn from(value: bitcoin::sighash::TaprootError) -> Self {
+        Self::Consensus(value.to_string())
+    }
+}
+
 impl From<bitcoin::key::UncompressedPublicKeyError> for WalletError {
     fn from(value: bitcoin::key::UncompressedPublicKeyError) -> Self {
         Self::Consensus(value.to_string())

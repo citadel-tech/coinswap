@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     use coinswap::{
         taker::{SwapParams, Taker},
-        wallet::RPCConfig,
+        wallet::{AddressType, RPCConfig},
     };
     println!("=== Coinswap Taker Basic Example ===");
     println!("NOTE: When prompted for encryption passphrase, press Enter for no encryption");
@@ -117,7 +117,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("\nFunding wallet with test coins...");
 
         let wallet_mut = taker.get_wallet_mut();
-        let funding_address = wallet_mut.get_next_external_address().unwrap();
+        let funding_address = wallet_mut
+            .get_next_external_address(AddressType::P2WPKH)
+            .unwrap();
 
         // Send coins from bitcoind to the taker wallet
         let fund_amount = Amount::from_btc(0.01).unwrap();
@@ -151,13 +153,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Generate a new receiving address
     let wallet_mut = taker.get_wallet_mut();
-    let new_address = wallet_mut.get_next_external_address().unwrap();
+    let new_address = wallet_mut
+        .get_next_external_address(AddressType::P2WPKH)
+        .unwrap();
     println!("\nGenerated new receiving address: {}", new_address);
 
     // Demonstrate sending coins (send small amount to ourselves)
     println!("\nDemonstrating send functionality:");
     let send_amount = Amount::from_btc(0.001).unwrap();
-    let internal_address = wallet_mut.get_next_internal_addresses(1).unwrap()[0].clone();
+    let internal_address = wallet_mut
+        .get_next_internal_addresses(1, AddressType::P2WPKH)
+        .unwrap()[0]
+        .clone();
 
     println!(
         "Sending {} BTC to internal address: {}",
