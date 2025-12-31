@@ -31,7 +31,7 @@ pub enum Destination {
         /// OP_RETURN data, used to create a OP_RETURN TxOut
         op_return_data: Option<Box<[u8]>>,
         /// Address type for change output (defaults to P2WPKH if None)
-        change_address_type: Option<AddressType>,
+        change_address_type: AddressType,
     },
     /// Send Dynamic Random Amounts to Multiple Addresses
     MultiDynamic(Amount, Vec<Address>),
@@ -369,7 +369,7 @@ impl Wallet {
                     tx.output.push(txout);
                 }
                 // Use specified change address type, default to P2WPKH
-                let change_type = change_address_type.unwrap_or(AddressType::P2WPKH);
+                let change_type = change_address_type;
                 let internal_spk =
                     self.get_next_internal_addresses(1, change_type)?[0].script_pubkey();
                 let minimal_nondust = internal_spk.minimal_non_dust();

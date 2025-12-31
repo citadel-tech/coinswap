@@ -15,7 +15,7 @@
 use crate::{
     security::{load_sensitive_struct_from_value, KeyMaterial, SerdeJson},
     utill::{get_taker_dir, MIN_FEE_RATE},
-    wallet::{Destination, RPCConfig, Wallet, WalletBackup, WalletError},
+    wallet::{AddressType, Destination, RPCConfig, Wallet, WalletBackup, WalletError},
 };
 use bitcoin::{Address, Amount, OutPoint, Txid};
 use bitcoind::bitcoincore_rpc::{json::ListTransactionResult, RpcApi};
@@ -220,7 +220,7 @@ impl Wallet {
         let destination = Destination::Multi {
             outputs,
             op_return_data: None,
-            change_address_type: None,
+            change_address_type: AddressType::P2WPKH,
         };
 
         let tx = self.spend_from_wallet(

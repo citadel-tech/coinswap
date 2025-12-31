@@ -629,7 +629,7 @@ impl Maker {
                 Destination::Multi {
                     outputs: vec![(contract_address, outgoing_contract_amount)],
                     op_return_data: None,
-                    change_address_type: Some(AddressType::P2TR),
+                    change_address_type: AddressType::P2TR,
                 },
                 &selected_utxos,
             )?;

@@ -259,7 +259,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
                 locktime,
                 Some(maker_address),
                 MIN_FEE_RATE,
-                Some(AddressType::P2WPKH),
+                AddressType::P2WPKH,
             );
 
             match fidelity_result {

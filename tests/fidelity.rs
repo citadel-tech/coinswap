@@ -140,7 +140,7 @@ fn test_fidelity() {
                     .unwrap(),
                 None,
                 MIN_FEE_RATE,
-                Some(AddressType::P2WPKH),
+                AddressType::P2WPKH,
             )
             .unwrap();
 
@@ -287,7 +287,7 @@ fn test_fidelity_spending() {
                 LockTime::from_height(short_timelock_height).unwrap(),
                 None,
                 MIN_FEE_RATE,
-                Some(AddressType::P2WPKH),
+                AddressType::P2WPKH,
             )
             .unwrap()
     };
@@ -384,7 +384,7 @@ fn test_fidelity_spending() {
                 let destination = coinswap::wallet::Destination::Multi {
                     outputs: vec![(external_addr, Amount::from_sat(REGULAR_TX_AMOUNT))],
                     op_return_data: None,
-                    change_address_type: None,
+                    change_address_type: AddressType::P2WPKH,
                 };
                 match wallet.spend_from_wallet(MIN_FEE_RATE, destination, &selected_utxos) {
                     Ok(tx) => Ok(Some(tx)),
@@ -470,7 +470,7 @@ fn test_fidelity_spending() {
                     .unwrap(),
                 None,
                 MIN_FEE_RATE,
-                Some(AddressType::P2WPKH),
+                AddressType::P2WPKH,
             )
             .unwrap()
     };

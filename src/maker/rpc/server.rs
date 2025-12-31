@@ -97,7 +97,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
             let destination = Destination::Multi {
                 outputs,
                 op_return_data: None,
-                change_address_type: None,
+                change_address_type: AddressType::P2WPKH,
             };
 
             let coins_to_send = maker.wallet().read()?.coin_select(amount, feerate, None)?;

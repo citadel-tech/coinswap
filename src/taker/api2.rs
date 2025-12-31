@@ -997,7 +997,7 @@ impl Taker {
                         self.ongoing_swap_state.swap_params.send_amount,
                     )],
                     op_return_data: None,
-                    change_address_type: Some(AddressType::P2TR),
+                    change_address_type: AddressType::P2TR,
                 },
                 &selected_utxos,
             )?

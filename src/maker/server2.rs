@@ -275,7 +275,7 @@ fn setup_fidelity_bond_taproot(
             locktime,
             Some(maker_address),
             MIN_FEE_RATE,
-            Some(AddressType::P2TR),
+            AddressType::P2TR,
         );
 
         match fidelity_result {

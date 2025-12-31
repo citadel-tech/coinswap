@@ -333,7 +333,7 @@ impl Wallet {
         locktime: LockTime,
         maker_address: Option<&str>,
         feerate: f64,
-        change_address_type: Option<AddressType>,
+        change_address_type: AddressType,
     ) -> Result<u32, WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
 

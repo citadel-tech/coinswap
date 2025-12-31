@@ -320,7 +320,7 @@ fn main() -> Result<(), TakerError> {
                     let destination = Destination::Multi {
                         outputs,
                         op_return_data: None,
-                        change_address_type: None,
+                        change_address_type: AddressType::P2WPKH,
                     };
 
                     let tx = taker.get_wallet_mut().spend_from_wallet(
