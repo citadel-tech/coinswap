@@ -489,39 +489,35 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                     );
                     ConnectionState::default()
                 }
-                TakerToMakerMessage::SwapDetails(_) => {
-                    match ongoing_swaps.get(&swap_id) {
-                        Some((state, _)) => {
-                            log::debug!(
-                                "[{}] Found existing connection state for SwapDetails",
-                                maker.config.network_port
-                            );
-                            state.clone()
-                        }
-                        None => {
-                            log::debug!(
-                                "[{}] Creating new connection state for SwapDetails",
-                                maker.config.network_port
-                            );
-                            ConnectionState::default()
-                        }
+                TakerToMakerMessage::SwapDetails(_) => match ongoing_swaps.get(&swap_id) {
+                    Some((state, _)) => {
+                        log::debug!(
+                            "[{}] Found existing connection state for SwapDetails",
+                            maker.config.network_port
+                        );
+                        state.clone()
                     }
-                }
-                _ => {
-                    match ongoing_swaps.get(&swap_id) {
-                        Some((state, _)) => state.clone(),
-                        None => {
-                            log::warn!(
+                    None => {
+                        log::debug!(
+                            "[{}] Creating new connection state for SwapDetails",
+                            maker.config.network_port
+                        );
+                        ConnectionState::default()
+                    }
+                },
+                _ => match ongoing_swaps.get(&swap_id) {
+                    Some((state, _)) => state.clone(),
+                    None => {
+                        log::warn!(
                                 "[{}] No connection state found for swap_id={:?}. SwapDetails must be sent first.",
                                 maker.config.network_port,
                                 &swap_id
                             );
-                            return Err(MakerError::General(
-                                "No connection state found. Send SwapDetails first.",
-                            ));
-                        }
+                        return Err(MakerError::General(
+                            "No connection state found. Send SwapDetails first.",
+                        ));
                     }
-                }
+                },
             }
         };
 

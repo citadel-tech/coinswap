@@ -19,7 +19,7 @@ use crate::protocol::messages2::{
 
 /// The Global Handle Message function for taproot protocol. Takes in a [`Arc<Maker>`] and handles
 /// messages according to the new taproot message flow without requiring state expectations.
-/// returns a tuple of `(Option<`Response`>, should_persist)`
+/// Returns a tuple of `(Option<Response>, should_persist)`
 /// - response: the message to send back to taker
 /// - should_persist: whether the connection_state should be saved to ongoing_swaps
 pub(crate) fn handle_message_taproot(
@@ -47,7 +47,8 @@ pub(crate) fn handle_message_taproot(
             Ok((response, true))
         }
         TakerToMakerMessage::PrivateKeyHandover(privkey_handover_message) => {
-            let response = handle_privkey_handover(maker, connection_state, privkey_handover_message)?;
+            let response =
+                handle_privkey_handover(maker, connection_state, privkey_handover_message)?;
             Ok((response, true))
         }
     }
