@@ -85,7 +85,9 @@ impl MakerOfferCandidate {
     fn mark_success(&mut self, offer: Offer, protocol: MakerProtocol) {
         self.offer = Some(offer);
         self.protocol = Some(protocol);
-        self.state = MakerState::Good;
+        if self.state != MakerState::Bad {
+            self.state = MakerState::Good;
+        }
     }
 
     fn mark_failure(&mut self) {
