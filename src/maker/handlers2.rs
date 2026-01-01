@@ -19,30 +19,36 @@ use crate::protocol::messages2::{
 
 /// The Global Handle Message function for taproot protocol. Takes in a [`Arc<Maker>`] and handles
 /// messages according to the new taproot message flow without requiring state expectations.
+/// returns a tuple of `(Option<`Response`>, should_persist)`
+/// - response: the message to send back to taker
+/// - should_persist: whether the connection_state should be saved to ongoing_swaps
 pub(crate) fn handle_message_taproot(
     maker: &Arc<Maker>,
     connection_state: &mut ConnectionState,
     message: TakerToMakerMessage,
-) -> Result<Option<MakerToTakerMessage>, MakerError> {
+) -> Result<(Option<MakerToTakerMessage>, bool), MakerError> {
     log::debug!(
         "[{}] Handling message: {:?}",
         maker.config.network_port,
         message
     );
 
-    // Handle messages based on their type, not on expected state
     match message {
         TakerToMakerMessage::GetOffer(get_offer_msg) => {
-            handle_get_offer(maker, connection_state, get_offer_msg)
+            let response = handle_get_offer(maker, connection_state, get_offer_msg)?;
+            Ok((response, false))
         }
         TakerToMakerMessage::SwapDetails(swap_details) => {
-            handle_swap_details(maker, connection_state, swap_details)
+            let response = handle_swap_details(maker, connection_state, swap_details)?;
+            Ok((response, true))
         }
         TakerToMakerMessage::SendersContract(senders_contract) => {
-            handle_senders_contract(maker, connection_state, senders_contract)
+            let response = handle_senders_contract(maker, connection_state, senders_contract)?;
+            Ok((response, true))
         }
         TakerToMakerMessage::PrivateKeyHandover(privkey_handover_message) => {
-            handle_privkey_handover(maker, connection_state, privkey_handover_message)
+            let response = handle_privkey_handover(maker, connection_state, privkey_handover_message)?;
+            Ok((response, true))
         }
     }
 }
@@ -82,14 +88,12 @@ fn handle_swap_details(
         swap_details.no_of_tx
     );
 
-    // Reject if GetOffer wasn't received first (my_privkey must be set)
-    // This ensures the taker has a fresh offer with a valid tweakable_point
     if connection_state.incoming_contract.my_privkey.is_none() {
-        log::warn!(
-            "[{}] Rejecting SwapDetails - GetOffer must be sent first to establish keypair",
+        log::info!(
+            "[{}] Generating new keypair for SwapDetails",
             maker.config.network_port
         );
-        return Ok(Some(MakerToTakerMessage::AckResponse(AckResponse::Nack)));
+        let _ = maker.create_offer(connection_state)?;
     }
 
     // Reject if there's already an active swap in progress for this connection
