@@ -97,36 +97,31 @@ impl FileRegistry {
 
     /// Flushes the in-memory registry to the persistent CBOR file on disk.
     fn flush(&self) {
-        // Ensure parent directory exists
-        if let Some(parent) = self.path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                log::error!("Failed to create registry directory {:?}: {}", parent, e);
-                return;
-            }
+        let parent = match self.path.parent() {
+            Some(p) => p,
+            None => return,
+        };
+
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            log::error!("Failed to create registry directory {:?}: {}", parent, e);
+            return;
         }
 
-        let tmp = self.path.with_extension("tmp");
-        if let Ok(data) = self.data.lock() {
-            let bytes = match serde_cbor::to_vec(&*data) {
-                Ok(b) => b,
-                Err(e) => {
-                    log::error!("Failed to serialize registry data: {}", e);
-                    return;
-                }
-            };
+        let data = match self.data.lock() {
+            Ok(data) => data,
+            Err(_) => return,
+        };
 
-            if let Err(e) = std::fs::write(&tmp, &bytes) {
-                log::error!("Failed to write tmp registry file {:?}: {}", tmp, e);
+        let bytes = match serde_cbor::to_vec(&*data) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::error!("Failed to serialize registry data: {}", e);
                 return;
             }
-            if let Err(e) = std::fs::rename(&tmp, &self.path) {
-                log::error!(
-                    "Failed to rename registry file {:?} -> {:?}: {}",
-                    tmp,
-                    self.path,
-                    e
-                );
-            }
+        };
+
+        if let Err(e) = std::fs::write(&self.path, &bytes) {
+            log::error!("Failed to write registry file {:?}: {}", self.path, e);
         }
     }
 }

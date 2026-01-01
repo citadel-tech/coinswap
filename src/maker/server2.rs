@@ -16,7 +16,10 @@ use nostr::{
 use std::{
     io::ErrorKind,
     net::{Ipv4Addr, TcpListener, TcpStream},
-    sync::{atomic::Ordering::Relaxed, Arc},
+    sync::{
+        atomic::Ordering::{self, Relaxed},
+        Arc,
+    },
     thread::{self, sleep},
     time::{Duration, Instant},
 };
@@ -65,24 +68,71 @@ fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<String, MakerError> {
         .as_ref()
         .track_and_update_unconfirmed_fidelity_bonds()?;
 
-    manage_fidelity_bonds_taproot(maker.as_ref(), &maker_address)?;
+    manage_fidelity_bonds_taproot(maker, &maker_address, true)?;
 
     Ok(maker_address)
 }
 
 /// Setup's maker fidelity
-fn manage_fidelity_bonds_taproot(maker: &Maker, maker_addr: &str) -> Result<(), MakerError> {
+fn manage_fidelity_bonds_taproot(
+    maker: Arc<Maker>,
+    maker_addr: &str,
+    spawn_nostr: bool,
+) -> Result<(), MakerError> {
     // Redeem expired fidelity bonds first
     maker
         .wallet()
         .write()?
         .redeem_expired_fidelity_bonds(AddressType::P2TR)?;
 
-    // Create or get existing fidelity proof for taproot maker
-    let fidelity_proof = setup_fidelity_bond_taproot(maker, maker_addr)?;
+    let fidelity = setup_fidelity_bond_taproot(maker.as_ref(), maker_addr)?;
 
-    broadcast_bond_on_nostr(fidelity_proof)?;
+    if spawn_nostr {
+        spawn_nostr_broadcast_task(fidelity, maker)?;
+    }
 
+    Ok(())
+}
+
+fn spawn_nostr_broadcast_task(
+    fidelity: FidelityProof,
+    maker: Arc<Maker>,
+) -> Result<(), MakerError> {
+    log::info!("Spawning nostr background task for maker");
+    let maker_clone = maker.clone();
+
+    let handle = thread::Builder::new()
+        .name("nostr-event-thread".to_string())
+        .spawn(move || {
+            if let Err(e) = broadcast_bond_on_nostr(fidelity.clone()) {
+                log::warn!("initial nostr broadcast failed: {:?}", e);
+            }
+
+            let interval = Duration::from_secs(30 * 60);
+            let tick = Duration::from_secs(2);
+            let mut elapsed = Duration::ZERO;
+
+            while !maker_clone.shutdown.load(Ordering::Acquire) {
+                thread::sleep(tick);
+                elapsed += tick;
+
+                if elapsed < interval {
+                    continue;
+                }
+
+                elapsed = Duration::ZERO;
+
+                log::debug!("re-pinging nostr relays with bond announcement");
+
+                if let Err(e) = broadcast_bond_on_nostr(fidelity.clone()) {
+                    log::warn!("nostr re-ping failed: {:?}", e);
+                }
+            }
+
+            log::info!("nostr background task stopped");
+        })?;
+
+    maker.thread_pool.add_thread(handle);
     Ok(())
 }
 
