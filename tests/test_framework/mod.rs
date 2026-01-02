@@ -12,6 +12,10 @@
 //!
 //! Checkout `tests/standard_swap.rs` for example of simple coinswap simulation test between 1 Taker and 2 Makers.
 
+//  TODO(for taproot tests):
+// - Figure out why the fee variances are occuring
+// - Don't wait for timeout during maker recovery, monitor the relevant logs instead
+
 // Temporary custom assert macro to check for balances ranging +-2 Sats owing to variability in Transaction Size by 1 vbyte(low-s).
 #[macro_export]
 macro_rules! assert_in_range {
