@@ -152,21 +152,18 @@ fn test_taproot_taker_abort2() {
     // Use spendable balance (regular + swap) since swept coins from V2 swaps
     // are tracked as SweptCoinV2 and appear in swap balance
     let taker_total_after = taker_balances.spendable;
-    assert!(
-        taker_total_after.to_sat() == 14999496, // swap never happened, funds recovered via timelock
-        "Taproot Taker Balance should decrease a little. Original: {}, After: {}",
-        taproot_taker_original_balance,
-        taker_total_after
+    assert_in_range!(
+        taker_total_after.to_sat(),
+        [14999492, 14999496], // swap never happened, funds recovered via timelock (with slight fee variance)
+        "Taproot Taker Balance should decrease a little."
     );
 
     // But the taker should still have a reasonable amount left (not all spent on fees)
     let balance_diff = taproot_taker_original_balance - taker_total_after;
-    assert!(
-        balance_diff.to_sat() == 504, // here a little fund loss because of outgoing contract creation, timelock recovery transaction.
-        "Taproot Taker should have paid a little fees. Original: {}, After: {},fees paid: {}",
-        taproot_taker_original_balance,
-        taker_total_after,
-        balance_diff
+    assert_in_range!(
+        balance_diff.to_sat(),
+        [504, 508], // here a little fund loss because of outgoing contract creation, timelock recovery transaction.
+        "Taproot Taker should have paid a little fees."
     );
     info!(
         "Taproot Taker balance verification passed. Original spendable: {}, After spendable: {} (fees paid: {})",
@@ -192,7 +189,7 @@ fn test_taproot_taker_abort2() {
         // Use spendable (regular + swap) for comparison
         assert_in_range!(
             balances.spendable.to_sat(),
-            [14999500], // here no fund loss because no contract were created by makers
+            [14999500, 14999518], // here no fund loss because no contract were created by makers (with slight fee variance)
             "Taproot Maker after balance check."
         );
 

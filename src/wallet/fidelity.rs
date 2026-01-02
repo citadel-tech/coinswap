@@ -1,7 +1,7 @@
 use crate::{
     protocol::messages::FidelityProof,
     utill::{redeemscript_to_scriptpubkey, MIN_FEE_RATE},
-    wallet::Wallet,
+    wallet::{AddressType, Wallet},
 };
 use bitcoin::{
     absolute::LockTime,
@@ -333,6 +333,7 @@ impl Wallet {
         locktime: LockTime,
         maker_address: Option<&str>,
         feerate: f64,
+        change_address_type: AddressType,
     ) -> Result<u32, WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
 
@@ -347,6 +348,7 @@ impl Wallet {
         let destination = Destination::Multi {
             outputs,
             op_return_data,
+            change_address_type,
         };
 
         let tx = self.spend_coins(&coins, destination, feerate)?;
@@ -399,7 +401,10 @@ impl Wallet {
     }
 
     /// Redeems all expired fidelity bonds in the wallet ,if found any.
-    pub fn redeem_expired_fidelity_bonds(&mut self) -> Result<(), WalletError> {
+    pub fn redeem_expired_fidelity_bonds(
+        &mut self,
+        destination_address_type: AddressType,
+    ) -> Result<(), WalletError> {
         let curr_height = self.rpc.get_block_count()? as u32;
 
         let expired_bond_indices = self
@@ -417,7 +422,8 @@ impl Wallet {
 
         expired_bond_indices.into_iter().try_for_each(|i| {
             log::info!("Fidelity Bond at index: {i:?} expired | Redeeming it.");
-            self.redeem_fidelity(i, MIN_FEE_RATE).map(|_| ())
+            self.redeem_fidelity(i, MIN_FEE_RATE, destination_address_type)
+                .map(|_| ())
         })
     }
 

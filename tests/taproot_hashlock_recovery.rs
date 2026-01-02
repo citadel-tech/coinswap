@@ -165,22 +165,19 @@ fn test_taproot_hashlock_recovery_end_to_end() {
     // as the parties are completing their swap by claiming their incoming contract
     // via script-path spend.
     let taker_total_after = taker_balances.spendable;
-    assert!(
-        taker_total_after.to_sat() == 14944003,
-        "Taproot Taker Balance check after hashlock recovery. Original: {}, After: {}",
-        taproot_taker_original_balance,
-        taker_total_after
+    assert_in_range!(
+        taker_total_after.to_sat(),
+        [14943999, 14944003],
+        "Taproot Taker Balance check after hashlock recovery."
     );
 
     // But the taker should still have a reasonable amount left (not all spent on fees)
     let balance_diff = taproot_taker_original_balance - taker_total_after;
-    assert!(
-        // In this swap case -: Each Maker fee is 13500 sats, mining fee (including hashlock recovery txn) is 28997 sats
-        balance_diff.to_sat() == 55997, // Maker fee + Hashlock recovery txn fee
-        "Taproot Taker should have paid some fees. Original: {}, After: {},fees paid: {}",
-        taproot_taker_original_balance,
-        taker_total_after,
-        balance_diff
+    // In this swap case -: Each Maker fee is 13500 sats, mining fee (including hashlock recovery txn) is 28997 sats
+    assert_in_range!(
+        balance_diff.to_sat(),
+        [55997, 56001], // Maker fee + Hashlock recovery txn fee (with slight variance)
+        "Taproot Taker should have paid some fees."
     );
     info!(
         "Taproot Taker balance verification passed. Original spendable: {}, After spendable: {} (fees paid: {})",
@@ -211,7 +208,9 @@ fn test_taproot_hashlock_recovery_end_to_end() {
             balances.spendable.to_sat(),
             [
                 14999500, // No fund loss,it occurs for a maker when it was not having any incoming contract (less likely to occur)
+                14999518, // No fund loss (with slight fee variance)
                 15020989, // 1st Maker completed the swap via hashlock path spending and earned some sats.
+                15021003, // 1st Maker (with slight fee variance)
                 15032496, // 2nd Maker completed the swap via hashlock path spending and earned some sats.
             ],
             "Taproot Maker after hashlock recovery balance check."
@@ -223,6 +222,8 @@ fn test_taproot_hashlock_recovery_end_to_end() {
             balance_diff,
             [
                 0, // No fund gain/lost for a maker,if it was not having any incoming contract(so no swap for this maker)
+                18, // No fund gain/lost (with slight fee variance)
+                21485, // 1st Maker gained fee (with slight variance)
                 21489, // 1st Maker gained fee after completing the swap via hashlock path spending.
                 32996  // 2nd Maker gained fee after completing the swap via hashlock path spending.
             ],

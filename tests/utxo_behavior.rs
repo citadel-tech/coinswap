@@ -4,7 +4,7 @@ use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
     utill::MIN_FEE_RATE,
-    wallet::WalletError,
+    wallet::{AddressType, WalletError},
 };
 use log::{info, warn};
 use std::{
@@ -107,7 +107,7 @@ fn test_address_grouping_behavior() {
                 .get_wallet()
                 .write()
                 .unwrap()
-                .get_next_external_address()
+                .get_next_external_address(AddressType::P2WPKH)
                 .unwrap()
         });
 
