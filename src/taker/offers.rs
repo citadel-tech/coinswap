@@ -44,7 +44,7 @@ use crate::{
 use super::error::TakerError;
 
 #[cfg(not(feature = "integration-test"))]
-const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 #[cfg(feature = "integration-test")]
 const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(10);

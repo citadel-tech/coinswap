@@ -21,7 +21,10 @@ use tungstenite::Message;
 use std::{
     io::ErrorKind,
     net::{Ipv4Addr, TcpListener, TcpStream},
-    sync::{atomic::Ordering::Relaxed, Arc},
+    sync::{
+        atomic::Ordering::{self, Relaxed},
+        Arc,
+    },
     thread::{self, sleep},
     time::Duration,
 };
@@ -73,7 +76,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<String, MakerError> {
         .as_ref()
         .track_and_update_unconfirmed_fidelity_bonds()?;
 
-    manage_fidelity_bonds(maker.as_ref(), &maker_address)?;
+    manage_fidelity_bonds(maker, &maker_address, true)?;
 
     Ok(maker_address)
 }
@@ -83,13 +86,63 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<String, MakerError> {
 /// It performs the following operations:
 /// 1. Redeems all expired fidelity bonds in the maker's wallet, if any are found.
 /// 2. Creates a new fidelity bond if no valid bonds remain after redemption.
-fn manage_fidelity_bonds(maker: &Maker, maker_addr: &str) -> Result<(), MakerError> {
+fn manage_fidelity_bonds(
+    maker: Arc<Maker>,
+    maker_addr: &str,
+    spawn_nostr: bool,
+) -> Result<(), MakerError> {
     maker
         .wallet
         .write()?
         .redeem_expired_fidelity_bonds(AddressType::P2WPKH)?;
-    let fidelity = setup_fidelity_bond(maker, maker_addr)?;
-    broadcast_bond_on_nostr(fidelity)?;
+
+    let fidelity = setup_fidelity_bond(maker.as_ref(), maker_addr)?;
+
+    if spawn_nostr {
+        spawn_nostr_broadcast_task(fidelity, maker)?;
+    }
+
+    Ok(())
+}
+fn spawn_nostr_broadcast_task(
+    fidelity: FidelityProof,
+    maker: Arc<Maker>,
+) -> Result<(), MakerError> {
+    log::info!("Spawning nostr background task for maker");
+    let maker_clone = maker.clone();
+
+    let handle = thread::Builder::new()
+        .name("nostr-event-thread".to_string())
+        .spawn(move || {
+            if let Err(e) = broadcast_bond_on_nostr(fidelity.clone()) {
+                log::warn!("initial nostr broadcast failed: {:?}", e);
+            }
+
+            let interval = Duration::from_secs(30 * 60);
+            let tick = Duration::from_secs(2);
+            let mut elapsed = Duration::ZERO;
+
+            while !maker_clone.shutdown.load(Ordering::Acquire) {
+                thread::sleep(tick);
+                elapsed += tick;
+
+                if elapsed < interval {
+                    continue;
+                }
+
+                elapsed = Duration::ZERO;
+
+                log::debug!("re-pinging nostr relays with bond announcement");
+
+                if let Err(e) = broadcast_bond_on_nostr(fidelity.clone()) {
+                    log::warn!("nostr re-ping failed: {:?}", e);
+                }
+            }
+
+            log::info!("nostr background task stopped");
+        })?;
+
+    maker.thread_pool.add_thread(handle);
     Ok(())
 }
 
@@ -571,7 +624,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         // potentially aborting the swap.
         if maker.ongoing_swap_state.lock()?.is_empty() {
             if interval_tracker.is_multiple_of(FIDELITY_BOND_UPDATE_INTERVAL) {
-                manage_fidelity_bonds(maker.as_ref(), &maker_addr)?;
+                manage_fidelity_bonds(maker.clone(), &maker_addr, false)?;
                 interval_tracker = 0;
             }
 
