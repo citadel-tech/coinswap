@@ -185,7 +185,10 @@ fn test_taproot_multi_maker() {
         assert_in_range!(
             balance_diff,
             // These maker gained fee are arranged as per the corresponding spendable balance in the above assertion list.
-            [16795, 16799, 16813, 26181, 26183, 26187, 37643, 37645, 37649, 37663, 52190, 52192, 52196, 52210],
+            [
+                16795, 16799, 16813, 26181, 26183, 26187, 37643, 37645, 37649, 37663, 52190, 52192,
+                52196, 52210
+            ],
             "Taproot Maker fee gained check"
         );
         info!(

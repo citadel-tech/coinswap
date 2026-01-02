@@ -246,7 +246,9 @@ pub fn fund_and_verify_taker(
     let mut new_txids = Vec::new();
 
     for _ in 0..utxo_count {
-        let taker_address = wallet.get_next_external_address(AddressType::P2WPKH).unwrap();
+        let taker_address = wallet
+            .get_next_external_address(AddressType::P2WPKH)
+            .unwrap();
         new_txids.push(send_to_address(bitcoind, &taker_address, utxo_value));
     }
 
@@ -437,7 +439,10 @@ pub fn fund_taproot_taker(
 ) -> Amount {
     // Fund with regular UTXOs
     for _ in 0..utxo_count {
-        let addr = taker.get_wallet_mut().get_next_external_address(AddressType::P2TR).unwrap();
+        let addr = taker
+            .get_wallet_mut()
+            .get_next_external_address(AddressType::P2TR)
+            .unwrap();
         send_to_address(bitcoind, &addr, utxo_value);
     }
 
