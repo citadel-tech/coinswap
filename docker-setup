@@ -465,8 +465,22 @@ configure_setup() {
     read -p "Makerd RPC port [${DEFAULT_MAKERD_RPC_PORT}]: " makerd_rpc
     MAKERD_RPC_PORT="${makerd_rpc:-$DEFAULT_MAKERD_RPC_PORT}"
     
-    read -p "Use Taproot (experimental)? [Y/n]: " use_taproot
-    if [[ "${use_taproot:-Y}" =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "Select Swap Type:"
+    echo ""
+    echo "  1) Taproot (Recommended New Protocol)"
+    echo "     - Contract Tx with [Musig2 + Taproot HTLC]. Cheaper swap fees, more private. "
+    echo ""
+    echo "  2) Legacy (Original Atomic Swap Protocol)"
+    echo "     - Contract Tx with [2of2 Multisig + P2WSH HTLC]. Higher swap fees, less private."
+    echo -e "${YELLOW}NOTE:${NC}"
+    echo -e "${YELLOW}  Currently, a maker can only perform Legacy or Taproot swaps, but cannot perform both.${NC}"
+    echo -e "${YELLOW}  Although it can handle both taproot and legacy transactions for regular wallet operations.${NC}" 
+    echo -e "${YELLOW}  If you wanna serve both types of swap in the market, run two separate makers of each type.${NC}" 
+    echo -e "${YELLOW}  You can use the existing bitcoind Docker sockets for the second maker too to avoid multiple node IBD.${NC}"
+    read -p "Selected Option [1]: " swap_type
+
+    if [[ "${swap_type:-1}" == "1" ]]; then
         USE_TAPROOT="true"
     else
         USE_TAPROOT="false"
