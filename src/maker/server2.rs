@@ -656,17 +656,14 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
 
 /// Starts the taproot maker server
 pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
-    log::info!(
-        "[{}] Starting taproot coinswap maker server",
-        maker.config.network_port
-    );
+    let network_port = maker.config.network_port;
+    log::info!("[{network_port}] Starting taproot coinswap maker server",);
 
     // Set up network
     let maker_address = network_bootstrap_taproot(maker.clone())?;
 
     log::info!(
-        "[{}] Taproot maker initialized - Address: {}",
-        maker.config.network_port,
+        "[{network_port}] Taproot maker initialized - Address: {}",
         maker_address,
     );
 
@@ -758,8 +755,7 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
         let (inc, out) = maker.wallet.read()?.find_unfinished_swapcoins_v2();
         if !inc.is_empty() || !out.is_empty() {
             log::info!(
-                "[{}] Incomplete taproot swaps detected ({} incoming, {} outgoing). Starting recovery.",
-                maker.config.network_port,
+                "[{network_port}] Incomplete taproot swaps detected ({} incoming, {} outgoing). Starting recovery.",
                 inc.len(),
                 out.len()
             );
@@ -769,18 +765,11 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     // Mark setup as complete
     maker.is_setup_complete.store(true, Relaxed);
-    log::info!(
-        "[{}] Taproot maker setup completed",
-        maker.config.network_port
-    );
+    log::info!("[{network_port}] Taproot maker setup completed",);
 
     // Start listening for P2P connections
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.network_port))?;
-    log::info!(
-        "[{}] Taproot maker server listening on port {}",
-        maker.config.network_port,
-        maker.config.network_port
-    );
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, network_port))?;
+    log::info!("[{network_port}] Taproot maker server listening on port {network_port}",);
 
     // Set listener to non-blocking mode to allow periodic shutdown checks
     listener.set_nonblocking(true)?;
@@ -788,35 +777,20 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
     // Main server loop
     while !maker.shutdown.load(Relaxed) {
         match listener.accept() {
-            Ok((mut stream, addr)) => {
-                log::info!(
-                    "[{}] New client connection from: {}",
-                    maker.config.network_port,
-                    addr
-                );
-                let maker_clone = maker.clone();
-                let client_handle = thread::Builder::new()
-                    .name(format!("client-{}", addr))
-                    .spawn(move || {
-                        if let Err(e) = handle_client_taproot(&maker_clone, &mut stream) {
-                            log::error!("Client handler error: {:?}", e);
-                        }
-                    })?;
-                maker.thread_pool.add_thread(client_handle);
-            }
-            Err(e) => {
-                if e.kind() == ErrorKind::WouldBlock {
-                    // No incoming connections, continue loop
-                } else {
-                    log::error!(
-                        "[{}] Failed to accept connection: {:?}",
-                        maker.config.network_port,
-                        e
-                    );
+            Ok((mut stream, _)) => {
+                log::info!("[{network_port}] Received incoming connection");
+
+                if let Err(e) = handle_client_taproot(&maker, &mut stream) {
+                    log::error!("[{network_port}] Error Handling client request {e:?}");
                 }
             }
-        }
 
+            Err(e) => {
+                if e.kind() != ErrorKind::WouldBlock {
+                    log::error!("[{network_port}] Error accepting incoming connection: {e:?}");
+                }
+            }
+        };
         // Sleep briefly to avoid busy waiting
         sleep(HEART_BEAT_INTERVAL);
     }
