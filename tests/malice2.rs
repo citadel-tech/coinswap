@@ -19,7 +19,7 @@ use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 /// This case is hard to "blame". As the contract transactions are available to both the Makers, it's not identifiable
 /// which Maker is the culprit. Taker does not ban in this case.
 #[test]
-fn malice2_maker_broadcast_contract_prematurely() {
+fn malice_2() {
     // ---- Setup ----
 
     let makers_config_map = [
@@ -100,17 +100,10 @@ fn malice2_maker_broadcast_contract_prematurely() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done, wait for maker threads to conclude.
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
+    //wait for maker's to complete recovery
+    info!("Waiting for maker to complete recovery");
     thread::sleep(Duration::from_secs(10));
 
     ///////////////////
@@ -128,22 +121,16 @@ fn malice2_maker_broadcast_contract_prematurely() {
     //
     // Case 1: Maker6102 is the First Maker.
     // Workflow: Taker -> Maker6102 (BroadcastContractAfterSetup) -> Maker16102
-    //
-    // | Participant    | Amount Received (Sats) | Amount Forwarded (Sats) | Fee (Sats) | Funding Mining Fees (Sats) | Total Fees (Sats) |
-    // |----------------|------------------------|-------------------------|------------|----------------------------|-------------------|
-    // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
-    // | **Maker6102**  | 500,000                | 463,500                 | 33,500     | 3,000                      | 36,500            |
-    //
     // Maker6102 => BroadcastContractAfterSetup
     //
     // Seeing those contract txes, the Taker recovers from the swap.
-    // Taker and Maker6102 recover funds but lose **6,768 sats** each in fees.
+    // Taker,Maker6102 recover funds but lose ** 858 sats** each in fees.
     //
     // Final Outcome for Taker & Maker6102:
-    // | Participant    | Mining Fee for Contract txes (Sats) | Timelock Fee (Sats) | Funding Fee (Sats) | Total Recovery Fees (Sats) |
+    // | Participant    | Mining Fee for Contract txes (Sats) | Timelock Fee (Sats) | Funding Fee (Sats)| Total Recovery Fees (Sats) |
     // |----------------|------------------------------------|---------------------|--------------------|----------------------------|
-    // | **Taker**      | 3,000                              | 768                 | 3,000              | 6,768                      |
-    // | **Maker6102**  | 3,000                              | 768                 | 3,000              | 6,768                      |
+    // | **Taker**      | -                                  | 858                 | -                  | 858                        |
+    // | **Maker6102**  | -                                  | 858                 | -                  | 858                        |
     //
     // Final Outcome for Maker16102:
     // | Participant    | Coinswap Outcome (Sats) |
@@ -155,33 +142,129 @@ fn malice2_maker_broadcast_contract_prematurely() {
     // Case 2: Maker6102 is the Last Maker.
     // Workflow: Taker -> Maker16102 -> Maker6102 (BroadcastContractAfterSetup)
     //
-    // | Participant    | Amount Received (Sats) | Amount Forwarded (Sats) | Fee (Sats) | Funding Mining Fees (Sats) | Total Fees (Sats) |
-    // |----------------|------------------------|-------------------------|------------|----------------------------|-------------------|
-    // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
-    // | **Maker16102** | 500,000                | 463,500                 | 33,500     | 3,000                      | 36,500            |
-    // | **Maker6102**  | 463,500                | 438,642                 | 21,858     | 3,000                      | 24,858            |
-    //
+    // | Participant    | Amount Received (Sats) | Amount Forwarded (Sats) | Fee (Sats) | Total Fees (Sats) |
+    // |----------------|------------------------|-------------------------|------------|-------------------|
+    // | **Taker**      | 443,633                | 500,000                 | _          | 1,179(mining fees)|
+    // | **Maker16102** | 500,000                | 478,007                 | 21,992     | 21,992            |
+    // | **Maker6102**  | 478,007                | 443,633                 | 33,500     | 33,500            |
     // Maker6102 => BroadcastContractAfterSetup
-    //
-    // Participants regain their initial funding amounts but incur a total loss of **6,768 sats**
-    // due to mining fees (recovery + initial transaction fees).
-    //
-    // | Participant    | Mining Fee for Contract txes (Sats) | Timelock Fee (Sats) | Funding Fee (Sats) | Total Recovery Fees (Sats) |
-    // |----------------|------------------------------------|---------------------|--------------------|----------------------------|
-    // | **Taker**      | 3,000                              | 768                 | 3,000              | 6,768                      |
-    // | **Maker16102** | 3,000                              | 768                 | 3,000              | 6,768                      |
-    // | **Maker6102**  | 3,000                              | 768                 | 3,000              | 6,768                      |
 
     info!("📊 Verifying malicious scenario recovery results");
-    // After Swap checks:
-    verify_swap_results(
-        taker,
-        &makers,
-        org_taker_spend_balance,
-        org_maker_spend_balances,
-    );
+    // Check Taker balances
+    {
+        let wallet = taker.get_wallet();
+        let balances = wallet.get_balances().unwrap();
+
+        // Debug logging for taker
+        log::info!(
+            "🔍 DEBUG Taker - Regular: {}, Swap: {}, Spendable: {},Contract: {}",
+            balances.regular.to_btc(),
+            balances.swap.to_btc(),
+            balances.spendable.to_btc(),
+            balances.contract.to_btc()
+        );
+        assert_in_range!(
+            balances.regular.to_sat(),
+            [14499696],
+            "Taker seed balance mismatch"
+        );
+
+        assert_in_range!(
+            balances.swap.to_sat(),
+            [
+                443633 //swap balance
+            ],
+            "Taker swapcoin balance mismatch"
+        );
+
+        assert_in_range!(balances.contract.to_sat(), [0], "Contract balance mismatch");
+        assert_eq!(balances.fidelity, Amount::ZERO);
+
+        // Check balance difference
+        let balance_diff = org_taker_spend_balance
+            .checked_sub(balances.spendable)
+            .unwrap();
+
+        log::info!(
+            "🔍 DEBUG Taker balance diff: {} sats",
+            balance_diff.to_sat()
+        );
+        assert!(
+            balance_diff.to_sat() == 56671,
+            "Taker spendable balance change mismatch"
+        );
+    }
+
+    // Check Maker balances
+    makers
+        .iter()
+        .zip(org_maker_spend_balances.iter())
+        .enumerate()
+        .for_each(|(maker_index, (maker, org_spend_balance))| {
+            let mut wallet = maker.get_wallet().write().unwrap();
+            wallet.sync_and_save().unwrap();
+            let balances = wallet.get_balances().unwrap();
+
+            // Debug logging for makers
+            log::info!(
+                "🔍 DEBUG Maker {} - Regular: {}, Swap: {}, Contract: {}, Spendable: {}",
+                maker_index,
+                balances.regular.to_btc(),
+                balances.swap.to_btc(),
+                balances.contract.to_btc(),
+                balances.spendable.to_btc()
+            );
+
+            assert_in_range!(
+                balances.regular.to_sat(),
+                [
+                    14555287, // 1st maker
+                    14533002, // 2nd maker
+                ],
+                "Maker seed balance mismatch"
+            );
+
+            assert_in_range!(
+                balances.swap.to_sat(),
+                [
+                    465918, // First maker
+                    499724, // Second maker,
+                ],
+                "Maker swapcoin balance mismatch"
+            );
+            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
+            // Check spendable balance difference.
+            let balance_diff = match org_spend_balance.checked_sub(balances.spendable) {
+                None => balances.spendable.checked_sub(*org_spend_balance).unwrap(), // Successful swap as Makers balance increase by Coinswap fee.
+                Some(diff) => diff, // No spending or unsuccessful swap , Maker may have lost some funds here, generally due to timelock recovery transaction
+            };
+
+            log::info!(
+                "🔍 DEBUG Maker {} balance diff: {} sats",
+                maker_index,
+                balance_diff.to_sat()
+            );
+            assert_in_range!(
+                balance_diff.to_sat(),
+                [
+                    21705, // First maker fee gained
+                    33226, // Second maker fee gained
+                ],
+                "Maker spendable balance change mismatch"
+            );
+        });
+    log::info!("✅ Swap results verification complete");
 
     info!("🎉 All checks successful. Terminating integration test case");
+
+    //Shutdown Makers.
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     test_framework.stop();
     block_generation_handle.join().unwrap();
