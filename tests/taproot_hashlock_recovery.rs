@@ -7,14 +7,9 @@
 
 use bitcoin::Amount;
 use coinswap::{
-    maker::{start_maker_server_taproot, TaprootMaker, TaprootMakerBehavior as MakerBehavior},
-    taker::{
-        api2::{SwapParams, Taker},
-        TakerBehavior,
-    },
-    wallet::AddressType,
+    maker::{start_maker_server_taproot, TaprootMakerBehavior as MakerBehavior},
+    taker::api2::{SwapParams, TakerBehavior},
 };
-use std::sync::Arc;
 
 mod test_framework;
 use test_framework::*;
@@ -89,17 +84,7 @@ fn test_taproot_hashlock_recovery_end_to_end() {
         maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
 
-    // Get balances before swap
-    let maker_balance_before = {
-        let wallet = taproot_makers[0].wallet().read().unwrap();
-        let balances = wallet.get_balances().unwrap();
-        info!(
-            "Maker balance before swap: Regular: {}, Spendable: {}",
-            balances.regular, balances.spendable
-        );
-        balances.spendable
-    };
-
+    let maker_spendable_balance = verify_maker_pre_swap_balance_taproot(&taproot_makers);
     info!("🔄 Initiating taproot coinswap (will fail mid-swap)...");
 
     // Swap params - small amount for faster testing
@@ -155,70 +140,102 @@ fn test_taproot_hashlock_recovery_end_to_end() {
     generate_blocks(bitcoind, 2);
     taproot_taker.get_wallet_mut().sync_and_save().unwrap();
 
-    info!("📊 Taker balance after recovery:");
     let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
     info!(
-        "  Regular: {}, Contract: {}, Spendable: {}",
-        taker_balances_after.regular, taker_balances_after.contract, taker_balances_after.spendable
-    );
-
-    // Verify taker recovered their funds via hashlock
-    let max_taker_fees = Amount::from_sat(100000);
-    assert!(
-        taker_balances_after.spendable > taproot_taker_original_balance - max_taker_fees,
-        "Taker should have recovered via hashlock. Original: {}, After: {}, Lost: {}",
-        taproot_taker_original_balance,
+         "📊 Taproot Taker balance after hashlock recovery: Regular: {}, Contract: {}, Spendable: {}, Swap: {}",
+        taker_balances_after.regular,
+        taker_balances_after.contract,
         taker_balances_after.spendable,
-        taproot_taker_original_balance - taker_balances_after.spendable
+        taker_balances_after.swap,
     );
 
     // Now wait for maker to extract preimage and recover via hashlock
     info!("⏳ Waiting for maker to extract preimage and recover via hashlock...");
     std::thread::sleep(std::time::Duration::from_secs(60));
-
     // Mine more blocks to give maker time to see the hashlock sweep
     generate_blocks(bitcoind, 2);
 
-    // Wait a bit more for maker's recovery
-    std::thread::sleep(std::time::Duration::from_secs(10));
+    // Verify swap results
+    let taker_wallet = taproot_taker.get_wallet();
+    let taker_balances = taker_wallet.get_balances().unwrap();
 
-    // Verify maker recovered their incoming contract via hashlock
-    let maker_balance_after = {
-        let mut wallet = taproot_makers[0].wallet().write().unwrap();
-        wallet.sync_and_save().unwrap();
-        let balances = wallet.get_balances().unwrap();
-        info!(
-            "📊 Maker balance after hashlock recovery: Regular: {}, Spendable: {}",
-            balances.regular, balances.spendable
-        );
-        balances.spendable
-    };
-
-    // Maker should have recovered their outgoing contract via hashlock after extracting preimage
-    // They swept incoming (~500k sats) and should have it confirmed
-    let max_maker_fees = Amount::from_sat(100000); // 0.001 BTC max fees
-    assert!(
-        maker_balance_after >= maker_balance_before - max_maker_fees,
-        "Maker should have recovered via hashlock. Before: {}, After: {}, Lost: {}",
-        maker_balance_before,
-        maker_balance_after,
-        maker_balance_before - maker_balance_after
+    // Use spendable balance (regular + swap) since swept coins from V2 swaps
+    // are tracked as SweptCoinV2 and appear in swap balance
+    // Here in hashlock recovery the spendable balance is almost similar to key-path spend
+    // as the parties are completing their swap by claiming their incoming contract
+    // via script-path spend.
+    let taker_total_after = taker_balances.spendable;
+    assert_in_range!(
+        taker_total_after.to_sat(),
+        [14943999, 14944003],
+        "Taproot Taker Balance check after hashlock recovery."
     );
 
-    info!("✅ Hashlock recovery test passed!");
+    // But the taker should still have a reasonable amount left (not all spent on fees)
+    let balance_diff = taproot_taker_original_balance - taker_total_after;
+    // In this swap case -: Each Maker fee is 13500 sats, mining fee (including hashlock recovery txn) is 28997 sats
+    assert_in_range!(
+        balance_diff.to_sat(),
+        [55997, 56001], // Maker fee + Hashlock recovery txn fee (with slight variance)
+        "Taproot Taker should have paid some fees."
+    );
     info!(
-        "   Taker original balance: {}, Recovered: {}, Fees paid: {}",
+        "Taproot Taker balance verification passed. Original spendable: {}, After spendable: {} (fees paid: {})",
         taproot_taker_original_balance,
-        taker_balances_after.spendable,
-        taproot_taker_original_balance - taker_balances_after.spendable
-    );
-    info!(
-        "   Maker balance before: {}, After: {} (change: {})",
-        maker_balance_before,
-        maker_balance_after,
-        maker_balance_after.to_sat() as i64 - maker_balance_before.to_sat() as i64
+        taker_total_after,
+        balance_diff
     );
 
+    // Verify makers earned fees
+    for (i, (maker, original_spendable)) in taproot_makers
+        .iter()
+        .zip(maker_spendable_balance)
+        .enumerate()
+    {
+        let wallet = maker.wallet().read().unwrap();
+        let balances = wallet.get_balances().unwrap();
+
+        info!(
+            "Taproot Maker {} final balances - Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Spendable: {},Swap:{}",
+            i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable,balances.swap,
+        );
+
+        // Use spendable (regular + swap) for comparison
+        // Here in hashlock recovery the spendable balance is almost similar to key-path spend
+        // as the parties are completing their swap by claiming their incoming contract
+        // via script-path spend.
+        assert_in_range!(
+            balances.spendable.to_sat(),
+            [
+                14999500, // No fund loss,it occurs for a maker when it was not having any incoming contract (less likely to occur)
+                14999518, // No fund loss (with slight fee variance)
+                15020989, // 1st Maker completed the swap via hashlock path spending and earned some sats.
+                15021003, // 1st Maker (with slight fee variance)
+                15032496, // 2nd Maker completed the swap via hashlock path spending and earned some sats.
+            ],
+            "Taproot Maker after hashlock recovery balance check."
+        );
+
+        let balance_diff = balances.spendable.to_sat() - original_spendable.to_sat();
+        // maker gained fee arranged in the order of corresponding spendable balance in the above assertion
+        assert_in_range!(
+            balance_diff,
+            [
+                0, // No fund gain/lost for a maker,if it was not having any incoming contract(so no swap for this maker)
+                18, // No fund gain/lost (with slight fee variance)
+                21485, // 1st Maker gained fee (with slight variance)
+                21489, // 1st Maker gained fee after completing the swap via hashlock path spending.
+                32996  // 2nd Maker gained fee after completing the swap via hashlock path spending.
+            ],
+            "Taproot Maker fee gained by recovering via hashlock"
+        );
+
+        info!(
+            "Taproot Maker {} balance verification passed. Original spendable: {}, Current spendable: {}, fee gained: {}",
+            i, original_spendable, balances.spendable, balance_diff
+        );
+    }
+    info!("✅ Hashlock recovery test passed!");
     // Shutdown maker
     taproot_makers
         .iter()
@@ -230,71 +247,4 @@ fn test_taproot_hashlock_recovery_end_to_end() {
 
     test_framework.stop();
     block_generation_handle.join().unwrap();
-}
-
-/// Fund taproot makers and verify their balances
-fn fund_taproot_makers(
-    makers: &[Arc<TaprootMaker>],
-    bitcoind: &bitcoind::BitcoinD,
-    utxo_count: u32,
-    utxo_value: Amount,
-) {
-    for maker in makers {
-        let mut wallet = maker.wallet().write().unwrap();
-
-        // Fund with regular UTXOs
-        for _ in 0..utxo_count {
-            let addr = wallet
-                .get_next_external_address(AddressType::P2WPKH)
-                .unwrap();
-            send_to_address(bitcoind, &addr, utxo_value);
-        }
-
-        generate_blocks(bitcoind, 1);
-        wallet.sync_and_save().unwrap();
-
-        // Verify balances
-        let balances = wallet.get_balances().unwrap();
-        let expected_regular = utxo_value * utxo_count.into();
-
-        assert_eq!(balances.regular, expected_regular);
-
-        info!(
-            "Taproot Maker funded successfully. Regular: {}, Fidelity: {}",
-            balances.regular, balances.fidelity
-        );
-    }
-}
-
-/// Fund taproot taker and verify balance
-fn fund_taproot_taker(
-    taker: &mut Taker,
-    bitcoind: &bitcoind::BitcoinD,
-    utxo_count: u32,
-    utxo_value: Amount,
-) -> Amount {
-    // Fund with regular UTXOs
-    for _ in 0..utxo_count {
-        let addr = taker
-            .get_wallet_mut()
-            .get_next_external_address(AddressType::P2WPKH)
-            .unwrap();
-        send_to_address(bitcoind, &addr, utxo_value);
-    }
-
-    generate_blocks(bitcoind, 1);
-    taker.get_wallet_mut().sync_and_save().unwrap();
-
-    // Verify balances
-    let balances = taker.get_wallet().get_balances().unwrap();
-    let expected_regular = utxo_value * utxo_count.into();
-
-    assert_eq!(balances.regular, expected_regular);
-
-    info!(
-        "Taproot Taker funded successfully. Regular: {}, Spendable: {}",
-        balances.regular, balances.spendable
-    );
-
-    balances.spendable
 }

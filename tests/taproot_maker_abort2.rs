@@ -1,10 +1,8 @@
 #![cfg(feature = "integration-test")]
-//! Integration test for Taproot Timelock Recovery
+//! Integration test for Taproot Maker abort scenario
 //!
-//! This test demonstrates end-to-end taproot timelock-based recovery when a maker
-//! closes the connection after sweeping their incoming contract but before completing
-//! the private key handover. The taker must wait for the timelock to mature, then
-//! recover funds via script-path timelock spending.
+//! This test demonstrates when a maker closes the connection at private key handover step,before sweeping.
+//! The taker then recover funds via hashlock spend.
 
 use bitcoin::Amount;
 use coinswap::{
@@ -18,28 +16,24 @@ use test_framework::*;
 use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
-/// Test taproot timelock recovery - full end-to-end
-///
 /// Scenario:
 /// 1. Taker initiates swap with Maker
-/// 2. Taker sends outgoing contract to Maker
-/// 3. Maker closes connection after receiving incoming contract (before creating outgoing)
-/// 4. Taker has outgoing contract stuck, no incoming contract received
-/// 5. Both parties wait for timelock to mature
-/// 6. Both parties recover via timelock (no preimage available)
+/// 2. Taker sends private key to Maker
+/// 3. Maker closes connection after receiving private key, before sweeping their incoming contract.
+/// 4. Taker then sweeps it's incoming contract via hashlock.
 #[test]
-fn test_taproot_timelock_recovery_end_to_end() {
+fn test_taproot_maker_abort2() {
     // ---- Setup ----
-    warn!("🧪 Running Test: Taproot Timelock Recovery - End to End");
+    warn!("🧪 Running Test: Taproot Maker Abort 2");
 
-    // Create one maker that closes at contract exchange (forces timelock recovery)
+    // Create one normal maker, and a maker that closes connection at PrivateKeyHandover step
     let naughty = 7104;
     let makers_config_map = vec![
         (7103, Some(19071), MakerBehavior::Normal),
         (
             naughty,
             Some(19072),
-            MakerBehavior::CloseAtContractSigsExchange,
+            MakerBehavior::CloseAtPrivateKeyHandover,
         ),
     ];
     let taker_behavior = vec![TakerBehavior::Normal];
@@ -90,9 +84,8 @@ fn test_taproot_timelock_recovery_end_to_end() {
     for maker in &taproot_makers {
         maker.wallet().write().unwrap().sync_and_save().unwrap();
     }
-
     let maker_spendable_balance = verify_maker_pre_swap_balance_taproot(&taproot_makers);
-    info!("🔄 Initiating taproot coinswap (will fail mid-swap)...");
+    info!("🔄 Initiating taproot maker abort 2 case. (Will fail mid-swap due to one maker closing connection at handling private key step)");
 
     // Swap params - small amount for faster testing
     let swap_params = SwapParams {
@@ -117,79 +110,47 @@ fn test_taproot_timelock_recovery_end_to_end() {
         }
     }
 
-    // Mine a block to confirm any broadcasted transactions
-    // Note: do_coinswap may have already attempted recovery internally, but timelock
-    // recovery requires waiting for blocks, so funds may still be in contract
-    generate_blocks(bitcoind, 1);
-    taproot_taker.get_wallet_mut().sync_and_save().unwrap();
-
-    info!("📊 Taker balance after failed swap:");
-    let taker_balances = taproot_taker.get_wallet().get_balances().unwrap();
-    info!(
-        "  Regular: {}, Contract: {}, Spendable: {}",
-        taker_balances.regular, taker_balances.contract, taker_balances.spendable
-    );
-
-    // Mine blocks to mature timelock (20 blocks from swap params)
-    info!("⏰ Mining blocks to mature timelock (20+ blocks)...");
-    generate_blocks(bitcoind, 25);
-
-    // Taker recovers via TIMELOCK (may be no-op if already recovered)
-    info!("🔧 Taker recovering via timelock...");
-    match taproot_taker.recover_from_swap() {
-        Ok(()) => {
-            info!("✅ Taker recovery completed!");
-        }
-        Err(e) => {
-            panic!("Taker timelock recovery failed: {:?}", e);
-        }
-    }
-
-    // Mine blocks to confirm taker's recovery
+    // Mine blocks to confirm any recovery transactions
+    info!("⛏️ Mining blocks to confirm recovery transactions...");
     generate_blocks(bitcoind, 2);
     taproot_taker.get_wallet_mut().sync_and_save().unwrap();
 
-    info!("📊 Taproot Taker balance after timelock recovery:");
     let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
     info!(
-         "📊 Taproot Taker balance after timelock recovery: Regular: {}, Contract: {}, Spendable: {}, Swap: {}",
+         "📊 Taproot Taker balance after hashlock recovery: Regular: {}, Contract: {}, Spendable: {}, Swap: {}",
         taker_balances_after.regular,
         taker_balances_after.contract,
         taker_balances_after.spendable,
         taker_balances_after.swap,
     );
-    // Wait for maker's automatic recovery to trigger
-    // The idle-checker detects dropped connections after 60 seconds (IDLE_CONNECTION_TIMEOUT)
-    info!("⏳ Waiting for maker's automatic recovery (65 seconds)...");
-    thread::sleep(Duration::from_secs(65));
-    // Mine blocks to confirm maker's recovery transactions
-    generate_blocks(bitcoind, 10);
-
-    info!("🚫 Verifying naughty maker gets banned");
-    // Maker gets banned for being naughty.
-    assert_eq!(
-        format!("127.0.0.1:{naughty}"),
-        taproot_taker.get_bad_makers()[0].address.to_string()
-    );
+    // Now wait for maker to extract preimage and recover via hashlock
+    info!("⏳ Waiting for maker to extract preimage and recover via hashlock...");
+    std::thread::sleep(std::time::Duration::from_secs(60));
+    // Mine more blocks to give maker time to see the hashlock sweep
+    generate_blocks(bitcoind, 2);
 
     // Verify swap results
     let taker_wallet = taproot_taker.get_wallet();
     let taker_balances = taker_wallet.get_balances().unwrap();
+
     // Use spendable balance (regular + swap) since swept coins from V2 swaps
     // are tracked as SweptCoinV2 and appear in swap balance
+    // Here in hashlock recovery the spendable balance is almost similar to key-path spend
+    // as the parties are completing their swap by claiming their incoming contract
+    // via script-path spend.
     let taker_total_after = taker_balances.spendable;
     assert_in_range!(
         taker_total_after.to_sat(),
-        [14999492, 14999496], // swap never happened, funds recovered via timelock (with slight fee variance)
-        "Taproot Taker Balance should decrease a little."
+        [14943999, 14944003],
+        "Taproot Taker Balance check after hashlock recovery."
     );
 
-    // But the taker should still have a reasonable amount left (not all spent on fees)
     let balance_diff = taproot_taker_original_balance - taker_total_after;
+    // In this swap case -: Each Maker fee is 13500 sats, mining fee (including hashlock recovery txn) is 28997 sats
     assert_in_range!(
         balance_diff.to_sat(),
-        [504, 508], // here a little fund loss because of outgoing contract creation, and therefore a timelock recovery transaction for recovering it.
-        "Taproot Taker should have paid a little fees."
+        [55997, 56001], // Maker fee + hashlock_recovery_tx fee (with slight variance)
+        "Taproot Taker should have paid some fees."
     );
     info!(
         "Taproot Taker balance verification passed. Original spendable: {}, After spendable: {} (fees paid: {})",
@@ -213,35 +174,40 @@ fn test_taproot_timelock_recovery_end_to_end() {
         );
 
         // Use spendable (regular + swap) for comparison
+        // Here in hashlock recovery the spendable balance is almost similar to key-path spend
+        // as the parties are completing their swap by claiming their incoming contract
+        // via script-path spend.
         assert_in_range!(
             balances.spendable.to_sat(),
             [
-                14999500, // The corresponding maker didn't had any outgoing contract,so no need of recovery, hence no fund loss.
-                14999518, // Slight fee variance case (no recovery needed)
-                14999010, // Slight fee variance case (recovery needed)
-                14998996, // Here a little fund loss because of outgoing contract creation, and therefore a timelock recovery transaction for recovering it.
+                14999500, // No fund loss,it occurs for a maker when it was not having any incoming contract (less likely to occur)
+                14999518, // No fund loss (with slight fee variance)
+                15020989, // 1st Maker completed the swap via hashlock path spending and earned some sats.
+                15021003, // 1st Maker (with slight fee variance)
+                15032496, // 2nd Maker completed the swap via hashlock path spending and earned some sats.
             ],
-            "Taproot Maker after balance check."
+            "Taproot Maker after hashlock recovery balance check."
         );
 
-        let balance_diff = original_spendable.to_sat() - balances.spendable.to_sat();
-        // Maker may haVe lost some sats here due to timelock recovery transaction
+        let balance_diff = balances.spendable.to_sat() - original_spendable.to_sat();
+        // maker gained fee arranged in the order of corresponding spendable balance in the above assertion
         assert_in_range!(
             balance_diff,
             [
-                0,   // Here the maker was not having any outgoing contract (depends on the order of maker)
-                490, // Slight fee variance
-                504, // Corresponding maker recovered it's outgoing contract via timelock spending path
-                508, // Slight fee variance
+                0, // No fund gain/lost for a maker,if it was not having any incoming contract(so no swap for this maker)
+                21485, // 1st Maker gained fee (with slight variance)
+                21489, // 1st Maker gained fee after completing the swap via hashlock path spending.
+                32996  // 2nd Maker gained fee after completing the swap via hashlock path spending.
             ],
-            "Taproot Maker should have loose some funds here due to timelock recovery transaction."
+            "Taproot Maker should have gained some fees here."
         );
+
         info!(
             "Taproot Maker {} balance verification passed. Original spendable: {}, Current spendable: {}, fee gained: {}",
             i, original_spendable, balances.spendable, balance_diff
         );
     }
-    info!("✅ Timelock recovery test passed!");
+    info!("✅ Taproot Maker abort 2 recovery test passed!");
     // Shutdown maker
     taproot_makers
         .iter()
@@ -250,6 +216,13 @@ fn test_taproot_timelock_recovery_end_to_end() {
     taproot_maker_threads
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
+
+    info!("🚫 Verifying naughty maker gets banned");
+    // Maker gets banned for being naughty.
+    assert_eq!(
+        format!("127.0.0.1:{naughty}"),
+        taproot_taker.get_bad_makers()[0].address.to_string()
+    );
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

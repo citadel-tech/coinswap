@@ -65,6 +65,8 @@ pub enum MakerBehavior {
     /// Close connection after sweeping incoming contract but before completing handover
     /// This allows maker to recover their coins but forces taker to recover via hashlock/timelock
     CloseAfterSweep,
+    /// Close connection after accepting Swap offer from taker and sending it AckResponse message.
+    CloseAfterAckResponse,
 }
 
 /// Interval for health checks on a stable RPC connection with bitcoind.
@@ -924,6 +926,20 @@ impl Maker {
                 .incoming_contract
                 .contract_tx
                 .compute_txid();
+
+            for (vout, _) in connection_state
+                .incoming_contract
+                .contract_tx
+                .output
+                .iter()
+                .enumerate()
+            {
+                let outpoint = OutPoint {
+                    txid: incoming_txid,
+                    vout: vout as u32,
+                };
+                self.watch_service.unwatch(outpoint);
+            }
 
             // Record the swept coin to track swap balance
             let output_scriptpubkey = spending_tx.output[0].script_pubkey.clone();
