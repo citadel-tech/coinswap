@@ -1731,6 +1731,11 @@ impl Taker {
         log::info!("Taproot swap recovery completed");
         Ok(())
     }
+
+    /// Indicates if offerbook syncing is in progress or not.
+    pub fn is_offerbook_syncing(&self) -> bool {
+        self.offer_sync_handle.is_syncing()
+    }
 }
 
 impl Role for Taker {
