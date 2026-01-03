@@ -991,6 +991,10 @@ impl Maker {
         // Get the contract output value (assuming it's the first output)
         let contract_value = incoming_contract_tx.output[0].value;
 
+        // sync wallet to update utxo cache before getting destination address
+        // ensuring we get a fresh address different from any change address
+        self.wallet.write()?.sync_and_save()?;
+
         // Get a fresh internal address for the destination
         let destination_address = {
             let wallet = self.wallet.read()?;
