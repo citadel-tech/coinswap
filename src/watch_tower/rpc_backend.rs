@@ -265,7 +265,7 @@ impl BitcoinRpc {
                         }
                     }
                     None => {
-                        log::warn!("Invalid fidelity {txid}:{vout} via {relay_url}");
+                        log::debug!("Invalid fidelity {txid}:{vout} via {relay_url}");
                     }
                 }
             }
