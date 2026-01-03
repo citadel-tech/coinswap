@@ -227,6 +227,7 @@ fn test_taproot_hashlock_recovery_end_to_end() {
                 21485, // 1st Maker gained fee (with slight variance)
                 21489, // 1st Maker gained fee after completing the swap via hashlock path spending.
                 31710, // 2nd Maker gained fee (with fee variance after sync fix)
+                32192, // 1st Maker gained fee (with fee variance)
                 32996  // 2nd Maker gained fee after completing the swap via hashlock path spending.
             ],
             "Taproot Maker fee gained by recovering via hashlock"
