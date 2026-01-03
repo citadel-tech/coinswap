@@ -89,7 +89,6 @@ services:
 
         makerd -t "$${TOR_AUTH_PASSWORD}" -r $${BITCOIN_RPC_HOST} -a $${BITCOIN_RPC_AUTH} $${MAKERD_EXTRA_ARGS} -w "$$WALLET_NAME"
     ports:
-      - "${MAKERD_PORT:-6102}:${MAKERD_PORT:-6102}"
       - "${MAKERD_RPC_PORT:-6103}:${MAKERD_RPC_PORT:-6103}"
     volumes:
       - maker-data:/home/coinswap/.coinswap
