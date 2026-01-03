@@ -500,11 +500,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         );
         let message = match serde_cbor::from_slice::<TakerToMakerMessage>(&message_bytes) {
             Ok(msg) => {
-                log::debug!(
-                    "[{}] Successfully decoded message: {:?}",
-                    maker.config.network_port,
-                    msg
-                );
+                log::info!("[{}] <=== {}", maker.config.network_port, msg);
                 msg
             }
             Err(e) => {
@@ -596,7 +592,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         }
         // Send response if we have one (only applies to taker messages)
         if let Some(response_msg) = response {
-            log::info!("[{}] Sending response", maker.config.network_port,);
+            log::info!("[{}] ===> {}", maker.config.network_port, response_msg);
 
             if let Err(e) = send_message(stream, &response_msg) {
                 log::error!(
@@ -778,8 +774,6 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
     while !maker.shutdown.load(Relaxed) {
         match listener.accept() {
             Ok((mut stream, _)) => {
-                log::info!("[{network_port}] Received incoming connection");
-
                 if let Err(e) = handle_client_taproot(&maker, &mut stream) {
                     log::error!("[{network_port}] Error Handling client request {e:?}");
                 }
