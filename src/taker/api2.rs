@@ -1256,13 +1256,32 @@ impl Taker {
             );
 
             // Fetch and store the incoming contract transaction
-            let incoming_contract_tx = self
-                .wallet
-                .rpc
-                .get_raw_transaction(incoming_contract_txid, None)
-                .map_err(|e| {
-                    TakerError::General(format!("Failed to get incoming contract tx: {:?}", e))
-                })?;
+            // Wait for transaction to appear in mempool/blockchain with retry logic
+            let mempool_wait_timeout = 60;
+            let start_time = std::time::Instant::now();
+            let incoming_contract_tx = loop {
+                match self
+                    .wallet
+                    .rpc
+                    .get_raw_transaction(incoming_contract_txid, None)
+                {
+                    Ok(tx) => break tx,
+                    Err(_e) => {
+                        let elapsed = start_time.elapsed().as_secs();
+                        if elapsed > mempool_wait_timeout {
+                            return Err(TakerError::General(format!(
+                                "Timed out waiting for incoming contract tx {} to appear in mempool after {} secs",
+                                incoming_contract_txid, elapsed
+                            )));
+                        }
+                        log::info!(
+                            "Waiting for incoming contract tx to appear in mempool | {} secs",
+                            elapsed
+                        );
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                    }
+                }
+            };
             self.ongoing_swap_state.incoming_contract.contract_tx = incoming_contract_tx.clone();
             // Set funding amount from the transaction output
             self.ongoing_swap_state.incoming_contract.funding_amount =
