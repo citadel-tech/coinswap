@@ -19,13 +19,14 @@ use crate::{
 };
 use bitcoin::{Address, Amount, OutPoint, Txid};
 use bitcoind::bitcoincore_rpc::{json::ListTransactionResult, RpcApi};
+use serde::Serialize;
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
 
 /// Information about individual maker fees in a swap
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct MakerFeeInfo {
     /// Index of maker in the swap route
     pub maker_index: usize,
@@ -42,7 +43,7 @@ pub struct MakerFeeInfo {
 }
 
 /// Complete swap report containing all swap information
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct SwapReport {
     /// Unique swap ID
     pub swap_id: String,

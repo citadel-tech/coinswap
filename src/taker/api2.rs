@@ -642,37 +642,40 @@ impl Taker {
         // Collect maker fee information for V2
         let mut maker_fee_info = Vec::new();
         let mut total_maker_fees = 0u64;
+        let mut temp_target_amount = swap_state.swap_params.send_amount.to_sat();
 
         for (maker_index, maker) in swap_state.chosen_makers.iter().enumerate() {
-            let maker_fee = calculate_coinswap_fee(
-                swap_state.swap_params.send_amount.to_sat(),
-                0, // timelock not used for fee display in report
-                maker.offer.base_fee,
-                maker.offer.amount_relative_fee_pct,
-                maker.offer.time_relative_fee_pct,
-            );
+            let maker_refund_locktime = REFUND_LOCKTIME
+                + REFUND_LOCKTIME_STEP
+                    * (swap_state.swap_params.maker_count - maker_index - 1) as u16;
+            let base_fee = maker.offer.base_fee as f64;
+            let amount_rel_fee =
+                (maker.offer.amount_relative_fee_pct * temp_target_amount as f64) / 100.0;
+            let time_rel_fee = (maker.offer.time_relative_fee_pct
+                * maker_refund_locktime as f64
+                * temp_target_amount as f64)
+                / 100.0;
 
             println!("\n\x1b[1;33mMaker {}:\x1b[0m", maker_index + 1);
             println!("    Address              : {}", maker.address);
-            println!("    Base Fee             : {}", maker.offer.base_fee);
-            println!(
-                "    Amount Relative Fee  : {:.2}%",
-                maker.offer.amount_relative_fee_pct
-            );
-            println!("    Total Fee            : {} sats", maker_fee);
+            println!("    Base Fee             : {base_fee}");
+            println!("    Amount Relative Fee  : {amount_rel_fee:.2}");
+            println!("    Time Relative Fee    : {time_rel_fee:.2}");
+
+            let total_maker_fee = base_fee + amount_rel_fee + time_rel_fee;
+            println!("    Total Fee            : {total_maker_fee:.2} sats");
 
             maker_fee_info.push(MakerFeeInfo {
                 maker_index,
                 maker_address: maker.address.to_string(),
-                base_fee: maker.offer.base_fee as f64,
-                amount_relative_fee: (maker.offer.amount_relative_fee_pct
-                    * swap_state.swap_params.send_amount.to_sat() as f64)
-                    / 100.0,
-                time_relative_fee: 0.0, // Simplified for report
-                total_fee: maker_fee as f64,
+                base_fee,
+                amount_relative_fee: amount_rel_fee,
+                time_relative_fee: time_rel_fee,
+                total_fee: total_maker_fee,
             });
 
-            total_maker_fees += maker_fee;
+            temp_target_amount = temp_target_amount.saturating_sub(total_maker_fee as u64);
+            total_maker_fees += total_maker_fee as u64;
         }
 
         let mining_fee = total_fee.saturating_sub(total_maker_fees);
@@ -708,7 +711,6 @@ impl Taker {
         // For V2, we have a single funding tx (the outgoing contract)
         let funding_txids_by_hop = all_outgoing_txid;
         let total_funding_txs = funding_txids_by_hop.len();
-        println!("funding_txids_by_hop: {:?}", funding_txids_by_hop);
 
         let report = SwapReport {
             swap_id: swap_state.id.clone(),
@@ -731,7 +733,6 @@ impl Taker {
             output_swap_utxos,
             output_change_utxos,
         };
-
         Ok(report)
     }
 
