@@ -302,6 +302,7 @@ pub struct OfferSyncService {
     socks_port: u16,
     rpc_backend: BitcoinRpc,
     is_syncing: Arc<AtomicBool>,
+    run_now: Arc<AtomicBool>,
 }
 
 /// OfferSync handle, use for shutting down OfferSyncService
@@ -309,6 +310,7 @@ pub struct OfferSyncHandle {
     shutdown: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
     is_syncing: Arc<AtomicBool>,
+    run_now: Arc<AtomicBool>,
 }
 
 impl OfferSyncHandle {
@@ -324,6 +326,11 @@ impl OfferSyncHandle {
     /// Suggests whether offerbook syncing is in progress or not.
     pub fn is_syncing(&self) -> bool {
         self.is_syncing.load(Ordering::SeqCst)
+    }
+
+    /// Runs manual sync, rather than waiting for routine to trigger it.
+    pub fn run_sync_now(&self) {
+        self.run_now.store(true, Ordering::Relaxed);
     }
 }
 
@@ -341,6 +348,7 @@ impl OfferSyncService {
             socks_port,
             rpc_backend,
             is_syncing: Arc::new(AtomicBool::new(false)),
+            run_now: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -397,6 +405,7 @@ impl OfferSyncService {
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_flag = shutdown.clone();
         let is_syncing = self.is_syncing.clone();
+        let run_now = self.run_now.clone();
         self.is_syncing.store(true, Ordering::SeqCst);
 
         let join = std::thread::Builder::new()
@@ -414,9 +423,15 @@ impl OfferSyncService {
                     log::debug!("Running offerbook sync completed");
                     self.is_syncing.store(false, Ordering::SeqCst);
                     let mut slept = Duration::ZERO;
-                    while slept < OFFER_SYNC_INTERVAL && !shutdown_flag.load(Ordering::Relaxed) {
+                    while slept < OFFER_SYNC_INTERVAL
+                        && !self.run_now.load(Ordering::Relaxed)
+                        && !shutdown_flag.load(Ordering::Relaxed)
+                    {
                         std::thread::sleep(Duration::from_secs(1));
                         slept += Duration::from_secs(1);
+                    }
+                    if self.run_now.swap(false, Ordering::Relaxed) {
+                        log::info!("Manual offerbook syncing initiated");
                     }
                 }
 
@@ -428,6 +443,7 @@ impl OfferSyncService {
             shutdown,
             join: Some(join),
             is_syncing,
+            run_now,
         }
     }
 

@@ -1823,6 +1823,11 @@ impl Taker {
     pub fn is_offerbook_syncing(&self) -> bool {
         self.offer_sync_handle.is_syncing()
     }
+
+    /// Run offer sync now.
+    pub fn run_offer_sync_now(&self) {
+        self.offer_sync_handle.run_sync_now()
+    }
 }
 
 impl Role for Taker {
