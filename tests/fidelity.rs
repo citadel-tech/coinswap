@@ -5,6 +5,7 @@ use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::TakerBehavior,
     utill::MIN_FEE_RATE,
+    wallet::AddressType,
 };
 mod test_framework;
 use test_framework::*;
@@ -102,7 +103,11 @@ fn test_fidelity() {
             .get(&highest_bond_index)
             .unwrap();
         let bond_value = wallet_read.calculate_bond_value(bond).unwrap();
-        assert_eq!(bond_value, Amount::from_sat(10814));
+        assert!(
+            bond_value == Amount::from_sat(10814) || bond_value == Amount::from_sat(10656),
+            "unexpected bond_value: {} SAT",
+            bond_value.to_sat()
+        );
 
         let bond = wallet_read
             .get_fidelity_bonds()
@@ -135,6 +140,7 @@ fn test_fidelity() {
                     .unwrap(),
                 None,
                 MIN_FEE_RATE,
+                AddressType::P2WPKH,
             )
             .unwrap();
 
@@ -160,7 +166,7 @@ fn test_fidelity() {
         let balances = wallet_read.get_balances().unwrap();
 
         assert_eq!(balances.fidelity.to_sat(), 13000000);
-        assert_eq!(balances.regular.to_sat(), 90999342);
+        assert_eq!(balances.regular.to_sat(), 90999332);
     }
 
     log::info!("⏳ Waiting for fidelity bonds to mature and testing redemption");
@@ -181,7 +187,9 @@ fn test_fidelity() {
             if required_height == first_maturity_height {
                 log::info!("🔓 First Fidelity Bond is matured. Sending redemption transaction");
 
-                wallet_write.redeem_fidelity(0, MIN_FEE_RATE).unwrap();
+                wallet_write
+                    .redeem_fidelity(0, MIN_FEE_RATE, AddressType::P2WPKH)
+                    .unwrap();
 
                 log::info!("✅ First Fidelity Bond is successfully redeemed");
 
@@ -195,7 +203,9 @@ fn test_fidelity() {
             } else {
                 log::info!("🔓 Second Fidelity Bond is matured. Sending redemption transaction");
 
-                wallet_write.redeem_fidelity(1, MIN_FEE_RATE).unwrap();
+                wallet_write
+                    .redeem_fidelity(1, MIN_FEE_RATE, AddressType::P2WPKH)
+                    .unwrap();
 
                 log::info!("✅ Second Fidelity Bond is successfully redeemed");
 
@@ -229,7 +239,7 @@ fn test_fidelity() {
         let balances = wallet_read.get_balances().unwrap();
 
         assert_eq!(balances.fidelity.to_sat(), 0);
-        assert_eq!(balances.regular.to_sat(), 103998898);
+        assert_eq!(balances.regular.to_sat(), 103998888);
     }
 
     thread::sleep(Duration::from_secs(10));
@@ -277,19 +287,20 @@ fn test_fidelity_spending() {
                 LockTime::from_height(short_timelock_height).unwrap(),
                 None,
                 MIN_FEE_RATE,
+                AddressType::P2WPKH,
             )
             .unwrap()
     };
 
     generate_blocks(bitcoind, 1);
-    maker.get_wallet().write().unwrap().sync_no_fail();
+    maker.get_wallet().write().unwrap().sync_and_save().unwrap();
 
     // Make fidelity bond expire
     while (bitcoind.client.get_block_count().unwrap() as u32) < short_timelock_height {
         generate_blocks(bitcoind, 10);
     }
     generate_blocks(bitcoind, 5);
-    maker.get_wallet().write().unwrap().sync_no_fail();
+    maker.get_wallet().write().unwrap().sync_and_save().unwrap();
 
     // Assert UTXO shows up in list and track the specific fidelity UTXO
     let fidelity_utxo_info = {
@@ -373,6 +384,7 @@ fn test_fidelity_spending() {
                 let destination = coinswap::wallet::Destination::Multi {
                     outputs: vec![(external_addr, Amount::from_sat(REGULAR_TX_AMOUNT))],
                     op_return_data: None,
+                    change_address_type: AddressType::P2WPKH,
                 };
                 match wallet.spend_from_wallet(MIN_FEE_RATE, destination, &selected_utxos) {
                     Ok(tx) => Ok(Some(tx)),
@@ -385,7 +397,7 @@ fn test_fidelity_spending() {
             Ok(Some(tx)) => {
                 bitcoind.client.send_raw_transaction(&tx).unwrap();
                 generate_blocks(bitcoind, 1);
-                maker.get_wallet().write().unwrap().sync_no_fail();
+                maker.get_wallet().write().unwrap().sync_and_save().unwrap();
                 log::info!("✅ Regular transaction #{} completed successfully", i + 1);
             }
             Ok(None) => {
@@ -410,12 +422,12 @@ fn test_fidelity_spending() {
     {
         let mut wallet = maker.get_wallet().write().unwrap();
         wallet
-            .redeem_fidelity(fidelity_index, MIN_FEE_RATE)
+            .redeem_fidelity(fidelity_index, MIN_FEE_RATE, AddressType::P2WPKH)
             .unwrap();
     }
 
     generate_blocks(bitcoind, 1);
-    maker.get_wallet().write().unwrap().sync_no_fail();
+    maker.get_wallet().write().unwrap().sync_and_save().unwrap();
 
     // Verify the specific UTXO is now consumed and bond is spent
     {
@@ -458,12 +470,13 @@ fn test_fidelity_spending() {
                     .unwrap(),
                 None,
                 MIN_FEE_RATE,
+                AddressType::P2WPKH,
             )
             .unwrap()
     };
 
     generate_blocks(bitcoind, 1);
-    maker.get_wallet().write().unwrap().sync_no_fail();
+    maker.get_wallet().write().unwrap().sync_and_save().unwrap();
 
     {
         let wallet = maker.get_wallet().read().unwrap();

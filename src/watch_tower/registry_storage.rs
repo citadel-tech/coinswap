@@ -1,13 +1,15 @@
 //! File-backed registry for watch requests, fidelity bonds, and chain checkpoints.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
 
 use bitcoin::{BlockHash, OutPoint, Transaction, Txid};
 use serde::{Deserialize, Serialize};
+
+use crate::watch_tower::utils::FidelityAnnouncement;
 
 /// Represents a UTXO being watched and records when it gets spent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,12 +23,14 @@ pub struct WatchRequest {
 }
 
 /// Fidelity records used to discover Makers.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct Fidelity {
     /// Transaction ID of the maker's fidelity bond.
     pub txid: Txid,
     /// Maker's advertised onion address.
     pub onion_address: String,
+    /// Fidelity expiry height used later for pruning.
+    pub expire_height: u32,
 }
 
 /// Last processed chain tip so scanning can resume efficiently.
@@ -41,7 +45,7 @@ pub struct Checkpoint {
 #[derive(Serialize, Deserialize, Default)]
 struct RegistryData {
     watches: HashMap<OutPoint, WatchRequest>,
-    fidelity: Vec<Fidelity>,
+    fidelity: HashSet<Fidelity>,
     checkpoint: Option<Checkpoint>,
 }
 
@@ -93,36 +97,31 @@ impl FileRegistry {
 
     /// Flushes the in-memory registry to the persistent CBOR file on disk.
     fn flush(&self) {
-        // Ensure parent directory exists
-        if let Some(parent) = self.path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                log::error!("Failed to create registry directory {:?}: {}", parent, e);
-                return;
-            }
+        let parent = match self.path.parent() {
+            Some(p) => p,
+            None => return,
+        };
+
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            log::error!("Failed to create registry directory {:?}: {}", parent, e);
+            return;
         }
 
-        let tmp = self.path.with_extension("tmp");
-        if let Ok(data) = self.data.lock() {
-            let bytes = match serde_cbor::to_vec(&*data) {
-                Ok(b) => b,
-                Err(e) => {
-                    log::error!("Failed to serialize registry data: {}", e);
-                    return;
-                }
-            };
+        let data = match self.data.lock() {
+            Ok(data) => data,
+            Err(_) => return,
+        };
 
-            if let Err(e) = std::fs::write(&tmp, &bytes) {
-                log::error!("Failed to write tmp registry file {:?}: {}", tmp, e);
+        let bytes = match serde_cbor::to_vec(&*data) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::error!("Failed to serialize registry data: {}", e);
                 return;
             }
-            if let Err(e) = std::fs::rename(&tmp, &self.path) {
-                log::error!(
-                    "Failed to rename registry file {:?} -> {:?}: {}",
-                    tmp,
-                    self.path,
-                    e
-                );
-            }
+        };
+
+        if let Err(e) = std::fs::write(&self.path, &bytes) {
+            log::error!("Failed to write registry file {:?}: {}", self.path, e);
         }
     }
 }
@@ -146,22 +145,38 @@ impl FileRegistry {
     }
 
     /// Returns all stored maker fidelity records.
-    pub fn list_fidelity(&self) -> Vec<Fidelity> {
-        self.with_data(|data| data.fidelity.clone())
+    pub fn list_fidelity(&self, height: u32) -> HashSet<Fidelity> {
+        self.with_data(|data| {
+            data.fidelity = data
+                .fidelity
+                .iter()
+                .filter(|v| v.expire_height > height)
+                .cloned()
+                .collect();
+            data.fidelity.clone()
+        })
     }
 
     /// Inserts a new fidelity record.
-    pub fn insert_fidelity(&mut self, txid: Txid, onion_address: String) {
+    pub fn insert_fidelity(
+        &mut self,
+        txid: Txid,
+        fidelity_announcement: FidelityAnnouncement,
+    ) -> bool {
         let fidelity = Fidelity {
             txid,
-            onion_address,
+            onion_address: fidelity_announcement.onion,
+            expire_height: fidelity_announcement.expires_at_height,
         };
-        self.with_data(|data| data.fidelity.push(fidelity));
+        let is_in = self.with_data(|data| data.fidelity.insert(fidelity));
+        self.flush();
+        is_in
     }
 
     /// Removes fidelity records matching the given txid.
     pub fn remove_fidelity(&mut self, txid: Txid) {
         self.with_data(|data| data.fidelity.retain(|f| f.txid != txid));
+        self.flush();
     }
 
     /// Persists the latest processed checkpoint to disk.
@@ -275,15 +290,25 @@ mod tests {
         let txid1 = dummy_txid(1);
         let txid2 = dummy_txid(2);
 
-        reg.insert_fidelity(txid1, "abc.onion".into());
-        reg.insert_fidelity(txid2, "def.onion".into());
+        let fidelity_announcement_1 = FidelityAnnouncement {
+            onion: "abc.onion".to_string(),
+            expires_at_height: 212,
+        };
 
-        let list = reg.list_fidelity();
+        let fidelity_announcement_2 = FidelityAnnouncement {
+            onion: "def.onion".to_string(),
+            expires_at_height: 232,
+        };
+
+        reg.insert_fidelity(txid1, fidelity_announcement_1);
+        reg.insert_fidelity(txid2, fidelity_announcement_2);
+
+        let list = reg.list_fidelity(0);
         assert_eq!(list.len(), 2);
 
         reg.remove_fidelity(txid1);
 
-        let list2 = reg.list_fidelity();
+        let list2 = reg.list_fidelity(0);
         assert_eq!(list2.len(), 0);
     }
 

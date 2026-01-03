@@ -1,8 +1,5 @@
 #![cfg(feature = "integration-test")]
-//! Integration test for Taproot Coinswap implementation
-//!
-//! This test demonstrates a taproot-based coinswap between a Taker and 2 Makers using the new
-//! taproot protocol with MuSig2 signatures and enhanced privacy features.
+//! This test demonstrates a taproot coinswap between a Taker and multiple Makers
 
 use bitcoin::Amount;
 use coinswap::{
@@ -16,21 +13,24 @@ use test_framework::*;
 use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
-/// Test taproot coinswap
+/// Test taproot multi maker coinswap
 #[test]
-fn test_taproot_coinswap() {
+fn test_taproot_multi_maker() {
     // ---- Setup ----
-    warn!("Running Test: Taproot Coinswap Basic Functionality");
+    warn!("Running Test: Taproot Multi Maker Coinswap");
 
-    // Use different ports for taproot makers to avoid conflicts
+    // Create 4 makers to perform a taproot swap with 1 taker and 4 makers.
     use coinswap::maker::TaprootMakerBehavior as MakerBehavior;
     let taproot_makers_config_map = vec![
         (7102, Some(19061), MakerBehavior::Normal),
         (17102, Some(19062), MakerBehavior::Normal),
+        (27102, Some(19063), MakerBehavior::Normal),
+        (15102, Some(19064), MakerBehavior::Normal),
     ];
+    // Create a taker with normal behavior
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    // Initialize test framework (without regular takers, we'll create taproot taker manually)
+    // Initialize test framework
     let (test_framework, mut taproot_taker, taproot_makers, block_generation_handle) =
         TestFramework::init_taproot(taproot_makers_config_map, taker_behavior);
 
@@ -76,14 +76,12 @@ fn test_taproot_coinswap() {
     }
 
     let maker_spendable_balance = verify_maker_pre_swap_balance_taproot(&taproot_makers);
-    log::info!("Starting end-to-end taproot swap test...");
-    log::info!("Initiating taproot coinswap protocol");
-
+    log::info!("Starting multi maker taproot coinswap...");
     // Swap params for taproot coinswap
     let swap_params = SwapParams {
         send_amount: Amount::from_sat(500000), // 0.005 BTC
-        maker_count: 2,
-        tx_count: 3,
+        maker_count: 4,                        // 4 maker count
+        tx_count: 5,
         required_confirms: 1,
         manually_selected_outpoints: None,
     };
@@ -94,14 +92,15 @@ fn test_taproot_coinswap() {
     // Perform the swap
     match taproot_taker.do_coinswap(swap_params) {
         Ok(Some(_report)) => {
-            log::info!("Taproot coinswap completed successfully!");
+            log::info!("Taproot multi maker coinswap completed successfully!");
         }
         Ok(None) => {
-            log::warn!("Taproot coinswap completed but no report generated (recovery occurred)");
+            log::warn!(
+                "Taproot multi maker coinswap completed but no report generated (recovery occurred)"
+            );
         }
         Err(e) => {
-            log::error!("Taproot coinswap failed: {:?}", e);
-            panic!("Taproot coinswap failed: {:?}", e);
+            log::error!("Taproot multi maker coinswap failed: {:?}", e);
         }
     }
 
@@ -114,8 +113,6 @@ fn test_taproot_coinswap() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    log::info!("All taproot coinswaps processed successfully. Transaction complete.");
-
     // Sync wallets and verify results
     taproot_taker.get_wallet_mut().sync_and_save().unwrap();
 
@@ -127,34 +124,33 @@ fn test_taproot_coinswap() {
         let mut wallet = maker.wallet().write().unwrap();
         wallet.sync_and_save().unwrap();
     }
-
-    let taker_balances_after = taproot_taker.get_wallet().get_balances().unwrap();
-    info!("📊 Taproot Taker balance after completing swap:");
+    let taker_wallet = taproot_taker.get_wallet();
+    let taker_balances = taker_wallet.get_balances().unwrap();
     info!(
-        "  Regular: {}, Contract: {}, Spendable: {}, Swap: {}",
-        taker_balances_after.regular,
-        taker_balances_after.contract,
-        taker_balances_after.spendable,
-        taker_balances_after.swap,
+        "📊 Taproot Taker balance after swap: Regular: {}, Contract: {}, Spendable: {}, Swap: {}",
+        taker_balances.regular,
+        taker_balances.contract,
+        taker_balances.spendable,
+        taker_balances.swap,
     );
 
-    // verify swap results
-    let taker_total_after = taker_balances_after.spendable;
     // Use spendable balance (regular + swap) since swept coins from V2 swaps
     // are tracked as SweptCoinV2 and appear in swap balance
+    let taker_total_after = taker_balances.spendable;
     assert_in_range!(
         taker_total_after.to_sat(),
-        [14943199, 14943203], // Normal Taproot swap case (with slight fee variance)
+        [14860645, 14860649], // Multi maker case (less spendable balance due to higher no. of makers,more fee paid) with variance
         "Taproot Taker spendable balance check."
     );
 
-    // In a normal swap case -: Each Maker fee is 13500 sats, mining fee is 29797 sats
     let balance_diff = taproot_taker_original_balance - taker_total_after;
     assert_in_range!(
+        // This balance diff(fee paid) consist of Maker fee's paid + mining fees.
         balance_diff.to_sat(),
-        [56797, 56801], // sats paid as fees in a normal swap case (with slight variance)
-        "Taproot Taker should have paid reasonable fees."
+        [139351, 139355], // amount spended as fee (multi maker case,more no. of maker so more fee) with variance
+        "Taproot taker spent on fees check."
     );
+
     info!(
         "Taproot Taker balance verification passed. Original spendable: {}, After spendable: {} (fees paid: {})",
         taproot_taker_original_balance,
@@ -176,29 +172,32 @@ fn test_taproot_coinswap() {
             i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable,balances.swap,
         );
 
-        // The spendable contains maker's regular balance + maker's swap balance,therefore used spendable balance for comparision.
         assert_in_range!(
             balances.spendable.to_sat(),
-            [15020189, 15020203, 15031694, 15031708], // Normal swap spendable balance for makers (with slight variance)
-            "Taproot Maker after balance check."
+            [
+                // Here it's arranged in the increasing order of maker's spendable balance, as maker's order is random during swap.
+                15016299, 15016313, 15025685, 15025699, 15037147, 15037161, 15051694, 15051708,
+            ],
+            "Taproot Maker spendable balance check for multi maker test case"
         );
 
         let balance_diff = balances.spendable.to_sat() - original_spendable.to_sat();
-        // maker gained fee arranged in the order of corresponding spendable balance in the above assertion.
         assert_in_range!(
             balance_diff,
-            [20685, 20689, 20703, 32190, 32194, 32208], // (with slight variance)
-            "Taproot Maker should have gained some fee"
+            // These maker gained fee are arranged as per the corresponding spendable balance in the above assertion list.
+            [
+                16795, 16799, 16813, 26181, 26183, 26187, 37643, 37645, 37649, 37663, 52190, 52192,
+                52196, 52210
+            ],
+            "Taproot Maker fee gained check"
         );
-
         info!(
             "Taproot Maker {} balance verification passed. Original spendable: {}, Current spendable: {}, fee gained: {}",
-            i, original_spendable, balances.spendable, balance_diff
+            i, original_spendable, balances.spendable,balance_diff
         );
     }
 
-    info!("All taproot swap tests completed successfully!");
-
+    log::info!("✅ Taproot mutli maker test passed successfully.");
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

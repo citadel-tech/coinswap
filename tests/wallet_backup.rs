@@ -11,7 +11,7 @@ use bitcoind::{
 };
 use log::info;
 
-use coinswap::wallet::{RPCConfig, Wallet, WalletBackup};
+use coinswap::wallet::{AddressType, RPCConfig, Wallet, WalletBackup};
 
 use coinswap::security::{load_sensitive_struct_interactive, KeyMaterial, SerdeJson};
 
@@ -82,15 +82,19 @@ fn plainwallet_plainbackup_plainrestore() {
 
     let mut wallet = coinswap::wallet::Wallet::init(&original_wallet, &rpc_config, None).unwrap();
 
-    let addr = wallet.get_next_external_address().unwrap();
+    let addr = wallet
+        .get_next_external_address(AddressType::P2WPKH)
+        .unwrap();
     send_and_mine(&mut bitcoind, &addr, 0.05, 1).unwrap();
 
     let _ = wallet.backup(&wallet_backup_file, None);
 
-    let addr = wallet.get_next_external_address().unwrap();
+    let addr = wallet
+        .get_next_external_address(AddressType::P2WPKH)
+        .unwrap();
     send_and_mine(&mut bitcoind, &addr, 0.05, 1).unwrap();
 
-    wallet.sync().unwrap();
+    wallet.sync_and_save().unwrap();
 
     let (backup, _) =
         load_sensitive_struct_interactive::<WalletBackup, SerdeJson>(&wallet_backup_file);
@@ -116,15 +120,19 @@ fn encwallet_encbackup_encrestore() {
     let mut wallet =
         coinswap::wallet::Wallet::init(&original_wallet, &rpc_config, km.clone()).unwrap();
 
-    let addr = wallet.get_next_external_address().unwrap();
+    let addr = wallet
+        .get_next_external_address(AddressType::P2WPKH)
+        .unwrap();
     send_and_mine(&mut bitcoind, &addr, 0.05, 1).unwrap();
 
     let _ = wallet.backup(&wallet_backup_file, km.clone());
 
-    let addr = wallet.get_next_external_address().unwrap();
+    let addr = wallet
+        .get_next_external_address(AddressType::P2WPKH)
+        .unwrap();
     send_and_mine(&mut bitcoind, &addr, 0.05, 1).unwrap();
 
-    wallet.sync().unwrap();
+    wallet.sync_and_save().unwrap();
 
     let (backup, _) =
         load_sensitive_struct_interactive::<WalletBackup, SerdeJson>(&wallet_backup_file);

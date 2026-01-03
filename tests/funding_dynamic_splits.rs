@@ -1,7 +1,7 @@
 #![cfg(feature = "integration-test")]
 mod test_framework;
 use bitcoin::{Address, Amount};
-use coinswap::{taker::TakerBehavior, utill::MIN_FEE_RATE};
+use coinswap::{taker::TakerBehavior, utill::MIN_FEE_RATE, wallet::AddressType};
 use test_framework::*;
 
 const UTXO_SETS: &[&[u64]] = &[
@@ -18,16 +18,16 @@ const UTXO_SETS: &[&[u64]] = &[
 // Test data structure: (target amount, expected selected inputs, expected number of outputs)
 #[rustfmt::skip]
 const TEST_CASES: &[(u64, &[u64], u64)] = &[
-    (54_082, &[53245, 46824, 9091], 4), // CASE A : Threshold -> 2 Targets, 2 Changes
-    (102_980, &[35892, 70000, 65658, 38012], 4), // CASE B : Threshold -> 2 Targets, 2 Changes
+    (54_082, &[53245, 3919, 46824, 9091], 4), // CASE A : Threshold -> 2 Targets, 2 Changes
+    (102_980, &[70000, 35892, 100000, 3919], 4), // CASE B : Threshold -> 2 Targets, 2 Changes
     (708_742, &[107831, 301909, 38012, 35892, 9091, 65658, 53245, 100000, 712971], 4), // CASE C.1 : Threshold -> 2 Targets, 2 Changes
     (500_000, &[91379, 3919, 107831, 35892, 46824, 9091, 38012, 70000, 100000, 65658, 298092, 53245, 109831], 4), // CASE C.2 : Deterministic -> 2 Targets, 2 Changes
     (654_321, &[301909, 46824, 70000, 38012, 9091, 100000, 91379, 53245, 65658, 432441, 107831], 4), // Edge Case A for the UTXO set
     (90_000, &[53245, 35892, 3919, 91379], 4), // Edge Case B
     (10_000, &[9091, 3919], 4), // Gradual scaling targets
-    // (100_000, &[38012, 65658, 46824, 53245], 4), // OR  &[38012, 65658, 100000] Edge Case C. Will investigate 
+    // (100_000, &[38012, 65658, 46824, 53245], 4), // OR  &[38012, 65658, 100000] Edge Case C. Will investigate
     (1_000_000, &[91379, 100000, 9091, 65658, 109831, 46824, 107831, 35892, 3919, 432441, 38012, 70000, 900000], 4),
-    (7_777_777, &[46824, 1992436, 1000000, 712971, 9091, 91379, 38012, 900000, 800000, 1946436, 65658, 70000, 107831], 3), // Odd, lopsided amounts
+    (7_777_777, &[1992436, 1946436, 900000, 800000, 712971, 432441, 301909, 298092, 107831, 91379, 70000, 53245, 38012, 35892], 3), // Odd, lopsided amounts
     (888_888, &[3919, 9091, 35892, 46824, 53245, 65658, 70000, 91379, 107831, 109831, 298092, 100000, 800000], 4),
     (999_999, &[432441, 109831, 107831, 100000, 91379, 65658, 46824, 35892, 9091, 3919, 900000, 38012, 70000], 4), // Near-round numbers
     (123_456, &[38012, 53245, 35892, 46824, 9091, 3919, 65658], 4), // Non-round numbers
@@ -60,7 +60,10 @@ fn test_create_funding_txn_with_varied_distributions() {
     // Generate 5 random addresses from the taker's wallet
     let mut destinations: Vec<Address> = Vec::with_capacity(5);
     for _ in 0..5 {
-        let addr = taker.get_wallet_mut().get_next_external_address().unwrap();
+        let addr = taker
+            .get_wallet_mut()
+            .get_next_external_address(AddressType::P2WPKH)
+            .unwrap();
         destinations.push(addr);
     }
 

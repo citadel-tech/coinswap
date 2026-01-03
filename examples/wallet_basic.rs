@@ -23,7 +23,7 @@ use bitcoind::{
 };
 use coinswap::{
     utill::MIN_FEE_RATE,
-    wallet::{Destination, RPCConfig, Wallet},
+    wallet::{AddressType, Destination, RPCConfig, Wallet},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -95,7 +95,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Wallet synced with blockchain");
 
     // Fund the wallet for demonstration
-    let funding_address = wallet.get_next_external_address().unwrap();
+    let funding_address = wallet
+        .get_next_external_address(AddressType::P2WPKH)
+        .unwrap();
     let fund_amount = Amount::from_btc(0.05).unwrap();
     let _txid = bitcoind
         .client
@@ -165,8 +167,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Generate addresses
     println!("\nAddress Generation:");
-    let external_address = wallet.get_next_external_address().unwrap();
-    let internal_addresses = wallet.get_next_internal_addresses(2).unwrap();
+    let external_address = wallet
+        .get_next_external_address(AddressType::P2WPKH)
+        .unwrap();
+    let internal_addresses = wallet
+        .get_next_internal_addresses(2, AddressType::P2WPKH)
+        .unwrap();
     println!("  External (receiving): {external_address}");
     println!(
         "  Internal (change): {} {}",

@@ -303,7 +303,7 @@ impl Maker {
                 .get(funding_output_index as usize)
                 .expect("funding output expected at this index");
 
-            self.wallet.write()?.sync_no_fail();
+            self.wallet.write()?.sync_and_save()?;
 
             let receiver_contract_tx = create_receivers_contract_tx(
                 OutPoint {

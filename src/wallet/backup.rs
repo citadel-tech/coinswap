@@ -125,8 +125,7 @@ impl Wallet {
             store,
             store_enc_material: restored_enc_material,
         };
-        tmp_wallet.sync()?;
-        tmp_wallet.save_to_disk()?;
+        tmp_wallet.sync_and_save()?;
 
         Ok(tmp_wallet)
     }

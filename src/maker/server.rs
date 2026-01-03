@@ -4,14 +4,27 @@
 //! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend, and RPC Client Request.
 //! The server listens at two ports: 6102 for P2P, and 6103 for RPC Client requests.
 
-use crate::protocol::messages::FidelityProof;
+use crate::{
+    protocol::messages::FidelityProof,
+    utill::{COINSWAP_KIND, NOSTR_RELAYS},
+};
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
+use nostr::{
+    event::{EventBuilder, Kind},
+    key::{Keys, SecretKey},
+    message::{ClientMessage, RelayMessage},
+    util::JsonUtil,
+};
+use tungstenite::Message;
 
 use std::{
     io::ErrorKind,
     net::{Ipv4Addr, TcpListener, TcpStream},
-    sync::{atomic::Ordering::Relaxed, Arc},
+    sync::{
+        atomic::Ordering::{self, Relaxed},
+        Arc,
+    },
     thread::{self, sleep},
     time::Duration,
 };
@@ -33,7 +46,7 @@ use crate::{
     },
     protocol::messages::TakerToMakerMessage,
     utill::{read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
-    wallet::WalletError,
+    wallet::{AddressType, WalletError},
 };
 
 use crate::maker::error::MakerError;
@@ -63,7 +76,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<String, MakerError> {
         .as_ref()
         .track_and_update_unconfirmed_fidelity_bonds()?;
 
-    manage_fidelity_bonds(maker.as_ref(), &maker_address)?;
+    manage_fidelity_bonds(maker, &maker_address, true)?;
 
     Ok(maker_address)
 }
@@ -73,10 +86,155 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<String, MakerError> {
 /// It performs the following operations:
 /// 1. Redeems all expired fidelity bonds in the maker's wallet, if any are found.
 /// 2. Creates a new fidelity bond if no valid bonds remain after redemption.
-fn manage_fidelity_bonds(maker: &Maker, maker_addr: &str) -> Result<(), MakerError> {
-    maker.wallet.write()?.redeem_expired_fidelity_bonds()?;
-    setup_fidelity_bond(maker, maker_addr)?;
+fn manage_fidelity_bonds(
+    maker: Arc<Maker>,
+    maker_addr: &str,
+    spawn_nostr: bool,
+) -> Result<(), MakerError> {
+    maker
+        .wallet
+        .write()?
+        .redeem_expired_fidelity_bonds(AddressType::P2WPKH)?;
+
+    let fidelity = setup_fidelity_bond(maker.as_ref(), maker_addr)?;
+
+    if spawn_nostr {
+        spawn_nostr_broadcast_task(fidelity, maker)?;
+    }
+
     Ok(())
+}
+fn spawn_nostr_broadcast_task(
+    fidelity: FidelityProof,
+    maker: Arc<Maker>,
+) -> Result<(), MakerError> {
+    log::info!("Spawning nostr background task for maker");
+    let maker_clone = maker.clone();
+
+    let handle = thread::Builder::new()
+        .name("nostr-event-thread".to_string())
+        .spawn(move || {
+            if let Err(e) = broadcast_bond_on_nostr(fidelity.clone()) {
+                log::warn!("initial nostr broadcast failed: {:?}", e);
+            }
+
+            let interval = Duration::from_secs(30 * 60);
+            let tick = Duration::from_secs(2);
+            let mut elapsed = Duration::ZERO;
+
+            while !maker_clone.shutdown.load(Ordering::Acquire) {
+                thread::sleep(tick);
+                elapsed += tick;
+
+                if elapsed < interval {
+                    continue;
+                }
+
+                elapsed = Duration::ZERO;
+
+                log::debug!("re-pinging nostr relays with bond announcement");
+
+                if let Err(e) = broadcast_bond_on_nostr(fidelity.clone()) {
+                    log::warn!("nostr re-ping failed: {:?}", e);
+                }
+            }
+
+            log::info!("nostr background task stopped");
+        })?;
+
+    maker.thread_pool.add_thread(handle);
+    Ok(())
+}
+
+// ##TODO: Make this part of nostr module and improve error handing
+// ##TODO: Try retry in case relay doesn't accept the event
+fn broadcast_bond_on_nostr(fidelity: FidelityProof) -> Result<(), MakerError> {
+    let outpoint = fidelity.bond.outpoint;
+    let content = format!("{}:{}", outpoint.txid, outpoint.vout);
+
+    // ##TODO: Don't use ephemeral keys
+    let secret_key = SecretKey::generate();
+    let keys = Keys::new(secret_key);
+
+    let event = EventBuilder::new(Kind::Custom(COINSWAP_KIND), content)
+        .build(keys.public_key)
+        .sign_with_keys(&keys)
+        .expect("Event should be signed");
+
+    let msg = ClientMessage::Event(std::borrow::Cow::Owned(event));
+
+    log::debug!("nostr wire msg: {}", msg.as_json());
+
+    let mut success = false;
+
+    for relay in NOSTR_RELAYS {
+        match broadcast_to_relay(relay, &msg) {
+            Ok(()) => {
+                success = true;
+            }
+            Err(e) => {
+                log::warn!("failed to broadcast to {}: {:?}", relay, e);
+            }
+        }
+    }
+
+    if !success {
+        log::warn!("nostr event was not accepted by any relay");
+    }
+
+    Ok(())
+}
+
+fn broadcast_to_relay(relay: &str, msg: &ClientMessage) -> Result<(), MakerError> {
+    let (mut socket, _) = tungstenite::connect(relay).map_err(|e| {
+        log::warn!("failed to connect to nostr relay {}: {}", relay, e);
+        MakerError::General("failed to connect to nostr relay")
+    })?;
+
+    socket
+        .write(Message::Text(msg.as_json().into()))
+        .map_err(|e| {
+            log::warn!("nostr relay write failed: {}", e);
+            MakerError::General("failed to write to nostr relay")
+        })?;
+    socket.flush().ok();
+
+    match socket.read() {
+        Ok(Message::Text(text)) => {
+            if let Ok(relay_msg) = RelayMessage::from_json(&text) {
+                match relay_msg {
+                    RelayMessage::Ok {
+                        event_id,
+                        status: true,
+                        ..
+                    } => {
+                        log::info!("nostr relay {} accepted event {}", relay, event_id);
+                        return Ok(());
+                    }
+                    RelayMessage::Ok {
+                        event_id,
+                        status: false,
+                        message,
+                    } => {
+                        log::warn!(
+                            "nostr relay {} rejected event {}: {}",
+                            relay,
+                            event_id,
+                            message
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(_) => {}
+        Err(e) => {
+            log::warn!("nostr relay {} read error: {}", relay, e);
+        }
+    }
+    log::warn!("nostr relay {} did not confirm event", relay);
+
+    Err(MakerError::General("nostr relay did not confirm event"))
 }
 
 /// Ensures the wallet has a valid fidelity bond. If no active bond exists, it creates a new one.
@@ -147,13 +305,14 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
         while !maker.shutdown.load(Relaxed) {
             sleep_multiplier += 1;
             // sync the wallet
-            maker.get_wallet().write()?.sync_no_fail();
+            maker.get_wallet().write()?.sync_and_save()?;
 
             let fidelity_result = maker.get_wallet().write()?.create_fidelity(
                 amount,
                 locktime,
-                Some(maker_address.as_bytes()),
+                Some(maker_address),
                 MIN_FEE_RATE,
+                AddressType::P2WPKH,
             );
 
             match fidelity_result {
@@ -167,7 +326,10 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
                     {
                         log::warn!("Insufficient fund to create fidelity bond.");
                         let amount = required - available;
-                        let addr = maker.get_wallet().write()?.get_next_external_address()?;
+                        let addr = maker
+                            .get_wallet()
+                            .write()?
+                            .get_next_external_address(AddressType::P2WPKH)?;
 
                         log::info!("Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", Amount::from_sat(amount).to_btc(), addr);
 
@@ -196,8 +358,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
                     *proof = Some(highest_proof);
 
                     // sync and save the wallet data to disk
-                    maker.get_wallet().write()?.sync_no_fail();
-                    maker.get_wallet().read()?.save_to_disk()?;
+                    maker.get_wallet().write()?.sync_and_save()?;
                     break;
                 }
             }
@@ -215,9 +376,12 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
 fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
     let sleep_incremental = 10;
     let mut sleep_duration = 0;
-    let addr = maker.get_wallet().write()?.get_next_external_address()?;
+    let addr = maker
+        .get_wallet()
+        .write()?
+        .get_next_external_address(AddressType::P2WPKH)?;
     while !maker.shutdown.load(Relaxed) {
-        maker.get_wallet().write()?.sync_no_fail();
+        maker.get_wallet().write()?.sync_and_save()?;
         let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;
 
         let min_required = maker.config.min_swap_amount;
@@ -311,14 +475,12 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
             }
             Err(err) => {
                 match &err {
-                    // Shutdown server if special behavior is set
                     MakerError::SpecialBehaviour(sp) => {
                         log::error!(
-                            "[{}] Maker Special Behavior : {:?}",
+                            "[{}] Maker Special Behavior Triggered Disconnection : {:?}",
                             maker.config.network_port,
                             sp
                         );
-                        maker.shutdown.store(true, Relaxed);
                     }
                     e => {
                         log::error!(
@@ -328,7 +490,7 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
                         );
                     }
                 }
-                return Err(err);
+                break;
             }
         }
     }
@@ -460,7 +622,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         // potentially aborting the swap.
         if maker.ongoing_swap_state.lock()?.is_empty() {
             if interval_tracker.is_multiple_of(FIDELITY_BOND_UPDATE_INTERVAL) {
-                manage_fidelity_bonds(maker.as_ref(), &maker_addr)?;
+                manage_fidelity_bonds(maker.clone(), &maker_addr, false)?;
                 interval_tracker = 0;
             }
 
@@ -501,9 +663,8 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     maker.thread_pool.join_all_threads()?;
 
     log::info!("Shutdown wallet sync initiated.");
-    maker.get_wallet().write()?.sync_no_fail();
+    maker.get_wallet().write()?.sync_and_save()?;
     log::info!("Shutdown wallet syncing completed.");
-    maker.get_wallet().read()?.save_to_disk()?;
     log::info!("Wallet file saved to disk.");
     log::info!("Maker Server is shut down successfully.");
     Ok(())

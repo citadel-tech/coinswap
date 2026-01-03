@@ -22,10 +22,11 @@ use bip39::Mnemonic;
 use bitcoin::{
     bip32::{ChildNumber, DerivationPath, Xpriv, Xpub},
     hashes::hash160::Hash as Hash160,
+    key::TapTweak,
     secp256k1,
-    secp256k1::{Secp256k1, SecretKey},
-    sighash::{EcdsaSighashType, SighashCache},
-    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, Weight,
+    secp256k1::{Keypair, Secp256k1, SecretKey},
+    sighash::{EcdsaSighashType, Prevouts, SighashCache, TapSighashType},
+    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, TxOut, Txid, Weight,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
 use serde::{Deserialize, Serialize};
@@ -42,14 +43,14 @@ use crate::{
 
 use rust_coinselect::{
     selectcoin::select_coin,
-    types::{CoinSelectionOpt, ExcessStrategy, OutputGroup},
+    types::{CoinSelectionOpt, ExcessStrategy, OutputGroup, SelectionError},
     utils::calculate_fee,
 };
 
 use super::{
     error::WalletError,
     rpc::RPCConfig,
-    storage::WalletStore,
+    storage::{AddressType, WalletStore},
     swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletSwapCoin},
     swapcoin2::{IncomingSwapCoinV2, OutgoingSwapCoinV2},
 };
@@ -58,7 +59,10 @@ use super::{
 // data in the bitcoin core wallet
 // for example which privkey corresponds to a scriptpubkey is stored in hd paths
 
-const HARDENDED_DERIVATION: &str = "m/84'/1'/0'";
+/// BIP-84 derivation path for P2WPKH (Native SegWit)
+const HARDENDED_DERIVATION_P2WPKH: &str = "m/84'/1'/0'";
+/// BIP-86 derivation path for P2TR (Taproot key-path)
+const HARDENDED_DERIVATION_P2TR: &str = "m/86'/1'/0'";
 
 /// Represents a Bitcoin wallet with associated functionality and data.
 #[derive(Debug)]
@@ -108,7 +112,7 @@ impl PartialEq for Wallet {
     }
 }
 
-/// Specify the keychain derivation path from [`HARDENDED_DERIVATION`]
+/// Specify the keychain derivation path from [`HARDENDED_DERIVATION_P2WPKH`] or [`HARDENDED_DERIVATION_P2TR`]
 /// Each kind represents an unhardened index value. Starting with External = 0.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub(crate) enum KeychainKind {
@@ -138,12 +142,15 @@ const WATCH_ONLY_SWAPCOIN_LABEL: &str = "watchonly_swapcoin_label";
 // about a UTXO required to spend it
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum UTXOSpendInfo {
-    /// Seed Coin
+    /// Seed Coin (regular wallet UTXO from HD derivation)
     SeedCoin {
         /// HD derivation path for the private key
         path: String,
         /// UTXO value in satoshis
         input_value: Amount,
+        /// Address type (P2WPKH or P2TR)
+        #[serde(default)]
+        address_type: AddressType,
     },
     /// Coins that we have received in a swap
     IncomingSwapCoin {
@@ -182,22 +189,29 @@ pub enum UTXOSpendInfo {
         path: String,
         /// UTXO value in satoshis
         input_value: Amount,
-        /// Original multisig script before sweeping
-        original_multisig_redeemscript: ScriptBuf,
+        /// Address type (P2WPKH or P2TR)
+        #[serde(default)]
+        address_type: AddressType,
     },
 }
 
 impl UTXOSpendInfo {
     /// Estimates Witness Size for different types of UTXOs in the context of Coinswap
     pub fn estimate_witness_size(&self) -> usize {
-        const P2PWPKH_WITNESS_SIZE: usize = 107;
+        const P2WPKH_WITNESS_SIZE: usize = 107; // 1 + 72 (sig) + 33 (pubkey) + 1 (count)
+        const P2TR_WITNESS_SIZE: usize = 65; // 1 + 64 (Schnorr sig)
         const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 222;
         const FIDELITY_BOND_WITNESS_SIZE: usize = 115;
         const TIME_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 179;
         const HASH_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 211;
 
-        match *self {
-            Self::SeedCoin { .. } | Self::SweptCoin { .. } => P2PWPKH_WITNESS_SIZE,
+        match self {
+            Self::SeedCoin { address_type, .. } | Self::SweptCoin { address_type, .. } => {
+                match address_type {
+                    AddressType::P2WPKH => P2WPKH_WITNESS_SIZE,
+                    AddressType::P2TR => P2TR_WITNESS_SIZE,
+                }
+            }
             Self::IncomingSwapCoin { .. } | Self::OutgoingSwapCoin { .. } => {
                 P2WSH_MULTISIG_2OF2_WITNESS_SIZE
             }
@@ -627,23 +641,41 @@ impl Wallet {
 
     //pub(crate) fn get_recovery_phrase_from_file()
 
+    /// Returns the derivation path for the given address type
+    fn get_derivation_path(address_type: AddressType) -> &'static str {
+        match address_type {
+            AddressType::P2WPKH => HARDENDED_DERIVATION_P2WPKH,
+            AddressType::P2TR => HARDENDED_DERIVATION_P2TR,
+        }
+    }
+
     /// Wallet descriptors are derivable. Currently only supports two KeychainKind. Internal and External.
-    fn get_wallet_descriptors(&self) -> Result<HashMap<KeychainKind, String>, WalletError> {
+    fn get_wallet_descriptors(
+        &self,
+        address_type: AddressType,
+    ) -> Result<HashMap<KeychainKind, String>, WalletError> {
         let secp = Secp256k1::new();
+        let derivation_path = Self::get_derivation_path(address_type);
         let wallet_xpub = Xpub::from_priv(
             &secp,
             &self
                 .store
                 .master_key
-                .derive_priv(&secp, &DerivationPath::from_str(HARDENDED_DERIVATION)?)?,
+                .derive_priv(&secp, &DerivationPath::from_str(derivation_path)?)?,
         );
 
         // Get descriptors for external and internal keychain. Other chains are not supported yet.
         [KeychainKind::External, KeychainKind::Internal]
             .iter()
             .map(|keychain| {
-                let descriptor_without_checksum =
-                    format!("wpkh({}/{}/*)", wallet_xpub, keychain.index_num());
+                let descriptor_without_checksum = match address_type {
+                    AddressType::P2WPKH => {
+                        format!("wpkh({}/{}/*)", wallet_xpub, keychain.index_num())
+                    }
+                    AddressType::P2TR => {
+                        format!("tr({}/{}/*)", wallet_xpub, keychain.index_num())
+                    }
+                };
                 let decriptor = format!(
                     "{}#{}",
                     descriptor_without_checksum,
@@ -656,11 +688,14 @@ impl Wallet {
 
     /// Checks if the addresses derived from the wallet descriptor is imported upto full index range.
     /// Returns the list of descriptors not imported yet. Max index range is as below:
-    /// Procution => 5000
+    /// Production => 5000
     /// Integration Tests => 6
-    pub(super) fn get_unimported_wallet_desc(&self) -> Result<Vec<String>, WalletError> {
+    pub(super) fn get_unimported_wallet_desc(
+        &self,
+        address_type: AddressType,
+    ) -> Result<Vec<String>, WalletError> {
         let mut unimported = Vec::new();
-        for (_, descriptor) in self.get_wallet_descriptors()? {
+        for (_, descriptor) in self.get_wallet_descriptors(address_type)? {
             let first_addr = self.rpc.derive_addresses(&descriptor, Some([0, 0]))?[0].clone();
 
             let last_index = self.get_addrss_import_count() - 1;
@@ -756,18 +791,23 @@ impl Wallet {
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Option<UTXOSpendInfo> {
-        if let Some(original_multisig_redeemscript) = self
+        if self
             .store
             .swept_incoming_swapcoins
-            .get(&utxo.script_pub_key)
+            .contains(&utxo.script_pub_key)
         {
             if let Some(descriptor) = &utxo.descriptor {
                 if let Some((_, addr_type, index)) = get_hd_path_from_descriptor(descriptor) {
                     let path = format!("m/{addr_type}/{index}");
+                    let address_type = if descriptor.starts_with("tr(") {
+                        AddressType::P2TR
+                    } else {
+                        AddressType::P2WPKH
+                    };
                     return Some(UTXOSpendInfo::SweptCoin {
                         input_value: utxo.amount,
                         path,
-                        original_multisig_redeemscript: original_multisig_redeemscript.clone(),
+                        address_type,
                     });
                 }
             }
@@ -861,15 +901,23 @@ impl Wallet {
                 //utxo is in a hd wallet
                 let (fingerprint, addr_type, index) = ret;
 
+                let address_type = if descriptor.starts_with("tr(") {
+                    AddressType::P2TR
+                } else {
+                    AddressType::P2WPKH
+                };
+
                 let secp = Secp256k1::new();
+                let derivation_path = Self::get_derivation_path(address_type);
                 let master_private_key = self
                     .store
                     .master_key
-                    .derive_priv(&secp, &DerivationPath::from_str(HARDENDED_DERIVATION)?)?;
+                    .derive_priv(&secp, &DerivationPath::from_str(derivation_path)?)?;
                 if fingerprint == master_private_key.fingerprint(&secp).to_string() {
                     return Ok(Some(UTXOSpendInfo::SeedCoin {
                         path: format!("m/{addr_type}/{index}"),
                         input_value: utxo.amount,
+                        address_type,
                     }));
                 }
             } else {
@@ -1180,8 +1228,11 @@ impl Wallet {
     }
 
     /// Gets the next external address from the HD keychain. Saves the wallet to disk
-    pub fn get_next_external_address(&mut self) -> Result<Address, WalletError> {
-        let descriptors = self.get_wallet_descriptors()?;
+    pub fn get_next_external_address(
+        &mut self,
+        address_type: AddressType,
+    ) -> Result<Address, WalletError> {
+        let descriptors = self.get_wallet_descriptors(address_type)?;
         let receive_branch_descriptor = descriptors
             .get(&KeychainKind::External)
             .expect("external keychain expected");
@@ -1196,9 +1247,13 @@ impl Wallet {
     }
 
     /// Gets the next internal addresses from the HD keychain.
-    pub fn get_next_internal_addresses(&self, count: u32) -> Result<Vec<Address>, WalletError> {
+    pub fn get_next_internal_addresses(
+        &self,
+        count: u32,
+        address_type: AddressType,
+    ) -> Result<Vec<Address>, WalletError> {
         let next_change_addr_index = self.find_hd_next_index(KeychainKind::Internal)?;
-        let descriptors = self.get_wallet_descriptors()?;
+        let descriptors = self.get_wallet_descriptors(address_type)?;
         let change_branch_descriptor = descriptors
             .get(&KeychainKind::Internal)
             .expect("Internal Keychain expected");
@@ -1305,13 +1360,75 @@ impl Wallet {
         inputs_info: impl Iterator<Item = UTXOSpendInfo>,
     ) -> Result<(), WalletError> {
         let secp = Secp256k1::new();
-        let master_private_key = self
-            .store
-            .master_key
-            .derive_priv(&secp, &DerivationPath::from_str(HARDENDED_DERIVATION)?)?;
         let tx_clone = tx.clone();
 
-        for (ix, (input, input_info)) in tx.input.iter_mut().zip(inputs_info).enumerate() {
+        let inputs_info: Vec<UTXOSpendInfo> = inputs_info.collect();
+
+        // Build all prevouts for taproot sighash computation (BIP-341 requires all prevouts)
+        let prevouts: Vec<TxOut> = inputs_info
+            .iter()
+            .map(|info| match info {
+                UTXOSpendInfo::SeedCoin {
+                    path,
+                    input_value,
+                    address_type,
+                }
+                | UTXOSpendInfo::SweptCoin {
+                    path,
+                    input_value,
+                    address_type,
+                    ..
+                } => {
+                    let base_derivation = match address_type {
+                        AddressType::P2WPKH => HARDENDED_DERIVATION_P2WPKH,
+                        AddressType::P2TR => HARDENDED_DERIVATION_P2TR,
+                    };
+                    let master_private_key = self
+                        .store
+                        .master_key
+                        .derive_priv(&secp, &DerivationPath::from_str(base_derivation).unwrap())
+                        .unwrap();
+                    let privkey = master_private_key
+                        .derive_priv(&secp, &DerivationPath::from_str(path).unwrap())
+                        .unwrap()
+                        .private_key;
+
+                    let script_pubkey = match address_type {
+                        AddressType::P2WPKH => {
+                            let pubkey = PublicKey {
+                                compressed: true,
+                                inner: privkey.public_key(&secp),
+                            };
+                            ScriptBuf::new_p2wpkh(&pubkey.wpubkey_hash().unwrap())
+                        }
+                        AddressType::P2TR => {
+                            let keypair = Keypair::from_secret_key(&secp, &privkey);
+                            let (x_only_pubkey, _) = keypair.x_only_public_key();
+                            ScriptBuf::new_p2tr(&secp, x_only_pubkey, None)
+                        }
+                    };
+                    TxOut {
+                        script_pubkey,
+                        value: *input_value,
+                    }
+                }
+                UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
+                    let redeemscript = self.get_fidelity_reedemscript(*index).unwrap();
+                    TxOut {
+                        script_pubkey: redeemscript.to_p2wsh(),
+                        value: *input_value,
+                    }
+                }
+                _ => TxOut {
+                    script_pubkey: ScriptBuf::new(),
+                    value: Amount::ZERO,
+                },
+            })
+            .collect();
+
+        for (ix, (input, input_info)) in
+            tx.input.iter_mut().zip(inputs_info.into_iter()).enumerate()
+        {
             match input_info {
                 UTXOSpendInfo::OutgoingSwapCoin { .. } => {
                     return Err(WalletError::General(
@@ -1325,34 +1442,72 @@ impl Wallet {
                         .expect("incoming swapcoin missing")
                         .sign_transaction_input(ix, &tx_clone, input, &multisig_redeemscript)?;
                 }
-                UTXOSpendInfo::SeedCoin { path, input_value }
+                UTXOSpendInfo::SeedCoin {
+                    path,
+                    input_value,
+                    address_type,
+                }
                 | UTXOSpendInfo::SweptCoin {
-                    path, input_value, ..
+                    path,
+                    input_value,
+                    address_type,
+                    ..
                 } => {
+                    let base_derivation = match address_type {
+                        AddressType::P2WPKH => HARDENDED_DERIVATION_P2WPKH,
+                        AddressType::P2TR => HARDENDED_DERIVATION_P2TR,
+                    };
+                    let master_private_key = self
+                        .store
+                        .master_key
+                        .derive_priv(&secp, &DerivationPath::from_str(base_derivation)?)?;
                     let privkey = master_private_key
                         .derive_priv(&secp, &DerivationPath::from_str(&path)?)?
                         .private_key;
-                    let pubkey = PublicKey {
-                        compressed: true,
-                        inner: privkey.public_key(&secp),
-                    };
-                    let scriptcode = ScriptBuf::new_p2wpkh(&pubkey.wpubkey_hash()?);
-                    let sighash = SighashCache::new(&tx_clone).p2wpkh_signature_hash(
-                        ix,
-                        &scriptcode,
-                        input_value,
-                        EcdsaSighashType::All,
-                    )?;
-                    //use low-R value signatures for privacy
-                    //https://en.bitcoin.it/wiki/Privacy#Wallet_fingerprinting
-                    let signature = secp.sign_ecdsa_low_r(
-                        &secp256k1::Message::from_digest_slice(&sighash[..])?,
-                        &privkey,
-                    );
-                    let mut sig_serialised = signature.serialize_der().to_vec();
-                    sig_serialised.push(EcdsaSighashType::All as u8);
-                    input.witness.push(sig_serialised);
-                    input.witness.push(pubkey.to_bytes());
+
+                    match address_type {
+                        AddressType::P2WPKH => {
+                            // P2WPKH signing (existing logic)
+                            let pubkey = PublicKey {
+                                compressed: true,
+                                inner: privkey.public_key(&secp),
+                            };
+                            let scriptcode = ScriptBuf::new_p2wpkh(&pubkey.wpubkey_hash()?);
+                            let sighash = SighashCache::new(&tx_clone).p2wpkh_signature_hash(
+                                ix,
+                                &scriptcode,
+                                input_value,
+                                EcdsaSighashType::All,
+                            )?;
+                            //use low-R value signatures for privacy
+                            //https://en.bitcoin.it/wiki/Privacy#Wallet_fingerprinting
+                            let signature = secp.sign_ecdsa_low_r(
+                                &secp256k1::Message::from_digest_slice(&sighash[..])?,
+                                &privkey,
+                            );
+                            let mut sig_serialised = signature.serialize_der().to_vec();
+                            sig_serialised.push(EcdsaSighashType::All as u8);
+                            input.witness.push(sig_serialised);
+                            input.witness.push(pubkey.to_bytes());
+                        }
+                        AddressType::P2TR => {
+                            let keypair = Keypair::from_secret_key(&secp, &privkey);
+
+                            // Calculate taproot key-spend sighash using all prevouts
+                            let sighash = SighashCache::new(&tx_clone)
+                                .taproot_key_spend_signature_hash(
+                                    ix,
+                                    &Prevouts::All(&prevouts),
+                                    TapSighashType::Default,
+                                )?;
+
+                            let tweaked_keypair = keypair.tap_tweak(&secp, None);
+                            let msg = secp256k1::Message::from(sighash);
+                            let signature = secp.sign_schnorr(&msg, &tweaked_keypair.to_keypair());
+
+                            input.witness.push(signature.as_ref());
+                        }
+                    }
                 }
                 UTXOSpendInfo::TimelockContract {
                     swapcoin_multisig_redeemscript,
@@ -1749,9 +1904,11 @@ impl Wallet {
             + selected_weight
             + MAX_SPLITS as u64 * (target_weight.to_wu() + change_weight.to_wu());
 
+        let remaining_target = (amount.to_sat() + estimated_fee).saturating_sub(selected_total);
+
         // Create coin selection options with adjusted target
         let coin_selection_option = CoinSelectionOpt {
-            target_value: amount.to_sat().saturating_sub(selected_total),
+            target_value: remaining_target,
             target_feerate: feerate as f32,
             long_term_feerate: Some(LONG_TERM_FEERATE),
             min_absolute_fee: MIN_FEE_RATE as u64 * tx_base_weight,
@@ -1782,9 +1939,22 @@ impl Wallet {
             }
             Err(e) => {
                 log::error!("Coin selection of {utxo_type} UTXOs failed: {e:?}");
-                Err(WalletError::General(format!(
-                    "Coin selection failed: {e:?}"
-                )))
+                match e {
+                    SelectionError::InsufficientFunds => {
+                        let available = if utxo_type == "regular" {
+                            regular_total
+                        } else {
+                            swap_total
+                        };
+                        Err(WalletError::InsufficientFund {
+                            available,
+                            required: amount.to_sat() + estimated_fee,
+                        })
+                    }
+                    _ => Err(WalletError::General(format!(
+                        "Coin selection failed: {e:?}"
+                    ))),
+                }
             }
         }
     }
@@ -1916,7 +2086,9 @@ impl Wallet {
     pub(crate) fn descriptors_to_import(&self) -> Result<Vec<String>, WalletError> {
         let mut descriptors_to_import = Vec::new();
 
-        descriptors_to_import.extend(self.get_unimported_wallet_desc()?);
+        // Import both P2WPKH and P2TR descriptors to support both address types
+        descriptors_to_import.extend(self.get_unimported_wallet_desc(AddressType::P2WPKH)?);
+        descriptors_to_import.extend(self.get_unimported_wallet_desc(AddressType::P2TR)?);
 
         descriptors_to_import.extend(
             self.store
@@ -2035,7 +2207,7 @@ impl Wallet {
             completed_swapcoins.len()
         );
 
-        self.sync_no_fail();
+        self.sync_and_save()?;
 
         for (multisig_redeemscript, _) in completed_swapcoins {
             let utxo_info = self
@@ -2048,7 +2220,8 @@ impl Wallet {
                 });
 
             if let Some((utxo, spend_info)) = utxo_info {
-                let internal_address = self.get_next_internal_addresses(1)?[0].clone();
+                let internal_address =
+                    self.get_next_internal_addresses(1, AddressType::P2WPKH)?[0].clone();
                 log::info!(
                     "Sweeping incoming swap coin {} to internal address {}",
                     utxo.txid,
@@ -2071,7 +2244,7 @@ impl Wallet {
                 let output_scriptpubkey = internal_address.script_pubkey();
                 self.store
                     .swept_incoming_swapcoins
-                    .insert(output_scriptpubkey, multisig_redeemscript.clone());
+                    .insert(output_scriptpubkey);
             } else {
                 log::warn!("Could not find UTXO for completed incoming swap coin");
             }
@@ -2127,8 +2300,8 @@ impl Wallet {
                 log::info!("Broadcasting Incoming Contract. Removing from wallet. Txid : {txid}");
             }
             let reedem_script = incoming.get_multisig_redeemscript();
-            let next_internal = &self.get_next_internal_addresses(1)?[0];
-            self.sync()?;
+            let next_internal = &self.get_next_internal_addresses(1, AddressType::P2WPKH)?[0];
+            self.sync_and_save()?;
 
             let hashlock_spend =
                 self.create_hashlock_spend(&incoming, next_internal, MIN_FEE_RATE)?;
@@ -2158,8 +2331,8 @@ impl Wallet {
             }
             let reedem_script = outgoing.get_multisig_redeemscript();
             let timelock = outgoing.get_timelock()?;
-            let next_internal = &self.get_next_internal_addresses(1)?[0];
-            self.sync()?;
+            let next_internal = &self.get_next_internal_addresses(1, AddressType::P2WPKH)?[0];
+            self.sync_and_save()?;
 
             let timelock_spend =
                 self.create_timelock_spend(&outgoing, next_internal, MIN_FEE_RATE)?;
@@ -2202,7 +2375,7 @@ impl Wallet {
             // Add them as part of swapcoins, because they are technically output of a swap.
             self.store
                 .swept_incoming_swapcoins
-                .insert(hashlock_tx.output[0].script_pubkey.clone(), ic_rs.clone());
+                .insert(hashlock_tx.output[0].script_pubkey.clone());
 
             let removed = self
                 .remove_incoming_swapcoin(ic_rs)?
@@ -2311,7 +2484,7 @@ impl Wallet {
         };
 
         // Get destination address
-        let destination = self.get_next_internal_addresses(1)?[0].clone();
+        let destination = self.get_next_internal_addresses(1, AddressType::P2WPKH)?[0].clone();
 
         // Estimate output amount (contract amount minus fees)
         let contract_amount = incoming.funding_amount;
@@ -2408,7 +2581,7 @@ impl Wallet {
 
         self.store
             .swept_incoming_swapcoins
-            .insert(output.script_pubkey.clone(), output.script_pubkey);
+            .insert(output.script_pubkey.clone());
 
         // Remove from wallet storage
         self.store
@@ -2456,7 +2629,7 @@ impl Wallet {
         };
 
         // Get destination
-        let destination = self.get_next_internal_addresses(1)?[0].clone();
+        let destination = self.get_next_internal_addresses(1, AddressType::P2WPKH)?[0].clone();
 
         let contract_amount = outgoing.funding_amount;
         let estimated_fee = bitcoin::Amount::from_sat(200);

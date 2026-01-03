@@ -1,3 +1,4 @@
+use super::error::TakerError;
 use crate::{
     protocol::{
         contract2::{
@@ -16,12 +17,15 @@ use crate::{
     },
     taker::{
         config::TakerConfig,
-        offers::{MakerAddress, OfferAndAddress, OfferBook},
+        offers::{
+            MakerAddress, MakerProtocol, OfferAndAddress, OfferBook, OfferBookHandle,
+            OfferSyncHandle, OfferSyncService,
+        },
     },
     utill::{check_tor_status, get_taker_dir, read_message, send_message},
     wallet::{
         ffi::{MakerFeeInfo, SwapReport},
-        IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError,
+        AddressType, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError,
     },
     watch_tower::{
         registry_storage::FileRegistry,
@@ -44,14 +48,25 @@ use bitcoin::{
     Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, RawTx, RpcApi};
-use chrono::Utc;
 use socks::Socks5Stream;
 use std::{
-    collections::HashSet, convert::TryFrom, net::TcpStream, path::PathBuf, sync::mpsc, thread,
-    time::Duration,
+    collections::HashSet, net::TcpStream, path::PathBuf, sync::mpsc, thread, time::Duration,
 };
 
-use super::error::TakerError;
+/// Represents different behaviors taker can have during the swap.
+/// Used for testing various possible scenarios that can happen during a swap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "integration-test")]
+pub enum TakerBehavior {
+    /// Normal behaviour
+    Normal,
+    /// Close connection after receiving AckResponse message from the maker. (no outgoing/incoming contract created)
+    CloseAtAckResponse,
+    /// Close connection after sending SendersContract (outgoing contract created)
+    CloseAtSendersContract,
+    /// Close connection after receiving SendersContract from maker (outgoing contract created).
+    CloseAtSendersContractFromMaker,
+}
 
 /// Represents how a taproot contract output was spent
 #[derive(Debug, Clone)]
@@ -160,9 +175,9 @@ pub(crate) const REFUND_LOCKTIME: u16 = 20;
 pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
 
 /// Helper function to establish a connection to a maker
-fn connect_to_maker(
+pub fn connect_to_maker(
     maker_addr: &str,
-    config: &TakerConfig,
+    socks_port: u16,
     timeout_secs: u64,
 ) -> Result<TcpStream, TakerError> {
     let socket = if cfg!(feature = "integration-test") {
@@ -173,17 +188,14 @@ fn connect_to_maker(
             ))
         })?
     } else {
-        Socks5Stream::connect(
-            format!("127.0.0.1:{}", config.socks_port).as_str(),
-            maker_addr,
-        )
-        .map_err(|e| {
-            TakerError::General(format!(
-                "Failed to connect to maker {} via Tor: {:?}",
-                maker_addr, e
-            ))
-        })?
-        .into_inner()
+        Socks5Stream::connect(format!("127.0.0.1:{socks_port}").as_str(), maker_addr)
+            .map_err(|e| {
+                TakerError::General(format!(
+                    "Failed to connect to maker {} via Tor: {:?}",
+                    maker_addr, e
+                ))
+            })?
+            .into_inner()
     };
 
     let timeout = Duration::from_secs(timeout_secs);
@@ -195,135 +207,35 @@ fn connect_to_maker(
     Ok(socket)
 }
 
-/// Fetch offers from taproot makers using taproot protocol messages
-fn fetch_taproot_offers(
-    maker_addresses: &[MakerAddress],
-    config: &TakerConfig,
-) -> Result<Vec<OfferAndAddress>, TakerError> {
-    use std::sync::mpsc;
-
-    let (offers_writer, offers_reader) = mpsc::channel::<Option<OfferAndAddress>>();
-    let maker_addresses_len = maker_addresses.len();
-
-    thread::scope(|s| {
-        for address in maker_addresses {
-            let offers_writer = offers_writer.clone();
-            s.spawn(move || {
-                let offer = download_taproot_offer(address, config);
-                let _ = offers_writer.send(offer);
-            });
-        }
-    });
-
-    let mut result = Vec::new();
-    for _ in 0..maker_addresses_len {
-        if let Some(offer_addr) = offers_reader.recv()? {
-            result.push(offer_addr);
-        }
-    }
-
-    Ok(result)
-}
-
-/// Download a single offer from a taproot maker
-fn download_taproot_offer(address: &MakerAddress, config: &TakerConfig) -> Option<OfferAndAddress> {
-    let maker_addr = address.to_string();
-    log::info!("Downloading offer from taproot maker: {}", maker_addr);
-
-    // Try connecting to the maker using the helper function
-    let mut socket = match connect_to_maker(&maker_addr, config, 30) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("Failed to connect to taproot maker {}: {:?}", maker_addr, e);
-            return None;
-        }
-    };
-
-    // Send GetOffer message (taproot protocol)
-    let get_offer_msg = GetOffer {
-        protocol_version_min: 1,
-        protocol_version_max: 1,
-        number_of_transactions: 1,
-    };
-
-    let msg = TakerToMakerMessage::GetOffer(get_offer_msg);
-    if let Err(e) = send_message(&mut socket, &msg) {
-        log::error!("Failed to send GetOffer message to {}: {:?}", maker_addr, e);
-        return None;
-    }
-
-    // Read the response
-    let response_bytes = match read_message(&mut socket) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            log::error!("Failed to read response from {}: {:?}", maker_addr, e);
-            return None;
-        }
-    };
-
-    // Parse the response
-    let response: MakerToTakerMessage = match serde_cbor::from_slice(&response_bytes) {
-        Ok(msg) => msg,
-        Err(e) => {
-            log::error!("Failed to parse response from {}: {:?}", maker_addr, e);
-            return None;
-        }
-    };
-
-    // Extract the offer
-    let taproot_offer = match response {
-        MakerToTakerMessage::RespOffer(offer) => *offer,
-        _ => {
-            log::error!(
-                "Unexpected response from {}: expected RespOffer",
-                maker_addr
-            );
-            return None;
-        }
-    };
-
-    let offer = crate::protocol::messages::Offer {
-        base_fee: taproot_offer.base_fee,
-        amount_relative_fee_pct: taproot_offer.amount_relative_fee,
-        time_relative_fee_pct: taproot_offer.time_relative_fee,
-        required_confirms: 1, // Default value for taproot
-        minimum_locktime: taproot_offer.minimum_locktime,
-        max_size: taproot_offer.max_size,
-        min_size: taproot_offer.min_size,
-        tweakable_point: taproot_offer.tweakable_point,
-        fidelity: crate::protocol::messages::FidelityProof {
-            bond: taproot_offer.fidelity.bond,
-            cert_hash: bitcoin::hashes::sha256d::Hash::from_slice(
-                taproot_offer.fidelity.cert_hash.as_ref(),
-            )
-            .ok()?,
-            cert_sig: taproot_offer.fidelity.cert_sig,
-        },
-    };
-
-    log::info!(
-        "Successfully downloaded offer from taproot maker: {}",
-        maker_addr
-    );
-
-    Some(OfferAndAddress {
-        offer,
-        address: address.clone(),
-        timestamp: Utc::now(),
-    })
-}
 /// Taker implementation for coinswap protocol
 pub struct Taker {
     wallet: Wallet,
     config: TakerConfig,
-    offerbook: OfferBook,
+    offerbook: OfferBookHandle,
     ongoing_swap_state: OngoingSwapState,
-    data_dir: PathBuf,
     watch_service: WatchService,
+    offer_sync_handle: OfferSyncHandle,
+    #[cfg(feature = "integration-test")]
+    behavior: TakerBehavior,
+}
+
+impl Drop for Taker {
+    fn drop(&mut self) {
+        log::info!("Shutting down taker.");
+        self.offerbook.persist().unwrap();
+        log::info!("shutting the offer sync background job");
+        self.offer_sync_handle.shutdown();
+        log::info!("shutting the watch service background job");
+        self.watch_service.shutdown();
+        log::info!("offerbook data saved to disk.");
+        self.wallet.save_to_disk().unwrap();
+        log::info!("Wallet data saved to disk.");
+    }
 }
 
 impl Taker {
     /// Initialize a new Taker instance
+    #[allow(clippy::too_many_arguments)]
     pub fn init(
         data_dir: Option<PathBuf>,
         wallet_file_name: Option<String>,
@@ -332,6 +244,7 @@ impl Taker {
         tor_auth_password: Option<String>,
         zmq_addr: String,
         password: Option<String>,
+        #[cfg(feature = "integration-test")] behavior: TakerBehavior,
     ) -> Result<Taker, TakerError> {
         let data_dir = data_dir.unwrap_or_else(get_taker_dir);
 
@@ -355,11 +268,12 @@ impl Taker {
         let registry = FileRegistry::load(file_registry);
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = mpsc::channel();
+        let rpc_config_watcher = rpc_config.clone();
 
         let mut watcher = Watcher::<Taker>::new(backend, registry, rx_requests, tx_events);
         _ = thread::Builder::new()
             .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(rpc_backend));
+            .spawn(move || watcher.run(rpc_config_watcher));
 
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
@@ -385,29 +299,18 @@ impl Taker {
 
         config.write_to_file(&data_dir.join("config.toml"))?;
 
-        let offerbook_path = data_dir.join("offerbook.json");
-        let offerbook = if offerbook_path.exists() {
-            match OfferBook::read_from_disk(&offerbook_path) {
-                Ok(offerbook) => {
-                    log::info!("Successfully loaded offerbook at : {:?}", offerbook_path);
-                    offerbook
-                }
-                Err(e) => {
-                    log::error!("Offerbook data corrupted. Recreating. {:?}", e);
-                    let empty_book = OfferBook::default();
-                    empty_book.write_to_disk(&offerbook_path)?;
-                    empty_book
-                }
-            }
-        } else {
-            let empty_book = OfferBook::default();
-            std::fs::File::create(&offerbook_path)?;
-            empty_book.write_to_disk(&offerbook_path)?;
-            empty_book
-        };
+        let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
+
+        let offer_sync_handle = OfferSyncService::new(
+            offerbook.clone(),
+            watch_service.clone(),
+            config.socks_port,
+            rpc_backend,
+        )
+        .start();
 
         log::info!("Initializing wallet sync...");
-        wallet.sync()?;
+        wallet.sync_and_save()?;
         log::info!("Completed wallet sync");
 
         Ok(Self {
@@ -415,8 +318,10 @@ impl Taker {
             config,
             offerbook,
             ongoing_swap_state: OngoingSwapState::default(),
-            data_dir,
             watch_service,
+            offer_sync_handle,
+            #[cfg(feature = "integration-test")]
+            behavior,
         })
     }
 
@@ -450,9 +355,28 @@ impl Taker {
             return Err(err.into());
         }
 
-        self.sync_offerbook()?;
+        // Generate preimage for the swap
+        let mut preimage = [0u8; 32];
+        OsRng.fill_bytes(&mut preimage);
+
+        let unique_id = preimage[0..8].to_hex_string(bitcoin::hex::Case::Lower);
+        log::info!("Initiating coinswap with id : {}", unique_id);
+
+        self.ongoing_swap_state.active_preimage = preimage;
+        self.ongoing_swap_state.id = unique_id;
+
         self.choose_makers_for_swap(swap_params)?;
         self.setup_contract_keys_and_scripts()?;
+
+        #[cfg(feature = "integration-test")]
+        {
+            if self.behavior == TakerBehavior::CloseAtAckResponse {
+                log::error!(
+                    "Dropping Swap Process after receiving Ack Response message from maker"
+                );
+                return Err(TakerError::General("Taker Dropping after receiving AckResponse message from maker. (Test behavior)".to_string(),));
+            }
+        }
 
         let outgoing_signed_contract_transactions = self.create_outgoing_contract_transactions()?;
         let tx = match outgoing_signed_contract_transactions.first() {
@@ -486,7 +410,6 @@ impl Taker {
         for tx in &outgoing_signed_contract_transactions {
             self.wallet.wait_for_tx_confirmation(tx.compute_txid())?;
         }
-
         match self
             .negotiate_with_makers_and_coordinate_sweep(&outgoing_signed_contract_transactions)
         {
@@ -497,6 +420,7 @@ impl Taker {
 
                 // Store swap state before reset for report generation
                 let prereset_swapstate = self.ongoing_swap_state.clone();
+                self.ongoing_swap_state = OngoingSwapState::default();
 
                 // Sync wallet and generate report
                 self.wallet.sync_and_save()?;
@@ -818,6 +742,7 @@ impl Taker {
             // Always send GetOffer first to ensure maker has fresh keypair state
             // This is required because offers may be cached but maker might have restarted
             let get_offer_msg = GetOffer {
+                id: self.ongoing_swap_state.id.clone(),
                 protocol_version_min: 1,
                 protocol_version_max: 1,
                 number_of_transactions: 1,
@@ -861,25 +786,27 @@ impl Taker {
             );
 
             let swap_details = SwapDetails {
+                id: self.ongoing_swap_state.id.clone(),
                 amount: self.ongoing_swap_state.swap_params.send_amount,
                 no_of_tx: self.ongoing_swap_state.swap_params.tx_count as u8,
                 timelock: maker_timelock,
             };
 
             let msg = TakerToMakerMessage::SwapDetails(swap_details);
-            let response = self.send_to_maker_and_get_response(&suitable_maker.address, msg)?;
+            let response = self.send_to_maker_and_get_response(&suitable_maker.address, msg);
             match response {
-                MakerToTakerMessage::AckResponse(AckResponse::Ack) => {
+                Ok(MakerToTakerMessage::AckResponse(AckResponse::Ack)) => {
                     log::info!("Received AckResponse from maker: {:?}", suitable_maker);
                     self.ongoing_swap_state
                         .chosen_makers
                         .push(suitable_maker.clone());
                 }
-                MakerToTakerMessage::AckResponse(AckResponse::Nack) => {
+                Ok(MakerToTakerMessage::AckResponse(AckResponse::Nack)) => {
                     log::warn!("Maker {:?} did not accept the swap request", suitable_maker);
                     continue;
                 }
                 _ => {
+                    self.offerbook.add_bad_maker(suitable_maker);
                     log::warn!("Received unexpected message from maker: {:?}", response);
                     continue;
                 }
@@ -903,86 +830,13 @@ impl Taker {
         let chosen_makers_count = self.ongoing_swap_state.chosen_makers.len();
         self.ongoing_swap_state.maker_outgoing_privkeys = vec![None; chosen_makers_count];
 
-        // Generate preimage for the swap
-        let mut preimage = [0u8; 32];
-        OsRng.fill_bytes(&mut preimage);
-
-        let unique_id = preimage[0..8].to_hex_string(bitcoin::hex::Case::Lower);
-        log::info!("Initiating coinswap with id : {}", unique_id);
-
-        self.ongoing_swap_state.active_preimage = preimage;
-        self.ongoing_swap_state.id = unique_id;
-
-        Ok(())
-    }
-
-    /// Sync the offer book with directory servers
-    pub fn sync_offerbook(&mut self) -> Result<(), TakerError> {
-        self.watch_service.request_maker_address();
-        let watcher_event = self.watch_service.wait_for_event();
-
-        let Some(WatcherEvent::MakerAddresses { maker_addresses }) = watcher_event else {
-            return Err(TakerError::General("No response from watcher".to_string()));
-        };
-
-        let maker_addresses = maker_addresses
-            .into_iter()
-            .map(MakerAddress::try_from)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| {
-                TakerError::General(format!("Failed to parse maker addresses: {:?}", e))
-            })?;
-
-        // Find out addresses that was last updated 30 mins ago.
-        let fresh_addrs = self
-            .offerbook
-            .get_fresh_addrs()
-            .iter()
-            .map(|oa| &oa.address)
-            .collect::<HashSet<_>>();
-
-        // Fetch only those addresses which are new, or last updated more than 30 mins ago
-        let addrs_to_fetch = maker_addresses
-            .iter()
-            .filter(|tracker_addr| !fresh_addrs.contains(tracker_addr))
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let new_offers = fetch_taproot_offers(&addrs_to_fetch, &self.config)?;
-
-        for new_offer in new_offers {
-            log::info!(
-                "Found offer from {}. Verifying Fidelity Proof",
-                new_offer.address
-            );
-            if let Err(e) = self
-                .wallet
-                .verify_fidelity_proof(&new_offer.offer.fidelity, &new_offer.address.to_string())
-            {
-                log::warn!(
-                    "Fidelity Proof Verification failed with error: {:?}. Adding this to bad maker list: {}",
-                    e,
-                    new_offer.address
-                );
-                self.offerbook.add_bad_maker(&new_offer);
-            } else {
-                log::info!("Fidelity Bond verification success. Adding offer to our OfferBook");
-                self.offerbook.add_new_offer(&new_offer);
-            }
-        }
-
-        // Save the updated cache back to disk.
-        self.offerbook
-            .write_to_disk(&self.data_dir.join("offerbook.json"))?;
-
         Ok(())
     }
 
     /// Fetch offers from available makers
     /// This syncs the offerbook first and then returns a reference to it
-    pub fn fetch_offers(&mut self) -> Result<&OfferBook, TakerError> {
-        self.sync_offerbook()?;
-        Ok(&self.offerbook)
+    pub fn fetch_offers(&mut self) -> Result<OfferBook, TakerError> {
+        Ok(self.offerbook.snapshot())
     }
 
     /// Send a message to a maker and get response
@@ -992,7 +846,7 @@ impl Taker {
         msg: TakerToMakerMessage,
     ) -> Result<MakerToTakerMessage, TakerError> {
         let address = maker_addr.to_string();
-        let mut socket = connect_to_maker(&address, &self.config, TCP_TIMEOUT_SECONDS)?;
+        let mut socket = connect_to_maker(&address, self.config.socks_port, TCP_TIMEOUT_SECONDS)?;
 
         send_message(&mut socket, &msg)?;
         log::info!("===> {msg} | {maker_addr}");
@@ -1018,7 +872,7 @@ impl Taker {
 
         let suitable_makers: Vec<OfferAndAddress> = self
             .offerbook
-            .all_good_makers()
+            .active_makers(&MakerProtocol::Taproot)
             .into_iter()
             .filter(|oa| {
                 let maker_fee = calculate_coinswap_fee(
@@ -1039,16 +893,19 @@ impl Taker {
 
                 is_suitable
             })
-            .cloned()
             .collect();
 
         log::info!(
             "Found {} suitable makers out of {} total makers",
             suitable_makers.len(),
-            self.offerbook.all_good_makers().len()
+            self.offerbook.active_makers(&MakerProtocol::Taproot).len()
         );
 
         suitable_makers
+    }
+    /// Get all the bad makers
+    pub fn get_bad_makers(&self) -> Vec<OfferAndAddress> {
+        self.offerbook.get_bad_makers(&MakerProtocol::Taproot)
     }
 
     /// Setup contract keys and scripts for the swap
@@ -1175,6 +1032,7 @@ impl Taker {
                         self.ongoing_swap_state.swap_params.send_amount,
                     )],
                     op_return_data: None,
+                    change_address_type: AddressType::P2TR,
                 },
                 &selected_utxos,
             )?
@@ -1209,6 +1067,7 @@ impl Taker {
             };
 
         let senders_contract = SendersContract {
+            id: self.ongoing_swap_state.id.clone(),
             contract_txs: vec![outgoing_signed_contract_transactions[0].compute_txid()],
             pubkeys_a: vec![self.ongoing_swap_state.outgoing_contract.pubkey()?],
             hashlock_scripts: vec![self
@@ -1228,13 +1087,24 @@ impl Taker {
         };
 
         let msg = TakerToMakerMessage::SendersContract(senders_contract.clone());
-        let response = self.send_to_maker_and_get_response(&first_maker.address, msg)?;
+        let response = self.send_to_maker_and_get_response(&first_maker.address, msg);
+        #[cfg(feature = "integration-test")]
+        {
+            if self.behavior == TakerBehavior::CloseAtSendersContract {
+                log::error!("Dropping connection after sending SendersContract to Maker");
+                return Err(TakerError::General(
+                    "Taker dropping of after sending Senders Contract to Maker (test behavior) "
+                        .to_string(),
+                ));
+            }
+        }
 
         match response {
-            MakerToTakerMessage::SenderContractFromMaker(incoming_contract) => {
+            Ok(MakerToTakerMessage::SenderContractFromMaker(incoming_contract)) => {
                 self.forward_contracts_and_coordinate_sweep(incoming_contract)?;
             }
             _ => {
+                self.offerbook.add_bad_maker(first_maker);
                 return Err(TakerError::General(
                     "Unexpected response from first maker".to_string(),
                 ));
@@ -1289,6 +1159,7 @@ impl Taker {
             };
 
             let forward_contract = SendersContract {
+                id: self.ongoing_swap_state.id.clone(),
                 contract_txs: current_contract.contract_txs.clone(),
                 pubkeys_a: current_contract.pubkeys_a.clone(),
                 hashlock_scripts: current_contract.hashlock_scripts.clone(),
@@ -1299,11 +1170,21 @@ impl Taker {
             };
 
             let forward_msg = TakerToMakerMessage::SendersContract(forward_contract);
-            let maker_response =
-                self.send_to_maker_and_get_response(&maker.address, forward_msg)?;
+            let maker_response = self.send_to_maker_and_get_response(&maker.address, forward_msg);
 
             match maker_response {
-                MakerToTakerMessage::SenderContractFromMaker(maker_contract) => {
+                Ok(MakerToTakerMessage::SenderContractFromMaker(maker_contract)) => {
+                    #[cfg(feature = "integration-test")]
+                    {
+                        if self.behavior == TakerBehavior::CloseAtSendersContractFromMaker {
+                            log::error!(
+                                "Dropping connection after receiving Sender Contract from Maker"
+                            );
+                            return Err(TakerError::General(
+                                "Taker dropping of after receiving Senders Contract from Maker (test behavior) ".to_string(),));
+                        }
+                    }
+
                     if maker_index == maker_count - 1 {
                         // This is the last maker - store its response as final contract data
                         self.store_final_contract_data(&maker_contract)?;
@@ -1315,6 +1196,7 @@ impl Taker {
                     }
                 }
                 _ => {
+                    self.offerbook.add_bad_maker(maker);
                     return Err(TakerError::General(format!(
                         "Unexpected response from maker {}",
                         maker_index
@@ -1374,13 +1256,32 @@ impl Taker {
             );
 
             // Fetch and store the incoming contract transaction
-            let incoming_contract_tx = self
-                .wallet
-                .rpc
-                .get_raw_transaction(incoming_contract_txid, None)
-                .map_err(|e| {
-                    TakerError::General(format!("Failed to get incoming contract tx: {:?}", e))
-                })?;
+            // Wait for transaction to appear in mempool/blockchain with retry logic
+            let mempool_wait_timeout = 60;
+            let start_time = std::time::Instant::now();
+            let incoming_contract_tx = loop {
+                match self
+                    .wallet
+                    .rpc
+                    .get_raw_transaction(incoming_contract_txid, None)
+                {
+                    Ok(tx) => break tx,
+                    Err(_e) => {
+                        let elapsed = start_time.elapsed().as_secs();
+                        if elapsed > mempool_wait_timeout {
+                            return Err(TakerError::General(format!(
+                                "Timed out waiting for incoming contract tx {} to appear in mempool after {} secs",
+                                incoming_contract_txid, elapsed
+                            )));
+                        }
+                        log::info!(
+                            "Waiting for incoming contract tx to appear in mempool | {} secs",
+                            elapsed
+                        );
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                    }
+                }
+            };
             self.ongoing_swap_state.incoming_contract.contract_tx = incoming_contract_tx.clone();
             // Set funding amount from the transaction output
             self.ongoing_swap_state.incoming_contract.funding_amount =
@@ -1442,12 +1343,12 @@ impl Taker {
 
             // Create private key handover message
             let privkey_msg = TakerToMakerMessage::PrivateKeyHandover(PrivateKeyHandover {
+                id: Some(self.ongoing_swap_state.id.clone()),
                 secret_key: outgoing_privkey,
             });
 
             // Send to maker and get their outgoing key in response
-            let response = self.send_to_maker_and_get_response(&maker_address, privkey_msg)?;
-
+            let response = self.send_to_maker_and_get_response(&maker_address, privkey_msg);
             // remove taker's outgoing swapcoin since we've handed over the key
             if maker_index == 0 {
                 let outgoing_txid = self
@@ -1455,6 +1356,20 @@ impl Taker {
                     .outgoing_contract
                     .contract_tx
                     .compute_txid();
+                for (vout, _) in self
+                    .ongoing_swap_state
+                    .outgoing_contract
+                    .contract_tx
+                    .output
+                    .iter()
+                    .enumerate()
+                {
+                    let outpoint = OutPoint {
+                        txid: outgoing_txid,
+                        vout: vout as u32,
+                    };
+                    self.watch_service.unwatch(outpoint);
+                }
                 self.wallet.remove_outgoing_swapcoin_v2(&outgoing_txid);
                 log::info!(
                     "Removed taker's outgoing swapcoin {} after sending PrivateKeyHandover",
@@ -1465,7 +1380,7 @@ impl Taker {
 
             // Extract maker's outgoing key from response
             match response {
-                MakerToTakerMessage::PrivateKeyHandover(maker_privkey_handover) => {
+                Ok(MakerToTakerMessage::PrivateKeyHandover(maker_privkey_handover)) => {
                     let maker_outgoing_privkey = maker_privkey_handover.secret_key;
 
                     log::info!("  [Maker {}] Received outgoing private key", maker_index);
@@ -1475,6 +1390,8 @@ impl Taker {
                         Some(maker_outgoing_privkey);
                 }
                 _ => {
+                    self.offerbook
+                        .add_bad_maker(&self.ongoing_swap_state.chosen_makers[maker_index]);
                     return Err(TakerError::General(format!(
                         "Unexpected response from maker {}: expected PrivateKeyHandover",
                         maker_index
@@ -1544,7 +1461,7 @@ impl Taker {
 
         let destination_address = self
             .wallet
-            .get_next_internal_addresses(1)
+            .get_next_internal_addresses(1, AddressType::P2TR)
             .map_err(TakerError::Wallet)?
             .into_iter()
             .next()
@@ -1680,11 +1597,26 @@ impl Taker {
         self.wallet
             .store
             .swept_incoming_swapcoins
-            .insert(output_scriptpubkey.clone(), output_scriptpubkey);
+            .insert(output_scriptpubkey);
         log::info!(
             "Recorded swept incoming swapcoin V2: {}",
             incoming_contract_txid
         );
+
+        for (vout, _) in self
+            .ongoing_swap_state
+            .incoming_contract
+            .contract_tx
+            .output
+            .iter()
+            .enumerate()
+        {
+            let outpoint = OutPoint {
+                txid: incoming_contract_txid,
+                vout: vout as u32,
+            };
+            self.watch_service.unwatch(outpoint);
+        }
 
         // Remove the incoming swapcoin since we've successfully swept it
         self.wallet
@@ -1904,6 +1836,16 @@ impl Taker {
 
         log::info!("Taproot swap recovery completed");
         Ok(())
+    }
+
+    /// Indicates if offerbook syncing is in progress or not.
+    pub fn is_offerbook_syncing(&self) -> bool {
+        self.offer_sync_handle.is_syncing()
+    }
+
+    /// Run offer sync now.
+    pub fn run_offer_sync_now(&self) {
+        self.offer_sync_handle.run_sync_now()
     }
 }
 

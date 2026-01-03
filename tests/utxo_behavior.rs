@@ -4,7 +4,7 @@ use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
     utill::MIN_FEE_RATE,
-    wallet::WalletError,
+    wallet::{AddressType, WalletError},
 };
 use log::{info, warn};
 use std::{
@@ -107,7 +107,7 @@ fn test_address_grouping_behavior() {
                 .get_wallet()
                 .write()
                 .unwrap()
-                .get_next_external_address()
+                .get_next_external_address(AddressType::P2WPKH)
                 .unwrap()
         });
 
@@ -131,7 +131,7 @@ fn test_address_grouping_behavior() {
     // Sync wallet to see all the UTXOs we just created
     {
         let mut wallet = maker.get_wallet().write().unwrap();
-        wallet.sync_no_fail();
+        wallet.sync_and_save().unwrap();
     }
 
     println!("\n=== Available UTXO Summary ===");
@@ -265,7 +265,7 @@ fn test_separated_utxo_coin_selection() {
     // Sync both maker wallets
     for maker in &makers {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
     }
 
     println!("=== Testing Separated UTXO Coin Selection ===");
@@ -369,7 +369,7 @@ fn test_separated_utxo_coin_selection() {
     // Sync wallet and retry
     {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync().unwrap();
+        wallet.sync_and_save().unwrap();
         let updated_balances = wallet.get_balances().unwrap();
 
         println!("Updated balances after funding:");
@@ -442,7 +442,7 @@ fn test_maunal_coinselection() {
         }
     }
 
-    taker.get_wallet_mut().sync_no_fail();
+    taker.get_wallet_mut().sync_and_save().unwrap();
 
     let all_utxos = taker.get_wallet_mut().list_all_utxo();
 

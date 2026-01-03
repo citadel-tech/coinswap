@@ -7,13 +7,23 @@
 
 use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::RpcApi;
+use nostr::{
+    event::{EventBuilder, Kind},
+    key::{Keys, SecretKey},
+    message::{ClientMessage, RelayMessage},
+    util::JsonUtil,
+};
 use std::{
     io::ErrorKind,
     net::{Ipv4Addr, TcpListener, TcpStream},
-    sync::{atomic::Ordering::Relaxed, Arc},
+    sync::{
+        atomic::Ordering::{self, Relaxed},
+        Arc,
+    },
     thread::{self, sleep},
     time::{Duration, Instant},
 };
+use tungstenite::Message;
 
 pub(crate) use super::api2::{Maker, RPC_PING_INTERVAL};
 
@@ -24,9 +34,12 @@ use crate::{
         handlers2::handle_message_taproot,
         rpc::start_rpc_server,
     },
-    protocol::messages2::{MakerToTakerMessage, TakerToMakerMessage},
-    utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
-    wallet::WalletError,
+    protocol::messages2::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
+    utill::{
+        get_tor_hostname, read_message, send_message, COINSWAP_KIND, HEART_BEAT_INTERVAL,
+        MIN_FEE_RATE, NOSTR_RELAYS,
+    },
+    wallet::{AddressType, WalletError},
 };
 
 use crate::maker::error::MakerError;
@@ -55,20 +68,162 @@ fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<String, MakerError> {
         .as_ref()
         .track_and_update_unconfirmed_fidelity_bonds()?;
 
-    manage_fidelity_bonds_taproot(maker.as_ref(), &maker_address)?;
+    manage_fidelity_bonds_taproot(maker, &maker_address, true)?;
 
     Ok(maker_address)
 }
 
 /// Setup's maker fidelity
-fn manage_fidelity_bonds_taproot(maker: &Maker, maker_addr: &str) -> Result<(), MakerError> {
+fn manage_fidelity_bonds_taproot(
+    maker: Arc<Maker>,
+    maker_addr: &str,
+    spawn_nostr: bool,
+) -> Result<(), MakerError> {
     // Redeem expired fidelity bonds first
-    maker.wallet().write()?.redeem_expired_fidelity_bonds()?;
+    maker
+        .wallet()
+        .write()?
+        .redeem_expired_fidelity_bonds(AddressType::P2TR)?;
 
-    // Create or get existing fidelity proof for taproot maker
-    let _ = setup_fidelity_bond_taproot(maker, maker_addr)?;
+    let fidelity = setup_fidelity_bond_taproot(maker.as_ref(), maker_addr)?;
+
+    if spawn_nostr {
+        spawn_nostr_broadcast_task(fidelity, maker)?;
+    }
 
     Ok(())
+}
+
+fn spawn_nostr_broadcast_task(
+    fidelity: FidelityProof,
+    maker: Arc<Maker>,
+) -> Result<(), MakerError> {
+    log::info!("Spawning nostr background task for maker");
+    let maker_clone = maker.clone();
+
+    let handle = thread::Builder::new()
+        .name("nostr-event-thread".to_string())
+        .spawn(move || {
+            if let Err(e) = broadcast_bond_on_nostr(fidelity.clone()) {
+                log::warn!("initial nostr broadcast failed: {:?}", e);
+            }
+
+            let interval = Duration::from_secs(30 * 60);
+            let tick = Duration::from_secs(2);
+            let mut elapsed = Duration::ZERO;
+
+            while !maker_clone.shutdown.load(Ordering::Acquire) {
+                thread::sleep(tick);
+                elapsed += tick;
+
+                if elapsed < interval {
+                    continue;
+                }
+
+                elapsed = Duration::ZERO;
+
+                log::debug!("re-pinging nostr relays with bond announcement");
+
+                if let Err(e) = broadcast_bond_on_nostr(fidelity.clone()) {
+                    log::warn!("nostr re-ping failed: {:?}", e);
+                }
+            }
+
+            log::info!("nostr background task stopped");
+        })?;
+
+    maker.thread_pool.add_thread(handle);
+    Ok(())
+}
+
+// ##TODO: Make this part of nostr module and improve error handing
+// ##TODO: Try retry in case relay doesn't accept the event
+fn broadcast_bond_on_nostr(fidelity: FidelityProof) -> Result<(), MakerError> {
+    let outpoint = fidelity.bond.outpoint;
+    let content = format!("{}:{}", outpoint.txid, outpoint.vout);
+
+    let secret_key = SecretKey::generate();
+    let keys = Keys::new(secret_key);
+
+    let event = EventBuilder::new(Kind::Custom(COINSWAP_KIND), content)
+        .build(keys.public_key)
+        .sign_with_keys(&keys)
+        .expect("Event should be signed");
+
+    let msg = ClientMessage::Event(std::borrow::Cow::Owned(event));
+
+    log::debug!("nostr wire msg: {}", msg.as_json());
+
+    let mut success = false;
+
+    for relay in NOSTR_RELAYS {
+        match broadcast_to_relay(relay, &msg) {
+            Ok(()) => {
+                success = true;
+            }
+            Err(e) => {
+                log::warn!("failed to broadcast to {}: {:?}", relay, e);
+            }
+        }
+    }
+
+    if !success {
+        log::warn!("nostr event was not accepted by any relay");
+    }
+
+    Ok(())
+}
+
+fn broadcast_to_relay(relay: &str, msg: &ClientMessage) -> Result<(), MakerError> {
+    let (mut socket, _) = tungstenite::connect(relay).map_err(|e| {
+        log::warn!("failed to connect to nostr relay {}: {}", relay, e);
+        MakerError::General("failed to connect to nostr relay")
+    })?;
+
+    socket
+        .write(Message::Text(msg.as_json().into()))
+        .map_err(|e| {
+            log::warn!("nostr relay write failed: {}", e);
+            MakerError::General("failed to write to nostr relay")
+        })?;
+    socket.flush().ok();
+
+    match socket.read() {
+        Ok(Message::Text(text)) => {
+            if let Ok(relay_msg) = RelayMessage::from_json(&text) {
+                match relay_msg {
+                    RelayMessage::Ok {
+                        event_id,
+                        status: true,
+                        ..
+                    } => {
+                        log::info!("nostr relay {} accepted event {}", relay, event_id);
+                        return Ok(());
+                    }
+                    RelayMessage::Ok {
+                        event_id,
+                        status: false,
+                        message,
+                    } => {
+                        log::warn!(
+                            "nostr relay {} rejected event {}: {}",
+                            relay,
+                            event_id,
+                            message
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(_) => {}
+        Err(e) => {
+            log::warn!("nostr relay {} read error: {}", relay, e);
+        }
+    }
+    log::warn!("nostr relay {} did not confirm event", relay);
+
+    Err(MakerError::General("nostr relay did not confirm event"))
 }
 
 /// Ensures the wallet has a valid fidelity bond for taproot operations.
@@ -163,13 +318,14 @@ fn setup_fidelity_bond_taproot(
     while !maker.shutdown.load(Relaxed) {
         sleep_multiplier += 1;
         // sync the wallet
-        maker.wallet().write()?.sync_no_fail();
+        maker.wallet().write()?.sync_and_save()?;
 
         let fidelity_result = maker.wallet().write()?.create_fidelity(
             amount,
             locktime,
-            Some(maker_address.as_bytes()),
+            Some(maker_address),
             MIN_FEE_RATE,
+            AddressType::P2TR,
         );
 
         match fidelity_result {
@@ -186,7 +342,10 @@ fn setup_fidelity_bond_taproot(
                         maker.config.network_port
                     );
                     let amount = required - available;
-                    let addr = maker.wallet().write()?.get_next_external_address()?;
+                    let addr = maker
+                        .wallet()
+                        .write()?
+                        .get_next_external_address(AddressType::P2TR)?;
 
                     log::info!("[{}] Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", maker.config.network_port, Amount::from_sat(amount).to_btc(), addr);
 
@@ -225,8 +384,7 @@ fn setup_fidelity_bond_taproot(
                 };
 
                 // sync and save the wallet data to disk
-                maker.wallet().write()?.sync_no_fail();
-                maker.wallet().read()?.save_to_disk()?;
+                maker.wallet().write()?.sync_and_save()?;
 
                 // Store the fidelity proof in maker
                 *maker.highest_fidelity_proof.write()? = Some(highest_proof.clone());
@@ -304,29 +462,6 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         peer_addr.port()
     );
 
-    // Get or create connection state for this IP
-    let mut connection_state = {
-        let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-        let (state, _) = ongoing_swaps.entry(ip.clone()).or_insert_with(|| {
-            log::info!(
-                "[{}] Creating new connection state for {}",
-                maker.config.network_port,
-                ip
-            );
-            (ConnectionState::default(), Instant::now())
-        });
-
-        log::info!(
-            "[{}] Retrieved connection state for {}: swap_amount={}, my_privkey_is_some={}",
-            maker.config.network_port,
-            ip,
-            state.swap_amount,
-            state.incoming_contract.my_privkey.is_some()
-        );
-
-        state.clone()
-    };
-
     loop {
         // Check if we should shutdown
         if maker.shutdown.load(Relaxed) {
@@ -383,23 +518,50 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
             }
         };
 
+        let swap_id = match &message {
+            TakerToMakerMessage::GetOffer(msg) => Some(msg.id.clone()),
+            TakerToMakerMessage::SwapDetails(msg) => Some(msg.id.clone()),
+            TakerToMakerMessage::SendersContract(msg) => Some(msg.id.clone()),
+            TakerToMakerMessage::PrivateKeyHandover(msg) => msg.id.clone(),
+        }
+        .ok_or_else(|| MakerError::General("Message missing swap_id"))?;
+
+        // Get or create connection state for this swap id
+        let mut connection_state = {
+            let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
+
+            match &message {
+                TakerToMakerMessage::GetOffer(_) => {
+                    // TODO: Right now sync_offerbook is sending GetOffer with an empty string swap_id
+                    // Refactor to not create a connection state when swap id is an empty string
+                    // Just return the Offer
+                    let (state, _) = ongoing_swaps.entry(swap_id.clone()).or_insert_with(|| {
+                        log::info!(
+                            "[{}] Creating new connection state for {:?}",
+                            maker.config.network_port,
+                            &swap_id
+                        );
+                        (ConnectionState::default(), Instant::now())
+                    });
+                    state.clone()
+                }
+                _ => match ongoing_swaps.get(&swap_id) {
+                    Some((state, _)) => state.clone(),
+                    None => {
+                        log::info!(
+                                "[{}] No connection state found for swap_id={:?}. GetOffer must be sent first.",
+                                maker.config.network_port,
+                                &swap_id
+                            );
+                        return Err(MakerError::General("No connection state found"));
+                    }
+                },
+            }
+        };
+
         // Handle the message using taproot handlers
         let response = match handle_message_taproot(maker, &mut connection_state, message) {
-            Ok(response) => {
-                // Save connection state immediately after successful message handling
-                {
-                    let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-                    log::info!(
-                        "[{}] Saving connection state for {}: swap_amount={}, my_privkey_is_some={}",
-                        maker.config.network_port,
-                        ip,
-                        connection_state.swap_amount,
-                        connection_state.incoming_contract.my_privkey.is_some()
-                    );
-                    ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
-                }
-                response
-            }
+            Ok(response) => response,
             Err(e) => {
                 log::error!(
                     "[{}] Error handling message from {}: {:?}",
@@ -407,12 +569,6 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                     ip,
                     e
                 );
-
-                // Always save connection state even if there was an error
-                {
-                    let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-                    ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
-                }
 
                 // Check if this is a behavior-triggered error
                 match &e {
@@ -427,7 +583,17 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                 break;
             }
         };
-
+        {
+            let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
+            log::info!(
+                "[{}] Saving connection state for {}: swap_amount={}, my_privkey_is_some={}",
+                maker.config.network_port,
+                ip,
+                connection_state.swap_amount,
+                connection_state.incoming_contract.my_privkey.is_some()
+            );
+            ongoing_swaps.insert(swap_id.clone(), (connection_state.clone(), Instant::now()));
+        }
         // Send response if we have one (only applies to taker messages)
         if let Some(response_msg) = response {
             log::info!("[{}] Sending response", maker.config.network_port,);
@@ -448,55 +614,35 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                 ip
             );
 
-            // For certain message types, handle cleanup
-            match &response_msg {
-                MakerToTakerMessage::RespOffer(_) => {
-                    // Keep connection open for SwapDetails
-                }
-                MakerToTakerMessage::AckResponse(_) => {
-                    // Keep connection open for SendersContract
-                    log::debug!(
-                        "[{}] Keeping connection open after AckResponse for SendersContract",
-                        maker.config.network_port
-                    );
-                }
-                MakerToTakerMessage::SenderContractFromMaker(_) => {}
-                MakerToTakerMessage::PrivateKeyHandover(_) => {
-                    // Swap completed successfully - remove outgoing swapcoin and ongoing swap state
+            if let MakerToTakerMessage::PrivateKeyHandover(_) = &response_msg {
+                // Swap completed successfully - remove outgoing swapcoin and ongoing swap state
+                log::info!(
+                    "[{}] Swap completed successfully with {}, removing from ongoing swaps",
+                    maker.config.network_port,
+                    ip
+                );
+
+                // Remove the outgoing swapcoin now that PrivateKeyHandover was sent
+                let outgoing_txid = connection_state
+                    .outgoing_contract
+                    .contract_tx
+                    .compute_txid();
+                {
+                    let mut wallet = maker.wallet.write()?;
+                    wallet.remove_outgoing_swapcoin_v2(&outgoing_txid);
                     log::info!(
-                        "[{}] Swap completed successfully with {}, removing from ongoing swaps",
+                        "[{}] Removed outgoing swapcoin {} after PrivateKeyHandover sent",
                         maker.config.network_port,
-                        ip
+                        outgoing_txid
                     );
-
-                    // Remove the outgoing swapcoin now that PrivateKeyHandover was sent
-                    let outgoing_txid = connection_state
-                        .outgoing_contract
-                        .contract_tx
-                        .compute_txid();
-                    {
-                        let mut wallet = maker.wallet.write()?;
-                        wallet.remove_outgoing_swapcoin_v2(&outgoing_txid);
-                        log::info!(
-                            "[{}] Removed outgoing swapcoin {} after PrivateKeyHandover sent",
-                            maker.config.network_port,
-                            outgoing_txid
-                        );
-                        wallet.save_to_disk()?;
-                    }
-
-                    let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-                    ongoing_swaps.remove(&ip);
-                    // Exit loop - swap is complete
-                    break;
+                    wallet.save_to_disk()?;
                 }
-            }
-        }
 
-        // Update the connection state in the maker
-        {
-            let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
-            ongoing_swaps.insert(ip.clone(), (connection_state.clone(), Instant::now()));
+                let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;
+                ongoing_swaps.remove(&swap_id);
+                // Exit loop - swap is complete
+                break;
+            }
         }
     }
 
@@ -510,17 +656,14 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
 
 /// Starts the taproot maker server
 pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
-    log::info!(
-        "[{}] Starting taproot coinswap maker server",
-        maker.config.network_port
-    );
+    let network_port = maker.config.network_port;
+    log::info!("[{network_port}] Starting taproot coinswap maker server",);
 
     // Set up network
     let maker_address = network_bootstrap_taproot(maker.clone())?;
 
     log::info!(
-        "[{}] Taproot maker initialized - Address: {}",
-        maker.config.network_port,
+        "[{network_port}] Taproot maker initialized - Address: {}",
         maker_address,
     );
 
@@ -612,8 +755,7 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
         let (inc, out) = maker.wallet.read()?.find_unfinished_swapcoins_v2();
         if !inc.is_empty() || !out.is_empty() {
             log::info!(
-                "[{}] Incomplete taproot swaps detected ({} incoming, {} outgoing). Starting recovery.",
-                maker.config.network_port,
+                "[{network_port}] Incomplete taproot swaps detected ({} incoming, {} outgoing). Starting recovery.",
                 inc.len(),
                 out.len()
             );
@@ -623,18 +765,11 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
 
     // Mark setup as complete
     maker.is_setup_complete.store(true, Relaxed);
-    log::info!(
-        "[{}] Taproot maker setup completed",
-        maker.config.network_port
-    );
+    log::info!("[{network_port}] Taproot maker setup completed",);
 
     // Start listening for P2P connections
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.network_port))?;
-    log::info!(
-        "[{}] Taproot maker server listening on port {}",
-        maker.config.network_port,
-        maker.config.network_port
-    );
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, network_port))?;
+    log::info!("[{network_port}] Taproot maker server listening on port {network_port}",);
 
     // Set listener to non-blocking mode to allow periodic shutdown checks
     listener.set_nonblocking(true)?;
@@ -642,35 +777,20 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
     // Main server loop
     while !maker.shutdown.load(Relaxed) {
         match listener.accept() {
-            Ok((mut stream, addr)) => {
-                log::info!(
-                    "[{}] New client connection from: {}",
-                    maker.config.network_port,
-                    addr
-                );
-                let maker_clone = maker.clone();
-                let client_handle = thread::Builder::new()
-                    .name(format!("client-{}", addr))
-                    .spawn(move || {
-                        if let Err(e) = handle_client_taproot(&maker_clone, &mut stream) {
-                            log::error!("Client handler error: {:?}", e);
-                        }
-                    })?;
-                maker.thread_pool.add_thread(client_handle);
-            }
-            Err(e) => {
-                if e.kind() == ErrorKind::WouldBlock {
-                    // No incoming connections, continue loop
-                } else {
-                    log::error!(
-                        "[{}] Failed to accept connection: {:?}",
-                        maker.config.network_port,
-                        e
-                    );
+            Ok((mut stream, _)) => {
+                log::info!("[{network_port}] Received incoming connection");
+
+                if let Err(e) = handle_client_taproot(&maker, &mut stream) {
+                    log::error!("[{network_port}] Error Handling client request {e:?}");
                 }
             }
-        }
 
+            Err(e) => {
+                if e.kind() != ErrorKind::WouldBlock {
+                    log::error!("[{network_port}] Error accepting incoming connection: {e:?}");
+                }
+            }
+        };
         // Sleep briefly to avoid busy waiting
         sleep(HEART_BEAT_INTERVAL);
     }

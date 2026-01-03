@@ -39,6 +39,15 @@ use crossterm::{
 use std::str::FromStr;
 
 static LOGGER: OnceLock<()> = OnceLock::new();
+/// nost url for coinswap
+#[cfg(not(feature = "integration-test"))]
+pub const NOSTR_RELAYS: &[&str] = &["wss://nos.lol"];
+/// nostr url for coinswap
+#[cfg(feature = "integration-test")]
+pub const NOSTR_RELAYS: &[&str] = &["ws://127.0.0.1:8000"];
+
+/// coinswap nostr event kind
+pub const COINSWAP_KIND: u16 = 37777;
 
 use crate::{
     error::NetError,
@@ -864,17 +873,24 @@ pub fn interactive_select(
                             selected: &[bool],
                             scroll_offset: usize|
      -> Result<(), WalletError> {
+        let selected_total = choices
+            .iter()
+            .zip(selected)
+            .filter(|(_, sel)| **sel)
+            .map(|((selected_choice, _), _)| selected_choice.amount.to_btc())
+            .collect::<Vec<_>>();
         if max_scroll > 0 {
             queue!(
                 stdout,
                 MoveTo(0, 2),
                 Print(format!(
-                    "\x1b[90mScrolling: {} / {} (showing rows {}-{})\x1b[0m",
-                    scroll_offset + 1,
-                    max_scroll + 1,
-                    scroll_offset + 1,
-                    (scroll_offset + visible_rows).min(total_rows)
-                ))
+                                "\x1b[90mScrolling: {} / {} (showing rows {}-{})\x1b[0m   Total Selected (In BTC) : {:.8}",
+                                scroll_offset + 1,
+                                max_scroll + 1,
+                                scroll_offset + 1,
+                                (scroll_offset + visible_rows).min(total_rows),
+                                selected_total.iter().sum::<f64>()
+                            ))
             )?;
         }
         // Clear only the grid area, not the entire screen

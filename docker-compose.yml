@@ -1,61 +1,136 @@
 services:
+  bitcoind:
+    image: coinswap/${BITCOIN_IMAGE_NAME:-bitcoin-mutinynet}:${BITCOIN_TAG:-latest}
+    container_name: coinswap-bitcoind
+    profiles: ["internal-bitcoind"]
+    command: >
+      bitcoind 
+      ${BITCOIN_NETWORK_ARG}
+      -rpcbind=0.0.0.0
+      -rpcallowip=0.0.0.0/0
+    ports:
+      - "${BITCOIN_RPC_PORT:-38332}:${BITCOIN_RPC_PORT:-38332}"
+      - "${BITCOIN_ZMQ_PORT:-28332}:${BITCOIN_ZMQ_PORT:-28332}"
+    volumes:
+      - bitcoin-data:/home/bitcoin/.bitcoin
+      - ./docs/bitcoin.conf:/home/bitcoin/.bitcoin/bitcoin.conf:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bitcoin-cli", "-rpcuser=${BITCOIN_RPC_USER:-user}", "-rpcpassword=${BITCOIN_RPC_PASSWORD:-password}", "-rpcport=${BITCOIN_RPC_PORT:-38332}", "getblockchaininfo"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
   tor:
     image: osminogin/tor-simple
-    container_name: tor
-    restart: unless-stopped
-    ports:
-      - "${TOR_SOCKS_PORT:-19050}:${TOR_SOCKS_PORT:-19050}"
-      - "${TOR_CONTROL_PORT:-19051}:${TOR_CONTROL_PORT:-19051}"
-      - "${MAKER_RPC_PORT:-6113}:${MAKER_RPC_PORT:-6113}"
+    container_name: coinswap-tor
+    profiles: ["internal-tor"]
+    network_mode: "host"
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        HASH=$$(tor --hash-password "$${TOR_AUTH_PASSWORD}" | grep "^16:")
+        
+        # use /tmp/torrc because the container runs as non-root and cannot write to /etc/tor/
+        cat > /tmp/torrc << EOF
+        SocksPort 0.0.0.0:$${TOR_SOCKS_PORT:-9050}
+        ControlPort 0.0.0.0:$${TOR_CONTROL_PORT:-9051}
+        DataDirectory /var/lib/tor
+        HashedControlPassword $$HASH
+        EOF
+        echo "Starting Tor with the following configuration:"
+        cat /tmp/torrc
+        echo ""
+        
+        exec tor -f /tmp/torrc
     volumes:
-      - ./torrc:/etc/tor/torrc:ro
       - tor-data:/var/lib/tor
+    ports:
+      - "127.0.0.1:${TOR_SOCKS_PORT:-9050}:${TOR_SOCKS_PORT:-9050}"
+      - "127.0.0.1:${TOR_CONTROL_PORT:-9051}:${TOR_CONTROL_PORT:-9051}"
+      - "${MAKERD_RPC_PORT:-6103}:${MAKERD_RPC_PORT:-6103}"
+    environment:
+      - TOR_SOCKS_PORT=${TOR_SOCKS_PORT:-9050}
+      - TOR_CONTROL_PORT=${TOR_CONTROL_PORT:-9051}
+      - TOR_AUTH_PASSWORD=${TOR_AUTH_PASSWORD}
+    restart: unless-stopped
 
   makerd:
-    image: coinswap/coinswap:master
+    image: coinswap/${IMAGE_NAME:-coinswap}:latest
     container_name: coinswap-makerd
-    network_mode: "service:tor"
-    command:
+    profiles: ["external-tor"]
+    network_mode: "host"
+    command: &makerd-command
       - sh
       - -c
       - |
         sleep 15
         mkdir -p /home/coinswap/.coinswap/maker
-        printf '%s\n' \
-          "network_port = ${MAKER_NETWORK_PORT:-6112}" \
-          "rpc_port = ${MAKER_RPC_PORT:-6113}" \
-          "socks_port = ${TOR_SOCKS_PORT:-19050}" \
-          "control_port = ${TOR_CONTROL_PORT:-19051}" \
-          "tor_auth_password = ${TOR_AUTH_PASSWORD:-coinswap}" \
-          "min_swap_amount = ${MIN_SWAP_AMOUNT:-10000}" \
-          "fidelity_amount = ${FIDELITY_AMOUNT:-50000}" \
-          "fidelity_timelock = ${FIDELITY_TIMELOCK:-13104}" \
-          "connection_type = TOR" \
-          "base_fee = ${BASE_FEE:-100}" \
-          "amount_relative_fee_ppt = ${AMOUNT_RELATIVE_FEE_PPT:-1000}" \
-          > /home/coinswap/.coinswap/maker/config.toml
-        makerd -w ${WALLET_NAME} -r ${BITCOIN_RPC_HOST:-172.81.178.3:48332} -a ${BITCOIN_RPC_AUTH:-user:password} --taproot
+        
+        cat > /home/coinswap/.coinswap/maker/config.toml << EOM
+        network_port = $${MAKER_NETWORK_PORT:-6102}
+        rpc_port = $${MAKER_RPC_PORT:-6103}
+        socks_port = $${TOR_SOCKS_PORT:-9050}
+        control_port = $${TOR_CONTROL_PORT:-9051}
+        tor_auth_password = "$${TOR_AUTH_PASSWORD}"
+        min_swap_amount = $${MIN_SWAP_AMOUNT:-10000}
+        fidelity_amount = $${FIDELITY_AMOUNT:-50000}
+        fidelity_timelock = $${FIDELITY_TIMELOCK:-13104}
+        connection_type = "TOR"
+        base_fee = $${BASE_FEE:-100}
+        amount_relative_fee_ppt = $${AMOUNT_RELATIVE_FEE_PPT:-1000}
+        EOM
+        
+        WALLET_NAME="$${BITCOIN_WALLET_NAME:-coinswap-maker}"
+        echo "INFO: Using wallet: $$WALLET_NAME"
+
+        echo "[DEBUG] Running: makerd -t \"$${TOR_AUTH_PASSWORD}\" -r $${BITCOIN_RPC_HOST} -a $${BITCOIN_RPC_AUTH} $${MAKERD_EXTRA_ARGS} -w \"$$WALLET_NAME\""
+
+        makerd -t "$${TOR_AUTH_PASSWORD}" -r $${BITCOIN_RPC_HOST} -a $${BITCOIN_RPC_AUTH} $${MAKERD_EXTRA_ARGS} -w "$$WALLET_NAME"
+    ports:
+      - "${MAKERD_RPC_PORT:-6103}:${MAKERD_RPC_PORT:-6103}"
     volumes:
       - maker-data:/home/coinswap/.coinswap
-    environment:
+    environment: &makerd-env
       - RUST_LOG=${RUST_LOG:-info}
-      - TOR_SOCKS_PORT=${TOR_SOCKS_PORT:-19050}
-      - TOR_CONTROL_PORT=${TOR_CONTROL_PORT:-19051}
-      - TOR_AUTH_PASSWORD=${TOR_AUTH_PASSWORD:-coinswap}
-      - MAKER_NETWORK_PORT=${MAKER_NETWORK_PORT:-6112}
-      - MAKER_RPC_PORT=${MAKER_RPC_PORT:-6113}
+      - MAKER_NETWORK_PORT=${MAKERD_PORT:-6102}
+      - MAKER_RPC_PORT=${MAKERD_RPC_PORT:-6103}
+      - TOR_SOCKS_PORT=${TOR_SOCKS_PORT:-9050}
+      - TOR_CONTROL_PORT=${TOR_CONTROL_PORT:-9051}
+      - TOR_AUTH_PASSWORD=${TOR_AUTH_PASSWORD}
       - MIN_SWAP_AMOUNT=${MIN_SWAP_AMOUNT:-10000}
       - FIDELITY_AMOUNT=${FIDELITY_AMOUNT:-50000}
       - FIDELITY_TIMELOCK=${FIDELITY_TIMELOCK:-13104}
       - BASE_FEE=${BASE_FEE:-100}
       - AMOUNT_RELATIVE_FEE_PPT=${AMOUNT_RELATIVE_FEE_PPT:-1000}
-      - BITCOIN_RPC_HOST=${BITCOIN_RPC_HOST:-172.81.178.3:48332}
+      - BITCOIN_RPC_HOST=${BITCOIN_RPC_HOST}
       - BITCOIN_RPC_AUTH=${BITCOIN_RPC_AUTH:-user:password}
+      - MAKERD_EXTRA_ARGS=${MAKERD_EXTRA_ARGS}
+      - BITCOIN_WALLET_NAME=${BITCOIN_WALLET_NAME:-coinswap-maker}
     restart: unless-stopped
 
+  makerd-internal:
+    image: coinswap/${IMAGE_NAME:-coinswap}:latest
+    container_name: coinswap-makerd
+    profiles: ["internal-tor"]
+    network_mode: "host"
+    command: *makerd-command
+    volumes:
+      - maker-data:/home/coinswap/.coinswap
+    environment: *makerd-env
+    restart: unless-stopped
+    depends_on:
+      - tor
+
 volumes:
+  bitcoin-data:
+    driver: local
   tor-data:
     driver: local
   maker-data:
     driver: local
+
+networks:
+  default:
+    name: coinswap-network

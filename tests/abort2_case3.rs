@@ -18,7 +18,7 @@ use test_framework::*;
 ///
 /// CASE 3: Maker Drops After Sending Sender's Signature. Taker and other Maker recovers.
 #[test]
-fn maker_drops_after_sending_senders_sigs() {
+fn maker_abort2_case3() {
     // ---- Setup ----
 
     // 6102 is naughty. And theres not enough makers.
@@ -86,7 +86,7 @@ fn maker_drops_after_sending_senders_sigs() {
 
             let balances = wallet.get_balances().unwrap();
 
-            verify_maker_pre_swap_balances(&balances, 14999508);
+            verify_maker_pre_swap_balances(&balances, 14999500);
 
             balances.spendable
         })
@@ -102,19 +102,11 @@ fn maker_drops_after_sending_senders_sigs() {
         manually_selected_outpoints: None,
     };
     taker.do_coinswap(swap_params).unwrap();
-
-    // After Swap is done, wait for maker threads to conclude.
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
-    thread::sleep(Duration::from_secs(10));
+    //wait for maker's to complete recovery
+    info!("Waiting for maker to complete recovery");
+    thread::sleep(Duration::from_secs(30));
 
     ///////////////////
     let taker_wallet = taker.get_wallet_mut();
@@ -132,7 +124,7 @@ fn maker_drops_after_sending_senders_sigs() {
     //
     // | Participant    | Amount Received (Sats) | Amount Forwarded (Sats) | Fee (Sats) | Funding Mining Fees (Sats) | Total Fees (Sats) |
     // |----------------|------------------------|-------------------------|------------|----------------------------|-------------------|
-    // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
+    // | **Taker**      | _                      | 500,000                 | _          | 1,179                      | 1,179             |
 
     // - Taker sends [`ReqContractSigsForSender`] to Maker6102, Maker6102 responds with signatures.
     // - Taker forwards [`ProofOfFunding`], but Maker6102 doesn't respond, leading to swap recovery.
@@ -141,16 +133,16 @@ fn maker_drops_after_sending_senders_sigs() {
     // Final Outcome for Taker (Recover from Swap):
     //
     // | Participant    | Mining Fee for Contract txes (Sats) | Timelock Fee (Sats) | Funding Fee (Sats) | Total Recovery Fees (Sats) |
-    // |----------------|------------------------------------|---------------------|--------------------|----------------------------|
-    // | **Taker**      | 3,000                              | 768                 | 3,000              | 6,768                      |
+    // |----------------|------------------------------------|---------------------|--------------------|-----------------------------|
+    // | **Taker**      | -                                  | 858                 | -                  | 858                         |
 
-    // Taker recovers initial funding but incurs 6,768 sats in mining fees.
+    // Taker recovers initial funding but incurs 858 sats in recovery fees.
 
     //
     // Final Outcome for Makers (Case 1):
     //
     // | Participant    | Coinswap Outcome (Sats)                 |
-    // |----------------|------------------------------------------|
+    // |----------------|-----------------------------------------|
     // | **Maker6102**  | 0 (Bad maker marked by Taker)           |
     // | **Maker16102** | 0
 
@@ -159,12 +151,12 @@ fn maker_drops_after_sending_senders_sigs() {
     // Case 2: Taker -> Maker16102 -> Maker6102 (CloseAtProofOfFunding)
 
     //
-    // | Participant    | Amount Received (Sats) | Amount Forwarded (Sats) | Fee (Sats) | Funding Mining Fees (Sats) | Total Fees (Sats) |
-    // |----------------|------------------------|-------------------------|------------|----------------------------|-------------------|
-    // | **Taker**      | _                      | 500,000                 | _          | 3,000                      | 3,000             |
-    // | **Maker16102** | 500,000                | 463,500                 | 33,500     | 3,000                      | 36,500            |
+    // | Participant    | Amount Received (Sats) | Amount Forwarded (Sats) | Fee (Sats) | Funding Mining Fees (Sats) |
+    // |----------------|------------------------|-------------------------|------------|----------------------------|
+    // | **Taker**      | _                      | 500,000                 | _          | 1,179(mining fees)         |
+    // | **Maker16102** | 500,000                | 478,007                 | 21,992     | 21,992                     |
 
-    // Maker6102 reaches CloseAtProofOfFunding state, Maker16102 and Taker regain funding but incur total loss of 6,768 sats.
+    // Maker6102 reaches CloseAtProofOfFunding state, Maker16102 and Taker regain funding but incur total loss of 858 sats.
 
     //
     // Final Outcome for Maker6102:
@@ -177,8 +169,8 @@ fn maker_drops_after_sending_senders_sigs() {
     //
     // | Participant    | Mining Fee for Contract txes (Sats) | Timelock Fee (Sats) | Funding Fee (Sats) | Total Recovery Fees (Sats) |
     // |----------------|------------------------------------|---------------------|--------------------|----------------------------|
-    // | **Taker**      | 3,000                              | 768                 | 3,000              | 6,768                      |
-    // | **Maker16102** | 3,000                              | 768                 | 3,000              | 6,768                      |
+    // | **Taker**      | -                                  | 858                 | -                  | 858                        |
+    // | **Maker16102** | -                                  | 858                 | -                  | 858                        |
 
     info!("🚫 Verifying naughty maker gets banned");
     // Maker6102 gets banned for being naughty.
@@ -188,15 +180,123 @@ fn maker_drops_after_sending_senders_sigs() {
     );
 
     info!("📊 Verifying swap results after maker drops connection");
-    // After Swap checks:
-    verify_swap_results(
-        taker,
-        &makers,
-        org_taker_spend_balance,
-        org_maker_spend_balances,
-    );
+    // Check Taker balances
+    {
+        let wallet = taker.get_wallet();
+        let balances = wallet.get_balances().unwrap();
+
+        // Debug logging for taker
+        log::info!(
+            "🔍 DEBUG Taker - Regular: {}, Swap: {}, Spendable: {},Contract: {}",
+            balances.regular.to_btc(),
+            balances.swap.to_btc(),
+            balances.spendable.to_btc(),
+            balances.contract.to_btc()
+        );
+        assert_in_range!(
+            balances.regular.to_sat(),
+            [
+                14999142,// Recover via timelock
+            ],
+            "Taker seed balance mismatch"
+        );
+
+        assert_in_range!(
+            balances.swap.to_sat(),
+            [
+                0 // No swap happened,each party recovered their outgoing contract via timelock
+            ],
+            "Taker swapcoin balance mismatch"
+        );
+
+        assert_in_range!(balances.contract.to_sat(), [0], "Contract balance mismatch");
+        assert_eq!(balances.fidelity, Amount::ZERO);
+
+        // Check balance difference
+        let balance_diff = org_taker_spend_balance
+            .checked_sub(balances.spendable)
+            .unwrap();
+
+        log::info!(
+            "🔍 DEBUG Taker balance diff: {} sats",
+            balance_diff.to_sat()
+        );
+        assert_in_range!(
+            balance_diff.to_sat(),
+            [
+                858  // Timlock recovery fee
+            ],
+            "Taker spendable balance change mismatch"
+        );
+    }
+
+    // Check Maker balances
+    makers
+        .iter()
+        .zip(org_maker_spend_balances.iter())
+        .enumerate()
+        .for_each(|(maker_index, (maker, org_spend_balance))| {
+            let mut wallet = maker.get_wallet().write().unwrap();
+            wallet.sync_and_save().unwrap();
+            let balances = wallet.get_balances().unwrap();
+
+            // Debug logging for makers
+            log::info!(
+                "🔍 DEBUG Maker {} - Regular: {}, Swap: {}, Contract: {}, Spendable: {}",
+                maker_index,
+                balances.regular.to_btc(),
+                balances.swap.to_btc(),
+                balances.contract.to_btc(),
+                balances.spendable.to_btc()
+            );
+
+            assert_in_range!(
+                balances.regular.to_sat(),
+                [
+                    14999500, // No spend
+                    14998642, // Maker after recovering via timelock,it has lost some sats here.
+                ],
+                "Maker seed balance mismatch"
+            );
+
+            assert!(
+                balances.swap.to_sat() == 0,
+                "Maker swapcoin balance mismatch"
+            );
+            assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
+            // Check spendable balance difference.
+            let balance_diff = match org_spend_balance.checked_sub(balances.spendable) {
+                None => balances.spendable.checked_sub(*org_spend_balance).unwrap(), // Successful swap as Makers balance increase by Coinswap fee.
+                Some(diff) => diff, // No spending or unsuccessful swap , Maker may have lost some funds here, generally due to timelock recovery transaction
+            };
+
+            log::info!(
+                "🔍 DEBUG Maker {} balance diff: {} sats",
+                maker_index,
+                balance_diff.to_sat()
+            );
+
+            assert_in_range!(
+                balance_diff.to_sat(),
+                [
+                    0,   // No spend
+                    858, // Maker has lost some sats here due to timelock recovery transaction fee
+                ],
+                "Maker spendable balance change mismatch"
+            );
+        });
+
+    log::info!("✅ Swap results verification complete");
 
     info!("🎉 All checks successful. Terminating integration test case");
+    // shutdown makers.
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

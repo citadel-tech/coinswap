@@ -20,6 +20,7 @@ pub use fidelity::FidelityBond;
 pub(crate) use fidelity::FidelityError;
 pub use rpc::RPCConfig;
 pub use spend::Destination;
+pub use storage::AddressType;
 pub(crate) use swapcoin::{
     IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletSwapCoin, WatchOnlySwapCoin,
 };

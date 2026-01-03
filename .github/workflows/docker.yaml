@@ -22,9 +22,6 @@ jobs:
     - name: Test taker
       run: docker run --rm coinswap/coinswap:latest taker --help
 
-    - name: Start Coinswap stack
-      run: ./docker-setup start --default
-
     - name: Wait for services to be healthy
       run: |
         echo "Waiting for services to start..."
