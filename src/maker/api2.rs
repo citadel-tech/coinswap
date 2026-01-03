@@ -954,7 +954,8 @@ impl Maker {
                 self.config.network_port,
                 incoming_txid
             );
-            wallet.save_to_disk()?;
+            // Sync to update utxo_cache with the swept UTXO so it's classified as SweptCoin
+            wallet.sync_and_save()?;
         }
 
         let outgoing_privkey_handover_message = PrivateKeyHandover {
