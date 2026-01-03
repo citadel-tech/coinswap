@@ -109,6 +109,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
 
             let txid = maker.wallet().read()?.send_tx(&tx)?;
 
+            log::info!("Sync at:----handle_request----");
             maker.wallet().write()?.sync_and_save()?;
 
             RpcMsgResp::SendToAddressResp(txid.to_string())

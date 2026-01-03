@@ -340,6 +340,7 @@ impl Maker {
         }
         config.write_to_file(&data_dir.join("config.toml"))?;
 
+        log::info!("Sync at:----Maker init----");
         wallet.sync_and_save()?;
 
         let network_port = config.network_port;
