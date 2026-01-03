@@ -1459,6 +1459,10 @@ impl Taker {
             .checked_sub(fee)
             .ok_or_else(|| TakerError::General("Insufficient amount for fee".to_string()))?;
 
+        // sync wallet to update utxo cache before getting destination address
+        // ensuring we get a fresh address different from any change address
+        self.wallet.sync_and_save()?;
+
         let destination_address = self
             .wallet
             .get_next_internal_addresses(1, AddressType::P2TR)

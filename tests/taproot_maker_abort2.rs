@@ -184,6 +184,7 @@ fn test_taproot_maker_abort2() {
                 14999518, // No fund loss (with slight fee variance)
                 15020989, // 1st Maker completed the swap via hashlock path spending and earned some sats.
                 15021003, // 1st Maker (with slight fee variance)
+                15031710, // 1st Maker (with fee variance after sync fix)
                 15032496, // 2nd Maker completed the swap via hashlock path spending and earned some sats.
             ],
             "Taproot Maker after hashlock recovery balance check."
@@ -197,6 +198,7 @@ fn test_taproot_maker_abort2() {
                 0, // No fund gain/lost for a maker,if it was not having any incoming contract(so no swap for this maker)
                 21485, // 1st Maker gained fee (with slight variance)
                 21489, // 1st Maker gained fee after completing the swap via hashlock path spending.
+                32192, // 1st Maker gained fee (with fee variance after sync fix)
                 32996  // 2nd Maker gained fee after completing the swap via hashlock path spending.
             ],
             "Taproot Maker should have gained some fees here."
