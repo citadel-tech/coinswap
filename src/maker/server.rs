@@ -383,8 +383,10 @@ fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
         .write()?
         .get_next_external_address(AddressType::P2WPKH)?;
     while !maker.shutdown.load(Relaxed) {
-        log::info!("Sync at:----check_swap_liquidity----");
-        maker.get_wallet().write()?.sync_and_save()?;
+        log::info!("----check_swap_liquidity----");
+        maker.get_wallet().write()?.refresh_offer_maxsize_cache()?;
+        maker.get_wallet().write()?.save_to_disk()?;
+
         let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;
 
         let min_required = maker.config.min_swap_amount;
