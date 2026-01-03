@@ -211,6 +211,7 @@ fn test_taproot_hashlock_recovery_end_to_end() {
                 14999518, // No fund loss (with slight fee variance)
                 15020989, // 1st Maker completed the swap via hashlock path spending and earned some sats.
                 15021003, // 1st Maker (with slight fee variance)
+                15031710, // 2nd Maker (with fee variance after sync fix)
                 15032496, // 2nd Maker completed the swap via hashlock path spending and earned some sats.
             ],
             "Taproot Maker after hashlock recovery balance check."
@@ -225,6 +226,7 @@ fn test_taproot_hashlock_recovery_end_to_end() {
                 18, // No fund gain/lost (with slight fee variance)
                 21485, // 1st Maker gained fee (with slight variance)
                 21489, // 1st Maker gained fee after completing the swap via hashlock path spending.
+                31710, // 2nd Maker gained fee (with fee variance after sync fix)
                 32996  // 2nd Maker gained fee after completing the swap via hashlock path spending.
             ],
             "Taproot Maker fee gained by recovering via hashlock"
