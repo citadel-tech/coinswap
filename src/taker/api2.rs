@@ -109,6 +109,8 @@ struct OngoingSwapState {
     // Private key handover: store maker outgoing contract private keys (indexed by maker position)
     // Each maker hands over their outgoing contract private key after sweeping their incoming contract
     pub maker_outgoing_privkeys: Vec<Option<bitcoin::secp256k1::SecretKey>>,
+    // Here storing maker contract transaction IDs for reporting (indexed by maker position)
+    pub maker_contract_txs: Vec<Vec<bitcoin::Txid>>,
 }
 
 impl Default for OngoingSwapState {
@@ -166,6 +168,7 @@ impl Default for OngoingSwapState {
                 swap_id: None,
             },
             maker_outgoing_privkeys: Vec::new(),
+            maker_contract_txs: Vec::new(),
         }
     }
 }
@@ -580,12 +583,54 @@ impl Taker {
         println!("                            Transaction Details");
         println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
 
-        // In V2 taproot, we have one outgoing contract tx
-        let outgoing_txid = swap_state.outgoing_contract.contract_tx.compute_txid();
-        println!(
-            "\x1b[1;37mOutgoing Contract :\x1b[0m \x1b[2m{}\x1b[0m",
-            outgoing_txid
-        );
+        // Outgoing contracts section
+
+        println!("\n\x1b[1;37mOutgoing Contracts:\x1b[0m");
+        // Taker's outgoing contract (sent to first maker)
+        let taker_outgoing_txid = swap_state.outgoing_contract.contract_tx.compute_txid();
+        println!("  \x1b[1;33mTaker:\x1b[0m");
+        println!("     ← \x1b[2m{}\x1b[0m → ", taker_outgoing_txid);
+        let mut all_outgoing_txid = vec![vec![taker_outgoing_txid.to_string()]];
+        // Each maker's outgoing contracts
+        for (maker_index, maker_txs) in swap_state.maker_contract_txs.iter().enumerate() {
+            if !maker_txs.is_empty() {
+                println!("  \x1b[1;33mMaker {}:\x1b[0m", maker_index + 1);
+                all_outgoing_txid.push(
+                    maker_txs
+                        .iter()
+                        .map(|txid| txid.to_string())
+                        .collect::<Vec<_>>()
+                        .clone(),
+                );
+                for txid in maker_txs.iter() {
+                    println!("     ← \x1b[2m{}\x1b[0m → ", txid);
+                }
+            }
+        }
+
+        // Incoming contracts section
+
+        println!("\n\x1b[1;37mIncoming Contracts:\x1b[0m");
+        // First maker receives taker's outgoing
+        println!("  \x1b[1;33mMaker 1:\x1b[0m");
+        println!("    → \x1b[2m{}\x1b[0m ← ", taker_outgoing_txid);
+        if swap_state.maker_contract_txs.len() > 1 {
+            // For more than a single maker, the outgoing txn of maker at index `i` is the incoming txn of maker at index `i+1`
+            for maker_index in 0..(swap_state.maker_contract_txs.len() - 1) {
+                if let Some(maker_txs) = swap_state.maker_contract_txs.get(maker_index) {
+                    if !maker_txs.is_empty() {
+                        if let Some(txid) = maker_txs.first() {
+                            println!("  \x1b[1;33mMaker {}:\x1b[0m", maker_index + 2);
+                            println!("    → \x1b[2m{}\x1b[0m ← ", txid);
+                        }
+                    }
+                }
+            }
+        }
+        // Taker receives last maker's outgoing
+        let taker_incoming_txid = swap_state.incoming_contract.contract_tx.compute_txid();
+        println!("  \x1b[1;33mTaker:\x1b[0m");
+        println!("    → \x1b[2m{}\x1b[0m ← ", taker_incoming_txid);
 
         println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
         println!("                              Fee Information");
@@ -597,37 +642,40 @@ impl Taker {
         // Collect maker fee information for V2
         let mut maker_fee_info = Vec::new();
         let mut total_maker_fees = 0u64;
+        let mut temp_target_amount = swap_state.swap_params.send_amount.to_sat();
 
         for (maker_index, maker) in swap_state.chosen_makers.iter().enumerate() {
-            let maker_fee = calculate_coinswap_fee(
-                swap_state.swap_params.send_amount.to_sat(),
-                0, // timelock not used for fee display in report
-                maker.offer.base_fee,
-                maker.offer.amount_relative_fee_pct,
-                maker.offer.time_relative_fee_pct,
-            );
+            let maker_refund_locktime = REFUND_LOCKTIME
+                + REFUND_LOCKTIME_STEP
+                    * (swap_state.swap_params.maker_count - maker_index - 1) as u16;
+            let base_fee = maker.offer.base_fee as f64;
+            let amount_rel_fee =
+                (maker.offer.amount_relative_fee_pct * temp_target_amount as f64) / 100.0;
+            let time_rel_fee = (maker.offer.time_relative_fee_pct
+                * maker_refund_locktime as f64
+                * temp_target_amount as f64)
+                / 100.0;
 
             println!("\n\x1b[1;33mMaker {}:\x1b[0m", maker_index + 1);
             println!("    Address              : {}", maker.address);
-            println!("    Base Fee             : {}", maker.offer.base_fee);
-            println!(
-                "    Amount Relative Fee  : {:.2}%",
-                maker.offer.amount_relative_fee_pct
-            );
-            println!("    Total Fee            : {} sats", maker_fee);
+            println!("    Base Fee             : {base_fee}");
+            println!("    Amount Relative Fee  : {amount_rel_fee:.2}");
+            println!("    Time Relative Fee    : {time_rel_fee:.2}");
+
+            let total_maker_fee = base_fee + amount_rel_fee + time_rel_fee;
+            println!("    Total Fee            : {total_maker_fee:.2} sats");
 
             maker_fee_info.push(MakerFeeInfo {
                 maker_index,
                 maker_address: maker.address.to_string(),
-                base_fee: maker.offer.base_fee as f64,
-                amount_relative_fee: (maker.offer.amount_relative_fee_pct
-                    * swap_state.swap_params.send_amount.to_sat() as f64)
-                    / 100.0,
-                time_relative_fee: 0.0, // Simplified for report
-                total_fee: maker_fee as f64,
+                base_fee,
+                amount_relative_fee: amount_rel_fee,
+                time_relative_fee: time_rel_fee,
+                total_fee: total_maker_fee,
             });
 
-            total_maker_fees += maker_fee;
+            temp_target_amount = temp_target_amount.saturating_sub(total_maker_fee as u64);
+            total_maker_fees += total_maker_fee as u64;
         }
 
         let mining_fee = total_fee.saturating_sub(total_maker_fees);
@@ -661,7 +709,8 @@ impl Taker {
             .collect::<Vec<_>>();
 
         // For V2, we have a single funding tx (the outgoing contract)
-        let funding_txids_by_hop = vec![vec![outgoing_txid.to_string()]];
+        let funding_txids_by_hop = all_outgoing_txid;
+        let total_funding_txs = funding_txids_by_hop.len();
 
         let report = SwapReport {
             swap_id: swap_state.id.clone(),
@@ -671,7 +720,7 @@ impl Taker {
             total_output_amount,
             makers_count: swap_state.swap_params.maker_count,
             maker_addresses,
-            total_funding_txs: 1,
+            total_funding_txs,
             funding_txids_by_hop,
             total_fee,
             total_maker_fees,
@@ -684,7 +733,6 @@ impl Taker {
             output_swap_utxos,
             output_change_utxos,
         };
-
         Ok(report)
     }
 
@@ -829,6 +877,7 @@ impl Taker {
         // Initialize storage for maker private keys received during handover
         let chosen_makers_count = self.ongoing_swap_state.chosen_makers.len();
         self.ongoing_swap_state.maker_outgoing_privkeys = vec![None; chosen_makers_count];
+        self.ongoing_swap_state.maker_contract_txs = vec![Vec::new(); chosen_makers_count];
 
         Ok(())
     }
@@ -1101,6 +1150,8 @@ impl Taker {
 
         match response {
             Ok(MakerToTakerMessage::SenderContractFromMaker(incoming_contract)) => {
+                self.ongoing_swap_state.maker_contract_txs[0] =
+                    incoming_contract.contract_txs.clone();
                 self.forward_contracts_and_coordinate_sweep(incoming_contract)?;
             }
             _ => {
@@ -1174,6 +1225,8 @@ impl Taker {
 
             match maker_response {
                 Ok(MakerToTakerMessage::SenderContractFromMaker(maker_contract)) => {
+                    self.ongoing_swap_state.maker_contract_txs[maker_index] =
+                        maker_contract.contract_txs.clone();
                     #[cfg(feature = "integration-test")]
                     {
                         if self.behavior == TakerBehavior::CloseAtSendersContractFromMaker {
