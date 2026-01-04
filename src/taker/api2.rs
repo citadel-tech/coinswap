@@ -1808,85 +1808,122 @@ impl Taker {
                 outgoing_swapcoins.len()
             );
 
-            for outgoing in &outgoing_swapcoins {
-                let contract_txid = outgoing.contract_tx.compute_txid();
-                log::info!(
-                    "Checking recovery options for outgoing contract: {}",
-                    contract_txid
-                );
+            let mut pending_recovery: Vec<_> = outgoing_swapcoins.iter().collect();
 
-                // Check if contract has been spent
-                let outpoint = bitcoin::OutPoint {
-                    txid: contract_txid,
-                    vout: 0,
-                };
-                self.watch_service.watch_request(outpoint);
+            // loop until all contracts are recovered
+            while !pending_recovery.is_empty() {
+                let mut recovered_indices = Vec::new();
 
-                let spending_result = if let Some(event) = self.watch_service.wait_for_event() {
-                    match event {
-                        WatcherEvent::UtxoSpent { spending_tx, .. } => spending_tx,
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
+                for (idx, outgoing) in pending_recovery.iter().enumerate() {
+                    let contract_txid = outgoing.contract_tx.compute_txid();
+                    log::info!(
+                        "Checking recovery options for outgoing contract: {}",
+                        contract_txid
+                    );
 
-                match spending_result {
-                    Some(spending_tx) => {
-                        log::info!("Outgoing contract {} already spent", contract_txid);
+                    // Check if contract has been spent
+                    let outpoint = bitcoin::OutPoint {
+                        txid: contract_txid,
+                        vout: 0,
+                    };
+                    self.watch_service.watch_request(outpoint);
 
-                        match crate::protocol::contract2::detect_taproot_spending_path(
-                            &spending_tx,
-                            outpoint,
-                        )? {
-                            TaprootSpendingPath::KeyPath => {
-                                log::info!("Contract spent cooperatively - no recovery needed");
-                                continue;
-                            }
-                            TaprootSpendingPath::Hashlock { .. } => {
-                                log::info!("Contract spent by receiver via hashlock - swap partially completed");
-                                continue;
-                            }
-                            TaprootSpendingPath::Timelock => {
-                                log::warn!("We already recovered this via timelock");
-                                continue;
-                            }
+                    let spending_result = if let Some(event) = self.watch_service.wait_for_event() {
+                        match event {
+                            WatcherEvent::UtxoSpent { spending_tx, .. } => spending_tx,
+                            _ => None,
                         }
-                    }
-                    None => {
-                        // Contract not spent - check if timelock matured
-                        log::info!(
-                            "Outgoing contract {} not spent - checking timelock maturity",
-                            contract_txid
-                        );
+                    } else {
+                        None
+                    };
 
-                        if let Some(timelock) = outgoing.get_timelock() {
-                            if crate::protocol::contract2::is_timelock_mature(
-                                &self.wallet.rpc,
-                                &contract_txid,
-                                timelock,
+                    match spending_result {
+                        Some(spending_tx) => {
+                            log::info!("Outgoing contract {} already spent", contract_txid);
+
+                            match crate::protocol::contract2::detect_taproot_spending_path(
+                                &spending_tx,
+                                outpoint,
                             )? {
-                                log::info!("Timelock matured, attempting recovery");
-
-                                match self
-                                    .wallet
-                                    .spend_via_timelock_v2(outgoing, &self.watch_service)
-                                {
-                                    Ok(txid) => {
-                                        log::info!("Successfully recovered outgoing contract via timelock: {}", txid);
-                                    }
-                                    Err(e) => {
-                                        log::error!("Failed to spend via timelock: {:?}", e);
-                                    }
+                                TaprootSpendingPath::KeyPath => {
+                                    log::info!("Contract spent cooperatively - no recovery needed");
+                                    recovered_indices.push(idx);
                                 }
-                            } else {
-                                log::info!(
-                                    "Timelock not yet mature for contract {}",
-                                    contract_txid
-                                );
+                                TaprootSpendingPath::Hashlock { .. } => {
+                                    log::info!("Contract spent by receiver via hashlock - swap partially completed");
+                                    recovered_indices.push(idx);
+                                }
+                                TaprootSpendingPath::Timelock => {
+                                    log::warn!("We already recovered this via timelock");
+                                    recovered_indices.push(idx);
+                                }
+                            }
+                        }
+                        None => {
+                            // Contract not spent - check if timelock matured
+                            if let Some(timelock) = outgoing.get_timelock() {
+                                // get current confirmations to calculate remaining blocks
+                                let confirmations: u32 = self
+                                    .wallet
+                                    .rpc
+                                    .get_raw_transaction_info(&contract_txid, None)
+                                    .ok()
+                                    .and_then(|info| info.confirmations)
+                                    .unwrap_or(0);
+
+                                let remaining_blocks = if confirmations > timelock {
+                                    0
+                                } else {
+                                    timelock - confirmations + 1
+                                };
+
+                                if remaining_blocks == 0 {
+                                    log::info!("Timelock matured, attempting recovery");
+
+                                    match self
+                                        .wallet
+                                        .spend_via_timelock_v2(outgoing, &self.watch_service)
+                                    {
+                                        Ok(txid) => {
+                                            log::info!("Successfully recovered outgoing contract via timelock: {}", txid);
+                                            recovered_indices.push(idx);
+                                        }
+                                        Err(e) => {
+                                            log::error!("Failed to spend via timelock: {:?}", e);
+                                        }
+                                    }
+                                } else {
+                                    log::info!(
+                                        "Timelock not yet mature for contract {} - {} blocks remaining (confirmations: {}, required: {})",
+                                        contract_txid,
+                                        remaining_blocks,
+                                        confirmations,
+                                        timelock + 1
+                                    );
+                                }
                             }
                         }
                     }
+                }
+
+                // remove recovered contracts
+                for idx in recovered_indices.into_iter().rev() {
+                    pending_recovery.remove(idx);
+                }
+
+                // If there are still pending contracts, wait before checking again
+                if !pending_recovery.is_empty() {
+                    let wait_time = if cfg!(feature = "integration-test") {
+                        std::time::Duration::from_secs(10)
+                    } else {
+                        std::time::Duration::from_secs(10 * 60)
+                    };
+                    log::info!(
+                        "Waiting {:?} before checking {} remaining contracts...",
+                        wait_time,
+                        pending_recovery.len()
+                    );
+                    std::thread::sleep(wait_time);
                 }
             }
         }

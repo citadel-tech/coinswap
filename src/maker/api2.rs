@@ -1312,11 +1312,19 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot_v2(
             .find(|o| o.swap_id.as_ref() == Some(incoming_swap_id));
 
         let Some(outgoing) = matching_outgoing else {
-            log::warn!(
-                "[{}] No matching outgoing swapcoin found for swap_id={}, skipping",
+            // The swap failed before maker created an outgoing contract, so maker has no funds at risk.
+            let incoming_txid = incoming.contract_tx.compute_txid();
+
+            log::info!(
+                "[{}] Orphaned incoming swapcoin {} (swap_id={}) has no matching outgoing. Maker has no funds at risk. Cleaning up stale entry.",
                 maker.config.network_port,
+                incoming_txid,
                 incoming_swap_id
             );
+
+            let mut wallet = maker.wallet.write()?;
+            wallet.remove_incoming_swapcoin_v2(&incoming_txid);
+            wallet.save_to_disk()?;
             continue;
         };
 
