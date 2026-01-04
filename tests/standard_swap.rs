@@ -4,11 +4,12 @@ use coinswap::{
     maker::{start_maker_server, MakerBehavior},
     taker::{SwapParams, TakerBehavior},
     utill::MIN_FEE_RATE,
-    wallet::{AddressType, Destination},
+    wallet::{AddressType, Destination, UTXOSpendInfo},
 };
 use std::sync::Arc;
 
 use bitcoind::bitcoincore_rpc::RpcApi;
+use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 
 mod test_framework;
 use test_framework::*;
@@ -254,8 +255,13 @@ fn test_standard_coinswap() {
         .unwrap()[0]
         .to_owned();
 
+    let owned_swap_coins: Vec<(ListUnspentResultEntry, UTXOSpendInfo)> =
+        swap_coins
+            .iter()
+            .map(|(e, s)| ((*e).clone(), (*s).clone()))
+            .collect();
     let tx = taker_wallet_mut
-        .spend_from_wallet(MIN_FEE_RATE, Destination::Sweep(addr), &swap_coins)
+        .spend_from_wallet(MIN_FEE_RATE, Destination::Sweep(addr), &owned_swap_coins)
         .unwrap();
 
     assert_eq!(

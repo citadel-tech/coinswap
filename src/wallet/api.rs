@@ -971,36 +971,35 @@ impl Wallet {
     }
 
     /// Returns a list of all UTXOs tracked by the wallet. Including fidelity, live_contracts and swap coins.
-    pub fn list_all_utxo(&self) -> Vec<ListUnspentResultEntry> {
+    pub fn list_all_utxo(&self) -> Vec<&ListUnspentResultEntry> {
         self.list_all_utxo_spend_info()
-            .iter()
-            .map(|(utxo, _)| utxo.clone())
+            .into_iter()
+            .map(|(utxo, _)| utxo)
             .collect()
     }
 
     /// Returns a list all utxos with their spend info tracked by the wallet.
     /// Optionally takes in an Utxo list to reduce RPC calls. If None is given, the
     /// full list of utxo is fetched from core rpc.
-    pub fn list_all_utxo_spend_info(&self) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    pub fn list_all_utxo_spend_info(&self) -> Vec<(&ListUnspentResultEntry, &UTXOSpendInfo)> {
         let processed_utxos = self
             .store
             .utxo_cache
             .values()
-            .map(|(utxo, spend_info)| (utxo.clone(), spend_info.clone()))
+            .map(|(utxo, spend_info)| (utxo, spend_info))
             .collect();
         processed_utxos
     }
 
     /// Lists live contract UTXOs along with their Spend info.
-    pub fn list_live_contract_spend_info(&self) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    pub fn list_live_contract_spend_info(&self) -> Vec<(&ListUnspentResultEntry, &UTXOSpendInfo)> {
         let all_valid_utxo = self.list_all_utxo_spend_info();
         let filtered_utxos: Vec<_> = all_valid_utxo
-            .iter()
+            .into_iter()
             .filter(|x| {
                 matches!(x.1, UTXOSpendInfo::HashlockContract { .. })
                     || matches!(x.1, UTXOSpendInfo::TimelockContract { .. })
             })
-            .cloned()
             .collect();
         filtered_utxos
     }
@@ -1008,62 +1007,57 @@ impl Wallet {
     /// Lists live timelock contract UTXOs along with their Spend info.
     pub fn list_live_timelock_contract_spend_info(
         &self,
-    ) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    ) -> Vec<(&ListUnspentResultEntry, &UTXOSpendInfo)> {
         let all_valid_utxo = self.list_all_utxo_spend_info();
         let filtered_utxos: Vec<_> = all_valid_utxo
-            .iter()
+            .into_iter()
             .filter(|x| matches!(x.1, UTXOSpendInfo::TimelockContract { .. }))
-            .cloned()
             .collect();
         filtered_utxos
     }
     /// Lists all live hashlock contract UTXOs along with their Spend info.
     pub fn list_live_hashlock_contract_spend_info(
         &self,
-    ) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    ) -> Vec<(&ListUnspentResultEntry, &UTXOSpendInfo)> {
         let all_valid_utxo = self.list_all_utxo_spend_info();
         let filtered_utxos: Vec<_> = all_valid_utxo
-            .iter()
+            .into_iter()
             .filter(|x| matches!(x.1, UTXOSpendInfo::HashlockContract { .. }))
-            .cloned()
             .collect();
         filtered_utxos
     }
 
     /// Lists fidelity UTXOs along with their Spend info.
-    pub fn list_fidelity_spend_info(&self) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    pub fn list_fidelity_spend_info(&self) -> Vec<(&ListUnspentResultEntry, &UTXOSpendInfo)> {
         let all_valid_utxo = self.list_all_utxo_spend_info();
         let filtered_utxos: Vec<_> = all_valid_utxo
-            .iter()
+            .into_iter()
             .filter(|x| matches!(x.1, UTXOSpendInfo::FidelityBondCoin { .. }))
-            .cloned()
             .collect();
         filtered_utxos
     }
 
     /// Lists descriptor UTXOs along with their Spend info.
-    pub fn list_descriptor_utxo_spend_info(&self) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    pub fn list_descriptor_utxo_spend_info(&self) -> Vec<(&ListUnspentResultEntry, &UTXOSpendInfo)> {
         let all_valid_utxo = self.list_all_utxo_spend_info();
         let filtered_utxos: Vec<_> = all_valid_utxo
-            .iter()
+            .into_iter()
             .filter(|x| matches!(x.1, UTXOSpendInfo::SeedCoin { .. }))
-            .cloned()
             .collect();
         filtered_utxos
     }
 
     /// Lists swap coin UTXOs along with their Spend info.
-    pub fn list_swap_coin_utxo_spend_info(&self) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    pub fn list_swap_coin_utxo_spend_info(&self) -> Vec<(&ListUnspentResultEntry, &UTXOSpendInfo)> {
         let all_valid_utxo = self.list_all_utxo_spend_info();
         let filtered_utxos: Vec<_> = all_valid_utxo
-            .iter()
+            .into_iter()
             .filter(|x| {
                 matches!(
                     x.1,
                     UTXOSpendInfo::IncomingSwapCoin { .. } | UTXOSpendInfo::OutgoingSwapCoin { .. }
                 )
             })
-            .cloned()
             .collect();
         filtered_utxos
     }
@@ -1071,22 +1065,20 @@ impl Wallet {
     /// Lists all incoming swapcoin UTXOs along with their Spend info.
     pub fn list_incoming_swap_coin_utxo_spend_info(
         &self,
-    ) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    ) -> Vec<(&ListUnspentResultEntry, &UTXOSpendInfo)> {
         let all_valid_utxo = self.list_all_utxo_spend_info();
         let filtered_utxos: Vec<_> = all_valid_utxo
-            .iter()
+            .into_iter()
             .filter(|x| matches!(x.1, UTXOSpendInfo::IncomingSwapCoin { .. }))
-            .cloned()
             .collect();
         filtered_utxos
     }
     /// Lists all swept incoming swapcoin UTXOs along with their Spend info.
-    pub fn list_swept_incoming_swap_utxos(&self) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
+    pub fn list_swept_incoming_swap_utxos(&self) -> Vec<(&ListUnspentResultEntry, &UTXOSpendInfo)> {
         let all_valid_utxo = self.list_all_utxo_spend_info();
         let filtered_utxos: Vec<_> = all_valid_utxo
-            .iter()
+            .into_iter()
             .filter(|(_, spend_info)| matches!(spend_info, UTXOSpendInfo::SweptCoin { .. }))
-            .cloned()
             .collect();
         filtered_utxos
     }
@@ -1223,7 +1215,7 @@ impl Wallet {
             if utxo.descriptor.is_none() {
                 continue;
             }
-            let descriptor = utxo.descriptor.expect("its not none");
+            let descriptor = utxo.clone().descriptor.expect("its not none");
             let ret = get_hd_path_from_descriptor(&descriptor);
             if ret.is_none() {
                 continue;
@@ -1653,7 +1645,7 @@ impl Wallet {
         const CHANGE_OUTPUT_WEIGHT: u64 = Amount::SIZE as u64 + 1 + P2WPKH_SPK_SIZE as u64; // ~31 bytes
 
         let locked_utxos = self.list_lock_unspent()?;
-        let filter_locked = |utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>| {
+        fn filter_locked<'a>(utxos: Vec<(&'a ListUnspentResultEntry, &'a UTXOSpendInfo)>, locked_utxos: &[OutPoint]) -> Vec<(&'a ListUnspentResultEntry, &'a UTXOSpendInfo)> {
             utxos
                 .into_iter()
                 .filter(|(utxo, _)| {
@@ -1661,11 +1653,11 @@ impl Wallet {
                     !locked_utxos.contains(&outpoint)
                 })
                 .collect::<Vec<_>>()
-        };
+        }
 
         // Get regular and swap UTXOs separately
-        let available_regular_utxos = filter_locked(self.list_descriptor_utxo_spend_info());
-        let available_swap_utxos = filter_locked(self.list_swept_incoming_swap_utxos());
+        let available_regular_utxos = filter_locked(self.list_descriptor_utxo_spend_info(), &locked_utxos);
+        let available_swap_utxos = filter_locked(self.list_swept_incoming_swap_utxos(), &locked_utxos);
 
         // Assert that no non-spendable UTXOs are included after filtering
         assert!(
@@ -1817,9 +1809,8 @@ impl Wallet {
             grouped_addresses.insert(
                 0,
                 manual_unspents
-                    .clone()
-                    .into_iter()
-                    .cloned()
+                    .iter()
+                    .map(|(utxo, spend_info)| ((*utxo).clone(), (*spend_info).clone()))
                     .collect::<Vec<_>>(),
             );
 
@@ -1979,7 +1970,7 @@ impl Wallet {
 
         for utxo in seed_coin_utxo {
             if utxo.0.txid == txid && utxo.0.vout == vout {
-                return Ok(Some(utxo.1));
+                return Ok(Some(utxo.1.clone()));
             }
         }
 
@@ -2238,7 +2229,7 @@ impl Wallet {
                     internal_address
                 );
                 let sweep_tx = self.spend_coins(
-                    &[(utxo.clone(), spend_info)],
+                    &[(utxo.clone(), spend_info.clone())],
                     Destination::Sweep(internal_address.clone()),
                     feerate,
                 )?;

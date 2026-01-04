@@ -156,10 +156,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Categorize UTXOs by type
     println!("\nUTXO Categories:");
-    let regular_utxos = wallet.list_descriptor_utxo_spend_info();
-    let swap_utxos = wallet.list_swap_coin_utxo_spend_info();
-    let fidelity_utxos = wallet.list_fidelity_spend_info();
-    let swept_utxos = wallet.list_swept_incoming_swap_utxos();
+    let regular_utxos: Vec<_> = wallet.list_descriptor_utxo_spend_info().into_iter().map(|(a, b)| (a.clone(), b.clone())).collect();
+    let swap_utxos: Vec<_> = wallet.list_swap_coin_utxo_spend_info().into_iter().map(|(a, b)| (a.clone(), b.clone())).collect();
+    let fidelity_utxos: Vec<_> = wallet.list_fidelity_spend_info().into_iter().map(|(a, b)| (a.clone(), b.clone())).collect();
+    let swept_utxos: Vec<_> = wallet.list_swept_incoming_swap_utxos().into_iter().map(|(a, b)| (a.clone(), b.clone())).collect();
     println!("  Regular UTXOs: {}", regular_utxos.len());
     println!("  Swap UTXOs: {}", swap_utxos.len());
     println!("  Fidelity UTXOs: {}", fidelity_utxos.len());

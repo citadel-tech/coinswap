@@ -344,7 +344,7 @@ impl Taker {
         swap_params: SwapParams,
     ) -> Result<Option<SwapReport>, TakerError> {
         let swap_start_time = std::time::Instant::now();
-        let initial_utxoset = self.wallet.list_all_utxo();
+        let initial_utxoset = self.wallet.list_all_utxo().into_iter().cloned().collect::<Vec<_>>();
 
         let available = self.wallet.get_balances()?.spendable;
 

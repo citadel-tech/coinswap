@@ -356,7 +356,7 @@ impl Taker {
         swap_params: SwapParams,
     ) -> Result<Option<SwapReport>, TakerError> {
         let swap_start_time = std::time::Instant::now();
-        let initial_utxoset = self.wallet.list_all_utxo();
+        let initial_utxoset = self.wallet.list_all_utxo().into_iter().cloned().collect::<Vec<_>>();
         self.ongoing_swap_state.swap_params = swap_params.clone();
 
         // Check if we have enough balance - try regular first, then swap
@@ -576,7 +576,7 @@ impl Taker {
             .wallet
             .list_descriptor_utxo_spend_info()
             .into_iter()
-            .map(|(utxo, _)| utxo)
+            .map(|(utxo, _)| utxo.clone())
             .collect::<Vec<_>>();
 
         let initial_outpoints = initial_utxos
