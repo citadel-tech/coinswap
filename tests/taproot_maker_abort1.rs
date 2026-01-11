@@ -83,6 +83,7 @@ fn test_taproot_maker_abort1() {
         tx_count: 3,
         required_confirms: 1,
         manually_selected_outpoints: None,
+        manually_selected_makers: None,
     };
 
     // Attempt the swap - it will fail when taker discovers there are not enough makers.

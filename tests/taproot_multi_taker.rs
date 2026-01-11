@@ -101,6 +101,7 @@ fn test_taproot_multi_taker() {
                 tx_count: 3,
                 required_confirms: 1,
                 manually_selected_outpoints: None,
+                manually_selected_makers: None,
             };
             s.spawn(move || match taker.do_coinswap(swap_params) {
                 Ok(Some(_report)) => {

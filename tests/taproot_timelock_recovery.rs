@@ -101,6 +101,7 @@ fn test_taproot_timelock_recovery_end_to_end() {
         tx_count: 3,
         required_confirms: 1,
         manually_selected_outpoints: None,
+        manually_selected_makers: None,
     };
 
     // Attempt the swap - it will fail when maker closes connection

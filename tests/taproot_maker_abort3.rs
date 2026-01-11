@@ -88,6 +88,7 @@ fn test_taproot_maker_abort3() {
         tx_count: 3,
         required_confirms: 1,
         manually_selected_outpoints: None,
+        manually_selected_makers: None,
     };
 
     // Attempt the swap

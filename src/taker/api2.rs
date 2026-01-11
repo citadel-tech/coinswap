@@ -95,6 +95,10 @@ pub struct SwapParams {
     pub required_confirms: u32,
     /// User selected UTXOs (optional, for manual UTXO selection)
     pub manually_selected_outpoints: Option<Vec<OutPoint>>,
+    /// Optional list of maker addresses explicitly selected by the user for the swap.
+    /// If set, the taker will only attempt to use these makers instead of selecting
+    /// from the offerbook automatically.
+    pub manually_selected_makers: Option<Vec<MakerAddress>>,
 }
 
 #[derive(Clone)]
@@ -738,6 +742,17 @@ impl Taker {
 
     /// Choose makers for the swap by negotiating with them
     fn choose_makers_for_swap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
+        self.ongoing_swap_state.swap_params = swap_params.clone();
+
+        if let Some(manual_makers) = &swap_params.manually_selected_makers {
+            if manual_makers.len() != swap_params.maker_count {
+                return Err(TakerError::General(
+                    "Number of manually selected makers must equal maker_count".to_string(),
+                ));
+            }
+            return self.choose_manual_makers(manual_makers);
+        }
+
         // Find suitable maker asks for an offer from the makers
         let mut suitable_makers = self.find_suitable_makers(&swap_params);
         log::info!(
@@ -758,7 +773,6 @@ impl Taker {
 
         // Set swap params early so they're available for SwapDetails
         self.ongoing_swap_state.swap_params = swap_params.clone();
-
         // Send SwapDetails message to all the makers
         // Receive the Ack or Nack message from the maker
         for (maker_index, suitable_maker) in suitable_makers.iter_mut().enumerate() {
@@ -881,7 +895,90 @@ impl Taker {
 
         Ok(())
     }
+    fn choose_manual_makers(&mut self, manual_makers: &[MakerAddress]) -> Result<(), TakerError> {
+        for (chain_position, maker_addr) in manual_makers.iter().enumerate() {
+            // Find maker in offerbook
+            // active_makers returns only GOOD makers for the given protocol
+            let maker = self
+                .offerbook
+                .active_makers(&MakerProtocol::Taproot)
+                .into_iter()
+                .find(|oa| &oa.address == maker_addr)
+                .ok_or_else(|| {
+                    TakerError::General(format!("Maker {} not found in offerbook", maker_addr))
+                })?;
 
+            // suitability check for makers
+            if !self.is_maker_suitable(&maker, &self.ongoing_swap_state.swap_params) {
+                return Err(TakerError::General(format!(
+                    "Maker {} is not suitable for this swap",
+                    maker.address
+                )));
+            }
+
+            // Perform the same GetOffer + SwapDetails handshake
+            let get_offer_msg = GetOffer {
+                id: self.ongoing_swap_state.id.clone(),
+                protocol_version_min: 1,
+                protocol_version_max: 1,
+                number_of_transactions: 1,
+            };
+
+            let response = self.send_to_maker_and_get_response(
+                &maker.address,
+                TakerToMakerMessage::GetOffer(get_offer_msg),
+            )?;
+
+            match response {
+                MakerToTakerMessage::RespOffer(fresh_offer) => {
+                    let mut maker = maker.clone();
+                    maker.offer.tweakable_point = fresh_offer.tweakable_point;
+
+                    let maker_timelock = REFUND_LOCKTIME
+                        + REFUND_LOCKTIME_STEP
+                            * (self.ongoing_swap_state.swap_params.maker_count - chain_position - 1)
+                                as u16;
+
+                    let swap_details = SwapDetails {
+                        id: self.ongoing_swap_state.id.clone(),
+                        amount: self.ongoing_swap_state.swap_params.send_amount,
+                        no_of_tx: self.ongoing_swap_state.swap_params.tx_count as u8,
+                        timelock: maker_timelock,
+                    };
+
+                    let ack = self.send_to_maker_and_get_response(
+                        &maker.address,
+                        TakerToMakerMessage::SwapDetails(swap_details),
+                    )?;
+
+                    match ack {
+                        MakerToTakerMessage::AckResponse(AckResponse::Ack) => {
+                            self.ongoing_swap_state.chosen_makers.push(maker);
+                        }
+                        _ => {
+                            return Err(TakerError::General(format!(
+                                "Maker {} rejected swap",
+                                maker.address
+                            )));
+                        }
+                    }
+                }
+                _ => {
+                    return Err(TakerError::General(format!(
+                        "Unexpected response from maker {}",
+                        maker.address
+                    )));
+                }
+            }
+        }
+
+        // Init storage
+        let n = self.ongoing_swap_state.chosen_makers.len();
+        self.ongoing_swap_state.maker_outgoing_privkeys = vec![None; n];
+        self.ongoing_swap_state.maker_contract_txs = vec![Vec::new(); n];
+
+        Ok(())
+    }
     /// Fetch offers from available makers
     /// This syncs the offerbook first and then returns a reference to it
     pub fn fetch_offers(&mut self) -> Result<OfferBook, TakerError> {
@@ -907,6 +1004,29 @@ impl Taker {
 
         Ok(response)
     }
+    /// Checks whether a maker is suitable for the given swap parameters.
+    ///
+    /// A maker is considered suitable if the taker's send amount:
+    /// - Covers the maker's minimum size plus estimated fees
+    /// - Does not exceed the maker's maximum allowed size
+    fn is_maker_suitable(&self, maker: &OfferAndAddress, swap_params: &SwapParams) -> bool {
+        let swap_amount = swap_params.send_amount;
+        let max_refund_locktime = REFUND_LOCKTIME * (swap_params.maker_count + 1) as u16;
+
+        let maker_fee = calculate_coinswap_fee(
+            swap_amount.to_sat(),
+            max_refund_locktime,
+            maker.offer.base_fee,
+            maker.offer.amount_relative_fee_pct,
+            maker.offer.time_relative_fee_pct,
+        );
+
+        let min_size_with_fee = Amount::from_sat(
+            maker.offer.min_size + maker_fee + 500, // estimated mining fee
+        );
+
+        swap_amount >= min_size_with_fee && swap_amount <= Amount::from_sat(maker.offer.max_size)
+    }
 
     /// Find suitable makers for the given swap parameters
     pub fn find_suitable_makers(&self, swap_params: &SwapParams) -> Vec<OfferAndAddress> {
@@ -923,25 +1043,7 @@ impl Taker {
             .offerbook
             .active_makers(&MakerProtocol::Taproot)
             .into_iter()
-            .filter(|oa| {
-                let maker_fee = calculate_coinswap_fee(
-                    swap_amount.to_sat(),
-                    max_refund_locktime,
-                    oa.offer.base_fee,
-                    oa.offer.amount_relative_fee_pct,
-                    oa.offer.time_relative_fee_pct,
-                );
-                let min_size_with_fee = bitcoin::Amount::from_sat(
-                    oa.offer.min_size + maker_fee + 500, /* Estimated mining fee */
-                );
-                let is_suitable = swap_amount >= min_size_with_fee
-                    && swap_amount <= bitcoin::Amount::from_sat(oa.offer.max_size);
-
-                log::debug!("Evaluating maker {}: min_size={}, max_size={}, maker_fee={}, min_size_with_fee={}, swap_amount={}, suitable={}",
-                           oa.address, oa.offer.min_size, oa.offer.max_size, maker_fee, min_size_with_fee.to_sat(), swap_amount.to_sat(), is_suitable);
-
-                is_suitable
-            })
+            .filter(|oa| self.is_maker_suitable(oa, swap_params))
             .collect();
 
         log::info!(
