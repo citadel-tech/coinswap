@@ -95,6 +95,10 @@ pub struct SwapParams {
     pub required_confirms: u32,
     /// User selected UTXOs (optional, for manual UTXO selection)
     pub manually_selected_outpoints: Option<Vec<OutPoint>>,
+    /// Optional list of maker addresses explicitly selected by the user for the swap.
+    /// If set, the taker will only attempt to use these makers instead of selecting
+    /// from the offerbook automatically.
+    pub manually_selected_makers: Option<Vec<MakerAddress>>,
 }
 
 #[derive(Clone)]
@@ -738,6 +742,13 @@ impl Taker {
 
     /// Choose makers for the swap by negotiating with them
     fn choose_makers_for_swap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
+        if let Some(ref makers) = swap_params.manually_selected_makers {
+            if makers.len() != swap_params.maker_count {
+                return Err(TakerError::General(
+                    "Number of manually selected makers must equal maker_count".to_string(),
+                ));
+            }
+        }
         // Find suitable maker asks for an offer from the makers
         let mut suitable_makers = self.find_suitable_makers(&swap_params);
         log::info!(
@@ -758,6 +769,9 @@ impl Taker {
 
         // Set swap params early so they're available for SwapDetails
         self.ongoing_swap_state.swap_params = swap_params.clone();
+        if let Some(manual_makers) = &swap_params.manually_selected_makers {
+            return self.choose_manual_makers(manual_makers);
+        }
 
         // Send SwapDetails message to all the makers
         // Receive the Ack or Nack message from the maker
@@ -881,7 +895,89 @@ impl Taker {
 
         Ok(())
     }
+    fn choose_manual_makers(&mut self, manual_makers: &[MakerAddress]) -> Result<(), TakerError> {
+        for (chain_position, maker_addr) in manual_makers.iter().enumerate() {
+            // Find maker in offerbook
+            let maker = self
+                .offerbook
+                .active_makers(&MakerProtocol::Taproot)
+                .into_iter()
+                .find(|oa| &oa.address == maker_addr)
+                .ok_or_else(|| {
+                    TakerError::General(format!("Maker {} not found in offerbook", maker_addr))
+                })?;
 
+            // Reject bad makers
+            if self.offerbook.is_bad_maker(&maker) {
+                return Err(TakerError::General(format!(
+                    "Maker {} is marked as bad",
+                    maker.address
+                )));
+            }
+
+            // Perform the same GetOffer + SwapDetails handshake
+            let get_offer_msg = GetOffer {
+                id: self.ongoing_swap_state.id.clone(),
+                protocol_version_min: 1,
+                protocol_version_max: 1,
+                number_of_transactions: 1,
+            };
+
+            let response = self.send_to_maker_and_get_response(
+                &maker.address,
+                TakerToMakerMessage::GetOffer(get_offer_msg),
+            )?;
+
+            match response {
+                MakerToTakerMessage::RespOffer(fresh_offer) => {
+                    let mut maker = maker.clone();
+                    maker.offer.tweakable_point = fresh_offer.tweakable_point;
+
+                    let maker_timelock = REFUND_LOCKTIME
+                        + REFUND_LOCKTIME_STEP
+                            * (self.ongoing_swap_state.swap_params.maker_count - chain_position - 1)
+                                as u16;
+
+                    let swap_details = SwapDetails {
+                        id: self.ongoing_swap_state.id.clone(),
+                        amount: self.ongoing_swap_state.swap_params.send_amount,
+                        no_of_tx: self.ongoing_swap_state.swap_params.tx_count as u8,
+                        timelock: maker_timelock,
+                    };
+
+                    let ack = self.send_to_maker_and_get_response(
+                        &maker.address,
+                        TakerToMakerMessage::SwapDetails(swap_details),
+                    )?;
+
+                    match ack {
+                        MakerToTakerMessage::AckResponse(AckResponse::Ack) => {
+                            self.ongoing_swap_state.chosen_makers.push(maker);
+                        }
+                        _ => {
+                            return Err(TakerError::General(format!(
+                                "Maker {} rejected swap",
+                                maker.address
+                            )));
+                        }
+                    }
+                }
+                _ => {
+                    return Err(TakerError::General(format!(
+                        "Unexpected response from maker {}",
+                        maker.address
+                    )));
+                }
+            }
+        }
+
+        // Init storage
+        let n = self.ongoing_swap_state.chosen_makers.len();
+        self.ongoing_swap_state.maker_outgoing_privkeys = vec![None; n];
+        self.ongoing_swap_state.maker_contract_txs = vec![Vec::new(); n];
+
+        Ok(())
+    }
     /// Fetch offers from available makers
     /// This syncs the offerbook first and then returns a reference to it
     pub fn fetch_offers(&mut self) -> Result<OfferBook, TakerError> {
