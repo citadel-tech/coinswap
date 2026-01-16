@@ -584,8 +584,8 @@ pub(crate) fn fetch_offer_from_makers(
     }
 
     let mut offers = Vec::new();
-    for _ in 0..total {
-        if let Some(offer) = rx.recv()? {
+    for _ in 0..threads.len() {
+        if let Some(offer) = rx.recv_timeout(Duration::from_secs(180))? {
             offers.push(offer);
         }
     }

@@ -90,6 +90,12 @@ impl From<std::sync::mpsc::RecvError> for TakerError {
     }
 }
 
+impl From<std::sync::mpsc::RecvTimeoutError> for TakerError {
+    fn from(value: std::sync::mpsc::RecvTimeoutError) -> Self {
+        Self::MPSC(value.to_string())
+    }
+}
+
 impl<T> From<std::sync::mpsc::SendError<T>> for TakerError {
     fn from(value: std::sync::mpsc::SendError<T>) -> Self {
         Self::MPSC(value.to_string())
