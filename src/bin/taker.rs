@@ -205,6 +205,7 @@ fn main() -> Result<(), TakerError> {
                 #[cfg(feature = "integration-test")]
                 TaprootTakerBehavior::Normal,
             )?;
+            taproot_taker.sync_wallet()?;
             taproot_taker.recover_from_swap()?;
         }
         Commands::Coinswap { makers, amount } if args.taproot => {
@@ -247,6 +248,7 @@ fn main() -> Result<(), TakerError> {
                 args.zmq,
                 args.password,
             )?;
+            taker.sync_wallet()?;
             match &args.command {
                 Commands::ListUtxo => {
                     let utxos = taker.get_wallet().list_all_utxo_spend_info();

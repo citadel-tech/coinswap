@@ -280,7 +280,7 @@ impl Taker {
 
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
-        let mut wallet = if wallet_path.exists() {
+        let wallet = if wallet_path.exists() {
             let wallet = Wallet::load(&wallet_path, &rpc_config, password)?;
             log::info!("Loaded wallet from {}", wallet_path.display());
             wallet
@@ -312,9 +312,7 @@ impl Taker {
         )
         .start();
 
-        log::info!("Initializing wallet sync...");
-        wallet.sync_and_save()?;
-        log::info!("Completed wallet sync");
+        log::info!("Wallet sync skipped during initialization. Call sync_wallet() manually.");
 
         Ok(Self {
             wallet,
@@ -326,6 +324,12 @@ impl Taker {
             #[cfg(feature = "integration-test")]
             behavior,
         })
+    }
+
+    /// Sync the wallet and save to disk
+    pub fn sync_wallet(&mut self) -> Result<(), TakerError> {
+        self.wallet.sync_and_save()?;
+        Ok(())
     }
 
     /// Get a reference to the wallet

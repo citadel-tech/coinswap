@@ -537,6 +537,7 @@ pub fn verify_maker_pre_swap_balance_taproot(taproot_makers: &[Arc<TaprootMaker>
 pub struct TestFramework {
     pub(super) bitcoind: BitcoinD,
     pub(super) temp_dir: PathBuf,
+    pub(super) zmq_addr: String,
     shutdown: AtomicBool,
     nostr_relay_shutdown: mpsc::Sender<()>,
     nostr_relay_handle: Option<JoinHandle<()>>,
@@ -583,6 +584,7 @@ impl TestFramework {
         let test_framework = Arc::new(Self {
             bitcoind,
             temp_dir: temp_dir.clone(),
+            zmq_addr: zmq_addr.clone(),
             shutdown,
             nostr_relay_shutdown,
             nostr_relay_handle: Some(nostr_relay_handle),
@@ -598,7 +600,7 @@ impl TestFramework {
             .enumerate()
             .map(|(i, behavior)| {
                 let taker_id = format!("taker{}", i + 1); // ex: "taker1"
-                Taker::init(
+                let mut taker = Taker::init(
                     Some(temp_dir.join(&taker_id)),
                     Some(taker_id),
                     Some(taker_rpc_config.clone()),
@@ -608,7 +610,9 @@ impl TestFramework {
                     zmq_addr.clone(),
                     None,
                 )
-                .unwrap()
+                .unwrap();
+                taker.sync_wallet().unwrap();
+                taker
             })
             .collect::<Vec<_>>();
         let mut base_rpc_port = 3500; // Random port for RPC connection in tests. (Not used)
@@ -708,6 +712,7 @@ impl TestFramework {
         let test_framework = Arc::new(Self {
             bitcoind,
             temp_dir: temp_dir.clone(),
+            zmq_addr: zmq_addr.clone(),
             shutdown,
             nostr_relay_shutdown,
             nostr_relay_handle: Some(nostr_relay_handle),
@@ -723,7 +728,7 @@ impl TestFramework {
             .enumerate()
             .map(|(i, behavior)| {
                 let taker_id = format!("taker{}", i + 1); // ex: "taker1"
-                TaprootTaker::init(
+                let mut taker = TaprootTaker::init(
                     Some(temp_dir.join(&taker_id)),
                     Some(taker_id),
                     Some(taker_rpc_config.clone()),
@@ -733,7 +738,9 @@ impl TestFramework {
                     None,
                     behavior,
                 )
-                .unwrap()
+                .unwrap();
+                taker.sync_wallet().unwrap();
+                taker
             })
             .collect::<Vec<_>>();
         let mut base_rpc_port = 3500; // Random port for RPC connection in tests. (Not used)

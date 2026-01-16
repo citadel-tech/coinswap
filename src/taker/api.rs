@@ -247,7 +247,7 @@ impl Taker {
 
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
-        let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config, password)?;
+        let wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config, password)?;
 
         // If config file doesn't exist, default config will be loaded.
         let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
@@ -276,7 +276,7 @@ impl Taker {
         )
         .start();
 
-        wallet.sync_and_save()?;
+        log::info!("Wallet sync skipped during initialization. Call sync_wallet() manually.");
 
         Ok(Self {
             wallet,
@@ -288,6 +288,12 @@ impl Taker {
             watch_service,
             offer_sync_handle,
         })
+    }
+
+    /// Sync the wallet and save to disk
+    pub fn sync_wallet(&mut self) -> Result<(), TakerError> {
+        self.wallet.sync_and_save()?;
+        Ok(())
     }
 
     /// Restores a wallet from a backup file using the given configuration.
