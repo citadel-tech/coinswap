@@ -7,14 +7,19 @@
 
 use std::sync::Arc;
 
+use bitcoin::Amount;
+
 use super::{
     api2::{ConnectionState, Maker},
     error::MakerError,
 };
 
-use crate::protocol::messages2::{
-    AckResponse, GetOffer, MakerToTakerMessage, PrivateKeyHandover, SendersContract, SwapDetails,
-    TakerToMakerMessage,
+use crate::protocol::{
+    self,
+    messages2::{
+        GetOffer, MakerToTakerMessage, PrivateKeyHandover, SendersContract, SwapDetails,
+        TakerToMakerMessage,
+    },
 };
 
 /// The Global Handle Message function for taproot protocol. Takes in a [`Arc<Maker>`] and handles
@@ -82,27 +87,22 @@ fn handle_swap_details(
         swap_details.no_of_tx
     );
 
-    // Reject if GetOffer wasn't received first (my_privkey must be set)
-    // This ensures the taker has a fresh offer with a valid tweakable_point
-    if connection_state.incoming_contract.my_privkey.is_none() {
-        log::warn!(
-            "[{}] Rejecting SwapDetails - GetOffer must be sent first to establish keypair",
-            maker.config.network_port
-        );
-        return Ok(Some(MakerToTakerMessage::AckResponse(AckResponse::Nack)));
-    }
+    let (privkey, pubkey) = maker.wallet.read()?.get_tweakable_keypair()?;
+    connection_state.incoming_contract.my_privkey = Some(privkey);
+    connection_state.incoming_contract.my_pubkey = Some(pubkey);
 
-    // Reject if there's already an active swap in progress for this connection
-    // This prevents an attacker from resetting another taker's swap state
-    // [TODO] Remove this once we have a way to handle multiple swaps using swap_id
-    // if connection_state.swap_amount > Amount::ZERO {
-    //     log::warn!(
-    //         "[{}] Rejecting SwapDetails - swap already in progress with amount {}",
-    //         maker.config.network_port,
-    //         connection_state.swap_amount
-    //     );
-    //     return Ok(Some(MakerToTakerMessage::AckResponse(AckResponse::Nack)));
-    // }
+    if connection_state.swap_amount > Amount::ZERO {
+        log::warn!(
+            "[{}] Rejecting SwapDetails - swap already in progress with amount {}",
+            maker.config.network_port,
+            connection_state.swap_amount
+        );
+        return Ok(Some(MakerToTakerMessage::AckResponse(
+            protocol::messages2::AckResponse {
+                tweakable_point: None,
+            },
+        )));
+    }
 
     // Validate swap parameters using api2
     maker.validate_swap_parameters(&swap_details)?;
@@ -132,7 +132,11 @@ fn handle_swap_details(
     }
 
     // Send acknowledgment
-    Ok(Some(MakerToTakerMessage::AckResponse(AckResponse::Ack)))
+    Ok(Some(MakerToTakerMessage::AckResponse(
+        protocol::messages2::AckResponse {
+            tweakable_point: Some(pubkey),
+        },
+    )))
 }
 
 /// Handles SendersContract message and creates our receiver contract
