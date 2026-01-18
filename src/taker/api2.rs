@@ -280,7 +280,7 @@ impl Taker {
 
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
-        let mut wallet = if wallet_path.exists() {
+        let wallet = if wallet_path.exists() {
             let wallet = Wallet::load(&wallet_path, &rpc_config, password)?;
             log::info!("Loaded wallet from {}", wallet_path.display());
             wallet
@@ -311,10 +311,6 @@ impl Taker {
             rpc_backend,
         )
         .start();
-
-        log::info!("Initializing wallet sync...");
-        wallet.sync_and_save()?;
-        log::info!("Completed wallet sync");
 
         Ok(Self {
             wallet,
