@@ -247,7 +247,7 @@ impl Taker {
 
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
-        let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config, password)?;
+        let wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config, password)?;
 
         // If config file doesn't exist, default config will be loaded.
         let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
@@ -275,8 +275,6 @@ impl Taker {
             rpc_backend,
         )
         .start();
-
-        wallet.sync_and_save()?;
 
         Ok(Self {
             wallet,

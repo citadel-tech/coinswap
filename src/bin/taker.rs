@@ -221,6 +221,8 @@ fn main() -> Result<(), TakerError> {
                 #[cfg(feature = "integration-test")]
                 TaprootTakerBehavior::Normal,
             )?;
+            // Sync and save the wallet data after initialization
+            taproot_taker.get_wallet_mut().sync_and_save()?;
 
             let taproot_swap_params = coinswap::taker::api2::SwapParams {
                 send_amount: Amount::from_sat(*amount),
@@ -247,6 +249,8 @@ fn main() -> Result<(), TakerError> {
                 args.zmq,
                 args.password,
             )?;
+            // Sync and save the wallet data after initialization
+            taker.get_wallet_mut().sync_and_save()?;
             match &args.command {
                 Commands::ListUtxo => {
                     let utxos = taker.get_wallet().list_all_utxo_spend_info();
