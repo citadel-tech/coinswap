@@ -24,8 +24,7 @@ use crate::{
         watcher_error::WatcherError,
     },
 };
-// ## TODO: Improve error handling, currently we are just using messing
-//          unwraps and general error
+
 // ## TODO: Instead of looping over relay's have a connection Pool.
 /// Discovers maker fidelity bonds by subscribing to Nostr events (kind 37777).
 pub fn run_discovery(
@@ -48,8 +47,7 @@ pub fn run_discovery(
             .name(format!("nostr-session-{}", relay))
             .spawn(move || {
                 run_nostr_session_for_relay(&relay.clone(), registry, shutdown, bitcoin_rpc);
-            })
-            .map_err(|e| WatcherError::General(e.to_string()))?;
+            })?;
     }
 
     Ok(())
@@ -97,8 +95,7 @@ fn connect_and_run_once(
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<Mutex<BitcoinRpc>>,
 ) -> Result<(), WatcherError> {
-    let (mut socket, _) =
-        tungstenite::connect(relay_url).map_err(|e| WatcherError::General(e.to_string()))?;
+    let (mut socket, _) = tungstenite::connect(relay_url)?;
 
     let filter = Filter::new().kind(Kind::Custom(COINSWAP_KIND));
     let req = ClientMessage::Req {
@@ -109,13 +106,9 @@ fn connect_and_run_once(
         filters: vec![Cow::Owned(filter)],
     };
 
-    socket
-        .write(Message::Text(req.as_json().into()))
-        .map_err(|e| WatcherError::General(e.to_string()))?;
+    socket.write(Message::Text(req.as_json().into()))?;
 
-    socket
-        .flush()
-        .map_err(|e| WatcherError::General(e.to_string()))?;
+    socket.flush()?;
 
     log::info!(
         "Subscribed to fidelity announcements on {} (kind={})",
@@ -136,20 +129,15 @@ fn read_event_loop(
     relay_url: &str,
 ) -> Result<(), WatcherError> {
     while !shutdown.load(Ordering::SeqCst) {
-        let msg = socket
-            .read()
-            .map_err(|e| WatcherError::General(e.to_string()))?;
+        let msg = socket.read()?;
 
         let text = match msg {
             Message::Text(t) => t,
-            Message::Binary(b) => String::from_utf8(b.to_vec())
-                .map_err(|e| WatcherError::General(e.to_string()))?
-                .into(),
+            Message::Binary(b) => String::from_utf8(b.to_vec())?.into(),
             _ => continue,
         };
 
-        let relay_msg =
-            RelayMessage::from_json(&text).map_err(|e| WatcherError::General(e.to_string()))?;
+        let relay_msg = RelayMessage::from_json(&text)?;
 
         handle_relay_message(registry.clone(), relay_msg, bitcoin_rpc.clone(), relay_url)?;
     }
@@ -176,14 +164,14 @@ fn handle_relay_message(
             // ## TODO: Optimize for this, we are currently doing a lot of RPC calls which
             //    are redundant as nostr relay's share same event multiple time. Come up
             //    with a clever way to reduce these RPC trips.
-            let Ok(tx) = bitcoin_rpc.lock().unwrap().get_raw_tx(&txid) else {
+            let Ok(tx) = bitcoin_rpc.lock()?.get_raw_tx(&txid) else {
                 log::debug!("Received invalid txid: {txid:?}");
                 return Ok(());
             };
 
             match process_fidelity(&tx) {
                 Some(fidelity) => {
-                    if registry.lock().unwrap().insert_fidelity(txid, fidelity) {
+                    if registry.lock()?.insert_fidelity(txid, fidelity) {
                         log::info!("Stored verified fidelity via {relay_url}: {txid}:{vout}");
                     }
                 }
