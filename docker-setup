@@ -290,12 +290,6 @@ configure_setup() {
     echo "  2) Use pre-configured bitcoind Docker image"
     echo "     - Quick setup, runs locally in Docker"
     echo ""
-    if [ "$BITCOIN_NETWORK" == "signet" ]; then
-        echo "  3) Connect to Public Mutinynet Node (Dev testing only)"
-        echo "     - WARNING: Leaks your transaction graph to a third party"
-        echo "     - Only use for quick developer testing, never for real funds"
-        echo ""
-    fi
     
     read -p "Select option [1]: " source_choice
     source_choice=${source_choice:-1}
@@ -330,36 +324,6 @@ configure_setup() {
                 BITCOIN_ZMQ_PORT="${btc_zmq_port:-$BITCOIN_ZMQ_PORT}"
                 
                 select_bitcoin_wallet "$EXTERNAL_BITCOIND_HOST" "$BITCOIN_RPC_USER" "$BITCOIN_RPC_PASSWORD"
-            fi
-        ;;
-        3)
-            if [ "$BITCOIN_NETWORK" == "signet" ]; then
-                echo ""
-                print_warning "============================================"
-                print_warning "            PRIVACY WARNING"
-                print_warning "============================================"
-                print_warning "Using a public node exposes your transaction graph!"
-                print_warning "The node operator can see all your wallet activity."
-                print_warning "DO NOT use this for real funds or private swaps."
-                print_warning "This option is ONLY for quick developer testing."
-                echo ""
-                read -p "I understand the privacy risks and want to continue [y/N]: " confirm_public
-                if [[ ! "${confirm_public}" =~ ^[Yy]$ ]]; then
-                    print_info "Falling back to Docker image..."
-                    configure_docker_node="true"
-                else
-                    USE_EXTERNAL_BITCOIND="true"
-                    EXTERNAL_BITCOIND_HOST="172.81.178.3:48332"
-                    BITCOIN_ZMQ_PORT="58332"
-                    BITCOIN_RPC_USER="user"
-                    BITCOIN_RPC_PASSWORD="password"
-                    BITCOIN_WALLET_NAME="coinswap-$(head -c 8 /dev/urandom | xxd -p)"
-                    print_info "Using Coinswap Public Node at $EXTERNAL_BITCOIND_HOST"
-                    print_info "Auto-generated wallet name: $BITCOIN_WALLET_NAME"
-                fi
-            else
-                print_error "Public node only available for Mutinynet."
-                configure_docker_node="true"
             fi
         ;;
         *)
