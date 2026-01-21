@@ -577,79 +577,6 @@ build_bitcoin_image() {
     fi
 }
 
-# Publish the Docker image
-publish_image() {
-    local version="$1"
-    local username="${DOCKERHUB_USERNAME}"
-    
-    if [ -z "$username" ]; then
-        read -p "Enter Docker Hub username: " username
-    fi
-    
-    if [ -z "$username" ]; then
-        print_error "Username required to publish"
-        exit 1
-    fi
-    
-    local repo="${username}/${IMAGE_NAME}"
-    
-    # Ensure image is built
-    build_image
-    
-    print_info "Tagging and pushing image to $repo..."
-    
-    # Tag and push latest
-    docker tag "${IMAGE_NAME}:latest" "${repo}:latest"
-    docker push "${repo}:latest"
-    
-    # Tag and push version if provided
-    if [ -n "$version" ]; then
-        docker tag "${IMAGE_NAME}:latest" "${repo}:${version}"
-        docker push "${repo}:${version}"
-        print_success "Published ${repo}:${version}"
-    fi
-    
-    print_success "Published ${repo}:latest"
-}
-
-# Publish the Bitcoin Docker image
-publish_bitcoin_image() {
-    local username="${DOCKERHUB_USERNAME}"
-    
-    if [ -z "$username" ]; then
-        read -p "Enter Docker Hub username: " username
-    fi
-    
-    if [ -z "$username" ]; then
-        print_error "Username required to publish"
-        exit 1
-    fi
-    
-    # Extract repo name if it contains a slash (e.g. coinswap/bitcoin-mutinynet -> bitcoin-mutinynet)
-    local repo_name=$(echo "$BITCOIN_IMAGE_NAME" | awk -F/ '{print $NF}')
-    local target_repo="${username}/${repo_name}"
-    
-    local tag="latest"
-    if [ -f "$VERSION_FILE" ]; then
-        tag=$(grep "^TAG=" "$VERSION_FILE" | cut -d'=' -f2)
-    fi
-    
-    build_bitcoin_image
-    
-    print_info "Tagging and pushing image to $target_repo..."
-    
-    docker tag "${BITCOIN_IMAGE_NAME}:latest" "${target_repo}:latest"
-    docker push "${target_repo}:latest"
-    
-    if [ -n "$tag" ]; then
-        docker tag "${BITCOIN_IMAGE_NAME}:${tag}" "${target_repo}:${tag}"
-        docker push "${target_repo}:${tag}"
-        print_success "Published ${target_repo}:${tag}"
-    fi
-    
-    print_success "Published ${target_repo}:latest"
-}
-
 # Start the full stack using docker-compose
 start_stack() {
     local use_defaults="false"
@@ -844,8 +771,6 @@ show_help() {
     echo "  configure        Configure Coinswap Docker setup"
     echo "  build            Build the Docker image"
     echo "  build-bitcoin    Build the Bitcoin Mutinynet Docker image"
-    echo "  publish [ver]    Publish image to Docker Hub (optional version tag)"
-    echo "  publish-bitcoin  Publish Bitcoin Mutinynet image to Docker Hub"
     echo "  start [options]  Start the full Coinswap stack"
     echo "                   Options:"
     echo "                     -d, --default   Use default configuration without prompting"
@@ -864,8 +789,6 @@ show_help() {
     echo ""
     echo "Examples:"
     echo "  $0 build"
-    echo "  $0 publish 1.0.0"
-    echo "  $0 publish-bitcoin"
     echo "  $0 start"
     echo "  $0 taker --help"
     echo "  $0 maker-cli ping"
@@ -883,14 +806,6 @@ case "${1:-}" in
     "build-bitcoin")
         check_docker
         build_bitcoin_image
-    ;;
-    "publish")
-        check_docker
-        publish_image "$2"
-    ;;
-    "publish-bitcoin")
-        check_docker
-        publish_bitcoin_image
     ;;
     "start")
         check_docker
