@@ -17,7 +17,9 @@ pub use api::{Balances, UTXOSpendInfo, Wallet};
 pub use backup::WalletBackup;
 pub use error::WalletError;
 pub use fidelity::FidelityBond;
-pub(crate) use fidelity::{fidelity_redeemscript, FidelityError};
+pub(crate) use fidelity::{
+    verify_fidelity_checks, FidelityError, MAX_FIDELITY_TIMELOCK, MIN_FIDELITY_TIMELOCK,
+};
 pub use rpc::RPCConfig;
 pub use spend::Destination;
 pub use storage::AddressType;
