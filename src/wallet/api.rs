@@ -2013,7 +2013,7 @@ impl Wallet {
             .rpc
             .get_descriptor_info(&format!("wsh(sortedmulti(2,{my_pubkey},{other_pubkey}))"))?
             .descriptor;
-        self.import_descriptors(std::slice::from_ref(&descriptor), None)?;
+        self.import_descriptors(std::slice::from_ref(&descriptor), None, None)?;
 
         // redeemscript and descriptor show up in `getaddressinfo` only after
         // the address gets outputs on it-
@@ -2107,7 +2107,11 @@ impl Wallet {
             .rpc
             .get_descriptor_info(&format!("raw({spk:x})"))?
             .descriptor;
-        self.import_descriptors(&[descriptor], Some(WATCH_ONLY_SWAPCOIN_LABEL.to_string()))
+        self.import_descriptors(
+            &[descriptor],
+            None,
+            Some(WATCH_ONLY_SWAPCOIN_LABEL.to_string()),
+        )
     }
 
     pub(crate) fn descriptors_to_import(&self) -> Result<Vec<String>, WalletError> {
