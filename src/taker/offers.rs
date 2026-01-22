@@ -37,7 +37,8 @@ use crate::{
         api2::connect_to_maker,
         routines::handshake_maker,
     },
-    utill::{read_message, send_message, verify_fidelity_checks},
+    utill::{read_message, send_message},
+    wallet::verify_fidelity_checks,
     watch_tower::{rpc_backend::BitcoinRpc, service::WatchService, watcher::WatcherEvent},
 };
 

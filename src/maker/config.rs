@@ -12,6 +12,11 @@ use crate::utill::{get_maker_dir, parse_field};
 
 use super::api::MIN_SWAP_AMOUNT;
 
+// Fidelity Bond relative timelock in number of blocks ( 1 block ~= 10mins)
+// Must be between 12,960 (≈3 months) and 25,920 (≈6 months)
+const MIN_FIDELITY_TIMELOCK: u32 = 12_960; // No. of blocks produce in 3 months(144*90)
+const MAX_FIDELITY_TIMELOCK: u32 = 25_920; // No. of blocks produce in 6 months(144*180)
+
 /// Maker Configuration
 ///
 /// This struct defines all configurable parameters for the Maker module, including:
@@ -47,7 +52,7 @@ impl Default for MakerConfig {
     fn default() -> Self {
         let (fidelity_amount, fidelity_timelock, base_fee, amount_relative_fee_pct) =
             if cfg!(feature = "integration-test") {
-                (5_000_000, 26_000, 1000, 2.50) // Test values
+                (5_000_000, MAX_FIDELITY_TIMELOCK, 1000, 2.50) // Test values
             } else {
                 (50_000, 13104, 100, 0.1) // Production values
             };
@@ -64,6 +69,26 @@ impl Default for MakerConfig {
             base_fee,
             amount_relative_fee_pct,
         }
+    }
+}
+/// Ensure fidelity timelock lies in the allowed range (3months-6months)
+fn validate_fidelity_timelock(timelock: u32) -> u32 {
+    if timelock < MIN_FIDELITY_TIMELOCK {
+        log::warn!(
+            "fidelity_timelock too low ({} blocks). Clamping to minimum allowed: {} blocks",
+            timelock,
+            MIN_FIDELITY_TIMELOCK
+        );
+        MIN_FIDELITY_TIMELOCK
+    } else if timelock > MAX_FIDELITY_TIMELOCK {
+        log::warn!(
+            "fidelity_timelock too high ({} blocks). Clamping to maximum allowed: {} blocks",
+            timelock,
+            MAX_FIDELITY_TIMELOCK
+        );
+        MAX_FIDELITY_TIMELOCK
+    } else {
+        timelock
     }
 }
 
@@ -118,10 +143,10 @@ impl MakerConfig {
                 config_map.get("fidelity_amount"),
                 default_config.fidelity_amount,
             ),
-            fidelity_timelock: parse_field(
+            fidelity_timelock: validate_fidelity_timelock(parse_field(
                 config_map.get("fidelity_timelock"),
                 default_config.fidelity_timelock,
-            ),
+            )),
             base_fee: parse_field(config_map.get("base_fee"), default_config.base_fee),
             amount_relative_fee_pct: parse_field(
                 config_map.get("amount_relative_fee_pct"),
@@ -150,6 +175,7 @@ min_swap_amount = {}
 # Fidelity Bond amount in satoshis
 fidelity_amount = {}
 # Fidelity Bond relative timelock in number of blocks 
+# Must be between {} (~3 months) and {} (~6 months)
 fidelity_timelock = {}
 # A fixed base fee charged by the Maker for providing its services (in satoshis)
 base_fee = {}
@@ -163,6 +189,8 @@ amount_relative_fee_pct = {}
             self.tor_auth_password,
             self.min_swap_amount,
             self.fidelity_amount,
+            MIN_FIDELITY_TIMELOCK,
+            MAX_FIDELITY_TIMELOCK,
             self.fidelity_timelock,
             self.base_fee,
             self.amount_relative_fee_pct,
@@ -251,5 +279,23 @@ mod tests {
         let config = MakerConfig::new(Some(&config_path)).unwrap();
         remove_temp_config(&config_path);
         assert_eq!(config, MakerConfig::default());
+    }
+
+    #[test]
+    fn fidelity_timelock_clamped_low() {
+        let contents = r#"fidelity_timelock = 1000"#;
+        let path = create_temp_config(contents, "low.toml");
+        let cfg = MakerConfig::new(Some(&path)).unwrap();
+        remove_temp_config(&path);
+        assert_eq!(cfg.fidelity_timelock, MIN_FIDELITY_TIMELOCK);
+    }
+
+    #[test]
+    fn fidelity_timelock_clamped_high() {
+        let contents = r#"fidelity_timelock = 50000"#;
+        let path = create_temp_config(contents, "high.toml");
+        let cfg = MakerConfig::new(Some(&path)).unwrap();
+        remove_temp_config(&path);
+        assert_eq!(cfg.fidelity_timelock, MAX_FIDELITY_TIMELOCK);
     }
 }
