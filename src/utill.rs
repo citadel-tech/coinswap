@@ -1,11 +1,10 @@
 //! Various utility and helper functions for both Taker and Maker.
 
 use bitcoin::{
-    absolute::LockTime,
     hashes::Hash,
     key::{rand::thread_rng, Keypair},
-    secp256k1::{Message, Secp256k1, SecretKey},
-    Address, Amount, FeeRate, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
+    secp256k1::{Secp256k1, SecretKey},
+    Amount, FeeRate, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
 };
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use log::LevelFilter;
@@ -44,11 +43,9 @@ static LOGGER: OnceLock<()> = OnceLock::new();
 use crate::{
     error::NetError,
     protocol::{
-        contract::derive_maker_pubkey_and_nonce,
-        error::ProtocolError,
-        messages::{FidelityProof, MultisigPrivkey},
+        contract::derive_maker_pubkey_and_nonce, error::ProtocolError, messages::MultisigPrivkey,
     },
-    wallet::{fidelity_redeemscript, FidelityError, SwapCoin, UTXOSpendInfo, WalletError},
+    wallet::{SwapCoin, UTXOSpendInfo, WalletError},
 };
 
 const INPUT_CHARSET: &str =
@@ -477,66 +474,6 @@ pub fn parse_proxy_auth(s: &str) -> Result<(String, String), NetError> {
     let passwd = parts[1].to_string();
 
     Ok((user, passwd))
-}
-
-pub(crate) fn verify_fidelity_checks(
-    proof: &FidelityProof,
-    addr: &str,
-    tx: Transaction,
-    current_height: u64,
-) -> Result<(), WalletError> {
-    // Check if bond lock time has expired
-    let lock_time = LockTime::from_height(current_height as u32)?;
-    if lock_time > proof.bond.lock_time {
-        return Err(FidelityError::BondLocktimeExpired.into());
-    }
-
-    // Verify certificate hash
-    let expected_cert_hash = proof
-        .bond
-        .generate_cert_hash(addr)
-        .expect("Bond is not yet confirmed");
-    if proof.cert_hash != expected_cert_hash {
-        return Err(FidelityError::InvalidCertHash.into());
-    }
-
-    let networks = vec![
-        bitcoin::network::Network::Regtest,
-        bitcoin::network::Network::Testnet,
-        bitcoin::network::Network::Bitcoin,
-        bitcoin::network::Network::Signet,
-    ];
-
-    let mut all_failed = true;
-
-    for network in networks {
-        // Validate redeem script and corresponding address
-        let fidelity_redeem_script =
-            fidelity_redeemscript(&proof.bond.lock_time, &proof.bond.pubkey);
-        let expected_address = Address::p2wsh(fidelity_redeem_script.as_script(), network);
-
-        let derived_script_pubkey = expected_address.script_pubkey();
-        let tx_out = tx
-            .tx_out(proof.bond.outpoint.vout as usize)
-            .map_err(|_| WalletError::General("Outputs index error".to_string()))?;
-
-        if tx_out.script_pubkey == derived_script_pubkey {
-            all_failed = false;
-            break; // No need to continue checking once we find a successful match
-        }
-    }
-
-    // Only throw error if all checks fail
-    if all_failed {
-        return Err(FidelityError::BondDoesNotExist.into());
-    }
-
-    // Verify ECDSA signature
-    let secp = Secp256k1::new();
-    let cert_message = Message::from_digest_slice(proof.cert_hash.as_byte_array())?;
-    secp.verify_ecdsa(&cert_message, &proof.cert_sig, &proof.bond.pubkey.inner)?;
-
-    Ok(())
 }
 
 /// Tor Error grades
