@@ -1558,14 +1558,7 @@ fn recover_via_hashlock(maker: Arc<Maker>, incoming: IncomingSwapCoinV2) -> Resu
 
         let result = {
             // Check if we have the preimage
-            if incoming.hash_preimage.is_none() {
-                log::warn!(
-                    "[{}] Preimage not available yet, waiting...",
-                    maker.config.network_port
-                );
-                None
-            } else {
-                let preimage = incoming.hash_preimage.unwrap();
+            if let Some(preimage) = incoming.hash_preimage {
                 let mut wallet = maker.wallet.write()?;
 
                 // Attempt to spend via hashlock
@@ -1587,6 +1580,12 @@ fn recover_via_hashlock(maker: Arc<Maker>, incoming: IncomingSwapCoinV2) -> Resu
                         Some(Err(MakerError::Wallet(e)))
                     }
                 }
+            } else {
+                log::warn!(
+                    "[{}] Preimage not available yet, waiting...",
+                    maker.config.network_port
+                );
+                None
             }
         };
 
