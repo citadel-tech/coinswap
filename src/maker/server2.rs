@@ -30,6 +30,7 @@ pub(crate) use super::api2::{Maker, RPC_PING_INTERVAL};
 use crate::{
     error::NetError,
     maker::{
+        api::FIDELITY_BOND_UPDATE_INTERVAL,
         api2::{check_for_broadcasted_contracts, check_for_idle_states, ConnectionState},
         handlers2::handle_message_taproot,
         rpc::start_rpc_server,
@@ -715,6 +716,52 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
             }
         })?;
     maker.thread_pool.add_thread(liquidity_handle);
+
+    // fidelity renewal thread
+    let maker_clone_fidelity = maker.clone();
+    let maker_addr_clone = maker_address.clone();
+    let fidelity_handle = thread::Builder::new()
+        .name("fidelity-monitor-taproot".to_string())
+        .spawn(move || {
+            let mut counter = 0u64;
+            let check_interval =
+                FIDELITY_BOND_UPDATE_INTERVAL as u64 / HEART_BEAT_INTERVAL.as_secs();
+
+            loop {
+                if maker_clone_fidelity.shutdown.load(Relaxed) {
+                    break;
+                }
+
+                let swaps_empty = maker_clone_fidelity
+                    .ongoing_swap_state
+                    .lock()
+                    .map(|s| s.is_empty())
+                    .unwrap_or(false);
+
+                let check_is_due = counter.is_multiple_of(check_interval);
+
+                if check_is_due && swaps_empty {
+                    log::debug!(
+                        "[{}] Running periodic fidelity bond check",
+                        maker_clone_fidelity.config.network_port
+                    );
+                    if let Err(e) = manage_fidelity_bonds_taproot(
+                        maker_clone_fidelity.clone(),
+                        &maker_addr_clone,
+                        false,
+                    ) {
+                        log::error!("Fidelity bond renewal error: {:?}", e);
+                    }
+                }
+
+                if swaps_empty || !check_is_due {
+                    counter += 1;
+                }
+
+                sleep(HEART_BEAT_INTERVAL);
+            }
+        })?;
+    maker.thread_pool.add_thread(fidelity_handle);
 
     // Start Bitcoin Core connection monitoring
     let maker_clone_core = maker.clone();
