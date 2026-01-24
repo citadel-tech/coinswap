@@ -378,19 +378,26 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
 fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
     let sleep_incremental = 10;
     let mut sleep_duration = 0;
-    let addr = maker
-        .get_wallet()
-        .write()?
-        .get_next_external_address(AddressType::P2WPKH)?;
     while !maker.shutdown.load(Relaxed) {
-        log::info!("Sync at:----check_swap_liquidity----");
-        maker.get_wallet().write()?.sync_and_save()?;
+        {
+            log::info!("Sync at:----check_swap_liquidity----");
+            let mut wallet = maker.get_wallet().write()?;
+            wallet.sync_and_save()?;
+            wallet.refresh_offer_maxsize_cache()?;
+        }
         let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;
-
         let min_required = maker.config.min_swap_amount;
         if offer_max_size < min_required {
+            let addr = maker
+                .get_wallet()
+                .write()?
+                .get_next_external_address(AddressType::P2WPKH)?;
             log::warn!(
-                "Low Swap Liquidity | Min: {min_required} sats | Available: {offer_max_size} sats. Add funds to {addr:?}"
+                "[{}] Low Swap Liquidity | Min: {} sats | Available: {} sats. Add funds to {:?}",
+                maker.config.network_port,
+                min_required,
+                offer_max_size,
+                addr,
             );
 
             sleep_duration = (sleep_duration + sleep_incremental).min(10 * 60); // Capped at 1 Block interval
@@ -398,7 +405,10 @@ fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
             thread::sleep(Duration::from_secs(sleep_duration));
         } else {
             log::info!(
-                "Swap Liquidity: {offer_max_size} sats | Min: {min_required} sats | Listening for requests."
+                "[{}] Swap Liquidity ready: {} sats | Min: {} sats | Listening for requests.",
+                maker.config.network_port,
+                offer_max_size,
+                min_required
             );
             break;
         }
