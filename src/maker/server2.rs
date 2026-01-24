@@ -241,12 +241,13 @@ fn setup_fidelity_bond_taproot(
 
     if let Some(i) = highest_index {
         let wallet_read = maker.wallet().read()?;
-        let bond = wallet_read.store.fidelity_bond.get(&i).unwrap();
-
+        let bond = wallet_read.store.fidelity_bond.get(&i).unwrap().clone();
         let current_height = wallet_read
             .rpc
             .get_block_count()
             .map_err(WalletError::Rpc)? as u32;
+        let bond_value = wallet_read.calculate_bond_value(&bond)?.to_sat();
+        drop(wallet_read);
 
         let proof_message = maker
             .wallet()
@@ -269,7 +270,7 @@ fn setup_fidelity_bond_taproot(
             i,
             bond.amount.to_sat(),
             bond.lock_time.to_consensus_u32() - current_height,
-            wallet_read.calculate_bond_value(bond)?.to_sat()
+            bond_value
         );
 
         // Store the fidelity proof in maker
