@@ -800,6 +800,8 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
         maker.config.network_port
     );
 
+    maker.watch_service.shutdown();
+
     // Join all threads
     maker.thread_pool.join_all_threads()?;
 

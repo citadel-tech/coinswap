@@ -663,6 +663,9 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     }
 
     log::info!("[{network_port}] Maker is shutting down.");
+
+    maker.watch_service.shutdown();
+
     maker.thread_pool.join_all_threads()?;
 
     log::info!("sync at:----Shutdown wallet----");
