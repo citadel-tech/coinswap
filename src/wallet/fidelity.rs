@@ -36,6 +36,10 @@ const BOND_VALUE_INTEREST_RATE: f64 = 0.015;
 
 /// Constant representing the derivation path for fidelity addresses.
 const FIDELITY_DERIVATION_PATH: &str = "m/84'/0'/0'/2";
+// Fidelity Bond relative timelock in number of blocks ( 1 block ~= 10mins)
+// Must be between 12,960 (≈3 months) and 25,920 (≈6 months)
+pub const MIN_FIDELITY_TIMELOCK: u32 = 12_960; // No. of blocks produce in 3 months(144*90)
+pub const MAX_FIDELITY_TIMELOCK: u32 = 25_920; // No. of blocks produce in 6 months(144*180)
 
 /// Error structure defining possible fidelity related errors
 #[derive(Debug)]
@@ -73,6 +77,21 @@ pub(crate) fn verify_fidelity_checks(
     tx: Transaction,
     current_height: u64,
 ) -> Result<(), WalletError> {
+    // Ensure fidelity bond timelock lies within allowed range
+    if cfg!(not(feature = "integration-test")) {
+        let bond_height = proof.bond.lock_time.to_consensus_u32();
+        if !(MIN_FIDELITY_TIMELOCK..=MAX_FIDELITY_TIMELOCK).contains(&bond_height) {
+            log::warn!(
+                "Invalid fidelity bond timelock: {} blocks. Accepted range is [{}-{}] blocks.",
+                bond_height,
+                MIN_FIDELITY_TIMELOCK,
+                MAX_FIDELITY_TIMELOCK
+            );
+            return Err(WalletError::General(
+                "Invalid fidelity bond timelock".to_string(),
+            ));
+        }
+    }
     // Check if bond lock time has expired
     let lock_time = LockTime::from_height(current_height as u32)?;
     if lock_time > proof.bond.lock_time {

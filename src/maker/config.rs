@@ -3,7 +3,10 @@
 //! This module defines the configuration options for the Maker server, controlling various aspects
 //! of the maker's behavior including network settings, swap parameters, and security settings.
 
-use crate::utill::parse_toml;
+use crate::{
+    utill::parse_toml,
+    wallet::{MAX_FIDELITY_TIMELOCK, MIN_FIDELITY_TIMELOCK},
+};
 use std::{io, path::Path};
 
 use std::io::Write;
@@ -11,11 +14,6 @@ use std::io::Write;
 use crate::utill::{get_maker_dir, parse_field};
 
 use super::api::MIN_SWAP_AMOUNT;
-
-// Fidelity Bond relative timelock in number of blocks ( 1 block ~= 10mins)
-// Must be between 12,960 (≈3 months) and 25,920 (≈6 months)
-const MIN_FIDELITY_TIMELOCK: u32 = 12_960; // No. of blocks produce in 3 months(144*90)
-const MAX_FIDELITY_TIMELOCK: u32 = 25_920; // No. of blocks produce in 6 months(144*180)
 
 /// Maker Configuration
 ///
@@ -71,25 +69,21 @@ impl Default for MakerConfig {
         }
     }
 }
-/// Ensure fidelity timelock lies in the allowed range (3months-6months)
-fn validate_fidelity_timelock(timelock: u32) -> u32 {
-    if timelock < MIN_FIDELITY_TIMELOCK {
+/// Ensure fidelity timelock lies in the allowed range (3–6 months)
+fn validate_fidelity_timelock(timelock: u32) -> io::Result<u32> {
+    if !(MIN_FIDELITY_TIMELOCK..=MAX_FIDELITY_TIMELOCK).contains(&timelock) {
         log::warn!(
-            "fidelity_timelock too low ({} blocks). Clamping to minimum allowed: {} blocks",
+            "Invalid fidelity_timelock: {} blocks. Accepted range is [{}-{}] blocks.
+             Fidelity bond will not be created.",
             timelock,
-            MIN_FIDELITY_TIMELOCK
-        );
-        MIN_FIDELITY_TIMELOCK
-    } else if timelock > MAX_FIDELITY_TIMELOCK {
-        log::warn!(
-            "fidelity_timelock too high ({} blocks). Clamping to maximum allowed: {} blocks",
-            timelock,
+            MIN_FIDELITY_TIMELOCK,
             MAX_FIDELITY_TIMELOCK
         );
-        MAX_FIDELITY_TIMELOCK
-    } else {
-        timelock
+        return Err(io::Error::other(
+            "Invalid fidelity timelock; cannot proceed".to_string(),
+        ));
     }
+    Ok(timelock)
 }
 
 impl MakerConfig {
@@ -146,7 +140,7 @@ impl MakerConfig {
             fidelity_timelock: validate_fidelity_timelock(parse_field(
                 config_map.get("fidelity_timelock"),
                 default_config.fidelity_timelock,
-            )),
+            ))?,
             base_fee: parse_field(config_map.get("base_fee"), default_config.base_fee),
             amount_relative_fee_pct: parse_field(
                 config_map.get("amount_relative_fee_pct"),
@@ -282,20 +276,11 @@ mod tests {
     }
 
     #[test]
-    fn fidelity_timelock_clamped_low() {
-        let contents = r#"fidelity_timelock = 1000"#;
-        let path = create_temp_config(contents, "low.toml");
-        let cfg = MakerConfig::new(Some(&path)).unwrap();
+    fn fidelity_timelock_out_of_range_fails() {
+        let contents = r#"fidelity_timelock = 1000"#; // below minimum timelock
+        let path = create_temp_config(contents, "invalid_timelock.toml");
+        let result = MakerConfig::new(Some(&path));
         remove_temp_config(&path);
-        assert_eq!(cfg.fidelity_timelock, MIN_FIDELITY_TIMELOCK);
-    }
-
-    #[test]
-    fn fidelity_timelock_clamped_high() {
-        let contents = r#"fidelity_timelock = 50000"#;
-        let path = create_temp_config(contents, "high.toml");
-        let cfg = MakerConfig::new(Some(&path)).unwrap();
-        remove_temp_config(&path);
-        assert_eq!(cfg.fidelity_timelock, MAX_FIDELITY_TIMELOCK);
+        assert!(result.is_err());
     }
 }
