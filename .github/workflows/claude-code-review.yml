@@ -28,7 +28,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
 
       - name: Run Claude Code Review
         id: claude-review
@@ -36,6 +37,12 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Allow workflow to run for all users, including those without write access
+          # ⚠️ Security Note: This bypasses the write permission requirement check.
+          # The workflow is still secured by pull_request_target which runs in the base repo context
+          # and only reviews code without executing it. See:
+          # https://github.com/anthropics/claude-code-action/blob/main/docs/security.md#access-control
+          allowed_non_write_users: "*"
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
