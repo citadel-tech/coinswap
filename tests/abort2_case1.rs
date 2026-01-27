@@ -105,15 +105,6 @@ fn maker_abort2_case1() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done, wait for maker threads to conclude.
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
     thread::sleep(Duration::from_secs(10));
@@ -335,6 +326,15 @@ fn maker_abort2_case1() {
     );
 
     info!("🎉 All checks successful. Terminating integration test case");
+
+    // After all balance checks are complete, shut down maker threads
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     test_framework.stop();
 
