@@ -1,12 +1,26 @@
 //! Public watchtower service for sending commands to and receiving events from the watcher.
 
 use bitcoin::OutPoint;
-use std::sync::{
-    mpsc::{Receiver, Sender},
-    Arc, Mutex,
+use std::{
+    path::Path,
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        Arc, Mutex,
+    },
+    thread,
 };
 
-use crate::watch_tower::watcher::{WatcherCommand, WatcherEvent};
+use crate::{
+    maker::Maker,
+    wallet::RPCConfig,
+    watch_tower::{
+        registry_storage::FileRegistry,
+        rpc_backend::BitcoinRpc,
+        watcher::{Watcher, WatcherCommand, WatcherEvent},
+        watcher_error::WatcherError,
+        zmq_backend::ZmqBackend,
+    },
+};
 
 /// Client-facing service for sending watcher commands and receiving events.
 #[derive(Clone)]
@@ -62,4 +76,38 @@ impl WatchService {
     pub fn shutdown(&self) {
         let _ = self.tx.send(WatcherCommand::Shutdown);
     }
+}
+
+/// Starts the Maker Watch Service
+pub fn start_maker_watch_service(
+    zmq_addr: &str,
+    rpc_config: &RPCConfig,
+    data_dir: &Path,
+    network_port: u16,
+) -> Result<WatchService, WatcherError> {
+    // Backends
+    let backend = ZmqBackend::new(zmq_addr);
+    let rpc_backend = BitcoinRpc::new(rpc_config.clone())?;
+    let blockchain_info = rpc_backend.get_blockchain_info()?;
+
+    // Registry
+    let file_registry = data_dir
+        .join(format!(".maker_{}_watcher", network_port))
+        .join(blockchain_info.chain.to_string());
+    let registry = FileRegistry::load(file_registry);
+
+    // Channels
+    let (tx_requests, rx_requests) = mpsc::channel();
+    let (tx_events, rx_responses) = mpsc::channel();
+
+    // Watcher
+    let rpc_config_watcher = rpc_config.clone();
+    let mut watcher = Watcher::<Maker>::new(backend, registry, rx_requests, tx_events);
+
+    thread::Builder::new()
+        .name("Watcher thread".to_string())
+        .spawn(move || watcher.run(rpc_config_watcher))
+        .expect("failed to spawn watcher thread");
+
+    Ok(WatchService::new(tx_requests, rx_responses))
 }

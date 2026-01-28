@@ -4,19 +4,9 @@
 //! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend, and RPC Client Request.
 //! The server listens at two ports: 6102 for P2P, and 6103 for RPC Client requests.
 
-use crate::{
-    protocol::messages::FidelityProof,
-    utill::{COINSWAP_KIND, NOSTR_RELAYS},
-};
+use crate::protocol::messages::FidelityProof;
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
-use nostr::{
-    event::{EventBuilder, Kind},
-    key::{Keys, SecretKey},
-    message::{ClientMessage, RelayMessage},
-    util::JsonUtil,
-};
-use tungstenite::Message;
 
 use std::{
     io::ErrorKind,
@@ -44,6 +34,7 @@ use crate::{
         handlers::handle_message,
         rpc::start_rpc_server,
     },
+    nostr_coinswap::broadcast_bond_on_nostr,
     protocol::messages::TakerToMakerMessage,
     utill::{read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::{AddressType, WalletError},
@@ -144,97 +135,6 @@ fn spawn_nostr_broadcast_task(
 
     maker.thread_pool.add_thread(handle);
     Ok(())
-}
-
-// ##TODO: Make this part of nostr module and improve error handing
-// ##TODO: Try retry in case relay doesn't accept the event
-fn broadcast_bond_on_nostr(fidelity: FidelityProof) -> Result<(), MakerError> {
-    let outpoint = fidelity.bond.outpoint;
-    let content = format!("{}:{}", outpoint.txid, outpoint.vout);
-
-    // ##TODO: Don't use ephemeral keys
-    let secret_key = SecretKey::generate();
-    let keys = Keys::new(secret_key);
-
-    let event = EventBuilder::new(Kind::Custom(COINSWAP_KIND), content)
-        .build(keys.public_key)
-        .sign_with_keys(&keys)
-        .expect("Event should be signed");
-
-    let msg = ClientMessage::Event(std::borrow::Cow::Owned(event));
-
-    log::debug!("nostr wire msg: {}", msg.as_json());
-
-    let mut success = false;
-
-    for relay in NOSTR_RELAYS {
-        match broadcast_to_relay(relay, &msg) {
-            Ok(()) => {
-                success = true;
-            }
-            Err(e) => {
-                log::warn!("failed to broadcast to {}: {:?}", relay, e);
-            }
-        }
-    }
-
-    if !success {
-        log::warn!("nostr event was not accepted by any relay");
-    }
-
-    Ok(())
-}
-
-fn broadcast_to_relay(relay: &str, msg: &ClientMessage) -> Result<(), MakerError> {
-    let (mut socket, _) = tungstenite::connect(relay).map_err(|e| {
-        log::warn!("failed to connect to nostr relay {}: {}", relay, e);
-        MakerError::General("failed to connect to nostr relay")
-    })?;
-
-    socket
-        .write(Message::Text(msg.as_json().into()))
-        .map_err(|e| {
-            log::warn!("nostr relay write failed: {}", e);
-            MakerError::General("failed to write to nostr relay")
-        })?;
-    socket.flush().ok();
-
-    match socket.read() {
-        Ok(Message::Text(text)) => {
-            if let Ok(relay_msg) = RelayMessage::from_json(&text) {
-                match relay_msg {
-                    RelayMessage::Ok {
-                        event_id,
-                        status: true,
-                        ..
-                    } => {
-                        log::info!("nostr relay {} accepted event {}", relay, event_id);
-                        return Ok(());
-                    }
-                    RelayMessage::Ok {
-                        event_id,
-                        status: false,
-                        message,
-                    } => {
-                        log::warn!(
-                            "nostr relay {} rejected event {}: {}",
-                            relay,
-                            event_id,
-                            message
-                        );
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Ok(_) => {}
-        Err(e) => {
-            log::warn!("nostr relay {} read error: {}", relay, e);
-        }
-    }
-    log::warn!("nostr relay {} did not confirm event", relay);
-
-    Err(MakerError::General("nostr relay did not confirm event"))
 }
 
 /// Ensures the wallet has a valid fidelity bond. If no active bond exists, it creates a new one.

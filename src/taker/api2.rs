@@ -7,8 +7,8 @@ use crate::{
         },
         error::ProtocolError,
         messages2::{
-            AckResponse, GetOffer, MakerToTakerMessage, Preimage, PrivateKeyHandover,
-            SenderContractFromMaker, SendersContract, SwapDetails, TakerToMakerMessage,
+            GetOffer, MakerToTakerMessage, Preimage, PrivateKeyHandover, SenderContractFromMaker,
+            SendersContract, SwapDetails, TakerToMakerMessage,
         },
         musig_interface::{
             aggregate_partial_signatures_compat, generate_new_nonce_pair_compat,
@@ -786,7 +786,6 @@ impl Taker {
             // Always send GetOffer first to ensure maker has fresh keypair state
             // This is required because offers may be cached but maker might have restarted
             let get_offer_msg = GetOffer {
-                id: self.ongoing_swap_state.id.clone(),
                 protocol_version_min: 1,
                 protocol_version_max: 1,
                 number_of_transactions: 1,
@@ -796,14 +795,16 @@ impl Taker {
                 TakerToMakerMessage::GetOffer(get_offer_msg),
             )?;
             match get_offer_response {
-                MakerToTakerMessage::RespOffer(fresh_offer) => {
+                MakerToTakerMessage::RespOffer(_fresh_offer) => {
                     log::info!(
-                        "Received fresh offer from maker: {:?}, updating tweakable_point",
+                        "Received fresh offer from maker: {:?}",
                         suitable_maker.address
                     );
-                    // TODO: Update entire offer instead of just tweakable_point.
+                    // TODO: Update entire offer other than tweakable_point
+                    // as the maker is sending temporary tweakable point in
+                    // RespOffer message.
                     // This requires OfferAndAddress to use messages2::Offer for taproot swaps.
-                    suitable_maker.offer.tweakable_point = fresh_offer.tweakable_point;
+                    //suitable_maker.offer.tweakable_point = fresh_offer.tweakable_point;
                 }
                 _ => {
                     log::warn!(
@@ -839,15 +840,21 @@ impl Taker {
             let msg = TakerToMakerMessage::SwapDetails(swap_details);
             let response = self.send_to_maker_and_get_response(&suitable_maker.address, msg);
             match response {
-                Ok(MakerToTakerMessage::AckResponse(AckResponse::Ack)) => {
-                    log::info!("Received AckResponse from maker: {:?}", suitable_maker);
-                    self.ongoing_swap_state
-                        .chosen_makers
-                        .push(suitable_maker.clone());
-                }
-                Ok(MakerToTakerMessage::AckResponse(AckResponse::Nack)) => {
-                    log::warn!("Maker {:?} did not accept the swap request", suitable_maker);
-                    continue;
+                Ok(MakerToTakerMessage::AckResponse(response)) => {
+                    if let Some(tweakable_point) = response.tweakable_point {
+                        log::info!(
+                            "Received AckResponse from maker: {:?}, updating tweakable_point.",
+                            suitable_maker
+                        );
+                        // Update the tweakable point
+                        suitable_maker.offer.tweakable_point = tweakable_point;
+                        self.ongoing_swap_state
+                            .chosen_makers
+                            .push(suitable_maker.clone());
+                    } else {
+                        log::warn!("Maker {:?} did not accept the swap request", suitable_maker);
+                        continue;
+                    }
                 }
                 _ => {
                     self.offerbook.add_bad_maker(suitable_maker);
@@ -1392,7 +1399,7 @@ impl Taker {
 
             // Create private key handover message
             let privkey_msg = TakerToMakerMessage::PrivateKeyHandover(PrivateKeyHandover {
-                id: Some(self.ongoing_swap_state.id.clone()),
+                id: self.ongoing_swap_state.id.clone(),
                 secret_key: outgoing_privkey,
             });
 

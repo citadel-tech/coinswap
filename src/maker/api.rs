@@ -18,11 +18,8 @@ use crate::{
     },
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
     watch_tower::{
-        registry_storage::FileRegistry,
-        rpc_backend::BitcoinRpc,
-        service::WatchService,
-        watcher::{Role, Watcher, WatcherEvent},
-        zmq_backend::ZmqBackend,
+        service::{start_maker_watch_service, WatchService},
+        watcher::{Role, WatcherEvent},
     },
 };
 use bitcoin::{
@@ -38,9 +35,9 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        mpsc, Arc, Mutex, RwLock,
+        Arc, Mutex, RwLock,
     },
-    thread::{self, JoinHandle},
+    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
@@ -297,25 +294,8 @@ impl Maker {
             config.network_port = port;
         }
 
-        // ## TODO: Encapsulate these initialization inside the watcher and
-        //     pollute the client declaration.
-        let backend = ZmqBackend::new(&zmq_addr);
-        let rpc_backend = BitcoinRpc::new(rpc_config.clone())?;
-        let blockchain_info = rpc_backend.get_blockchain_info()?;
-        let file_registry = data_dir
-            .join(format!(".maker_{}_watcher", config.network_port))
-            .join(blockchain_info.chain.to_string());
-        let registry = FileRegistry::load(file_registry);
-        let (tx_requests, rx_requests) = mpsc::channel();
-        let (tx_events, rx_responses) = mpsc::channel();
-        let rpc_config_watcher = rpc_config.clone();
-
-        let mut watcher = Watcher::<Maker>::new(backend, registry, rx_requests, tx_events);
-        _ = thread::Builder::new()
-            .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(rpc_config_watcher));
-
-        let watch_service = WatchService::new(tx_requests, rx_responses);
+        let watch_service =
+            start_maker_watch_service(&zmq_addr, &rpc_config, &data_dir, config.network_port)?;
 
         let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config, password)?;
 
