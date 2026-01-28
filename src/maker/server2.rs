@@ -424,7 +424,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         };
 
         let swap_id = match &message {
-            TakerToMakerMessage::GetOffer(msg) => Some(msg.id.clone()),
+            TakerToMakerMessage::GetOffer(_) => Some(String::new()), // No swap id in GetOffer message
             TakerToMakerMessage::SwapDetails(msg) => Some(msg.id.clone()),
             TakerToMakerMessage::SendersContract(msg) => Some(msg.id.clone()),
             TakerToMakerMessage::PrivateKeyHandover(msg) => Some(msg.id.clone()),
@@ -438,19 +438,23 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
             match &message {
                 TakerToMakerMessage::GetOffer(_) => {
                     log::info!(
-                        "[{}] Using temporary connection state for GetOffer from {:?}",
+                        "[{}] Using temporary connection state for GetOffer",
                         maker.config.network_port,
-                        &swap_id
                     );
+                    // This connection state won't be persisted
                     ConnectionState::default()
                 }
                 TakerToMakerMessage::SwapDetails(_) => match ongoing_swaps.get(&swap_id) {
                     Some((state, _)) => {
                         log::info!(
-                            "[{}] Found existing connection state for SwapDetails",
-                            maker.config.network_port
+                            "[{}] Protocol Violation: Found existing ConnectionState {:?} for SwapDetails for this SwapId:{},",
+                            maker.config.network_port,
+                            state,
+                            swap_id,
                         );
-                        state.clone()
+                        return Err(MakerError::General(
+                            "Protocol violation: Found duplicate Swap Details message",
+                        ));
                     }
                     None => {
                         log::info!(

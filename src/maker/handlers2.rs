@@ -5,14 +5,11 @@
 //! SendersContract -> ReceiverToSenderContract -> PartialSignaturesAndNonces.
 //! Manages the taproot-based swap protocol with MuSig2 signatures.
 
-use std::sync::Arc;
-
-use bitcoin::Amount;
-
 use super::{
     api2::{ConnectionState, Maker},
     error::MakerError,
 };
+use std::sync::Arc;
 
 use crate::protocol::{
     self,
@@ -37,9 +34,7 @@ pub(crate) fn handle_message_taproot(
 
     // Handle messages based on their type, not on expected state
     match message {
-        TakerToMakerMessage::GetOffer(get_offer_msg) => {
-            handle_get_offer(maker, connection_state, get_offer_msg)
-        }
+        TakerToMakerMessage::GetOffer(get_offer_msg) => handle_get_offer(maker, get_offer_msg),
         TakerToMakerMessage::SwapDetails(swap_details) => {
             handle_swap_details(maker, connection_state, swap_details)
         }
@@ -55,13 +50,12 @@ pub(crate) fn handle_message_taproot(
 /// Handles GetOffer message and returns an Offer with fidelity proof
 fn handle_get_offer(
     maker: &Arc<Maker>,
-    connection_state: &mut ConnectionState,
     _get_offer: GetOffer,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     log::info!("[{}] Handling GetOffer request", maker.config.network_port);
 
     // Create offer using the new api2 implementation
-    let offer = maker.create_offer(connection_state)?;
+    let offer = maker.create_offer()?;
 
     log::info!(
         "[{}] Sending offer: min_size={}, max_size={}",
@@ -90,19 +84,6 @@ fn handle_swap_details(
     let (privkey, pubkey) = maker.wallet.read()?.get_tweakable_keypair()?;
     connection_state.incoming_contract.my_privkey = Some(privkey);
     connection_state.incoming_contract.my_pubkey = Some(pubkey);
-
-    if connection_state.swap_amount > Amount::ZERO {
-        log::warn!(
-            "[{}] Rejecting SwapDetails - swap already in progress with amount {}",
-            maker.config.network_port,
-            connection_state.swap_amount
-        );
-        return Ok(Some(MakerToTakerMessage::AckResponse(
-            protocol::messages2::AckResponse {
-                tweakable_point: None,
-            },
-        )));
-    }
 
     // Validate swap parameters using api2
     maker.validate_swap_parameters(&swap_details)?;

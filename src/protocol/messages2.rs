@@ -119,7 +119,6 @@ pub(crate) enum MakerToTakerMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct GetOffer {
-    pub(crate) id: String,
     pub(crate) protocol_version_min: u32,
     pub(crate) protocol_version_max: u32,
     pub(crate) number_of_transactions: u32,

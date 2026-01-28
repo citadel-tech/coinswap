@@ -786,7 +786,6 @@ impl Taker {
             // Always send GetOffer first to ensure maker has fresh keypair state
             // This is required because offers may be cached but maker might have restarted
             let get_offer_msg = GetOffer {
-                id: self.ongoing_swap_state.id.clone(),
                 protocol_version_min: 1,
                 protocol_version_max: 1,
                 number_of_transactions: 1,

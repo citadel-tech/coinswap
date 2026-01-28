@@ -726,7 +726,6 @@ impl MakerAddress {
         let mut socket = connect_to_maker(&maker_addr, socks_port, 30)?;
 
         let get_offer_msg = GetOffer {
-            id: String::new(),
             protocol_version_min: 1,
             protocol_version_max: 1,
             number_of_transactions: 1,

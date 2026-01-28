@@ -347,19 +347,10 @@ impl Maker {
     }
 
     /// Creates an offer for the taker
-    pub fn create_offer(
-        &self,
-        connection_state: &mut ConnectionState,
-    ) -> Result<Offer, MakerError> {
+    pub fn create_offer(&self) -> Result<Offer, MakerError> {
         let wallet = self.wallet.read()?;
         // Create a temporary incoming contract pubkey here, replace with the actual pubkey after sending AckResponse msg to taker.
         let (_, incoming_contract_temporary_pubkey) = wallet.get_tweakable_keypair()?;
-        connection_state.incoming_contract.my_pubkey = Some(incoming_contract_temporary_pubkey);
-        log::info!(
-            "[{}] create_offer: Set my_privkey for incoming contract, is_some={}",
-            self.config.network_port,
-            connection_state.incoming_contract.my_privkey.is_some()
-        );
         // Get wallet balances to determine max size
         let balances = wallet.get_balances()?;
         let max_size = balances.spendable;
