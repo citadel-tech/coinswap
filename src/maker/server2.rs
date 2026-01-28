@@ -401,30 +401,48 @@ fn setup_fidelity_bond_taproot(
     ))
 }
 
-/// Checks swap liquidity for taproot swaps
+/// Blocks until sufficient liquidity is available for taproot swaps.
 fn check_swap_liquidity_taproot(maker: &Maker) -> Result<(), MakerError> {
-    {
-        let mut wallet = maker.wallet().write()?;
-        wallet.refresh_offer_maxsize_cache()?;
-    }
-    let wallet_read = maker.wallet().read()?;
-    let balances = wallet_read.get_balances()?;
+    let sleep_incremental = 10;
+    let mut sleep_duration = 0;
+    while !maker.shutdown.load(Relaxed) {
+        {
+            log::info!("Sync at:----check_swap_liquidity----");
+            let mut wallet = maker.wallet().write()?;
+            wallet.sync_and_save()?;
+            wallet.refresh_offer_maxsize_cache()?;
+        }
+        let offer_max_size = maker.wallet().read()?.store.offer_maxsize;
+        let min_required = maker.config.min_swap_amount;
+        if offer_max_size < min_required {
+            let funding_addr = maker
+                .wallet()
+                .write()?
+                .get_next_external_address(AddressType::P2TR)?;
+            log::warn!(
+                "[{}] Low taproot swap liquidity | Min: {} sats | Available: {} sats | Add Funds to: {:?}",
+                maker.config.network_port,
+                min_required,
+                offer_max_size,
+                funding_addr,
+            );
+            sleep_duration = (sleep_duration + sleep_incremental).min(10 * 60); // Capped at 1 Block interval
+            log::info!(
+                "[{}] Next liquidity check in {:?} seconds",
+                maker.config.network_port,
+                sleep_duration
+            );
 
-    let swap_balance = balances.spendable;
-    let ongoing_swaps_count = maker.ongoing_swap_state.lock()?.len();
-
-    if swap_balance == Amount::ZERO {
-        log::warn!(
-            "[{}] No spendable balance available for taproot swaps",
-            maker.config.network_port
-        );
-    } else {
-        log::info!(
-            "[{}] Taproot swap liquidity: {} sats, {} ongoing swaps",
-            maker.config.network_port,
-            swap_balance.to_sat(),
-            ongoing_swaps_count
-        );
+            std::thread::sleep(std::time::Duration::from_secs(sleep_duration));
+        } else {
+            log::info!(
+                "[{}] Taproot swap liquidity ready: {} sats | Min: {} sats | Listening for requests.",
+                maker.config.network_port,
+                offer_max_size,
+                min_required
+            );
+            break;
+        }
     }
 
     Ok(())
