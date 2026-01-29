@@ -136,10 +136,10 @@ fn test_fidelity_auto_renewal_legacy() {
         // Check if there's a new highest bond with different index
         let highest_index = wallet_read.get_highest_fidelity_index().unwrap();
         let new_bond_created = highest_index
-            .map(|idx| idx != initial_bond_index)
+            .map(|idx| idx == initial_bond_index + 1)
             .unwrap_or(false);
 
-        if original_spent || new_bond_created {
+        if original_spent && new_bond_created {
             log::info!(
                 "Fidelity bond renewal detected at iteration {}! Original spent: {}, New bond index: {:?}",
                 i,
@@ -157,6 +157,14 @@ fn test_fidelity_auto_renewal_legacy() {
         renewal_detected,
         "Fidelity bond should have been automatically renewed"
     );
+
+    let log_file = test_framework.temp_dir.join("taker/debug.log");
+    let log_path = log_file.to_str().unwrap();
+    test_framework.assert_log(
+        "Fidelity Bond at index: 0 expired | Redeeming it.",
+        log_path,
+    );
+    test_framework.assert_log("Successfully created fidelity bond", log_path);
 
     // Shutdown
     maker.shutdown.store(true, Relaxed);
@@ -288,10 +296,10 @@ fn test_fidelity_auto_renewal_taproot() {
         // Check if there's a new highest bond with different index
         let highest_index = wallet_read.get_highest_fidelity_index().unwrap();
         let new_bond_created = highest_index
-            .map(|idx| idx != initial_bond_index)
+            .map(|idx| idx == initial_bond_index + 1)
             .unwrap_or(false);
 
-        if original_spent || new_bond_created {
+        if original_spent && new_bond_created {
             log::info!(
                 "Taproot fidelity bond renewal detected at iteration {}! Original spent: {}, New bond index: {:?}",
                 i,
@@ -309,6 +317,14 @@ fn test_fidelity_auto_renewal_taproot() {
         renewal_detected,
         "Taproot fidelity bond should have been automatically renewed"
     );
+
+    let log_file = test_framework.temp_dir.join("taker/debug.log");
+    let log_path = log_file.to_str().unwrap();
+    test_framework.assert_log(
+        "Fidelity Bond at index: 0 expired | Redeeming it.",
+        log_path,
+    );
+    test_framework.assert_log("Successfully created fidelity bond", log_path);
 
     // shutdown
     maker.shutdown.store(true, Relaxed);

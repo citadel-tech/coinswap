@@ -742,7 +742,7 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
                 let check_is_due = counter.is_multiple_of(check_interval);
 
                 if check_is_due && swaps_empty {
-                    log::debug!(
+                    log::info!(
                         "[{}] Running periodic fidelity bond check",
                         maker_clone_fidelity.config.network_port
                     );
