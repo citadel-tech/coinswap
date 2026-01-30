@@ -161,7 +161,12 @@ fn test_taproot_timelock_recovery_end_to_end() {
     // Wait for maker's automatic recovery to trigger
     // The idle-checker detects dropped connections after 60 seconds (IDLE_CONNECTION_TIMEOUT)
     info!("⏳ Waiting for maker's automatic recovery (65 seconds)...");
-    thread::sleep(Duration::from_secs(65));
+    let log_path = test_framework.temp_dir.join("debug.log");
+    test_framework.assert_log(
+    "timelock recovery completed",
+    log_path.to_str().unwrap(),
+);
+
     // Mine blocks to confirm maker's recovery transactions
     generate_blocks(bitcoind, 10);
 
