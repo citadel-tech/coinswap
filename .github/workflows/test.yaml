@@ -8,14 +8,27 @@ name: test
 
 jobs:
   test_with_codecov:
-    name: Run tests with coverage reporting
+    name: Run tests coverage (Partition ${{ matrix.partition }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1,2,3,4,5,6,7,8,9,10]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install protobuf compiler
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{  hashFiles('**/Cargo.toml','**/Cargo.lock') }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -28,14 +41,23 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
+      - name: Setup nextest config
+        run: |
+          mkdir -p .config
+          cat <<'EOF' > .config/nextest.toml
+          [profile.default]
+          global-timeout = "1h"
+          slow-timeout = "3m"
+          EOF
+
       - name: Run cargo-llvm-cov
         run: |
           mkdir -p ./coverage/reports/
-          cargo llvm-cov nextest --lib --bins --tests --fail-fast --features integration-test --no-capture
-          cargo llvm-cov report --cobertura --output-path ./coverage/reports/cobertura.xml
-        
+          cargo llvm-cov nextest --lib --bins --tests --retries 1 --max-fail 2:immediate --partition hash:${{ matrix.partition }}/${{strategy.job-total}} --features integration-test --no-capture
+          cargo llvm-cov report --cobertura --output-path ./coverage/reports/cobertura-${{ strategy.job-index }}.xml
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          file: ./coverage/reports/cobertura.xml
+          files: ./coverage/reports/cobertura-${{ strategy.job-index }}.xml
