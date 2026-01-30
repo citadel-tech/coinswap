@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 
 use crate::{utill::HEART_BEAT_INTERVAL, wallet::api::KeychainKind};
 
+use bitcoin::block::Header;
 use serde::Deserialize;
 
 use super::{error::WalletError, Wallet};
@@ -127,8 +128,6 @@ impl Wallet {
             return Ok(());
         }
 
-        self.import_descriptors(&descriptors_to_import, None)?;
-
         // Sometimes in test multiple wallet scans can occur at same time, resulting in error.
         let last_synced_height = self
             .store
@@ -138,10 +137,10 @@ impl Wallet {
         let node_synced = self.rpc.get_block_count()?;
         log::info!("Re-scanning Blockchain from:{last_synced_height} to:{node_synced}");
 
-        let _ = self.rpc.rescan_blockchain(
-            Some(last_synced_height as usize),
-            Some(node_synced as usize),
-        );
+        let block_hash = self.rpc.get_block_hash(last_synced_height)?;
+        let Header { time, .. } = self.rpc.get_block_header(&block_hash)?;
+
+        let _ = self.import_descriptors(&descriptors_to_import, Some(time), None);
 
         // Returns when the scanning is completed
         loop {
@@ -182,25 +181,30 @@ impl Wallet {
     }
 
     /// Import watch addresses into core wallet. Does not check if the address was already imported.
+    /// Scans blocks from a given timestamp.
     pub(crate) fn import_descriptors(
         &self,
         descriptors_to_import: &[String],
+        time: Option<u32>,
         address_label: Option<String>,
     ) -> Result<(), WalletError> {
         let address_label = address_label.unwrap_or(self.get_core_wallet_label());
+
+        // Offset by +2h because import_descriptors applies a default -2h to the timestamp
+        let time_stamp = time.map(|t| json!(t + 7200)).unwrap_or(json!("now"));
 
         let import_requests = descriptors_to_import
             .iter()
             .map(|desc| {
                 if desc.contains("/*") {
                     return json!({
-                        "timestamp": "now",
+                        "timestamp": time_stamp,
                         "desc": desc,
                         "range": (self.get_addrss_import_count() - 1)
                     });
                 }
                 json!({
-                    "timestamp": "now",
+                    "timestamp": time_stamp,
                     "desc": desc,
                     "label": address_label
                 })
