@@ -25,11 +25,8 @@ use crate::{
         WalletError,
     },
     watch_tower::{
-        registry_storage::FileRegistry,
-        rpc_backend::BitcoinRpc,
-        service::WatchService,
-        watcher::{Role, Watcher},
-        zmq_backend::ZmqBackend,
+        service::{start_maker_watch_service, WatchService},
+        watcher::Role,
     },
 };
 use bitcoin::{
@@ -42,9 +39,9 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        mpsc, Arc, Mutex, RwLock,
+        Arc, Mutex, RwLock,
     },
-    thread::{self, JoinHandle},
+    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
@@ -238,7 +235,7 @@ pub struct Maker {
     /// Map of IP address to Connection State + last Connected instant
     pub(crate) ongoing_swap_state: Mutex<HashMap<String, (ConnectionState, Instant)>>,
     /// Highest Value Fidelity Proof
-    pub(crate) highest_fidelity_proof: RwLock<Option<crate::protocol::messages2::FidelityProof>>,
+    pub(crate) highest_fidelity_proof: RwLock<Option<crate::protocol::messages::FidelityProof>>,
     /// Is setup complete
     pub is_setup_complete: AtomicBool,
     /// Path for the data directory.
@@ -283,25 +280,8 @@ impl Maker {
             config.network_port = port;
         }
 
-        // ## TODO: Encapsulate these initialization inside the watcher and
-        //     pollute the client declaration.
-        let backend = ZmqBackend::new(&zmq_addr);
-        let rpc_backend = BitcoinRpc::new(rpc_config.clone())?;
-        let blockchain_info = rpc_backend.get_blockchain_info()?;
-        let file_registry = data_dir
-            .join(format!(".maker_{}_watcher", config.network_port))
-            .join(blockchain_info.chain.to_string());
-        let registry = FileRegistry::load(file_registry);
-        let (tx_requests, rx_requests) = mpsc::channel();
-        let (tx_events, rx_responses) = mpsc::channel();
-        let rpc_config_watcher = rpc_config.clone();
-
-        let mut watcher = Watcher::<Maker>::new(backend, registry, rx_requests, tx_events);
-        _ = thread::Builder::new()
-            .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(rpc_config_watcher));
-
-        let watch_service = WatchService::new(tx_requests, rx_responses);
+        let watch_service =
+            start_maker_watch_service(&zmq_addr, &rpc_config, &data_dir, config.network_port)?;
 
         let mut wallet = if wallet_path.exists() {
             let wallet = Wallet::load(&wallet_path, &rpc_config, password)?;
@@ -367,20 +347,10 @@ impl Maker {
     }
 
     /// Creates an offer for the taker
-    pub fn create_offer(
-        &self,
-        connection_state: &mut ConnectionState,
-    ) -> Result<Offer, MakerError> {
+    pub fn create_offer(&self) -> Result<Offer, MakerError> {
         let wallet = self.wallet.read()?;
-        let (incoming_contract_my_privkey, incoming_contract_my_pubkey) =
-            wallet.get_tweakable_keypair()?;
-        connection_state.incoming_contract.my_privkey = Some(incoming_contract_my_privkey);
-        connection_state.incoming_contract.my_pubkey = Some(incoming_contract_my_pubkey);
-        log::info!(
-            "[{}] create_offer: Set my_privkey for incoming contract, is_some={}",
-            self.config.network_port,
-            connection_state.incoming_contract.my_privkey.is_some()
-        );
+        // Create a temporary incoming contract pubkey here, replace with the actual pubkey after sending AckResponse msg to taker.
+        let (_, incoming_contract_temporary_pubkey) = wallet.get_tweakable_keypair()?;
         // Get wallet balances to determine max size
         let balances = wallet.get_balances()?;
         let max_size = balances.spendable;
@@ -397,7 +367,8 @@ impl Maker {
         let max_size = max_size.to_sat();
 
         Ok(Offer {
-            tweakable_point: incoming_contract_my_pubkey,
+            // send temporary pubkey to taker for now
+            tweakable_point: incoming_contract_temporary_pubkey,
             base_fee: BASE_FEE,
             amount_relative_fee: AMOUNT_RELATIVE_FEE_PCT,
             time_relative_fee: TIME_RELATIVE_FEE_PCT,

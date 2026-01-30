@@ -5,16 +5,18 @@
 //! SendersContract -> ReceiverToSenderContract -> PartialSignaturesAndNonces.
 //! Manages the taproot-based swap protocol with MuSig2 signatures.
 
-use std::sync::Arc;
-
 use super::{
     api2::{ConnectionState, Maker},
     error::MakerError,
 };
+use std::sync::Arc;
 
-use crate::protocol::messages2::{
-    AckResponse, GetOffer, MakerToTakerMessage, PrivateKeyHandover, SendersContract, SwapDetails,
-    TakerToMakerMessage,
+use crate::protocol::{
+    self,
+    messages2::{
+        GetOffer, MakerToTakerMessage, PrivateKeyHandover, SendersContract, SwapDetails,
+        TakerToMakerMessage,
+    },
 };
 
 /// The Global Handle Message function for taproot protocol. Takes in a [`Arc<Maker>`] and handles
@@ -32,9 +34,7 @@ pub(crate) fn handle_message_taproot(
 
     // Handle messages based on their type, not on expected state
     match message {
-        TakerToMakerMessage::GetOffer(get_offer_msg) => {
-            handle_get_offer(maker, connection_state, get_offer_msg)
-        }
+        TakerToMakerMessage::GetOffer(get_offer_msg) => handle_get_offer(maker, get_offer_msg),
         TakerToMakerMessage::SwapDetails(swap_details) => {
             handle_swap_details(maker, connection_state, swap_details)
         }
@@ -50,13 +50,12 @@ pub(crate) fn handle_message_taproot(
 /// Handles GetOffer message and returns an Offer with fidelity proof
 fn handle_get_offer(
     maker: &Arc<Maker>,
-    connection_state: &mut ConnectionState,
     _get_offer: GetOffer,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     log::info!("[{}] Handling GetOffer request", maker.config.network_port);
 
     // Create offer using the new api2 implementation
-    let offer = maker.create_offer(connection_state)?;
+    let offer = maker.create_offer()?;
 
     log::info!(
         "[{}] Sending offer: min_size={}, max_size={}",
@@ -82,27 +81,9 @@ fn handle_swap_details(
         swap_details.no_of_tx
     );
 
-    // Reject if GetOffer wasn't received first (my_privkey must be set)
-    // This ensures the taker has a fresh offer with a valid tweakable_point
-    if connection_state.incoming_contract.my_privkey.is_none() {
-        log::warn!(
-            "[{}] Rejecting SwapDetails - GetOffer must be sent first to establish keypair",
-            maker.config.network_port
-        );
-        return Ok(Some(MakerToTakerMessage::AckResponse(AckResponse::Nack)));
-    }
-
-    // Reject if there's already an active swap in progress for this connection
-    // This prevents an attacker from resetting another taker's swap state
-    // [TODO] Remove this once we have a way to handle multiple swaps using swap_id
-    // if connection_state.swap_amount > Amount::ZERO {
-    //     log::warn!(
-    //         "[{}] Rejecting SwapDetails - swap already in progress with amount {}",
-    //         maker.config.network_port,
-    //         connection_state.swap_amount
-    //     );
-    //     return Ok(Some(MakerToTakerMessage::AckResponse(AckResponse::Nack)));
-    // }
+    let (privkey, pubkey) = maker.wallet.read()?.get_tweakable_keypair()?;
+    connection_state.incoming_contract.my_privkey = Some(privkey);
+    connection_state.incoming_contract.my_pubkey = Some(pubkey);
 
     // Validate swap parameters using api2
     maker.validate_swap_parameters(&swap_details)?;
@@ -132,7 +113,11 @@ fn handle_swap_details(
     }
 
     // Send acknowledgment
-    Ok(Some(MakerToTakerMessage::AckResponse(AckResponse::Ack)))
+    Ok(Some(MakerToTakerMessage::AckResponse(
+        protocol::messages2::AckResponse {
+            tweakable_point: Some(pubkey),
+        },
+    )))
 }
 
 /// Handles SendersContract message and creates our receiver contract

@@ -23,7 +23,7 @@ use nostr::{
 use tungstenite::{stream::MaybeTlsStream, Message};
 
 use crate::{
-    utill::{COINSWAP_KIND, NOSTR_RELAYS},
+    nostr_coinswap::{COINSWAP_KIND, NOSTR_RELAYS},
     wallet::RPCConfig,
     watch_tower::{
         registry_storage::FileRegistry,
