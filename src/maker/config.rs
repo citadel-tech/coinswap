@@ -103,10 +103,21 @@ impl MakerConfig {
 
         Ok(MakerConfig {
             rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
-            min_swap_amount: parse_field(
-                config_map.get("min_swap_amount"),
-                default_config.min_swap_amount,
-            ),
+            min_swap_amount: {
+                let min_swap_amount = parse_field(
+                    config_map.get("min_swap_amount"),
+                    default_config.min_swap_amount,
+                );
+                if min_swap_amount < MIN_SWAP_AMOUNT {
+                    log::error!(
+                        "Configured min_swap_amount {} is below protocol minimum {} sats",
+                        min_swap_amount,
+                        MIN_SWAP_AMOUNT
+                    );
+                    return Err(io::Error::other("min_swap_amount below protocol minimum"));
+                }
+                min_swap_amount
+            },
             network_port: parse_field(config_map.get("network_port"), default_config.network_port),
             control_port: parse_field(config_map.get("control_port"), default_config.control_port),
             socks_port: parse_field(config_map.get("socks_port"), default_config.socks_port),
