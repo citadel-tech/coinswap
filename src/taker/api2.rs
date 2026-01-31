@@ -24,7 +24,7 @@ use crate::{
     },
     utill::{check_tor_status, get_taker_dir, read_message, send_message},
     wallet::{
-        ffi::{MakerFeeInfo, SwapReport},
+        ffi::{MakerFeeInfo, TakerSwapReport},
         AddressType, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError,
     },
     watch_tower::{
@@ -338,7 +338,7 @@ impl Taker {
     pub fn do_coinswap(
         &mut self,
         swap_params: SwapParams,
-    ) -> Result<Option<SwapReport>, TakerError> {
+    ) -> Result<Option<TakerSwapReport>, TakerError> {
         let swap_start_time = std::time::Instant::now();
         let initial_utxoset = self.wallet.list_all_utxo();
 
@@ -447,7 +447,7 @@ impl Taker {
         prereset_swapstate: &OngoingSwapState,
         start_time: std::time::Instant,
         initial_utxos: Vec<ListUnspentResultEntry>,
-    ) -> Result<SwapReport, TakerError> {
+    ) -> Result<TakerSwapReport, TakerError> {
         let swap_state = prereset_swapstate;
         let target_amount = swap_state.swap_params.send_amount.to_sat();
         let swap_duration = start_time.elapsed();
@@ -708,7 +708,7 @@ impl Taker {
         let funding_txids_by_hop = all_outgoing_txid;
         let total_funding_txs = funding_txids_by_hop.len();
 
-        let report = SwapReport {
+        let report = TakerSwapReport {
             swap_id: swap_state.id.clone(),
             swap_duration_seconds: swap_duration.as_secs_f64(),
             target_amount,

@@ -16,6 +16,7 @@ mod swapcoin2;
 pub use api::{Balances, UTXOSpendInfo, Wallet};
 pub use backup::WalletBackup;
 pub use error::WalletError;
+pub use ffi::{MakerFeeInfo, MakerSwapReport, TakerSwapReport};
 pub use fidelity::FidelityBond;
 pub(crate) use fidelity::{fidelity_redeemscript, FidelityError};
 pub use rpc::RPCConfig;
