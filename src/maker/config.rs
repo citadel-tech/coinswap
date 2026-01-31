@@ -5,9 +5,9 @@
 
 use crate::{
     utill::parse_toml,
-    wallet::{MAX_FIDELITY_TIMELOCK, MIN_FIDELITY_TIMELOCK},
+    wallet::{WalletError, MAX_FIDELITY_TIMELOCK, MIN_FIDELITY_TIMELOCK},
 };
-use std::{io, path::Path};
+use std::path::Path;
 
 use std::io::Write;
 
@@ -52,7 +52,7 @@ impl Default for MakerConfig {
             if cfg!(feature = "integration-test") {
                 (5_000_000, MAX_FIDELITY_TIMELOCK, 1000, 2.50) // Test values
             } else {
-                (50_000, 13104, 100, 0.1) // Production values
+                (50_000, MAX_FIDELITY_TIMELOCK, 100, 0.1) // Production values
             };
 
         Self {
@@ -70,7 +70,7 @@ impl Default for MakerConfig {
     }
 }
 /// Ensure fidelity timelock lies in the allowed range (3–6 months)
-fn validate_fidelity_timelock(timelock: u32) -> io::Result<u32> {
+fn validate_fidelity_timelock(timelock: u32) -> Result<u32, WalletError> {
     if !(MIN_FIDELITY_TIMELOCK..=MAX_FIDELITY_TIMELOCK).contains(&timelock) {
         log::warn!(
             "Invalid fidelity_timelock: {} blocks. Accepted range is [{}-{}] blocks.
@@ -79,8 +79,8 @@ fn validate_fidelity_timelock(timelock: u32) -> io::Result<u32> {
             MIN_FIDELITY_TIMELOCK,
             MAX_FIDELITY_TIMELOCK
         );
-        return Err(io::Error::other(
-            "Invalid fidelity timelock; cannot proceed".to_string(),
+        return Err(WalletError::Fidelity(
+            crate::wallet::FidelityError::InvalidBondLocktime,
         ));
     }
     Ok(timelock)
@@ -97,7 +97,7 @@ impl MakerConfig {
     ///
     /// Default data-dir for linux: `~/.coinswap/maker`
     /// Default config locations: `~/.coinswap/maker/config.toml`.
-    pub(crate) fn new(config_path: Option<&Path>) -> io::Result<Self> {
+    pub(crate) fn new(config_path: Option<&Path>) -> Result<Self, WalletError> {
         let default_config_path = get_maker_dir().join("config.toml");
 
         let config_path = config_path.unwrap_or(&default_config_path);
@@ -133,7 +133,10 @@ impl MakerConfig {
                         min_swap_amount,
                         MIN_SWAP_AMOUNT
                     );
-                    return Err(io::Error::other("min_swap_amount below protocol minimum"));
+                    return Err(WalletError::InsufficientFund {
+                        available: min_swap_amount,
+                        required: MIN_SWAP_AMOUNT,
+                    });
                 }
                 min_swap_amount
             },
@@ -292,6 +295,11 @@ mod tests {
         let path = create_temp_config(contents, "invalid_timelock.toml");
         let result = MakerConfig::new(Some(&path));
         remove_temp_config(&path);
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(WalletError::Fidelity(
+                crate::wallet::FidelityError::InvalidBondLocktime
+            ))
+        ));
     }
 }

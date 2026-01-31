@@ -64,6 +64,8 @@ pub enum MakerBehavior {
     CloseAfterSweep,
     /// Close connection after accepting Swap offer from taker and sending it AckResponse message.
     CloseAfterAckResponse,
+    /// Fidelity timelock doesn't lie in the acceptable range
+    InvalidFidelityTimelock,
 }
 
 /// Interval for health checks on a stable RPC connection with bitcoind.
