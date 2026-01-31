@@ -86,24 +86,23 @@ pub(crate) fn verify_fidelity_checks(
     current_height: u64,
 ) -> Result<(), WalletError> {
     // Ensure fidelity bond timelock lies within allowed range
-    if cfg!(not(feature = "integration-test")) {
-        let bond_height = proof.bond.lock_time.to_consensus_u32()
-            - proof
-                .bond
-                .conf_height
-                .ok_or(WalletError::Fidelity(FidelityError::BondDoesNotExist))?;
-        if !(MIN_FIDELITY_TIMELOCK..=MAX_FIDELITY_TIMELOCK).contains(&bond_height) {
-            log::warn!(
-                "Invalid fidelity bond timelock: {} blocks. Accepted range is [{}-{}] blocks.",
-                bond_height,
-                MIN_FIDELITY_TIMELOCK,
-                MAX_FIDELITY_TIMELOCK
-            );
-            return Err(WalletError::General(
-                "Invalid fidelity bond timelock".to_string(),
-            ));
-        }
+    let bond_height = proof.bond.lock_time.to_consensus_u32()
+        - proof
+            .bond
+            .conf_height
+            .ok_or(WalletError::Fidelity(FidelityError::BondDoesNotExist))?;
+    if !(MIN_FIDELITY_TIMELOCK..=MAX_FIDELITY_TIMELOCK).contains(&bond_height) {
+        log::warn!(
+            "Invalid fidelity bond timelock: {} blocks. Accepted range is [{}-{}] blocks.",
+            bond_height,
+            MIN_FIDELITY_TIMELOCK,
+            MAX_FIDELITY_TIMELOCK
+        );
+        return Err(WalletError::General(
+            "Invalid fidelity bond timelock".to_string(),
+        ));
     }
+
     // Check if bond lock time has expired
     let lock_time = LockTime::from_height(current_height as u32)?;
     if lock_time > proof.bond.lock_time {
