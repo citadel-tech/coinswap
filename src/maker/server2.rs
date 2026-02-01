@@ -405,6 +405,32 @@ fn setup_fidelity_bond_taproot(
 fn check_swap_liquidity_taproot(maker: &Maker) -> Result<(), MakerError> {
     let sleep_incremental = 10;
     let mut sleep_duration = 0;
+    #[cfg(feature = "integration-test")]
+    if maker.behavior == super::api2::MakerBehavior::LowSwapLiqudity {
+        use crate::utill::MIN_FEE_RATE;
+        use bitcoin::{
+            key::CompressedPublicKey,
+            secp256k1::{rand::rngs::OsRng, Secp256k1, SecretKey},
+            Address, Network, PublicKey,
+        };
+        use bitcoind::bitcoincore_rpc::RpcApi;
+        use std::convert::TryFrom;
+
+        let coins = maker.wallet().read()?.list_descriptor_utxo_spend_info();
+        let secp = Secp256k1::new();
+        let pk = SecretKey::new(&mut OsRng).public_key(&secp);
+        let addr = Address::p2wpkh(
+            &CompressedPublicKey::try_from(PublicKey::new(pk)).unwrap(),
+            Network::Regtest,
+        );
+        let mut wallet = maker.wallet().write()?;
+        let tx = wallet.spend_from_wallet(
+            MIN_FEE_RATE,
+            crate::wallet::Destination::Sweep(addr),
+            &coins,
+        )?;
+        wallet.rpc.send_raw_transaction(&tx).unwrap();
+    }
     while !maker.shutdown.load(Relaxed) {
         {
             log::info!("Sync at:----check_swap_liquidity----");
@@ -434,6 +460,15 @@ fn check_swap_liquidity_taproot(maker: &Maker) -> Result<(), MakerError> {
             );
 
             std::thread::sleep(std::time::Duration::from_secs(sleep_duration));
+            #[cfg(feature = "integration-test")]
+            // Panic the thread after 20 secs for low swap liquidity test
+            if maker.behavior == super::api2::MakerBehavior::LowSwapLiqudity && sleep_duration == 20
+            {
+                return Err(MakerError::Wallet(WalletError::InsufficientFund {
+                    available: offer_max_size,
+                    required: min_required,
+                }));
+            }
         } else {
             log::info!(
                 "[{}] Taproot swap liquidity ready: {} sats | Min: {} sats | Listening for requests.",
@@ -686,7 +721,8 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
         "[{network_port}] Taproot maker initialized - Address: {}",
         maker_address,
     );
-
+    // Check swap liquidity before spawning the threads
+    check_swap_liquidity_taproot(&maker)?;
     // Start idle connection checker thread
     let maker_clone_idle = maker.clone();
     let idle_checker_handle = thread::Builder::new()

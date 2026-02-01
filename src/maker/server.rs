@@ -639,7 +639,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
                 interval_tracker = 0;
             }
 
-            if interval_tracker.is_multiple_of(FIDELITY_BOND_UPDATE_INTERVAL) {
+            if interval_tracker.is_multiple_of(SWAP_LIQUIDITY_CHECK_INTERVAL) {
                 check_swap_liquidity(maker.as_ref())?;
             }
         }
