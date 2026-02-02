@@ -4,7 +4,7 @@
 //! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend, and RPC Client Request.
 //! The server listens at two ports: 6102 for P2P, and 6103 for RPC Client requests.
 
-use crate::protocol::messages::FidelityProof;
+use crate::{protocol::messages::FidelityProof, wallet::SwapCoin};
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
 
@@ -378,6 +378,60 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
                 }
             }
             Err(err) => {
+                if !connection_state.incoming_swapcoins.is_empty()
+                    || !connection_state.outgoing_swapcoins.is_empty()
+                {
+                    let network = maker
+                        .wallet
+                        .read()
+                        .map(|w| w.store.network.to_string())
+                        .unwrap_or_default();
+                    let incoming_txid = connection_state
+                        .incoming_swapcoins
+                        .first()
+                        .map(|s| s.contract_tx.compute_txid().to_string())
+                        .unwrap_or_else(|| "N/A".to_string());
+                    let outgoing_txid = connection_state
+                        .outgoing_swapcoins
+                        .first()
+                        .map(|s| s.contract_tx.compute_txid().to_string())
+                        .unwrap_or_else(|| "N/A".to_string());
+                    let incoming_amount: u64 = connection_state
+                        .incoming_swapcoins
+                        .iter()
+                        .map(|s| s.funding_amount.to_sat())
+                        .sum();
+                    let outgoing_amount: u64 = connection_state
+                        .outgoing_swapcoins
+                        .iter()
+                        .map(|s| s.funding_amount.to_sat())
+                        .sum();
+                    let timelock = connection_state
+                        .outgoing_swapcoins
+                        .first()
+                        .and_then(|s| s.get_timelock().ok())
+                        .unwrap_or(0);
+
+                    let report = crate::wallet::ffi::MakerSwapReport::failed(
+                        format!(
+                            "failed-{}",
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_nanos()
+                        ),
+                        incoming_amount,
+                        outgoing_amount,
+                        incoming_txid,
+                        outgoing_txid,
+                        timelock,
+                        network,
+                        format!("{:?}", err),
+                    );
+                    report.print();
+                    let _ = report.save_to_disk(maker.get_data_dir());
+                }
+
                 match &err {
                     MakerError::SpecialBehaviour(sp) => {
                         log::error!(
