@@ -407,6 +407,8 @@ fn check_swap_liquidity_taproot(maker: &Maker) -> Result<(), MakerError> {
     let mut sleep_duration = 0;
     while !maker.shutdown.load(Relaxed) {
         {
+            #[cfg(feature = "integration-test")]
+            thread::sleep(Duration::from_secs(5));
             log::info!("Sync at:----check_swap_liquidity----");
             let mut wallet = maker.wallet().write()?;
             wallet.sync_and_save()?;
@@ -686,34 +688,6 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
         "[{network_port}] Taproot maker initialized - Address: {}",
         maker_address,
     );
-
-    #[cfg(feature = "integration-test")]
-    // Drain the wallet for liquidity_test
-    if maker.behavior == super::api2::MakerBehavior::LowSwapLiqudity {
-        use crate::utill::MIN_FEE_RATE;
-        use bitcoin::{
-            key::CompressedPublicKey,
-            secp256k1::{rand::rngs::OsRng, Secp256k1, SecretKey},
-            Address, Network, PublicKey,
-        };
-        use bitcoind::bitcoincore_rpc::RpcApi;
-        use std::convert::TryFrom;
-
-        let coins = maker.wallet().read()?.list_descriptor_utxo_spend_info();
-        let secp = Secp256k1::new();
-        let pk = SecretKey::new(&mut OsRng).public_key(&secp);
-        let addr = Address::p2wpkh(
-            &CompressedPublicKey::try_from(PublicKey::new(pk)).unwrap(),
-            Network::Regtest,
-        );
-        let mut wallet = maker.wallet().write()?;
-        let tx = wallet.spend_from_wallet(
-            MIN_FEE_RATE,
-            crate::wallet::Destination::Sweep(addr),
-            &coins,
-        )?;
-        wallet.rpc.send_raw_transaction(&tx).unwrap();
-    }
     // Check swap liquidity before spawning the threads
     check_swap_liquidity_taproot(&maker)?;
     // Start idle connection checker thread

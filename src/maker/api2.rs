@@ -67,8 +67,6 @@ pub enum MakerBehavior {
     CloseAfterSweep,
     /// Close connection after accepting Swap offer from taker and sending it AckResponse message.
     CloseAfterAckResponse,
-    /// Drain the maker wallet after creating fidelity bond, to test low swap liquidty thread
-    LowSwapLiqudity,
 }
 
 /// Interval for health checks on a stable RPC connection with bitcoind.
