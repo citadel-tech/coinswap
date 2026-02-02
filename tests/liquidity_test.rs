@@ -63,7 +63,7 @@ fn test_low_swap_liquidity() {
 
     // Attempt the swap - it will fail
     let err = taproot_taker
-        .do_coinswap(swap_params)
+        .do_coinswap(swap_params.clone())
         .expect_err("Swap should have failed due to NotEnoughMakersInOfferBook");
     assert!(
         matches!(err, TakerError::NotEnoughMakersInOfferBook),
@@ -72,20 +72,33 @@ fn test_low_swap_liquidity() {
     );
     info!("✅ Taproot coinswap failed as expected: {err:?}");
 
-    maker.shutdown.store(true, Relaxed);
-    let err = taproot_maker_threads
-        .join()
-        .expect_err("maker thread should panic");
-
-    let msg = err.downcast_ref::<String>().unwrap();
-    assert!(
-        msg.contains("Wallet(InsufficientFund { available: 0, required: 10000 })"),
-        "Unexpected panic: {}",
-        msg
+    let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
+    // wait for the low swap liquidity log, and then fund the maker again
+    test_framework.assert_log(
+        " Low taproot swap liquidity | Min: 10000 sats | Available: 0 sats | Add Funds to: ",
+        &log_path,
     );
+    log::info!("✅ Maker stopped due to low swap liquidity as expected");
 
-    log::info!("✅ Maker stopped due to low swap liquidity as expected:\n{msg}");
+    log::info!("Adding sufficient funds to perform a swap and avoid low swap liquidity ");
+    fund_taproot_makers(&taproot_maker, bitcoind, 4, Amount::from_btc(0.05).unwrap());
 
+    // Attempt the swap again, it should succeed
+    match taproot_taker.do_coinswap(swap_params.clone()) {
+        Ok(Some(_report)) => {
+            log::info!("✅ Taproot coinswap completed successfully!");
+        }
+        Ok(None) => {
+            log::warn!("Taproot coinswap completed but no report generated (recovery occurred)");
+        }
+        Err(e) => {
+            log::error!("Taproot coinswap failed: {:?}", e);
+            panic!("Taproot coinswap failed: {:?}", e);
+        }
+    }
+
+    maker.shutdown.store(true, Relaxed);
+    taproot_maker_threads.join().unwrap();
     test_framework.stop();
     block_generation_handle.join().unwrap();
 
