@@ -104,16 +104,6 @@ fn malice_1() {
     info!("Waiting for maker to complete recovery");
     thread::sleep(Duration::from_secs(60));
 
-    // shutdown makers thread
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    //join makers thread
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     ///////////////////
     let taker_wallet = taker.get_wallet_mut();
     taker_wallet.sync_and_save().unwrap();
@@ -247,6 +237,15 @@ fn malice_1() {
     log::info!("✅ Swap results verification complete");
 
     info!("🎉 All checks successful. Terminating integration test case");
+
+    // After all balance checks are complete, shut down maker threads
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     test_framework.stop();
     block_generation_handle.join().unwrap();
