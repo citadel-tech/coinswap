@@ -1001,6 +1001,7 @@ fn wait_for_ports_to_close(label: &str, ports: &[u16], timeout: Duration) -> Res
         return Ok(());
     }
 
+    
     log::info!("⏳ Waiting for {label} to shut down: {open_ports:?}");
 
     while start.elapsed() < timeout {
