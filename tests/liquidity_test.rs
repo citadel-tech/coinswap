@@ -8,7 +8,7 @@
 
 use bitcoin::Amount;
 use coinswap::{
-    maker::{start_maker_server_taproot, TaprootMaker, TaprootMakerBehavior as MakerBehavior},
+    maker::{TaprootMaker, TaprootMakerBehavior as MakerBehavior},
     taker::{
         api2::{SwapParams, TakerBehavior},
         error::TakerError,
@@ -18,11 +18,7 @@ mod test_framework;
 use test_framework::*;
 
 use log::{info, warn};
-use std::{
-    sync::{atomic::Ordering::Relaxed, Arc},
-    thread,
-    time::Duration,
-};
+use std::{sync::Arc, thread, time::Duration};
 
 #[test]
 fn test_low_swap_liquidity() {
@@ -33,7 +29,7 @@ fn test_low_swap_liquidity() {
     //Create a Taker
     let taker_behavior = vec![TakerBehavior::Normal];
     // Initialize test framework
-    let (test_framework, mut taproot_taker, taproot_maker, block_generation_handle) =
+    let (test_framework, mut taproot_taker, taproot_maker) =
         TestFramework::init_taproot(makers_config_map, taker_behavior);
 
     let bitcoind = &test_framework.bitcoind;
@@ -49,12 +45,7 @@ fn test_low_swap_liquidity() {
 
     // Start the Taproot Maker Server thread
     info!("🚀 Initiating Maker server...");
-    let taproot_maker_threads = {
-        let maker_clone = maker.clone();
-        thread::spawn(move || {
-            start_maker_server_taproot(maker_clone).unwrap();
-        })
-    };
+    test_framework.start_maker_servers();
 
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
     // Wait for fidelity bond to be created, before draining the wallet.
@@ -107,10 +98,8 @@ fn test_low_swap_liquidity() {
         }
     }
 
-    maker.shutdown.store(true, Relaxed);
-    taproot_maker_threads.join().unwrap();
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
+    test_framework.shutdown_maker_servers().unwrap();
+    // TestFramework drop handles shutdown of all background processes.
 
     info!("✅ Low Swap liquidity test passed");
 }

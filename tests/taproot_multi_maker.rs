@@ -2,10 +2,7 @@
 //! This test demonstrates a taproot coinswap between a Taker and multiple Makers
 
 use bitcoin::Amount;
-use coinswap::{
-    maker::start_maker_server_taproot,
-    taker::api2::{SwapParams, TakerBehavior},
-};
+use coinswap::taker::api2::{SwapParams, TakerBehavior};
 
 mod test_framework;
 use test_framework::*;
@@ -31,7 +28,7 @@ fn test_taproot_multi_maker() {
     let taker_behavior = vec![TakerBehavior::Normal];
 
     // Initialize test framework
-    let (test_framework, mut taproot_taker, taproot_makers, block_generation_handle) =
+    let (test_framework, mut taproot_taker, taproot_makers) =
         TestFramework::init_taproot(taproot_makers_config_map, taker_behavior);
 
     let bitcoind = &test_framework.bitcoind;
@@ -51,16 +48,7 @@ fn test_taproot_multi_maker() {
 
     // Start the Taproot Maker Server threads
     log::info!("Initiating Taproot Makers...");
-
-    let taproot_maker_threads = taproot_makers
-        .iter()
-        .map(|maker| {
-            let maker_clone = maker.clone();
-            thread::spawn(move || {
-                start_maker_server_taproot(maker_clone).unwrap();
-            })
-        })
-        .collect::<Vec<_>>();
+    test_framework.start_maker_servers();
 
     // Wait for taproot makers to complete setup
     for maker in &taproot_makers {
@@ -105,13 +93,7 @@ fn test_taproot_multi_maker() {
     }
 
     // After swap, shutdown maker threads
-    taproot_makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    taproot_maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
+    test_framework.shutdown_maker_servers().unwrap();
 
     // Sync wallets and verify results
     taproot_taker.get_wallet_mut().sync_and_save().unwrap();
@@ -198,6 +180,5 @@ fn test_taproot_multi_maker() {
     }
 
     log::info!("✅ Taproot mutli maker test passed successfully.");
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
+    // TestFramework drop handles shutdown of all background processes.
 }

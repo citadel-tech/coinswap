@@ -6,7 +6,8 @@
 //! and initializes the database.
 //!
 //! The tests' data are stored in the `tests/temp-files` directory, which is auto-removed after each successful test.
-//! Do not invoke [TestFramework::stop] function at the end of the test, to persist this data for debugging.
+//! Drop [`TestFramework`] to shutdown all background processes. To persist data for debugging, prevent
+//! it from being dropped (e.g. `std::mem::forget`).
 //!
 //! The test data also includes the backend bitcoind data-directory, which is useful for observing the blockchain states after a swap.
 //!
@@ -42,7 +43,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        mpsc, Arc,
+        mpsc, Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -57,7 +58,10 @@ use bitcoind::{
 };
 
 use coinswap::{
-    maker::{Maker, MakerBehavior, TaprootMaker, TaprootMakerBehavior},
+    maker::{
+        start_maker_server, start_maker_server_taproot, Maker, MakerBehavior, TaprootMaker,
+        TaprootMakerBehavior,
+    },
     taker::{api2::TakerBehavior as TaprootTakerBehavior, Taker, TakerBehavior, TaprootTaker},
     utill::setup_logger,
     wallet::{AddressType, Balances, RPCConfig},
@@ -210,13 +214,17 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path, zmq_addr: String) -> Bitc
 
 /// Generate Blocks in regtest node.
 pub(crate) fn generate_blocks(bitcoind: &BitcoinD, n: u64) {
-    let mining_address = match bitcoind.client.get_new_address(None, None) {
+    generate_blocks_with_client(&bitcoind.client, n);
+}
+
+fn generate_blocks_with_client(client: &bitcoind::bitcoincore_rpc::Client, n: u64) {
+    let mining_address = match client.get_new_address(None, None) {
         Ok(addr) => addr
             .require_network(bitcoind::bitcoincore_rpc::bitcoin::Network::Regtest)
             .unwrap(),
         Err(_) => return,
     };
-    let _ = bitcoind.client.generate_to_address(n, &mining_address);
+    let _ = client.generate_to_address(n, &mining_address);
 }
 
 /// Send coins to a bitcoin address.
@@ -537,9 +545,13 @@ pub fn verify_maker_pre_swap_balance_taproot(taproot_makers: &[Arc<TaprootMaker>
 pub struct TestFramework {
     pub(super) bitcoind: BitcoinD,
     pub(super) temp_dir: PathBuf,
-    shutdown: AtomicBool,
+    shutdown: Arc<AtomicBool>,
     nostr_relay_shutdown: mpsc::Sender<()>,
     nostr_relay_handle: Option<JoinHandle<()>>,
+    block_generation_handle: Option<JoinHandle<()>>,
+    maker_server_handles: Mutex<Vec<JoinHandle<()>>>,
+    makers: Vec<Arc<Maker>>,
+    taproot_makers: Vec<Arc<TaprootMaker>>,
 }
 
 impl TestFramework {
@@ -558,7 +570,7 @@ impl TestFramework {
     pub fn init(
         makers_config_map: Vec<((u16, Option<u16>), MakerBehavior)>,
         taker_behavior: Vec<TakerBehavior>,
-    ) -> (Arc<Self>, Vec<Taker>, Vec<Arc<Maker>>, JoinHandle<()>) {
+    ) -> (Arc<Self>, Vec<Taker>, Vec<Arc<Maker>>) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
         // Remove if previously existing
@@ -579,13 +591,17 @@ impl TestFramework {
 
         _ = wait_for_relay_healthy();
 
-        let shutdown = AtomicBool::new(false);
-        let test_framework = Arc::new(Self {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut test_framework = Arc::new(Self {
             bitcoind,
             temp_dir: temp_dir.clone(),
             shutdown,
             nostr_relay_shutdown,
             nostr_relay_handle: Some(nostr_relay_handle),
+            block_generation_handle: None,
+            maker_server_handles: Mutex::new(Vec::new()),
+            makers: Vec::new(),
+            taproot_makers: Vec::new(),
         });
 
         // Translate a RpcConfig from the test framework.
@@ -639,23 +655,34 @@ impl TestFramework {
             })
             .collect::<Vec<_>>();
 
+        Arc::get_mut(&mut test_framework)
+            .expect("test framework arc should not be shared during init")
+            .makers = makers.clone();
+
         // start the block generation thread
         log::info!("⛏️ Spawning block generation thread");
-        let tf_clone = test_framework.clone();
+        let shutdown_clone = test_framework.shutdown.clone();
+        let block_client = bitcoind::bitcoincore_rpc::Client::new(
+            &test_framework.bitcoind.rpc_url(),
+            Auth::CookieFile(test_framework.bitcoind.params.cookie_file.clone()),
+        )
+        .expect("failed to create bitcoind rpc client for block generation");
         let generate_blocks_handle = thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(3));
 
-            if tf_clone.shutdown.load(Relaxed) {
+            if shutdown_clone.load(Relaxed) {
                 log::info!("🔚 Ending block generation thread");
                 return;
             }
-            // tf_clone.generate_blocks(10);
-            generate_blocks(&tf_clone.bitcoind, 10);
+            generate_blocks_with_client(&block_client, 10);
         });
+        Arc::get_mut(&mut test_framework)
+            .expect("test framework arc should not be shared during init")
+            .block_generation_handle = Some(generate_blocks_handle);
 
         log::info!("✅ Test Framework initialization complete");
 
-        (test_framework, takers, makers, generate_blocks_handle)
+        (test_framework, takers, makers)
     }
 
     /// Assert that a log message exists in the debug.log file
@@ -680,12 +707,7 @@ impl TestFramework {
     pub fn init_taproot(
         makers_config_map: Vec<(u16, Option<u16>, TaprootMakerBehavior)>,
         taker_behavior: Vec<TaprootTakerBehavior>,
-    ) -> (
-        Arc<Self>,
-        Vec<TaprootTaker>,
-        Vec<Arc<TaprootMaker>>,
-        JoinHandle<()>,
-    ) {
+    ) -> (Arc<Self>, Vec<TaprootTaker>, Vec<Arc<TaprootMaker>>) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
         // Remove if previously existing
@@ -704,13 +726,17 @@ impl TestFramework {
         log::info!("🌐 Spawning local nostr relay for tests");
         let (nostr_relay_shutdown, nostr_relay_handle) = spawn_nostr_relay(&temp_dir);
 
-        let shutdown = AtomicBool::new(false);
-        let test_framework = Arc::new(Self {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut test_framework = Arc::new(Self {
             bitcoind,
             temp_dir: temp_dir.clone(),
             shutdown,
             nostr_relay_shutdown,
             nostr_relay_handle: Some(nostr_relay_handle),
+            block_generation_handle: None,
+            maker_server_handles: Mutex::new(Vec::new()),
+            makers: Vec::new(),
+            taproot_makers: Vec::new(),
         });
 
         // Translate a RpcConfig from the test framework.
@@ -764,41 +790,223 @@ impl TestFramework {
             })
             .collect::<Vec<_>>();
 
+        Arc::get_mut(&mut test_framework)
+            .expect("test framework arc should not be shared during init")
+            .taproot_makers = makers.clone();
+
         // start the block generation thread
         log::info!("⛏️ Spawning block generation thread");
-        let tf_clone = test_framework.clone();
+        let shutdown_clone = test_framework.shutdown.clone();
+        let block_client = bitcoind::bitcoincore_rpc::Client::new(
+            &test_framework.bitcoind.rpc_url(),
+            Auth::CookieFile(test_framework.bitcoind.params.cookie_file.clone()),
+        )
+        .expect("failed to create bitcoind rpc client for block generation");
         let generate_blocks_handle = thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(3));
 
-            if tf_clone.shutdown.load(Relaxed) {
+            if shutdown_clone.load(Relaxed) {
                 log::info!("🔚 Ending block generation thread");
                 return;
             }
-            // tf_clone.generate_blocks(10);
-            generate_blocks(&tf_clone.bitcoind, 10);
+            generate_blocks_with_client(&block_client, 10);
         });
+        Arc::get_mut(&mut test_framework)
+            .expect("test framework arc should not be shared during init")
+            .block_generation_handle = Some(generate_blocks_handle);
 
         log::info!("✅ Test Framework initialization complete");
 
-        (test_framework, takers, makers, generate_blocks_handle)
+        (test_framework, takers, makers)
     }
 
-    /// Stop bitcoind and clean up all test data.
-    pub fn stop(&self) {
-        log::info!("🛑 Stopping Test Framework");
-        // stop all framework threads.
-        self.shutdown.store(true, Relaxed);
-        _ = self.nostr_relay_shutdown.send(());
-        // stop bitcoind
-        let _ = self.bitcoind.client.stop().unwrap();
+    /// Spawns maker server threads for all makers created by this test framework.
+    ///
+    /// This must be called explicitly from tests (often after funding makers), because the maker
+    /// server requires funds to successfully initialize in many scenarios.
+    pub fn start_maker_servers(&self) {
+        let mut handles = match self.maker_server_handles.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        if !handles.is_empty() {
+            log::warn!("Maker servers already started; skipping duplicate start");
+            return;
+        }
+
+        if !self.makers.is_empty() {
+            log::info!("🚀 Initiating Maker servers");
+            for (i, maker) in self.makers.iter().enumerate() {
+                let maker_clone = maker.clone();
+                let handle = thread::Builder::new()
+                    .name(format!("maker-server-{i}"))
+                    .spawn(move || {
+                        start_maker_server(maker_clone).unwrap();
+                    })
+                    .expect("failed to spawn maker server thread");
+                handles.push(handle);
+            }
+        }
+
+        if !self.taproot_makers.is_empty() {
+            log::info!("🚀 Initiating Taproot Maker servers");
+            for (i, maker) in self.taproot_makers.iter().enumerate() {
+                let maker_clone = maker.clone();
+                let handle = thread::Builder::new()
+                    .name(format!("taproot-maker-server-{i}"))
+                    .spawn(move || {
+                        start_maker_server_taproot(maker_clone).unwrap();
+                    })
+                    .expect("failed to spawn taproot maker server thread");
+                handles.push(handle);
+            }
+        }
+
+        if self.makers.is_empty() && self.taproot_makers.is_empty() {
+            log::info!("ℹ️ No makers configured; skipping maker server startup");
+        }
+    }
+
+    pub fn shutdown_makers(&self) {
+        for maker in &self.makers {
+            maker.shutdown.store(true, Relaxed);
+            maker.watch_service.shutdown();
+        }
+
+        for maker in &self.taproot_makers {
+            maker.shutdown.store(true, Relaxed);
+            maker.watch_service.shutdown();
+        }
+    }
+
+    pub fn join_maker_servers(&self) -> Result<(), String> {
+        let handles = {
+            let mut guard = match self.maker_server_handles.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            std::mem::take(&mut *guard)
+        };
+
+        if handles.is_empty() {
+            return Ok(());
+        }
+
+        let total = handles.len();
+        let mut joined_ok = 0usize;
+        let mut joined_err = 0usize;
+
+        for handle in handles {
+            let thread_name = handle
+                .thread()
+                .name()
+                .unwrap_or("<unnamed maker server>")
+                .to_string();
+
+            match handle.join() {
+                Ok(()) => {
+                    joined_ok += 1;
+                    log::info!("✅ Joined maker server thread: {thread_name}");
+                }
+                Err(_) => {
+                    joined_err += 1;
+                    log::error!("Maker server thread panicked while joining: {thread_name}");
+                }
+            }
+        }
+
+        if joined_err == 0 {
+            log::info!("✅ Maker server threads joined ({joined_ok}/{total})");
+            return Ok(());
+        }
+
+        Err(format!(
+            "maker server thread join failures ({joined_err}/{total})"
+        ))
+    }
+
+    pub fn shutdown_maker_servers(&self) -> Result<(), String> {
+        self.shutdown_makers();
+        self.join_maker_servers()
     }
 }
 
 impl Drop for TestFramework {
     fn drop(&mut self) {
-        let handle = self.nostr_relay_handle.take();
-        if let Some(handle) = handle {
-            _ = handle.join();
+        log::info!("🛑 Shutting down Test Framework (drop)");
+
+        let mut all_ok = true;
+
+        // Shutdown makers first so they can gracefully exit while bitcoind is still alive.
+        if !(self.makers.is_empty() && self.taproot_makers.is_empty()) {
+            log::info!("🧹 Shutting down makers");
+        }
+        self.shutdown_makers();
+
+        // Stop all framework threads.
+        self.shutdown.store(true, Relaxed);
+
+        // Shutdown nostr relay.
+        if self.nostr_relay_shutdown.send(()).is_err() {
+            log::warn!("Failed to send nostr relay shutdown signal (receiver already dropped)");
+        }
+
+        // Wait for maker server threads to conclude.
+        match self.join_maker_servers() {
+            Ok(()) => {
+                if !(self.makers.is_empty() && self.taproot_makers.is_empty()) {
+                    log::info!("✅ Makers shut down successfully");
+                }
+            }
+            Err(e) => {
+                all_ok = false;
+                log::error!("Maker server shutdown incomplete: {e}");
+            }
+        }
+
+        // Stop block generation thread.
+        if let Some(handle) = self.block_generation_handle.take() {
+            if handle.join().is_err() {
+                all_ok = false;
+                log::error!("Block generation thread panicked while joining");
+            } else {
+                log::info!("✅ Block generation thread stopped");
+            }
+        }
+
+        // Stop nostr relay thread.
+        if let Some(handle) = self.nostr_relay_handle.take() {
+            if handle.join().is_err() {
+                all_ok = false;
+                log::error!("Nostr relay thread panicked while joining");
+            } else {
+                log::info!("✅ Nostr relay stopped");
+            }
+        }
+
+        // Shutdown bitcoind (best-effort).
+        match self.bitcoind.stop() {
+            Ok(status) => {
+                if status.success() {
+                    log::info!("✅ bitcoind stopped successfully");
+                } else {
+                    all_ok = false;
+                    log::error!("bitcoind exited with non-zero status: {status}");
+                }
+            }
+            Err(e) => {
+                all_ok = false;
+                log::error!("Failed to stop bitcoind gracefully: {e:?}");
+                // Fallback to RPC stop (older behavior). Process will be killed on `BitcoinD` drop.
+                let _ = self.bitcoind.client.stop();
+            }
+        }
+
+        if all_ok {
+            log::info!("✅ Test Framework shutdown complete");
+        } else {
+            log::error!("❌ Test Framework shutdown encountered errors");
         }
     }
 }

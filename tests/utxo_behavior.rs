@@ -1,7 +1,7 @@
 #![cfg(feature = "integration-test")]
 use bitcoin::{Amount, OutPoint};
 use coinswap::{
-    maker::{start_maker_server, MakerBehavior},
+    maker::MakerBehavior,
     taker::{SwapParams, TakerBehavior},
     utill::MIN_FEE_RATE,
     wallet::{AddressType, WalletError},
@@ -88,8 +88,7 @@ fn test_address_grouping_behavior() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map.into(), taker_behavior);
+    let (test_framework, _, makers) = TestFramework::init(makers_config_map.into(), taker_behavior);
 
     println!("=== Testing Smart Address Grouping Behavior ===");
 
@@ -194,9 +193,7 @@ fn test_address_grouping_behavior() {
     println!("\n=== Test Completed Successfully ===");
     println!("✅ All address grouping scenarios work correctly");
 
-    // Clean shutdown
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
+    // TestFramework drop handles shutdown of all background processes.
 }
 
 fn test_separated_utxo_coin_selection() {
@@ -207,7 +204,7 @@ fn test_separated_utxo_coin_selection() {
     ];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, mut takers, makers, block_generation_handle) =
+    let (test_framework, mut takers, makers) =
         TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🔧 Running Test: Separated UTXO Coin Selection");
@@ -227,15 +224,7 @@ fn test_separated_utxo_coin_selection() {
 
     // Start the Maker Servers
     info!("🚀 Starting Maker servers");
-    let maker_threads = makers
-        .iter()
-        .map(|maker| {
-            let maker_clone = maker.clone();
-            std::thread::spawn(move || {
-                start_maker_server(maker_clone).unwrap();
-            })
-        })
-        .collect::<Vec<_>>();
+    test_framework.start_maker_servers();
 
     // Wait for both makers setup completion
     for maker in &makers {
@@ -254,13 +243,7 @@ fn test_separated_utxo_coin_selection() {
     taker.do_coinswap(swap_params).unwrap();
 
     // Shutdown maker servers
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
+    test_framework.shutdown_maker_servers().unwrap();
 
     // Sync both maker wallets
     for maker in &makers {
@@ -396,13 +379,11 @@ fn test_separated_utxo_coin_selection() {
 
     println!("\n=== Test Completed Successfully ===");
 
-    // Clean shutdown
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
+    // TestFramework drop handles shutdown of all background processes.
 }
 
 fn test_maunal_coinselection() {
-    let (test_framework, mut takers, maker, block_generation_handle) = TestFramework::init(
+    let (test_framework, mut takers, makers) = TestFramework::init(
         vec![
             ((26102, Some(19053)), MakerBehavior::Normal),
             ((36102, Some(19054)), MakerBehavior::Normal),
@@ -422,20 +403,12 @@ fn test_maunal_coinselection() {
     }
 
     // Fund the Maker with 3 utxos of 0.05 btc each and do basic checks on the balance.
-    let makers_ref = maker.iter().map(Arc::as_ref).collect::<Vec<_>>();
+    let makers_ref = makers.iter().map(Arc::as_ref).collect::<Vec<_>>();
     fund_and_verify_maker(makers_ref, bitcoind, 3, Amount::from_btc(0.05).unwrap());
 
-    let maker_threads = maker
-        .iter()
-        .map(|maker| {
-            let maker_clone = maker.clone();
-            thread::spawn(move || {
-                start_maker_server(maker_clone).unwrap();
-            })
-        })
-        .collect::<Vec<_>>();
+    test_framework.start_maker_servers();
 
-    for maker in maker.iter() {
+    for maker in makers.iter() {
         while !maker.is_setup_complete.load(Relaxed) {
             info!("⏳ Waiting for maker setup completion");
             thread::sleep(Duration::from_secs(10));
@@ -476,12 +449,7 @@ fn test_maunal_coinselection() {
     });
 
     // After Swap is done, wait for maker threads to conclude.
-    maker
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
+    test_framework.shutdown_maker_servers().unwrap();
 
     info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
@@ -490,7 +458,7 @@ fn test_maunal_coinselection() {
     // Sync taker wallet to get the latest UTXO state after swap
     taker.get_wallet_mut().sync_and_save().unwrap();
 
-    for maker in maker.iter() {
+    for maker in makers.iter() {
         let mut wallet = maker.get_wallet().write().unwrap();
         wallet.sync_and_save().unwrap();
     }
@@ -696,6 +664,5 @@ fn test_maunal_coinselection() {
     }
 
     println!("✅ All test cases completed successfully");
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
+    // TestFramework drop handles shutdown of all background processes.
 }

@@ -1,7 +1,7 @@
 #![cfg(feature = "integration-test")]
 use bitcoin::Amount;
 use coinswap::{
-    maker::{start_maker_server, MakerBehavior},
+    maker::MakerBehavior,
     taker::{SwapParams, TakerBehavior},
 };
 mod test_framework;
@@ -35,7 +35,7 @@ fn taker_abort1() {
 
     // Initiate test framework, Makers.
     // Taker has a special behavior DropConnectionAfterFullSetup.
-    let (test_framework, mut takers, makers, block_generation_handle) =
+    let (test_framework, mut takers, makers) =
         TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🧪 Running Test: Taker cheats on everybody");
@@ -61,16 +61,7 @@ fn taker_abort1() {
 
     //  Start the Maker Server threads
     info!("🚀 Initiating Maker servers");
-
-    let maker_threads = makers
-        .iter()
-        .map(|maker| {
-            let maker_clone = maker.clone();
-            thread::spawn(move || {
-                start_maker_server(maker_clone).unwrap();
-            })
-        })
-        .collect::<Vec<_>>();
+    test_framework.start_maker_servers();
 
     // Makers take time to fully setup.
     let org_maker_spend_balances = makers
@@ -105,10 +96,8 @@ fn taker_abort1() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done, wait for maker threads to conclude.
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
+    // After Swap is done, shutdown maker servers.
+    test_framework.shutdown_maker_servers().unwrap();
 
     info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
@@ -250,8 +239,4 @@ fn taker_abort1() {
     log::info!("✅ Swap results verification complete");
 
     info!("🎉 All checks successful. Terminating integration test case");
-
-    test_framework.stop();
-
-    block_generation_handle.join().unwrap();
 }

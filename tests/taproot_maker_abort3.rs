@@ -4,7 +4,7 @@
 
 use bitcoin::Amount;
 use coinswap::{
-    maker::{start_maker_server_taproot, TaprootMakerBehavior as MakerBehavior},
+    maker::TaprootMakerBehavior as MakerBehavior,
     taker::{
         api2::{SwapParams, TakerBehavior},
         error::TakerError,
@@ -32,7 +32,7 @@ fn test_taproot_maker_abort3() {
     let taker_behavior = vec![TakerBehavior::Normal];
 
     // Initialize test framework
-    let (test_framework, mut taproot_taker, taproot_makers, block_generation_handle) =
+    let (test_framework, mut taproot_taker, taproot_makers) =
         TestFramework::init_taproot(makers_config_map, taker_behavior);
 
     let bitcoind = &test_framework.bitcoind;
@@ -54,16 +54,7 @@ fn test_taproot_maker_abort3() {
 
     // Start the Taproot Maker Server thread
     info!("🚀 Initiating Maker server...");
-
-    let taproot_maker_threads = taproot_makers
-        .iter()
-        .map(|maker| {
-            let maker_clone = maker.clone();
-            thread::spawn(move || {
-                start_maker_server_taproot(maker_clone).unwrap();
-            })
-        })
-        .collect::<Vec<_>>();
+    test_framework.start_maker_servers();
 
     // Wait for taproot maker to complete setup
     for maker in &taproot_makers {
@@ -188,14 +179,6 @@ fn test_taproot_maker_abort3() {
     }
     info!("✅ Taproot maker abort 3 recovery test passed!");
     // Shutdown maker
-    taproot_makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    taproot_maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
+    test_framework.shutdown_maker_servers().unwrap();
+    // TestFramework drop handles shutdown of all background processes.
 }

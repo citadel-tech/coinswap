@@ -7,7 +7,7 @@
 use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::RpcApi;
 use coinswap::{
-    maker::{start_maker_server, start_maker_server_taproot, MakerBehavior, TaprootMakerBehavior},
+    maker::{MakerBehavior, TaprootMakerBehavior},
     taker::TakerBehavior,
 };
 
@@ -23,8 +23,7 @@ fn test_fidelity_auto_renewal_legacy() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map.into(), taker_behavior);
+    let (test_framework, _, makers) = TestFramework::init(makers_config_map.into(), taker_behavior);
 
     log::info!("Running Test: Fidelity Bond Auto-Renewal (Legacy/P2WSH)");
 
@@ -39,8 +38,7 @@ fn test_fidelity_auto_renewal_legacy() {
     fund_and_verify_maker(makers_ref, bitcoind, 4, Amount::from_btc(0.20).unwrap());
 
     // Start the maker server
-    let maker_clone = maker.clone();
-    let maker_thread = thread::spawn(move || start_maker_server(maker_clone));
+    test_framework.start_maker_servers();
 
     // Wait for setup to complete
     while !maker.is_setup_complete.load(Relaxed) {
@@ -167,10 +165,8 @@ fn test_fidelity_auto_renewal_legacy() {
     test_framework.assert_log("Successfully created fidelity bond", log_path);
 
     // Shutdown
-    maker.shutdown.store(true, Relaxed);
-    let _ = maker_thread.join();
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
+    test_framework.shutdown_maker_servers().unwrap();
+    // TestFramework drop handles shutdown of all background processes.
 
     log::info!("Fidelity bond auto-renewal test (legacy) completed successfully");
 }
@@ -184,7 +180,7 @@ fn test_fidelity_auto_renewal_taproot() {
     let taproot_makers_config_map = vec![(7102, Some(19061), TaprootMakerBehavior::Normal)];
     let taker_behavior = vec![coinswap::taker::api2::TakerBehavior::Normal];
 
-    let (test_framework, _, taproot_makers, block_generation_handle) =
+    let (test_framework, _, taproot_makers) =
         TestFramework::init_taproot(taproot_makers_config_map, taker_behavior);
 
     let bitcoind = &test_framework.bitcoind;
@@ -199,8 +195,7 @@ fn test_fidelity_auto_renewal_taproot() {
     );
 
     // Start the maker server
-    let maker_clone = maker.clone();
-    let maker_thread = thread::spawn(move || start_maker_server_taproot(maker_clone));
+    test_framework.start_maker_servers();
 
     // Wait for setup to complete
     while !maker.is_setup_complete.load(Relaxed) {
@@ -327,10 +322,8 @@ fn test_fidelity_auto_renewal_taproot() {
     test_framework.assert_log("Successfully created fidelity bond", log_path);
 
     // shutdown
-    maker.shutdown.store(true, Relaxed);
-    let _ = maker_thread.join();
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
+    test_framework.shutdown_maker_servers().unwrap();
+    // TestFramework drop handles shutdown of all background processes.
 
     log::info!("Fidelity bond auto-renewal test (taproot) completed successfully");
 }

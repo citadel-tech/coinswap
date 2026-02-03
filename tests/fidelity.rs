@@ -2,20 +2,12 @@
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use coinswap::{
-    maker::{start_maker_server, MakerBehavior},
-    taker::TakerBehavior,
-    utill::MIN_FEE_RATE,
-    wallet::AddressType,
+    maker::MakerBehavior, taker::TakerBehavior, utill::MIN_FEE_RATE, wallet::AddressType,
 };
 mod test_framework;
 use test_framework::*;
 
-use std::{
-    assert_eq,
-    sync::{atomic::Ordering::Relaxed, Arc},
-    thread,
-    time::Duration,
-};
+use std::{assert_eq, sync::Arc, thread, time::Duration};
 
 #[test]
 fn test_fidelity_complete() {
@@ -38,8 +30,7 @@ fn test_fidelity() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map.into(), taker_behavior);
+    let (test_framework, _, makers) = TestFramework::init(makers_config_map.into(), taker_behavior);
 
     log::info!("🧪 Running Test: Fidelity Bond Creation and Redemption");
 
@@ -60,10 +51,8 @@ fn test_fidelity() {
         Amount::from_btc(0.04).unwrap(),
     );
 
-    let maker_clone = maker.clone();
-
     log::info!("🚀 Starting maker server with insufficient funds");
-    let maker_thread = thread::spawn(move || start_maker_server(maker_clone));
+    test_framework.start_maker_servers();
 
     thread::sleep(Duration::from_secs(6));
 
@@ -76,9 +65,7 @@ fn test_fidelity() {
 
     thread::sleep(Duration::from_secs(6));
     // stop the maker server
-    maker.shutdown.store(true, Relaxed);
-
-    let _ = maker_thread.join().unwrap();
+    test_framework.shutdown_maker_servers().unwrap();
 
     // Assert that successful fidelity bond creation is logged
     test_framework.assert_log("Successfully created fidelity bond", &log_path);
@@ -239,9 +226,7 @@ fn test_fidelity() {
     }
 
     thread::sleep(Duration::from_secs(10));
-
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
+    // TestFramework drop handles shutdown of all background processes.
 
     log::info!("🎉 Fidelity bond lifecycle test completed successfully");
 }
@@ -260,8 +245,7 @@ fn test_fidelity_spending() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map.into(), taker_behavior);
+    let (test_framework, _, makers) = TestFramework::init(makers_config_map.into(), taker_behavior);
 
     log::info!("🧪 Running Test: Assert Fidelity Spending Behavior");
 
@@ -484,6 +468,5 @@ fn test_fidelity_spending() {
     }
 
     log::info!("🎉 SUCCESS: All requirements from issue #525 verified!");
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
+    // TestFramework drop handles shutdown of all background processes.
 }
