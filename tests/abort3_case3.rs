@@ -107,16 +107,6 @@ fn maker_abort3_case3() {
     info!("Waiting for maker to complete recovery");
     thread::sleep(Duration::from_secs(60));
 
-    // shutdown makers thread
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    //join makers thread
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     let taker_wallet = taker.get_wallet_mut();
     taker_wallet.sync_and_save().unwrap();
 
