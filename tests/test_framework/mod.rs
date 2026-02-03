@@ -38,7 +38,7 @@ use std::{
     env,
     fs::{self, create_dir_all, File},
     io::{BufReader, Read},
-    net::TcpStream,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream},
     path::{Path, PathBuf},
     sync::{
         atomic::Ordering::Relaxed,
@@ -68,6 +68,7 @@ use coinswap::{
 use log::info;
 
 const BITCOIN_VERSION: &str = "28.1";
+const NOSTR_RELAY_PORT: u16 = 8000;
 
 fn download_bitcoind_tarball(download_url: &str, retries: usize) -> Vec<u8> {
     for attempt in 1..=retries {
@@ -559,6 +560,9 @@ pub(super) struct TestFramework {
     // Makers to signal shutdown (weak avoids keeping them alive)
     makers: Vec<Weak<Maker>>,
     taproot_makers: Vec<Weak<TaprootMaker>>,
+
+    // Network ports used by maker servers (to verify shutdown)
+    maker_listen_ports: Vec<u16>,
 }
 
 impl TestFramework {
@@ -578,6 +582,11 @@ impl TestFramework {
         makers_config_map: Vec<((u16, Option<u16>), MakerBehavior)>,
         taker_behavior: Vec<TakerBehavior>,
     ) -> (Arc<Self>, Vec<Taker>, Vec<Arc<Maker>>) {
+        let maker_listen_ports = makers_config_map
+            .iter()
+            .map(|(ports, _)| ports.0)
+            .collect::<Vec<_>>();
+
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
         if temp_dir.exists() {
@@ -664,6 +673,7 @@ impl TestFramework {
             block_generation_handle: Mutex::new(None),
             makers: maker_weaks,
             taproot_makers: vec![],
+            maker_listen_ports,
         });
 
         // Block generation thread: exits when framework drops (Weak upgrade fails)
@@ -707,6 +717,11 @@ impl TestFramework {
         makers_config_map: Vec<(u16, Option<u16>, TaprootMakerBehavior)>,
         taker_behavior: Vec<TaprootTakerBehavior>,
     ) -> (Arc<Self>, Vec<TaprootTaker>, Vec<Arc<TaprootMaker>>) {
+        let maker_listen_ports = makers_config_map
+            .iter()
+            .map(|(network_port, _, _)| *network_port)
+            .collect::<Vec<_>>();
+
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
         if temp_dir.exists() {
@@ -792,6 +807,7 @@ impl TestFramework {
             block_generation_handle: Mutex::new(None),
             makers: vec![],
             taproot_makers: taproot_maker_weaks,
+            maker_listen_ports,
         });
 
         log::info!("⛏️ Spawning block generation thread");
@@ -815,47 +831,97 @@ impl TestFramework {
 impl Drop for TestFramework {
     fn drop(&mut self) {
         log::info!("🛑 Stopping Test Framework (Drop)");
+        let mut shutdown_ok = true;
+
         // 1) Shutdown makers (signal)
+        let mut makers_signaled = 0usize;
         for mw in &self.makers {
             if let Some(maker) = mw.upgrade() {
                 maker.shutdown.store(true, Relaxed);
+                maker.watch_service.shutdown();
+                makers_signaled += 1;
             }
         }
         for mw in &self.taproot_makers {
             if let Some(maker) = mw.upgrade() {
                 maker.shutdown.store(true, Relaxed);
+                maker.watch_service.shutdown();
+                makers_signaled += 1;
             }
         }
-        if !self.makers.is_empty() || !self.taproot_makers.is_empty() {
+        if makers_signaled > 0 {
             log::info!("✅ Makers signaled to shut down");
         }
 
-        // 2) Shutdown nostr relay (signal + join)
-        if let Err(e) = self.nostr_relay_shutdown.send(()) {
-            log::error!("❌ Failed to send nostr shutdown signal: {e:?}");
-        } else {
+        if let Err(open_ports) = wait_for_ports_to_close(
+            "maker servers",
+            &self.maker_listen_ports,
+            Duration::from_secs(30),
+        ) {
+            shutdown_ok = false;
+            log::error!("❌ Maker servers still running on ports: {open_ports:?}");
+        }
+
+        // 2) Shutdown block generation thread (join)
+        if let Some(handle) = self.block_generation_handle.lock().unwrap().take() {
+            match handle.join() {
+                Ok(_) => log::info!("✅ Block generation thread joined"),
+                Err(_) => {
+                    shutdown_ok = false;
+                    log::error!("❌ Block generation thread panicked")
+                }
+            }
+        }
+
+        // 3) Shutdown nostr relay (signal + join)
+        if self.nostr_relay_shutdown.send(()).is_ok() {
             log::info!("✅ Nostr shutdown signal sent");
+        } else {
+            log::warn!("⚠️ Failed to send nostr shutdown signal (relay may already be down)");
         }
 
         if let Some(handle) = self.nostr_relay_handle.take() {
             match handle.join() {
                 Ok(_) => log::info!("✅ Nostr relay thread joined"),
-                Err(_) => log::error!("❌ Nostr relay thread panicked"),
+                Err(_) => {
+                    shutdown_ok = false;
+                    log::error!("❌ Nostr relay thread panicked")
+                }
             }
         }
 
-        // 3) Shutdown block generation thread (join)
-        if let Some(handle) = self.block_generation_handle.lock().unwrap().take() {
-            match handle.join() {
-                Ok(_) => log::info!("✅ Block generation thread joined"),
-                Err(_) => log::error!("❌ Block generation thread panicked"),
-            }
+        if let Err(open_ports) =
+            wait_for_ports_to_close("nostr relay", &[NOSTR_RELAY_PORT], Duration::from_secs(5))
+        {
+            shutdown_ok = false;
+            log::error!("❌ Nostr relay still accepting connections on ports: {open_ports:?}");
         }
 
         // 4) Shutdown bitcoind
-        match self.bitcoind.client.stop() {
-            Ok(_) => log::info!("✅ bitcoind stopped"),
-            Err(e) => log::error!("❌ bitcoind stop failed: {e}"),
+        let rpc_port = self.bitcoind.params.rpc_socket.port();
+        let bitcoind_stop_err = self.bitcoind.stop().err();
+
+        match wait_for_ports_to_close("bitcoind", &[rpc_port], Duration::from_secs(20)) {
+            Ok(()) => {
+                if let Some(e) = bitcoind_stop_err {
+                    log::warn!("⚠️ bitcoind stop returned error, but RPC port is closed: {e:?}");
+                } else {
+                    log::info!("✅ bitcoind stopped");
+                }
+            }
+            Err(open_ports) => {
+                shutdown_ok = false;
+                if let Some(e) = bitcoind_stop_err {
+                    log::error!("❌ bitcoind stop failed: {e:?}");
+                }
+                log::error!("❌ bitcoind RPC port still open on: {open_ports:?}");
+            }
+        }
+
+        if shutdown_ok {
+            log::info!("✅ Test Framework stopped successfully");
+        } else {
+            log::error!("❌ Test Framework shutdown incomplete");
         }
     }
 }
@@ -878,7 +944,7 @@ fn spawn_nostr_relay(temp_dir: &Path) -> (mpsc::Sender<()>, JoinHandle<()>) {
     std::fs::create_dir_all(&data_dir).unwrap();
 
     let addr = "127.0.0.1".to_string();
-    let port = 8000;
+    let port = NOSTR_RELAY_PORT;
 
     let mut settings = config::Settings::default();
     settings.network.address = addr;
@@ -898,7 +964,7 @@ fn spawn_nostr_relay(temp_dir: &Path) -> (mpsc::Sender<()>, JoinHandle<()>) {
 }
 
 fn wait_for_relay_healthy() -> Result<(), String> {
-    let addr = "127.0.0.1:8000".to_string();
+    let addr = format!("127.0.0.1:{NOSTR_RELAY_PORT}");
     let timeout = Duration::from_secs(10);
     let start = Instant::now();
 
@@ -913,5 +979,37 @@ fn wait_for_relay_healthy() -> Result<(), String> {
 
     log::error!("Nostr relay not alive");
 
-    Err("nostr relay did not become healthy on port 8000".to_string())
+    Err(format!(
+        "nostr relay did not become healthy on port {NOSTR_RELAY_PORT}"
+    ))
+}
+
+fn is_local_port_open(port: u16) -> bool {
+    let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok()
+}
+
+fn wait_for_ports_to_close(label: &str, ports: &[u16], timeout: Duration) -> Result<(), Vec<u16>> {
+    let start = Instant::now();
+    let mut open_ports = ports
+        .iter()
+        .copied()
+        .filter(|port| is_local_port_open(*port))
+        .collect::<Vec<_>>();
+
+    if open_ports.is_empty() {
+        return Ok(());
+    }
+
+    log::info!("⏳ Waiting for {label} to shut down: {open_ports:?}");
+
+    while start.elapsed() < timeout {
+        open_ports.retain(|port| is_local_port_open(*port));
+        if open_ports.is_empty() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    Err(open_ports)
 }
