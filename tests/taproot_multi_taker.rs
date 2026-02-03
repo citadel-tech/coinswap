@@ -28,7 +28,7 @@ fn test_taproot_multi_taker() {
     let taker_behavior = vec![TakerBehavior::Normal, TakerBehavior::Normal];
 
     // Initialize test framework
-    let (test_framework, mut taproot_takers, taproot_makers, block_generation_handle) =
+    let (test_framework, mut taproot_takers, taproot_makers) =
         TestFramework::init_taproot(taproot_makers_config_map, taker_behavior);
 
     let bitcoind = &test_framework.bitcoind;
@@ -217,7 +217,4 @@ fn test_taproot_multi_taker() {
         }
     }
     info!("✅ Multi Taker test passed!");
-
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
 }

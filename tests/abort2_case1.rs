@@ -39,7 +39,7 @@ fn maker_abort2_case1() {
 
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, block_generation_handle) =
+    let (test_framework, mut takers, makers) =
         TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!(
@@ -335,8 +335,4 @@ fn maker_abort2_case1() {
     );
 
     info!("🎉 All checks successful. Terminating integration test case");
-
-    test_framework.stop();
-
-    block_generation_handle.join().unwrap();
 }

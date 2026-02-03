@@ -31,7 +31,7 @@ fn maker_abort3_case3() {
     let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, block_generation_handle) =
+    let (test_framework, mut takers, makers) =
         TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🧪 Running Test: Maker closes connection at hash preimage handling");
@@ -256,7 +256,4 @@ fn maker_abort3_case3() {
     log::info!("✅ Swap results verification complete");
 
     info!("🎉 All checks successful. Terminating integration test case");
-
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
 }

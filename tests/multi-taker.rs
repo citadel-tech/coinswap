@@ -37,7 +37,7 @@ fn multi_taker_single_maker_swap() {
     ];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, block_generation_handle) =
+    let (test_framework, mut takers, makers) =
         TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🧪 Running Test: Multiple Takers with Different Behaviors");
@@ -149,7 +149,4 @@ fn multi_taker_single_maker_swap() {
     }
 
     info!("🎉 All checks successful. Terminating integration test case");
-
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
 }

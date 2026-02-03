@@ -28,7 +28,7 @@ fn malice_1() {
     let taker_behavior = vec![TakerBehavior::BroadcastContractAfterFullSetup];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, block_generation_handle) =
+    let (test_framework, mut takers, makers) =
         TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🧪 Running Test: Malice 1 - Taker broadcasts contract transaction prematurely");
@@ -247,7 +247,4 @@ fn malice_1() {
     log::info!("✅ Swap results verification complete");
 
     info!("🎉 All checks successful. Terminating integration test case");
-
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
 }

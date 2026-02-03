@@ -6,7 +6,7 @@
 //! and initializes the database.
 //!
 //! The tests' data are stored in the `tests/temp-files` directory, which is auto-removed after each successful test.
-//! Do not invoke [TestFramework::stop] function at the end of the test, to persist this data for debugging.
+//! TestFramework shuts down automatically when dropped. Avoid manual shutdown calls in tests.
 //!
 //! The test data also includes the backend bitcoind data-directory, which is useful for observing the blockchain states after a swap.
 //!
@@ -41,8 +41,11 @@ use std::{
     net::TcpStream,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering::Relaxed},
-        mpsc, Arc,
+        atomic::Ordering::Relaxed,
+        mpsc,
+        Arc,
+        Mutex,
+        Weak, // Added Mutex, Weak
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -167,10 +170,19 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path, zmq_addr: String) -> Bitc
 
     if !bitcoin_exe_home.exists() {
         let tarball_bytes = match env::var("BITCOIND_TARBALL_FILE") {
-            Ok(path) => read_tarball_from_file(&path),
+            Ok(path) if Path::new(&path).exists() => read_tarball_from_file(&path),
+            Ok(path) => {
+                eprintln!(
+                    "BITCOIND_TARBALL_FILE is set but file does not exist: {path}. Falling back to download."
+                );
+                let download_endpoint = env::var("BITCOIND_DOWNLOAD_ENDPOINT")
+                    .unwrap_or_else(|_| "https://bitcoincore.org/bin/bitcoin-core-28.1".to_owned());
+                let url = format!("{download_endpoint}/{download_filename}");
+                download_bitcoind_tarball(&url, 5)
+            }
             Err(_) => {
                 let download_endpoint = env::var("BITCOIND_DOWNLOAD_ENDPOINT")
-                    .unwrap_or_else(|_| "http://172.81.178.3/bitcoin-binaries".to_owned());
+                    .unwrap_or_else(|_| "https://bitcoincore.org/bin/bitcoin-core-28.1".to_owned());
                 let url = format!("{download_endpoint}/{download_filename}");
                 download_bitcoind_tarball(&url, 5)
             }
@@ -534,12 +546,19 @@ pub fn verify_maker_pre_swap_balance_taproot(taproot_makers: &[Arc<TaprootMaker>
 ///
 /// Handles initializing, operating and cleaning up of all backend processes. Bitcoind, Taker and Makers.
 #[allow(dead_code)]
-pub struct TestFramework {
+pub(super) struct TestFramework {
     pub(super) bitcoind: BitcoinD,
     pub(super) temp_dir: PathBuf,
-    shutdown: AtomicBool,
+
     nostr_relay_shutdown: mpsc::Sender<()>,
     nostr_relay_handle: Option<JoinHandle<()>>,
+
+    // Block generation thread is owned by the framework now
+    block_generation_handle: Mutex<Option<JoinHandle<()>>>,
+
+    // Makers to signal shutdown (weak avoids keeping them alive)
+    makers: Vec<Weak<Maker>>,
+    taproot_makers: Vec<Weak<TaprootMaker>>,
 }
 
 impl TestFramework {
@@ -558,10 +577,9 @@ impl TestFramework {
     pub fn init(
         makers_config_map: Vec<((u16, Option<u16>), MakerBehavior)>,
         taker_behavior: Vec<TakerBehavior>,
-    ) -> (Arc<Self>, Vec<Taker>, Vec<Arc<Maker>>, JoinHandle<()>) {
+    ) -> (Arc<Self>, Vec<Taker>, Vec<Arc<Maker>>) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
-        // Remove if previously existing
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
         }
@@ -569,35 +587,30 @@ impl TestFramework {
         log::info!("📁 temporary directory : {}", temp_dir.display());
 
         let port_zmq = 28332 + rand::random::<u16>() % 1000;
-
         let zmq_addr = format!("tcp://127.0.0.1:{port_zmq}");
 
         let bitcoind = init_bitcoind(&temp_dir, zmq_addr.clone());
 
         log::info!("🌐 Spawning local nostr relay for tests");
         let (nostr_relay_shutdown, nostr_relay_handle) = spawn_nostr_relay(&temp_dir);
-
         _ = wait_for_relay_healthy();
 
-        let shutdown = AtomicBool::new(false);
-        let test_framework = Arc::new(Self {
-            bitcoind,
-            temp_dir: temp_dir.clone(),
-            shutdown,
-            nostr_relay_shutdown,
-            nostr_relay_handle: Some(nostr_relay_handle),
-        });
+        // Build RPCConfig directly (so we don't need TestFramework before makers exist)
+        let url = bitcoind.rpc_url().split_at(7).1.to_string();
+        let auth = Auth::CookieFile(bitcoind.params.cookie_file.clone());
+        let rpc_config = RPCConfig {
+            url,
+            auth,
+            ..Default::default()
+        };
 
-        // Translate a RpcConfig from the test framework.
-        // a modification of this will be used for taker and makers rpc connections.
-        let rpc_config = RPCConfig::from(test_framework.as_ref());
-        // Create the Taker.
+        // Create the Takers
         let taker_rpc_config = rpc_config.clone();
         let takers = taker_behavior
             .into_iter()
             .enumerate()
             .map(|(i, behavior)| {
-                let taker_id = format!("taker{}", i + 1); // ex: "taker1"
+                let taker_id = format!("taker{}", i + 1);
                 Taker::init(
                     Some(temp_dir.join(&taker_id)),
                     Some(taker_id),
@@ -611,15 +624,16 @@ impl TestFramework {
                 .unwrap()
             })
             .collect::<Vec<_>>();
-        let mut base_rpc_port = 3500; // Random port for RPC connection in tests. (Not used)
 
-        let makers = makers_config_map // Create the Makers as per given configuration map.
+        // Create the Makers
+        let mut base_rpc_port = 3500;
+        let makers = makers_config_map
             .into_iter()
             .map(|(port, behavior)| {
                 base_rpc_port += 1;
-                let maker_id = format!("maker{}", port.0); // ex: "maker6102"
+                let maker_id = format!("maker{}", port.0);
                 let maker_rpc_config = rpc_config.clone();
-                thread::sleep(Duration::from_secs(5)); // Sleep for some time avoid resource unavailable error.
+                thread::sleep(Duration::from_secs(5));
                 Arc::new(
                     Maker::init(
                         Some(temp_dir.join(port.0.to_string())),
@@ -639,23 +653,35 @@ impl TestFramework {
             })
             .collect::<Vec<_>>();
 
-        // start the block generation thread
-        log::info!("⛏️ Spawning block generation thread");
-        let tf_clone = test_framework.clone();
-        let generate_blocks_handle = thread::spawn(move || loop {
-            thread::sleep(Duration::from_secs(3));
+        let maker_weaks = makers.iter().map(Arc::downgrade).collect::<Vec<_>>();
 
-            if tf_clone.shutdown.load(Relaxed) {
-                log::info!("🔚 Ending block generation thread");
-                return;
-            }
-            // tf_clone.generate_blocks(10);
-            generate_blocks(&tf_clone.bitcoind, 10);
+        // Create framework AFTER makers exist (so we can store maker_weaks)
+        let test_framework = Arc::new(Self {
+            bitcoind,
+            temp_dir: temp_dir.clone(),
+            nostr_relay_shutdown,
+            nostr_relay_handle: Some(nostr_relay_handle),
+            block_generation_handle: Mutex::new(None),
+            makers: maker_weaks,
+            taproot_makers: vec![],
         });
 
-        log::info!("✅ Test Framework initialization complete");
+        // Block generation thread: exits when framework drops (Weak upgrade fails)
+        log::info!("⛏️ Spawning block generation thread");
+        let tf_weak = Arc::downgrade(&test_framework);
+        let generate_blocks_handle = thread::spawn(move || loop {
+            thread::sleep(Duration::from_secs(3));
+            let Some(tf) = tf_weak.upgrade() else {
+                log::info!("🔚 Ending block generation thread (framework dropped)");
+                return;
+            };
+            generate_blocks(&tf.bitcoind, 10);
+        });
 
-        (test_framework, takers, makers, generate_blocks_handle)
+        *test_framework.block_generation_handle.lock().unwrap() = Some(generate_blocks_handle);
+
+        log::info!("✅ Test Framework initialization complete");
+        (test_framework, takers, makers)
     }
 
     /// Assert that a log message exists in the debug.log file
@@ -680,15 +706,9 @@ impl TestFramework {
     pub fn init_taproot(
         makers_config_map: Vec<(u16, Option<u16>, TaprootMakerBehavior)>,
         taker_behavior: Vec<TaprootTakerBehavior>,
-    ) -> (
-        Arc<Self>,
-        Vec<TaprootTaker>,
-        Vec<Arc<TaprootMaker>>,
-        JoinHandle<()>,
-    ) {
+    ) -> (Arc<Self>, Vec<TaprootTaker>, Vec<Arc<TaprootMaker>>) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
-        // Remove if previously existing
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
         }
@@ -696,33 +716,30 @@ impl TestFramework {
         log::info!("📁 temporary directory : {}", temp_dir.display());
 
         let port_zmq = 28332 + rand::random::<u16>() % 1000;
-
         let zmq_addr = format!("tcp://127.0.0.1:{port_zmq}");
 
         let bitcoind = init_bitcoind(&temp_dir, zmq_addr.clone());
 
         log::info!("🌐 Spawning local nostr relay for tests");
         let (nostr_relay_shutdown, nostr_relay_handle) = spawn_nostr_relay(&temp_dir);
+        _ = wait_for_relay_healthy();
 
-        let shutdown = AtomicBool::new(false);
-        let test_framework = Arc::new(Self {
-            bitcoind,
-            temp_dir: temp_dir.clone(),
-            shutdown,
-            nostr_relay_shutdown,
-            nostr_relay_handle: Some(nostr_relay_handle),
-        });
+        // Build RPCConfig directly
+        let url = bitcoind.rpc_url().split_at(7).1.to_string();
+        let auth = Auth::CookieFile(bitcoind.params.cookie_file.clone());
+        let rpc_config = RPCConfig {
+            url,
+            auth,
+            ..Default::default()
+        };
 
-        // Translate a RpcConfig from the test framework.
-        // a modification of this will be used for taker and makers rpc connections.
-        let rpc_config = RPCConfig::from(test_framework.as_ref());
-        // Create the Taker.
+        // Create takers
         let taker_rpc_config = rpc_config.clone();
         let takers = taker_behavior
             .into_iter()
             .enumerate()
             .map(|(i, behavior)| {
-                let taker_id = format!("taker{}", i + 1); // ex: "taker1"
+                let taker_id = format!("taker{}", i + 1);
                 TaprootTaker::init(
                     Some(temp_dir.join(&taker_id)),
                     Some(taker_id),
@@ -736,15 +753,16 @@ impl TestFramework {
                 .unwrap()
             })
             .collect::<Vec<_>>();
-        let mut base_rpc_port = 3500; // Random port for RPC connection in tests. (Not used)
 
-        let makers = makers_config_map // Create the Makers as per given configuration map.
+        // Create makers
+        let mut base_rpc_port = 3500;
+        let makers = makers_config_map
             .into_iter()
             .map(|(network_port, socks_port, behavior)| {
                 base_rpc_port += 1;
-                let maker_id = format!("maker{}", network_port); // ex: "maker6102"
+                let maker_id = format!("maker{}", network_port);
                 let maker_rpc_config = rpc_config.clone();
-                thread::sleep(Duration::from_secs(5)); // Sleep for some time avoid resource unavailable error.
+                thread::sleep(Duration::from_secs(5));
                 Arc::new(
                     TaprootMaker::init(
                         Some(temp_dir.join(network_port.to_string())),
@@ -764,41 +782,80 @@ impl TestFramework {
             })
             .collect::<Vec<_>>();
 
-        // start the block generation thread
-        log::info!("⛏️ Spawning block generation thread");
-        let tf_clone = test_framework.clone();
-        let generate_blocks_handle = thread::spawn(move || loop {
-            thread::sleep(Duration::from_secs(3));
+        let taproot_maker_weaks = makers.iter().map(Arc::downgrade).collect::<Vec<_>>();
 
-            if tf_clone.shutdown.load(Relaxed) {
-                log::info!("🔚 Ending block generation thread");
-                return;
-            }
-            // tf_clone.generate_blocks(10);
-            generate_blocks(&tf_clone.bitcoind, 10);
+        let test_framework = Arc::new(Self {
+            bitcoind,
+            temp_dir: temp_dir.clone(),
+            nostr_relay_shutdown,
+            nostr_relay_handle: Some(nostr_relay_handle),
+            block_generation_handle: Mutex::new(None),
+            makers: vec![],
+            taproot_makers: taproot_maker_weaks,
         });
 
+        log::info!("⛏️ Spawning block generation thread");
+        let tf_weak = Arc::downgrade(&test_framework);
+        let generate_blocks_handle = thread::spawn(move || loop {
+            thread::sleep(Duration::from_secs(3));
+            let Some(tf) = tf_weak.upgrade() else {
+                log::info!("🔚 Ending block generation thread (framework dropped)");
+                return;
+            };
+            generate_blocks(&tf.bitcoind, 10);
+        });
+
+        *test_framework.block_generation_handle.lock().unwrap() = Some(generate_blocks_handle);
+
         log::info!("✅ Test Framework initialization complete");
-
-        (test_framework, takers, makers, generate_blocks_handle)
-    }
-
-    /// Stop bitcoind and clean up all test data.
-    pub fn stop(&self) {
-        log::info!("🛑 Stopping Test Framework");
-        // stop all framework threads.
-        self.shutdown.store(true, Relaxed);
-        _ = self.nostr_relay_shutdown.send(());
-        // stop bitcoind
-        let _ = self.bitcoind.client.stop().unwrap();
+        (test_framework, takers, makers)
     }
 }
 
 impl Drop for TestFramework {
     fn drop(&mut self) {
-        let handle = self.nostr_relay_handle.take();
-        if let Some(handle) = handle {
-            _ = handle.join();
+        log::info!("🛑 Stopping Test Framework (Drop)");
+        // 1) Shutdown makers (signal)
+        for mw in &self.makers {
+            if let Some(maker) = mw.upgrade() {
+                maker.shutdown.store(true, Relaxed);
+            }
+        }
+        for mw in &self.taproot_makers {
+            if let Some(maker) = mw.upgrade() {
+                maker.shutdown.store(true, Relaxed);
+            }
+        }
+        if !self.makers.is_empty() || !self.taproot_makers.is_empty() {
+            log::info!("✅ Makers signaled to shut down");
+        }
+
+        // 2) Shutdown nostr relay (signal + join)
+        if let Err(e) = self.nostr_relay_shutdown.send(()) {
+            log::error!("❌ Failed to send nostr shutdown signal: {e:?}");
+        } else {
+            log::info!("✅ Nostr shutdown signal sent");
+        }
+
+        if let Some(handle) = self.nostr_relay_handle.take() {
+            match handle.join() {
+                Ok(_) => log::info!("✅ Nostr relay thread joined"),
+                Err(_) => log::error!("❌ Nostr relay thread panicked"),
+            }
+        }
+
+        // 3) Shutdown block generation thread (join)
+        if let Some(handle) = self.block_generation_handle.lock().unwrap().take() {
+            match handle.join() {
+                Ok(_) => log::info!("✅ Block generation thread joined"),
+                Err(_) => log::error!("❌ Block generation thread panicked"),
+            }
+        }
+
+        // 4) Shutdown bitcoind
+        match self.bitcoind.client.stop() {
+            Ok(_) => log::info!("✅ bitcoind stopped"),
+            Err(e) => log::error!("❌ bitcoind stop failed: {e}"),
         }
     }
 }

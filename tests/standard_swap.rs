@@ -31,7 +31,7 @@ fn test_standard_coinswap() {
     let taker_behavior = vec![TakerBehavior::Normal];
 
     // Initiate test framework, Makers and a Taker with default behavior.
-    let (test_framework, mut takers, makers, block_generation_handle) =
+    let (test_framework, mut takers, makers) =
         TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🧪 Running Test: Standard Coinswap Procedure");
@@ -279,7 +279,4 @@ fn test_standard_coinswap() {
     );
 
     info!("🎉 All checks successful. Terminating integration test case");
-
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
 }

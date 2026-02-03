@@ -23,8 +23,7 @@ fn test_fidelity_auto_renewal_legacy() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map.into(), taker_behavior);
+    let (test_framework, _, makers) = TestFramework::init(makers_config_map.into(), taker_behavior);
 
     log::info!("Running Test: Fidelity Bond Auto-Renewal (Legacy/P2WSH)");
 
@@ -169,8 +168,6 @@ fn test_fidelity_auto_renewal_legacy() {
     // Shutdown
     maker.shutdown.store(true, Relaxed);
     let _ = maker_thread.join();
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
 
     log::info!("Fidelity bond auto-renewal test (legacy) completed successfully");
 }
@@ -184,7 +181,7 @@ fn test_fidelity_auto_renewal_taproot() {
     let taproot_makers_config_map = vec![(7102, Some(19061), TaprootMakerBehavior::Normal)];
     let taker_behavior = vec![coinswap::taker::api2::TakerBehavior::Normal];
 
-    let (test_framework, _, taproot_makers, block_generation_handle) =
+    let (test_framework, _, taproot_makers) =
         TestFramework::init_taproot(taproot_makers_config_map, taker_behavior);
 
     let bitcoind = &test_framework.bitcoind;
@@ -329,8 +326,6 @@ fn test_fidelity_auto_renewal_taproot() {
     // shutdown
     maker.shutdown.store(true, Relaxed);
     let _ = maker_thread.join();
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
 
     log::info!("Fidelity bond auto-renewal test (taproot) completed successfully");
 }

@@ -35,7 +35,7 @@ fn taker_abort1() {
 
     // Initiate test framework, Makers.
     // Taker has a special behavior DropConnectionAfterFullSetup.
-    let (test_framework, mut takers, makers, block_generation_handle) =
+    let (test_framework, mut takers, makers) =
         TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🧪 Running Test: Taker cheats on everybody");
@@ -250,8 +250,4 @@ fn taker_abort1() {
     log::info!("✅ Swap results verification complete");
 
     info!("🎉 All checks successful. Terminating integration test case");
-
-    test_framework.stop();
-
-    block_generation_handle.join().unwrap();
 }

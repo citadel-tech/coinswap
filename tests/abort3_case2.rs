@@ -32,7 +32,7 @@ fn maker_abort3_case2() {
     let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, block_generation_handle) =
+    let (test_framework, mut takers, makers) =
         TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🧪 Running Test: Maker closes connection after sending a ContractSigsForRecvr");
@@ -277,7 +277,4 @@ fn maker_abort3_case2() {
     maker_threads
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
-
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
 }
