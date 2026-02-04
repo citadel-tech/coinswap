@@ -54,3 +54,7 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
         run: cargo +nightly doc --all-features --document-private-items --no-deps
+
+      - name: Run cargo-machete
+        # Pointing to release v0.9.1
+        uses: bnjbvr/cargo-machete@7959c845782fed02ee69303126d4a12d64f1db18
