@@ -196,12 +196,12 @@ impl ThreadPool {
             .lock()
             .map_err(|_| MakerError::General("Failed to lock threads"))?;
 
-        log::info!("Joining {} threads", threads.len());
+        log::info!("[{}] Joining {} threads", self.port, threads.len());
 
         let mut joined_count = 0;
         while let Some(thread) = threads.pop() {
-            let thread_name = thread.thread().name().unwrap().to_string();
-            println!("joining thread: {thread_name}");
+            let thread_name = thread.thread().name().unwrap_or("unknown").to_string();
+            log::info!("[{}] Joining thread: {}", self.port, thread_name);
 
             match thread.join() {
                 Ok(_) => {
