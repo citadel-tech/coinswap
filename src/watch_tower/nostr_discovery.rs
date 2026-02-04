@@ -3,7 +3,7 @@ use std::{
     borrow::Cow,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc,
     },
 };
 
@@ -34,8 +34,8 @@ pub fn run_discovery(
 ) -> Result<(), WatcherError> {
     log::info!("Starting market discovery via Nostr");
 
-    let registry = Arc::new(Mutex::new(registry));
-    let bitcoin_rpc = Arc::new(Mutex::new(bitcoin_rpc));
+    let registry = Arc::new(registry);
+    let bitcoin_rpc = Arc::new(bitcoin_rpc);
 
     for relay in NOSTR_RELAYS {
         let relay = relay.to_string();
@@ -57,9 +57,9 @@ pub fn run_discovery(
 /// Reconnects automatically until shutdown is requested.
 fn run_nostr_session_for_relay(
     relay_url: &str,
-    registry: Arc<Mutex<FileRegistry>>,
+    registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Arc<Mutex<BitcoinRpc>>,
+    bitcoin_rpc: Arc<BitcoinRpc>,
 ) {
     log::info!("Starting Nostr session for relay {}", relay_url);
 
@@ -91,9 +91,9 @@ fn run_nostr_session_for_relay(
 /// Establishes a single Nostr connection and processes events until error or shutdown.
 fn connect_and_run_once(
     relay_url: &str,
-    registry: Arc<Mutex<FileRegistry>>,
+    registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Arc<Mutex<BitcoinRpc>>,
+    bitcoin_rpc: Arc<BitcoinRpc>,
 ) -> Result<(), WatcherError> {
     let (mut socket, _) = tungstenite::connect(relay_url)?;
 
@@ -119,13 +119,12 @@ fn connect_and_run_once(
     read_event_loop(registry, socket, shutdown, bitcoin_rpc, relay_url)
 }
 
-// ## TODO: improve this, we don't really need FileRegistry inside Arc<Mutex
-//          and come up with a better way to use rpc, instead of Arc<Mutex
+
 fn read_event_loop(
-    registry: Arc<Mutex<FileRegistry>>,
+    registry: Arc<FileRegistry>,
     mut socket: tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Arc<Mutex<BitcoinRpc>>,
+    bitcoin_rpc: Arc<BitcoinRpc>,
     relay_url: &str,
 ) -> Result<(), WatcherError> {
     while !shutdown.load(Ordering::SeqCst) {
@@ -146,9 +145,9 @@ fn read_event_loop(
 }
 
 fn handle_relay_message(
-    registry: Arc<Mutex<FileRegistry>>,
+    registry: Arc<FileRegistry>,
     msg: RelayMessage,
-    bitcoin_rpc: Arc<Mutex<BitcoinRpc>>,
+    bitcoin_rpc: Arc<BitcoinRpc>,
     relay_url: &str,
 ) -> Result<(), WatcherError> {
     match msg {
@@ -164,14 +163,14 @@ fn handle_relay_message(
             // ## TODO: Optimize for this, we are currently doing a lot of RPC calls which
             //    are redundant as nostr relay's share same event multiple time. Come up
             //    with a clever way to reduce these RPC trips.
-            let Ok(tx) = bitcoin_rpc.lock()?.get_raw_tx(&txid) else {
+            let Ok(tx) = bitcoin_rpc.get_raw_tx(&txid) else {
                 log::debug!("Received invalid txid: {txid:?}");
                 return Ok(());
             };
 
             match process_fidelity(&tx) {
                 Some(fidelity) => {
-                    if registry.lock()?.insert_fidelity(txid, fidelity) {
+                    if registry.insert_fidelity(txid, fidelity) {
                         log::info!("Stored verified fidelity via {relay_url}: {txid}:{vout}");
                     }
                 }

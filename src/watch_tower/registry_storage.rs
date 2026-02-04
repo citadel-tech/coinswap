@@ -159,7 +159,7 @@ impl FileRegistry {
 
     /// Inserts a new fidelity record.
     pub fn insert_fidelity(
-        &mut self,
+        &self,
         txid: Txid,
         fidelity_announcement: FidelityAnnouncement,
     ) -> bool {
