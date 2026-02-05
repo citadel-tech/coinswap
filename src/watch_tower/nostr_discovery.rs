@@ -1,12 +1,14 @@
 //! Discovers maker fidelity bond from Nostr relays
 use std::{
     borrow::Cow,
+    collections::HashSet,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 
+use bitcoin::Txid;
 use nostr::{
     event::Kind,
     filter::Filter,
@@ -34,6 +36,7 @@ pub fn run_discovery(
 ) -> Result<(), WatcherError> {
     log::info!("Starting market discovery via Nostr");
 
+    let seen_txid = Arc::new(Mutex::new(HashSet::new()));
     let registry = Arc::new(registry);
     let bitcoin_rpc = Arc::new(bitcoin_rpc);
 
@@ -42,11 +45,18 @@ pub fn run_discovery(
         let shutdown = shutdown.clone();
         let registry = Arc::clone(&registry);
         let bitcoin_rpc = Arc::clone(&bitcoin_rpc);
+        let seen_txid = Arc::clone(&seen_txid);
 
         std::thread::Builder::new()
             .name(format!("nostr-session-{}", relay))
             .spawn(move || {
-                run_nostr_session_for_relay(&relay.clone(), registry, shutdown, bitcoin_rpc);
+                run_nostr_session_for_relay(
+                    &relay.clone(),
+                    registry,
+                    shutdown,
+                    bitcoin_rpc,
+                    &seen_txid,
+                );
             })?;
     }
 
@@ -60,6 +70,7 @@ fn run_nostr_session_for_relay(
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRpc>,
+    seen_txid: &Arc<Mutex<HashSet<Txid>>>,
 ) {
     log::info!("Starting Nostr session for relay {}", relay_url);
 
@@ -69,6 +80,7 @@ fn run_nostr_session_for_relay(
             registry.clone(),
             shutdown.clone(),
             bitcoin_rpc.clone(),
+            seen_txid,
         ) {
             Ok(()) => {
                 // Likely exited due to shutdown
@@ -94,6 +106,7 @@ fn connect_and_run_once(
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRpc>,
+    seen_txid: &Arc<Mutex<HashSet<Txid>>>,
 ) -> Result<(), WatcherError> {
     let (mut socket, _) = tungstenite::connect(relay_url)?;
 
@@ -116,9 +129,15 @@ fn connect_and_run_once(
         COINSWAP_KIND
     );
 
-    read_event_loop(registry, socket, shutdown, bitcoin_rpc, relay_url)
+    read_event_loop(
+        registry,
+        socket,
+        shutdown,
+        bitcoin_rpc,
+        relay_url,
+        seen_txid,
+    )
 }
-
 
 fn read_event_loop(
     registry: Arc<FileRegistry>,
@@ -126,6 +145,7 @@ fn read_event_loop(
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRpc>,
     relay_url: &str,
+    seen_txid: &Arc<Mutex<HashSet<Txid>>>,
 ) -> Result<(), WatcherError> {
     while !shutdown.load(Ordering::SeqCst) {
         let msg = socket.read()?;
@@ -138,7 +158,13 @@ fn read_event_loop(
 
         let relay_msg = RelayMessage::from_json(&text)?;
 
-        handle_relay_message(registry.clone(), relay_msg, bitcoin_rpc.clone(), relay_url)?;
+        handle_relay_message(
+            registry.clone(),
+            relay_msg,
+            bitcoin_rpc.clone(),
+            relay_url,
+            seen_txid,
+        )?;
     }
 
     Ok(())
@@ -149,6 +175,7 @@ fn handle_relay_message(
     msg: RelayMessage,
     bitcoin_rpc: Arc<BitcoinRpc>,
     relay_url: &str,
+    seen_txid: &Arc<Mutex<HashSet<Txid>>>,
 ) -> Result<(), WatcherError> {
     match msg {
         RelayMessage::Event { event, .. } => {
@@ -160,23 +187,24 @@ fn handle_relay_message(
                 return Ok(());
             };
 
-            // ## TODO: Optimize for this, we are currently doing a lot of RPC calls which
-            //    are redundant as nostr relay's share same event multiple time. Come up
-            //    with a clever way to reduce these RPC trips.
-            let Ok(tx) = bitcoin_rpc.get_raw_tx(&txid) else {
-                log::debug!("Received invalid txid: {txid:?}");
-                return Ok(());
-            };
+            if seen_txid.lock()?.insert(txid) {
+                let Ok(tx) = bitcoin_rpc.get_raw_tx(&txid) else {
+                    log::debug!("Received invalid txid: {txid:?}");
+                    return Ok(());
+                };
 
-            match process_fidelity(&tx) {
-                Some(fidelity) => {
-                    if registry.insert_fidelity(txid, fidelity) {
-                        log::info!("Stored verified fidelity via {relay_url}: {txid}:{vout}");
+                match process_fidelity(&tx) {
+                    Some(fidelity) => {
+                        if registry.insert_fidelity(txid, fidelity) {
+                            log::info!("Stored verified fidelity via {relay_url}: {txid}:{vout}");
+                        }
+                    }
+                    None => {
+                        log::debug!("Invalid fidelity {txid}:{vout} via {relay_url}");
                     }
                 }
-                None => {
-                    log::debug!("Invalid fidelity {txid}:{vout} via {relay_url}");
-                }
+            } else {
+                log::debug!("Transaction ID already present {txid} via {relay_url}")
             }
         }
 
