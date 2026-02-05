@@ -3,7 +3,7 @@
 //! Wallet data is currently written in unencrypted CBOR files which are not directly human readable.
 
 use crate::{
-    security::{encrypt_struct, load_sensitive_struct_from_value, KeyMaterial, SerdeCbor},
+    security::{encrypt_struct, load_sensitive_struct, KeyMaterial, SerdeCbor},
     wallet::UTXOSpendInfo,
 };
 
@@ -146,7 +146,7 @@ impl WalletStore {
         password: String,
     ) -> Result<(Self, Option<KeyMaterial>), WalletError> {
         let (wallet_store, store_enc_material) =
-            load_sensitive_struct_from_value::<Self, SerdeCbor>(backup_file_path, password);
+            load_sensitive_struct::<Self, SerdeCbor>(backup_file_path, Some(password));
 
         Ok((wallet_store, store_enc_material))
     }

@@ -13,7 +13,7 @@ use log::info;
 
 use coinswap::wallet::{AddressType, RPCConfig, Wallet, WalletBackup};
 
-use coinswap::security::{load_sensitive_struct_interactive, KeyMaterial, SerdeJson};
+use coinswap::security::{load_sensitive_struct, KeyMaterial, SerdeJson};
 
 use test_framework::init_bitcoind;
 
@@ -96,8 +96,7 @@ fn plainwallet_plainbackup_plainrestore() {
 
     wallet.sync_and_save().unwrap();
 
-    let (backup, _) =
-        load_sensitive_struct_interactive::<WalletBackup, SerdeJson>(&wallet_backup_file);
+    let (backup, _) = load_sensitive_struct::<WalletBackup, SerdeJson>(&wallet_backup_file, None);
 
     let restored_wallet =
         Wallet::restore(&backup, &restored_wallet_file, &rpc_config, None).unwrap();
@@ -134,8 +133,7 @@ fn encwallet_encbackup_encrestore() {
 
     wallet.sync_and_save().unwrap();
 
-    let (backup, _) =
-        load_sensitive_struct_interactive::<WalletBackup, SerdeJson>(&wallet_backup_file);
+    let (backup, _) = load_sensitive_struct::<WalletBackup, SerdeJson>(&wallet_backup_file, None);
 
     let restored_wallet =
         Wallet::restore(&backup, &restored_wallet_file, &rpc_config, km.clone()).unwrap();

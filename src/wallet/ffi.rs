@@ -13,7 +13,7 @@
 //! would be difficult to represent in other languages.
 
 use crate::{
-    security::{load_sensitive_struct_from_value, KeyMaterial, SerdeJson},
+    security::{load_sensitive_struct, KeyMaterial, SerdeJson},
     utill::{get_taker_dir, MIN_FEE_RATE},
     wallet::{AddressType, Destination, RPCConfig, Wallet, WalletBackup, WalletError},
 };
@@ -89,7 +89,7 @@ pub struct SwapReport {
 ///
 /// This is a non-interactive restore method designed for programmatic use via FFI bindings.
 /// Unlike `restore_wallet`, this function accepts a path to a JSON backup file and handles both
-/// encrypted and unencrypted backups using [`load_sensitive_struct_from_value`].
+/// encrypted and unencrypted backups using [`load_sensitive_struct`].
 ///
 /// # Behavior
 ///
@@ -111,9 +111,9 @@ pub fn restore_wallet_gui_app(
     backup_file_path: PathBuf,
     password: Option<String>,
 ) {
-    let (backup, encryption_material) = load_sensitive_struct_from_value::<WalletBackup, SerdeJson>(
+    let (backup, encryption_material) = load_sensitive_struct::<WalletBackup, SerdeJson>(
         &backup_file_path,
-        password.unwrap_or_default(),
+        Some(password.unwrap_or_default()),
     );
     let restored_wallet_filename = wallet_file_name.unwrap_or("".to_string());
 

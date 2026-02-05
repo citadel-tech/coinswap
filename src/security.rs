@@ -50,7 +50,7 @@ impl From<aes_gcm::Error> for EncryptError {
 /// This trait abstracts over format-specific parsing logic to allow runtime
 /// switching between JSON and CBOR.
 ///
-/// It is specifically used by [`load_sensitive_struct_interactive`] to try parsing
+/// It is specifically used by [`load_sensitive_struct`] to try parsing
 /// the file in both formats.
 ///
 /// **Note on CBOR:**  
@@ -299,9 +299,9 @@ pub fn decrypt_struct<T: DeserializeOwned>(
 /// # Type Parameters
 /// - `T`: The struct type to load.
 /// - `F`: A type implementing [`SerdeFormat`] (`SerdeCbor` or `SerdeJson`).
-// TODO: Combine the from_interactive and from_value APIs into a single API with an optional password parameter.
-pub fn load_sensitive_struct_interactive<T: DeserializeOwned, F: SerdeFormat>(
+pub fn load_sensitive_struct<T: DeserializeOwned, F: SerdeFormat>(
     file: &Path,
+    password: Option<String>,
 ) -> (T, Option<KeyMaterial>) {
     let content = fs::read(file).unwrap_or_else(|_| panic!("Failed to read the file: {:?}", file));
 
@@ -309,9 +309,11 @@ pub fn load_sensitive_struct_interactive<T: DeserializeOwned, F: SerdeFormat>(
         Ok(unencrypted_struct) => (unencrypted_struct, None),
         Err(unencrypted_err) => match F::from_slice::<EncryptedData>(&content) {
             Ok(encrypted_struct) => {
-                let encryption_password =
-                    utill::prompt_password("Enter encryption passphrase: ".to_string())
-                        .expect("Failed to read password");
+                let encryption_password = match password {
+                    Some(p) => p,
+                    None => utill::prompt_password("Enter encryption passphrase: ".to_string())
+                        .expect("Failed to read password"),
+                };
                 let enc_material = KeyMaterial::existing(
                     encryption_password,
                     encrypted_struct.nonce,
@@ -327,61 +329,6 @@ pub fn load_sensitive_struct_interactive<T: DeserializeOwned, F: SerdeFormat>(
                 panic!(
                     "Failed to deserialize file {:?}:\n- As unencrypted: {}\n- As encrypted: {}",
                     file, unencrypted_err, encrypted_err
-                );
-            }
-        },
-    };
-
-    (sensitive_struct, encryption_material)
-}
-
-/// Loads a sensitive struct from a JSON value, supporting both encrypted and plaintext formats.
-///
-/// This is a non-interactive variant of [`load_sensitive_struct_interactive`] designed for
-/// programmatic use via FFI bindings or GUI applications where password prompts are not feasible.
-///
-/// # Behavior
-///
-/// The function attempts to deserialize the JSON value in two steps:
-///
-/// 1. **Unencrypted:** Attempts to deserialize the value directly as `T`.
-/// 2. **Encrypted:** If that fails, attempts to deserialize as [`EncryptedData`],
-///    then decrypts it using the provided password (no interactive prompt).
-///
-/// The deserialization format is defined by the [`SerdeFormat`] trait implementation
-/// passed via the type parameter `F`.`
-///
-/// # Type Parameters
-///
-/// - `T`: The struct type to load.
-/// - `F`: A type implementing [`SerdeFormat`].
-pub fn load_sensitive_struct_from_value<T: DeserializeOwned, F: SerdeFormat>(
-    file: &Path,
-    password: String,
-) -> (T, Option<KeyMaterial>) {
-    let content = fs::read(file).expect("Failed to serialize JSON value");
-
-    let (sensitive_struct, encryption_material) = match F::from_slice::<T>(&content) {
-        Ok(unencrypted_struct) => (unencrypted_struct, None),
-        Err(unencrypted_err) => match F::from_slice::<EncryptedData>(&content) {
-            Ok(encrypted_struct) => {
-                let encryption_password = password;
-
-                let enc_material = KeyMaterial::existing(
-                    encryption_password,
-                    encrypted_struct.nonce,
-                    encrypted_struct.pbkdf2_salt,
-                );
-
-                let decrypted = decrypt_struct::<T>(encrypted_struct, &enc_material)
-                    .unwrap_or_else(|err| panic!("Failed to decrypt struct: {:?}", err));
-
-                (decrypted, Some(enc_material))
-            }
-            Err(encrypted_err) => {
-                panic!(
-                    "Failed to deserialize JSON:\n- As unencrypted: {}\n- As encrypted: {}",
-                    unencrypted_err, encrypted_err
                 );
             }
         },

@@ -1,7 +1,7 @@
 use std::{convert::TryFrom, env, ffi::OsStr, fs, io::Write, path::PathBuf};
 
 use crate::{
-    security::{encrypt_struct, load_sensitive_struct_interactive, KeyMaterial, SerdeJson},
+    security::{encrypt_struct, load_sensitive_struct, KeyMaterial, SerdeJson},
     wallet::{Wallet, WalletError},
 };
 
@@ -154,8 +154,7 @@ impl Wallet {
             restored_path.file_name()
         );
 
-        let (backup, _) =
-            load_sensitive_struct_interactive::<WalletBackup, SerdeJson>(backup_file_path);
+        let (backup, _) = load_sensitive_struct::<WalletBackup, SerdeJson>(backup_file_path, None);
         let restore_enc_material = KeyMaterial::new_interactive(Some(
             "Enter restored walled encryption passphrase(empty for no encryption): ".to_string(),
         ));
