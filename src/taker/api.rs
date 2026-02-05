@@ -53,9 +53,8 @@ use crate::{
     },
     utill::*,
     wallet::{
-        ffi::{MakerFeeInfo, SwapReport},
-        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
-        WatchOnlySwapCoin,
+        IncomingSwapCoin, MakerFeeInfo, OutgoingSwapCoin, RPCConfig, SwapCoin, TakerSwapReport,
+        Wallet, WalletError, WatchOnlySwapCoin,
     },
     watch_tower::{
         registry_storage::FileRegistry,
@@ -168,6 +167,8 @@ pub struct Taker {
     wallet: Wallet,
     /// Taker configuration with refund, connection, and sleep settings.
     pub config: TakerConfig,
+    /// Data directory for persistence
+    data_dir: PathBuf,
     offerbook: OfferBookHandle,
     ongoing_swap_state: OngoingSwapState,
     #[cfg(feature = "integration-test")]
@@ -279,6 +280,7 @@ impl Taker {
         Ok(Self {
             wallet,
             config,
+            data_dir,
             offerbook,
             ongoing_swap_state: OngoingSwapState::default(),
             #[cfg(feature = "integration-test")]
@@ -336,7 +338,7 @@ impl Taker {
     pub fn do_coinswap(
         &mut self,
         swap_params: SwapParams,
-    ) -> Result<Option<SwapReport>, TakerError> {
+    ) -> Result<Option<TakerSwapReport>, TakerError> {
         self.send_coinswap(swap_params)
     }
 
@@ -352,7 +354,7 @@ impl Taker {
     pub(crate) fn send_coinswap(
         &mut self,
         swap_params: SwapParams,
-    ) -> Result<Option<SwapReport>, TakerError> {
+    ) -> Result<Option<TakerSwapReport>, TakerError> {
         let swap_start_time = std::time::Instant::now();
         let initial_utxoset = self.wallet.list_all_utxo();
         self.ongoing_swap_state.swap_params = swap_params.clone();
@@ -542,13 +544,23 @@ impl Taker {
 
                 // Generate post-swap report
                 self.wallet.sync_and_save()?;
-                let swap_report = Some(self.generate_swap_report(
+                let swap_report = self.generate_swap_report(
                     prereset_swapstate,
                     swap_start_time,
                     initial_utxoset,
-                )?);
+                )?;
+
+                // Persist swap report to disk
+                if let Err(e) = crate::wallet::persist_taker_report(
+                    &self.data_dir,
+                    self.wallet.get_name(),
+                    &swap_report,
+                ) {
+                    log::error!("Failed to persist swap report: {:?}", e);
+                }
+
                 log::info!("Successfully Completed Coinswap.");
-                Ok(swap_report)
+                Ok(Some(swap_report))
             }
             Err(e) => {
                 log::error!("Swap Settlement Failed : {e:?}");
@@ -564,7 +576,7 @@ impl Taker {
         prereset_swapstate: &OngoingSwapState,
         start_time: std::time::Instant,
         initial_utxos: Vec<ListUnspentResultEntry>,
-    ) -> Result<SwapReport, TakerError> {
+    ) -> Result<TakerSwapReport, TakerError> {
         let swap_state = &prereset_swapstate;
 
         let target_amount = swap_state.swap_params.send_amount.to_sat();
@@ -811,7 +823,7 @@ impl Taker {
             })
             .collect::<Vec<_>>();
 
-        let report = SwapReport {
+        let report = TakerSwapReport {
             swap_id: swap_state.id.clone(),
             swap_duration_seconds: swap_duration.as_secs_f64(),
             target_amount: swap_state.swap_params.send_amount.to_sat(),

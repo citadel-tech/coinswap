@@ -24,8 +24,8 @@ use crate::{
     },
     utill::{check_tor_status, get_taker_dir, read_message, send_message},
     wallet::{
-        ffi::{MakerFeeInfo, SwapReport},
-        AddressType, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError,
+        AddressType, IncomingSwapCoinV2, MakerFeeInfo, OutgoingSwapCoinV2, RPCConfig,
+        TakerSwapReport, Wallet, WalletError,
     },
     watch_tower::{
         registry_storage::FileRegistry,
@@ -214,6 +214,7 @@ pub fn connect_to_maker(
 pub struct Taker {
     wallet: Wallet,
     config: TakerConfig,
+    data_dir: PathBuf,
     offerbook: OfferBookHandle,
     ongoing_swap_state: OngoingSwapState,
     watch_service: WatchService,
@@ -315,6 +316,7 @@ impl Taker {
         Ok(Self {
             wallet,
             config,
+            data_dir,
             offerbook,
             ongoing_swap_state: OngoingSwapState::default(),
             watch_service,
@@ -338,7 +340,7 @@ impl Taker {
     pub fn do_coinswap(
         &mut self,
         swap_params: SwapParams,
-    ) -> Result<Option<SwapReport>, TakerError> {
+    ) -> Result<Option<TakerSwapReport>, TakerError> {
         let swap_start_time = std::time::Instant::now();
         let initial_utxoset = self.wallet.list_all_utxo();
 
@@ -429,6 +431,15 @@ impl Taker {
                     initial_utxoset,
                 )?;
 
+                // Persist swap report to disk
+                if let Err(e) = crate::wallet::persist_taker_report(
+                    &self.data_dir,
+                    self.wallet.get_name(),
+                    &swap_report,
+                ) {
+                    log::error!("Failed to persist swap report: {:?}", e);
+                }
+
                 log::info!("Successfully Completed Taproot Coinswap.");
                 Ok(Some(swap_report))
             }
@@ -447,7 +458,7 @@ impl Taker {
         prereset_swapstate: &OngoingSwapState,
         start_time: std::time::Instant,
         initial_utxos: Vec<ListUnspentResultEntry>,
-    ) -> Result<SwapReport, TakerError> {
+    ) -> Result<TakerSwapReport, TakerError> {
         let swap_state = prereset_swapstate;
         let target_amount = swap_state.swap_params.send_amount.to_sat();
         let swap_duration = start_time.elapsed();
@@ -708,7 +719,7 @@ impl Taker {
         let funding_txids_by_hop = all_outgoing_txid;
         let total_funding_txs = funding_txids_by_hop.len();
 
-        let report = SwapReport {
+        let report = TakerSwapReport {
             swap_id: swap_state.id.clone(),
             swap_duration_seconds: swap_duration.as_secs_f64(),
             target_amount,

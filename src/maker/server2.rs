@@ -34,7 +34,7 @@ use crate::{
         messages2::{MakerToTakerMessage, TakerToMakerMessage},
     },
     utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
-    wallet::{AddressType, WalletError},
+    wallet::{persist_maker_report, AddressType, MakerSwapReport, WalletError},
 };
 
 use crate::maker::error::MakerError;
@@ -503,16 +503,65 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
         // Handle the message using taproot handlers
         let response = match handle_message_taproot(maker, &mut connection_state, message) {
             Ok(response) => response,
-            Err(e) => {
+            Err(err) => {
                 log::error!(
                     "[{}] Error handling message from {}: {:?}",
                     maker.config.network_port,
                     ip,
-                    e
+                    err
                 );
 
+                // Generate failed report if swap was in progress
+                if connection_state.incoming_contract.funding_amount() > Amount::ZERO {
+                    let wallet = maker.wallet.read().ok();
+                    if let Some(wallet) = wallet {
+                        let network = wallet.store.network.to_string();
+                        let wallet_name = wallet.get_name().to_string();
+                        drop(wallet);
+
+                        let incoming_amount =
+                            connection_state.incoming_contract.funding_amount().to_sat();
+                        let outgoing_amount =
+                            connection_state.outgoing_contract.funding_amount.to_sat();
+                        let incoming_txid = connection_state
+                            .incoming_contract
+                            .contract_txid()
+                            .map(|t| t.to_string())
+                            .unwrap_or_else(|_| "N/A".to_string());
+                        let outgoing_txid = connection_state
+                            .outgoing_contract
+                            .contract_tx
+                            .compute_txid()
+                            .to_string();
+                        let timelock = connection_state.timelock;
+
+                        let report = MakerSwapReport::failed(
+                            format!(
+                                "failed-{}",
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_nanos()
+                            ),
+                            incoming_amount,
+                            outgoing_amount,
+                            incoming_txid,
+                            outgoing_txid,
+                            timelock,
+                            network,
+                            format!("{:?}", err),
+                        );
+                        report.print();
+                        if let Err(e) =
+                            persist_maker_report(maker.data_dir(), &wallet_name, &report)
+                        {
+                            log::warn!("Failed to persist maker swap report: {:?}", e);
+                        }
+                    }
+                }
+
                 // Check if this is a behavior-triggered error
-                match &e {
+                match &err {
                     MakerError::General(msg) if msg.contains("behavior") => {
                         log::info!(
                             "[{}] Behavior-triggered disconnection",
@@ -579,6 +628,47 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                         outgoing_txid
                     );
                     wallet.save_to_disk()?;
+                }
+
+                // Generate and persist success report before removing from ongoing_swaps
+                {
+                    let ongoing_swaps = maker.ongoing_swap_state.lock()?;
+                    if let Some((_, start_instant)) = ongoing_swaps.get(&swap_id) {
+                        let wallet = maker.wallet.read()?;
+                        let network = wallet.store.network.to_string();
+                        let wallet_name = wallet.get_name().to_string();
+                        drop(wallet);
+
+                        let incoming_total =
+                            connection_state.incoming_contract.funding_amount().to_sat();
+                        let outgoing_total =
+                            connection_state.outgoing_contract.funding_amount.to_sat();
+                        let incoming_txid = connection_state
+                            .incoming_contract
+                            .contract_txid()
+                            .map(|t| t.to_string())
+                            .unwrap_or_else(|_| "N/A".to_string());
+                        let outgoing_txid = outgoing_txid.to_string();
+                        let timelock = connection_state.timelock;
+
+                        let report = MakerSwapReport::success(
+                            swap_id.clone(),
+                            *start_instant,
+                            incoming_total,
+                            outgoing_total,
+                            incoming_txid,
+                            outgoing_txid,
+                            "cooperative_sweep".to_string(),
+                            timelock,
+                            network,
+                        );
+                        report.print();
+                        if let Err(e) =
+                            persist_maker_report(maker.data_dir(), &wallet_name, &report)
+                        {
+                            log::warn!("Failed to persist maker swap report: {:?}", e);
+                        }
+                    }
                 }
 
                 let mut ongoing_swaps = maker.ongoing_swap_state.lock()?;

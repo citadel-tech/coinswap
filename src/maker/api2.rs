@@ -21,8 +21,8 @@ use crate::{
     },
     utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::{
-        AddressType, Destination, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet,
-        WalletError,
+        persist_maker_report, AddressType, Destination, IncomingSwapCoinV2, MakerSwapReport,
+        OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError,
     },
     watch_tower::{
         service::{start_maker_watch_service, WatchService},
@@ -1540,6 +1540,35 @@ fn recover_via_hashlock(maker: Arc<Maker>, incoming: IncomingSwapCoinV2) -> Resu
                             maker.config.network_port,
                             txid
                         );
+
+                        // Generate recovery report
+                        let incoming_txid = incoming.contract_tx.compute_txid();
+                        let network = wallet.store.network.to_string();
+                        let wallet_name = wallet.get_name().to_string();
+                        let swap_id = incoming
+                            .swap_id
+                            .clone()
+                            .unwrap_or_else(|| format!("recovery_hashlock_{}", incoming_txid));
+
+                        let report = MakerSwapReport::recovery(
+                            swap_id,
+                            "hashlock",
+                            incoming.funding_amount.to_sat(),
+                            0,
+                            incoming_txid.to_string(),
+                            "N/A".to_string(),
+                            txid.to_string(),
+                            0,
+                            network,
+                        );
+                        drop(wallet);
+                        report.print();
+                        if let Err(e) =
+                            persist_maker_report(maker.data_dir(), &wallet_name, &report)
+                        {
+                            log::warn!("Failed to persist hashlock recovery report: {:?}", e);
+                        }
+
                         Some(Ok(()))
                     }
                     Err(e) => {
@@ -1596,6 +1625,34 @@ fn recover_via_timelock(maker: Arc<Maker>, outgoing: OutgoingSwapCoinV2) -> Resu
                         maker.config.network_port,
                         txid
                     );
+
+                    // Generate recovery report
+                    let outgoing_txid = outgoing.contract_tx.compute_txid();
+                    let network = wallet.store.network.to_string();
+                    let wallet_name = wallet.get_name().to_string();
+                    let timelock = outgoing.get_timelock().unwrap_or(0) as u16;
+                    let swap_id = outgoing
+                        .swap_id
+                        .clone()
+                        .unwrap_or_else(|| format!("recovery_timelock_{}", outgoing_txid));
+
+                    let report = MakerSwapReport::recovery(
+                        swap_id,
+                        "timelock",
+                        0,
+                        outgoing.funding_amount.to_sat(),
+                        "N/A".to_string(),
+                        outgoing_txid.to_string(),
+                        txid.to_string(),
+                        timelock,
+                        network,
+                    );
+                    drop(wallet);
+                    report.print();
+                    if let Err(e) = persist_maker_report(maker.data_dir(), &wallet_name, &report) {
+                        log::warn!("Failed to persist timelock recovery report: {:?}", e);
+                    }
+
                     Some(Ok(()))
                 }
                 Err(e) => {

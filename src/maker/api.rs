@@ -16,7 +16,7 @@ use crate::{
         check_tor_status, get_maker_dir, redeemscript_to_scriptpubkey, BLOCK_DELAY,
         HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
     },
-    wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
+    wallet::{persist_maker_report, MakerSwapReport, RPCConfig, SwapCoin, WalletSwapCoin},
     watch_tower::{
         service::{start_maker_watch_service, WatchService},
         watcher::{Role, WatcherEvent},
@@ -827,6 +827,45 @@ fn recover_via_hashlock(
             incoming.len()
         );
         if broadcasted.len() == incoming.len() {
+            // Generate recovery reports for each incoming swapcoin
+            let wallet = maker.wallet.read()?;
+            let network = wallet.store.network.to_string();
+            drop(wallet);
+
+            for (i, inc) in incoming.iter().enumerate() {
+                let incoming_txid = inc.contract_tx.compute_txid();
+                let swap_id = format!("recovery_hashlock_{}", incoming_txid);
+                let timelock = inc.get_timelock().unwrap_or(0);
+
+                let report = MakerSwapReport::recovery(
+                    swap_id,
+                    "hashlock",
+                    inc.funding_amount.to_sat(),
+                    0, // No outgoing in hashlock recovery
+                    incoming_txid.to_string(),
+                    "N/A".to_string(),
+                    broadcasted
+                        .get(i)
+                        .map(|t| t.compute_txid().to_string())
+                        .unwrap_or_else(|| "N/A".to_string()),
+                    timelock,
+                    network.clone(),
+                );
+                report.print();
+                if let Err(e) = persist_maker_report(
+                    maker.data_dir(),
+                    maker
+                        .wallet
+                        .read()
+                        .map(|w| w.get_name().to_string())
+                        .unwrap_or_default()
+                        .as_str(),
+                    &report,
+                ) {
+                    log::warn!("Failed to persist hashlock recovery report: {:?}", e);
+                }
+            }
+
             #[cfg(feature = "integration-test")]
             maker.shutdown.store(true, Relaxed);
             break;
@@ -857,6 +896,45 @@ fn recover_via_timelock(
             outgoing.len()
         );
         if broadcasted.len() == outgoing.len() {
+            // Generate recovery reports for each outgoing swapcoin
+            let wallet = maker.wallet.read()?;
+            let network = wallet.store.network.to_string();
+            drop(wallet);
+
+            for (i, out) in outgoing.iter().enumerate() {
+                let outgoing_txid = out.contract_tx.compute_txid();
+                let swap_id = format!("recovery_timelock_{}", outgoing_txid);
+                let timelock = out.get_timelock().unwrap_or(0);
+
+                let report = MakerSwapReport::recovery(
+                    swap_id,
+                    "timelock",
+                    0, // No incoming in timelock recovery
+                    out.funding_amount.to_sat(),
+                    "N/A".to_string(),
+                    outgoing_txid.to_string(),
+                    broadcasted
+                        .get(i)
+                        .map(|t| t.compute_txid().to_string())
+                        .unwrap_or_else(|| "N/A".to_string()),
+                    timelock,
+                    network.clone(),
+                );
+                report.print();
+                if let Err(e) = persist_maker_report(
+                    maker.data_dir(),
+                    maker
+                        .wallet
+                        .read()
+                        .map(|w| w.get_name().to_string())
+                        .unwrap_or_default()
+                        .as_str(),
+                    &report,
+                ) {
+                    log::warn!("Failed to persist timelock recovery report: {:?}", e);
+                }
+            }
+
             #[cfg(feature = "integration-test")]
             maker.shutdown.store(true, Relaxed);
             break;
