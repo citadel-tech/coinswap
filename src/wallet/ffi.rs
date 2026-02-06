@@ -6,7 +6,7 @@
 //! language-agnostic representations of the core swap data structures.
 //!
 //! - [`MakerFeeInfo`]: Detailed fee breakdown for individual makers in a swap route
-//! - [`SwapReport`]: Comprehensive report of a completed swap transaction
+//! - [`TakerSwapReport`]: Comprehensive report of a completed swap transaction
 //!
 //! These structures use primitive types and standard collections (Vec, String) that
 //! can be easily marshaled across FFI boundaries, avoiding Rust-specific types that
@@ -44,7 +44,7 @@ pub struct MakerFeeInfo {
 
 /// Complete swap report containing all swap information
 #[derive(Debug, Serialize)]
-pub struct SwapReport {
+pub struct TakerSwapReport {
     /// Unique swap ID
     pub swap_id: String,
     /// Duration of the swap in seconds
@@ -83,6 +83,277 @@ pub struct SwapReport {
     pub output_change_utxos: Vec<(u64, String)>,
     /// Output swap coin UTXOs with amounts and addresses (amount, address)
     pub output_swap_utxos: Vec<(u64, String)>,
+}
+
+/// Status of Maker swap report
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub enum MakerSwapReportStatus {
+    /// Swap completed successfully
+    Success,
+    /// Swap recovered via hashlock path
+    RecoveryHashlock,
+    /// Swap recovered via timelock path
+    RecoveryTimelock,
+    /// Swap failed
+    Failed,
+}
+
+impl FromStr for MakerSwapReportStatus {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "success" => Ok(MakerSwapReportStatus::Success),
+            "recovery_hashlock" => Ok(MakerSwapReportStatus::RecoveryHashlock),
+            "recovery_timelock" => Ok(MakerSwapReportStatus::RecoveryTimelock),
+            "failed" => Ok(MakerSwapReportStatus::Failed),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for MakerSwapReportStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                MakerSwapReportStatus::Failed => "failed",
+                MakerSwapReportStatus::Success => "success",
+                MakerSwapReportStatus::RecoveryHashlock => "recovery_hashlock",
+                MakerSwapReportStatus::RecoveryTimelock => "recovery_timelock",
+            }
+        )
+    }
+}
+
+/// Represents a swap report for the maker
+#[derive(Debug, Clone, Serialize)]
+pub struct MakerSwapReport {
+    /// Unique identifier for the swap
+    pub swap_id: String,
+    /// Status of the swap
+    pub status: MakerSwapReportStatus,
+    /// Duration of the swap in seconds
+    pub swap_duration_seconds: f64,
+    /// Timestamp when the swap started (Unix epoch)
+    pub start_timestamp: u64,
+    /// Timestamp when the swap ended (Unix epoch)
+    pub end_timestamp: u64,
+    /// Amount received in the incoming contract (sats)
+    pub incoming_amount: u64,
+    /// Amount sent in the outgoing contract (sats)
+    pub outgoing_amount: u64,
+    /// Fee earned by the maker (sats)
+    pub fee_earned: u64,
+    /// Incoming contract transaction ID
+    pub incoming_contract_txid: String,
+    /// Outgoing contract transaction ID
+    pub outgoing_contract_txid: String,
+    /// Sweep transaction ID (if successful)
+    pub sweep_txid: Option<String>,
+    /// Recovery transaction ID (if recovered via hashlock/timelock)
+    pub recovery_txid: Option<String>,
+    /// Timelock value used in the swap
+    pub timelock: u16,
+    /// Network (mainnet, testnet, regtest)
+    pub network: String,
+    /// Error message (if failed)
+    pub error_message: Option<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
+impl MakerSwapReport {
+    /// Create a new successful swap report
+    pub fn success(
+        swap_id: String,
+        start_time: std::time::Instant,
+        incoming_amount: u64,
+        outgoing_amount: u64,
+        incoming_contract_txid: String,
+        outgoing_contract_txid: String,
+        sweep_txid: String,
+        timelock: u16,
+        network: String,
+    ) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let end_timestamp = now.as_secs();
+        let swap_duration = start_time.elapsed();
+
+        Self {
+            swap_id,
+            status: MakerSwapReportStatus::Success,
+            swap_duration_seconds: swap_duration.as_secs_f64(),
+            start_timestamp: end_timestamp.saturating_sub(swap_duration.as_secs()),
+            end_timestamp,
+            incoming_amount,
+            outgoing_amount,
+            fee_earned: incoming_amount.saturating_sub(outgoing_amount),
+            incoming_contract_txid,
+            outgoing_contract_txid,
+            sweep_txid: Some(sweep_txid),
+            recovery_txid: None,
+            timelock,
+            network,
+            error_message: None,
+        }
+    }
+
+    /// Create a recovery swap report (hashlock or timelock)
+    pub fn recovery(
+        swap_id: String,
+        recovery_type: &str, // "hashlock" or "timelock"
+        incoming_amount: u64,
+        outgoing_amount: u64,
+        incoming_contract_txid: String,
+        outgoing_contract_txid: String,
+        recovery_txid: String,
+        timelock: u16,
+        network: String,
+    ) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let end_timestamp = now.as_secs();
+
+        Self {
+            swap_id,
+            status: MakerSwapReportStatus::from_str(&format!("recovery_{}", recovery_type))
+                .unwrap(),
+            swap_duration_seconds: 0.0,
+            start_timestamp: 0,
+            end_timestamp,
+            incoming_amount,
+            outgoing_amount,
+            fee_earned: 0,
+            incoming_contract_txid,
+            outgoing_contract_txid,
+            sweep_txid: None,
+            recovery_txid: Some(recovery_txid),
+            timelock,
+            network,
+            error_message: None,
+        }
+    }
+
+    /// Create a failed swap report
+    pub fn failed(
+        swap_id: String,
+        incoming_amount: u64,
+        outgoing_amount: u64,
+        incoming_contract_txid: String,
+        outgoing_contract_txid: String,
+        timelock: u16,
+        network: String,
+        error_message: String,
+    ) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let end_timestamp = now.as_secs();
+
+        Self {
+            swap_id,
+            status: MakerSwapReportStatus::Failed,
+            swap_duration_seconds: 0.0,
+            start_timestamp: 0,
+            end_timestamp,
+            incoming_amount,
+            outgoing_amount,
+            fee_earned: 0,
+            incoming_contract_txid,
+            outgoing_contract_txid,
+            sweep_txid: None,
+            recovery_txid: None,
+            timelock,
+            network,
+            error_message: Some(error_message),
+        }
+    }
+
+    /// Save the report to disk
+    pub fn save_to_disk(&self, data_dir: &std::path::Path) -> std::io::Result<()> {
+        let reports_dir = data_dir.join("swap_reports");
+        std::fs::create_dir_all(&reports_dir)?;
+
+        let timestamp = self.end_timestamp;
+        let filename = format!("{}_{}.json", timestamp, self.swap_id);
+        let filepath = reports_dir.join(filename);
+
+        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+        std::fs::write(&filepath, json)?;
+
+        log::info!("Saved maker swap report to: {}", filepath.display());
+        Ok(())
+    }
+
+    /// Print the report to console
+    pub fn print(&self) {
+        println!("\n\x1b[1;36m================================================================================");
+        println!("                            MAKER SWAP REPORT");
+        println!("================================================================================\x1b[0m\n");
+
+        println!("\x1b[1;37mSwap ID           :\x1b[0m {}", self.swap_id);
+
+        println!("\x1b[1;37mStatus            :\x1b[0m {}", self.status);
+
+        if self.swap_duration_seconds > 0.0 {
+            println!(
+                "\x1b[1;37mDuration          :\x1b[0m {:.2} seconds",
+                self.swap_duration_seconds
+            );
+        }
+
+        println!("\n\x1b[1;36m--------------------------------------------------------------------------------");
+        println!("                              Swap Details");
+        println!("--------------------------------------------------------------------------------\x1b[0m");
+        println!(
+            "\x1b[1;37mIncoming Amount   :\x1b[0m {} sats",
+            self.incoming_amount
+        );
+        println!(
+            "\x1b[1;37mOutgoing Amount   :\x1b[0m {} sats",
+            self.outgoing_amount
+        );
+        println!(
+            "\x1b[1;37mFee Earned        :\x1b[0m \x1b[1;32m{} sats\x1b[0m",
+            self.fee_earned
+        );
+        println!(
+            "\x1b[1;37mTimelock          :\x1b[0m {} blocks",
+            self.timelock
+        );
+        println!("\x1b[1;37mNetwork           :\x1b[0m {}", self.network);
+
+        println!("\n\x1b[1;36m--------------------------------------------------------------------------------");
+        println!("                            Transaction IDs");
+        println!("--------------------------------------------------------------------------------\x1b[0m");
+        println!(
+            "\x1b[1;37mIncoming Contract :\x1b[0m {}",
+            self.incoming_contract_txid
+        );
+        println!(
+            "\x1b[1;37mOutgoing Contract :\x1b[0m {}",
+            self.outgoing_contract_txid
+        );
+
+        if let Some(ref sweep_txid) = self.sweep_txid {
+            println!("\x1b[1;37mSweep Tx          :\x1b[0m {}", sweep_txid);
+        }
+
+        if let Some(ref recovery_txid) = self.recovery_txid {
+            println!("\x1b[1;37mRecovery Tx       :\x1b[0m {}", recovery_txid);
+        }
+
+        if let Some(ref error) = self.error_message {
+            println!("\n\x1b[1;31mError: {}\x1b[0m", error);
+        }
+
+        println!("\n\x1b[1;36m================================================================================");
+        println!("                                END REPORT");
+        println!("================================================================================\x1b[0m\n");
+    }
 }
 
 /// Restores a wallet from an encrypted or unencrypted JSON backup file for GUI/FFI applications.

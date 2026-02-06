@@ -53,7 +53,7 @@ use crate::{
     },
     utill::*,
     wallet::{
-        ffi::{MakerFeeInfo, SwapReport},
+        ffi::{MakerFeeInfo, TakerSwapReport},
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
         WatchOnlySwapCoin,
     },
@@ -336,7 +336,7 @@ impl Taker {
     pub fn do_coinswap(
         &mut self,
         swap_params: SwapParams,
-    ) -> Result<Option<SwapReport>, TakerError> {
+    ) -> Result<Option<TakerSwapReport>, TakerError> {
         self.send_coinswap(swap_params)
     }
 
@@ -352,7 +352,7 @@ impl Taker {
     pub(crate) fn send_coinswap(
         &mut self,
         swap_params: SwapParams,
-    ) -> Result<Option<SwapReport>, TakerError> {
+    ) -> Result<Option<TakerSwapReport>, TakerError> {
         let swap_start_time = std::time::Instant::now();
         let initial_utxoset = self.wallet.list_all_utxo();
         self.ongoing_swap_state.swap_params = swap_params.clone();
@@ -564,7 +564,7 @@ impl Taker {
         prereset_swapstate: &OngoingSwapState,
         start_time: std::time::Instant,
         initial_utxos: Vec<ListUnspentResultEntry>,
-    ) -> Result<SwapReport, TakerError> {
+    ) -> Result<TakerSwapReport, TakerError> {
         let swap_state = &prereset_swapstate;
 
         let target_amount = swap_state.swap_params.send_amount.to_sat();
@@ -811,7 +811,7 @@ impl Taker {
             })
             .collect::<Vec<_>>();
 
-        let report = SwapReport {
+        let report = TakerSwapReport {
             swap_id: swap_state.id.clone(),
             swap_duration_seconds: swap_duration.as_secs_f64(),
             target_amount: swap_state.swap_params.send_amount.to_sat(),
