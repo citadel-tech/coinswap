@@ -38,6 +38,8 @@ use crate::{
 };
 
 use crate::maker::error::MakerError;
+#[cfg(feature = "integration-test")]
+use crate::maker::TaprootMakerBehavior;
 
 /// Fetches the Maker address.
 fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<String, MakerError> {
@@ -204,12 +206,17 @@ fn setup_fidelity_bond_taproot(
         .map_err(WalletError::Rpc)? as u32;
 
     // Set locktime for fidelity bond
-    let locktime = if cfg!(feature = "integration-test") {
-        LockTime::from_height(current_height + 950).map_err(WalletError::Locktime)?
-    } else {
-        LockTime::from_height(maker.config.fidelity_timelock + current_height)
-            .map_err(WalletError::Locktime)?
+    #[cfg(feature = "integration-test")]
+    let locktime = {
+        if maker.behavior == TaprootMakerBehavior::InvalidFidelityTimelock {
+            LockTime::from_height(current_height + 500).map_err(WalletError::Locktime)?
+        } else {
+            LockTime::from_height(current_height + 950).map_err(WalletError::Locktime)?
+        }
     };
+    #[cfg(not(feature = "integration-test"))]
+    let locktime = LockTime::from_height(maker.config.fidelity_timelock + current_height)
+        .map_err(WalletError::Locktime)?;
 
     log::info!(
         "[{}] Fidelity timelock {:?} blocks",
