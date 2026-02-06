@@ -12,11 +12,12 @@ on:
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+    # Filter to skip draft PRs and bot-generated PRs for cost optimization
+    # Deter both official GitHub bots and community bots (Renovate, Snyk, etc.)
+    if: |
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.type != 'Bot' &&
+      !endsWith(github.event.pull_request.user.login, '[bot]')
 
     runs-on: ubuntu-latest
     permissions:
@@ -29,10 +30,34 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
+          fetch-depth: 1
+
+      - name: Check PR size
+        id: pr_size
+        run: |
+          CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} HEAD | wc -l)
+          TOTAL_CHANGES=$(git diff --stat ${{ github.event.pull_request.base.sha }} HEAD | tail -1 | awk '{print $4+$6}')
+          
+          echo "Changed files: $CHANGED_FILES"
+          echo "Total changes: $TOTAL_CHANGES lines"
+          
+          if [ $CHANGED_FILES -gt 50 ] || [ $TOTAL_CHANGES -gt 2000 ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for code changes
+        id: has_code
+        run: |
+          CHANGED_CODE=$(git diff --name-only ${{ github.event.pull_request.base.sha }} HEAD | grep -E '\.(rs|toml)$' | wc -l)
+          
+          if [ $CHANGED_CODE -eq 0 ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Run Claude Code Review
+        if: steps.pr_size.outputs.skip != 'true' && steps.has_code.outputs.skip != 'true'
         id: claude-review
+        timeout-minutes: 5
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -43,9 +68,35 @@ jobs:
           # and only reviews code without executing it. See:
           # https://github.com/anthropics/claude-code-action/blob/main/docs/security.md#access-control
           allowed_non_write_users: "*"
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          include_fix_links: false
+          use_sticky_comment: true
+          prompt: |
+            Review ONLY the changed files in these directories:
+            - src/
+            - Cargo.toml
+            - docker/
+            - .github/
+            
+            Focus ONLY on:
+            - Security vulnerabilities
+            - Type errors and safety issues
+            - Performance problems
+            
+            Ignore: style, formatting, comments, documentation, variable naming.
+            
+            Format response as bullet points. Keep response under 150 words.
+            
+            PR: ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+          claude_args: |
+            --model haiku
+            --add-dir src/
+            --add-dir docker/
+            --add-dir .github/
+            --disable-slash-commands
+            --append-system-prompt "Review ONLY src/, docker/, .github/, Cargo.toml. Focus: security vulnerabilities, type errors, performance problems. Ignore: style, formatting, documentation. Be concise and brief."
+            --max-turns 3
+            --max-budget-usd 0.50
+            --tools Read,Grep,Glob
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
 
