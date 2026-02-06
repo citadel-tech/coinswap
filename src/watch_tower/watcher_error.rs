@@ -1,5 +1,7 @@
 //! Watchtower-related error types.
 
+use std::sync::{MutexGuard, PoisonError};
+
 /// Errors that can occur within the watchtower components.
 #[derive(Debug)]
 pub enum WatcherError {
@@ -19,6 +21,12 @@ pub enum WatcherError {
     RPCError(bitcoind::bitcoincore_rpc::Error),
     /// Serialization/deserialization error for CBOR.
     SerdeCbor(serde_cbor::Error),
+    /// WebSocket error from tungstenite
+    WebSocket(tungstenite::Error),
+    /// Nostr message parsing error
+    NostrParsingError(nostr::message::MessageHandleError),
+    /// Represents a mutex poisoning error.
+    MutexPoison,
     /// Represents a general error with a descriptive message.
     General(String),
 }
@@ -47,6 +55,30 @@ impl From<serde_cbor::Error> for WatcherError {
     }
 }
 
+impl From<tungstenite::Error> for WatcherError {
+    fn from(value: tungstenite::Error) -> Self {
+        WatcherError::WebSocket(value)
+    }
+}
+
+impl From<std::string::FromUtf8Error> for WatcherError {
+    fn from(_value: std::string::FromUtf8Error) -> Self {
+        WatcherError::ParsingError
+    }
+}
+
+impl From<nostr::message::MessageHandleError> for WatcherError {
+    fn from(value: nostr::message::MessageHandleError) -> Self {
+        WatcherError::NostrParsingError(value)
+    }
+}
+
+impl<'a, T> From<PoisonError<MutexGuard<'a, T>>> for WatcherError {
+    fn from(_: PoisonError<MutexGuard<'a, T>>) -> Self {
+        Self::MutexPoison
+    }
+}
+
 impl WatcherError {
     /// Returns the underlying `ErrorKind` if the error wraps an I/O failure.
     pub fn io_error_kind(&self) -> Option<std::io::ErrorKind> {
@@ -67,6 +99,9 @@ impl WatcherError {
             WatcherError::IOError(_) => "IOError",
             WatcherError::RPCError(_) => "RPCError",
             WatcherError::SerdeCbor(_) => "SerdeCbor",
+            WatcherError::WebSocket(_) => "WebSocket",
+            WatcherError::NostrParsingError(_) => "NostrParsingError",
+            WatcherError::MutexPoison => "MutexPoison",
             WatcherError::General(_) => "General",
         }
     }

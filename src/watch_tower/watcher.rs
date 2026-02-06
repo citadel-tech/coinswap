@@ -17,6 +17,7 @@ use bitcoin::{consensus::deserialize, Block, OutPoint, Transaction};
 use crate::{
     wallet::RPCConfig,
     watch_tower::{
+        nostr_discovery,
         registry_storage::{Checkpoint, FileRegistry, WatchRequest},
         rpc_backend::BitcoinRpc,
         utils::{process_block, process_transaction},
@@ -113,9 +114,11 @@ impl<R: Role> Watcher<R> {
             let discovery_clone = discovery_shutdown.clone();
             if R::RUN_DISCOVERY {
                 s.spawn(move || {
-                    if let Err(e) =
-                        rpc_backend_1.run_discovery(registry, discovery_shutdown.clone())
-                    {
+                    if let Err(e) = nostr_discovery::run_discovery(
+                        rpc_backend_1,
+                        registry,
+                        discovery_shutdown.clone(),
+                    ) {
                         log::error!("Discovery thread failed: {:?}", e);
                     }
                 });
