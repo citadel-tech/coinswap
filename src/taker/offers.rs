@@ -50,8 +50,6 @@ const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(15 * 60);
 #[cfg(feature = "integration-test")]
 const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(10);
 
-// ##TODO: Split these constructs and API's well, in a separate module.
-
 /// Represents an offer along with the corresponding maker address.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OfferAndAddress {
