@@ -7,12 +7,13 @@ use std::{
     marker::PhantomData,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::{Receiver, Sender, TryRecvError},
+        mpsc::{Receiver as StdReceiver, TryRecvError},
         Arc,
     },
 };
 
 use bitcoin::{consensus::deserialize, Block, OutPoint, Transaction};
+use crossbeam_channel::Sender as CbSender;
 
 use crate::{
     wallet::RPCConfig,
@@ -36,8 +37,8 @@ pub trait Role {
 pub struct Watcher<R: Role> {
     backend: ZmqBackend,
     registry: FileRegistry,
-    rx_requests: Receiver<WatcherCommand>,
-    tx_events: Sender<WatcherEvent>,
+    rx_requests: StdReceiver<WatcherCommand>,
+    tx_events: CbSender<WatcherEvent>,
     _role: PhantomData<R>,
 }
 
@@ -89,8 +90,8 @@ impl<R: Role> Watcher<R> {
     pub fn new(
         backend: ZmqBackend,
         registry: FileRegistry,
-        rx_requests: Receiver<WatcherCommand>,
-        tx_events: Sender<WatcherEvent>,
+        rx_requests: StdReceiver<WatcherCommand>,
+        tx_events: CbSender<WatcherEvent>,
     ) -> Self {
         Self {
             backend,

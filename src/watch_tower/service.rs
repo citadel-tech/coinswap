@@ -1,12 +1,10 @@
 //! Public watchtower service for sending commands to and receiving events from the watcher.
 
 use bitcoin::OutPoint;
+use crossbeam_channel::{unbounded, Receiver as CbReceiver};
 use std::{
     path::Path,
-    sync::{
-        mpsc::{self, Receiver, Sender},
-        Arc, Mutex,
-    },
+    sync::mpsc::{self, Sender as StdSender},
     thread,
 };
 
@@ -25,18 +23,14 @@ use crate::{
 /// Client-facing service for sending watcher commands and receiving events.
 #[derive(Clone)]
 pub struct WatchService {
-    tx: Sender<WatcherCommand>,
-    rx: Arc<Mutex<Receiver<WatcherEvent>>>,
+    tx: StdSender<WatcherCommand>,
+    rx: CbReceiver<WatcherEvent>,
 }
 
-// ##TODO: Improve lock free ergonomics.
 impl WatchService {
     /// Creates a new service from the given command sender and event receiver.
-    pub fn new(tx: Sender<WatcherCommand>, rx: Receiver<WatcherEvent>) -> Self {
-        Self {
-            tx,
-            rx: Arc::new(Mutex::new(rx)),
-        }
+    pub fn new(tx: StdSender<WatcherCommand>, rx: CbReceiver<WatcherEvent>) -> Self {
+        Self { tx, rx }
     }
 
     /// Registers an outpoint to be monitored for future spends.
@@ -58,18 +52,18 @@ impl WatchService {
 
     /// Attempts a non-blocking receive; returns `None` if no event is pending.
     pub fn poll_event(&self) -> Option<WatcherEvent> {
-        self.rx.lock().ok()?.try_recv().ok()
+        self.rx.try_recv().ok()
     }
 
     /// Blocks until the next watcher event arrives.
     pub fn wait_for_event(&self) -> Option<WatcherEvent> {
-        self.rx.lock().ok()?.recv().ok()
+        self.rx.recv().ok()
     }
 
     /// Requests the list of maker addresses.
     pub fn request_maker_address(&self) -> Option<WatcherEvent> {
         _ = self.tx.send(WatcherCommand::MakerAddress);
-        self.rx.lock().ok()?.recv().ok()
+        self.rx.recv().ok()
     }
 
     /// Signals the watcher to shut down gracefully.
@@ -98,7 +92,7 @@ pub fn start_maker_watch_service(
 
     // Channels
     let (tx_requests, rx_requests) = mpsc::channel();
-    let (tx_events, rx_responses) = mpsc::channel();
+    let (tx_events, rx_responses) = unbounded();
 
     // Watcher
     let rpc_config_watcher = rpc_config.clone();

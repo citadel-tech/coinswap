@@ -48,6 +48,7 @@ use bitcoin::{
     Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, RawTx, RpcApi};
+use crossbeam_channel::unbounded;
 use socks::Socks5Stream;
 use std::{
     collections::HashSet, net::TcpStream, path::PathBuf, sync::mpsc, thread, time::Duration,
@@ -270,7 +271,7 @@ impl Taker {
             .join(blockchain_info.chain.to_string());
         let registry = FileRegistry::load(file_registry);
         let (tx_requests, rx_requests) = mpsc::channel();
-        let (tx_events, rx_responses) = mpsc::channel();
+        let (tx_events, rx_responses) = unbounded();
         let rpc_config_watcher = rpc_config.clone();
 
         let mut watcher = Watcher::<Taker>::new(backend, registry, rx_requests, tx_events);
