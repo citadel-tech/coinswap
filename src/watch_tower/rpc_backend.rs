@@ -68,7 +68,7 @@ impl BitcoinRpc {
     }
 
     /// Processes transactions in the mempool and updates registry.
-    pub fn process_mempool(&mut self, registry: &mut FileRegistry) -> Result<(), WatcherError> {
+    pub fn process_mempool(&self, registry: &mut FileRegistry) -> Result<(), WatcherError> {
         let txids = self.get_raw_mempool()?;
         for txid in &txids {
             let tx = self.get_raw_tx(txid)?;

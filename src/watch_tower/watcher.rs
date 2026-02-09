@@ -102,13 +102,16 @@ impl<R: Role> Watcher<R> {
         }
     }
 
-    // #TODO: When watcher starts index the mempool, to check if watch request is present there
-    //        or not.
     /// Runs the watcher loop: handles ZMQ events and commands, optionally spawning discovery.
     pub fn run(&mut self, rpc_config: RPCConfig) -> Result<(), WatcherError> {
         log::info!("Watcher initiated");
         let rpc_backend_1 = BitcoinRpc::new(rpc_config.clone())?;
         let rpc_backend_2 = BitcoinRpc::new(rpc_config)?;
+
+        if let Err(e) = rpc_backend_1.process_mempool(&mut self.registry) {
+            log::warn!("Failed to process mempool on startup: {}", e);
+        }
+
         let discovery_shutdown = Arc::new(AtomicBool::new(false));
         let registry = self.registry.clone();
         std::thread::scope(move |s| {
