@@ -63,6 +63,28 @@ pub enum FidelityError {
     BondUncomfirmed,
 }
 
+impl std::fmt::Display for FidelityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FidelityError::WrongScriptType => write!(f, "Wrong script type for fidelity bond"),
+            FidelityError::BondDoesNotExist => write!(f, "Fidelity bond does not exist"),
+            FidelityError::BondAlreadyRedeemed => {
+                write!(f, "Fidelity bond has already been redeemed")
+            }
+            FidelityError::BondLocktimeExpired => write!(f, "Fidelity bond locktime has expired"),
+            FidelityError::CertExpired => write!(f, "Fidelity certificate has expired"),
+            FidelityError::InvalidCertHash => write!(f, "Invalid fidelity certificate hash"),
+            FidelityError::InvalidBondLocktime => {
+                write!(f, "Fidelity bond locktime is outside the acceptable range")
+            }
+            FidelityError::BondUncomfirmed => write!(f, "Fidelity bond transaction is unconfirmed"),
+            FidelityError::General(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl std::error::Error for FidelityError {}
+
 // ------- Fidelity Helper Scripts -------------
 #[allow(rustdoc::invalid_html_tags)]
 /// Create a Fidelity Timelocked redeemscript.
