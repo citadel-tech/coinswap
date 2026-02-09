@@ -179,3 +179,49 @@ impl From<rust_coinselect::types::SelectionError> for WalletError {
         Self::Selection(value)
     }
 }
+
+impl std::fmt::Display for WalletError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WalletError::IO(e) => write!(f, "I/O error: {}", e),
+            WalletError::Cbor(e) => write!(f, "CBOR error: {}", e),
+            WalletError::Json(e) => write!(f, "JSON error: {}", e),
+            WalletError::Rpc(e) => write!(f, "Bitcoin RPC error: {}", e),
+            WalletError::BIP32(e) => write!(f, "BIP32 error: {}", e),
+            WalletError::BIP39(e) => write!(f, "BIP39 error: {}", e),
+            WalletError::General(msg) => write!(f, "{}", msg),
+            WalletError::Protocol(e) => write!(f, "Protocol error: {}", e),
+            WalletError::Fidelity(e) => write!(f, "Fidelity error: {}", e),
+            WalletError::Locktime(e) => write!(f, "Locktime conversion error: {}", e),
+            WalletError::Secp(e) => write!(f, "Secp256k1 error: {}", e),
+            WalletError::Consensus(msg) => write!(f, "Consensus error: {}", msg),
+            WalletError::InsufficientFund {
+                available,
+                required,
+            } => {
+                write!(
+                    f,
+                    "Insufficient funds: available {} sats, required {} sats",
+                    available, required
+                )
+            }
+            WalletError::Selection(e) => write!(f, "Coin selection error: {:?}", e),
+        }
+    }
+}
+
+impl std::error::Error for WalletError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            WalletError::IO(e) => Some(e),
+            WalletError::Cbor(e) => Some(e),
+            WalletError::Json(e) => Some(e),
+            WalletError::Rpc(e) => Some(e),
+            WalletError::BIP32(e) => Some(e),
+            WalletError::BIP39(e) => Some(e),
+            WalletError::Locktime(e) => Some(e),
+            WalletError::Secp(e) => Some(e),
+            _ => None,
+        }
+    }
+}

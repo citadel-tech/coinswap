@@ -151,3 +151,77 @@ impl From<bitcoin::taproot::SigFromSliceError> for ProtocolError {
         Self::TaprootSigSlice(value)
     }
 }
+
+impl std::fmt::Display for ProtocolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProtocolError::Secp(e) => write!(f, "Secp256k1 error: {}", e),
+            ProtocolError::Script(e) => write!(f, "Script error: {}", e),
+            ProtocolError::Hash(e) => write!(f, "Hash conversion error: {}", e),
+            ProtocolError::Key(e) => write!(f, "Key conversion error: {}", e),
+            ProtocolError::Sighash(e) => write!(f, "Sighash error: {}", e),
+            ProtocolError::WrongMessage { expected, received } => {
+                write!(
+                    f,
+                    "Wrong message: expected {}, received {}",
+                    expected, received
+                )
+            }
+            ProtocolError::WrongNumOfSigs { expected, received } => {
+                write!(
+                    f,
+                    "Wrong number of signatures: expected {}, received {}",
+                    expected, received
+                )
+            }
+            ProtocolError::WrongNumOfContractTxs { expected, received } => {
+                write!(
+                    f,
+                    "Wrong number of contract txs: expected {}, received {}",
+                    expected, received
+                )
+            }
+            ProtocolError::WrongNumOfPrivkeys { expected, received } => {
+                write!(
+                    f,
+                    "Wrong number of private keys: expected {}, received {}",
+                    expected, received
+                )
+            }
+            ProtocolError::IncorrectFundingAmount { expected, found } => {
+                write!(
+                    f,
+                    "Incorrect funding amount: expected {}, found {}",
+                    expected, found
+                )
+            }
+            ProtocolError::ScriptPubkey(e) => write!(f, "Script pubkey error: {}", e),
+            ProtocolError::ScalarOutOfRange(e) => write!(f, "Scalar out of range: {}", e),
+            ProtocolError::General(msg) => write!(f, "{}", msg),
+            ProtocolError::TaprootSecp(e) => write!(f, "Taproot secp256k1 error: {}", e),
+            ProtocolError::TaprootScript(e) => write!(f, "Taproot script error: {}", e),
+            ProtocolError::TaprootBuilder(e) => write!(f, "Taproot builder error: {:?}", e),
+            ProtocolError::MusigTweak(e) => write!(f, "MuSig tweak error: {}", e),
+            ProtocolError::TaprootSigSlice(e) => write!(f, "Taproot signature slice error: {}", e),
+            ProtocolError::TaprootSighash(e) => write!(f, "Taproot sighash error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for ProtocolError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ProtocolError::Secp(e) => Some(e),
+            ProtocolError::Script(e) => Some(e),
+            ProtocolError::Hash(e) => Some(e),
+            ProtocolError::Key(e) => Some(e),
+            ProtocolError::Sighash(e) => Some(e),
+            ProtocolError::ScriptPubkey(e) => Some(e),
+            ProtocolError::TaprootSecp(e) => Some(e),
+            ProtocolError::TaprootScript(e) => Some(e),
+            ProtocolError::TaprootSigSlice(e) => Some(e),
+            ProtocolError::TaprootSighash(e) => Some(e),
+            _ => None,
+        }
+    }
+}
