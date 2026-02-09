@@ -5,10 +5,13 @@
 //! fidelity bond information and other coordination signals required
 //! by the Coinswap protocol.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use nostr::{
-    event::{EventBuilder, Kind},
+    event::{EventBuilder, Kind, Tag, TagStandard},
     key::{Keys, SecretKey},
     message::{ClientMessage, RelayMessage},
+    types::Timestamp,
     util::JsonUtil,
 };
 use tungstenite::Message;
@@ -17,13 +20,15 @@ use crate::{maker::MakerError, protocol::messages::FidelityProof};
 
 /// nost url for coinswap
 #[cfg(not(feature = "integration-test"))]
-pub const NOSTR_RELAYS: &[&str] = &["wss://nos.lol"];
+pub const NOSTR_RELAYS: &[&str] = &["wss://nos.lol", "wss://relay.damus.io"];
 /// nostr url for coinswap
 #[cfg(feature = "integration-test")]
 pub const NOSTR_RELAYS: &[&str] = &["ws://127.0.0.1:8000"];
 
 /// coinswap nostr event kind
 pub const COINSWAP_KIND: u16 = 37777;
+// 24 hours
+const EXPIRATION_SECS: u64 = 86400;
 
 /// Broadcasts a fidelity bond announcement over Nostr.
 pub fn broadcast_bond_on_nostr(fidelity: FidelityProof) -> Result<(), MakerError> {
@@ -33,7 +38,19 @@ pub fn broadcast_bond_on_nostr(fidelity: FidelityProof) -> Result<(), MakerError
     let secret_key = SecretKey::generate();
     let keys = Keys::new(secret_key);
 
+    let expiration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| {
+            log::warn!("failed to create expiration time : {}", e);
+            MakerError::General("failed to create expiration time")
+        })?
+        .as_secs()
+        + EXPIRATION_SECS;
+
     let event = EventBuilder::new(Kind::Custom(COINSWAP_KIND), content)
+        .tag(Tag::from_standardized(TagStandard::Expiration(
+            Timestamp::from_secs(expiration),
+        )))
         .build(keys.public_key)
         .sign_with_keys(&keys)
         .expect("Event should be signed");
