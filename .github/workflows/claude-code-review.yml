@@ -12,6 +12,7 @@ on:
       - "docs/**"
       - ".github/**"
       - "git_hooks/**"
+      - "README.md"
 
 # Cancel in-flight reviews when a new push arrives on the same PR,
 # so only the latest commit gets reviewed. Saves budget on rapid pushes.
