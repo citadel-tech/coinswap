@@ -79,6 +79,9 @@ jobs:
           allowed_non_write_users: "*"
           include_fix_links: false
           use_sticky_comment: true
+          # Enable progress tracking
+          # Source: https://github.com/anthropics/claude-code-action/blob/main/examples/pr-review-comprehensive.yml
+          track_progress: true
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
