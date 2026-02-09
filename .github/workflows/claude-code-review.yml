@@ -103,8 +103,8 @@ jobs:
               Review ONLY src/, docker/, docs/, .github/, git_hooks/, Cargo.toml, Cargo.lock.
               Be concise and brief.
             "
-            --max-turns 10
-            --max-budget-usd 0.50
+            --max-turns 50
+            --max-budget-usd 0.75
             --tools Read,Grep,Glob
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
