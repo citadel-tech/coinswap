@@ -21,8 +21,8 @@ use crate::{
     },
     utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::{
-        AddressType, Destination, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet,
-        WalletError,
+        ffi::SwapReport, AddressType, Destination, IncomingSwapCoinV2, OutgoingSwapCoinV2,
+        RPCConfig, Wallet, WalletError,
     },
     watch_tower::{
         service::{start_maker_watch_service, WatchService},
@@ -106,6 +106,7 @@ pub struct ConnectionState {
     pub(crate) timelock: u16,
     pub(crate) incoming_contract: IncomingSwapCoinV2,
     pub(crate) outgoing_contract: OutgoingSwapCoinV2,
+    pub(crate) swap_start_time: Option<std::time::Instant>,
 }
 
 impl Default for ConnectionState {
@@ -159,6 +160,7 @@ impl Default for ConnectionState {
                 funding_amount: Amount::ZERO,
                 swap_id: None,
             },
+            swap_start_time: None,
         }
     }
 }
@@ -170,6 +172,7 @@ impl Clone for ConnectionState {
             timelock: self.timelock,
             incoming_contract: self.incoming_contract.clone(),
             outgoing_contract: self.outgoing_contract.clone(),
+            swap_start_time: self.swap_start_time,
         }
     }
 }
@@ -878,6 +881,54 @@ impl Maker {
             txid
         );
 
+        // generate and save success report
+        let incoming_contract_txid = connection_state
+            .incoming_contract
+            .contract_tx
+            .compute_txid();
+        let outgoing_contract_txid = connection_state
+            .outgoing_contract
+            .contract_tx
+            .compute_txid();
+
+        let incoming_amount = connection_state.incoming_contract.funding_amount.to_sat();
+        let outgoing_amount = connection_state.outgoing_contract.funding_amount.to_sat();
+
+        let network = self.wallet.read()?.store.network.to_string();
+        let swap_id = connection_state.incoming_contract.swap_id.clone().unwrap();
+
+        let report = if let Some(start_time) = connection_state.swap_start_time {
+            SwapReport::maker_success(
+                swap_id,
+                start_time,
+                incoming_amount,
+                outgoing_amount,
+                incoming_contract_txid.to_string(),
+                outgoing_contract_txid.to_string(),
+                connection_state.timelock,
+                network,
+            )
+        } else {
+            // fallback if start time wasn't recorded
+            let mut report = SwapReport::maker_success(
+                swap_id,
+                std::time::Instant::now(),
+                incoming_amount,
+                outgoing_amount,
+                incoming_contract_txid.to_string(),
+                outgoing_contract_txid.to_string(),
+                connection_state.timelock,
+                network,
+            );
+            report.swap_duration_seconds = 0.0;
+            report
+        };
+
+        report.print();
+        if let Err(e) = report.save_to_disk(&self.data_dir) {
+            log::warn!("Failed to save swap report to disk: {:?}", e);
+        }
+
         // Check for test behavior: close connection after sweeping
         #[cfg(feature = "integration-test")]
         if self.behavior == MakerBehavior::CloseAfterSweep {
@@ -1523,6 +1574,13 @@ fn recover_via_hashlock(maker: Arc<Maker>, incoming: IncomingSwapCoinV2) -> Resu
         maker.config.network_port
     );
 
+    let incoming_contract_txid = incoming.contract_tx.compute_txid();
+    let incoming_amount = incoming.funding_amount.to_sat();
+    let swap_id = incoming
+        .swap_id
+        .clone()
+        .unwrap_or_else(|| incoming_contract_txid.to_string());
+
     // Try to spend via hashlock
     loop {
         if maker.shutdown.load(Relaxed) {
@@ -1542,6 +1600,25 @@ fn recover_via_hashlock(maker: Arc<Maker>, incoming: IncomingSwapCoinV2) -> Resu
                             maker.config.network_port,
                             txid
                         );
+
+                        // generate recovery report
+                        let network = wallet.store.network.to_string();
+                        let report = SwapReport::maker_recovery(
+                            swap_id.clone(),
+                            "hashlock",
+                            incoming_amount,
+                            0,
+                            incoming_contract_txid.to_string(),
+                            "N/A".to_string(),
+                            txid.to_string(),
+                            0,
+                            network,
+                        );
+                        report.print();
+                        if let Err(e) = report.save_to_disk(maker.data_dir()) {
+                            log::warn!("Failed to save recovery report to disk: {:?}", e);
+                        }
+
                         Some(Ok(()))
                     }
                     Err(e) => {
@@ -1581,6 +1658,14 @@ fn recover_via_timelock(maker: Arc<Maker>, outgoing: OutgoingSwapCoinV2) -> Resu
         maker.config.network_port
     );
 
+    let outgoing_contract_txid = outgoing.contract_tx.compute_txid();
+    let outgoing_amount = outgoing.funding_amount.to_sat();
+    let swap_id = outgoing
+        .swap_id
+        .clone()
+        .unwrap_or_else(|| outgoing_contract_txid.to_string());
+    let timelock = outgoing.get_timelock().unwrap_or(0);
+
     // Try to spend via timelock
     loop {
         if maker.shutdown.load(Relaxed) {
@@ -1598,6 +1683,24 @@ fn recover_via_timelock(maker: Arc<Maker>, outgoing: OutgoingSwapCoinV2) -> Resu
                         maker.config.network_port,
                         txid
                     );
+
+                    let network = wallet.store.network.to_string();
+                    let report = SwapReport::maker_recovery(
+                        swap_id.clone(),
+                        "timelock",
+                        0,
+                        outgoing_amount,
+                        "N/A".to_string(),
+                        outgoing_contract_txid.to_string(),
+                        txid.to_string(),
+                        timelock as u16,
+                        network,
+                    );
+                    report.print();
+                    if let Err(e) = report.save_to_disk(maker.data_dir()) {
+                        log::warn!("Failed to save recovery report to disk: {:?}", e);
+                    }
+
                     Some(Ok(()))
                 }
                 Err(e) => {
