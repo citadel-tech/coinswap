@@ -800,7 +800,7 @@ impl Taker {
                         "Received fresh offer from maker: {:?}",
                         suitable_maker.address
                     );
-                    // RespOffer message.
+                    // RespOffer message, store everything except the tweakable point as it's stored after receiving AckResponse message from Maker.
                     suitable_maker.offer.base_fee = fresh_offer.base_fee;
                     suitable_maker.offer.amount_relative_fee_pct = fresh_offer.amount_relative_fee;
                     suitable_maker.offer.time_relative_fee_pct = fresh_offer.time_relative_fee;
@@ -855,6 +855,22 @@ impl Taker {
                         self.ongoing_swap_state
                             .chosen_makers
                             .push(suitable_maker.clone());
+                        //Update the offerbook with new offer and persist it.
+                        self.offerbook
+                            .inner
+                            .write()
+                            .map_err(|e| {
+                                TakerError::General(format!(
+                                    "Failed to acquire offerbook write lock: {}",
+                                    e
+                                ))
+                            })?
+                            .mark_success(
+                                &suitable_maker.address,
+                                suitable_maker.offer.clone(),
+                                MakerProtocol::Taproot,
+                            );
+                        self.offerbook.persist()?;
                     } else {
                         log::warn!("Maker {:?} did not accept the swap request", suitable_maker);
                         continue;

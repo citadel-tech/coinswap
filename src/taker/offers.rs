@@ -178,7 +178,7 @@ impl TryFrom<&mut TcpStream> for MakerAddress {
 /// offerbook
 #[derive(Clone)]
 pub struct OfferBookHandle {
-    inner: Arc<RwLock<OfferBook>>,
+    pub(crate) inner: Arc<RwLock<OfferBook>>,
     path: PathBuf,
 }
 
@@ -482,7 +482,12 @@ impl OfferBook {
         });
     }
 
-    fn mark_success(&mut self, address: &MakerAddress, offer: Offer, protocol: MakerProtocol) {
+    pub(crate) fn mark_success(
+        &mut self,
+        address: &MakerAddress,
+        offer: Offer,
+        protocol: MakerProtocol,
+    ) {
         if let Some(m) = self.makers.iter_mut().find(|m| &m.address == address) {
             m.mark_success(offer, protocol);
         }
