@@ -57,8 +57,15 @@ use bitcoind::{
 };
 
 use coinswap::{
-    maker::{Maker, MakerBehavior, TaprootMaker, TaprootMakerBehavior},
-    taker::{api2::TakerBehavior as TaprootTakerBehavior, Taker, TakerBehavior, TaprootTaker},
+    maker::{
+        Maker, MakerBehavior, TaprootMaker, TaprootMakerBehavior,
+        UnifiedMakerServer, UnifiedMakerServerConfig,
+    },
+    protocol::common_messages::ProtocolVersion,
+    taker::{
+        api2::TakerBehavior as TaprootTakerBehavior, Taker, TakerBehavior, TaprootTaker,
+        UnifiedTaker, UnifiedTakerBehavior, UnifiedTakerConfig,
+    },
     utill::setup_logger,
     wallet::{AddressType, Balances, RPCConfig},
 };
@@ -530,6 +537,134 @@ pub fn verify_maker_pre_swap_balance_taproot(taproot_makers: &[Arc<TaprootMaker>
     maker_spendable_balance
 }
 
+/// Fund unified taker and verify balance
+#[allow(dead_code)]
+pub fn fund_unified_taker(
+    taker: &UnifiedTaker,
+    bitcoind: &bitcoind::BitcoinD,
+    utxo_count: u32,
+    utxo_value: Amount,
+    address_type: AddressType,
+) -> Amount {
+    log::info!("💰 Funding Unified Taker...");
+
+    // Fund with UTXOs
+    for _ in 0..utxo_count {
+        let addr = taker
+            .get_wallet()
+            .write()
+            .unwrap()
+            .get_next_external_address(address_type)
+            .unwrap();
+        send_to_address(bitcoind, &addr, utxo_value);
+    }
+
+    generate_blocks(bitcoind, 1);
+
+    let mut wallet = taker.get_wallet().write().unwrap();
+    wallet.sync_and_save().unwrap();
+
+    // Verify balances
+    let balances = wallet.get_balances().unwrap();
+    let expected_regular = utxo_value * utxo_count.into();
+
+    assert_eq!(balances.regular, expected_regular);
+
+    info!(
+        "Unified Taker funded successfully. Regular: {}, Spendable: {}",
+        balances.regular, balances.spendable
+    );
+
+    balances.spendable
+}
+
+/// Fund unified makers and verify their balances
+#[allow(dead_code)]
+pub fn fund_unified_makers(
+    makers: &[Arc<UnifiedMakerServer>],
+    bitcoind: &bitcoind::BitcoinD,
+    utxo_count: u32,
+    utxo_value: Amount,
+    address_type: AddressType,
+) {
+    log::info!("💰 Funding Unified Makers...");
+
+    for maker in makers {
+        let mut wallet = maker.wallet.write().unwrap();
+
+        // Fund with regular UTXOs
+        for _ in 0..utxo_count {
+            let addr = wallet.get_next_external_address(address_type).unwrap();
+            send_to_address(bitcoind, &addr, utxo_value);
+        }
+
+        generate_blocks(bitcoind, 1);
+        wallet.sync_and_save().unwrap();
+
+        // Verify balances
+        let balances = wallet.get_balances().unwrap();
+        let expected_regular = utxo_value * utxo_count.into();
+
+        assert_eq!(balances.regular, expected_regular);
+
+        info!(
+            "Unified Maker funded successfully. Regular: {}, Fidelity: {}",
+            balances.regular, balances.fidelity
+        );
+    }
+}
+
+/// Verify unified maker pre-swap balances
+#[allow(dead_code)]
+pub fn verify_unified_maker_pre_swap_balances(makers: &[Arc<UnifiedMakerServer>]) -> Vec<Amount> {
+    let mut maker_spendable_balance = Vec::new();
+
+    info!("Testing unified maker balance verification");
+
+    for (i, maker) in makers.iter().enumerate() {
+        let wallet = maker.wallet.read().unwrap();
+        let balances = wallet.get_balances().unwrap();
+
+        info!(
+            "Unified Maker {} balances: Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Spendable: {}",
+            i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable
+        );
+
+        // Regular balance after fidelity bond (allow variance for different setups)
+        assert_in_range!(
+            balances.regular.to_sat(),
+            [
+                14999500, // maker (normal case)
+                14999518, // maker (normal case with slight fee variance)
+                14999540, // maker (unified taproot case with fee variance)
+                14999542, // maker (unified taproot case with fee variance)
+                34999500, // maker multi taker case (8 utxo funded)
+                34999518, // maker multi taker case (with slight fee variance)
+            ],
+            "Unified Maker regular balance check after fidelity bond creation."
+        );
+
+        assert_eq!(balances.swap, Amount::ZERO);
+        assert_eq!(balances.contract, Amount::ZERO);
+
+        assert_eq!(
+            balances.fidelity,
+            Amount::from_btc(0.05).unwrap(),
+            "Fidelity bond should be exactly 0.05 BTC"
+        );
+
+        assert!(
+            balances.spendable > Amount::ZERO,
+            "Unified Maker {} should have spendable balance",
+            i
+        );
+
+        maker_spendable_balance.push(balances.spendable);
+    }
+
+    maker_spendable_balance
+}
+
 /// The Test Framework.
 ///
 /// Handles initializing, operating and cleaning up of all backend processes. Bitcoind, Taker and Makers.
@@ -789,6 +924,119 @@ impl TestFramework {
         });
 
         log::info!("✅ Test Framework initialization complete");
+
+        (test_framework, takers, makers, generate_blocks_handle)
+    }
+
+    /// Initialize test framework for unified protocol testing.
+    ///
+    /// This creates UnifiedTaker and UnifiedMakerServer instances that support
+    /// both Legacy (ECDSA) and Taproot (MuSig2) protocols using unified message types.
+    #[allow(clippy::type_complexity)]
+    pub fn init_unified(
+        makers_config_map: Vec<(u16, Option<u16>)>,
+        taker_behavior: Vec<UnifiedTakerBehavior>,
+    ) -> (
+        Arc<Self>,
+        Vec<UnifiedTaker>,
+        Vec<Arc<UnifiedMakerServer>>,
+        JoinHandle<()>,
+    ) {
+        // Setup directory
+        let temp_dir = env::temp_dir().join("coinswap");
+        // Remove if previously existing
+        if temp_dir.exists() {
+            fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
+        }
+        setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
+        log::info!("📁 temporary directory : {}", temp_dir.display());
+
+        let port_zmq = 28332 + rand::random::<u16>() % 1000;
+
+        let zmq_addr = format!("tcp://127.0.0.1:{port_zmq}");
+
+        let bitcoind = init_bitcoind(&temp_dir, zmq_addr.clone());
+
+        log::info!("🌐 Spawning local nostr relay for tests");
+        let (nostr_relay_shutdown, nostr_relay_handle) = spawn_nostr_relay(&temp_dir);
+
+        _ = wait_for_relay_healthy();
+
+        let shutdown = AtomicBool::new(false);
+        let test_framework = Arc::new(Self {
+            bitcoind,
+            temp_dir: temp_dir.clone(),
+            shutdown,
+            nostr_relay_shutdown,
+            nostr_relay_handle: Some(nostr_relay_handle),
+        });
+
+        // Translate a RpcConfig from the test framework.
+        let rpc_config = RPCConfig::from(test_framework.as_ref());
+
+        // Create the UnifiedTakers
+        let takers = taker_behavior
+            .into_iter()
+            .enumerate()
+            .map(|(i, behavior)| {
+                let taker_id = format!("unified_taker{}", i + 1);
+                let config = UnifiedTakerConfig::default()
+                    .with_data_dir(temp_dir.join(&taker_id))
+                    .with_wallet_name(taker_id)
+                    .with_rpc_config(rpc_config.clone())
+                    .with_zmq_addr(zmq_addr.clone());
+                let mut taker = UnifiedTaker::init(config).unwrap();
+                taker.behavior = behavior;
+                taker
+            })
+            .collect::<Vec<_>>();
+
+        let mut base_rpc_port = 4500;
+
+        // Create the UnifiedMakerServers with unified message handling
+        let makers = makers_config_map
+            .into_iter()
+            .map(|(network_port, _socks_port)| {
+                base_rpc_port += 1;
+                let maker_id = format!("unified_maker{}", network_port);
+                thread::sleep(Duration::from_secs(5)); // Avoid resource unavailable error
+
+                let config = UnifiedMakerServerConfig {
+                    data_dir: temp_dir.join(network_port.to_string()),
+                    network_port,
+                    rpc_port: base_rpc_port,
+                    base_fee: 1000,
+                    amount_relative_fee_pct: 0.025,
+                    time_relative_fee_pct: 0.001,
+                    min_swap_amount: 10_000,
+                    required_confirms: 1,
+                    supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
+                    zmq_addr: zmq_addr.clone(),
+                    fidelity_amount: 5_000_000, // 0.05 BTC
+                    fidelity_timelock: 950,     // ~950 blocks for test
+                    network: bitcoin::Network::Regtest,
+                    wallet_name: maker_id,
+                    rpc_config: rpc_config.clone(),
+                };
+
+                Arc::new(UnifiedMakerServer::init(config).unwrap())
+            })
+            .collect::<Vec<_>>();
+
+        // Start the block generation thread
+        log::info!("⛏️ Spawning block generation thread");
+        let tf_clone = test_framework.clone();
+        let generate_blocks_handle = thread::spawn(move || loop {
+            thread::sleep(Duration::from_secs(3));
+
+            if tf_clone.shutdown.load(Relaxed) {
+                log::info!("🔚 Ending block generation thread");
+                return;
+            }
+            generate_blocks(&tf_clone.bitcoind, 10);
+        });
+
+        log::info!("✅ Unified Test Framework initialization complete");
 
         (test_framework, takers, makers, generate_blocks_handle)
     }

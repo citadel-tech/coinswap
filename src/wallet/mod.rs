@@ -11,8 +11,9 @@ mod rpc;
 mod spend;
 mod split_utxos;
 mod storage;
-mod swapcoin;
-mod swapcoin2;
+pub(crate) mod swapcoin;
+pub(crate) mod swapcoin2;
+pub(crate) mod unified_swapcoin;
 
 pub use api::{Balances, UTXOSpendInfo, Wallet};
 pub use backup::WalletBackup;
@@ -25,6 +26,8 @@ pub use report::{MakerFeeInfo, SwapReport, SwapRole, SwapStatus};
 pub use rpc::RPCConfig;
 pub use spend::Destination;
 pub use storage::AddressType;
+
+// Legacy exports (for backward compatibility)
 pub(crate) use swapcoin::{
     IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletSwapCoin, WatchOnlySwapCoin,
 };

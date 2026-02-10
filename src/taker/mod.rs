@@ -12,7 +12,17 @@ pub mod error;
 pub mod offers;
 mod routines;
 
+// Unified API
+mod legacy_swap;
+mod taproot_swap;
+pub mod unified_api;
+
 pub use self::api::TakerBehavior;
 pub use api::{SwapParams, Taker};
 pub use api2::Taker as TaprootTaker;
 pub use config::TakerConfig;
+
+// Unified protocol exports
+#[cfg(feature = "integration-test")]
+pub use unified_api::UnifiedTakerBehavior;
+pub use unified_api::{UnifiedSwapParams, UnifiedSwapReport, UnifiedTaker, UnifiedTakerConfig};
