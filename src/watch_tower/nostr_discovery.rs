@@ -1,7 +1,12 @@
-//! Discovers maker fidelity bond from Nostr relays
+//! Nostr discovery module.
+//!
+//! Handles the discovery of Maker fidelity bonds via Nostr relays. It creates persistent
+//! subscriptions to CoinSwap-related events (kind 37777), validates incoming fidelity
+//! announcements against the Bitcoin blockchain, and stores verified bonds in the registry.
+
 use std::{
     borrow::Cow,
-    collections::HashSet,
+    num::NonZeroUsize,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -9,6 +14,7 @@ use std::{
 };
 
 use bitcoin::Txid;
+use lru::LruCache;
 use nostr::{
     event::Kind,
     filter::Filter,
@@ -27,6 +33,9 @@ use crate::{
     },
 };
 
+/// Maximum number of txids in memory.
+const MAX_SEEN_TXIDS: usize = 5_000;
+
 // ## TODO: Instead of looping over relay's have a connection Pool.
 /// Discovers maker fidelity bonds by subscribing to Nostr events (kind 37777).
 pub fn run_discovery(
@@ -36,7 +45,9 @@ pub fn run_discovery(
 ) -> Result<(), WatcherError> {
     log::info!("Starting market discovery via Nostr");
 
-    let seen_txid = Arc::new(Mutex::new(HashSet::new()));
+    let seen_txid = Arc::new(Mutex::new(LruCache::new(
+        NonZeroUsize::new(MAX_SEEN_TXIDS).expect("MAX_SEEN_TXIDS is non-zero"),
+    )));
     let registry = Arc::new(registry);
     let bitcoin_rpc = Arc::new(bitcoin_rpc);
 
@@ -70,7 +81,7 @@ fn run_nostr_session_for_relay(
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRpc>,
-    seen_txid: &Arc<Mutex<HashSet<Txid>>>,
+    seen_txid: &Arc<Mutex<LruCache<Txid, ()>>>,
 ) {
     log::info!("Starting Nostr session for relay {}", relay_url);
 
@@ -106,7 +117,7 @@ fn connect_and_run_once(
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRpc>,
-    seen_txid: &Arc<Mutex<HashSet<Txid>>>,
+    seen_txid: &Arc<Mutex<LruCache<Txid, ()>>>,
 ) -> Result<(), WatcherError> {
     let (mut socket, _) = tungstenite::connect(relay_url)?;
 
@@ -145,7 +156,7 @@ fn read_event_loop(
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRpc>,
     relay_url: &str,
-    seen_txid: &Arc<Mutex<HashSet<Txid>>>,
+    seen_txid: &Arc<Mutex<LruCache<Txid, ()>>>,
 ) -> Result<(), WatcherError> {
     while !shutdown.load(Ordering::SeqCst) {
         let msg = socket.read()?;
@@ -175,7 +186,7 @@ fn handle_relay_message(
     msg: RelayMessage,
     bitcoin_rpc: Arc<BitcoinRpc>,
     relay_url: &str,
-    seen_txid: &Arc<Mutex<HashSet<Txid>>>,
+    seen_txid: &Arc<Mutex<LruCache<Txid, ()>>>,
 ) -> Result<(), WatcherError> {
     match msg {
         RelayMessage::Event { event, .. } => {
@@ -187,7 +198,8 @@ fn handle_relay_message(
                 return Ok(());
             };
 
-            if seen_txid.lock()?.insert(txid) {
+            if seen_txid.lock()?.put(txid, ()).is_none() {
+                log::debug!("add new cache {}", txid);
                 let Ok(tx) = bitcoin_rpc.get_raw_tx(&txid) else {
                     log::debug!("Received invalid txid: {txid:?}");
                     return Ok(());
