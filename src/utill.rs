@@ -7,25 +7,6 @@ use bitcoin::{
     Amount, FeeRate, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
 };
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
-use log::LevelFilter;
-use log4rs::{
-    append::{console::ConsoleAppender, file::FileAppender},
-    config::{Appender, Logger, Root},
-    Config,
-};
-use serde::{Deserialize, Serialize};
-use std::{
-    cmp::max,
-    collections::HashMap,
-    env, fs,
-    io::{self, stdout, BufReader, BufWriter, ErrorKind, Read, Write},
-    net::TcpStream,
-    os::unix::io::AsRawFd,
-    path::{Path, PathBuf},
-    sync::{Once, OnceLock},
-    time::Duration,
-};
-
 use crossterm::{
     cursor::MoveTo,
     event::{
@@ -35,8 +16,25 @@ use crossterm::{
     style::Print,
     terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
 };
+use log::LevelFilter;
+use log4rs::{
+    append::{console::ConsoleAppender, file::FileAppender},
+    config::{Appender, Logger, Root},
+    Config,
+};
+use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use std::str::FromStr;
+use std::{
+    cmp::max,
+    collections::HashMap,
+    env, fs,
+    io::{self, stdout, BufReader, BufWriter, ErrorKind, Read, Write},
+    net::TcpStream,
+    path::{Path, PathBuf},
+    sync::{Once, OnceLock},
+    time::Duration,
+};
 
 static LOGGER: OnceLock<()> = OnceLock::new();
 
@@ -549,59 +547,20 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
     }
     Ok(())
 }
-// Representation of the C `struct termios` from <termios.h>
-// Used for manipulating terminal I/O settings
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct Termios {
-    c_iflag: u32,
-    c_oflag: u32,
-    c_cflag: u32,
-    c_lflag: u32,
-    c_line: u8,
-    c_cc: [u8; 32],
-    c_ispeed: u32,
-    c_ospeed: u32,
-}
 
-// Constants (from <termios.h>)
-// Terminal flag to enable/disable input echo
-const ECHO: u32 = 0x00000008;
-// Action to apply terminal attributes immediately
-const TCSANOW: i32 = 0;
-// ICANON flag: enables canonical (line-buffered) input mode
-const ICANON: u32 = 0o0000002;
-
-// Foreign Function Interface (FFI) declarations
-// Bindings to C library functions from <termios.h>
-extern "C" {
-    fn tcgetattr(fd: i32, termios_p: *mut Termios) -> i32;
-    fn tcsetattr(fd: i32, optional_actions: i32, termios_p: *const Termios) -> i32;
-}
 /// Sets the terminal input mode by enabling or disabling canonical mode and echo.
 ///
 /// - When `echo` is `true`, the terminal behaves normally (line-buffered, characters visible).
-/// - When `echo` is `false`, input is read character-by-character and hidden (used for password input).
+/// - When `echo` is `false`, input is read character-by-character and hidden
+///   (used for password-style input).
 ///
-/// # Safety
-/// This function uses unsafe FFI calls and directly modifies terminal settings.
-/// Also needed for zeroing [`Termios`] struct.
-fn set_terminal_mode(fd: i32, echo: bool) {
-    unsafe {
-        let mut term: Termios = std::mem::zeroed(); // Create a zeroed termios struct
-        if tcgetattr(fd, &mut term) != 0 {
-            panic!("Failed to get terminal attributes");
-        }
-
-        if echo {
-            term.c_lflag |= ECHO | ICANON; // Enable echo and canonical mode
-        } else {
-            term.c_lflag &= !(ECHO | ICANON); // Disable echo and canonical mode
-        }
-        // Apply modified settings immediately
-        if tcsetattr(fd, TCSANOW, &term) != 0 {
-            panic!("Failed to set terminal attributes");
-        }
+/// This uses `crossterm`'s cross-platform raw mode handling instead of
+/// directly interacting with POSIX `termios` or Win32 console APIs.
+fn set_terminal_mode(echo: bool) {
+    if echo {
+        disable_raw_mode().expect("Failed to disable raw mode");
+    } else {
+        enable_raw_mode().expect("Failed to enable raw mode");
     }
 }
 
@@ -613,12 +572,10 @@ pub fn prompt_password(message: String) -> std::io::Result<String> {
         Ok("integration-test".to_string())
     } else {
         let stdin = io::stdin();
-        let fd = stdin.as_raw_fd();
-
         print!("{message}");
         io::stdout().flush()?; // Ensure the prompt is printed
 
-        set_terminal_mode(fd, false); // disable echo & canonical mode
+        set_terminal_mode(false); // disable echo & canonical mode
 
         let mut password = String::new();
         // Buffer to read one byte at a time from stdin.
@@ -656,7 +613,7 @@ pub fn prompt_password(message: String) -> std::io::Result<String> {
             }
         }
 
-        set_terminal_mode(fd, true); // restore terminal settings
+        set_terminal_mode(true); // restore terminal settings
 
         println!(); // move to next line after input
         Ok(password.trim_end().to_string())
