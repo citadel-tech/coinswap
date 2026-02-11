@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc, RwLock,
+        mpsc, Arc, Mutex, RwLock,
     },
     thread::{sleep, Builder, JoinHandle},
     time::Duration,
@@ -49,8 +49,6 @@ const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 #[cfg(feature = "integration-test")]
 const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(10);
-
-// ##TODO: Split these constructs and API's well, in a separate module.
 
 /// Represents an offer along with the corresponding maker address.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -180,7 +178,7 @@ impl TryFrom<&mut TcpStream> for MakerAddress {
 /// offerbook
 #[derive(Clone)]
 pub struct OfferBookHandle {
-    inner: Arc<RwLock<OfferBook>>,
+    pub(crate) inner: Arc<RwLock<OfferBook>>,
     path: PathBuf,
 }
 
@@ -484,7 +482,12 @@ impl OfferBook {
         });
     }
 
-    fn mark_success(&mut self, address: &MakerAddress, offer: Offer, protocol: MakerProtocol) {
+    pub(crate) fn mark_success(
+        &mut self,
+        address: &MakerAddress,
+        offer: Offer,
+        protocol: MakerProtocol,
+    ) {
         if let Some(m) = self.makers.iter_mut().find(|m| &m.address == address) {
             m.mark_success(offer, protocol);
         }
@@ -561,41 +564,76 @@ impl OfferBook {
     }
 }
 
-// ##TODO: Don't spawn thread for each IO request, make this better.
 /// Synchronizes the offer book with specific maker addresses.
 /// Tries legacy first, then taproot.
 pub(crate) fn fetch_offer_from_makers(
     maker_addresses: Vec<MakerAddress>,
     socks_port: u16,
 ) -> Result<Vec<OfferAndAddress>, TakerError> {
-    let (tx, rx) = mpsc::channel::<Option<OfferAndAddress>>();
-    let total = maker_addresses.len();
-    let mut threads = Vec::with_capacity(total);
+    // Limit workers to CPU cores to avoid thread overhead
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(maker_addresses.len());
 
-    for addr in maker_addresses {
+    let queue = Arc::new(Mutex::new(maker_addresses.into_iter()));
+    let (tx, rx) = mpsc::channel();
+    let mut handles = Vec::with_capacity(workers);
+
+    for i in 0..workers {
+        let queue = Arc::clone(&queue);
         let tx = tx.clone();
-        let thread = Builder::new()
-            .name(format!("maker_offer_fetch_thread_{addr}"))
-            .spawn(move || {
-                let offer = addr.download_offer_with_retries(socks_port);
-                let _ = tx.send(offer);
+
+        let handle = Builder::new()
+            .name(format!("maker_offer_fetch_worker_{i}"))
+            .spawn(move || -> Result<(), TakerError> {
+                loop {
+                    let addr_opt = {
+                        let mut guard = queue.lock().map_err(|_| {
+                            TakerError::General("Maker queue mutex poisoned".into())
+                        })?;
+                        guard.next()
+                    };
+
+                    let Some(addr) = addr_opt else { break };
+                    if let Some(offer) = addr.download_offer_with_retries(socks_port) {
+                        let _ = tx.send(offer);
+                    }
+                }
+                Ok(())
             })?;
 
-        threads.push(thread);
+        handles.push(handle);
     }
 
-    let mut offers = Vec::new();
-    for _ in 0..threads.len() {
-        if let Some(offer) = rx.recv_timeout(Duration::from_secs(180))? {
-            offers.push(offer);
+    // Drop original sender so rx knows when all workers are done
+    drop(tx);
+
+    let mut first_err: Option<TakerError> = None;
+    for handle in handles {
+        match handle.join() {
+            Ok(res) => {
+                if let Err(e) = res {
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                }
+            }
+            Err(_) => {
+                if first_err.is_none() {
+                    first_err = Some(TakerError::General(
+                        "Offer fetch worker thread panicked".into(),
+                    ));
+                }
+            }
         }
+    }
+    if let Some(err) = first_err {
+        return Err(err);
     }
 
-    for t in threads {
-        if let Err(e) = t.join() {
-            log::error!("Error joining maker offer thread: {e:?}");
-        }
-    }
+    // Collect all results from channel
+    let offers: Vec<OfferAndAddress> = rx.iter().collect();
 
     Ok(offers)
 }

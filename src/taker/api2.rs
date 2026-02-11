@@ -795,16 +795,20 @@ impl Taker {
                 TakerToMakerMessage::GetOffer(get_offer_msg),
             )?;
             match get_offer_response {
-                MakerToTakerMessage::RespOffer(_fresh_offer) => {
+                MakerToTakerMessage::RespOffer(fresh_offer) => {
                     log::info!(
                         "Received fresh offer from maker: {:?}",
                         suitable_maker.address
                     );
-                    // TODO: Update entire offer other than tweakable_point
-                    // as the maker is sending temporary tweakable point in
-                    // RespOffer message.
-                    // This requires OfferAndAddress to use messages2::Offer for taproot swaps.
-                    //suitable_maker.offer.tweakable_point = fresh_offer.tweakable_point;
+                    // RespOffer message, store everything except the tweakable point as it's stored after receiving AckResponse message from Maker.
+                    suitable_maker.offer.base_fee = fresh_offer.base_fee;
+                    suitable_maker.offer.amount_relative_fee_pct = fresh_offer.amount_relative_fee;
+                    suitable_maker.offer.time_relative_fee_pct = fresh_offer.time_relative_fee;
+                    suitable_maker.offer.required_confirms = 1;
+                    suitable_maker.offer.minimum_locktime = fresh_offer.minimum_locktime;
+                    suitable_maker.offer.max_size = fresh_offer.max_size;
+                    suitable_maker.offer.min_size = fresh_offer.min_size;
+                    suitable_maker.offer.fidelity = fresh_offer.fidelity;
                 }
                 _ => {
                     log::warn!(
@@ -851,6 +855,22 @@ impl Taker {
                         self.ongoing_swap_state
                             .chosen_makers
                             .push(suitable_maker.clone());
+                        //Update the offerbook with new offer and persist it.
+                        self.offerbook
+                            .inner
+                            .write()
+                            .map_err(|e| {
+                                TakerError::General(format!(
+                                    "Failed to acquire offerbook write lock: {}",
+                                    e
+                                ))
+                            })?
+                            .mark_success(
+                                &suitable_maker.address,
+                                suitable_maker.offer.clone(),
+                                MakerProtocol::Taproot,
+                            );
+                        self.offerbook.persist()?;
                     } else {
                         log::warn!("Maker {:?} did not accept the swap request", suitable_maker);
                         continue;
