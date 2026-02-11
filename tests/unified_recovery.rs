@@ -125,7 +125,22 @@ fn test_unified_legacy_recovery_after_funding_broadcast() {
     // Mine a block to confirm any pending transactions
     generate_blocks(bitcoind, 1);
 
-    // Retry timelock recovery now that CSV has matured.
+    // Retry hashlock recovery (incoming swapcoins) now that makers have
+    // broadcast their contracts. The taker has the preimage and can spend
+    // the incoming contract outputs via the hashlock path.
+    {
+        let mut wallet = unified_taker.get_wallet().write().unwrap();
+        wallet.sync_and_save().unwrap();
+        match wallet.sweep_unified_incoming_swapcoins(2.0) {
+            Ok(swept) => info!("Swept {} incoming hashlock transactions", swept.len()),
+            Err(e) => warn!("Hashlock sweep retry: {:?}", e),
+        }
+    }
+
+    // Mine a block to confirm the hashlock sweep tx
+    generate_blocks(bitcoind, 1);
+
+    // Retry timelock recovery (outgoing swapcoins) now that CSV has matured.
     // The initial recover_from_swap() correctly broadcast the contract tx but the
     // timelock recovery failed (non-BIP68-final) because CSV wasn't mature yet.
     // After ~300 blocks, the CSV is now satisfied and we can recover.
@@ -307,6 +322,20 @@ fn test_unified_taproot_recovery_after_contract_broadcast() {
     info!("Makers shut down. Retrying timelock recovery...");
 
     // Mine a block to confirm any pending transactions
+    generate_blocks(bitcoind, 1);
+
+    // Retry hashlock recovery (incoming swapcoins) — for Taproot, the contract
+    // tx is already on-chain (broadcast by taker). The taker can spend via hashlock.
+    {
+        let mut wallet = unified_taker.get_wallet().write().unwrap();
+        wallet.sync_and_save().unwrap();
+        match wallet.sweep_unified_incoming_swapcoins(2.0) {
+            Ok(swept) => info!("Swept {} incoming hashlock transactions", swept.len()),
+            Err(e) => warn!("Hashlock sweep retry: {:?}", e),
+        }
+    }
+
+    // Mine a block to confirm the hashlock sweep tx
     generate_blocks(bitcoind, 1);
 
     // Retry timelock recovery now that the timelock has matured.

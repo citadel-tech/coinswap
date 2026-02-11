@@ -518,6 +518,42 @@ impl UnifiedTaker {
                 "Created {} incoming swapcoins from last maker",
                 self.swap_state()?.incoming_swapcoins.len()
             );
+
+            // Request the last maker's contract signature on the incoming contracts.
+            // This allows the taker to broadcast the incoming contract tx during recovery
+            // (for hashlock spending) without depending on the maker.
+            let last_maker_address = self.swap_state()?.makers[maker_count - 1]
+                .offer_and_address
+                .address
+                .to_string();
+            log::info!(
+                "Requesting receiver contract sigs from last maker: {}",
+                last_maker_address
+            );
+            let mut last_maker_stream = self.connect_to_maker(&last_maker_address)?;
+            self.handshake_maker(&mut last_maker_stream)?;
+
+            let incoming_contract_txs: Vec<Transaction> = last_senders_info
+                .iter()
+                .map(|info| info.contract_tx.clone())
+                .collect();
+
+            let receiver_sigs = self.request_receiver_sigs_for_contracts(
+                &mut last_maker_stream,
+                &swap_id,
+                &incoming_contract_txs,
+                last_senders_info,
+            )?;
+
+            // Store the maker's signatures on the incoming swapcoins
+            let swap = self.swap_state_mut()?;
+            for (incoming, sig) in swap.incoming_swapcoins.iter_mut().zip(receiver_sigs.iter()) {
+                incoming.others_contract_sig = Some(*sig);
+            }
+            log::info!(
+                "Stored {} receiver contract signatures on incoming swapcoins",
+                receiver_sigs.len()
+            );
         }
 
         log::info!("Multi-hop Legacy swap contract exchange completed");

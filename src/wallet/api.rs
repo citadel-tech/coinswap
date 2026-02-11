@@ -2768,11 +2768,60 @@ impl Wallet {
             };
 
             if !utxo_exists {
-                log::info!(
-                    "Skipping sweep for {} - UTXO not available on chain",
-                    swap_id
-                );
-                continue;
+                // For hashlock spend (no other_privkey), try broadcasting the contract tx
+                // so the contract output becomes available on-chain.
+                if swapcoin.other_privkey.is_none() && swapcoin.others_contract_sig.is_some() {
+                    log::info!(
+                        "Contract output not on-chain for {} — broadcasting signed contract tx",
+                        swap_id
+                    );
+                    match swapcoin.create_signed_contract_tx() {
+                        Ok(signed_contract_tx) => match self.send_tx(&signed_contract_tx) {
+                            Ok(txid) => {
+                                log::info!(
+                                    "Broadcast incoming contract tx {} for {}",
+                                    txid,
+                                    swap_id
+                                );
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to broadcast incoming contract tx for {}: {:?}",
+                                    swap_id,
+                                    e
+                                );
+                                continue;
+                            }
+                        },
+                        Err(e) => {
+                            log::warn!(
+                                "Failed to create signed incoming contract tx for {}: {:?}",
+                                swap_id,
+                                e
+                            );
+                            continue;
+                        }
+                    }
+
+                    // Re-check UTXO availability (including mempool) after broadcast
+                    let utxo_available = matches!(
+                        self.rpc.get_tx_out(&utxo_txid, utxo_vout, Some(true)),
+                        Ok(Some(_))
+                    );
+                    if !utxo_available {
+                        log::info!(
+                            "Contract output still not available for {} after broadcast — will retry later",
+                            swap_id
+                        );
+                        continue;
+                    }
+                } else {
+                    log::info!(
+                        "Skipping sweep for {} - UTXO not available on chain",
+                        swap_id
+                    );
+                    continue;
+                }
             }
 
             // Get next internal address for receiving the swept funds

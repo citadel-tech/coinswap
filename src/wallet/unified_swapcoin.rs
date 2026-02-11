@@ -259,6 +259,64 @@ impl IncomingSwapCoin {
         self.tap_tweak = Some(tap_tweak);
     }
 
+    /// Create a fully signed contract transaction for broadcast.
+    ///
+    /// For Legacy, the contract tx spends the P2WSH multisig funding output.
+    /// It needs both our signature and the maker's signature applied to the witness.
+    pub fn create_signed_contract_tx(&self) -> Result<Transaction, WalletError> {
+        let mut signed_tx = self.contract_tx.clone();
+
+        match self.protocol {
+            ProtocolVersion::Legacy => {
+                let my_privkey = self.my_privkey.ok_or_else(|| {
+                    WalletError::General("Missing my_privkey for contract tx signing".to_string())
+                })?;
+                let my_pubkey = self.my_pubkey.ok_or_else(|| {
+                    WalletError::General("Missing my_pubkey for contract tx signing".to_string())
+                })?;
+                let other_pubkey = self.other_pubkey.ok_or_else(|| {
+                    WalletError::General("Missing other_pubkey for contract tx signing".to_string())
+                })?;
+                let others_sig = self.others_contract_sig.ok_or_else(|| {
+                    WalletError::General(
+                        "Missing others_contract_sig for contract tx signing".to_string(),
+                    )
+                })?;
+
+                let multisig_redeemscript = crate::protocol::contract::create_multisig_redeemscript(
+                    &my_pubkey,
+                    &other_pubkey,
+                );
+
+                let my_sig = crate::protocol::contract::sign_contract_tx(
+                    &signed_tx,
+                    &multisig_redeemscript,
+                    self.funding_amount,
+                    &my_privkey,
+                )
+                .map_err(|e| {
+                    WalletError::General(format!("Failed to sign contract tx: {:?}", e))
+                })?;
+
+                if let Some(input) = signed_tx.input.get_mut(0) {
+                    crate::protocol::contract::apply_two_signatures_to_2of2_multisig_spend(
+                        &my_pubkey,
+                        &other_pubkey,
+                        &my_sig,
+                        &others_sig,
+                        input,
+                        &multisig_redeemscript,
+                    );
+                }
+            }
+            ProtocolVersion::Taproot => {
+                // Taproot contract txs don't need multisig witness signing
+            }
+        }
+
+        Ok(signed_tx)
+    }
+
     /// Creates and signs a spend transaction for this incoming swap coin.
     pub fn sign_spend_transaction(
         &self,
@@ -308,10 +366,20 @@ impl IncomingSwapCoin {
             }
         };
 
+        // For hashlock spend via contract redeemscript, the CSV opcode with
+        // value 0 requires nSequence bit 31 to be clear (BIP68-enabled).
+        // Sequence::ZERO satisfies this. For cooperative spend (2-of-2 multisig),
+        // Sequence::ENABLE_RBF_NO_LOCKTIME is fine since there's no CSV check.
+        let sequence = if self.other_privkey.is_some() {
+            Sequence::ENABLE_RBF_NO_LOCKTIME
+        } else {
+            Sequence::ZERO
+        };
+
         let tx_input = TxIn {
             previous_output,
             script_sig: bitcoin::ScriptBuf::new(),
-            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            sequence,
             witness: Witness::default(),
         };
 
@@ -411,13 +479,25 @@ impl IncomingSwapCoin {
                 WalletError::General("Missing contract_redeemscript for hashlock spend".to_string())
             })?;
 
+            // For hashlock spend, the sighash must use the contract output value
+            // (not funding_amount), because the UTXO being spent is the contract
+            // output which has value = funding_amount - contract_tx_fee.
+            let contract_output_value = self
+                .contract_tx
+                .output
+                .first()
+                .ok_or_else(|| {
+                    WalletError::General("Contract tx has no output for hashlock spend".to_string())
+                })?
+                .value;
+
             let secp = bitcoin::secp256k1::Secp256k1::new();
             let sighash = bitcoin::secp256k1::Message::from_digest_slice(
                 &SighashCache::new(&*spend_tx)
                     .p2wsh_signature_hash(
                         0,
                         contract_redeemscript,
-                        self.funding_amount,
+                        contract_output_value,
                         EcdsaSighashType::All,
                     )
                     .map_err(|e| WalletError::General(format!("Sighash error: {:?}", e)))?[..],
