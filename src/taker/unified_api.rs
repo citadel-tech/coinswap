@@ -3,7 +3,7 @@
 use std::{
     net::TcpStream,
     path::PathBuf,
-    sync::{mpsc, Arc, RwLock},
+    sync::{mpsc, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
     thread,
     time::{Duration, Instant},
 };
@@ -43,10 +43,6 @@ use crate::{
     },
 };
 
-impl Role for UnifiedTaker {
-    const RUN_DISCOVERY: bool = true;
-}
-
 use super::{
     config::TakerConfig,
     error::TakerError,
@@ -57,13 +53,19 @@ use super::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionType {
     /// Direct TCP connection.
-    CLEARNET,
+    Clearnet,
     /// Connection through Tor SOCKS proxy.
-    TOR,
+    Tor,
 }
 
 /// Timeout for connecting to makers.
 pub const CONNECT_TIMEOUT_SECS: u64 = 30;
+
+/// Base refund locktime (in blocks) for the taker's first hop.
+pub(crate) const REFUND_LOCKTIME_BASE: u16 = 20;
+
+/// Locktime increment per hop in the swap route.
+pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
 
 /// Unified Taker configuration.
 #[derive(Debug, Clone)]
@@ -99,7 +101,7 @@ impl Default for UnifiedTakerConfig {
             socks_port: 19050,
             zmq_addr: "tcp://127.0.0.1:28332".to_string(),
             password: None,
-            connection_type: ConnectionType::TOR,
+            connection_type: ConnectionType::Tor,
         }
     }
 }
@@ -194,8 +196,6 @@ pub struct UnifiedSwapReport {
     pub total_fees: Amount,
     /// Number of makers used.
     pub maker_count: usize,
-    /// Whether the swap was successful.
-    pub success: bool,
     /// Swap duration in seconds.
     pub duration_seconds: f64,
     /// Fee percentage relative to target amount.
@@ -246,8 +246,8 @@ pub struct UnifiedTaker {
     pub(crate) watch_service: WatchService,
     /// Handle for offer sync background service.
     offer_sync_handle: OfferSyncHandle,
-    /// Ongoing swap state.
-    pub(crate) ongoing_swap: OngoingSwapState,
+    /// Ongoing swap state (`None` when no swap is active).
+    pub(crate) ongoing_swap: Option<OngoingSwapState>,
     /// Test behavior.
     #[cfg(feature = "integration-test")]
     pub behavior: UnifiedTakerBehavior,
@@ -273,14 +273,68 @@ impl Drop for UnifiedTaker {
     }
 }
 
+impl Role for UnifiedTaker {
+    const RUN_DISCOVERY: bool = true;
+}
+
 impl UnifiedTaker {
+    /// Acquire a read lock on the wallet.
+    pub(crate) fn read_wallet(&self) -> Result<RwLockReadGuard<'_, Wallet>, TakerError> {
+        self.wallet
+            .read()
+            .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))
+    }
+
+    /// Acquire a write lock on the wallet.
+    pub(crate) fn write_wallet(&self) -> Result<RwLockWriteGuard<'_, Wallet>, TakerError> {
+        self.wallet
+            .write()
+            .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))
+    }
+
+    /// Get a shared reference to the ongoing swap state.
+    pub(crate) fn swap_state(&self) -> Result<&OngoingSwapState, TakerError> {
+        self.ongoing_swap
+            .as_ref()
+            .ok_or_else(|| TakerError::General("No active swap".to_string()))
+    }
+
+    /// Get a mutable reference to the ongoing swap state.
+    pub(crate) fn swap_state_mut(&mut self) -> Result<&mut OngoingSwapState, TakerError> {
+        self.ongoing_swap
+            .as_mut()
+            .ok_or_else(|| TakerError::General("No active swap".to_string()))
+    }
+
     /// Initialize a new unified taker.
     pub fn init(config: UnifiedTakerConfig) -> Result<Self, TakerError> {
         let data_dir = config.data_dir.clone().unwrap_or_else(get_taker_dir);
-
-        // Ensure the data directory exists
         std::fs::create_dir_all(&data_dir)?;
 
+        let (wallet, rpc_config) = Self::init_wallet(&config, &data_dir)?;
+        let watch_service = Self::init_watch_service(&config, &rpc_config, &data_dir)?;
+        Self::init_taker_config(&config, &data_dir)?;
+        let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
+        let offer_sync_handle =
+            Self::init_offer_sync(&offerbook, &watch_service, config.socks_port, rpc_config)?;
+
+        Ok(UnifiedTaker {
+            config,
+            wallet: Arc::new(RwLock::new(wallet)),
+            offerbook,
+            watch_service,
+            offer_sync_handle,
+            ongoing_swap: None,
+            #[cfg(feature = "integration-test")]
+            behavior: UnifiedTakerBehavior::Normal,
+        })
+    }
+
+    /// Set up the wallet from config and return it with the resolved RPC config.
+    fn init_wallet(
+        config: &UnifiedTakerConfig,
+        data_dir: &std::path::Path,
+    ) -> Result<(Wallet, RPCConfig), TakerError> {
         let wallet_file_name = config
             .wallet_file_name
             .clone()
@@ -292,14 +346,19 @@ impl UnifiedTaker {
             .ok_or_else(|| TakerError::General("RPC configuration is required".to_string()))?;
         rpc_config.wallet_name = wallet_file_name.clone();
 
-        let wallets_dir = data_dir.join("wallets");
-        let wallet_path = wallets_dir.join(&wallet_file_name);
-
-        // Initialize wallet
+        let wallet_path = data_dir.join("wallets").join(&wallet_file_name);
         let wallet =
             Wallet::load_or_init_wallet(&wallet_path, &rpc_config, config.password.clone())?;
 
-        // Initialize watch service
+        Ok((wallet, rpc_config))
+    }
+
+    /// Initialize the ZMQ-backed watch service and spawn the watcher thread.
+    fn init_watch_service(
+        config: &UnifiedTakerConfig,
+        rpc_config: &RPCConfig,
+        data_dir: &std::path::Path,
+    ) -> Result<WatchService, TakerError> {
         let backend = ZmqBackend::new(&config.zmq_addr);
         let rpc_backend = BitcoinRpc::new(rpc_config.clone())?;
         let blockchain_info = rpc_backend.get_blockchain_info()?;
@@ -307,6 +366,7 @@ impl UnifiedTaker {
             .join(".taker_watcher")
             .join(blockchain_info.chain.to_string());
         let registry = FileRegistry::load(file_registry);
+
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = mpsc::channel();
         let rpc_config_watcher = rpc_config.clone();
@@ -316,9 +376,14 @@ impl UnifiedTaker {
             .name("Unified Watcher thread".to_string())
             .spawn(move || watcher.run(rpc_config_watcher));
 
-        let watch_service = WatchService::new(tx_requests, rx_responses);
+        Ok(WatchService::new(tx_requests, rx_responses))
+    }
 
-        // Load taker config from file (or create default)
+    /// Load/merge taker config and check Tor status.
+    fn init_taker_config(
+        config: &UnifiedTakerConfig,
+        data_dir: &std::path::Path,
+    ) -> Result<(), TakerError> {
         let mut taker_config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
         if let Some(control_port) = config.control_port {
@@ -329,8 +394,7 @@ impl UnifiedTaker {
             taker_config.tor_auth_password = tor_auth_password.clone();
         }
 
-        // Check Tor status in non-test mode
-        if !cfg!(feature = "integration-test") && config.connection_type == ConnectionType::TOR {
+        if !cfg!(feature = "integration-test") && config.connection_type == ConnectionType::Tor {
             check_tor_status(
                 taker_config.control_port,
                 taker_config.tor_auth_password.as_str(),
@@ -338,30 +402,24 @@ impl UnifiedTaker {
         }
 
         taker_config.write_to_file(&data_dir.join("config.toml"))?;
+        Ok(())
+    }
 
-        // Initialize offerbook
-        let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
-
-        // Start offer sync service
+    /// Start the background offer sync service.
+    fn init_offer_sync(
+        offerbook: &OfferBookHandle,
+        watch_service: &WatchService,
+        socks_port: u16,
+        rpc_config: RPCConfig,
+    ) -> Result<OfferSyncHandle, TakerError> {
         let rpc_backend_sync = BitcoinRpc::new(rpc_config)?;
-        let offer_sync_handle = OfferSyncService::new(
+        Ok(OfferSyncService::new(
             offerbook.clone(),
             watch_service.clone(),
-            config.socks_port,
+            socks_port,
             rpc_backend_sync,
         )
-        .start();
-
-        Ok(UnifiedTaker {
-            config,
-            wallet: Arc::new(RwLock::new(wallet)),
-            offerbook,
-            watch_service,
-            offer_sync_handle,
-            ongoing_swap: OngoingSwapState::default(),
-            #[cfg(feature = "integration-test")]
-            behavior: UnifiedTakerBehavior::Normal,
-        })
+        .start())
     }
 
     /// Get reference to the wallet.
@@ -383,12 +441,7 @@ impl UnifiedTaker {
             params.protocol
         );
 
-        let available = self
-            .wallet
-            .read()
-            .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))?
-            .get_balances()?
-            .spendable;
+        let available = self.read_wallet()?.get_balances()?.spendable;
 
         let required = params.send_amount + Amount::from_sat(10000); // Buffer for fees
         if available < required {
@@ -404,17 +457,21 @@ impl UnifiedTaker {
         let swap_id = preimage[0..8].to_lower_hex_string();
         log::info!("Initiating coinswap with id: {}", swap_id);
 
+        // Extract values needed for the report before moving params into swap state
+        let amount_sent = params.send_amount;
+        let maker_count = params.maker_count;
+
         // Initialize swap state
-        self.ongoing_swap = OngoingSwapState {
+        self.ongoing_swap = Some(OngoingSwapState {
             id: swap_id.clone(),
             preimage,
-            params: params.clone(),
+            params,
             makers: Vec::new(),
             outgoing_swapcoins: Vec::new(),
             incoming_swapcoins: Vec::new(),
             multisig_nonces: Vec::new(),
             hashlock_nonces: Vec::new(),
-        };
+        });
 
         self.discover_and_select_makers()?;
 
@@ -430,22 +487,19 @@ impl UnifiedTaker {
 
         self.initialize_swap_funding()?;
 
-        if self.ongoing_swap.params.protocol == ProtocolVersion::Legacy {
+        if self.swap_state()?.params.protocol == ProtocolVersion::Legacy {
             log::info!("Using multi-hop Legacy flow with ProofOfFunding");
-            self.do_multi_hop_legacy_swap()?;
+            self.exchange_legacy_contract_data()?;
         } else {
             log::info!("Using simplified Taproot flow");
             self.exchange_contract_data()?;
-            self.create_and_broadcast_funding()?;
+            self.broadcast_contract_txs()?;
         }
 
         self.finalize_swap()?;
 
         {
-            let mut wallet = self
-                .wallet
-                .write()
-                .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))?;
+            let mut wallet = self.write_wallet()?;
             let swept = wallet.sweep_unified_incoming_swapcoins(2.0)?;
             log::info!("Swept {} incoming swapcoins", swept.len());
             wallet.sync_and_save()?;
@@ -453,9 +507,8 @@ impl UnifiedTaker {
 
         // Generate report
         let duration = swap_start_time.elapsed();
-        let amount_sent = params.send_amount;
         let amount_received = Amount::from_sat(
-            self.ongoing_swap
+            self.swap_state()?
                 .incoming_swapcoins
                 .iter()
                 .map(|sc| sc.funding_amount.to_sat())
@@ -467,12 +520,11 @@ impl UnifiedTaker {
 
         let report = UnifiedSwapReport {
             swap_id,
-            protocol_version: self.ongoing_swap.params.protocol,
+            protocol_version: self.swap_state()?.params.protocol,
             amount_sent,
             amount_received,
             total_fees,
-            maker_count: params.maker_count,
-            success: true,
+            maker_count,
             duration_seconds: duration.as_secs_f64(),
             fee_percentage: if amount_sent.to_sat() > 0 {
                 (total_fees.to_sat() as f64 / amount_sent.to_sat() as f64) * 100.0
@@ -487,18 +539,21 @@ impl UnifiedTaker {
 
     /// Discover and select makers for the swap.
     fn discover_and_select_makers(&mut self) -> Result<(), TakerError> {
-        log::info!(
-            "Discovering makers for {} hops...",
-            self.ongoing_swap.params.maker_count
-        );
+        let swap = self.swap_state()?;
+        let maker_count = swap.params.maker_count;
+        let send_amount = swap.params.send_amount;
+        let protocol = swap.params.protocol;
 
-        let maker_protocol = match self.ongoing_swap.params.protocol {
+        log::info!("Discovering makers for {} hops...", maker_count);
+
+        let maker_protocol = match protocol {
             ProtocolVersion::Legacy => MakerProtocol::Legacy,
             ProtocolVersion::Taproot => MakerProtocol::Taproot,
         };
 
         let mut available_makers = self.offerbook.active_makers(&maker_protocol);
 
+        // Polling loop: wait for offer sync to complete if no makers are available yet.
         if available_makers.is_empty() {
             log::warn!("No makers found in offerbook. Waiting for offer sync...");
 
@@ -515,7 +570,6 @@ impl UnifiedTaker {
             }
         }
 
-        let send_amount = self.ongoing_swap.params.send_amount;
         let suitable_makers: Vec<OfferAndAddress> = available_makers
             .into_iter()
             .filter(|maker| {
@@ -525,10 +579,10 @@ impl UnifiedTaker {
             })
             .collect();
 
-        if suitable_makers.len() < self.ongoing_swap.params.maker_count {
+        if suitable_makers.len() < maker_count {
             log::error!(
                 "Not enough suitable makers. Required: {}, Available: {}",
-                self.ongoing_swap.params.maker_count,
+                maker_count,
                 suitable_makers.len()
             );
             return Err(TakerError::NotEnoughMakersInOfferBook);
@@ -536,27 +590,31 @@ impl UnifiedTaker {
 
         let selected_makers: Vec<MakerConnection> = suitable_makers
             .into_iter()
-            .take(self.ongoing_swap.params.maker_count)
+            .take(maker_count)
             .map(|offer_and_address| MakerConnection {
                 offer_and_address,
-                protocol: self.ongoing_swap.params.protocol,
+                protocol,
                 tweakable_point: None,
             })
             .collect();
 
-        log::info!("Selected {} makers for the swap:", selected_makers.len());
-        for (i, maker) in selected_makers.iter().enumerate() {
-            log::info!(
-                "  Maker {}: {} (base_fee: {}, min: {}, max: {})",
-                i + 1,
-                maker.offer_and_address.address,
-                maker.offer_and_address.offer.base_fee,
-                maker.offer_and_address.offer.min_size,
-                maker.offer_and_address.offer.max_size
-            );
-        }
+        log::info!(
+            "Selected {} makers: {}",
+            selected_makers.len(),
+            selected_makers
+                .iter()
+                .enumerate()
+                .map(|(i, m)| format!(
+                    "#{} {} (fee: {})",
+                    i + 1,
+                    m.offer_and_address.address,
+                    m.offer_and_address.offer.base_fee
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
 
-        self.ongoing_swap.makers = selected_makers;
+        self.swap_state_mut()?.makers = selected_makers;
         Ok(())
     }
 
@@ -565,8 +623,15 @@ impl UnifiedTaker {
     fn negotiate_swap_details(&mut self) -> Result<(), TakerError> {
         log::info!("Negotiating swap details with makers...");
 
-        for i in 0..self.ongoing_swap.makers.len() {
-            let maker_address = self.ongoing_swap.makers[i]
+        let swap = self.swap_state()?;
+        let num_makers = swap.makers.len();
+        let maker_count = swap.params.maker_count;
+        let swap_id = swap.id.clone();
+        let send_amount = swap.params.send_amount;
+        let tx_count = swap.params.tx_count;
+
+        for i in 0..num_makers {
+            let maker_address = self.swap_state()?.makers[i]
                 .offer_and_address
                 .address
                 .to_string();
@@ -577,14 +642,14 @@ impl UnifiedTaker {
             let negotiated_protocol = self.handshake_maker(&mut stream)?;
             log::info!("Handshake complete, protocol: {:?}", negotiated_protocol);
 
-            let maker_count = self.ongoing_swap.params.maker_count;
-            let refund_locktime = 20 + 20 * (maker_count - i - 1) as u16;
+            let refund_locktime =
+                REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * (maker_count - i - 1) as u16;
 
             let swap_details = SwapDetails {
-                id: self.ongoing_swap.id.clone(),
+                id: swap_id.clone(),
                 protocol_version: negotiated_protocol,
-                amount: self.ongoing_swap.params.send_amount,
-                tx_count: self.ongoing_swap.params.tx_count,
+                amount: send_amount,
+                tx_count,
                 timelock: refund_locktime,
             };
 
@@ -596,8 +661,9 @@ impl UnifiedTaker {
             match msg {
                 MakerToTakerMessage::AckSwapDetails(ack) => {
                     if let Some(tweakable_point) = ack.tweakable_point {
-                        self.ongoing_swap.makers[i].tweakable_point = Some(tweakable_point);
-                        self.ongoing_swap.makers[i].protocol = negotiated_protocol;
+                        let swap = self.swap_state_mut()?;
+                        swap.makers[i].tweakable_point = Some(tweakable_point);
+                        swap.makers[i].protocol = negotiated_protocol;
                         log::info!("Maker {} accepted swap with tweakable point", i);
                     } else {
                         return Err(TakerError::General(format!("Maker {} rejected swap", i)));
@@ -619,9 +685,9 @@ impl UnifiedTaker {
     fn initialize_swap_funding(&mut self) -> Result<(), TakerError> {
         log::info!("Initializing swap funding...");
 
-        // Get the first maker's tweakable point
-        let first_maker = self
-            .ongoing_swap
+        let swap = self.swap_state()?;
+
+        let first_maker = swap
             .makers
             .first()
             .ok_or_else(|| TakerError::General("No makers in swap route".to_string()))?;
@@ -632,28 +698,23 @@ impl UnifiedTaker {
 
         let protocol = first_maker.protocol;
 
-        // Calculate refund locktime for the first hop (longest)
-        let maker_count = self.ongoing_swap.params.maker_count;
-        let refund_locktime = 20 + 20 * maker_count as u16;
+        let maker_count = swap.params.maker_count;
+        let refund_locktime = REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * maker_count as u16;
 
-        // Get hash value from preimage
-        let hashvalue = Hash160::hash(&self.ongoing_swap.preimage);
-        let preimage = self.ongoing_swap.preimage;
-        let send_amount = self.ongoing_swap.params.send_amount;
-        let swap_id = self.ongoing_swap.id.clone();
-        let manually_selected_outpoints =
-            self.ongoing_swap.params.manually_selected_outpoints.clone();
+        let hashvalue = Hash160::hash(&swap.preimage);
+        let preimage = swap.preimage;
+        let send_amount = swap.params.send_amount;
+        let swap_id = swap.id.clone();
+        let manually_selected_outpoints = swap.params.manually_selected_outpoints.clone();
 
         let (multisig_pubkeys, multisig_nonces, hashlock_pubkeys, hashlock_nonces) =
             generate_maker_keys(&tweakable_point, 1)?;
 
-        self.ongoing_swap.multisig_nonces = multisig_nonces;
-        self.ongoing_swap.hashlock_nonces = hashlock_nonces;
+        let swap = self.swap_state_mut()?;
+        swap.multisig_nonces = multisig_nonces;
+        swap.hashlock_nonces = hashlock_nonces;
 
-        let mut wallet = self
-            .wallet
-            .write()
-            .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))?;
+        let mut wallet = self.write_wallet()?;
 
         let network = wallet.store.network;
 
@@ -671,7 +732,7 @@ impl UnifiedTaker {
             )?,
             ProtocolVersion::Taproot => {
                 // TODO: Use nonces for taproot as well
-                Self::create_taproot_funding_static(
+                Self::create_taproot_contracts_static(
                     &mut wallet,
                     &[tweakable_point],
                     &hashlock_pubkeys,
@@ -692,12 +753,11 @@ impl UnifiedTaker {
         wallet.save_to_disk()?;
         drop(wallet);
 
-        self.ongoing_swap.outgoing_swapcoins = swapcoins;
+        let swap = self.swap_state_mut()?;
+        let num_swapcoins = swapcoins.len();
+        swap.outgoing_swapcoins = swapcoins;
 
-        log::info!(
-            "Created {} outgoing swapcoins for funding",
-            self.ongoing_swap.outgoing_swapcoins.len()
-        );
+        log::info!("Created {} outgoing swapcoins for funding", num_swapcoins);
         Ok(())
     }
 
@@ -714,7 +774,7 @@ impl UnifiedTaker {
 
         match msg {
             MakerToTakerMessage::MakerHello(maker_hello) => {
-                let desired = self.ongoing_swap.params.protocol;
+                let desired = self.swap_state()?.params.protocol;
                 if maker_hello.supported_protocols.contains(&desired) {
                     Ok(desired)
                 } else {
@@ -730,31 +790,34 @@ impl UnifiedTaker {
         }
     }
 
+    /// Returns the effective connection type, accounting for integration-test mode.
+    fn effective_connection_type(&self) -> ConnectionType {
+        if cfg!(feature = "integration-test") {
+            ConnectionType::Clearnet
+        } else {
+            self.config.connection_type
+        }
+    }
+
     /// Connect to a maker using either direct connection or Tor proxy.
     pub(crate) fn connect_to_maker(&self, address: &str) -> Result<TcpStream, TakerError> {
+        log::debug!("Connecting to maker at {}", address);
         let timeout = Duration::from_secs(CONNECT_TIMEOUT_SECS);
 
-        let socket = if cfg!(feature = "integration-test") {
-            TcpStream::connect(address).map_err(|e| {
+        let socket = match self.effective_connection_type() {
+            ConnectionType::Clearnet => TcpStream::connect(address).map_err(|e| {
                 TakerError::General(format!("Failed to connect to {}: {}", address, e))
-            })?
-        } else {
-            match self.config.connection_type {
-                ConnectionType::CLEARNET => TcpStream::connect(address).map_err(|e| {
-                    TakerError::General(format!("Failed to connect to {}: {}", address, e))
-                })?,
-                ConnectionType::TOR => {
-                    // Use SOCKS5 proxy for Tor connections
-                    let socks_addr = format!("127.0.0.1:{}", self.config.socks_port);
-                    Socks5Stream::connect(socks_addr.as_str(), address)
-                        .map_err(|e| {
-                            TakerError::General(format!(
-                                "Failed to connect to {} via Tor: {}",
-                                address, e
-                            ))
-                        })?
-                        .into_inner()
-                }
+            })?,
+            ConnectionType::Tor => {
+                let socks_addr = format!("127.0.0.1:{}", self.config.socks_port);
+                Socks5Stream::connect(socks_addr.as_str(), address)
+                    .map_err(|e| {
+                        TakerError::General(format!(
+                            "Failed to connect to {} via Tor: {}",
+                            address, e
+                        ))
+                    })?
+                    .into_inner()
             }
         };
 
@@ -768,7 +831,7 @@ impl UnifiedTaker {
 
     /// Wait for specific transaction IDs to be confirmed.
     pub(crate) fn wait_for_txids_confirmation(&self, txids: &[Txid]) -> Result<(), TakerError> {
-        let required_confirms = self.ongoing_swap.params.required_confirms;
+        let required_confirms = self.swap_state()?.params.required_confirms;
         if required_confirms == 0 || txids.is_empty() {
             return Ok(());
         }
@@ -778,11 +841,6 @@ impl UnifiedTaker {
             required_confirms,
             txids.len()
         );
-
-        let wallet = self
-            .wallet
-            .read()
-            .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))?;
 
         let start = Instant::now();
         let timeout = if cfg!(feature = "integration-test") {
@@ -794,23 +852,26 @@ impl UnifiedTaker {
         loop {
             let mut all_confirmed = true;
 
-            for txid in txids {
-                match wallet.rpc.get_raw_transaction_info(txid, None) {
-                    Ok(tx_info) => {
-                        let confirms = tx_info.confirmations.unwrap_or(0);
-                        if confirms < required_confirms {
-                            log::debug!(
-                                "Tx {} has {} confirmations (need {})",
-                                txid,
-                                confirms,
-                                required_confirms
-                            );
+            {
+                let wallet = self.read_wallet()?;
+                for txid in txids {
+                    match wallet.rpc.get_raw_transaction_info(txid, None) {
+                        Ok(tx_info) => {
+                            let confirms = tx_info.confirmations.unwrap_or(0);
+                            if confirms < required_confirms {
+                                log::debug!(
+                                    "Tx {} has {} confirmations (need {})",
+                                    txid,
+                                    confirms,
+                                    required_confirms
+                                );
+                                all_confirmed = false;
+                            }
+                        }
+                        Err(e) => {
+                            log::debug!("Error getting tx info for {}: {:?}", txid, e);
                             all_confirmed = false;
                         }
-                    }
-                    Err(e) => {
-                        log::debug!("Error getting tx info for {}: {:?}", txid, e);
-                        all_confirmed = false;
                     }
                 }
             }
@@ -832,12 +893,29 @@ impl UnifiedTaker {
     fn finalize_swap(&mut self) -> Result<(), TakerError> {
         log::info!("Finalizing swap...");
 
-        let num_makers = self.ongoing_swap.makers.len();
+        let maker_privkeys = self.reveal_preimage_and_collect_privkeys()?;
+        self.set_incoming_swapcoin_privkey(&maker_privkeys)?;
+        self.forward_privkeys_between_makers(&maker_privkeys)?;
+        self.persist_incoming_swapcoins()?;
+
+        log::info!("Swap finalized successfully");
+        Ok(())
+    }
+
+    /// Phase 1: Reveal preimage to each maker (in reverse order) and collect their private keys.
+    fn reveal_preimage_and_collect_privkeys(
+        &mut self,
+    ) -> Result<Vec<Option<bitcoin::secp256k1::SecretKey>>, TakerError> {
+        let swap = self.swap_state()?;
+        let num_makers = swap.makers.len();
+        let protocol = swap.params.protocol;
+        let swap_id = swap.id.clone();
+        let preimage = swap.preimage;
 
         let mut maker_privkeys: Vec<Option<bitcoin::secp256k1::SecretKey>> = vec![None; num_makers];
 
         for i in (0..num_makers).rev() {
-            let maker_address = self.ongoing_swap.makers[i]
+            let maker_address = self.swap_state()?.makers[i]
                 .offer_and_address
                 .address
                 .to_string();
@@ -845,30 +923,8 @@ impl UnifiedTaker {
 
             self.handshake_maker(&mut stream)?;
 
-            match self.ongoing_swap.params.protocol {
-                ProtocolVersion::Legacy => {
-                    let preimage_msg = LegacyHashPreimage::new(
-                        self.ongoing_swap.id.clone(),
-                        self.ongoing_swap.preimage,
-                        vec![], // senders_multisig_redeemscripts
-                        vec![], // receivers_multisig_redeemscripts
-                    );
-                    send_message(
-                        &mut stream,
-                        &TakerToMakerMessage::LegacyHashPreimage(preimage_msg),
-                    )?;
-                }
-                ProtocolVersion::Taproot => {
-                    let preimage_msg = TaprootHashPreimage::new(
-                        self.ongoing_swap.id.clone(),
-                        self.ongoing_swap.preimage,
-                    );
-                    send_message(
-                        &mut stream,
-                        &TakerToMakerMessage::TaprootHashPreimage(preimage_msg),
-                    )?;
-                }
-            }
+            let preimage_msg = Self::make_preimage_message(protocol, swap_id.clone(), preimage);
+            send_message(&mut stream, &preimage_msg)?;
 
             let msg_bytes = read_message(&mut stream)?;
             let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
@@ -890,31 +946,26 @@ impl UnifiedTaker {
             maker_privkeys[i] = received_privkey;
 
             if i == 0 {
-                if let Some(outgoing) = self.ongoing_swap.outgoing_swapcoins.first() {
+                let swap = self.swap_state()?;
+                if let Some(outgoing) = swap.outgoing_swapcoins.first() {
                     if let Some(privkey) = outgoing.my_privkey {
-                        let handover = PrivateKeyHandover {
-                            id: self.ongoing_swap.id.clone(),
-                            privkeys: vec![SwapPrivkey {
-                                identifier: bitcoin::ScriptBuf::new(),
-                                key: privkey,
-                            }],
-                        };
-                        let msg = match self.ongoing_swap.params.protocol {
-                            ProtocolVersion::Legacy => {
-                                TakerToMakerMessage::LegacyPrivateKeyHandover(handover)
-                            }
-                            ProtocolVersion::Taproot => {
-                                TakerToMakerMessage::TaprootPrivateKeyHandover(handover)
-                            }
-                        };
+                        let msg = Self::make_handover_message(protocol, swap_id.clone(), privkey);
                         send_message(&mut stream, &msg)?;
                     }
                 }
             }
         }
 
+        Ok(maker_privkeys)
+    }
+
+    fn set_incoming_swapcoin_privkey(
+        &mut self,
+        maker_privkeys: &[Option<bitcoin::secp256k1::SecretKey>],
+    ) -> Result<(), TakerError> {
+        let num_makers = maker_privkeys.len();
         if let Some(last_maker_privkey) = maker_privkeys.get(num_makers - 1).and_then(|p| *p) {
-            if let Some(incoming) = self.ongoing_swap.incoming_swapcoins.last_mut() {
+            if let Some(incoming) = self.swap_state_mut()?.incoming_swapcoins.last_mut() {
                 incoming.set_other_privkey(last_maker_privkey);
                 log::info!(
                     "Set taker's incoming swapcoin other_privkey from last maker ({})",
@@ -922,10 +973,20 @@ impl UnifiedTaker {
                 );
             }
         }
+        Ok(())
+    }
+
+    fn forward_privkeys_between_makers(
+        &mut self,
+        maker_privkeys: &[Option<bitcoin::secp256k1::SecretKey>],
+    ) -> Result<(), TakerError> {
+        let num_makers = maker_privkeys.len();
+        let protocol = self.swap_state()?.params.protocol;
+        let swap_id = self.swap_state()?.id.clone();
 
         for i in 1..num_makers {
             if let Some(prev_maker_privkey) = maker_privkeys.get(i - 1).and_then(|p| *p) {
-                let maker_address = self.ongoing_swap.makers[i]
+                let maker_address = self.swap_state()?.makers[i]
                     .offer_and_address
                     .address
                     .to_string();
@@ -939,72 +1000,130 @@ impl UnifiedTaker {
                     i
                 );
 
-                let handover = PrivateKeyHandover {
-                    id: self.ongoing_swap.id.clone(),
-                    privkeys: vec![SwapPrivkey {
-                        identifier: bitcoin::ScriptBuf::new(),
-                        key: prev_maker_privkey,
-                    }],
-                };
-                let msg = match self.ongoing_swap.params.protocol {
-                    ProtocolVersion::Legacy => {
-                        TakerToMakerMessage::LegacyPrivateKeyHandover(handover)
-                    }
-                    ProtocolVersion::Taproot => {
-                        TakerToMakerMessage::TaprootPrivateKeyHandover(handover)
-                    }
-                };
+                let msg =
+                    Self::make_handover_message(protocol, swap_id.clone(), prev_maker_privkey);
                 send_message(&mut stream, &msg)?;
             } else {
                 log::warn!("No privkey from maker {} to forward to maker {}", i - 1, i);
             }
         }
 
-        {
-            let mut wallet = self
-                .wallet
-                .write()
-                .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))?;
+        Ok(())
+    }
 
-            if let Some(incoming) = self.ongoing_swap.incoming_swapcoins.last_mut() {
-                incoming.set_preimage(self.ongoing_swap.preimage);
-                wallet.add_unified_incoming_swapcoin(incoming);
-            }
-
-            wallet.save_to_disk()?;
+    /// Persist the taker's incoming swapcoins with their preimage to the wallet.
+    fn persist_incoming_swapcoins(&mut self) -> Result<(), TakerError> {
+        // Set preimage on the incoming swapcoin before acquiring the wallet lock,
+        // since swap_state_mut borrows self which conflicts with write_wallet.
+        let swap = self.swap_state_mut()?;
+        if let Some(incoming) = swap.incoming_swapcoins.last_mut() {
+            incoming.set_preimage(swap.preimage);
         }
 
-        log::info!("Swap finalized successfully");
+        let mut wallet = self.write_wallet()?;
+        if let Some(incoming) = self.swap_state()?.incoming_swapcoins.last() {
+            wallet.add_unified_incoming_swapcoin(incoming);
+        }
+
+        wallet.save_to_disk()?;
         Ok(())
+    }
+
+    /// Create a protocol-appropriate preimage reveal message.
+    fn make_preimage_message(
+        protocol: ProtocolVersion,
+        swap_id: String,
+        preimage: [u8; 32],
+    ) -> TakerToMakerMessage {
+        match protocol {
+            ProtocolVersion::Legacy => {
+                let msg = LegacyHashPreimage::new(swap_id, preimage, vec![], vec![]);
+                TakerToMakerMessage::LegacyHashPreimage(msg)
+            }
+            ProtocolVersion::Taproot => {
+                let msg = TaprootHashPreimage::new(swap_id, preimage);
+                TakerToMakerMessage::TaprootHashPreimage(msg)
+            }
+        }
+    }
+
+    /// Create a protocol-appropriate private key handover message.
+    fn make_handover_message(
+        protocol: ProtocolVersion,
+        swap_id: String,
+        privkey: SecretKey,
+    ) -> TakerToMakerMessage {
+        let handover = PrivateKeyHandover {
+            id: swap_id,
+            privkeys: vec![SwapPrivkey {
+                identifier: bitcoin::ScriptBuf::new(),
+                key: privkey,
+            }],
+        };
+        match protocol {
+            ProtocolVersion::Legacy => TakerToMakerMessage::LegacyPrivateKeyHandover(handover),
+            ProtocolVersion::Taproot => TakerToMakerMessage::TaprootPrivateKeyHandover(handover),
+        }
     }
 
     /// Recover from a failed swap by spending contract outputs back to wallet.
     pub fn recover_from_swap(&mut self) -> Result<(), TakerError> {
         log::warn!("Starting swap recovery...");
 
-        let mut wallet = self
-            .wallet
-            .write()
-            .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))?;
-
-        for outgoing in &self.ongoing_swap.outgoing_swapcoins {
-            wallet.add_unified_outgoing_swapcoin(outgoing);
+        // Phase 1: Set preimage on incoming swapcoins (requires mutable swap access).
+        let preimage = self.swap_state()?.preimage;
+        let swap = self.swap_state_mut()?;
+        for incoming in &mut swap.incoming_swapcoins {
+            if incoming.hash_preimage.is_none() {
+                incoming.set_preimage(preimage);
+            }
         }
 
-        for incoming in &self.ongoing_swap.incoming_swapcoins {
-            wallet.add_unified_incoming_swapcoin(incoming);
+        // Phase 2: Persist swapcoins to wallet (requires wallet write lock + shared swap access).
+        {
+            let mut wallet = self.write_wallet()?;
+            let swap = self.swap_state()?;
+
+            for outgoing in &swap.outgoing_swapcoins {
+                wallet.add_unified_outgoing_swapcoin(outgoing);
+            }
+
+            for incoming in &swap.incoming_swapcoins {
+                wallet.add_unified_incoming_swapcoin(incoming);
+            }
+
+            wallet.save_to_disk()?;
+
+            let incoming_count = swap.incoming_swapcoins.len();
+            if incoming_count > 0 {
+                log::info!(
+                    "Attempting recovery for {} incoming swapcoins",
+                    incoming_count
+                );
+                match wallet.sweep_unified_incoming_swapcoins(2.0) {
+                    Ok(swept) => {
+                        if !swept.is_empty() {
+                            log::info!("Successfully swept {} incoming swapcoins", swept.len());
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Could not sweep incoming swapcoins now: {:?}", e);
+                        log::info!("Will need to wait for timelock expiry or manual recovery");
+                    }
+                }
+            }
         }
 
-        wallet.save_to_disk()?;
-
-        let outgoing_count = self.ongoing_swap.outgoing_swapcoins.len();
+        // Phase 3: Register outgoing contracts for monitoring (no wallet lock needed).
+        let swap = self.swap_state()?;
+        let outgoing_count = swap.outgoing_swapcoins.len();
         if outgoing_count > 0 {
             log::info!(
                 "Registered {} outgoing swapcoins for timelock recovery",
                 outgoing_count
             );
 
-            for outgoing in &self.ongoing_swap.outgoing_swapcoins {
+            for outgoing in &swap.outgoing_swapcoins {
                 if !outgoing.contract_tx.input.is_empty() {
                     let txid = outgoing.contract_tx.compute_txid();
                     let outpoint = OutPoint { txid, vout: 0 };
@@ -1014,39 +1133,7 @@ impl UnifiedTaker {
             }
         }
 
-        let incoming_count = self.ongoing_swap.incoming_swapcoins.len();
-        if incoming_count > 0 {
-            log::info!(
-                "Attempting recovery for {} incoming swapcoins",
-                incoming_count
-            );
-
-            let preimage = self.ongoing_swap.preimage;
-            for incoming in &mut self.ongoing_swap.incoming_swapcoins {
-                if incoming.hash_preimage.is_none() {
-                    incoming.set_preimage(preimage);
-                }
-            }
-
-            for incoming in &self.ongoing_swap.incoming_swapcoins {
-                wallet.add_unified_incoming_swapcoin(incoming);
-            }
-            wallet.save_to_disk()?;
-
-            match wallet.sweep_unified_incoming_swapcoins(2.0) {
-                Ok(swept) => {
-                    if !swept.is_empty() {
-                        log::info!("Successfully swept {} incoming swapcoins", swept.len());
-                    }
-                }
-                Err(e) => {
-                    log::warn!("Could not sweep incoming swapcoins now: {:?}", e);
-                    log::info!("Will need to wait for timelock expiry or manual recovery");
-                }
-            }
-        }
-
-        self.ongoing_swap = OngoingSwapState::default();
+        self.ongoing_swap = None;
 
         log::info!("Recovery complete. Swapcoins registered for monitoring.");
         log::info!("Use wallet recovery functions to spend timelocked outputs when ready.");

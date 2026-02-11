@@ -1,6 +1,6 @@
 //! Legacy (ECDSA) specific swap methods for the Unified Taker.
 
-use std::net::TcpStream;
+use std::{net::TcpStream, time::Duration};
 
 use bitcoin::{
     hashes::{hash160::Hash as Hash160, Hash},
@@ -29,6 +29,9 @@ use crate::{
 };
 
 use super::{error::TakerError, unified_api::UnifiedTaker};
+
+/// Delay to allow the maker to broadcast its funding transactions before we poll.
+const MAKER_BROADCAST_DELAY: Duration = Duration::from_secs(2);
 
 impl UnifiedTaker {
     /// Create Legacy (ECDSA) funding transactions and swapcoins (static version).
@@ -112,7 +115,386 @@ impl UnifiedTaker {
         Ok(swapcoins)
     }
 
-    /// Request contract signatures for sender from a maker
+    /// Execute the multi-hop Legacy coinswap flow.
+    pub(crate) fn exchange_legacy_contract_data(&mut self) -> Result<(), TakerError> {
+        log::info!("Starting multi-hop Legacy swap with ProofOfFunding flow");
+
+        let swap = self.swap_state()?;
+        let swap_id = swap.id.clone();
+        let maker_count = swap.makers.len();
+
+        let mut prev_senders_info: Option<Vec<SenderContractTxInfo>> = None;
+        // Taker's own keys for the last hop (set during last iteration)
+        let mut taker_multisig_privkeys: Option<Vec<SecretKey>> = None;
+        let mut taker_hashlock_privkeys: Option<Vec<SecretKey>> = None;
+
+        for maker_idx in 0..maker_count {
+            let maker_address = self.swap_state()?.makers[maker_idx]
+                .offer_and_address
+                .address
+                .to_string();
+
+            log::info!(
+                "Processing maker {} of {}: {}",
+                maker_idx + 1,
+                maker_count,
+                maker_address
+            );
+
+            // Connect to this maker
+            let mut stream = self.connect_to_maker(&maker_address)?;
+            self.handshake_maker(&mut stream)?;
+
+            // Determine our position
+            let is_first_peer = maker_idx == 0;
+            let is_last_peer = maker_idx == maker_count - 1;
+
+            let outgoing_locktime = super::unified_api::REFUND_LOCKTIME_BASE
+                + super::unified_api::REFUND_LOCKTIME_STEP * (maker_count - maker_idx - 1) as u16;
+
+            let (
+                funding_txs,
+                contract_redeemscripts,
+                multisig_redeemscripts,
+                multisig_nonces,
+                hashlock_nonces,
+            ) = if is_first_peer {
+                let outgoing = &self.swap_state()?.outgoing_swapcoins;
+                if outgoing.is_empty() {
+                    return Err(TakerError::General(
+                        "No outgoing swapcoins for first hop".to_string(),
+                    ));
+                }
+
+                let funding_txs: Vec<Transaction> = outgoing
+                    .iter()
+                    .map(|sc| {
+                        sc.funding_tx.clone().ok_or_else(|| {
+                            TakerError::General("Outgoing swapcoin missing funding_tx".to_string())
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let contract_rs: Vec<ScriptBuf> = outgoing
+                    .iter()
+                    .map(|sc| {
+                        sc.contract_redeemscript.clone().ok_or_else(|| {
+                            TakerError::General(
+                                "Outgoing swapcoin missing contract_redeemscript".to_string(),
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let multisig_rs: Vec<ScriptBuf> = outgoing
+                    .iter()
+                    .map(|sc| {
+                        let my_pub = sc.my_pubkey.ok_or_else(|| {
+                            TakerError::General("Outgoing swapcoin missing my_pubkey".to_string())
+                        })?;
+                        let other_pub = sc.other_pubkey.ok_or_else(|| {
+                            TakerError::General(
+                                "Outgoing swapcoin missing other_pubkey".to_string(),
+                            )
+                        })?;
+                        Ok(create_multisig_redeemscript(&my_pub, &other_pub))
+                    })
+                    .collect::<Result<Vec<_>, TakerError>>()?;
+
+                (
+                    funding_txs,
+                    contract_rs,
+                    multisig_rs,
+                    self.swap_state()?.multisig_nonces.clone(),
+                    self.swap_state()?.hashlock_nonces.clone(),
+                )
+            } else {
+                let prev_info = prev_senders_info.as_ref().ok_or_else(|| {
+                    TakerError::General("No previous maker info for multi-hop".to_string())
+                })?;
+
+                let funding_txs: Vec<Transaction> = prev_info
+                    .iter()
+                    .map(|info| info.funding_tx.clone())
+                    .collect();
+                let contract_rs: Vec<ScriptBuf> = prev_info
+                    .iter()
+                    .map(|info| info.contract_redeemscript.clone())
+                    .collect();
+                let multisig_rs: Vec<ScriptBuf> = prev_info
+                    .iter()
+                    .map(|info| info.multisig_redeemscript.clone())
+                    .collect();
+                let multisig_nonces: Vec<SecretKey> =
+                    prev_info.iter().map(|info| info.multisig_nonce).collect();
+                let hashlock_nonces: Vec<SecretKey> =
+                    prev_info.iter().map(|info| info.hashlock_nonce).collect();
+
+                (
+                    funding_txs,
+                    contract_rs,
+                    multisig_rs,
+                    multisig_nonces,
+                    hashlock_nonces,
+                )
+            };
+
+            if is_first_peer {
+                log::info!(
+                    "Step 1: Requesting sender contract signatures from maker {}",
+                    maker_idx
+                );
+                let sender_sigs = self.request_sender_contract_sigs(
+                    &mut stream,
+                    &swap_id,
+                    &self.swap_state()?.outgoing_swapcoins,
+                    outgoing_locktime,
+                )?;
+                let swap = self.swap_state_mut()?;
+                for (swapcoin, sig) in swap
+                    .outgoing_swapcoins
+                    .iter_mut()
+                    .zip(sender_sigs.into_iter())
+                {
+                    swapcoin.others_contract_sig = Some(sig);
+                }
+            } else {
+                log::info!(
+                    "Step 1: Skipping separate signature request (handled in ProofOfFunding flow)"
+                );
+            }
+
+            if is_first_peer {
+                log::info!(
+                    "Step 1.5: Broadcasting funding transactions and waiting for confirmation"
+                );
+                {
+                    let wallet = self.write_wallet()?;
+
+                    for swapcoin in &self.swap_state()?.outgoing_swapcoins {
+                        let funding_tx = swapcoin.funding_tx.as_ref().ok_or_else(|| {
+                            TakerError::General("Outgoing swapcoin missing funding_tx".to_string())
+                        })?;
+                        wallet.send_tx(funding_tx).map_err(|e| {
+                            TakerError::General(format!("Failed to broadcast funding tx: {:?}", e))
+                        })?;
+                    }
+                    wallet.save_to_disk()?;
+                }
+                let funding_txids: Vec<_> = self
+                    .swap_state()?
+                    .outgoing_swapcoins
+                    .iter()
+                    .filter_map(|sc| sc.funding_tx.as_ref().map(|tx| tx.compute_txid()))
+                    .collect();
+                self.wait_for_txids_confirmation(&funding_txids)?;
+            }
+
+            log::info!("Sending ProofOfFunding to maker {}", maker_idx);
+
+            let (
+                next_multisig_pubkeys,
+                next_multisig_nonces,
+                next_hashlock_pubkeys,
+                next_hashlock_nonces,
+            ) = if !is_last_peer {
+                let next_maker = &self.swap_state()?.makers[maker_idx + 1];
+                let tweakable_point = next_maker.tweakable_point.ok_or_else(|| {
+                    TakerError::General(format!("Maker {} missing tweakable_point", maker_idx + 1))
+                })?;
+                generate_maker_keys(&tweakable_point, 1)?
+            } else {
+                // Last hop: taker is the next peer, generate our own keys
+                let (multisig_pubkey, multisig_privkey) = generate_keypair();
+                let (hashlock_pubkey, hashlock_privkey) = generate_keypair();
+                let nonce = SecretKey::new(&mut OsRng);
+                taker_multisig_privkeys = Some(vec![multisig_privkey]);
+                taker_hashlock_privkeys = Some(vec![hashlock_privkey]);
+                (
+                    vec![multisig_pubkey],
+                    vec![nonce],
+                    vec![hashlock_pubkey],
+                    vec![nonce],
+                )
+            };
+
+            let (receivers_contract_txs, senders_contract_txs_info) = self
+                .send_proof_of_funding_legacy(
+                    &mut stream,
+                    &swap_id,
+                    &funding_txs,
+                    &contract_redeemscripts,
+                    &multisig_redeemscripts,
+                    &multisig_nonces,
+                    &hashlock_nonces,
+                    &next_multisig_pubkeys,
+                    &next_hashlock_pubkeys,
+                    &next_multisig_nonces,
+                    &next_hashlock_nonces,
+                    outgoing_locktime,
+                )?;
+
+            let senders_sigs = if is_last_peer {
+                log::info!("Signing sender contracts (we are last peer)");
+                let privkeys = taker_multisig_privkeys.as_ref().ok_or_else(|| {
+                    TakerError::General("Missing taker multisig privkeys for last hop".to_string())
+                })?;
+                senders_contract_txs_info
+                    .iter()
+                    .zip(privkeys.iter().cycle())
+                    .map(|(info, privkey)| {
+                        sign_contract_tx(
+                            &info.contract_tx,
+                            &info.multisig_redeemscript,
+                            info.funding_amount,
+                            privkey,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                log::info!("Requesting sender signatures from next maker");
+                let next_maker_address = self.swap_state()?.makers[maker_idx + 1]
+                    .offer_and_address
+                    .address
+                    .to_string();
+                let mut next_stream = self.connect_to_maker(&next_maker_address)?;
+                self.handshake_maker(&mut next_stream)?;
+
+                let hashvalue = Hash160::hash(&self.swap_state()?.preimage);
+                let next_locktime = super::unified_api::REFUND_LOCKTIME_BASE
+                    + super::unified_api::REFUND_LOCKTIME_STEP
+                        * (maker_count - maker_idx - 2) as u16;
+
+                self.request_sender_sigs_for_contracts(
+                    &mut next_stream,
+                    &swap_id,
+                    &senders_contract_txs_info,
+                    hashvalue,
+                    next_locktime,
+                )?
+            };
+
+            let receivers_sigs = if is_first_peer {
+                log::info!("Signing receiver contracts (we are first peer)");
+                receivers_contract_txs
+                    .iter()
+                    .zip(self.swap_state()?.outgoing_swapcoins.iter())
+                    .map(|(rx_tx, outgoing)| {
+                        let privkey = outgoing.my_privkey.ok_or(
+                            crate::protocol::error::ProtocolError::General(
+                                "Outgoing swapcoin missing my_privkey for signing",
+                            ),
+                        )?;
+                        let rs = outgoing.contract_redeemscript.as_ref().ok_or(
+                            crate::protocol::error::ProtocolError::General(
+                                "Outgoing swapcoin missing contract_redeemscript for signing",
+                            ),
+                        )?;
+                        sign_contract_tx(rx_tx, rs, outgoing.funding_amount, &privkey)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                log::info!("Requesting receiver signatures from previous maker");
+                // For subsequent hops, request from previous maker
+                let prev_maker_address = self.swap_state()?.makers[maker_idx - 1]
+                    .offer_and_address
+                    .address
+                    .to_string();
+                let mut prev_stream = self.connect_to_maker(&prev_maker_address)?;
+                self.handshake_maker(&mut prev_stream)?;
+
+                self.request_receiver_sigs_for_contracts(
+                    &mut prev_stream,
+                    &swap_id,
+                    &receivers_contract_txs,
+                    prev_senders_info.as_ref().unwrap(),
+                )?
+            };
+
+            log::info!(
+                "Sending RespContractSigsForRecvrAndSender to maker {}",
+                maker_idx
+            );
+            self.send_recvr_and_sender_sigs(&mut stream, &swap_id, receivers_sigs, senders_sigs)?;
+
+            // Store this maker's outgoing info for next hop
+            prev_senders_info = Some(senders_contract_txs_info.clone());
+
+            // Wait for this maker's funding to be broadcast and confirmed
+            log::info!(
+                "Waiting for maker {}'s funding to be confirmed...",
+                maker_idx
+            );
+            // The maker broadcasts after receiving sigs - give it a moment then wait
+            std::thread::sleep(MAKER_BROADCAST_DELAY);
+
+            // Wait for the maker's specific funding txs to be confirmed
+            let maker_funding_txids: Vec<Txid> = senders_contract_txs_info
+                .iter()
+                .map(|i| i.funding_tx.compute_txid())
+                .collect();
+
+            self.wait_for_txids_confirmation(&maker_funding_txids)?;
+
+            log::info!("Maker {} processed successfully", maker_idx);
+        }
+
+        // Create incoming swapcoins from the last maker's sender contract info.
+        // These represent the taker's receivable coins from the last hop.
+        if let Some(last_senders_info) = &prev_senders_info {
+            let multisig_privkeys = taker_multisig_privkeys.ok_or_else(|| {
+                TakerError::General(
+                    "Missing taker multisig privkeys for incoming swapcoins".to_string(),
+                )
+            })?;
+            let hashlock_privkeys = taker_hashlock_privkeys.ok_or_else(|| {
+                TakerError::General(
+                    "Missing taker hashlock privkeys for incoming swapcoins".to_string(),
+                )
+            })?;
+
+            let secp = Secp256k1::new();
+            for (info, (multisig_privkey, hashlock_privkey)) in last_senders_info.iter().zip(
+                multisig_privkeys
+                    .iter()
+                    .cycle()
+                    .zip(hashlock_privkeys.iter().cycle()),
+            ) {
+                // Extract the maker's pubkey from the multisig redeemscript
+                let (pubkey1, pubkey2) =
+                    crate::protocol::contract::read_pubkeys_from_multisig_redeemscript(
+                        &info.multisig_redeemscript,
+                    )?;
+                let my_pubkey = PublicKey {
+                    compressed: true,
+                    inner: secp256k1::PublicKey::from_secret_key(&secp, multisig_privkey),
+                };
+                let other_pubkey = if pubkey1 == my_pubkey {
+                    pubkey2
+                } else {
+                    pubkey1
+                };
+
+                let incoming = IncomingSwapCoin::new_legacy(
+                    *multisig_privkey,
+                    other_pubkey,
+                    info.contract_tx.clone(),
+                    info.contract_redeemscript.clone(),
+                    *hashlock_privkey,
+                    info.funding_amount,
+                );
+                self.swap_state_mut()?.incoming_swapcoins.push(incoming);
+            }
+
+            log::info!(
+                "Created {} incoming swapcoins from last maker",
+                self.swap_state()?.incoming_swapcoins.len()
+            );
+        }
+
+        log::info!("Multi-hop Legacy swap contract exchange completed");
+        Ok(())
+    }
+
+    /// Request contract signatures for sender from a maker.
     fn request_sender_contract_sigs(
         &self,
         stream: &mut TcpStream,
@@ -130,26 +512,26 @@ impl UnifiedTaker {
                     inner: secp256k1::PublicKey::from_secret_key(&secp, &swapcoin.timelock_privkey),
                 };
 
-                let multisig_redeemscript = if let (Some(my_pub), Some(other_pub)) =
-                    (swapcoin.my_pubkey, swapcoin.other_pubkey)
-                {
-                    create_multisig_redeemscript(&my_pub, &other_pub)
-                } else {
-                    swapcoin.contract_redeemscript.clone().unwrap_or_default()
-                };
+                let my_pub = swapcoin.my_pubkey.ok_or_else(|| {
+                    TakerError::General("Outgoing swapcoin missing my_pubkey".to_string())
+                })?;
+                let other_pub = swapcoin.other_pubkey.ok_or_else(|| {
+                    TakerError::General("Outgoing swapcoin missing other_pubkey".to_string())
+                })?;
+                let multisig_redeemscript = create_multisig_redeemscript(&my_pub, &other_pub);
 
-                ContractTxInfoForSender {
+                Ok(ContractTxInfoForSender {
                     multisig_nonce: SecretKey::new(&mut OsRng),
                     hashlock_nonce: SecretKey::new(&mut OsRng),
                     timelock_pubkey,
                     senders_contract_tx: swapcoin.contract_tx.clone(),
                     multisig_redeemscript,
                     funding_input_value: swapcoin.funding_amount,
-                }
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, TakerError>>()?;
 
-        let hashvalue = Hash160::hash(&self.ongoing_swap.preimage);
+        let hashvalue = Hash160::hash(&self.swap_state()?.preimage);
 
         let req = ReqContractSigsForSender {
             id: swap_id.to_string(),
@@ -185,7 +567,7 @@ impl UnifiedTaker {
         }
     }
 
-    /// Send proof of funding and receive ReqContractSigsAsRecvrAndSender
+    /// Send proof of funding and receive ReqContractSigsAsRecvrAndSender.
     #[allow(clippy::type_complexity)]
     #[allow(clippy::too_many_arguments)]
     fn send_proof_of_funding_legacy(
@@ -293,363 +675,6 @@ impl UnifiedTaker {
             "Sent RespContractSigsForRecvrAndSender for swap {}",
             swap_id
         );
-        Ok(())
-    }
-
-    /// Execute the multi-hop Legacy coinswap flow.
-    pub(crate) fn do_multi_hop_legacy_swap(&mut self) -> Result<(), TakerError> {
-        log::info!("Starting multi-hop Legacy swap with ProofOfFunding flow");
-
-        let swap_id = self.ongoing_swap.id.clone();
-        let maker_count = self.ongoing_swap.makers.len();
-
-        let mut prev_senders_info: Option<Vec<SenderContractTxInfo>> = None;
-        // Taker's own keys for the last hop (set during last iteration)
-        let mut taker_multisig_privkeys: Option<Vec<SecretKey>> = None;
-        let mut taker_hashlock_privkeys: Option<Vec<SecretKey>> = None;
-
-        for maker_idx in 0..maker_count {
-            let maker_address = self.ongoing_swap.makers[maker_idx]
-                .offer_and_address
-                .address
-                .to_string();
-
-            log::info!(
-                "Processing maker {} of {}: {}",
-                maker_idx + 1,
-                maker_count,
-                maker_address
-            );
-
-            // Connect to this maker
-            let mut stream = self.connect_to_maker(&maker_address)?;
-            self.handshake_maker(&mut stream)?;
-
-            // Determine our position
-            let is_first_peer = maker_idx == 0;
-            let is_last_peer = maker_idx == maker_count - 1;
-
-            let outgoing_locktime = 20 + 20 * (maker_count - maker_idx - 1) as u16;
-
-            let (
-                funding_txs,
-                contract_redeemscripts,
-                multisig_redeemscripts,
-                multisig_nonces,
-                hashlock_nonces,
-            ) = if is_first_peer {
-                let outgoing = &self.ongoing_swap.outgoing_swapcoins;
-                if outgoing.is_empty() {
-                    return Err(TakerError::General(
-                        "No outgoing swapcoins for first hop".to_string(),
-                    ));
-                }
-
-                let funding_txs: Vec<Transaction> = outgoing
-                    .iter()
-                    .filter_map(|sc| sc.funding_tx.clone())
-                    .collect();
-                let contract_rs: Vec<ScriptBuf> = outgoing
-                    .iter()
-                    .filter_map(|sc| sc.contract_redeemscript.clone())
-                    .collect();
-                let multisig_rs: Vec<ScriptBuf> = outgoing
-                    .iter()
-                    .filter_map(|sc| {
-                        if let (Some(my_pub), Some(other_pub)) = (sc.my_pubkey, sc.other_pubkey) {
-                            Some(create_multisig_redeemscript(&my_pub, &other_pub))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                (
-                    funding_txs,
-                    contract_rs,
-                    multisig_rs,
-                    self.ongoing_swap.multisig_nonces.clone(),
-                    self.ongoing_swap.hashlock_nonces.clone(),
-                )
-            } else {
-                let prev_info = prev_senders_info.as_ref().ok_or_else(|| {
-                    TakerError::General("No previous maker info for multi-hop".to_string())
-                })?;
-
-                let funding_txs: Vec<Transaction> = prev_info
-                    .iter()
-                    .map(|info| info.funding_tx.clone())
-                    .collect();
-                let contract_rs: Vec<ScriptBuf> = prev_info
-                    .iter()
-                    .map(|info| info.contract_redeemscript.clone())
-                    .collect();
-                let multisig_rs: Vec<ScriptBuf> = prev_info
-                    .iter()
-                    .map(|info| info.multisig_redeemscript.clone())
-                    .collect();
-                let multisig_nonces: Vec<SecretKey> =
-                    prev_info.iter().map(|info| info.multisig_nonce).collect();
-                let hashlock_nonces: Vec<SecretKey> =
-                    prev_info.iter().map(|info| info.hashlock_nonce).collect();
-
-                (
-                    funding_txs,
-                    contract_rs,
-                    multisig_rs,
-                    multisig_nonces,
-                    hashlock_nonces,
-                )
-            };
-
-            if is_first_peer {
-                log::info!(
-                    "Step 1: Requesting sender contract signatures from maker {}",
-                    maker_idx
-                );
-                // TODO: Store these signatures on outgoing swapcoins as other_sig
-                // (matches api.rs behavior). Currently discarded.
-                let _sender_sigs = self.request_sender_contract_sigs(
-                    &mut stream,
-                    &swap_id,
-                    &self.ongoing_swap.outgoing_swapcoins,
-                    outgoing_locktime,
-                )?;
-            } else {
-                log::info!(
-                    "Step 1: Skipping separate signature request (handled in ProofOfFunding flow)"
-                );
-            }
-
-            if is_first_peer {
-                log::info!(
-                    "Step 1.5: Broadcasting funding transactions and waiting for confirmation"
-                );
-                {
-                    let wallet = self
-                        .wallet
-                        .write()
-                        .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))?;
-
-                    for swapcoin in &self.ongoing_swap.outgoing_swapcoins {
-                        if let Some(funding_tx) = &swapcoin.funding_tx {
-                            match wallet.send_tx(funding_tx) {
-                                Ok(txid) => log::info!("Broadcast funding tx: {}", txid),
-                                Err(e) => {
-                                    log::warn!("Failed to broadcast (may already exist): {:?}", e)
-                                }
-                            }
-                        }
-                    }
-                    wallet.save_to_disk()?;
-                }
-                let funding_txids: Vec<_> = self
-                    .ongoing_swap
-                    .outgoing_swapcoins
-                    .iter()
-                    .filter_map(|sc| sc.funding_tx.as_ref().map(|tx| tx.compute_txid()))
-                    .collect();
-                self.wait_for_txids_confirmation(&funding_txids)?;
-            }
-
-            log::info!("Sending ProofOfFunding to maker {}", maker_idx);
-
-            let (
-                next_multisig_pubkeys,
-                next_multisig_nonces,
-                next_hashlock_pubkeys,
-                next_hashlock_nonces,
-            ) = if !is_last_peer {
-                let next_maker = &self.ongoing_swap.makers[maker_idx + 1];
-                let tweakable_point = next_maker.tweakable_point.ok_or_else(|| {
-                    TakerError::General(format!("Maker {} missing tweakable_point", maker_idx + 1))
-                })?;
-                generate_maker_keys(&tweakable_point, 1)?
-            } else {
-                // Last hop: taker is the next peer, generate our own keys
-                let (multisig_pubkey, multisig_privkey) = generate_keypair();
-                let (hashlock_pubkey, hashlock_privkey) = generate_keypair();
-                let nonce = SecretKey::new(&mut OsRng);
-                taker_multisig_privkeys = Some(vec![multisig_privkey]);
-                taker_hashlock_privkeys = Some(vec![hashlock_privkey]);
-                (
-                    vec![multisig_pubkey],
-                    vec![nonce],
-                    vec![hashlock_pubkey],
-                    vec![nonce],
-                )
-            };
-
-            let (receivers_contract_txs, senders_contract_txs_info) = self
-                .send_proof_of_funding_legacy(
-                    &mut stream,
-                    &swap_id,
-                    &funding_txs,
-                    &contract_redeemscripts,
-                    &multisig_redeemscripts,
-                    &multisig_nonces,
-                    &hashlock_nonces,
-                    &next_multisig_pubkeys,
-                    &next_hashlock_pubkeys,
-                    &next_multisig_nonces,
-                    &next_hashlock_nonces,
-                    outgoing_locktime,
-                )?;
-
-            let senders_sigs = if is_last_peer {
-                log::info!("Signing sender contracts (we are last peer)");
-                let privkeys = taker_multisig_privkeys.as_ref().ok_or_else(|| {
-                    TakerError::General("Missing taker multisig privkeys for last hop".to_string())
-                })?;
-                senders_contract_txs_info
-                    .iter()
-                    .zip(privkeys.iter().cycle())
-                    .map(|(info, privkey)| {
-                        sign_contract_tx(
-                            &info.contract_tx,
-                            &info.multisig_redeemscript,
-                            info.funding_amount,
-                            privkey,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-            } else {
-                log::info!("Requesting sender signatures from next maker");
-                let next_maker_address = self.ongoing_swap.makers[maker_idx + 1]
-                    .offer_and_address
-                    .address
-                    .to_string();
-                let mut next_stream = self.connect_to_maker(&next_maker_address)?;
-                self.handshake_maker(&mut next_stream)?;
-
-                let hashvalue = Hash160::hash(&self.ongoing_swap.preimage);
-                let next_locktime = 20 + 20 * (maker_count - maker_idx - 2) as u16;
-
-                self.request_sender_sigs_for_contracts(
-                    &mut next_stream,
-                    &swap_id,
-                    &senders_contract_txs_info,
-                    hashvalue,
-                    next_locktime,
-                )?
-            };
-
-            let receivers_sigs = if is_first_peer {
-                log::info!("Signing receiver contracts (we are first peer)");
-                receivers_contract_txs
-                    .iter()
-                    .zip(self.ongoing_swap.outgoing_swapcoins.iter())
-                    .map(|(rx_tx, outgoing)| {
-                        if let Some(privkey) = outgoing.my_privkey {
-                            let rs = outgoing.contract_redeemscript.clone().unwrap_or_default();
-                            sign_contract_tx(rx_tx, &rs, outgoing.funding_amount, &privkey)
-                        } else {
-                            Err(crate::protocol::error::ProtocolError::General(
-                                "No private key",
-                            ))
-                        }
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-            } else {
-                log::info!("Requesting receiver signatures from previous maker");
-                // For subsequent hops, request from previous maker
-                let prev_maker_address = self.ongoing_swap.makers[maker_idx - 1]
-                    .offer_and_address
-                    .address
-                    .to_string();
-                let mut prev_stream = self.connect_to_maker(&prev_maker_address)?;
-                self.handshake_maker(&mut prev_stream)?;
-
-                self.request_receiver_sigs_for_contracts(
-                    &mut prev_stream,
-                    &swap_id,
-                    &receivers_contract_txs,
-                    prev_senders_info.as_ref().unwrap(),
-                )?
-            };
-
-            log::info!(
-                "Sending RespContractSigsForRecvrAndSender to maker {}",
-                maker_idx
-            );
-            self.send_recvr_and_sender_sigs(&mut stream, &swap_id, receivers_sigs, senders_sigs)?;
-
-            // Store this maker's outgoing info for next hop
-            prev_senders_info = Some(senders_contract_txs_info.clone());
-
-            // Wait for this maker's funding to be broadcast and confirmed
-            log::info!(
-                "Waiting for maker {}'s funding to be confirmed...",
-                maker_idx
-            );
-            // The maker broadcasts after receiving sigs - give it a moment then wait
-            std::thread::sleep(std::time::Duration::from_secs(2));
-
-            // Wait for the maker's specific funding txs to be confirmed
-            let maker_funding_txids: Vec<Txid> = senders_contract_txs_info
-                .iter()
-                .map(|i| i.funding_tx.compute_txid())
-                .collect();
-
-            self.wait_for_txids_confirmation(&maker_funding_txids)?;
-
-            log::info!("Maker {} processed successfully", maker_idx);
-        }
-
-        // Create incoming swapcoins from the last maker's sender contract info.
-        // These represent the taker's receivable coins from the last hop.
-        if let Some(last_senders_info) = &prev_senders_info {
-            let multisig_privkeys = taker_multisig_privkeys.ok_or_else(|| {
-                TakerError::General(
-                    "Missing taker multisig privkeys for incoming swapcoins".to_string(),
-                )
-            })?;
-            let hashlock_privkeys = taker_hashlock_privkeys.ok_or_else(|| {
-                TakerError::General(
-                    "Missing taker hashlock privkeys for incoming swapcoins".to_string(),
-                )
-            })?;
-
-            for (info, (multisig_privkey, hashlock_privkey)) in last_senders_info.iter().zip(
-                multisig_privkeys
-                    .iter()
-                    .cycle()
-                    .zip(hashlock_privkeys.iter().cycle()),
-            ) {
-                // Extract the maker's pubkey from the multisig redeemscript
-                let (pubkey1, pubkey2) =
-                    crate::protocol::contract::read_pubkeys_from_multisig_redeemscript(
-                        &info.multisig_redeemscript,
-                    )?;
-                let secp = Secp256k1::new();
-                let my_pubkey = PublicKey {
-                    compressed: true,
-                    inner: secp256k1::PublicKey::from_secret_key(&secp, multisig_privkey),
-                };
-                let other_pubkey = if pubkey1 == my_pubkey {
-                    pubkey2
-                } else {
-                    pubkey1
-                };
-
-                let incoming = IncomingSwapCoin::new_legacy(
-                    *multisig_privkey,
-                    other_pubkey,
-                    info.contract_tx.clone(),
-                    info.contract_redeemscript.clone(),
-                    *hashlock_privkey,
-                    info.funding_amount,
-                );
-                self.ongoing_swap.incoming_swapcoins.push(incoming);
-            }
-
-            log::info!(
-                "Created {} incoming swapcoins from last maker",
-                self.ongoing_swap.incoming_swapcoins.len()
-            );
-        }
-
-        log::info!("Multi-hop Legacy swap contract exchange completed");
         Ok(())
     }
 

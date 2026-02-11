@@ -22,9 +22,9 @@ use crate::{
 use super::{error::TakerError, unified_api::UnifiedTaker};
 
 impl UnifiedTaker {
-    /// Create Taproot (MuSig2) funding transactions and swapcoins (static version).
+    /// Create Taproot (MuSig2) contract transactions and swapcoins (static version).
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn create_taproot_funding_static(
+    pub(crate) fn create_taproot_contracts_static(
         wallet: &mut Wallet,
         multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
@@ -62,7 +62,6 @@ impl UnifiedTaker {
                 .unwrap_or(bitcoin::absolute::LockTime::ZERO);
             let timelock_script = create_timelock_script(locktime_abs, &other_xonly);
 
-            // Create Taproot output using TaprootBuilder
             let builder = bitcoin::taproot::TaprootBuilder::new()
                 .add_leaf(1, hashlock_script.clone())
                 .map_err(|e| TakerError::General(format!("Failed to add hashlock leaf: {:?}", e)))?
@@ -104,21 +103,15 @@ impl UnifiedTaker {
             {
                 let funding_amount = funding_tx.output[output_pos as usize].value;
 
-                // For Taproot, the funding tx IS the contract — it directly creates
-                // the P2TR output with hashlock/timelock script paths. There's no
-                // separate contract transaction like in Legacy.
-                let contract_tx = funding_tx.clone();
-
-                // Create outgoing swapcoin with Taproot data
+                // Create outgoing swapcoin with Taproot data.
                 let mut outgoing = OutgoingSwapCoin::new_taproot(
                     my_privkey,
                     hashlock_script.clone(),
                     timelock_script.clone(),
-                    contract_tx,
+                    funding_tx.clone(),
                     funding_amount,
                 );
                 outgoing.swap_id = Some(swap_id.to_string());
-                outgoing.funding_tx = Some(funding_tx.clone());
                 outgoing.set_taproot_params(
                     my_privkey,
                     my_pubkey,
@@ -138,10 +131,10 @@ impl UnifiedTaker {
     pub(crate) fn exchange_contract_data(&mut self) -> Result<(), TakerError> {
         log::info!("Exchanging contract data with makers...");
 
-        let secp = Secp256k1::new();
+        let num_makers = self.swap_state()?.makers.len();
 
-        for i in 0..self.ongoing_swap.makers.len() {
-            let maker_address = self.ongoing_swap.makers[i]
+        for i in 0..num_makers {
+            let maker_address = self.swap_state()?.makers[i]
                 .offer_and_address
                 .address
                 .to_string();
@@ -157,87 +150,25 @@ impl UnifiedTaker {
                 tap_tweak,
                 contract_txs,
                 amounts,
-            ) = if i == 0 && !self.ongoing_swap.outgoing_swapcoins.is_empty() {
-                let (pks, hl_scripts, tl_scripts, ik, tw) =
-                    self.build_contract_data_from_outgoing()?;
-
-                let mut contract_txs = Vec::new();
-                let mut amounts = Vec::new();
-
-                for swapcoin in &self.ongoing_swap.outgoing_swapcoins {
-                    if let Some(funding_tx) = &swapcoin.funding_tx {
-                        contract_txs.push(funding_tx.clone());
-                    }
-                    amounts.push(swapcoin.funding_amount);
-                }
-
-                (pks, hl_scripts, tl_scripts, ik, tw, contract_txs, amounts)
+            ) = if i == 0 && !self.swap_state()?.outgoing_swapcoins.is_empty() {
+                self.build_contract_data_from_outgoing()?
             } else {
-                let prev_incoming =
-                    self.ongoing_swap
-                        .incoming_swapcoins
-                        .get(i - 1)
-                        .ok_or_else(|| {
-                            TakerError::General(format!(
-                                "Missing incoming swapcoin from previous hop {}",
-                                i - 1
-                            ))
-                        })?;
-
-                let contract_txs = vec![prev_incoming.contract_tx.clone()];
-                let amounts = vec![prev_incoming.funding_amount];
-
-                let pubkeys = vec![prev_incoming.other_pubkey.ok_or_else(|| {
-                    TakerError::General(
-                        "Previous incoming swapcoin missing other_pubkey".to_string(),
-                    )
-                })?];
-
-                let internal_key = prev_incoming.internal_key.ok_or_else(|| {
-                    TakerError::General(
-                        "Previous incoming swapcoin missing internal_key".to_string(),
-                    )
-                })?;
-                let tweak_bytes = prev_incoming
-                    .tap_tweak
-                    .map(|s| s.to_be_bytes())
-                    .unwrap_or([0u8; 32]);
-                let tap_tweak = SerializableScalar::from_bytes(tweak_bytes.to_vec());
-
-                let hashlock_scripts = prev_incoming
-                    .hashlock_script
-                    .as_ref()
-                    .map(|s| vec![s.clone()])
-                    .unwrap_or_default();
-                let timelock_scripts = prev_incoming
-                    .timelock_script
-                    .as_ref()
-                    .map(|s| vec![s.clone()])
-                    .unwrap_or_default();
-
-                (
-                    pubkeys,
-                    hashlock_scripts,
-                    timelock_scripts,
-                    internal_key,
-                    tap_tweak,
-                    contract_txs,
-                    amounts,
-                )
+                self.build_contract_data_from_incoming(i)?
             };
 
+            let secp = Secp256k1::new();
             let my_privkey = SecretKey::new(&mut OsRng);
             let my_pubkey = PublicKey {
                 compressed: true,
                 inner: secp256k1::PublicKey::from_secret_key(&secp, &my_privkey),
             };
 
-            let next_hop_point = if i + 1 < self.ongoing_swap.makers.len() {
-                self.ongoing_swap.makers[i + 1]
+            let next_hop_point = if i + 1 < self.swap_state()?.makers.len() {
+                self.swap_state()?.makers[i + 1]
                     .tweakable_point
                     .unwrap_or(my_pubkey)
             } else {
-                my_pubkey 
+                my_pubkey
             };
 
             log::info!(
@@ -248,7 +179,7 @@ impl UnifiedTaker {
             );
 
             let contract_data = TaprootContractData::new(
-                self.ongoing_swap.id.clone(),
+                self.swap_state()?.id.clone(),
                 pubkeys,
                 next_hop_point,
                 internal_key,
@@ -288,7 +219,7 @@ impl UnifiedTaker {
         Ok(())
     }
 
-    /// Build contract data message from our outgoing swapcoins (Taproot).
+    /// Build contract data from our outgoing swapcoins (first hop).
     #[allow(clippy::type_complexity)]
     fn build_contract_data_from_outgoing(
         &self,
@@ -299,14 +230,18 @@ impl UnifiedTaker {
             Vec<ScriptBuf>,
             secp256k1::XOnlyPublicKey,
             SerializableScalar,
+            Vec<bitcoin::Transaction>,
+            Vec<Amount>,
         ),
         TakerError,
     > {
         let mut pubkeys = Vec::new();
         let mut hashlock_scripts = Vec::new();
         let mut timelock_scripts = Vec::new();
+        let mut contract_txs = Vec::new();
+        let mut amounts = Vec::new();
 
-        for swapcoin in &self.ongoing_swap.outgoing_swapcoins {
+        for swapcoin in &self.swap_state()?.outgoing_swapcoins {
             if let Some(pubkey) = swapcoin.my_pubkey {
                 pubkeys.push(pubkey);
             }
@@ -318,10 +253,13 @@ impl UnifiedTaker {
             if let Some(tl_script) = swapcoin.timelock_script() {
                 timelock_scripts.push(tl_script.clone());
             }
+
+            contract_txs.push(swapcoin.contract_tx.clone());
+            amounts.push(swapcoin.funding_amount);
         }
 
         let first_swapcoin = self
-            .ongoing_swap
+            .swap_state()?
             .outgoing_swapcoins
             .first()
             .ok_or_else(|| TakerError::General("No outgoing swapcoins".to_string()))?;
@@ -341,6 +279,74 @@ impl UnifiedTaker {
             timelock_scripts,
             internal_key,
             tap_tweak,
+            contract_txs,
+            amounts,
+        ))
+    }
+
+    /// Build contract data from a previous incoming swapcoin (subsequent hops).
+    #[allow(clippy::type_complexity)]
+    fn build_contract_data_from_incoming(
+        &self,
+        hop_index: usize,
+    ) -> Result<
+        (
+            Vec<PublicKey>,
+            Vec<ScriptBuf>,
+            Vec<ScriptBuf>,
+            secp256k1::XOnlyPublicKey,
+            SerializableScalar,
+            Vec<bitcoin::Transaction>,
+            Vec<Amount>,
+        ),
+        TakerError,
+    > {
+        let prev_incoming = self
+            .swap_state()?
+            .incoming_swapcoins
+            .get(hop_index - 1)
+            .ok_or_else(|| {
+                TakerError::General(format!(
+                    "Missing incoming swapcoin from previous hop {}",
+                    hop_index - 1
+                ))
+            })?;
+
+        let contract_txs = vec![prev_incoming.contract_tx.clone()];
+        let amounts = vec![prev_incoming.funding_amount];
+
+        let pubkeys = vec![prev_incoming.other_pubkey.ok_or_else(|| {
+            TakerError::General("Previous incoming swapcoin missing other_pubkey".to_string())
+        })?];
+
+        let internal_key = prev_incoming.internal_key.ok_or_else(|| {
+            TakerError::General("Previous incoming swapcoin missing internal_key".to_string())
+        })?;
+        let tweak_bytes = prev_incoming
+            .tap_tweak
+            .map(|s| s.to_be_bytes())
+            .unwrap_or([0u8; 32]);
+        let tap_tweak = SerializableScalar::from_bytes(tweak_bytes.to_vec());
+
+        let hashlock_scripts = prev_incoming
+            .hashlock_script
+            .as_ref()
+            .map(|s| vec![s.clone()])
+            .unwrap_or_default();
+        let timelock_scripts = prev_incoming
+            .timelock_script
+            .as_ref()
+            .map(|s| vec![s.clone()])
+            .unwrap_or_default();
+
+        Ok((
+            pubkeys,
+            hashlock_scripts,
+            timelock_scripts,
+            internal_key,
+            tap_tweak,
+            contract_txs,
+            amounts,
         ))
     }
 
@@ -357,11 +363,10 @@ impl UnifiedTaker {
                 TakerError::General("No contract tx in contract data".to_string())
             })?;
 
-        let amount = contract
-            .amounts
-            .first()
-            .cloned()
-            .unwrap_or(self.ongoing_swap.params.send_amount);
+        let amount =
+            contract.amounts.first().cloned().ok_or_else(|| {
+                TakerError::General("No amount in Taproot contract data".to_string())
+            })?;
 
         let hashlock_privkey = SecretKey::new(&mut OsRng);
 
@@ -373,14 +378,10 @@ impl UnifiedTaker {
             amount,
         );
 
-        let other_pubkey = contract
-            .pubkeys
-            .first()
-            .cloned()
-            .unwrap_or_else(|| PublicKey {
-                compressed: true,
-                inner: secp256k1::PublicKey::from_secret_key(&secp, &my_privkey),
-            });
+        let other_pubkey =
+            contract.pubkeys.first().cloned().ok_or_else(|| {
+                TakerError::General("No pubkey in Taproot contract data".to_string())
+            })?;
 
         swapcoin.my_privkey = Some(my_privkey);
         swapcoin.my_pubkey = Some(PublicKey {
@@ -392,60 +393,45 @@ impl UnifiedTaker {
         swapcoin.tap_tweak = Some(contract.tap_tweak.clone().into());
 
         swapcoin.swap_id = Some(contract.id.clone());
-        self.ongoing_swap.incoming_swapcoins.push(swapcoin);
+        self.swap_state_mut()?.incoming_swapcoins.push(swapcoin);
         Ok(())
     }
 
-    /// Create and broadcast funding transactions (Taproot).
-    pub(crate) fn create_and_broadcast_funding(&mut self) -> Result<(), TakerError> {
-        log::info!("Creating and broadcasting funding transactions...");
+    /// Broadcast contract transactions (Taproot).
+    pub(crate) fn broadcast_contract_txs(&mut self) -> Result<(), TakerError> {
+        log::info!("Broadcasting contract transactions...");
 
-        let wallet = self
-            .wallet
-            .write()
-            .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))?;
+        let wallet = self.write_wallet()?;
 
-        for swapcoin in &self.ongoing_swap.outgoing_swapcoins {
-            if let Some(funding_tx) = &swapcoin.funding_tx {
-                match wallet.send_tx(funding_tx) {
-                    Ok(txid) => {
-                        log::info!("Broadcast funding tx: {}", txid);
+        for swapcoin in &self.swap_state()?.outgoing_swapcoins {
+            let txid = wallet.send_tx(&swapcoin.contract_tx).map_err(|e| {
+                TakerError::General(format!("Failed to broadcast contract tx: {:?}", e))
+            })?;
 
-                        let outpoint = OutPoint {
-                            txid,
-                            vout: swapcoin
-                                .contract_tx
-                                .input
-                                .first()
-                                .map(|i| i.previous_output.vout)
-                                .unwrap_or(0),
-                        };
-                        self.watch_service.register_watch_request(outpoint);
-                    }
-                    Err(e) => {
-                        log::error!("Failed to broadcast funding tx: {:?}", e);
-                    }
-                }
-            } else {
-                log::warn!(
-                    "No funding tx found for swapcoin, swap_id: {:?}",
-                    swapcoin.swap_id
-                );
-            }
+            log::info!("Broadcast contract tx: {}", txid);
+
+            let vout = swapcoin
+                .contract_tx
+                .output
+                .iter()
+                .position(|o| o.value == swapcoin.funding_amount)
+                .unwrap_or(0) as u32;
+            let outpoint = OutPoint { txid, vout };
+            self.watch_service.register_watch_request(outpoint);
         }
 
         wallet.save_to_disk()?;
         drop(wallet);
 
-        let funding_txids: Vec<_> = self
-            .ongoing_swap
+        let contract_txids: Vec<_> = self
+            .swap_state()?
             .outgoing_swapcoins
             .iter()
-            .filter_map(|sc| sc.funding_tx.as_ref().map(|tx| tx.compute_txid()))
+            .map(|sc| sc.contract_tx.compute_txid())
             .collect();
-        self.wait_for_txids_confirmation(&funding_txids)?;
+        self.wait_for_txids_confirmation(&contract_txids)?;
 
-        log::info!("Funding transactions created and broadcast");
+        log::info!("Contract transactions broadcast and confirmed");
         Ok(())
     }
 }

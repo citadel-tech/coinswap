@@ -58,8 +58,8 @@ use bitcoind::{
 
 use coinswap::{
     maker::{
-        Maker, MakerBehavior, TaprootMaker, TaprootMakerBehavior,
-        UnifiedMakerServer, UnifiedMakerServerConfig,
+        Maker, MakerBehavior, TaprootMaker, TaprootMakerBehavior, UnifiedMakerServer,
+        UnifiedMakerServerConfig,
     },
     protocol::common_messages::ProtocolVersion,
     taker::{
