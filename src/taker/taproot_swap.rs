@@ -57,10 +57,10 @@ impl UnifiedTaker {
             // For Taproot, use SHA256 hash of the preimage
             let sha256_hash: [u8; 32] =
                 bitcoin::hashes::sha256::Hash::hash(&preimage).to_byte_array();
-            let hashlock_script = create_hashlock_script(&sha256_hash, &my_xonly);
+            let hashlock_script = create_hashlock_script(&sha256_hash, &other_xonly);
             let locktime_abs = bitcoin::absolute::LockTime::from_height(locktime as u32)
                 .unwrap_or(bitcoin::absolute::LockTime::ZERO);
-            let timelock_script = create_timelock_script(locktime_abs, &other_xonly);
+            let timelock_script = create_timelock_script(locktime_abs, &my_xonly);
 
             let builder = bitcoin::taproot::TaprootBuilder::new()
                 .add_leaf(1, hashlock_script.clone())

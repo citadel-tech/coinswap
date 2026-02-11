@@ -527,16 +527,15 @@ impl Wallet {
         &mut self,
         coin: &super::unified_swapcoin::IncomingSwapCoin,
     ) {
-        let swap_id = coin
-            .swap_id
-            .clone()
-            .unwrap_or_else(|| coin.contract_tx.compute_txid().to_string());
+        // Use contract txid as key to ensure each swapcoin has a unique entry,
+        // even when multiple incoming swapcoins share the same swap_id.
+        let key = coin.contract_tx.compute_txid().to_string();
         self.store
             .unified_incoming_swapcoins
-            .insert(swap_id.clone(), coin.clone());
+            .insert(key.clone(), coin.clone());
         log::info!(
             "Added unified incoming swapcoin to wallet store: {} (total: {})",
-            swap_id,
+            key,
             self.store.unified_incoming_swapcoins.len()
         );
     }
@@ -546,16 +545,15 @@ impl Wallet {
         &mut self,
         coin: &super::unified_swapcoin::OutgoingSwapCoin,
     ) {
-        let swap_id = coin
-            .swap_id
-            .clone()
-            .unwrap_or_else(|| coin.contract_tx.compute_txid().to_string());
+        // Use contract txid as key to ensure each swapcoin has a unique entry,
+        // even when multiple outgoing swapcoins share the same swap_id.
+        let key = coin.contract_tx.compute_txid().to_string();
         self.store
             .unified_outgoing_swapcoins
-            .insert(swap_id.clone(), coin.clone());
+            .insert(key.clone(), coin.clone());
         log::info!(
             "Added unified outgoing swapcoin to wallet store: {} (total: {})",
-            swap_id,
+            key,
             self.store.unified_outgoing_swapcoins.len()
         );
     }
@@ -618,6 +616,44 @@ impl Wallet {
         removed
     }
 
+    /// Adds unified watch-only swapcoins for a given swap.
+    pub(crate) fn add_unified_watchonly_swapcoins(
+        &mut self,
+        swap_id: &str,
+        coins: Vec<super::unified_swapcoin::WatchOnlySwapCoin>,
+    ) {
+        let count = coins.len();
+        self.store
+            .unified_watchonly_swapcoins
+            .entry(swap_id.to_string())
+            .or_default()
+            .extend(coins);
+        log::info!(
+            "Added {} unified watch-only swapcoins for swap {}",
+            count,
+            swap_id
+        );
+    }
+
+    /// Removes unified watch-only swapcoins for a given swap.
+    pub(crate) fn remove_unified_watchonly_swapcoins(
+        &mut self,
+        swap_id: &str,
+    ) -> Option<Vec<super::unified_swapcoin::WatchOnlySwapCoin>> {
+        self.store.unified_watchonly_swapcoins.remove(swap_id)
+    }
+
+    /// Returns all contract txids from unified watch-only swapcoins.
+    #[allow(dead_code)]
+    pub(crate) fn get_all_unified_watchonly_txids(&self) -> Vec<Txid> {
+        self.store
+            .unified_watchonly_swapcoins
+            .values()
+            .flatten()
+            .map(|sc| sc.contract_tx.compute_txid())
+            .collect()
+    }
+
     /// Gets the total count of swap coins in the wallet.
     pub fn get_swapcoins_count(&self) -> usize {
         self.store.incoming_swapcoins.len() + self.store.outgoing_swapcoins.len()
@@ -631,6 +667,30 @@ impl Wallet {
     /// Gets the count of unified outgoing swap coins.
     pub fn get_unified_outgoing_swapcoins_count(&self) -> usize {
         self.store.unified_outgoing_swapcoins.len()
+    }
+
+    /// Returns contract outpoints for all persisted unified outgoing swapcoins.
+    pub(crate) fn unified_outgoing_contract_outpoints(&self) -> Vec<OutPoint> {
+        self.store
+            .unified_outgoing_swapcoins
+            .values()
+            .map(|sc| OutPoint {
+                txid: sc.contract_tx.compute_txid(),
+                vout: 0,
+            })
+            .collect()
+    }
+
+    /// Returns contract outpoints for all persisted unified incoming swapcoins.
+    pub(crate) fn unified_incoming_contract_outpoints(&self) -> Vec<OutPoint> {
+        self.store
+            .unified_incoming_swapcoins
+            .values()
+            .map(|sc| OutPoint {
+                txid: sc.contract_tx.compute_txid(),
+                vout: 0,
+            })
+            .collect()
     }
 
     /// Attempt to recover timelocked unified outgoing swapcoins.
@@ -669,6 +729,53 @@ impl Wallet {
 
         for swap_id in to_recover {
             if let Some(swapcoin) = self.store.unified_outgoing_swapcoins.get(&swap_id) {
+                // Ensure the contract tx is on-chain before attempting timelock spend.
+                // For Legacy, the contract tx (pre-signed insurance) may not have been
+                // broadcast yet — it must be signed and pushed first so the timelock
+                // output exists.
+                let contract_txid = swapcoin.contract_tx.compute_txid();
+                match self.rpc.get_tx_out(&contract_txid, 0, Some(false)) {
+                    Ok(Some(_)) => {
+                        log::info!(
+                            "Contract tx {} already on-chain for {}",
+                            contract_txid,
+                            swap_id
+                        );
+                    }
+                    _ => {
+                        log::info!(
+                            "Signing and broadcasting contract tx for {} before timelock recovery",
+                            swap_id
+                        );
+                        match swapcoin.create_signed_contract_tx() {
+                            Ok(signed_contract_tx) => match self.send_tx(&signed_contract_tx) {
+                                Ok(_) => {
+                                    log::info!(
+                                        "Contract tx {} broadcast successfully",
+                                        signed_contract_tx.compute_txid()
+                                    );
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                            "Failed to broadcast contract tx for {}: {:?} — skipping recovery",
+                                            swap_id,
+                                            e
+                                        );
+                                    continue;
+                                }
+                            },
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to sign contract tx for {}: {:?} — skipping recovery",
+                                    swap_id,
+                                    e
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                }
+
                 match self.create_unified_timelock_recovery_tx(swapcoin, fee_rate) {
                     Ok(recovery_tx) => {
                         let txid = recovery_tx.compute_txid();
@@ -1444,6 +1551,40 @@ impl Wallet {
             );
         }
 
+        (unfinished_incomings, unfinished_outgoings)
+    }
+
+    /// Finds unfinished unified swapcoins.
+    /// Incoming unfinished: `other_privkey` is None.
+    /// Outgoing unfinished: `hash_preimage` is None.
+    #[allow(dead_code)]
+    pub(crate) fn find_unfinished_unified_swapcoins(
+        &self,
+    ) -> (
+        Vec<super::unified_swapcoin::IncomingSwapCoin>,
+        Vec<super::unified_swapcoin::OutgoingSwapCoin>,
+    ) {
+        let unfinished_incomings: Vec<_> = self
+            .store
+            .unified_incoming_swapcoins
+            .values()
+            .filter(|ic| ic.other_privkey.is_none())
+            .cloned()
+            .collect();
+        let unfinished_outgoings: Vec<_> = self
+            .store
+            .unified_outgoing_swapcoins
+            .values()
+            .filter(|oc| oc.hash_preimage.is_none())
+            .cloned()
+            .collect();
+        if !unfinished_incomings.is_empty() || !unfinished_outgoings.is_empty() {
+            log::info!(
+                "Unfinished unified swaps - Incoming: {}, Outgoing: {}",
+                unfinished_incomings.len(),
+                unfinished_outgoings.len()
+            );
+        }
         (unfinished_incomings, unfinished_outgoings)
     }
 

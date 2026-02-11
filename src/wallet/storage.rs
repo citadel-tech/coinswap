@@ -23,6 +23,7 @@ use super::{
     swapcoin2::{IncomingSwapCoinV2, OutgoingSwapCoinV2},
     unified_swapcoin::{
         IncomingSwapCoin as UnifiedIncomingSwapCoin, OutgoingSwapCoin as UnifiedOutgoingSwapCoin,
+        WatchOnlySwapCoin as UnifiedWatchOnlySwapCoin,
     },
 };
 
@@ -63,6 +64,9 @@ pub(crate) struct WalletStore {
     pub(super) unified_incoming_swapcoins: HashMap<String, UnifiedIncomingSwapCoin>,
     /// Map of swap_id to unified outgoing swapcoins.
     pub(super) unified_outgoing_swapcoins: HashMap<String, UnifiedOutgoingSwapCoin>,
+    /// Map of swap_id to unified watch-only swapcoins.
+    #[serde(default)]
+    pub(super) unified_watchonly_swapcoins: HashMap<String, Vec<UnifiedWatchOnlySwapCoin>>,
     /// Map of prevout to contract redeemscript.
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
     /// Set of swept incoming swap coin scriptpubkeys to prevent mixing with regular UTXOs
@@ -100,6 +104,7 @@ impl WalletStore {
             outgoing_swapcoins_v2: HashMap::new(),
             unified_incoming_swapcoins: HashMap::new(),
             unified_outgoing_swapcoins: HashMap::new(),
+            unified_watchonly_swapcoins: HashMap::new(),
             prevout_to_contract_map: HashMap::new(),
             swept_incoming_swapcoins: HashSet::new(),
             fidelity_bond: HashMap::new(),

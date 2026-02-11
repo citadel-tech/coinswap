@@ -404,12 +404,38 @@ impl IncomingSwapCoin {
             }
 
             Ok(())
-        } else if self.hash_preimage.is_some() {
+        } else if let Some(preimage) = &self.hash_preimage {
             log::info!("Signing legacy hashlock spend with preimage");
-            // TODO: Implement hashlock spend
-            Err(WalletError::General(
-                "Hashlock spend not yet implemented in unified swapcoin".to_string(),
-            ))
+
+            let contract_redeemscript = self.contract_redeemscript.as_ref().ok_or_else(|| {
+                WalletError::General("Missing contract_redeemscript for hashlock spend".to_string())
+            })?;
+
+            let secp = bitcoin::secp256k1::Secp256k1::new();
+            let sighash = bitcoin::secp256k1::Message::from_digest_slice(
+                &SighashCache::new(&*spend_tx)
+                    .p2wsh_signature_hash(
+                        0,
+                        contract_redeemscript,
+                        self.funding_amount,
+                        EcdsaSighashType::All,
+                    )
+                    .map_err(|e| WalletError::General(format!("Sighash error: {:?}", e)))?[..],
+            )
+            .map_err(|e| WalletError::General(format!("Message creation error: {:?}", e)))?;
+
+            let sig = bitcoin::ecdsa::Signature {
+                signature: secp.sign_ecdsa(&sighash, &self.hashlock_privkey),
+                sighash_type: EcdsaSighashType::All,
+            };
+
+            if let Some(input) = spend_tx.input.get_mut(0) {
+                input.witness.push(sig.to_vec());
+                input.witness.push(preimage);
+                input.witness.push(contract_redeemscript.to_bytes());
+            }
+
+            Ok(())
         } else {
             Err(WalletError::General(
                 "Cannot spend: need either other_privkey or preimage".to_string(),
@@ -420,14 +446,92 @@ impl IncomingSwapCoin {
     /// Signs a Taproot (MuSig2) spend transaction using cooperative key-path spend.
     fn sign_taproot_spend(&self, spend_tx: &mut Transaction) -> Result<(), WalletError> {
         if self.other_privkey.is_none() {
-            if self.hash_preimage.is_some() {
+            if let Some(preimage) = &self.hash_preimage {
                 log::info!("Signing taproot hashlock spend with preimage");
-                return Err(WalletError::General(
-                    "Hashlock script-path spend not yet implemented".to_string(),
-                ));
+
+                let hashlock_script = self.hashlock_script.as_ref().ok_or_else(|| {
+                    WalletError::General(
+                        "Missing hashlock_script for taproot hashlock spend".to_string(),
+                    )
+                })?;
+                let timelock_script = self.timelock_script.as_ref().ok_or_else(|| {
+                    WalletError::General(
+                        "Missing timelock_script for taproot hashlock spend".to_string(),
+                    )
+                })?;
+                let internal_key = self.internal_key.ok_or_else(|| {
+                    WalletError::General(
+                        "Missing internal_key for taproot hashlock spend".to_string(),
+                    )
+                })?;
+
+                let secp = bitcoin::secp256k1::Secp256k1::new();
+
+                // Recreate taproot spend info to get control block
+                let (_, taproot_spendinfo) = crate::protocol::contract2::create_taproot_script(
+                    hashlock_script.clone(),
+                    timelock_script.clone(),
+                    internal_key,
+                )?;
+
+                let control_block = taproot_spendinfo
+                    .control_block(&(
+                        hashlock_script.clone(),
+                        bitcoin::taproot::LeafVersion::TapScript,
+                    ))
+                    .ok_or_else(|| {
+                        WalletError::General(
+                            "Failed to get control block for hashlock script".to_string(),
+                        )
+                    })?;
+
+                // Sighash for script-path spend
+                let contract_output = bitcoin::TxOut {
+                    value: self.funding_amount,
+                    script_pubkey: self.contract_tx.output[0].script_pubkey.clone(),
+                };
+                let prevouts = vec![contract_output];
+                let prevouts_all = bitcoin::sighash::Prevouts::All(&prevouts);
+
+                let mut sighasher = SighashCache::new(&mut *spend_tx);
+                let leaf_hash = bitcoin::taproot::TapLeafHash::from_script(
+                    hashlock_script,
+                    bitcoin::taproot::LeafVersion::TapScript,
+                );
+                let sighash = sighasher
+                    .taproot_script_spend_signature_hash(
+                        0,
+                        &prevouts_all,
+                        leaf_hash,
+                        bitcoin::TapSighashType::All,
+                    )
+                    .map_err(|e| WalletError::General(format!("Sighash error: {:?}", e)))?;
+
+                let msg = bitcoin::secp256k1::Message::from(sighash);
+                let my_privkey = self.my_privkey.as_ref().ok_or_else(|| {
+                    WalletError::General("Missing my_privkey for hashlock spend".to_string())
+                })?;
+                let keypair = Keypair::from_secret_key(&secp, my_privkey);
+                let signature = secp.sign_schnorr(&msg, &keypair);
+                let tap_sig = bitcoin::taproot::Signature {
+                    signature,
+                    sighash_type: bitcoin::TapSighashType::All,
+                };
+
+                // Build witness: [sig] [preimage] [hashlock_script] [control_block]
+                let mut witness = Witness::new();
+                witness.push(tap_sig.to_vec());
+                witness.push(preimage);
+                witness.push(hashlock_script.as_bytes());
+                witness.push(control_block.serialize());
+
+                *sighasher.witness_mut(0).unwrap() = witness;
+
+                return Ok(());
             }
             return Err(WalletError::General(
-                "Cannot spend: need other_privkey for cooperative spend".to_string(),
+                "Cannot spend: need other_privkey for cooperative spend or preimage for hashlock"
+                    .to_string(),
             ));
         }
 
@@ -763,6 +867,66 @@ impl OutgoingSwapCoin {
         }
     }
 
+    /// Create a fully signed contract transaction for broadcast.
+    ///
+    /// For Legacy, the contract tx spends the P2WSH multisig funding output.
+    /// It needs both our signature and the maker's signature applied to the witness.
+    /// For Taproot, the contract tx is already self-contained (no multisig witness needed).
+    pub fn create_signed_contract_tx(&self) -> Result<Transaction, WalletError> {
+        let mut signed_tx = self.contract_tx.clone();
+
+        match self.protocol {
+            ProtocolVersion::Legacy => {
+                let my_privkey = self.my_privkey.ok_or_else(|| {
+                    WalletError::General("Missing my_privkey for contract tx signing".to_string())
+                })?;
+                let my_pubkey = self.my_pubkey.ok_or_else(|| {
+                    WalletError::General("Missing my_pubkey for contract tx signing".to_string())
+                })?;
+                let other_pubkey = self.other_pubkey.ok_or_else(|| {
+                    WalletError::General("Missing other_pubkey for contract tx signing".to_string())
+                })?;
+                let others_sig = self.others_contract_sig.ok_or_else(|| {
+                    WalletError::General(
+                        "Missing others_contract_sig for contract tx signing".to_string(),
+                    )
+                })?;
+
+                let multisig_redeemscript = crate::protocol::contract::create_multisig_redeemscript(
+                    &my_pubkey,
+                    &other_pubkey,
+                );
+
+                let my_sig = crate::protocol::contract::sign_contract_tx(
+                    &signed_tx,
+                    &multisig_redeemscript,
+                    self.funding_amount,
+                    &my_privkey,
+                )
+                .map_err(|e| {
+                    WalletError::General(format!("Failed to sign contract tx: {:?}", e))
+                })?;
+
+                if let Some(input) = signed_tx.input.get_mut(0) {
+                    crate::protocol::contract::apply_two_signatures_to_2of2_multisig_spend(
+                        &my_pubkey,
+                        &other_pubkey,
+                        &my_sig,
+                        &others_sig,
+                        input,
+                        &multisig_redeemscript,
+                    );
+                }
+            }
+            ProtocolVersion::Taproot => {
+                // Taproot contract txs don't need multisig witness signing
+                // (they use different broadcast paths)
+            }
+        }
+
+        Ok(signed_tx)
+    }
+
     /// Sign a timelock recovery transaction.
     ///
     /// This signs a transaction that spends the contract output via the timelock path,
@@ -897,7 +1061,6 @@ impl OutgoingSwapCoin {
 /// Watch-only view of a swap between two other parties.
 ///
 /// Used by the taker to monitor coinswaps between two makers.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WatchOnlySwapCoin {
     /// Protocol version for this swap coin.
@@ -918,8 +1081,13 @@ pub struct WatchOnlySwapCoin {
     pub funding_amount: Amount,
 }
 
-#[allow(dead_code)]
 impl WatchOnlySwapCoin {
+    /// Returns the contract transaction ID.
+    #[allow(dead_code)]
+    pub fn contract_txid(&self) -> Txid {
+        self.contract_tx.compute_txid()
+    }
+
     /// Create a new Legacy watch-only swap coin.
     pub fn new_legacy(
         sender_pubkey: PublicKey,
@@ -941,6 +1109,7 @@ impl WatchOnlySwapCoin {
     }
 
     /// Create a new Taproot watch-only swap coin.
+    #[allow(dead_code)]
     pub fn new_taproot(
         sender_pubkey: PublicKey,
         receiver_pubkey: PublicKey,

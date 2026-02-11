@@ -12,7 +12,7 @@ use crate::{
     protocol::{
         contract::{
             create_contract_redeemscript, create_multisig_redeemscript, create_senders_contract_tx,
-            sign_contract_tx,
+            read_pubkeys_from_multisig_redeemscript, sign_contract_tx,
         },
         legacy_messages::{
             ContractTxInfoForRecvr, ContractTxInfoForSender, FundingTxInfo, NextHopInfo,
@@ -23,7 +23,7 @@ use crate::{
     },
     utill::{generate_keypair, generate_maker_keys, read_message, send_message, MIN_FEE_RATE},
     wallet::{
-        unified_swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
+        unified_swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         Wallet,
     },
 };
@@ -279,6 +279,8 @@ impl UnifiedTaker {
                     }
                     wallet.save_to_disk()?;
                 }
+                // Funding txs are now on-chain — mark the phase transition.
+                self.swap_state_mut()?.phase = super::unified_api::SwapPhase::FundsBroadcast;
                 let funding_txids: Vec<_> = self
                     .swap_state()?
                     .outgoing_swapcoins
@@ -418,6 +420,34 @@ impl UnifiedTaker {
             // Store this maker's outgoing info for next hop
             prev_senders_info = Some(senders_contract_txs_info.clone());
 
+            // For non-first hops, the taker doesn't own these contracts — track as watch-only
+            if !is_first_peer {
+                let watchonly_coins: Vec<WatchOnlySwapCoin> = senders_contract_txs_info
+                    .iter()
+                    .map(|info| {
+                        let (pubkey1, pubkey2) =
+                            read_pubkeys_from_multisig_redeemscript(&info.multisig_redeemscript)?;
+                        Ok(WatchOnlySwapCoin::new_legacy(
+                            pubkey1,
+                            pubkey2,
+                            info.contract_tx.clone(),
+                            info.contract_redeemscript.clone(),
+                            info.funding_amount,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, TakerError>>()?;
+
+                let swap_id = self.swap_state()?.id.clone();
+                {
+                    let mut wallet = self.write_wallet()?;
+                    wallet.add_unified_watchonly_swapcoins(&swap_id, watchonly_coins.clone());
+                    wallet.save_to_disk()?;
+                }
+                self.swap_state_mut()?
+                    .watchonly_swapcoins
+                    .extend(watchonly_coins);
+            }
+
             // Wait for this maker's funding to be broadcast and confirmed
             log::info!(
                 "Waiting for maker {}'s funding to be confirmed...",
@@ -504,6 +534,20 @@ impl UnifiedTaker {
     ) -> Result<Vec<bitcoin::ecdsa::Signature>, TakerError> {
         let secp = Secp256k1::new();
 
+        // Use the correct nonces from swap state — these are the nonces that
+        // were used to derive the maker's multisig/hashlock pubkeys during
+        // setup_funding(). The maker needs them to derive the matching private
+        // keys for signing.
+        let swap_state = self.swap_state()?;
+        let multisig_nonce = swap_state
+            .multisig_nonces
+            .first()
+            .ok_or_else(|| TakerError::General("No multisig nonce in swap state".to_string()))?;
+        let hashlock_nonce = swap_state
+            .hashlock_nonces
+            .first()
+            .ok_or_else(|| TakerError::General("No hashlock nonce in swap state".to_string()))?;
+
         let txs_info: Vec<ContractTxInfoForSender> = outgoing_swapcoins
             .iter()
             .map(|swapcoin| {
@@ -521,8 +565,8 @@ impl UnifiedTaker {
                 let multisig_redeemscript = create_multisig_redeemscript(&my_pub, &other_pub);
 
                 Ok(ContractTxInfoForSender {
-                    multisig_nonce: SecretKey::new(&mut OsRng),
-                    hashlock_nonce: SecretKey::new(&mut OsRng),
+                    multisig_nonce: *multisig_nonce,
+                    hashlock_nonce: *hashlock_nonce,
                     timelock_pubkey,
                     senders_contract_tx: swapcoin.contract_tx.clone(),
                     multisig_redeemscript,

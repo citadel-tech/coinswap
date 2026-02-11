@@ -31,14 +31,14 @@ use crate::{
     },
     utill::{check_tor_status, generate_maker_keys, get_taker_dir, read_message, send_message},
     wallet::{
-        unified_swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
+        unified_swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         RPCConfig, Wallet,
     },
     watch_tower::{
         registry_storage::FileRegistry,
         rpc_backend::BitcoinRpc,
         service::WatchService,
-        watcher::{Role, Watcher},
+        watcher::{Role, Watcher, WatcherEvent},
         zmq_backend::ZmqBackend,
     },
 };
@@ -66,6 +66,18 @@ pub(crate) const REFUND_LOCKTIME_BASE: u16 = 20;
 
 /// Locktime increment per hop in the swap route.
 pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
+
+/// Maximum number of finalization retry attempts before triggering recovery.
+#[cfg(not(feature = "integration-test"))]
+const MAX_FINALIZE_RETRIES: u32 = 3;
+#[cfg(feature = "integration-test")]
+const MAX_FINALIZE_RETRIES: u32 = 2;
+
+/// Delay between finalization retry attempts.
+#[cfg(not(feature = "integration-test"))]
+const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(15);
+#[cfg(feature = "integration-test")]
+const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 /// Unified Taker configuration.
 #[derive(Debug, Clone)]
@@ -202,6 +214,17 @@ pub struct UnifiedSwapReport {
     pub fee_percentage: f64,
 }
 
+/// Tracks which phase of the swap has been reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum SwapPhase {
+    /// Initial state: negotiation, setup. No funds on-chain.
+    #[default]
+    Setup,
+    /// Funding/contract transactions have been broadcast.
+    /// Funds are on-chain — recovery is needed on failure.
+    FundsBroadcast,
+}
+
 /// State for an ongoing swap.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct OngoingSwapState {
@@ -217,10 +240,14 @@ pub(crate) struct OngoingSwapState {
     pub(crate) outgoing_swapcoins: Vec<OutgoingSwapCoin>,
     /// Incoming swapcoins (receiving side of the swap).
     pub(crate) incoming_swapcoins: Vec<IncomingSwapCoin>,
+    /// Watch-only swapcoins for intermediate hops (between makers).
+    pub(crate) watchonly_swapcoins: Vec<WatchOnlySwapCoin>,
     /// Multisig nonces for each outgoing swapcoin (used in ProofOfFunding).
     pub(crate) multisig_nonces: Vec<SecretKey>,
     /// Hashlock nonces for each outgoing swapcoin (used in ProofOfFunding).
     pub(crate) hashlock_nonces: Vec<SecretKey>,
+    /// Current phase of the swap lifecycle.
+    pub(crate) phase: SwapPhase,
 }
 
 /// Connection state for a maker in the swap route.
@@ -318,7 +345,7 @@ impl UnifiedTaker {
         let offer_sync_handle =
             Self::init_offer_sync(&offerbook, &watch_service, config.socks_port, rpc_config)?;
 
-        Ok(UnifiedTaker {
+        let mut taker = UnifiedTaker {
             config,
             wallet: Arc::new(RwLock::new(wallet)),
             offerbook,
@@ -327,7 +354,57 @@ impl UnifiedTaker {
             ongoing_swap: None,
             #[cfg(feature = "integration-test")]
             behavior: UnifiedTakerBehavior::Normal,
-        })
+        };
+
+        taker.recover_incomplete_swaps();
+        Ok(taker)
+    }
+
+    /// Called on startup to handle taker crash/restart scenarios.
+    fn recover_incomplete_swaps(&mut self) {
+        log::info!("Checking for incomplete swaps from previous session...");
+
+        match self.write_wallet() {
+            Ok(mut wallet) => {
+                // Phase 1: Try sweeping any incoming swapcoins with preimage/privkey
+                match wallet.sweep_unified_incoming_swapcoins(2.0) {
+                    Ok(swept) if !swept.is_empty() => {
+                        log::info!("Startup recovery: swept {} incoming swapcoins", swept.len());
+                    }
+                    Ok(_) => {}
+                    Err(e) => log::warn!("Startup incoming sweep failed: {:?}", e),
+                }
+
+                // Phase 2: Try recovering outgoing swapcoins via timelock
+                match wallet.recover_unified_timelocked_swapcoins(2.0) {
+                    Ok(recovered) if !recovered.is_empty() => {
+                        log::info!(
+                            "Startup recovery: recovered {} timelocked outgoing swapcoins",
+                            recovered.len()
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => log::warn!("Startup timelock recovery failed: {:?}", e),
+                }
+
+                // Phase 3: Register remaining unrecovered outpoints for monitoring
+                let mut remaining = wallet.unified_outgoing_contract_outpoints();
+                remaining.extend(wallet.unified_incoming_contract_outpoints());
+                drop(wallet);
+
+                for outpoint in &remaining {
+                    self.watch_service.register_watch_request(*outpoint);
+                }
+
+                if !remaining.is_empty() {
+                    log::info!(
+                        "Startup recovery: registered {} contract outputs for monitoring",
+                        remaining.len()
+                    );
+                }
+            }
+            Err(e) => log::warn!("Startup recovery: failed to lock wallet: {:?}", e),
+        }
     }
 
     /// Set up the wallet from config and return it with the resolved RPC config.
@@ -469,10 +546,13 @@ impl UnifiedTaker {
             makers: Vec::new(),
             outgoing_swapcoins: Vec::new(),
             incoming_swapcoins: Vec::new(),
+            watchonly_swapcoins: Vec::new(),
             multisig_nonces: Vec::new(),
             hashlock_nonces: Vec::new(),
+            phase: SwapPhase::Setup,
         });
 
+        // Pre-commitment phases: no funds on-chain yet, nothing to recover.
         self.discover_and_select_makers()?;
 
         #[cfg(feature = "integration-test")]
@@ -484,25 +564,117 @@ impl UnifiedTaker {
         }
 
         self.negotiate_swap_details()?;
-
         self.initialize_swap_funding()?;
 
-        if self.swap_state()?.params.protocol == ProtocolVersion::Legacy {
-            log::info!("Using multi-hop Legacy flow with ProofOfFunding");
-            self.exchange_legacy_contract_data()?;
-        } else {
-            log::info!("Using simplified Taproot flow");
-            self.exchange_contract_data()?;
-            self.broadcast_contract_txs()?;
+        // Protocol-specific execution with phase-aware recovery triggers.
+        let protocol = self.swap_state()?.params.protocol;
+
+        match protocol {
+            ProtocolVersion::Legacy => {
+                // Phase 1: Exchange contract data (includes funding tx broadcast).
+                // Phase transitions to FundsBroadcast inside exchange_legacy_contract_data()
+                // after funding txs are sent.
+                match self.exchange_legacy_contract_data() {
+                    Ok(()) => {}
+                    Err(e) => {
+                        log::error!("Legacy contract exchange failed: {:?}", e);
+                        let phase = self
+                            .swap_state()
+                            .map(|s| s.phase)
+                            .unwrap_or(SwapPhase::Setup);
+                        if phase == SwapPhase::FundsBroadcast {
+                            log::warn!("Funding txs were broadcast, triggering recovery");
+                            if let Err(re) = self.recover_from_swap() {
+                                log::error!("Recovery failed: {:?}", re);
+                            }
+                        } else {
+                            log::info!("No funds on-chain — safe to abort");
+                            self.ongoing_swap = None;
+                        }
+                        return Err(e);
+                    }
+                }
+
+                #[cfg(feature = "integration-test")]
+                if self.behavior == UnifiedTakerBehavior::DropAfterFundsBroadcast {
+                    log::warn!("Test behavior: dropping after funds broadcast (Legacy)");
+                    if let Err(re) = self.recover_from_swap() {
+                        log::error!("Recovery failed: {:?}", re);
+                    }
+                    return Err(TakerError::General(
+                        "Test: dropped after funds broadcast".to_string(),
+                    ));
+                }
+
+                // Phase 2: Finalize with retry (exchange succeeded → phase is FundsBroadcast).
+                match self.finalize_with_retry() {
+                    Ok(()) => {}
+                    Err(e) => {
+                        log::error!("Legacy finalization failed after retries: {:?}", e);
+                        if let Err(re) = self.recover_from_swap() {
+                            log::error!("Recovery failed: {:?}", re);
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+            ProtocolVersion::Taproot => {
+                // Phase 1: Exchange contract data (no on-chain activity).
+                // Phase is still Setup — failure propagates, no recovery.
+                self.exchange_contract_data()?;
+
+                // Phase 2: Broadcast contract txs (point of no return).
+                self.swap_state_mut()?.phase = SwapPhase::FundsBroadcast;
+                match self.broadcast_contract_txs() {
+                    Ok(()) => {}
+                    Err(e) => {
+                        log::error!("Taproot broadcast failed: {:?}", e);
+                        if let Err(re) = self.recover_from_swap() {
+                            log::error!("Recovery failed: {:?}", re);
+                        }
+                        return Err(e);
+                    }
+                }
+
+                #[cfg(feature = "integration-test")]
+                if self.behavior == UnifiedTakerBehavior::DropAfterFundsBroadcast {
+                    log::warn!("Test behavior: dropping after contract broadcast (Taproot)");
+                    if let Err(re) = self.recover_from_swap() {
+                        log::error!("Recovery failed: {:?}", re);
+                    }
+                    return Err(TakerError::General(
+                        "Test: dropped after contract broadcast".to_string(),
+                    ));
+                }
+
+                // Phase 3: Finalize with retry + watch tower polling.
+                match self.finalize_with_retry() {
+                    Ok(()) => {}
+                    Err(e) => {
+                        log::error!("Taproot finalization failed after retries: {:?}", e);
+                        if let Err(re) = self.recover_from_swap() {
+                            log::error!("Recovery failed: {:?}", re);
+                        }
+                        return Err(e);
+                    }
+                }
+            }
         }
 
-        self.finalize_swap()?;
-
+        // Success path: sweep + report (shared by both protocols)
         {
             let mut wallet = self.write_wallet()?;
             let swept = wallet.sweep_unified_incoming_swapcoins(2.0)?;
             log::info!("Swept {} incoming swapcoins", swept.len());
             wallet.sync_and_save()?;
+        }
+
+        // Clean up watch-only entries on success
+        {
+            let swap_id_for_cleanup = self.swap_state()?.id.clone();
+            let mut wallet = self.write_wallet()?;
+            wallet.remove_unified_watchonly_swapcoins(&swap_id_for_cleanup);
+            wallet.save_to_disk()?;
         }
 
         // Generate report
@@ -902,6 +1074,69 @@ impl UnifiedTaker {
         Ok(())
     }
 
+    /// Attempt finalization with retries and watch tower polling between attempts.
+    /// `finalize_swap()` is idempotent (re-sending preimage returns the same privkey),
+    /// so retrying is safe.
+    fn finalize_with_retry(&mut self) -> Result<(), TakerError> {
+        for attempt in 1..=MAX_FINALIZE_RETRIES {
+            match self.finalize_swap() {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    log::warn!(
+                        "Finalization attempt {}/{} failed: {:?}",
+                        attempt,
+                        MAX_FINALIZE_RETRIES,
+                        e
+                    );
+
+                    if self.detect_adversarial_spend() {
+                        log::error!("Adversarial contract spend detected — aborting retries");
+                        return Err(TakerError::General(
+                            "Adversarial contract spend detected during finalization".to_string(),
+                        ));
+                    }
+
+                    if attempt < MAX_FINALIZE_RETRIES {
+                        log::info!("Retrying in {:?}...", FINALIZE_RETRY_DELAY);
+                        thread::sleep(FINALIZE_RETRY_DELAY);
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        unreachable!()
+    }
+
+    /// Poll the watch service for spends on our swap's contract outpoints.
+    /// Returns true if an adversarial spend was detected.
+    fn detect_adversarial_spend(&self) -> bool {
+        let contract_outpoints: Vec<OutPoint> = match self.swap_state() {
+            Ok(swap) => swap
+                .outgoing_swapcoins
+                .iter()
+                .map(|sc| OutPoint {
+                    txid: sc.contract_tx.compute_txid(),
+                    vout: 0,
+                })
+                .collect(),
+            Err(_) => return false,
+        };
+
+        while let Some(event) = self.watch_service.poll_event() {
+            if let WatcherEvent::UtxoSpent { outpoint, .. } = event {
+                if contract_outpoints.contains(&outpoint) {
+                    log::warn!(
+                        "Watch service detected spend of contract output: {}",
+                        outpoint
+                    );
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Phase 1: Reveal preimage to each maker (in reverse order) and collect their private keys.
     fn reveal_preimage_and_collect_privkeys(
         &mut self,
@@ -1066,11 +1301,48 @@ impl UnifiedTaker {
         }
     }
 
+    /// Check if any contract transactions have been broadcast on-chain.
+    #[allow(dead_code)]
+    pub(crate) fn check_for_broadcasted_contracts(&self) -> Result<Vec<Txid>, TakerError> {
+        let swap = self.swap_state()?;
+        let contract_txids: Vec<Txid> = swap
+            .incoming_swapcoins
+            .iter()
+            .map(|sc| sc.contract_tx.compute_txid())
+            .chain(
+                swap.outgoing_swapcoins
+                    .iter()
+                    .map(|sc| sc.contract_tx.compute_txid()),
+            )
+            .chain(
+                swap.watchonly_swapcoins
+                    .iter()
+                    .map(|sc| sc.contract_tx.compute_txid()),
+            )
+            .collect();
+
+        let wallet = self.read_wallet()?;
+        let seen: Vec<Txid> = contract_txids
+            .iter()
+            .filter(|txid| wallet.rpc.get_raw_transaction_info(txid, None).is_ok())
+            .cloned()
+            .collect();
+
+        if !seen.is_empty() {
+            log::warn!("Detected {} broadcasted contract transactions!", seen.len());
+        }
+        Ok(seen)
+    }
+
     /// Recover from a failed swap by spending contract outputs back to wallet.
+    ///
+    /// Dispatches to protocol-specific recovery strategies:
+    /// - Legacy: broadcast incoming contracts, spend via hashlock, fallback to timelock for outgoing
+    /// - Taproot: analyze spending paths, try hashlock for incoming, monitor for outgoing
     pub fn recover_from_swap(&mut self) -> Result<(), TakerError> {
         log::warn!("Starting swap recovery...");
 
-        // Phase 1: Set preimage on incoming swapcoins (requires mutable swap access).
+        // Phase 1: Stamp preimage on all incoming swapcoins
         let preimage = self.swap_state()?.preimage;
         let swap = self.swap_state_mut()?;
         for incoming in &mut swap.incoming_swapcoins {
@@ -1079,64 +1351,147 @@ impl UnifiedTaker {
             }
         }
 
-        // Phase 2: Persist swapcoins to wallet (requires wallet write lock + shared swap access).
+        // Phase 2: Persist all swapcoins to wallet
         {
             let mut wallet = self.write_wallet()?;
             let swap = self.swap_state()?;
-
             for outgoing in &swap.outgoing_swapcoins {
                 wallet.add_unified_outgoing_swapcoin(outgoing);
             }
-
             for incoming in &swap.incoming_swapcoins {
                 wallet.add_unified_incoming_swapcoin(incoming);
             }
-
             wallet.save_to_disk()?;
-
-            let incoming_count = swap.incoming_swapcoins.len();
-            if incoming_count > 0 {
-                log::info!(
-                    "Attempting recovery for {} incoming swapcoins",
-                    incoming_count
-                );
-                match wallet.sweep_unified_incoming_swapcoins(2.0) {
-                    Ok(swept) => {
-                        if !swept.is_empty() {
-                            log::info!("Successfully swept {} incoming swapcoins", swept.len());
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("Could not sweep incoming swapcoins now: {:?}", e);
-                        log::info!("Will need to wait for timelock expiry or manual recovery");
-                    }
-                }
-            }
         }
 
-        // Phase 3: Register outgoing contracts for monitoring (no wallet lock needed).
-        let swap = self.swap_state()?;
-        let outgoing_count = swap.outgoing_swapcoins.len();
-        if outgoing_count > 0 {
-            log::info!(
-                "Registered {} outgoing swapcoins for timelock recovery",
-                outgoing_count
-            );
+        // Phase 3: Recover incoming swapcoins (we have hashlock privilege)
+        self.recover_incoming_swapcoins()?;
 
-            for outgoing in &swap.outgoing_swapcoins {
-                if !outgoing.contract_tx.input.is_empty() {
-                    let txid = outgoing.contract_tx.compute_txid();
-                    let outpoint = OutPoint { txid, vout: 0 };
-                    self.watch_service.register_watch_request(outpoint);
-                    log::info!("Registered outgoing contract {} for monitoring", outpoint);
-                }
-            }
+        // Phase 4: Recover outgoing swapcoins (must wait for timelock)
+        self.recover_outgoing_swapcoins()?;
+
+        // Phase 5: Clean up watch-only entries + clear swap state
+        {
+            let swap_id = self.swap_state()?.id.clone();
+            let mut wallet = self.write_wallet()?;
+            wallet.remove_unified_watchonly_swapcoins(&swap_id);
+            wallet.save_to_disk()?;
         }
-
         self.ongoing_swap = None;
 
-        log::info!("Recovery complete. Swapcoins registered for monitoring.");
-        log::info!("Use wallet recovery functions to spend timelocked outputs when ready.");
+        log::info!("Recovery completed.");
+        Ok(())
+    }
+
+    /// Recover incoming swapcoins using protocol-dispatched strategy.
+    fn recover_incoming_swapcoins(&mut self) -> Result<(), TakerError> {
+        let incoming_swapcoins = self.swap_state()?.incoming_swapcoins.clone();
+        if incoming_swapcoins.is_empty() {
+            return Ok(());
+        }
+        log::info!("Recovering {} incoming swapcoins", incoming_swapcoins.len());
+
+        for incoming in &incoming_swapcoins {
+            let contract_txid = incoming.contract_tx.compute_txid();
+
+            match incoming.protocol {
+                ProtocolVersion::Legacy => {
+                    log::info!(
+                        "Legacy incoming contract {}: attempting sweep",
+                        contract_txid
+                    );
+                    let mut wallet = self.write_wallet()?;
+                    match wallet.sweep_unified_incoming_swapcoins(2.0) {
+                        Ok(swept) if !swept.is_empty() => {
+                            log::info!("Swept {} legacy incoming contracts", swept.len());
+                        }
+                        Ok(_) => {
+                            log::warn!(
+                                "No legacy incoming contracts swept — will retry with timelock"
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!("Legacy sweep failed: {:?}", e);
+                        }
+                    }
+                }
+                ProtocolVersion::Taproot => {
+                    log::info!(
+                        "Taproot incoming contract {}: checking status",
+                        contract_txid
+                    );
+                    let outpoint = OutPoint {
+                        txid: contract_txid,
+                        vout: 0,
+                    };
+
+                    if incoming.hash_preimage.is_some() {
+                        let mut wallet = self.write_wallet()?;
+                        match wallet.sweep_unified_incoming_swapcoins(2.0) {
+                            Ok(swept) if !swept.is_empty() => {
+                                log::info!("Swept {} taproot incoming contracts", swept.len());
+                            }
+                            Ok(_) | Err(_) => {
+                                log::warn!(
+                                    "Taproot incoming sweep failed, registering for monitoring"
+                                );
+                                self.watch_service.register_watch_request(outpoint);
+                            }
+                        }
+                    } else {
+                        log::warn!(
+                            "No preimage for taproot incoming {} — registering for monitoring",
+                            contract_txid
+                        );
+                        self.watch_service.register_watch_request(outpoint);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Recover outgoing swapcoins using protocol-dispatched strategy.
+    fn recover_outgoing_swapcoins(&mut self) -> Result<(), TakerError> {
+        let outgoing_swapcoins = self.swap_state()?.outgoing_swapcoins.clone();
+        if outgoing_swapcoins.is_empty() {
+            return Ok(());
+        }
+        log::info!("Recovering {} outgoing swapcoins", outgoing_swapcoins.len());
+
+        // Try immediate timelock recovery for any mature contracts
+        {
+            let mut wallet = self.write_wallet()?;
+            match wallet.recover_unified_timelocked_swapcoins(2.0) {
+                Ok(recovered) if !recovered.is_empty() => {
+                    log::info!(
+                        "Recovered {} timelocked outgoing contracts",
+                        recovered.len()
+                    );
+                }
+                Ok(_) => {
+                    log::info!("No outgoing contracts ready for timelock recovery yet");
+                }
+                Err(e) => {
+                    log::warn!("Timelock recovery attempt failed: {:?}", e);
+                }
+            }
+        }
+
+        // Register remaining outgoing contracts for monitoring
+        for outgoing in &outgoing_swapcoins {
+            let contract_txid = outgoing.contract_tx.compute_txid();
+            let outpoint = OutPoint {
+                txid: contract_txid,
+                vout: 0,
+            };
+            self.watch_service.register_watch_request(outpoint);
+            log::info!(
+                "Registered outgoing contract {} for monitoring (protocol: {:?})",
+                outpoint,
+                outgoing.protocol
+            );
+        }
 
         Ok(())
     }
@@ -1151,4 +1506,7 @@ pub enum UnifiedTakerBehavior {
     Normal,
     /// Close connection early (after maker selection).
     CloseEarly,
+    /// Drop after funds/contracts are broadcast but before finalization.
+    /// Simulates a taker crash after funds are on-chain.
+    DropAfterFundsBroadcast,
 }
