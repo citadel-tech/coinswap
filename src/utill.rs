@@ -548,76 +548,72 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
     Ok(())
 }
 
-/// Sets the terminal input mode by enabling or disabling canonical mode and echo.
-///
-/// - When `echo` is `true`, the terminal behaves normally (line-buffered, characters visible).
-/// - When `echo` is `false`, input is read character-by-character and hidden
-///   (used for password-style input).
-///
-/// This uses `crossterm`'s cross-platform raw mode handling instead of
-/// directly interacting with POSIX `termios` or Win32 console APIs.
-fn set_terminal_mode(echo: bool) {
-    if echo {
-        disable_raw_mode().expect("Failed to disable raw mode");
-    } else {
-        enable_raw_mode().expect("Failed to enable raw mode");
+struct RawModeGuard;
+
+impl RawModeGuard {
+    fn new() -> io::Result<Self> {
+        enable_raw_mode()?;
+        Ok(Self)
     }
 }
 
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+    }
+}
 /// Prompts the user for a password using the given prompt string.
 /// Temporarily disables canonical mode and echo to mask each typed
 /// character with `*` as feedback.
-pub fn prompt_password(message: String) -> std::io::Result<String> {
+pub fn prompt_password(message: String) -> io::Result<String> {
     if cfg!(feature = "integration-test") || cfg!(test) {
-        Ok("integration-test".to_string())
-    } else {
-        let stdin = io::stdin();
-        print!("{message}");
-        io::stdout().flush()?; // Ensure the prompt is printed
+        return Ok("integration-test".to_string());
+    }
 
-        set_terminal_mode(false); // disable echo & canonical mode
+    let mut stdout = io::stdout();
+    let stdin = io::stdin();
 
-        let mut password = String::new();
-        // Buffer to read one byte at a time from stdin.
-        // We read input character-by-character because we disabled canonical mode (ICANON),
-        // which normally buffers input until Enter is pressed.
-        let mut buf = [0u8; 1];
+    print!("{message}");
+    stdout.flush()?; // Ensure the prompt is printed
 
-        while stdin.lock().read(&mut buf).unwrap() == 1 {
-            let c = buf[0] as char;
-            match c {
-                '\n' | '\r' => {
-                    // - If the byte is newline (`\n`, ASCII 0x0A) or carriage return (`\r`, ASCII 0x0D),
-                    //   it signals the end of input, so we break the loop.
-                    println!();
-                    break;
-                }
-                '\x08' | '\x7f' => {
-                    // - If the byte is Backspace (ASCII 0x08 or 0x7f),
-                    //   we remove the last character from the password (if any),
-                    //   and erase the asterisk from the terminal by moving the cursor back,
-                    //   writing a space to overwrite, then moving the cursor back again.
-                    if !password.is_empty() {
-                        password.pop();
-                        print!("\x08 \x08");
-                        io::stdout().flush().unwrap();
-                    }
-                }
-                _ => {
-                    // - Otherwise, for any other character, we append it to the password string
-                    //   and print an asterisk '*' as a visual placeholder for the typed character.
-                    password.push(c);
-                    print!("*");
-                    io::stdout().flush().unwrap();
+    let _guard = RawModeGuard::new()?;
+
+    let mut password = String::new();
+    let mut buf = [0u8; 1];
+
+    while stdin.lock().read(&mut buf)? == 1 {
+        let c = buf[0] as char;
+
+        match c {
+            '\n' | '\r' => {
+                // - If the byte is newline (`\n`, ASCII 0x0A) or carriage return (`\r`, ASCII 0x0D),
+                //   it signals the end of input, so we break the loop.
+                println!();
+                break;
+            }
+            '\x08' | '\x7f' => {
+                // - If the byte is Backspace (ASCII 0x08 or 0x7f),
+                //   we remove the last character from the password (if any),
+                //   and erase the asterisk from the terminal by moving the cursor back,
+                //   writing a space to overwrite, then moving the cursor back again.
+                if !password.is_empty() {
+                    password.pop();
+                    print!("\x08 \x08");
+                    stdout.flush()?;
                 }
             }
+            _ => {
+                // - Otherwise, for any other character, we append it to the password string
+                //   and print an asterisk '*' as a visual placeholder for the typed character.
+                password.push(c);
+                print!("*");
+                stdout.flush()?;
+            }
         }
-
-        set_terminal_mode(true); // restore terminal settings
-
-        println!(); // move to next line after input
-        Ok(password.trim_end().to_string())
     }
+
+    println!(); // move to next line after input
+    Ok(password.trim_end().to_string())
 }
 
 pub(crate) fn get_emphemeral_address(
