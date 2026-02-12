@@ -619,16 +619,27 @@ impl UnifiedTaker {
                 }
             }
             ProtocolVersion::Taproot => {
-                // Phase 1: Exchange contract data (no on-chain activity).
-                // Phase is still Setup — failure propagates, no recovery.
-                self.exchange_contract_data()?;
-
-                // Phase 2: Broadcast contract txs (point of no return).
+                // Phase 1: Broadcast our outgoing contract txs.
+                // Makers verify that contract txs are on-chain before
+                // creating their own outgoing, so we must broadcast first.
                 self.swap_state_mut()?.phase = SwapPhase::FundsBroadcast;
                 match self.broadcast_contract_txs() {
                     Ok(()) => {}
                     Err(e) => {
                         log::error!("Taproot broadcast failed: {:?}", e);
+                        if let Err(re) = self.recover_from_swap() {
+                            log::error!("Recovery failed: {:?}", re);
+                        }
+                        return Err(e);
+                    }
+                }
+
+                // Phase 2: Exchange contract data with makers.
+                // Our outgoing is on-chain, so makers can verify it.
+                match self.exchange_contract_data() {
+                    Ok(()) => {}
+                    Err(e) => {
+                        log::error!("Taproot contract exchange failed: {:?}", e);
                         if let Err(re) = self.recover_from_swap() {
                             log::error!("Recovery failed: {:?}", re);
                         }
@@ -1358,7 +1369,10 @@ impl UnifiedTaker {
             for outgoing in &swap.outgoing_swapcoins {
                 wallet.add_unified_outgoing_swapcoin(outgoing);
             }
-            for incoming in &swap.incoming_swapcoins {
+            // Only persist the last incoming swapcoin — it's the one from the final
+            // maker, addressed to the taker. Intermediate hop contracts (e.g., Maker1's
+            // outgoing to Maker2) are not spendable by the taker.
+            if let Some(incoming) = swap.incoming_swapcoins.last() {
                 wallet.add_unified_incoming_swapcoin(incoming);
             }
             wallet.save_to_disk()?;

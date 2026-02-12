@@ -14,7 +14,7 @@ use crate::{
     },
     utill::{read_message, send_message, MIN_FEE_RATE},
     wallet::{
-        unified_swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
+        unified_swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         Wallet,
     },
 };
@@ -96,20 +96,20 @@ impl UnifiedTaker {
                 manually_selected_outpoints.clone(),
             )?;
 
-            for (funding_tx, &output_pos) in funding_result
+            for (contract_tx, &output_pos) in funding_result
                 .funding_txes
                 .iter()
                 .zip(funding_result.payment_output_positions.iter())
             {
-                let funding_amount = funding_tx.output[output_pos as usize].value;
+                let contract_amount = contract_tx.output[output_pos as usize].value;
 
                 // Create outgoing swapcoin with Taproot data.
                 let mut outgoing = OutgoingSwapCoin::new_taproot(
                     my_privkey,
                     hashlock_script.clone(),
                     timelock_script.clone(),
-                    funding_tx.clone(),
-                    funding_amount,
+                    contract_tx.clone(),
+                    contract_amount,
                 );
                 outgoing.swap_id = Some(swap_id.to_string());
                 outgoing.set_taproot_params(
@@ -205,7 +205,49 @@ impl UnifiedTaker {
                         i,
                         maker_contract.contract_txs.len()
                     );
+                    // Always save as incoming swapcoin (needed for forwarding to next maker).
                     self.create_swapcoins_from_taproot_contract(&maker_contract, my_privkey)?;
+
+                    // For non-last hops, this contract goes to the next maker, not the taker.
+                    // Save it as watch-only so the taker can monitor it without trying to spend.
+                    let is_last_maker = i == num_makers - 1;
+                    if !is_last_maker {
+                        let sender_pubkey =
+                            maker_contract.pubkeys.first().cloned().unwrap_or(my_pubkey);
+                        let contract_tx =
+                            maker_contract
+                                .contract_txs
+                                .first()
+                                .cloned()
+                                .ok_or_else(|| {
+                                    TakerError::General(
+                                        "No contract tx in maker response".to_string(),
+                                    )
+                                })?;
+                        let funding_amount = maker_contract
+                            .amounts
+                            .first()
+                            .cloned()
+                            .unwrap_or(Amount::ZERO);
+
+                        let watchonly = WatchOnlySwapCoin::new_taproot(
+                            sender_pubkey,
+                            maker_contract.next_hop_point,
+                            contract_tx,
+                            maker_contract.hashlock_script.clone(),
+                            maker_contract.timelock_script.clone(),
+                            funding_amount,
+                        );
+
+                        let swap_id = self.swap_state()?.id.clone();
+                        {
+                            let mut wallet = self.write_wallet()?;
+                            wallet
+                                .add_unified_watchonly_swapcoins(&swap_id, vec![watchonly.clone()]);
+                            wallet.save_to_disk()?;
+                        }
+                        self.swap_state_mut()?.watchonly_swapcoins.push(watchonly);
+                    }
                 }
                 _ => {
                     return Err(TakerError::General(format!(

@@ -8,10 +8,11 @@ use std::{
         Arc, Mutex, RwLock,
     },
     thread::{self, JoinHandle},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use bitcoin::{Amount, Network, OutPoint, PublicKey, Transaction};
+use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
     protocol::common_messages::{FidelityProof, ProtocolVersion, SwapDetails},
@@ -25,6 +26,9 @@ use crate::{
     },
     watch_tower::service::WatchService,
 };
+
+#[cfg(feature = "integration-test")]
+pub use super::unified_handlers::UnifiedMakerBehavior;
 
 use super::{
     error::MakerError,
@@ -191,6 +195,9 @@ pub struct UnifiedMakerServer {
     pub thread_pool: Arc<UnifiedThreadPool>,
     /// Data directory.
     pub data_dir: PathBuf,
+    /// Test-only behavior override.
+    #[cfg(feature = "integration-test")]
+    pub behavior: UnifiedMakerBehavior,
 }
 
 impl UnifiedMakerServer {
@@ -232,6 +239,8 @@ impl UnifiedMakerServer {
             watch_service,
             thread_pool: Arc::new(UnifiedThreadPool::new(config.network_port)),
             data_dir,
+            #[cfg(feature = "integration-test")]
+            behavior: UnifiedMakerBehavior::default(),
         })
     }
 
@@ -457,6 +466,43 @@ impl UnifiedMakerServer {
 
         Ok(())
     }
+
+    /// Atomically find and remove stale entries from `ongoing_swaps`.
+    /// Returns the swap_id, incoming swapcoins, and outgoing swapcoins for each idle swap.
+    /// Only drains entries where `outgoing_swapcoins` is non-empty (otherwise nothing to recover).
+    pub fn drain_idle_swaps(
+        &self,
+        timeout: Duration,
+    ) -> Vec<(
+        String,
+        Vec<UnifiedIncomingSwapCoin>,
+        Vec<UnifiedOutgoingSwapCoin>,
+    )> {
+        let mut swaps = self.ongoing_swaps.lock().unwrap();
+        let mut idle = Vec::new();
+
+        let stale_ids: Vec<String> = swaps
+            .iter()
+            .filter(|(_, state)| {
+                state.last_activity.elapsed() > timeout && !state.outgoing_swapcoins.is_empty()
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        for id in stale_ids {
+            if let Some(state) = swaps.remove(&id) {
+                idle.push((id, state.incoming_swapcoins, state.outgoing_swapcoins));
+            }
+        }
+
+        idle
+    }
+
+    /// Remove a completed swap's entry from `ongoing_swaps`.
+    pub fn remove_swap_state(&self, swap_id: &str) {
+        let mut swaps = self.ongoing_swaps.lock().unwrap();
+        swaps.remove(swap_id);
+    }
 }
 
 impl UnifiedMakerTrait for UnifiedMakerServer {
@@ -568,6 +614,20 @@ impl UnifiedMakerTrait for UnifiedMakerServer {
             .unwrap_or(0);
 
         Ok((tx, output_position))
+    }
+
+    fn verify_contract_tx_on_chain(&self, txid: &bitcoin::Txid) -> Result<(), MakerError> {
+        let wallet = self
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+
+        wallet
+            .rpc
+            .get_raw_transaction(txid, None)
+            .map_err(|_| MakerError::General("Incoming contract tx not found on-chain"))?;
+
+        Ok(())
     }
 
     fn broadcast_transaction(&self, tx: &Transaction) -> Result<bitcoin::Txid, MakerError> {
@@ -682,6 +742,10 @@ impl UnifiedMakerTrait for UnifiedMakerServer {
             state.pending_funding_txes = s.pending_funding_txes.clone();
             state
         })
+    }
+
+    fn remove_connection_state(&self, swap_id: &str) {
+        self.remove_swap_state(swap_id);
     }
 
     fn verify_and_sign_sender_contract_txs(
@@ -1001,5 +1065,10 @@ impl UnifiedMakerTrait for UnifiedMakerServer {
             self.config.network_port
         );
         None
+    }
+
+    #[cfg(feature = "integration-test")]
+    fn behavior(&self) -> UnifiedMakerBehavior {
+        self.behavior
     }
 }

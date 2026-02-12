@@ -58,8 +58,8 @@ use bitcoind::{
 
 use coinswap::{
     maker::{
-        Maker, MakerBehavior, TaprootMaker, TaprootMakerBehavior, UnifiedMakerServer,
-        UnifiedMakerServerConfig,
+        Maker, MakerBehavior, TaprootMaker, TaprootMakerBehavior, UnifiedMakerBehavior,
+        UnifiedMakerServer, UnifiedMakerServerConfig,
     },
     protocol::common_messages::ProtocolVersion,
     taker::{
@@ -586,8 +586,10 @@ pub fn fund_unified_makers(
     utxo_count: u32,
     utxo_value: Amount,
     address_type: AddressType,
-) {
+) -> Vec<Amount> {
     log::info!("💰 Funding Unified Makers...");
+
+    let mut spendable_balances = Vec::new();
 
     for maker in makers {
         let mut wallet = maker.wallet.write().unwrap();
@@ -611,7 +613,11 @@ pub fn fund_unified_makers(
             "Unified Maker funded successfully. Regular: {}, Fidelity: {}",
             balances.regular, balances.fidelity
         );
+
+        spendable_balances.push(balances.spendable);
     }
+
+    spendable_balances
 }
 
 /// Verify unified maker pre-swap balances
@@ -936,6 +942,7 @@ impl TestFramework {
     pub fn init_unified(
         makers_config_map: Vec<(u16, Option<u16>)>,
         taker_behavior: Vec<UnifiedTakerBehavior>,
+        maker_behaviors: Vec<UnifiedMakerBehavior>,
     ) -> (
         Arc<Self>,
         Vec<UnifiedTaker>,
@@ -996,7 +1003,8 @@ impl TestFramework {
         // Create the UnifiedMakerServers with unified message handling
         let makers = makers_config_map
             .into_iter()
-            .map(|(network_port, _socks_port)| {
+            .enumerate()
+            .map(|(i, (network_port, _socks_port))| {
                 base_rpc_port += 1;
                 let maker_id = format!("unified_maker{}", network_port);
                 thread::sleep(Duration::from_secs(5)); // Avoid resource unavailable error
@@ -1019,7 +1027,9 @@ impl TestFramework {
                     rpc_config: rpc_config.clone(),
                 };
 
-                Arc::new(UnifiedMakerServer::init(config).unwrap())
+                let mut server = UnifiedMakerServer::init(config).unwrap();
+                server.behavior = maker_behaviors.get(i).copied().unwrap_or_default();
+                Arc::new(server)
             })
             .collect::<Vec<_>>();
 

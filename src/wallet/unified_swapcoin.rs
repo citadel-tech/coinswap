@@ -523,6 +523,18 @@ impl IncomingSwapCoin {
         }
     }
 
+    /// Get the vout of the contract output in the contract_tx.
+    pub fn get_contract_output_vout(&self) -> u32 {
+        if self.protocol == ProtocolVersion::Taproot && self.contract_tx.output.len() > 1 {
+            for (i, output) in self.contract_tx.output.iter().enumerate() {
+                if output.value == self.funding_amount {
+                    return i as u32;
+                }
+            }
+        }
+        0
+    }
+
     /// Signs a Taproot (MuSig2) spend transaction using cooperative key-path spend.
     fn sign_taproot_spend(&self, spend_tx: &mut Transaction) -> Result<(), WalletError> {
         if self.other_privkey.is_none() {
@@ -566,9 +578,10 @@ impl IncomingSwapCoin {
                     })?;
 
                 // Sighash for script-path spend
+                let contract_vout = self.get_contract_output_vout() as usize;
                 let contract_output = bitcoin::TxOut {
                     value: self.funding_amount,
-                    script_pubkey: self.contract_tx.output[0].script_pubkey.clone(),
+                    script_pubkey: self.contract_tx.output[contract_vout].script_pubkey.clone(),
                 };
                 let prevouts = vec![contract_output];
                 let prevouts_all = bitcoin::sighash::Prevouts::All(&prevouts);
@@ -947,6 +960,22 @@ impl OutgoingSwapCoin {
         }
     }
 
+    /// Get the vout of the contract output in the contract_tx.
+    ///
+    /// For Taproot, the contract_tx may have multiple outputs (funding + change).
+    /// Find the correct output by matching `funding_amount`.
+    /// For Legacy (single-output contract tx), returns 0.
+    pub fn get_contract_output_vout(&self) -> u32 {
+        if self.protocol == ProtocolVersion::Taproot && self.contract_tx.output.len() > 1 {
+            for (i, output) in self.contract_tx.output.iter().enumerate() {
+                if output.value == self.funding_amount {
+                    return i as u32;
+                }
+            }
+        }
+        0
+    }
+
     /// Create a fully signed contract transaction for broadcast.
     ///
     /// For Legacy, the contract tx spends the P2WSH multisig funding output.
@@ -1022,10 +1051,11 @@ impl OutgoingSwapCoin {
         let secp = Secp256k1::new();
 
         // Get the contract output we're spending
+        let contract_vout = self.get_contract_output_vout() as usize;
         let contract_output = self
             .contract_tx
             .output
-            .first()
+            .get(contract_vout)
             .ok_or_else(|| WalletError::General("No output in contract tx".to_string()))?;
 
         if self.protocol == ProtocolVersion::Taproot {

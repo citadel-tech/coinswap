@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use bitcoin::{Amount, OutPoint, PublicKey, ScriptBuf, Transaction};
+use bitcoin::{OutPoint, PublicKey};
 
 use super::{
     error::MakerError,
@@ -11,7 +11,7 @@ use super::{
 use crate::{
     protocol::{
         common_messages::{PrivateKeyHandover, SwapPrivkey},
-        contract2::create_timelock_script,
+        contract2::{create_hashlock_script, create_timelock_script, extract_hash_from_hashlock},
         router::MakerToTakerMessage,
         taproot_messages::{
             SerializableScalar, TaprootContractData, TaprootHashPreimage, TaprootTakerMessage,
@@ -71,6 +71,10 @@ fn process_taproot_contract<M: UnifiedMaker>(
         .cloned()
         .ok_or(MakerError::General("No contract transaction from taker"))?;
 
+    // Verify the incoming contract tx is on-chain before proceeding.
+    let incoming_txid = incoming_contract_tx.compute_txid();
+    maker.verify_contract_tx_on_chain(&incoming_txid)?;
+
     let incoming_funding_amount = data.amounts.first().cloned().unwrap_or(state.swap_amount);
 
     let other_pubkey = data.pubkeys.first().cloned().unwrap_or(data.next_hop_point);
@@ -122,7 +126,10 @@ fn process_taproot_contract<M: UnifiedMaker>(
     let timelock_keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &timelock_privkey);
     let timelock_xonly = bitcoin::secp256k1::XOnlyPublicKey::from_keypair(&timelock_keypair).0;
 
-    let hashlock_script = data.hashlock_script.clone();
+    let hash = extract_hash_from_hashlock(&data.hashlock_script)
+        .map_err(|e| MakerError::General(format!("Invalid hashlock script: {:?}", e).leak()))?;
+    let next_hop_xonly = bitcoin::key::XOnlyPublicKey::from(data.next_hop_point.inner);
+    let hashlock_script = create_hashlock_script(&hash, &next_hop_xonly);
     let timelock_script = {
         let locktime = bitcoin::absolute::LockTime::from_height(state.timelock as u32)
             .unwrap_or(bitcoin::absolute::LockTime::ZERO);
@@ -151,43 +158,25 @@ fn process_taproot_contract<M: UnifiedMaker>(
 
     let taproot_address = bitcoin::Address::p2tr_tweaked(tap_info.output_key(), maker.network());
 
-    let (funding_tx, output_pos) =
+    let (contract_tx, output_pos) =
         maker.create_funding_transaction(outgoing_amount, taproot_address.clone())?;
-    let funding_txid = funding_tx.compute_txid();
+    let contract_txid = contract_tx.compute_txid();
 
-    let funding_outpoint = OutPoint {
-        txid: funding_txid,
+    let contract_outpoint = OutPoint {
+        txid: contract_txid,
         vout: output_pos,
     };
 
-    let funding_output_amount = funding_tx.output[output_pos as usize].value;
+    let contract_output_amount = contract_tx.output[output_pos as usize].value;
 
-    // Create contract tx
-    let contract_tx = Transaction {
-        version: bitcoin::transaction::Version::TWO,
-        lock_time: bitcoin::absolute::LockTime::ZERO,
-        input: vec![bitcoin::TxIn {
-            previous_output: funding_outpoint,
-            script_sig: ScriptBuf::new(),
-            sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
-            witness: bitcoin::Witness::new(),
-        }],
-        output: vec![bitcoin::TxOut {
-            value: funding_output_amount - Amount::from_sat(500), // Deduct fee
-            script_pubkey: taproot_address.script_pubkey(),
-        }],
-    };
-
-    // Create outgoing swapcoin
     let mut outgoing_swapcoin = OutgoingSwapCoin::new_taproot(
         timelock_privkey,
         hashlock_script.clone(),
         timelock_script.clone(),
         contract_tx.clone(),
-        funding_output_amount,
+        contract_output_amount,
     );
     outgoing_swapcoin.swap_id = Some(data.id.clone());
-    outgoing_swapcoin.funding_tx = Some(funding_tx.clone());
     outgoing_swapcoin.set_taproot_params(
         outgoing_privkey,
         outgoing_pubkey,
@@ -200,25 +189,44 @@ fn process_taproot_contract<M: UnifiedMaker>(
     state.incoming_swapcoins.push(incoming_swapcoin.clone());
     state.outgoing_swapcoins.push(outgoing_swapcoin.clone());
 
-    match maker.broadcast_transaction(&funding_tx) {
+    #[cfg(feature = "integration-test")]
+    {
+        use super::unified_handlers::UnifiedMakerBehavior;
+        if maker.behavior() == UnifiedMakerBehavior::SkipFundingBroadcast {
+            log::warn!(
+                "[{}] Test behavior: skipping Taproot funding broadcast",
+                maker.network_port()
+            );
+            // Swapcoins are already in state.
+            // Save them to wallet for recovery detection.
+            maker.save_incoming_swapcoin(&incoming_swapcoin)?;
+            maker.save_outgoing_swapcoin(&outgoing_swapcoin)?;
+            maker.store_connection_state(&data.id, state);
+            return Err(MakerError::General("Test: skipped funding broadcast"));
+        }
+    }
+
+    match maker.broadcast_transaction(&contract_tx) {
         Ok(txid) => {
             log::info!(
-                "[{}] Broadcast Taproot funding tx {} immediately for swap {}",
+                "[{}] Broadcast Taproot contract tx {} for swap {}",
                 maker.network_port(),
                 txid,
                 data.id
             );
 
-            maker.register_watch_outpoint(funding_outpoint);
+            maker.register_watch_outpoint(contract_outpoint);
         }
         Err(e) => {
             log::warn!(
-                "[{}] Failed to broadcast Taproot funding tx (may already be broadcast): {:?}",
+                "[{}] Failed to broadcast Taproot contract tx (may already be broadcast): {:?}",
                 maker.network_port(),
                 e
             );
         }
     }
+
+    maker.register_watch_outpoint(contract_outpoint);
 
     // Save to wallet
     maker.save_incoming_swapcoin(&incoming_swapcoin)?;
@@ -242,8 +250,8 @@ fn process_taproot_contract<M: UnifiedMaker>(
         SerializableScalar::from_bytes(tap_tweak_scalar.to_be_bytes().to_vec()),
         hashlock_script,
         timelock_script,
-        vec![funding_tx],
-        vec![funding_output_amount],
+        vec![contract_tx],
+        vec![contract_output_amount],
     );
 
     Ok(Some(MakerToTakerMessage::TaprootContractData(Box::new(
@@ -324,6 +332,7 @@ fn process_taproot_handover<M: UnifiedMaker>(
     }
 
     maker.sweep_incoming_swapcoins()?;
+    maker.remove_connection_state(&handover.id);
 
     log::info!(
         "[{}] Taproot swap {} completed successfully",

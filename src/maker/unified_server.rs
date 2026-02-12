@@ -89,6 +89,18 @@ pub fn start_unified_server(maker: Arc<UnifiedMakerServer>) -> Result<(), MakerE
         maker.config.network_port
     );
 
+    // Spawn idle state checker thread for recovery
+    let maker_clone = Arc::clone(&maker);
+    let idle_handle = thread::Builder::new()
+        .name("unified-idle-checker".to_string())
+        .spawn(move || {
+            if let Err(e) = check_for_idle_states(maker_clone) {
+                log::error!("Idle state checker error: {:?}", e);
+            }
+        })
+        .map_err(MakerError::IO)?;
+    maker.thread_pool.add_thread(idle_handle);
+
     while !maker.is_shutdown() {
         match listener.accept() {
             Ok((stream, addr)) => {
@@ -278,6 +290,316 @@ fn handle_connection(maker: Arc<UnifiedMakerServer>, stream: TcpStream) -> Resul
         "[{}] Connection handler finished",
         maker.config.network_port
     );
+
+    Ok(())
+}
+
+/// Background thread that checks for idle swap states and spawns recovery.
+fn check_for_idle_states(maker: Arc<UnifiedMakerServer>) -> Result<(), MakerError> {
+    loop {
+        if maker.is_shutdown() {
+            break;
+        }
+
+        let idle_swaps = maker.drain_idle_swaps(IDLE_CONNECTION_TIMEOUT);
+
+        for (swap_id, incoming_swapcoins, outgoing_swapcoins) in idle_swaps {
+            log::error!(
+                "[{}] Potential dropped connection from taker. Swap {} idle. Recovering from swap",
+                maker.config.network_port,
+                swap_id
+            );
+
+            let maker_clone = Arc::clone(&maker);
+            let handle = thread::Builder::new()
+                .name(format!("swap-recovery-{}", swap_id))
+                .spawn(move || {
+                    if let Err(e) =
+                        recover_from_swap(maker_clone, incoming_swapcoins, outgoing_swapcoins)
+                    {
+                        log::error!("Failed to recover from swap {}: {:?}", swap_id, e);
+                    }
+                })
+                .map_err(MakerError::IO)?;
+            maker.thread_pool.add_thread(handle);
+        }
+
+        sleep(HEART_BEAT_INTERVAL);
+    }
+
+    Ok(())
+}
+
+/// Minimum witness items for a hashlock spend (signature + preimage).
+const MIN_WITNESS_ITEM_FOR_HASHLOCK: usize = 2;
+
+/// Preimage length in bytes.
+const PREIMAGE_LEN: usize = 32;
+
+/// Check the watch tower for spends on outgoing contract outputs, extract
+/// preimages from hashlock spends, and update incoming swapcoins in the wallet.
+fn check_for_preimage_via_watchtower(
+    maker: &UnifiedMakerServer,
+    outgoing_swapcoins: &[crate::wallet::unified_swapcoin::OutgoingSwapCoin],
+    incoming_swapcoins: &[crate::wallet::unified_swapcoin::IncomingSwapCoin],
+) -> Result<(), MakerError> {
+    use bitcoin::hashes::Hash;
+    use std::{collections::HashSet, convert::TryFrom};
+
+    let mut seen_outpoints = HashSet::new();
+    let mut preimages: Vec<[u8; 32]> = Vec::new();
+
+    // Query the watch tower for spends on each outgoing contract output.
+    for outgoing in outgoing_swapcoins {
+        let contract_txid = outgoing.contract_tx.compute_txid();
+        for (vout, _) in outgoing.contract_tx.output.iter().enumerate() {
+            let outpoint = bitcoin::OutPoint {
+                txid: contract_txid,
+                vout: vout as u32,
+            };
+            maker.watch_service.watch_request(outpoint);
+
+            if let Some(crate::watch_tower::watcher::WatcherEvent::UtxoSpent {
+                spending_tx: Some(spending_tx),
+                ..
+            }) = maker.watch_service.wait_for_event()
+            {
+                // Extract preimages from the spending transaction's witnesses.
+                for input in &spending_tx.input {
+                    let op = (input.previous_output.txid, input.previous_output.vout);
+                    if seen_outpoints.insert(op)
+                        && input.witness.len() >= MIN_WITNESS_ITEM_FOR_HASHLOCK
+                        && input.witness[1].len() == PREIMAGE_LEN
+                    {
+                        if let Ok(preimage) = <[u8; 32]>::try_from(&input.witness[1][..]) {
+                            preimages.push(preimage);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if preimages.is_empty() {
+        return Ok(());
+    }
+
+    log::info!(
+        "[{}] Extracted {} preimage(s) from on-chain hashlock spends",
+        maker.config.network_port,
+        preimages.len()
+    );
+
+    // Apply extracted preimages to incoming swapcoins in the wallet.
+    let mut wallet = maker
+        .wallet
+        .write()
+        .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+
+    for incoming in incoming_swapcoins {
+        // The wallet stores incoming swapcoins keyed by contract txid, not swap_id.
+        let wallet_key = incoming.contract_tx.compute_txid().to_string();
+
+        for preimage in &preimages {
+            // Verify the preimage matches the incoming swapcoin's hashlock.
+            let hash = bitcoin::hashes::Hash::hash(preimage);
+            let matches = if let Some(redeemscript) = incoming.contract_redeemscript() {
+                // Legacy: check against contract redeemscript
+                crate::protocol::contract::read_hashvalue_from_contract(redeemscript)
+                    .map(|h| h == hash)
+                    .unwrap_or(false)
+            } else {
+                // Taproot: check against hashlock script (contains OP_HASH160 <hash> OP_EQUAL)
+                incoming
+                    .hashlock_script()
+                    .map(|script| {
+                        let bytes = script.as_bytes();
+                        // hashlock script format: OP_HASH160 OP_PUSHBYTES_20 <20-byte hash> OP_EQUAL ...
+                        bytes.len() >= 22 && bytes[2..22] == *hash.as_byte_array()
+                    })
+                    .unwrap_or(false)
+            };
+
+            if matches {
+                if let Some(swapcoin) = wallet.find_unified_incoming_swapcoin_mut(&wallet_key) {
+                    if swapcoin.hash_preimage.is_none() {
+                        swapcoin.set_preimage(*preimage);
+                        log::info!(
+                            "[{}] Applied extracted preimage to incoming swapcoin {}",
+                            maker.config.network_port,
+                            wallet_key
+                        );
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    wallet.save_to_disk().map_err(MakerError::Wallet)?;
+
+    Ok(())
+}
+
+/// Recover maker funds after taker drops.
+///
+/// Two recovery paths are tried in a loop:
+/// 1. **Hashlock** (incoming swapcoins): If the taker (or another party) spends
+///    our outgoing contract output via hashlock, the preimage is revealed on-chain.
+///    We extract it via the watch tower and sweep our incoming swapcoins.
+/// 2. **Timelock** (outgoing swapcoins): After the timelock expires, we reclaim
+///    our outgoing funds via the timelock spending path.
+fn recover_from_swap(
+    maker: Arc<UnifiedMakerServer>,
+    incoming_swapcoins: Vec<crate::wallet::unified_swapcoin::IncomingSwapCoin>,
+    outgoing_swapcoins: Vec<crate::wallet::unified_swapcoin::OutgoingSwapCoin>,
+) -> Result<(), MakerError> {
+    use bitcoind::bitcoincore_rpc::RpcApi;
+
+    let timelock = outgoing_swapcoins
+        .first()
+        .and_then(|o| o.get_timelock())
+        .ok_or(MakerError::General("missing timelock on outgoing swapcoin"))?;
+
+    let start_height = maker
+        .wallet
+        .read()
+        .map_err(|_| MakerError::General("Failed to lock wallet"))?
+        .rpc
+        .get_block_count()
+        .map_err(crate::wallet::WalletError::Rpc)? as u32;
+
+    let timelock_expiry = start_height.saturating_add(timelock);
+
+    log::info!(
+        "[{}] recover_from_swap started | height={} timelock_expiry={} | incoming={} outgoing={}",
+        maker.config.network_port,
+        start_height,
+        timelock_expiry,
+        incoming_swapcoins.len(),
+        outgoing_swapcoins.len()
+    );
+
+    // NOTE: Do NOT re-register outgoing contract outputs here.
+    // They were already registered with the watch tower during swap setup
+    // (in legacy_handlers / taproot_handlers). Re-registering would overwrite
+    // the registry entry and lose any recorded `spent_tx` from on-chain
+    // hashlock spends that the watcher already captured.
+
+    while !maker.is_shutdown() {
+        // --- Hashlock path: check if preimages are available ---
+        check_for_preimage_via_watchtower(&maker, &outgoing_swapcoins, &incoming_swapcoins)?;
+
+        // Check if all incoming swapcoins now have preimages
+        let all_preimages_known = {
+            let wallet = maker
+                .wallet
+                .read()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+            incoming_swapcoins.iter().all(|incoming| {
+                // Wallet stores incoming swapcoins keyed by contract txid.
+                let key = incoming.contract_tx.compute_txid().to_string();
+                wallet
+                    .find_unified_incoming_swapcoin(&key)
+                    .is_some_and(|s| s.is_preimage_known())
+            })
+        };
+
+        if all_preimages_known && !incoming_swapcoins.is_empty() {
+            log::info!(
+                "[{}] All preimages known, recovering via hashlock path",
+                maker.config.network_port
+            );
+
+            maker
+                .wallet
+                .write()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .sync_and_save()
+                .map_err(MakerError::Wallet)?;
+
+            let swept = maker
+                .wallet
+                .write()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .sweep_unified_incoming_swapcoins(crate::utill::MIN_FEE_RATE)
+                .map_err(MakerError::Wallet)?;
+
+            if !swept.is_empty() {
+                log::info!(
+                    "[{}] Recovered {} incoming swapcoins via hashlock",
+                    maker.config.network_port,
+                    swept.len()
+                );
+
+                // Clean up outgoing swapcoins — their funding was spent by
+                // someone else (hashlock), so they are no longer recoverable
+                // via timelock. Remove them from the wallet store.
+                {
+                    let mut wallet = maker
+                        .wallet
+                        .write()
+                        .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+                    for outgoing in &outgoing_swapcoins {
+                        // Wallet stores outgoing swapcoins keyed by contract txid.
+                        let key = outgoing.contract_tx.compute_txid().to_string();
+                        wallet.remove_unified_outgoing_swapcoin(&key);
+                    }
+                    wallet.save_to_disk().map_err(MakerError::Wallet)?;
+                }
+
+                #[cfg(feature = "integration-test")]
+                maker.shutdown.store(true, Relaxed);
+                return Ok(());
+            }
+        }
+
+        // --- Timelock path: reclaim outgoing after timelock expires ---
+        let current_height = maker
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+            .rpc
+            .get_block_count()
+            .map_err(crate::wallet::WalletError::Rpc)? as u32;
+
+        if current_height >= timelock_expiry {
+            log::info!(
+                "[{}] Timelock expired at {} (expiry={}), recovering via timelock path",
+                maker.config.network_port,
+                current_height,
+                timelock_expiry
+            );
+
+            log::info!("Sync at:----recover_from_swap timelock----");
+            maker
+                .wallet
+                .write()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .sync_and_save()
+                .map_err(MakerError::Wallet)?;
+
+            let recovered = maker
+                .wallet
+                .write()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .recover_unified_timelocked_swapcoins(crate::utill::MIN_FEE_RATE)
+                .map_err(MakerError::Wallet)?;
+
+            if !recovered.is_empty() {
+                log::info!(
+                    "[{}] Recovered {} outgoing swapcoins via timelock",
+                    maker.config.network_port,
+                    recovered.len()
+                );
+                #[cfg(feature = "integration-test")]
+                maker.shutdown.store(true, Relaxed);
+                return Ok(());
+            }
+        }
+
+        sleep(HEART_BEAT_INTERVAL);
+    }
 
     Ok(())
 }

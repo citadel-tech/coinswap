@@ -18,6 +18,18 @@ use crate::{
     wallet::unified_swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
 };
 
+/// Test-only behavior overrides for unified maker.
+#[cfg(feature = "integration-test")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UnifiedMakerBehavior {
+    /// Normal operation (no test override).
+    #[default]
+    Normal,
+    /// Receive contract sigs and save swapcoins, but skip funding broadcast
+    /// and close the connection. Simulates last-maker misbehavior.
+    SkipFundingBroadcast,
+}
+
 /// Minimum time required to react to contract broadcasts (in blocks).
 pub const MIN_CONTRACT_REACTION_TIME: u16 = 10;
 
@@ -155,6 +167,12 @@ pub trait UnifiedMaker: Send + Sync {
     /// Retrieve stored connection state.
     fn get_connection_state(&self, swap_id: &str) -> Option<UnifiedConnectionState>;
 
+    /// Remove connection state for a completed swap.
+    fn remove_connection_state(&self, swap_id: &str);
+
+    /// Verify that a contract transaction is on-chain or in the mempool.
+    fn verify_contract_tx_on_chain(&self, txid: &bitcoin::Txid) -> Result<(), MakerError>;
+
     /// Verify and sign sender's contract transactions.
     fn verify_and_sign_sender_contract_txs(
         &self,
@@ -185,6 +203,10 @@ pub trait UnifiedMaker: Send + Sync {
         &self,
         multisig_redeemscript: &bitcoin::ScriptBuf,
     ) -> Option<OutgoingSwapCoin>;
+
+    /// Get the test behavior override.
+    #[cfg(feature = "integration-test")]
+    fn behavior(&self) -> UnifiedMakerBehavior;
 }
 
 /// Maker configuration values.

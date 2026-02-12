@@ -329,6 +329,25 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: UnifiedMaker>(
         );
     }
 
+    #[cfg(feature = "integration-test")]
+    {
+        use super::unified_handlers::UnifiedMakerBehavior;
+        if maker.behavior() == UnifiedMakerBehavior::SkipFundingBroadcast {
+            log::warn!(
+                "[{}] Test behavior: skipping funding broadcast",
+                maker.network_port()
+            );
+            for incoming in &state.incoming_swapcoins {
+                maker.save_incoming_swapcoin(incoming)?;
+            }
+            for outgoing in &state.outgoing_swapcoins {
+                maker.save_outgoing_swapcoin(outgoing)?;
+            }
+            maker.store_connection_state(&resp.id, state);
+            return Err(MakerError::General("Test: skipped funding broadcast"));
+        }
+    }
+
     log::info!(
         "[{}] SECURITY: Broadcasting {} funding txs after receiving signatures",
         maker.network_port(),
@@ -357,6 +376,16 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: UnifiedMaker>(
     }
     for outgoing in &state.outgoing_swapcoins {
         maker.save_outgoing_swapcoin(outgoing)?;
+
+        // Register outgoing contract output with watchtower EARLY so it can
+        // detect hashlock spends by the taker before recovery starts.
+        let contract_txid = outgoing.contract_tx.compute_txid();
+        for (vout, _) in outgoing.contract_tx.output.iter().enumerate() {
+            maker.register_watch_outpoint(bitcoin::OutPoint {
+                txid: contract_txid,
+                vout: vout as u32,
+            });
+        }
     }
 
     maker.store_connection_state(&resp.id, state);
@@ -514,6 +543,7 @@ fn process_legacy_handover<M: UnifiedMaker>(
     }
 
     maker.sweep_incoming_swapcoins()?;
+    maker.remove_connection_state(&handover.id);
 
     log::info!(
         "[{}] Legacy swap {} completed successfully",

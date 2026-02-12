@@ -562,18 +562,26 @@ impl Wallet {
     #[allow(dead_code)]
     pub(crate) fn find_unified_incoming_swapcoin(
         &self,
-        swap_id: &str,
+        contract_txid: &str,
     ) -> Option<&super::unified_swapcoin::IncomingSwapCoin> {
-        self.store.unified_incoming_swapcoins.get(swap_id)
+        self.store.unified_incoming_swapcoins.get(contract_txid)
     }
 
-    /// Finds a unified outgoing swap coin by swap_id.
+    /// Finds a unified incoming swap coin by contract txid (mutable).
+    pub(crate) fn find_unified_incoming_swapcoin_mut(
+        &mut self,
+        contract_txid: &str,
+    ) -> Option<&mut super::unified_swapcoin::IncomingSwapCoin> {
+        self.store.unified_incoming_swapcoins.get_mut(contract_txid)
+    }
+
+    /// Finds a unified outgoing swap coin by contract txid.
     #[allow(dead_code)]
     pub(crate) fn find_unified_outgoing_swapcoin(
         &self,
-        swap_id: &str,
+        contract_txid: &str,
     ) -> Option<&super::unified_swapcoin::OutgoingSwapCoin> {
-        self.store.unified_outgoing_swapcoins.get(swap_id)
+        self.store.unified_outgoing_swapcoins.get(contract_txid)
     }
 
     /// Finds a unified outgoing swap coin by multisig redeemscript.
@@ -693,6 +701,22 @@ impl Wallet {
             .collect()
     }
 
+    /// Remove a unified outgoing swapcoin by swap ID.
+    pub(crate) fn remove_unified_outgoing_swapcoin(&mut self, contract_txid: &str) {
+        if self
+            .store
+            .unified_outgoing_swapcoins
+            .remove(contract_txid)
+            .is_some()
+        {
+            log::info!(
+                "Removed unified outgoing swapcoin: {} (remaining: {})",
+                contract_txid,
+                self.store.unified_outgoing_swapcoins.len()
+            );
+        }
+    }
+
     /// Attempt to recover timelocked unified outgoing swapcoins.
     pub fn recover_unified_timelocked_swapcoins(
         &mut self,
@@ -727,14 +751,17 @@ impl Wallet {
             }
         }
 
+        let mut discarded = Vec::new();
+
         for swap_id in to_recover {
             if let Some(swapcoin) = self.store.unified_outgoing_swapcoins.get(&swap_id) {
                 // Ensure the contract tx is on-chain before attempting timelock spend.
-                // For Legacy, the contract tx (pre-signed insurance) may not have been
-                // broadcast yet — it must be signed and pushed first so the timelock
-                // output exists.
                 let contract_txid = swapcoin.contract_tx.compute_txid();
-                match self.rpc.get_tx_out(&contract_txid, 0, Some(false)) {
+                let contract_vout = swapcoin.get_contract_output_vout();
+                match self
+                    .rpc
+                    .get_tx_out(&contract_txid, contract_vout, Some(false))
+                {
                     Ok(Some(_)) => {
                         log::info!(
                             "Contract tx {} already on-chain for {}",
@@ -743,6 +770,32 @@ impl Wallet {
                         );
                     }
                     _ => {
+                        // Contract tx not on-chain. Check if the wallet UTXOs
+                        // (inputs to the contract tx) are still unspent — if so,
+                        // the tx was never broadcast and funds are still ours.
+                        let input_outpoint = swapcoin.contract_tx.input[0].previous_output;
+                        let input_still_unspent = matches!(
+                            self.rpc.get_tx_out(
+                                &input_outpoint.txid,
+                                input_outpoint.vout,
+                                Some(false)
+                            ),
+                            Ok(Some(_))
+                        );
+
+                        if input_still_unspent {
+                            log::info!(
+                                "Contract tx for {} was never broadcast — wallet UTXOs still unspent, discarding swapcoin",
+                                swap_id
+                            );
+                            discarded.push(swap_id.clone());
+                            continue;
+                        }
+
+                        // Inputs are spent but contract output isn't on-chain.
+                        // For Legacy, the contract tx (pre-signed insurance) may
+                        // not have been broadcast yet — sign and push it so the
+                        // timelock output exists.
                         log::info!(
                             "Signing and broadcasting contract tx for {} before timelock recovery",
                             swap_id
@@ -757,10 +810,10 @@ impl Wallet {
                                 }
                                 Err(e) => {
                                     log::warn!(
-                                            "Failed to broadcast contract tx for {}: {:?} — skipping recovery",
-                                            swap_id,
-                                            e
-                                        );
+                                        "Failed to broadcast contract tx for {}: {:?} — skipping recovery",
+                                        swap_id,
+                                        e
+                                    );
                                     continue;
                                 }
                             },
@@ -814,7 +867,11 @@ impl Wallet {
             }
         }
 
-        if !recovered.is_empty() {
+        for id in &discarded {
+            self.store.unified_outgoing_swapcoins.remove(id);
+        }
+
+        if !recovered.is_empty() || !discarded.is_empty() {
             self.save_to_disk()?;
         }
 
@@ -833,11 +890,12 @@ impl Wallet {
             WalletError::General("Could not extract timelock from swapcoin".to_string())
         })?;
         let contract_txid = swapcoin.contract_tx.compute_txid();
+        let contract_vout = swapcoin.get_contract_output_vout();
 
         let contract_output = swapcoin
             .contract_tx
             .output
-            .first()
+            .get(contract_vout as usize)
             .ok_or_else(|| WalletError::General("No output in contract tx".to_string()))?;
 
         let fee = Amount::from_sat((150.0 * fee_rate) as u64);
@@ -857,7 +915,7 @@ impl Wallet {
             input: vec![TxIn {
                 previous_output: OutPoint {
                     txid: contract_txid,
-                    vout: 0,
+                    vout: contract_vout,
                 },
                 script_sig: bitcoin::ScriptBuf::new(),
                 sequence: Sequence::from_height(timelock as u16),

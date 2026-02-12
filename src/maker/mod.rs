@@ -37,6 +37,8 @@ pub use api2::Maker as TaprootMaker;
 pub use api2::MakerBehavior as TaprootMakerBehavior;
 pub use server2::start_maker_server_taproot;
 
+#[cfg(feature = "integration-test")]
+pub use unified_api::UnifiedMakerBehavior;
 pub use unified_api::{UnifiedMakerServer, UnifiedMakerServerConfig};
 pub use unified_handlers::{
     handle_message as unified_handle_message, MakerConfig as UnifiedHandlerConfig, SwapPhase,

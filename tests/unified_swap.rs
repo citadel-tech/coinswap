@@ -26,7 +26,7 @@ fn test_unified_coinswap_legacy() {
 
     // Initialize test framework
     let (test_framework, mut unified_takers, unified_makers, block_generation_handle) =
-        TestFramework::init_unified(makers_config_map, taker_behavior);
+        TestFramework::init_unified(makers_config_map, taker_behavior, vec![]);
 
     let bitcoind = &test_framework.bitcoind;
     let unified_taker = unified_takers.get_mut(0).unwrap();
@@ -204,7 +204,7 @@ fn test_unified_coinswap_taproot() {
 
     // Initialize test framework
     let (test_framework, mut unified_takers, unified_makers, block_generation_handle) =
-        TestFramework::init_unified(makers_config_map, taker_behavior);
+        TestFramework::init_unified(makers_config_map, taker_behavior, vec![]);
 
     let bitcoind = &test_framework.bitcoind;
     let unified_taker = unified_takers.get_mut(0).unwrap();
