@@ -37,7 +37,6 @@ zmq = "0.10.0"
 tungstenite = { version = "0.28.0", features = ["native-tls"]}
 nostr = "0.44.2"
 crossbeam-channel = "0.5.15"
-lru = "0.16.3"
 
 [dev-dependencies]
 flate2 = {version = "1.0.35"}

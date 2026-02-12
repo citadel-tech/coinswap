@@ -6,15 +6,12 @@
 
 use std::{
     borrow::Cow,
-    num::NonZeroUsize,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
 };
 
-use bitcoin::Txid;
-use lru::LruCache;
 use nostr::{
     event::Kind,
     filter::Filter,
@@ -28,16 +25,13 @@ use crate::{
     watch_tower::{
         registry_storage::FileRegistry,
         rpc_backend::BitcoinRpc,
-        utils::{parse_fidelity_event, process_fidelity},
+        utils::{parse_fidelity_event, process_fidelity, SeenTxids},
         watcher_error::WatcherError,
     },
 };
 
-/// Maximum number of txids in memory.
-const MAX_SEEN_TXIDS: usize = 5_000;
-
 // ## TODO: Instead of looping over relay's have a connection Pool.
-/// Discovers maker fidelity bonds by subscribing to Nostr events (kind 37777).
+/// Runs the main discovery routine for maker's fidelity bonds by subscribing to Nostr events (kind 37777).
 pub fn run_discovery(
     bitcoin_rpc: BitcoinRpc,
     registry: FileRegistry,
@@ -45,9 +39,7 @@ pub fn run_discovery(
 ) -> Result<(), WatcherError> {
     log::info!("Starting market discovery via Nostr");
 
-    let seen_txid = Arc::new(Mutex::new(LruCache::new(
-        NonZeroUsize::new(MAX_SEEN_TXIDS).expect("MAX_SEEN_TXIDS is non-zero"),
-    )));
+    let seen_txid = Arc::new(Mutex::new(SeenTxids::new()));
     let registry = Arc::new(registry);
     let bitcoin_rpc = Arc::new(bitcoin_rpc);
 
@@ -81,7 +73,7 @@ fn run_nostr_session_for_relay(
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRpc>,
-    seen_txid: &Arc<Mutex<LruCache<Txid, ()>>>,
+    seen_txid: &Arc<Mutex<SeenTxids>>,
 ) {
     log::info!("Starting Nostr session for relay {}", relay_url);
 
@@ -111,13 +103,14 @@ fn run_nostr_session_for_relay(
     log::info!("Stopped Nostr session for relay {}", relay_url);
 }
 
-/// Establishes a single Nostr connection and processes events until error or shutdown.
+/// Establishes websocket connection to single Nostr relay and processes events until error or shutdown.
+/// Subscribe to Nostr events on Kind (37777).
 fn connect_and_run_once(
     relay_url: &str,
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRpc>,
-    seen_txid: &Arc<Mutex<LruCache<Txid, ()>>>,
+    seen_txid: &Arc<Mutex<SeenTxids>>,
 ) -> Result<(), WatcherError> {
     let (mut socket, _) = tungstenite::connect(relay_url)?;
 
@@ -150,13 +143,14 @@ fn connect_and_run_once(
     )
 }
 
+/// Stream all the events from the Nostr relay and deserialize from json until shutdown
 fn read_event_loop(
     registry: Arc<FileRegistry>,
     mut socket: tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>,
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRpc>,
     relay_url: &str,
-    seen_txid: &Arc<Mutex<LruCache<Txid, ()>>>,
+    seen_txid: &Arc<Mutex<SeenTxids>>,
 ) -> Result<(), WatcherError> {
     while !shutdown.load(Ordering::SeqCst) {
         let msg = socket.read()?;
@@ -181,12 +175,15 @@ fn read_event_loop(
     Ok(())
 }
 
+/// filter events based on kind and tags
+/// check if event was alredy recived using the cache
+/// Returns the fidelity announcement containing onion address
 fn handle_relay_message(
     registry: Arc<FileRegistry>,
     msg: RelayMessage,
     bitcoin_rpc: Arc<BitcoinRpc>,
     relay_url: &str,
-    seen_txid: &Arc<Mutex<LruCache<Txid, ()>>>,
+    seen_txid: &Arc<Mutex<SeenTxids>>,
 ) -> Result<(), WatcherError> {
     match msg {
         RelayMessage::Event { event, .. } => {
@@ -194,11 +191,19 @@ fn handle_relay_message(
                 return Ok(());
             }
 
+            if event.is_expired() || event.tags.expiration().is_none() {
+                log::debug!(
+                    "Ignoring expired event or event without expiration tag from {}",
+                    relay_url
+                );
+                return Ok(());
+            }
+
             let Some((txid, vout)) = parse_fidelity_event(&event) else {
                 return Ok(());
             };
 
-            if seen_txid.lock()?.put(txid, ()).is_none() {
+            if seen_txid.lock()?.insert(txid) {
                 log::debug!("add new cache {}", txid);
                 let Ok(tx) = bitcoin_rpc.get_raw_tx(&txid) else {
                     log::debug!("Received invalid txid: {txid:?}");

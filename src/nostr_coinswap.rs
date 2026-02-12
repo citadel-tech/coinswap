@@ -18,7 +18,7 @@ use tungstenite::Message;
 
 use crate::{maker::MakerError, protocol::messages::FidelityProof};
 
-/// nost url for coinswap
+/// nostr url for coinswap
 #[cfg(not(feature = "integration-test"))]
 pub const NOSTR_RELAYS: &[&str] = &["wss://nos.lol", "wss://relay.damus.io"];
 /// nostr url for coinswap
@@ -27,7 +27,7 @@ pub const NOSTR_RELAYS: &[&str] = &["ws://127.0.0.1:8000"];
 
 /// coinswap nostr event kind
 pub const COINSWAP_KIND: u16 = 37777;
-// 24 hours
+/// Expiration time for noster event (24 hours)
 const EXPIRATION_SECS: u64 = 86400;
 
 /// Broadcasts a fidelity bond announcement over Nostr.
