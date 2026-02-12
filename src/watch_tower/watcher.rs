@@ -7,16 +7,18 @@ use std::{
     marker::PhantomData,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::{Receiver, Sender, TryRecvError},
+        mpsc::{Receiver as StdReceiver, TryRecvError},
         Arc,
     },
 };
 
 use bitcoin::{consensus::deserialize, Block, OutPoint, Transaction};
+use crossbeam_channel::Sender as CbSender;
 
 use crate::{
     wallet::RPCConfig,
     watch_tower::{
+        nostr_discovery,
         registry_storage::{Checkpoint, FileRegistry, WatchRequest},
         rpc_backend::BitcoinRpc,
         utils::{process_block, process_transaction},
@@ -35,8 +37,8 @@ pub trait Role {
 pub struct Watcher<R: Role> {
     backend: ZmqBackend,
     registry: FileRegistry,
-    rx_requests: Receiver<WatcherCommand>,
-    tx_events: Sender<WatcherEvent>,
+    rx_requests: StdReceiver<WatcherCommand>,
+    tx_events: CbSender<WatcherEvent>,
     _role: PhantomData<R>,
 }
 
@@ -88,8 +90,8 @@ impl<R: Role> Watcher<R> {
     pub fn new(
         backend: ZmqBackend,
         registry: FileRegistry,
-        rx_requests: Receiver<WatcherCommand>,
-        tx_events: Sender<WatcherEvent>,
+        rx_requests: StdReceiver<WatcherCommand>,
+        tx_events: CbSender<WatcherEvent>,
     ) -> Self {
         Self {
             backend,
@@ -100,22 +102,27 @@ impl<R: Role> Watcher<R> {
         }
     }
 
-    // #TODO: When watcher starts index the mempool, to check if watch request is present there
-    //        or not.
     /// Runs the watcher loop: handles ZMQ events and commands, optionally spawning discovery.
     pub fn run(&mut self, rpc_config: RPCConfig) -> Result<(), WatcherError> {
         log::info!("Watcher initiated");
         let rpc_backend_1 = BitcoinRpc::new(rpc_config.clone())?;
         let rpc_backend_2 = BitcoinRpc::new(rpc_config)?;
+
+        if let Err(e) = rpc_backend_1.process_mempool(&mut self.registry) {
+            log::warn!("Failed to process mempool on startup: {}", e);
+        }
+
         let discovery_shutdown = Arc::new(AtomicBool::new(false));
         let registry = self.registry.clone();
         std::thread::scope(move |s| {
             let discovery_clone = discovery_shutdown.clone();
             if R::RUN_DISCOVERY {
                 s.spawn(move || {
-                    if let Err(e) =
-                        rpc_backend_1.run_discovery(registry, discovery_shutdown.clone())
-                    {
+                    if let Err(e) = nostr_discovery::run_discovery(
+                        rpc_backend_1,
+                        registry,
+                        discovery_shutdown.clone(),
+                    ) {
                         log::error!("Discovery thread failed: {:?}", e);
                     }
                 });
