@@ -1219,7 +1219,6 @@ impl WatchOnlySwapCoin {
     }
 
     /// Create a new Taproot watch-only swap coin.
-    #[allow(dead_code)]
     pub fn new_taproot(
         sender_pubkey: PublicKey,
         receiver_pubkey: PublicKey,

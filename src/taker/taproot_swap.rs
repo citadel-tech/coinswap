@@ -21,6 +21,30 @@ use crate::{
 
 use super::{error::TakerError, unified_api::UnifiedTaker};
 
+/// Build contract data from a previous maker's response (for forwarding to the next maker).
+#[allow(clippy::type_complexity)]
+fn build_contract_data_from_response(
+    prev: &TaprootContractData,
+) -> (
+    Vec<PublicKey>,
+    Vec<ScriptBuf>,
+    Vec<ScriptBuf>,
+    secp256k1::XOnlyPublicKey,
+    SerializableScalar,
+    Vec<bitcoin::Transaction>,
+    Vec<Amount>,
+) {
+    (
+        prev.pubkeys.clone(),
+        vec![prev.hashlock_script.clone()],
+        vec![prev.timelock_script.clone()],
+        prev.internal_key,
+        prev.tap_tweak.clone(),
+        prev.contract_txs.clone(),
+        prev.amounts.clone(),
+    )
+}
+
 impl UnifiedTaker {
     /// Create Taproot (MuSig2) contract transactions and swapcoins (static version).
     #[allow(clippy::too_many_arguments)]
@@ -132,6 +156,7 @@ impl UnifiedTaker {
         log::info!("Exchanging contract data with makers...");
 
         let num_makers = self.swap_state()?.makers.len();
+        let mut received_contracts: Vec<TaprootContractData> = Vec::new();
 
         for i in 0..num_makers {
             let maker_address = self.swap_state()?.makers[i]
@@ -150,10 +175,10 @@ impl UnifiedTaker {
                 tap_tweak,
                 contract_txs,
                 amounts,
-            ) = if i == 0 && !self.swap_state()?.outgoing_swapcoins.is_empty() {
+            ) = if i == 0 {
                 self.build_contract_data_from_outgoing()?
             } else {
-                self.build_contract_data_from_incoming(i)?
+                build_contract_data_from_response(&received_contracts[i - 1])
             };
 
             let secp = Secp256k1::new();
@@ -205,13 +230,13 @@ impl UnifiedTaker {
                         i,
                         maker_contract.contract_txs.len()
                     );
-                    // Always save as incoming swapcoin (needed for forwarding to next maker).
-                    self.create_swapcoins_from_taproot_contract(&maker_contract, my_privkey)?;
 
-                    // For non-last hops, this contract goes to the next maker, not the taker.
-                    // Save it as watch-only so the taker can monitor it without trying to spend.
                     let is_last_maker = i == num_makers - 1;
-                    if !is_last_maker {
+                    if is_last_maker {
+                        // Only the last maker's contract is addressed to the taker.
+                        self.create_swapcoins_from_taproot_contract(&maker_contract, my_privkey)?;
+                    } else {
+                        // Intermediate contracts (maker→maker) are watch-only for the taker.
                         let sender_pubkey =
                             maker_contract.pubkeys.first().cloned().unwrap_or(my_pubkey);
                         let contract_tx =
@@ -248,6 +273,8 @@ impl UnifiedTaker {
                         }
                         self.swap_state_mut()?.watchonly_swapcoins.push(watchonly);
                     }
+
+                    received_contracts.push(*maker_contract);
                 }
                 _ => {
                     return Err(TakerError::General(format!(
@@ -314,72 +341,6 @@ impl UnifiedTaker {
             .map(|s| s.to_be_bytes())
             .unwrap_or([0u8; 32]);
         let tap_tweak = SerializableScalar::from_bytes(tweak_bytes.to_vec());
-
-        Ok((
-            pubkeys,
-            hashlock_scripts,
-            timelock_scripts,
-            internal_key,
-            tap_tweak,
-            contract_txs,
-            amounts,
-        ))
-    }
-
-    /// Build contract data from a previous incoming swapcoin (subsequent hops).
-    #[allow(clippy::type_complexity)]
-    fn build_contract_data_from_incoming(
-        &self,
-        hop_index: usize,
-    ) -> Result<
-        (
-            Vec<PublicKey>,
-            Vec<ScriptBuf>,
-            Vec<ScriptBuf>,
-            secp256k1::XOnlyPublicKey,
-            SerializableScalar,
-            Vec<bitcoin::Transaction>,
-            Vec<Amount>,
-        ),
-        TakerError,
-    > {
-        let prev_incoming = self
-            .swap_state()?
-            .incoming_swapcoins
-            .get(hop_index - 1)
-            .ok_or_else(|| {
-                TakerError::General(format!(
-                    "Missing incoming swapcoin from previous hop {}",
-                    hop_index - 1
-                ))
-            })?;
-
-        let contract_txs = vec![prev_incoming.contract_tx.clone()];
-        let amounts = vec![prev_incoming.funding_amount];
-
-        let pubkeys = vec![prev_incoming.other_pubkey.ok_or_else(|| {
-            TakerError::General("Previous incoming swapcoin missing other_pubkey".to_string())
-        })?];
-
-        let internal_key = prev_incoming.internal_key.ok_or_else(|| {
-            TakerError::General("Previous incoming swapcoin missing internal_key".to_string())
-        })?;
-        let tweak_bytes = prev_incoming
-            .tap_tweak
-            .map(|s| s.to_be_bytes())
-            .unwrap_or([0u8; 32]);
-        let tap_tweak = SerializableScalar::from_bytes(tweak_bytes.to_vec());
-
-        let hashlock_scripts = prev_incoming
-            .hashlock_script
-            .as_ref()
-            .map(|s| vec![s.clone()])
-            .unwrap_or_default();
-        let timelock_scripts = prev_incoming
-            .timelock_script
-            .as_ref()
-            .map(|s| vec![s.clone()])
-            .unwrap_or_default();
 
         Ok((
             pubkeys,
