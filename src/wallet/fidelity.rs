@@ -110,11 +110,23 @@ pub(crate) fn verify_fidelity_checks(
     current_height: u64,
 ) -> Result<(), WalletError> {
     // Ensure fidelity bond timelock lies within allowed range
-    let bond_height = proof.bond.lock_time.to_consensus_u32()
-        - proof
-            .bond
-            .conf_height
-            .ok_or(WalletError::Fidelity(FidelityError::BondDoesNotExist))?;
+    let conf_height = proof
+        .bond
+        .conf_height
+        .ok_or(WalletError::Fidelity(FidelityError::BondDoesNotExist))?;
+    let bond_height = proof
+        .bond
+        .lock_time
+        .to_consensus_u32()
+        .checked_sub(conf_height)
+        .ok_or_else(|| {
+            log::warn!(
+                "Invalid fidelity bond heights: lock_time={} conf_height={}",
+                proof.bond.lock_time.to_consensus_u32(),
+                conf_height
+            );
+            WalletError::General("Invalid fidelity bond timelock".to_string())
+        })?;
     if !(MIN_FIDELITY_TIMELOCK..=MAX_FIDELITY_TIMELOCK).contains(&bond_height) {
         log::warn!(
             "Invalid fidelity bond timelock: {} blocks. Accepted range is [{}-{}] blocks.",
@@ -720,6 +732,49 @@ mod test {
                 calculate_fidelity_value(value, locktime, confirmation_time, current_time)
             );
         }
+    }
+
+    #[test]
+    fn test_verify_fidelity_checks_with_invalid_height_does_not_panic() {
+        let secp = Secp256k1::new();
+        let secret_key = bitcoin::secp256k1::SecretKey::from_slice(&[7u8; 32]).unwrap();
+        let pubkey = PublicKey {
+            compressed: true,
+            inner: bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &secret_key),
+        };
+
+        let cert_hash = sha256d::Hash::hash(b"invalid-height-proof");
+        let cert_sig = secp
+            .sign_ecdsa(
+                &Message::from_digest_slice(cert_hash.as_byte_array()).unwrap(),
+                &secret_key,
+            );
+
+        let proof = FidelityProof {
+            bond: FidelityBond {
+                outpoint: OutPoint::null(),
+                amount: Amount::from_sat(10_000),
+                lock_time: LockTime::from_height(2_000).unwrap(),
+                pubkey,
+                conf_height: Some(2_001),
+                cert_expiry: Some(10),
+                is_spent: false,
+            },
+            cert_hash,
+            cert_sig,
+        };
+
+        let tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![],
+            output: vec![],
+        };
+
+        let result =
+            std::panic::catch_unwind(|| verify_fidelity_checks(&proof, "maker.onion:6102", tx, 0));
+        assert!(result.is_ok(), "verify_fidelity_checks should not panic");
+        assert!(result.unwrap().is_err());
     }
 }
 
