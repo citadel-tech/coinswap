@@ -6,6 +6,7 @@ use std::{
     path::Path,
     sync::mpsc::{self, Sender as StdSender},
     thread,
+    time::Duration,
 };
 
 use crate::{
@@ -55,15 +56,30 @@ impl WatchService {
         self.rx.try_recv().ok()
     }
 
-    /// Blocks until the next watcher event arrives.
+    /// Waits up to 10 seconds for the next watcher event.
     pub fn wait_for_event(&self) -> Option<WatcherEvent> {
-        self.rx.recv().ok()
+        self.wait_for_event_timeout(Duration::from_secs(10))
     }
 
-    /// Requests the list of maker addresses.
-    pub fn request_maker_address(&self) -> Option<WatcherEvent> {
-        _ = self.tx.send(WatcherCommand::MakerAddress);
-        self.rx.recv().ok()
+    /// Waits up to `timeout` for the next watcher event.
+    pub fn wait_for_event_timeout(&self, timeout: Duration) -> Option<WatcherEvent> {
+        self.rx.recv_timeout(timeout).ok()
+    }
+
+    /// Requests the list of maker addresses over a dedicated one-shot response channel.
+    pub fn request_maker_address(&self) -> Option<Vec<String>> {
+        let (response_tx, response_rx) = mpsc::channel();
+        self.tx
+            .send(WatcherCommand::MakerAddress { response_tx })
+            .ok()?;
+
+        match response_rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(maker_addresses) => Some(maker_addresses),
+            Err(e) => {
+                log::warn!("Timed out waiting for maker addresses from watcher: {}", e);
+                None
+            }
+        }
     }
 
     /// Signals the watcher to shut down gracefully.

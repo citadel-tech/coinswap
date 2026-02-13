@@ -39,7 +39,7 @@ use crate::{
     },
     utill::{read_message, send_message},
     wallet::verify_fidelity_checks,
-    watch_tower::{rpc_backend::BitcoinRpc, service::WatchService, watcher::WatcherEvent},
+    watch_tower::{rpc_backend::BitcoinRpc, service::WatchService},
 };
 
 use super::error::TakerError;
@@ -352,12 +352,19 @@ impl OfferSyncService {
     }
 
     fn run_once(&self) -> Result<(), TakerError> {
-        if let Some(WatcherEvent::MakerAddresses { maker_addresses }) =
-            self.watch_service.request_maker_address()
-        {
+        if let Some(maker_addresses) = self.watch_service.request_maker_address() {
             let mut book = self.offerbook.inner.write().unwrap();
             for addr in maker_addresses {
-                book.upsert_address(MakerAddress::try_from(addr).unwrap());
+                match MakerAddress::try_from(addr.clone()) {
+                    Ok(maker_address) => book.upsert_address(maker_address),
+                    Err(err) => {
+                        log::warn!(
+                            "Skipping invalid maker address from watcher '{}': {}",
+                            addr,
+                            err
+                        );
+                    }
+                }
             }
         }
 
@@ -416,8 +423,22 @@ impl OfferSyncService {
                 while !shutdown_flag.load(Ordering::Relaxed) {
                     self.is_syncing.store(true, Ordering::SeqCst);
                     log::info!("Running offerbook sync");
-                    if let Err(e) = self.run_once() {
-                        log::warn!("Offer sync iteration failed: {e:?}");
+                    let sync_result =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.run_once()));
+                    match sync_result {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => {
+                            log::warn!("Offer sync iteration failed: {e:?}");
+                        }
+                        Err(panic_payload) => {
+                            if let Some(msg) = panic_payload.downcast_ref::<&str>() {
+                                log::error!("Offer sync iteration panicked: {}", msg);
+                            } else if let Some(msg) = panic_payload.downcast_ref::<String>() {
+                                log::error!("Offer sync iteration panicked: {}", msg);
+                            } else {
+                                log::error!("Offer sync iteration panicked with non-string payload");
+                            }
+                        }
                     }
                     log::debug!("Running offerbook sync completed");
                     self.is_syncing.store(false, Ordering::SeqCst);
@@ -552,7 +573,10 @@ impl OfferBook {
 
     /// Load existing file, updates it, writes it back (errors if path doesn't exist).
     fn write_to_disk(&self, path: &Path) -> Result<(), TakerError> {
-        let offerdata_file = std::fs::OpenOptions::new().write(true).open(path)?;
+        let offerdata_file = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(path)?;
         let writer = BufWriter::new(offerdata_file);
         Ok(serde_json::to_writer_pretty(writer, &self)?)
     }
@@ -628,12 +652,20 @@ pub(crate) fn fetch_offer_from_makers(
             }
         }
     }
-    if let Some(err) = first_err {
-        return Err(err);
-    }
 
     // Collect all results from channel
     let offers: Vec<OfferAndAddress> = rx.iter().collect();
+
+    if offers.is_empty() {
+        if let Some(err) = first_err {
+            return Err(err);
+        }
+    } else if let Some(err) = first_err {
+        log::warn!(
+            "Offer fetch completed with partial worker failures; preserving successful offers: {:?}",
+            err
+        );
+    }
 
     Ok(offers)
 }

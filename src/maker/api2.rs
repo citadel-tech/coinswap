@@ -1483,7 +1483,7 @@ pub(crate) fn recover_from_swap(
             if let Some(crate::watch_tower::watcher::WatcherEvent::UtxoSpent {
                 spending_tx: Some(spending_tx),
                 ..
-            }) = maker.watch_service.poll_event()
+            }) = maker.watch_service.wait_for_event()
             {
                 log::info!(
                     "[{}] Detected spend of outgoing contract, attempting to extract preimage",
@@ -1553,7 +1553,7 @@ pub(crate) fn recover_from_swap(
                     if let Some(crate::watch_tower::watcher::WatcherEvent::UtxoSpent {
                         spending_tx: Some(spending_tx),
                         ..
-                    }) = maker.watch_service.poll_event()
+                    }) = maker.watch_service.wait_for_event()
                     {
                         if let Some(preimage) =
                             crate::protocol::contract2::extract_preimage_from_spending_tx(

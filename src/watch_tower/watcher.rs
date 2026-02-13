@@ -7,9 +7,10 @@ use std::{
     marker::PhantomData,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::{Receiver as StdReceiver, TryRecvError},
+        mpsc::{Receiver as StdReceiver, Sender as StdSender, TryRecvError},
         Arc,
     },
+    time::Duration,
 };
 
 use bitcoin::{consensus::deserialize, Block, OutPoint, Transaction};
@@ -52,17 +53,12 @@ pub enum WatcherEvent {
         /// Transaction that spent the outpoint, if known.
         spending_tx: Option<Transaction>,
     },
-    /// Maker addresses.
-    MakerAddresses {
-        /// All maker addresses currently recorded in the registry.
-        maker_addresses: Vec<String>,
-    },
     /// Returned when a queried outpoint is not being watched.
     NoOutpoint,
 }
 
 /// Commands accepted by the watcher from clients.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum WatcherCommand {
     /// Store a new watch request.
     RegisterWatchRequest {
@@ -79,8 +75,11 @@ pub enum WatcherCommand {
         /// Outpoint to stop tracking.
         outpoint: OutPoint,
     },
-    /// Ask for the current maker address list.
-    MakerAddress,
+    /// Ask for the current maker address list and return it over a dedicated channel.
+    MakerAddress {
+        /// One-shot response channel used for this request.
+        response_tx: StdSender<Vec<String>>,
+    },
     /// Terminate the watcher loop.
     Shutdown,
 }
@@ -128,8 +127,10 @@ impl<R: Role> Watcher<R> {
                 });
             }
             loop {
+                let mut did_work = false;
                 match self.rx_requests.try_recv() {
                     Ok(cmd) => {
+                        did_work = true;
                         if !self.handle_command(cmd, &rpc_backend_2) {
                             discovery_clone.store(true, Ordering::SeqCst);
                             break;
@@ -140,7 +141,12 @@ impl<R: Role> Watcher<R> {
                 }
 
                 if let Some(event) = self.backend.poll() {
+                    did_work = true;
                     self.handle_event(event);
+                }
+
+                if !did_work {
+                    std::thread::sleep(Duration::from_millis(50));
                 }
             }
         });
@@ -179,7 +185,7 @@ impl<R: Role> Watcher<R> {
                 log::info!("Intercepted unwatch request : {outpoint}");
                 self.registry.remove_watch(outpoint);
             }
-            WatcherCommand::MakerAddress => {
+            WatcherCommand::MakerAddress { response_tx } => {
                 log::debug!("Intercepted maker address request");
                 let height = rpc_backend
                     .get_blockchain_info()
@@ -192,9 +198,7 @@ impl<R: Role> Watcher<R> {
                     .into_iter()
                     .map(|fidelity| fidelity.onion_address)
                     .collect();
-                _ = self
-                    .tx_events
-                    .send(WatcherEvent::MakerAddresses { maker_addresses });
+                _ = response_tx.send(maker_addresses);
             }
             WatcherCommand::Shutdown => return false,
         }
