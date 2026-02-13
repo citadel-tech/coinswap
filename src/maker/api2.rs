@@ -672,6 +672,17 @@ impl Maker {
                     self.config.network_port,
                     blocked_outpoint
                 );
+                let selected_outpoints: Vec<OutPoint> = selected_utxos
+                    .iter()
+                    .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                    .collect();
+                if let Err(e) = wallet.rpc.unlock_unspent(&selected_outpoints) {
+                    log::warn!(
+                        "[{}] Failed to unlock selected UTXOs after denied-input rejection: {:?}",
+                        self.config.network_port,
+                        e
+                    );
+                }
                 return Err(MakerError::General(
                     "Blocked UTXO detected before outgoing contract broadcast",
                 ));

@@ -21,6 +21,16 @@ use crate::{
     },
 };
 
+#[cfg(not(feature = "integration-test"))]
+pub(crate) const DEFAULT_WATCHER_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(feature = "integration-test")]
+pub(crate) const DEFAULT_WATCHER_TIMEOUT: Duration = Duration::from_millis(50);
+
+#[cfg(not(feature = "integration-test"))]
+pub(crate) const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(feature = "integration-test")]
+pub(crate) const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_millis(50);
+
 /// Client-facing service for sending watcher commands and receiving events.
 #[derive(Clone)]
 pub struct WatchService {
@@ -56,9 +66,9 @@ impl WatchService {
         self.rx.try_recv().ok()
     }
 
-    /// Waits up to 10 seconds for the next watcher event.
+    /// Waits up to the default watcher timeout for the next watcher event.
     pub fn wait_for_event(&self) -> Option<WatcherEvent> {
-        self.wait_for_event_timeout(Duration::from_secs(10))
+        self.wait_for_event_timeout(DEFAULT_WATCHER_TIMEOUT)
     }
 
     /// Waits up to `timeout` for the next watcher event.
@@ -73,7 +83,7 @@ impl WatchService {
             .send(WatcherCommand::MakerAddress { response_tx })
             .ok()?;
 
-        match response_rx.recv_timeout(Duration::from_secs(10)) {
+        match response_rx.recv_timeout(DEFAULT_REQUEST_TIMEOUT) {
             Ok(maker_addresses) => Some(maker_addresses),
             Err(e) => {
                 log::warn!("Timed out waiting for maker addresses from watcher: {}", e);

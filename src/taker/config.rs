@@ -90,9 +90,9 @@ control_port = {}
 # Socks port for Tor proxy
 socks_port = {}
 # Authentication password for Tor control interface
-tor_auth_password = {}
+tor_auth_password = \"{}\"
 # Path to a newline-separated UTXO deny-list file (txid:vout)
-utxo_deny_list_path = {}",
+utxo_deny_list_path = \"{}\"",
             self.control_port, self.socks_port, self.tor_auth_password, self.utxo_deny_list_path,
         );
 
