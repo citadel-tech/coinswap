@@ -1,6 +1,9 @@
 //! Utility helpers for parsing watchtower-relevant transactions and updating registry state.
 
-use std::str::FromStr;
+use std::{
+    collections::{HashSet, VecDeque},
+    str::FromStr,
+};
 
 use bitcoin::{
     absolute::{Height, LockTime},
@@ -8,6 +11,18 @@ use bitcoin::{
 };
 
 use crate::watch_tower::{registry_storage::FileRegistry, watcher::Role};
+
+/// Maximum number of txids to track for cache.
+const MAX_SEEN_TXIDS: usize = 5_000;
+
+/// Bounded deduplication.
+/// Combines HashSet for O(1) lookup with VecDeque for ordering.
+pub(crate) struct SeenTxids {
+    /// Fast lookup: whether we've seen a txid
+    seen: HashSet<Txid>,
+    /// Tracks insertion order FIFO
+    order: VecDeque<Txid>,
+}
 
 /// Fidelity announcement done by watcher to registry
 #[derive(Debug)]
@@ -156,6 +171,38 @@ pub(crate) fn parse_fidelity_event(event: &nostr::Event) -> Option<(Txid, u32)> 
     Some((txid, vout))
 }
 
+impl SeenTxids {
+    pub fn new() -> Self {
+        Self {
+            seen: HashSet::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    /// Returns true if txid was newly inserted (not seen before).
+    /// Returns false if txid was already present.
+    /// Uses FIFO eviction when capacity is exceeded.
+    pub fn insert(&mut self, txid: Txid) -> bool {
+        if self.seen.insert(txid) {
+            self.order.push_back(txid);
+
+            // Enforce capacity bound by evicting oldest entry
+            if self.order.len() > MAX_SEEN_TXIDS {
+                // Batch remove 10
+                for _ in 0..10 {
+                    if let Some(old) = self.order.pop_front() {
+                        self.seen.remove(&old);
+                    }
+                }
+            }
+
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,5 +339,25 @@ mod tests {
 
         let w = reg.list_watches().pop().unwrap();
         assert!(!w.in_block);
+    }
+    #[test]
+    fn test_seentxid_insert() {
+        // 1. Insert new txid → returns true
+        let mut seen_txid = SeenTxids::new();
+        let txid1 = Txid::from_slice(&[0u8; 32]).unwrap();
+        assert!(seen_txid.insert(txid1));
+
+        // 2. Insert duplicate txid → returns false
+        assert!(!seen_txid.insert(txid1));
+        assert_eq!(seen_txid.order.len(), 1);
+
+        // 3. Check for batch eviction when capacity exceeded
+        for i in 0u64..(MAX_SEEN_TXIDS + 1) as u64 {
+            let mut bytes = [0u8; 32];
+            bytes[0..8].copy_from_slice(&i.to_be_bytes());
+            let txid = Txid::from_slice(&bytes).unwrap();
+            seen_txid.insert(txid);
+        }
+        assert_eq!(seen_txid.order.len(), MAX_SEEN_TXIDS - 10 + 1);
     }
 }

@@ -1,5 +1,6 @@
 //! Watch tower implementation for coinswap.
 
+pub mod nostr_discovery;
 pub mod registry_storage;
 pub mod rpc_backend;
 pub mod service;

@@ -270,7 +270,7 @@ impl Taker {
             .join(blockchain_info.chain.to_string());
         let registry = FileRegistry::load(file_registry);
         let (tx_requests, rx_requests) = mpsc::channel();
-        let (tx_events, rx_responses) = mpsc::channel();
+        let (tx_events, rx_responses) = crossbeam_channel::unbounded();
         let rpc_config_watcher = rpc_config.clone();
 
         let mut watcher = Watcher::<Taker>::new(backend, registry, rx_requests, tx_events);

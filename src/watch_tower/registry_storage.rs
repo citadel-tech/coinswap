@@ -158,11 +158,7 @@ impl FileRegistry {
     }
 
     /// Inserts a new fidelity record.
-    pub fn insert_fidelity(
-        &mut self,
-        txid: Txid,
-        fidelity_announcement: FidelityAnnouncement,
-    ) -> bool {
+    pub fn insert_fidelity(&self, txid: Txid, fidelity_announcement: FidelityAnnouncement) -> bool {
         let fidelity = Fidelity {
             txid,
             onion_address: fidelity_announcement.onion,
