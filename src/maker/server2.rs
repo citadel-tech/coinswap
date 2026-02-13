@@ -125,6 +125,8 @@ fn spawn_nostr_broadcast_task(maker: Arc<Maker>) -> Result<(), MakerError> {
                                 "Detected updated fidelity outpoint {}; broadcasting updated nostr announcement",
                                 latest_outpoint
                             );
+                        } else if outpoint_changed {
+                            log::info!("Broadcasting initial fidelity bond announcement");
                         } else if periodic_reping_due {
                             log::debug!("re-pinging nostr relays with bond announcement");
                         }
@@ -132,12 +134,13 @@ fn spawn_nostr_broadcast_task(maker: Arc<Maker>) -> Result<(), MakerError> {
                         match broadcast_bond_on_nostr(fidelity) {
                             Ok(()) => {
                                 last_broadcasted_outpoint = Some(latest_outpoint);
-                                elapsed = Duration::ZERO;
                             }
                             Err(e) => {
                                 log::warn!("nostr bond broadcast failed: {:?}", e);
                             }
                         }
+
+                        elapsed = Duration::ZERO;
                     }
                 }
 
