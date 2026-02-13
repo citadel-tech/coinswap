@@ -45,6 +45,7 @@ jobs:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 20
+          persist-credentials: false
       
       #TODO: With fetch-depth: 1, `github.event.pull_request.base.sha` won't be available. Find a fix.
       # - name: Check PR size

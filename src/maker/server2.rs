@@ -102,6 +102,7 @@ fn spawn_nostr_broadcast_task(maker: Arc<Maker>) -> Result<(), MakerError> {
             // Force a first broadcast right after spawn.
             let mut elapsed = interval;
             let mut last_broadcasted_outpoint = None;
+            let mut last_attempted_outpoint = None;
 
             while !maker_clone.shutdown.load(Ordering::Acquire) {
                 let latest_fidelity = match maker_clone.highest_fidelity_proof.read() {
@@ -114,7 +115,7 @@ fn spawn_nostr_broadcast_task(maker: Arc<Maker>) -> Result<(), MakerError> {
 
                 if let Some(fidelity) = latest_fidelity {
                     let latest_outpoint = fidelity.bond.outpoint;
-                    let outpoint_changed = last_broadcasted_outpoint
+                    let outpoint_changed = last_attempted_outpoint
                         .map(|prev| prev != latest_outpoint)
                         .unwrap_or(true);
                     let periodic_reping_due = elapsed >= interval;
@@ -131,7 +132,8 @@ fn spawn_nostr_broadcast_task(maker: Arc<Maker>) -> Result<(), MakerError> {
                             log::debug!("re-pinging nostr relays with bond announcement");
                         }
 
-                        match broadcast_bond_on_nostr(fidelity) {
+                        last_attempted_outpoint = Some(latest_outpoint);
+                        match broadcast_bond_on_nostr(fidelity, maker_clone.config.socks_port) {
                             Ok(()) => {
                                 last_broadcasted_outpoint = Some(latest_outpoint);
                             }
