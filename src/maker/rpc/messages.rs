@@ -47,6 +47,23 @@ pub enum RpcMsgReq {
     ListFidelity,
     /// Request to sync the internal wallet with blockchain.
     SyncWallet,
+    /// Request to list all denied UTXOs.
+    ListDeniedUtxos,
+    /// Request to add a denied UTXO.
+    AddDeniedUtxo {
+        /// Outpoint in txid:vout format.
+        outpoint: String,
+    },
+    /// Request to remove a denied UTXO.
+    RemoveDeniedUtxo {
+        /// Outpoint in txid:vout format.
+        outpoint: String,
+    },
+    /// Request to import denied UTXOs from a file.
+    ImportDeniedUtxos {
+        /// Path to newline-separated txid:vout entries.
+        file_path: String,
+    },
 }
 
 /// Enum representing RPC message responses.
@@ -95,6 +112,13 @@ pub enum RpcMsgResp {
     ServerError(String),
     /// Response listing all current and past fidelity bonds.
     ListBonds(String),
+    /// Response listing denied UTXOs.
+    DeniedUtxosResp {
+        /// Outpoints in txid:vout format.
+        outpoints: Vec<String>,
+    },
+    /// Generic text response.
+    Text(String),
 }
 
 impl Display for RpcMsgResp {
@@ -133,6 +157,15 @@ impl Display for RpcMsgResp {
             Self::FidelitySpend(txid) => write!(f, "{txid}"),
             Self::ServerError(e) => write!(f, "{e}"),
             Self::ListBonds(v) => write!(f, "{v}"),
+            Self::DeniedUtxosResp { outpoints } => {
+                write!(
+                    f,
+                    "{}",
+                    serde_json::to_string_pretty(outpoints)
+                        .expect("deny-list JSON serialization failed")
+                )
+            }
+            Self::Text(message) => write!(f, "{message}"),
         }
     }
 }

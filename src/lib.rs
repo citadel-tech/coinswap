@@ -11,5 +11,6 @@ pub mod protocol;
 pub mod security;
 pub mod taker;
 pub mod utill;
+mod utxo_denylist;
 pub mod wallet;
 pub mod watch_tower;

@@ -160,6 +160,26 @@ enum Commands {
         #[clap(long, short = 'f')]
         backup_file: String,
     },
+    /// Show denied UTXOs used to reject swaps.
+    DenyListShow,
+    /// Add an outpoint to deny-list.
+    DenyListAdd {
+        /// Outpoint in txid:vout format.
+        #[clap(long, short = 'o')]
+        outpoint: String,
+    },
+    /// Remove an outpoint from deny-list.
+    DenyListRemove {
+        /// Outpoint in txid:vout format.
+        #[clap(long, short = 'o')]
+        outpoint: String,
+    },
+    /// Import outpoints into deny-list from file.
+    DenyListImport {
+        /// File path containing one txid:vout per line.
+        #[clap(long, short = 'f')]
+        file_path: String,
+    },
 }
 
 fn main() -> Result<(), TakerError> {
@@ -344,6 +364,38 @@ fn main() -> Result<(), TakerError> {
                     println!("{txid}");
 
                     taker.get_wallet_mut().sync_and_save()?;
+                }
+                Commands::DenyListShow => {
+                    let denied = taker
+                        .list_denied_utxos()
+                        .into_iter()
+                        .map(|outpoint| outpoint.to_string())
+                        .collect::<Vec<_>>();
+                    println!("{}", serde_json::to_string_pretty(&denied)?);
+                }
+                Commands::DenyListAdd { outpoint } => {
+                    let outpoint = bitcoin::OutPoint::from_str(outpoint)
+                        .map_err(|_| TakerError::General("Invalid outpoint format".to_string()))?;
+                    let added = taker.add_denied_utxo(outpoint)?;
+                    if added {
+                        println!("outpoint added to deny-list");
+                    } else {
+                        println!("outpoint already present in deny-list");
+                    }
+                }
+                Commands::DenyListRemove { outpoint } => {
+                    let outpoint = bitcoin::OutPoint::from_str(outpoint)
+                        .map_err(|_| TakerError::General("Invalid outpoint format".to_string()))?;
+                    let removed = taker.remove_denied_utxo(outpoint)?;
+                    if removed {
+                        println!("outpoint removed from deny-list");
+                    } else {
+                        println!("outpoint was not present in deny-list");
+                    }
+                }
+                Commands::DenyListImport { file_path } => {
+                    let imported = taker.import_denied_utxos(&PathBuf::from(file_path))?;
+                    println!("imported {imported} new outpoints");
                 }
                 Commands::FetchOffers => {
                     use std::time::{Duration, Instant};

@@ -20,6 +20,7 @@ use crate::{
         },
     },
     utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
+    utxo_denylist::{resolve_deny_list_path, UtxoDenyList},
     wallet::{
         AddressType, Destination, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet,
         WalletError,
@@ -246,6 +247,8 @@ pub struct Maker {
     pub(crate) thread_pool: Arc<ThreadPool>,
     /// Watcher Service
     pub watch_service: WatchService,
+    /// File-backed UTXO deny-list policy.
+    pub(crate) utxo_deny_list: RwLock<UtxoDenyList>,
     /// Behavior mode (for testing)
     #[cfg(feature = "integration-test")]
     pub(crate) behavior: MakerBehavior,
@@ -317,6 +320,8 @@ impl Maker {
         }
 
         config.write_to_file(&data_dir.join("config.toml"))?;
+        let deny_list_path = resolve_deny_list_path(&data_dir, &config.utxo_deny_list_path);
+        let utxo_deny_list = UtxoDenyList::load(deny_list_path)?;
 
         log::info!("Sync at:----Maker init----");
         wallet.sync_and_save()?;
@@ -333,6 +338,7 @@ impl Maker {
             data_dir,
             thread_pool: Arc::new(ThreadPool::new(network_port)),
             watch_service,
+            utxo_deny_list: RwLock::new(utxo_deny_list),
             #[cfg(feature = "integration-test")]
             behavior: behavior.unwrap_or(MakerBehavior::Normal),
         })
@@ -346,6 +352,33 @@ impl Maker {
     /// Returns a reference to the Maker's wallet.
     pub fn wallet(&self) -> &RwLock<Wallet> {
         &self.wallet
+    }
+
+    pub(crate) fn is_denied_outpoint(&self, outpoint: &OutPoint) -> Result<bool, MakerError> {
+        Ok(self.utxo_deny_list.read()?.contains(outpoint))
+    }
+
+    pub(crate) fn find_blocked_input_in_tx(
+        &self,
+        tx: &Transaction,
+    ) -> Result<Option<OutPoint>, MakerError> {
+        Ok(self.utxo_deny_list.read()?.first_blocked_input(tx))
+    }
+
+    pub(crate) fn add_denied_outpoint(&self, outpoint: OutPoint) -> Result<bool, MakerError> {
+        Ok(self.utxo_deny_list.write()?.add(outpoint)?)
+    }
+
+    pub(crate) fn remove_denied_outpoint(&self, outpoint: OutPoint) -> Result<bool, MakerError> {
+        Ok(self.utxo_deny_list.write()?.remove(&outpoint)?)
+    }
+
+    pub(crate) fn import_denied_outpoints(&self, path: &Path) -> Result<usize, MakerError> {
+        Ok(self.utxo_deny_list.write()?.import_from_file(path)?)
+    }
+
+    pub(crate) fn list_denied_outpoints(&self) -> Result<Vec<OutPoint>, MakerError> {
+        Ok(self.utxo_deny_list.read()?.list())
     }
 
     /// Creates an offer for the taker
@@ -452,6 +485,16 @@ impl Maker {
                 .get_raw_transaction(&message.contract_txs[0], None)
                 .map_err(|_| MakerError::General("Failed to get incoming contract tx"))?
         };
+        if let Some(blocked_outpoint) = self.find_blocked_input_in_tx(&incoming_contract_tx)? {
+            log::warn!(
+                "[{}] Rejecting incoming contract due to denied input {}",
+                self.config.network_port,
+                blocked_outpoint
+            );
+            return Err(MakerError::General(
+                "Blocked UTXO detected in incoming contract transaction",
+            ));
+        }
         connection_state.incoming_contract.contract_tx = incoming_contract_tx.clone();
         connection_state.incoming_contract.funding_amount = incoming_contract_tx.output[0].value;
 
@@ -486,6 +529,20 @@ impl Maker {
                 .map_err(|e| {
                     MakerError::General(format!("Coin selection failed: {:?}", e).leak())
                 })?;
+
+            for (utxo, _) in &selected_utxos {
+                let outpoint = OutPoint::new(utxo.txid, utxo.vout);
+                if self.is_denied_outpoint(&outpoint)? {
+                    log::warn!(
+                        "[{}] Coin selection picked denied outpoint {}",
+                        self.config.network_port,
+                        outpoint
+                    );
+                    return Err(MakerError::General(
+                        "Blocked UTXO detected in maker selected inputs",
+                    ));
+                }
+            }
 
             // Lock the selected UTXOs to prevent double-spending in concurrent swaps
             let funding_outpoints: Vec<OutPoint> = selected_utxos
@@ -1052,6 +1109,18 @@ impl MakerRpc for Maker {
     }
     fn shutdown(&self) -> &AtomicBool {
         &self.shutdown
+    }
+    fn add_denied_outpoint(&self, outpoint: OutPoint) -> Result<bool, MakerError> {
+        self.add_denied_outpoint(outpoint)
+    }
+    fn remove_denied_outpoint(&self, outpoint: OutPoint) -> Result<bool, MakerError> {
+        self.remove_denied_outpoint(outpoint)
+    }
+    fn import_denied_outpoints(&self, path: &Path) -> Result<usize, MakerError> {
+        self.import_denied_outpoints(path)
+    }
+    fn list_denied_outpoints(&self) -> Result<Vec<OutPoint>, MakerError> {
+        self.list_denied_outpoints()
     }
 }
 

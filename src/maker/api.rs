@@ -16,6 +16,7 @@ use crate::{
         check_tor_status, get_maker_dir, redeemscript_to_scriptpubkey, BLOCK_DELAY,
         HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
     },
+    utxo_denylist::{resolve_deny_list_path, UtxoDenyList},
     wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
     watch_tower::{
         service::{start_maker_watch_service, WatchService},
@@ -246,6 +247,8 @@ pub struct Maker {
     pub(crate) thread_pool: Arc<ThreadPool>,
     /// Watcher service
     pub watch_service: WatchService,
+    /// File-backed UTXO deny-list policy.
+    pub(crate) utxo_deny_list: RwLock<UtxoDenyList>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -319,6 +322,8 @@ impl Maker {
             check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
         }
         config.write_to_file(&data_dir.join("config.toml"))?;
+        let deny_list_path = resolve_deny_list_path(&data_dir, &config.utxo_deny_list_path);
+        let utxo_deny_list = UtxoDenyList::load(deny_list_path)?;
 
         log::info!("Sync at:----Maker init----");
         wallet.sync_and_save()?;
@@ -336,6 +341,7 @@ impl Maker {
             data_dir,
             thread_pool: Arc::new(ThreadPool::new(network_port)),
             watch_service,
+            utxo_deny_list: RwLock::new(utxo_deny_list),
         })
     }
 
@@ -347,6 +353,33 @@ impl Maker {
     /// Returns a reference to the Maker's wallet.
     pub fn get_wallet(&self) -> &RwLock<Wallet> {
         &self.wallet
+    }
+
+    pub(crate) fn is_denied_outpoint(&self, outpoint: &OutPoint) -> Result<bool, MakerError> {
+        Ok(self.utxo_deny_list.read()?.contains(outpoint))
+    }
+
+    pub(crate) fn find_blocked_input_in_tx(
+        &self,
+        tx: &Transaction,
+    ) -> Result<Option<OutPoint>, MakerError> {
+        Ok(self.utxo_deny_list.read()?.first_blocked_input(tx))
+    }
+
+    pub(crate) fn add_denied_outpoint(&self, outpoint: OutPoint) -> Result<bool, MakerError> {
+        Ok(self.utxo_deny_list.write()?.add(outpoint)?)
+    }
+
+    pub(crate) fn remove_denied_outpoint(&self, outpoint: OutPoint) -> Result<bool, MakerError> {
+        Ok(self.utxo_deny_list.write()?.remove(&outpoint)?)
+    }
+
+    pub(crate) fn import_denied_outpoints(&self, path: &Path) -> Result<usize, MakerError> {
+        Ok(self.utxo_deny_list.write()?.import_from_file(path)?)
+    }
+
+    pub(crate) fn list_denied_outpoints(&self) -> Result<Vec<OutPoint>, MakerError> {
+        Ok(self.utxo_deny_list.read()?.list())
     }
 
     /// Ensures all unconfirmed fidelity bonds in the maker's wallet are tracked until confirmation.  
@@ -393,6 +426,19 @@ impl Maker {
         }
 
         for funding_info in &message.confirmed_funding_txes {
+            if let Some(blocked_outpoint) =
+                self.find_blocked_input_in_tx(&funding_info.funding_tx)?
+            {
+                log::warn!(
+                    "[{}] Rejecting proof-of-funding due to denied input {}",
+                    self.config.network_port,
+                    blocked_outpoint
+                );
+                return Err(MakerError::General(
+                    "Blocked UTXO detected in funding transaction",
+                ));
+            }
+
             // check that the new locktime is sufficiently short enough compared to the
             // locktime in the provided funding tx
             let locktime = read_contract_locktime(&funding_info.contract_redeemscript)?;
@@ -473,6 +519,18 @@ impl Maker {
             {
                 return Err(MakerError::General(
                     "Invalid number of inputs or outputs in contract transaction",
+                ));
+            }
+
+            let sender_prevout = txinfo.senders_contract_tx.input[0].previous_output;
+            if self.is_denied_outpoint(&sender_prevout)? {
+                log::warn!(
+                    "[{}] Rejecting sender contract due to denied outpoint {}",
+                    self.config.network_port,
+                    sender_prevout
+                );
+                return Err(MakerError::General(
+                    "Blocked UTXO detected in sender contract",
                 ));
             }
 
@@ -571,6 +629,18 @@ impl MakerRpc for Maker {
     }
     fn shutdown(&self) -> &AtomicBool {
         &self.shutdown
+    }
+    fn add_denied_outpoint(&self, outpoint: OutPoint) -> Result<bool, MakerError> {
+        self.add_denied_outpoint(outpoint)
+    }
+    fn remove_denied_outpoint(&self, outpoint: OutPoint) -> Result<bool, MakerError> {
+        self.remove_denied_outpoint(outpoint)
+    }
+    fn import_denied_outpoints(&self, path: &Path) -> Result<usize, MakerError> {
+        self.import_denied_outpoints(path)
+    }
+    fn list_denied_outpoints(&self) -> Result<Vec<OutPoint>, MakerError> {
+        self.list_denied_outpoints()
     }
 }
 

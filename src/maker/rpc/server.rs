@@ -1,6 +1,7 @@
 use std::{
     io::ErrorKind,
     net::{TcpListener, TcpStream},
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc,
@@ -9,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use bitcoin::{Address, Amount};
+use bitcoin::{Address, Amount, OutPoint};
 
 use super::messages::RpcMsgReq;
 use crate::{
@@ -24,6 +25,10 @@ pub trait MakerRpc {
     fn data_dir(&self) -> &Path;
     fn config(&self) -> &MakerConfig;
     fn shutdown(&self) -> &AtomicBool;
+    fn add_denied_outpoint(&self, outpoint: OutPoint) -> Result<bool, MakerError>;
+    fn remove_denied_outpoint(&self, outpoint: OutPoint) -> Result<bool, MakerError>;
+    fn import_denied_outpoints(&self, path: &Path) -> Result<usize, MakerError>;
+    fn list_denied_outpoints(&self) -> Result<Vec<OutPoint>, MakerError>;
 }
 
 fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result<(), MakerError> {
@@ -147,6 +152,48 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
                 log::info!("Completed wallet sync");
                 RpcMsgResp::Pong
             }
+        }
+        RpcMsgReq::ListDeniedUtxos => {
+            let outpoints = maker
+                .list_denied_outpoints()?
+                .into_iter()
+                .map(|op| op.to_string())
+                .collect::<Vec<_>>();
+            RpcMsgResp::DeniedUtxosResp { outpoints }
+        }
+        RpcMsgReq::AddDeniedUtxo { outpoint } => match OutPoint::from_str(&outpoint) {
+            Ok(parsed_outpoint) => {
+                let added = maker.add_denied_outpoint(parsed_outpoint)?;
+                let message = if added {
+                    "outpoint added to deny-list"
+                } else {
+                    "outpoint already present in deny-list"
+                };
+                RpcMsgResp::Text(message.to_string())
+            }
+            Err(_) => RpcMsgResp::ServerError("Invalid outpoint format. Use txid:vout".to_string()),
+        },
+        RpcMsgReq::RemoveDeniedUtxo { outpoint } => match OutPoint::from_str(&outpoint) {
+            Ok(parsed_outpoint) => {
+                let removed = maker.remove_denied_outpoint(parsed_outpoint)?;
+                let message = if removed {
+                    "outpoint removed from deny-list"
+                } else {
+                    "outpoint was not present in deny-list"
+                };
+                RpcMsgResp::Text(message.to_string())
+            }
+            Err(_) => RpcMsgResp::ServerError("Invalid outpoint format. Use txid:vout".to_string()),
+        },
+        RpcMsgReq::ImportDeniedUtxos { file_path } => {
+            let path = PathBuf::from(&file_path);
+            let resolved = if path.is_absolute() {
+                path
+            } else {
+                maker.data_dir().join(path)
+            };
+            let imported = maker.import_denied_outpoints(&resolved)?;
+            RpcMsgResp::Text(format!("imported {imported} new outpoints"))
         }
     };
 

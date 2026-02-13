@@ -5,6 +5,7 @@
 
 use crate::{
     utill::parse_toml,
+    utxo_denylist::DEFAULT_UTXO_DENY_LIST_FILE,
     wallet::{WalletError, MAX_FIDELITY_TIMELOCK, MIN_FIDELITY_TIMELOCK},
 };
 use std::path::Path;
@@ -44,6 +45,8 @@ pub struct MakerConfig {
     pub base_fee: u64,
     /// A percentage fee based on the swap amount.
     pub amount_relative_fee_pct: f64,
+    /// File path that stores denied UTXO outpoints.
+    pub utxo_deny_list_path: String,
 }
 
 impl Default for MakerConfig {
@@ -66,6 +69,7 @@ impl Default for MakerConfig {
             fidelity_timelock,
             base_fee,
             amount_relative_fee_pct,
+            utxo_deny_list_path: DEFAULT_UTXO_DENY_LIST_FILE.to_string(),
         }
     }
 }
@@ -160,6 +164,10 @@ impl MakerConfig {
                 config_map.get("amount_relative_fee_pct"),
                 default_config.amount_relative_fee_pct,
             ),
+            utxo_deny_list_path: parse_field(
+                config_map.get("utxo_deny_list_path"),
+                default_config.utxo_deny_list_path,
+            ),
         })
     }
 
@@ -189,6 +197,8 @@ fidelity_timelock = {}
 base_fee = {}
 # A percentage fee based on the swap amount
 amount_relative_fee_pct = {}
+# Path to a newline-separated UTXO deny-list file (txid:vout)
+utxo_deny_list_path = {}
 ",
             self.network_port,
             self.rpc_port,
@@ -202,6 +212,7 @@ amount_relative_fee_pct = {}
             self.fidelity_timelock,
             self.base_fee,
             self.amount_relative_fee_pct,
+            self.utxo_deny_list_path,
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;

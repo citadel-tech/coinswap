@@ -68,6 +68,26 @@ enum Commands {
     ShowFidelity,
     /// Sync the maker wallet with the current blockchain state.
     SyncWallet,
+    /// Show denied UTXOs used to reject swaps.
+    DenyListShow,
+    /// Add an outpoint to deny-list.
+    DenyListAdd {
+        /// Outpoint in txid:vout format.
+        #[clap(long, short = 'o')]
+        outpoint: String,
+    },
+    /// Remove an outpoint from deny-list.
+    DenyListRemove {
+        /// Outpoint in txid:vout format.
+        #[clap(long, short = 'o')]
+        outpoint: String,
+    },
+    /// Import outpoints into deny-list from file.
+    DenyListImport {
+        /// File path containing one txid:vout per line.
+        #[clap(long, short = 'f')]
+        file_path: String,
+    },
 }
 
 fn main() -> Result<(), MakerError> {
@@ -125,6 +145,18 @@ fn main() -> Result<(), MakerError> {
         }
         Commands::SyncWallet => {
             send_rpc_req(stream, RpcMsgReq::SyncWallet)?;
+        }
+        Commands::DenyListShow => {
+            send_rpc_req(stream, RpcMsgReq::ListDeniedUtxos)?;
+        }
+        Commands::DenyListAdd { outpoint } => {
+            send_rpc_req(stream, RpcMsgReq::AddDeniedUtxo { outpoint })?;
+        }
+        Commands::DenyListRemove { outpoint } => {
+            send_rpc_req(stream, RpcMsgReq::RemoveDeniedUtxo { outpoint })?;
+        }
+        Commands::DenyListImport { file_path } => {
+            send_rpc_req(stream, RpcMsgReq::ImportDeniedUtxos { file_path })?;
         }
     }
 

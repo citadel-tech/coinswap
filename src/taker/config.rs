@@ -4,6 +4,7 @@
 //! of the taker's behavior including network settings, connection preferences, and security settings.
 
 use crate::utill::{get_taker_dir, parse_field, parse_toml};
+use crate::utxo_denylist::DEFAULT_UTXO_DENY_LIST_FILE;
 use std::{io, io::Write, path::Path};
 
 /// Taker configuration
@@ -17,6 +18,8 @@ pub struct TakerConfig {
     pub socks_port: u16,
     /// Authentication password for Tor interface
     pub tor_auth_password: String,
+    /// File path that stores denied UTXO outpoints.
+    pub utxo_deny_list_path: String,
 }
 
 impl Default for TakerConfig {
@@ -25,6 +28,7 @@ impl Default for TakerConfig {
             control_port: 9051,
             socks_port: 9050,
             tor_auth_password: "".to_string(),
+            utxo_deny_list_path: DEFAULT_UTXO_DENY_LIST_FILE.to_string(),
         }
     }
 }
@@ -69,6 +73,10 @@ impl TakerConfig {
                 config_map.get("tor_auth_password"),
                 default_config.tor_auth_password,
             ),
+            utxo_deny_list_path: parse_field(
+                config_map.get("utxo_deny_list_path"),
+                default_config.utxo_deny_list_path,
+            ),
         })
     }
 
@@ -82,8 +90,10 @@ control_port = {}
 # Socks port for Tor proxy
 socks_port = {}
 # Authentication password for Tor control interface
-tor_auth_password = {}",
-            self.control_port, self.socks_port, self.tor_auth_password,
+tor_auth_password = {}
+# Path to a newline-separated UTXO deny-list file (txid:vout)
+utxo_deny_list_path = {}",
+            self.control_port, self.socks_port, self.tor_auth_password, self.utxo_deny_list_path,
         );
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;

@@ -8,7 +8,7 @@
 use std::{
     collections::{HashMap, HashSet},
     net::TcpStream,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::mpsc,
     thread::{self, sleep},
     time::{Duration, Instant},
@@ -52,6 +52,7 @@ use crate::{
         },
     },
     utill::*,
+    utxo_denylist::{resolve_deny_list_path, UtxoDenyList},
     wallet::{
         ffi::{MakerFeeInfo, SwapReport},
         IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
@@ -175,6 +176,8 @@ pub struct Taker {
     /// iyiib
     pub watch_service: WatchService,
     offer_sync_handle: OfferSyncHandle,
+    /// File-backed UTXO deny-list policy.
+    utxo_deny_list: UtxoDenyList,
 }
 
 impl Drop for Taker {
@@ -265,6 +268,8 @@ impl Taker {
         }
 
         config.write_to_file(&data_dir.join("config.toml"))?;
+        let deny_list_path = resolve_deny_list_path(&data_dir, &config.utxo_deny_list_path);
+        let utxo_deny_list = UtxoDenyList::load(deny_list_path)?;
 
         let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
 
@@ -285,6 +290,7 @@ impl Taker {
             behavior,
             watch_service,
             offer_sync_handle,
+            utxo_deny_list,
         })
     }
 
@@ -330,6 +336,34 @@ impl Taker {
     /// Get mutable reference to wallet
     pub fn get_wallet_mut(&mut self) -> &mut Wallet {
         &mut self.wallet
+    }
+
+    /// Returns all denied UTXOs as outpoints.
+    pub fn list_denied_utxos(&self) -> Vec<OutPoint> {
+        self.utxo_deny_list.list()
+    }
+
+    /// Adds an outpoint to the deny-list and persists it.
+    pub fn add_denied_utxo(&mut self, outpoint: OutPoint) -> Result<bool, TakerError> {
+        Ok(self.utxo_deny_list.add(outpoint)?)
+    }
+
+    /// Removes an outpoint from the deny-list and persists it.
+    pub fn remove_denied_utxo(&mut self, outpoint: OutPoint) -> Result<bool, TakerError> {
+        Ok(self.utxo_deny_list.remove(&outpoint)?)
+    }
+
+    /// Imports outpoints from a newline-separated file and persists them.
+    pub fn import_denied_utxos(&mut self, path: &Path) -> Result<usize, TakerError> {
+        Ok(self.utxo_deny_list.import_from_file(path)?)
+    }
+
+    fn first_blocked_input(&self, tx: &Transaction) -> Option<OutPoint> {
+        self.utxo_deny_list.first_blocked_input(tx)
+    }
+
+    fn is_denied_outpoint(&self, outpoint: &OutPoint) -> bool {
+        self.utxo_deny_list.contains(outpoint)
     }
 
     ///  Does the coinswap process
@@ -469,6 +503,20 @@ impl Taker {
                         return Ok(None);
                     }
                 };
+
+            if let Some(blocked_outpoint) = funding_outpoints
+                .iter()
+                .copied()
+                .find(|outpoint| self.is_denied_outpoint(outpoint))
+            {
+                log::warn!(
+                    "Detected denied funding outpoint {} from maker hop {}; aborting swap",
+                    blocked_outpoint,
+                    maker_index
+                );
+                self.recover_from_swap()?;
+                return Ok(None);
+            }
 
             // Watch for both expected and unexpected transactions.
             // This errors in two cases.
@@ -1055,10 +1103,15 @@ impl Taker {
 
                 // handle confirmations
                 if gettx.confirmations >= Some(required_confirmations) {
-                    txid_tx_map.insert(
-                        *txid,
-                        deserialize::<Transaction>(&gettx.hex).map_err(WalletError::from)?,
-                    );
+                    let transaction =
+                        deserialize::<Transaction>(&gettx.hex).map_err(WalletError::from)?;
+                    if let Some(blocked_outpoint) = self.first_blocked_input(&transaction) {
+                        return Err(TakerError::General(format!(
+                            "Blocked UTXO detected in funding transaction: {}",
+                            blocked_outpoint
+                        )));
+                    }
+                    txid_tx_map.insert(*txid, transaction);
                     txid_blockhash_map.insert(*txid, gettx.blockhash.expect("Blockhash expected"));
                     log::info!("Tx {txid} | Confirmed at {required_confirmations}");
                 }
@@ -1543,6 +1596,17 @@ impl Taker {
         multisig_redeemscripts: Vec<ScriptBuf>,
         funding_outpoints: Vec<OutPoint>,
     ) -> Result<Vec<IncomingSwapCoin>, TakerError> {
+        if let Some(blocked_outpoint) = funding_outpoints
+            .iter()
+            .copied()
+            .find(|outpoint| self.is_denied_outpoint(outpoint))
+        {
+            return Err(TakerError::General(format!(
+                "Blocked UTXO detected in incoming contract outpoint: {}",
+                blocked_outpoint
+            )));
+        }
+
         let (funding_txs, funding_txs_merkleproofs) = self
             .ongoing_swap_state
             .funding_txs

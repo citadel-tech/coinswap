@@ -23,6 +23,7 @@ use crate::{
         },
     },
     utill::{check_tor_status, get_taker_dir, read_message, send_message},
+    utxo_denylist::{resolve_deny_list_path, UtxoDenyList},
     wallet::{
         ffi::{MakerFeeInfo, SwapReport},
         AddressType, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError,
@@ -50,7 +51,12 @@ use bitcoin::{
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, RawTx, RpcApi};
 use socks::Socks5Stream;
 use std::{
-    collections::HashSet, net::TcpStream, path::PathBuf, sync::mpsc, thread, time::Duration,
+    collections::HashSet,
+    net::TcpStream,
+    path::{Path, PathBuf},
+    sync::mpsc,
+    thread,
+    time::Duration,
 };
 
 /// Represents different behaviors taker can have during the swap.
@@ -218,6 +224,8 @@ pub struct Taker {
     ongoing_swap_state: OngoingSwapState,
     watch_service: WatchService,
     offer_sync_handle: OfferSyncHandle,
+    /// File-backed UTXO deny-list policy.
+    utxo_deny_list: UtxoDenyList,
     #[cfg(feature = "integration-test")]
     behavior: TakerBehavior,
 }
@@ -301,6 +309,8 @@ impl Taker {
         }
 
         config.write_to_file(&data_dir.join("config.toml"))?;
+        let deny_list_path = resolve_deny_list_path(&data_dir, &config.utxo_deny_list_path);
+        let utxo_deny_list = UtxoDenyList::load(deny_list_path)?;
 
         let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
 
@@ -319,6 +329,7 @@ impl Taker {
             ongoing_swap_state: OngoingSwapState::default(),
             watch_service,
             offer_sync_handle,
+            utxo_deny_list,
             #[cfg(feature = "integration-test")]
             behavior,
         })
@@ -332,6 +343,34 @@ impl Taker {
     /// Get a mutable reference to the wallet
     pub fn get_wallet_mut(&mut self) -> &mut Wallet {
         &mut self.wallet
+    }
+
+    /// Returns all denied UTXOs as outpoints.
+    pub fn list_denied_utxos(&self) -> Vec<OutPoint> {
+        self.utxo_deny_list.list()
+    }
+
+    /// Adds an outpoint to the deny-list and persists it.
+    pub fn add_denied_utxo(&mut self, outpoint: OutPoint) -> Result<bool, TakerError> {
+        Ok(self.utxo_deny_list.add(outpoint)?)
+    }
+
+    /// Removes an outpoint from the deny-list and persists it.
+    pub fn remove_denied_utxo(&mut self, outpoint: OutPoint) -> Result<bool, TakerError> {
+        Ok(self.utxo_deny_list.remove(&outpoint)?)
+    }
+
+    /// Imports outpoints from a newline-separated file and persists them.
+    pub fn import_denied_utxos(&mut self, path: &Path) -> Result<usize, TakerError> {
+        Ok(self.utxo_deny_list.import_from_file(path)?)
+    }
+
+    fn first_blocked_input(&self, tx: &Transaction) -> Option<OutPoint> {
+        self.utxo_deny_list.first_blocked_input(tx)
+    }
+
+    fn is_denied_outpoint(&self, outpoint: &OutPoint) -> bool {
+        self.utxo_deny_list.contains(outpoint)
     }
 
     /// Initiate a coinswap with the given parameters
@@ -1055,6 +1094,16 @@ impl Taker {
             .coin_select(send_amount, MIN_FEE_RATE, None)
             .map_err(|e| TakerError::General(format!("Coin selection failed: {:?}", e)))?;
 
+        for (utxo, _) in &selected_utxos {
+            let outpoint = OutPoint::new(utxo.txid, utxo.vout);
+            if self.is_denied_outpoint(&outpoint) {
+                return Err(TakerError::General(format!(
+                    "Blocked UTXO detected in selected inputs: {}",
+                    outpoint
+                )));
+            }
+        }
+
         let hashlock_script = self
             .ongoing_swap_state
             .outgoing_contract
@@ -1325,6 +1374,17 @@ impl Taker {
                 txid: *incoming_contract_txid,
                 vout: 0,
             };
+            if self.is_denied_outpoint(&incoming_outpoint) {
+                return Err(TakerError::General(format!(
+                    "Blocked incoming contract outpoint detected: {}",
+                    incoming_outpoint
+                )));
+            }
+
+            let incoming_outpoint = bitcoin::OutPoint {
+                txid: *incoming_contract_txid,
+                vout: 0,
+            };
             self.watch_service.register_watch_request(incoming_outpoint);
             log::info!(
                 "Registered watcher for taker's incoming contract: {}",
@@ -1358,6 +1418,12 @@ impl Taker {
                     }
                 }
             };
+            if let Some(blocked_outpoint) = self.first_blocked_input(&incoming_contract_tx) {
+                return Err(TakerError::General(format!(
+                    "Blocked UTXO detected in incoming contract transaction: {}",
+                    blocked_outpoint
+                )));
+            }
             self.ongoing_swap_state.incoming_contract.contract_tx = incoming_contract_tx.clone();
             // Set funding amount from the transaction output
             self.ongoing_swap_state.incoming_contract.funding_amount =

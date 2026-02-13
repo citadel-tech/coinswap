@@ -425,6 +425,19 @@ impl Maker {
             )?
         };
 
+        for funding_tx in &my_funding_txes {
+            if let Some(blocked_outpoint) = self.find_blocked_input_in_tx(funding_tx)? {
+                log::warn!(
+                    "[{}] Aborting swap due to denied local funding input {}",
+                    self.config.network_port,
+                    blocked_outpoint
+                );
+                return Err(MakerError::General(
+                    "Blocked UTXO detected in maker funding transaction",
+                ));
+            }
+        }
+
         let act_coinswap_fees = incoming_amount
             .checked_sub(outgoing_amount + act_funding_txs_fees.to_sat())
             .expect("This should not overflow as we just checked above.");
@@ -563,6 +576,19 @@ impl Maker {
                 wallet_writer.add_outgoing_swapcoin(outgoing_sc);
             }
             wallet_writer.save_to_disk()?;
+        }
+
+        for funding_tx in &connection_state.pending_funding_txes {
+            if let Some(blocked_outpoint) = self.find_blocked_input_in_tx(funding_tx)? {
+                log::warn!(
+                    "[{}] Refusing to broadcast funding tx due to denied input {}",
+                    self.config.network_port,
+                    blocked_outpoint
+                );
+                return Err(MakerError::General(
+                    "Blocked UTXO detected before funding broadcast",
+                ));
+            }
         }
 
         let mut my_funding_txids = Vec::<Txid>::new();
