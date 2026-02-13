@@ -36,18 +36,15 @@ jobs:
       issues: read
 
     steps:
-      # Checkout the repository with default settings. 
-      # origin is set to base-branch 
+      # Checkout the PR head repository/ref directly.
+      # This keeps `origin` pointed at the contributor fork for cross-repo PRs,
+      # so downstream tooling that runs `git fetch origin <head-ref>` works.
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
-      
-      ## Specifically checkout the PR head to ensure we have access to the latest changes
-      - name: Fetch PR head
-        run: |
-          git fetch origin pull/${{ github.event.pull_request.number }}/head:pr-head
-          git checkout pr-head
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 20
       
       #TODO: With fetch-depth: 1, `github.event.pull_request.base.sha` won't be available. Find a fix.
       # - name: Check PR size
@@ -117,4 +114,3 @@ jobs:
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-
