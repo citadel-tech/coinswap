@@ -122,9 +122,7 @@ pub(crate) fn verify_fidelity_checks(
             MIN_FIDELITY_TIMELOCK,
             MAX_FIDELITY_TIMELOCK
         );
-        return Err(WalletError::General(
-            "Invalid fidelity bond timelock".to_string(),
-        ));
+        return Err(FidelityError::InvalidBondLocktime.into());
     }
 
     // Check if bond lock time has expired
@@ -142,35 +140,15 @@ pub(crate) fn verify_fidelity_checks(
         return Err(FidelityError::InvalidCertHash.into());
     }
 
-    let networks = vec![
-        bitcoin::network::Network::Regtest,
-        bitcoin::network::Network::Testnet,
-        bitcoin::network::Network::Bitcoin,
-        bitcoin::network::Network::Signet,
-    ];
+    // Validate redeem script and corresponding output scriptPubKey
+    let fidelity_redeem_script = fidelity_redeemscript(&proof.bond.lock_time, &proof.bond.pubkey);
+    let derived_script_pubkey = redeemscript_to_scriptpubkey(&fidelity_redeem_script)?;
+    let tx_out = tx
+        .tx_out(proof.bond.outpoint.vout as usize)
+        .map_err(|_| WalletError::General("Outputs index error".to_string()))?;
 
-    let mut all_failed = true;
-
-    for network in networks {
-        // Validate redeem script and corresponding address
-        let fidelity_redeem_script =
-            fidelity_redeemscript(&proof.bond.lock_time, &proof.bond.pubkey);
-        let expected_address = Address::p2wsh(fidelity_redeem_script.as_script(), network);
-
-        let derived_script_pubkey = expected_address.script_pubkey();
-        let tx_out = tx
-            .tx_out(proof.bond.outpoint.vout as usize)
-            .map_err(|_| WalletError::General("Outputs index error".to_string()))?;
-
-        if tx_out.script_pubkey == derived_script_pubkey {
-            all_failed = false;
-            break; // No need to continue checking once we find a successful match
-        }
-    }
-
-    // Only throw error if all checks fail
-    if all_failed {
-        return Err(FidelityError::BondDoesNotExist.into());
+    if tx_out.script_pubkey != derived_script_pubkey {
+        return Err(WalletError::Fidelity(FidelityError::BondDoesNotExist));
     }
 
     // Verify ECDSA signature
