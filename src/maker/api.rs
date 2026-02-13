@@ -248,7 +248,7 @@ pub struct Maker {
     /// Watcher service
     pub watch_service: WatchService,
     /// File-backed UTXO deny-list policy.
-    pub(crate) utxo_deny_list: RwLock<UtxoDenyList>,
+    pub(crate) utxo_deny_list: Arc<RwLock<UtxoDenyList>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -341,7 +341,7 @@ impl Maker {
             data_dir,
             thread_pool: Arc::new(ThreadPool::new(network_port)),
             watch_service,
-            utxo_deny_list: RwLock::new(utxo_deny_list),
+            utxo_deny_list: Arc::new(RwLock::new(utxo_deny_list)),
         })
     }
 

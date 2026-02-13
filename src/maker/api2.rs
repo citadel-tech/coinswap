@@ -248,7 +248,7 @@ pub struct Maker {
     /// Watcher Service
     pub watch_service: WatchService,
     /// File-backed UTXO deny-list policy.
-    pub(crate) utxo_deny_list: RwLock<UtxoDenyList>,
+    pub(crate) utxo_deny_list: Arc<RwLock<UtxoDenyList>>,
     /// Behavior mode (for testing)
     #[cfg(feature = "integration-test")]
     pub(crate) behavior: MakerBehavior,
@@ -338,7 +338,7 @@ impl Maker {
             data_dir,
             thread_pool: Arc::new(ThreadPool::new(network_port)),
             watch_service,
-            utxo_deny_list: RwLock::new(utxo_deny_list),
+            utxo_deny_list: Arc::new(RwLock::new(utxo_deny_list)),
             #[cfg(feature = "integration-test")]
             behavior: behavior.unwrap_or(MakerBehavior::Normal),
         })
@@ -665,6 +665,17 @@ impl Maker {
                 },
                 &selected_utxos,
             )?;
+
+            if let Some(blocked_outpoint) = self.find_blocked_input_in_tx(&signed_tx)? {
+                log::warn!(
+                    "[{}] Refusing to broadcast outgoing contract tx due to denied input {}",
+                    self.config.network_port,
+                    blocked_outpoint
+                );
+                return Err(MakerError::General(
+                    "Blocked UTXO detected before outgoing contract broadcast",
+                ));
+            }
 
             // Broadcast the signed transaction
             wallet.send_tx(&signed_tx)?;

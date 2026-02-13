@@ -2,10 +2,12 @@ use bitcoin::{OutPoint, Transaction};
 use std::{
     collections::HashSet,
     fs::{self, File},
-    io::{self, BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     str::FromStr,
 };
+
+use crate::wallet::WalletError;
 
 pub(crate) const DEFAULT_UTXO_DENY_LIST_FILE: &str = "utxo-deny-list.txt";
 
@@ -30,7 +32,7 @@ pub(crate) struct UtxoDenyList {
 }
 
 impl UtxoDenyList {
-    pub(crate) fn load(path: PathBuf) -> io::Result<Self> {
+    pub(crate) fn load(path: PathBuf) -> Result<Self, WalletError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -55,7 +57,7 @@ impl UtxoDenyList {
         self.denied_outpoints.contains(outpoint)
     }
 
-    pub(crate) fn add(&mut self, outpoint: OutPoint) -> io::Result<bool> {
+    pub(crate) fn add(&mut self, outpoint: OutPoint) -> Result<bool, WalletError> {
         let inserted = self.denied_outpoints.insert(outpoint);
         if inserted {
             self.save_to_disk()?;
@@ -63,7 +65,7 @@ impl UtxoDenyList {
         Ok(inserted)
     }
 
-    pub(crate) fn remove(&mut self, outpoint: &OutPoint) -> io::Result<bool> {
+    pub(crate) fn remove(&mut self, outpoint: &OutPoint) -> Result<bool, WalletError> {
         let removed = self.denied_outpoints.remove(outpoint);
         if removed {
             self.save_to_disk()?;
@@ -71,7 +73,7 @@ impl UtxoDenyList {
         Ok(removed)
     }
 
-    pub(crate) fn import_from_file(&mut self, import_path: &Path) -> io::Result<usize> {
+    pub(crate) fn import_from_file(&mut self, import_path: &Path) -> Result<usize, WalletError> {
         let outpoints = Self::read_outpoints_from_file(import_path)?;
         let mut imported = 0usize;
         for outpoint in outpoints {
@@ -94,7 +96,7 @@ impl UtxoDenyList {
             .find(|outpoint| self.denied_outpoints.contains(outpoint))
     }
 
-    fn save_to_disk(&self) -> io::Result<()> {
+    fn save_to_disk(&self) -> Result<(), WalletError> {
         let mut file = File::create(&self.path)?;
         for outpoint in self.list() {
             writeln!(file, "{outpoint}")?;
@@ -103,7 +105,7 @@ impl UtxoDenyList {
         Ok(())
     }
 
-    fn read_outpoints_from_file(path: &Path) -> io::Result<HashSet<OutPoint>> {
+    fn read_outpoints_from_file(path: &Path) -> Result<HashSet<OutPoint>, WalletError> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         let mut outpoints = HashSet::new();
@@ -116,10 +118,11 @@ impl UtxoDenyList {
             }
 
             let outpoint = OutPoint::from_str(entry).map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid outpoint '{}' at line {}", entry, line_number + 1),
-                )
+                WalletError::General(format!(
+                    "invalid outpoint '{}' at line {}",
+                    entry,
+                    line_number + 1
+                ))
             })?;
             outpoints.insert(outpoint);
         }

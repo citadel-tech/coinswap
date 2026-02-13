@@ -1,7 +1,6 @@
 use std::{
     io::ErrorKind,
     net::{TcpListener, TcpStream},
-    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc,
@@ -16,6 +15,7 @@ use super::messages::RpcMsgReq;
 use crate::{
     maker::{config::MakerConfig, error::MakerError, rpc::messages::RpcMsgResp},
     utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, UTXO},
+    utxo_denylist::resolve_deny_list_path,
     wallet::{AddressType, Destination, Wallet},
 };
 use std::{path::Path, str::FromStr, sync::RwLock};
@@ -186,12 +186,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
             Err(_) => RpcMsgResp::ServerError("Invalid outpoint format. Use txid:vout".to_string()),
         },
         RpcMsgReq::ImportDeniedUtxos { file_path } => {
-            let path = PathBuf::from(&file_path);
-            let resolved = if path.is_absolute() {
-                path
-            } else {
-                maker.data_dir().join(path)
-            };
+            let resolved = resolve_deny_list_path(maker.data_dir(), &file_path);
             let imported = maker.import_denied_outpoints(&resolved)?;
             RpcMsgResp::Text(format!("imported {imported} new outpoints"))
         }
