@@ -30,7 +30,6 @@ use crate::{
     },
     nostr_coinswap::broadcast_bond_on_nostr,
     protocol::{
-        messages::FidelityProof,
         messages2::{MakerToTakerMessage, TakerToMakerMessage},
     },
     utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
@@ -82,48 +81,68 @@ fn manage_fidelity_bonds_taproot(
         .write()?
         .redeem_expired_fidelity_bonds(AddressType::P2TR)?;
 
-    let fidelity = setup_fidelity_bond_taproot(maker.as_ref(), maker_addr)?;
+    setup_fidelity_bond_taproot(maker.as_ref(), maker_addr)?;
 
     if spawn_nostr {
-        spawn_nostr_broadcast_task(fidelity, maker)?;
+        spawn_nostr_broadcast_task(maker)?;
     }
 
     Ok(())
 }
 
-fn spawn_nostr_broadcast_task(
-    fidelity: FidelityProof,
-    maker: Arc<Maker>,
-) -> Result<(), MakerError> {
+fn spawn_nostr_broadcast_task(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Spawning nostr background task for maker");
     let maker_clone = maker.clone();
 
     let handle = thread::Builder::new()
         .name("nostr-event-thread".to_string())
         .spawn(move || {
-            if let Err(e) = broadcast_bond_on_nostr(fidelity.clone()) {
-                log::warn!("initial nostr broadcast failed: {:?}", e);
-            }
-
             let interval = Duration::from_secs(30 * 60);
             let tick = Duration::from_secs(2);
-            let mut elapsed = Duration::ZERO;
+            // Force a first broadcast right after spawn.
+            let mut elapsed = interval;
+            let mut last_broadcasted_outpoint = None;
 
             while !maker_clone.shutdown.load(Ordering::Acquire) {
+                let latest_fidelity = match maker_clone.highest_fidelity_proof.read() {
+                    Ok(proof) => proof.clone(),
+                    Err(e) => {
+                        log::warn!("failed to read latest fidelity proof for nostr broadcast: {e}");
+                        None
+                    }
+                };
+
+                if let Some(fidelity) = latest_fidelity {
+                    let latest_outpoint = fidelity.bond.outpoint;
+                    let outpoint_changed = last_broadcasted_outpoint
+                        .map(|prev| prev != latest_outpoint)
+                        .unwrap_or(true);
+                    let periodic_reping_due = elapsed >= interval;
+
+                    if outpoint_changed || periodic_reping_due {
+                        if outpoint_changed && last_broadcasted_outpoint.is_some() {
+                            log::info!(
+                                "Detected updated fidelity outpoint {}; broadcasting updated nostr announcement",
+                                latest_outpoint
+                            );
+                        } else if periodic_reping_due {
+                            log::debug!("re-pinging nostr relays with bond announcement");
+                        }
+
+                        match broadcast_bond_on_nostr(fidelity) {
+                            Ok(()) => {
+                                last_broadcasted_outpoint = Some(latest_outpoint);
+                                elapsed = Duration::ZERO;
+                            }
+                            Err(e) => {
+                                log::warn!("nostr bond broadcast failed: {:?}", e);
+                            }
+                        }
+                    }
+                }
+
                 thread::sleep(tick);
                 elapsed += tick;
-
-                if elapsed < interval {
-                    continue;
-                }
-
-                elapsed = Duration::ZERO;
-
-                log::debug!("re-pinging nostr relays with bond announcement");
-
-                if let Err(e) = broadcast_bond_on_nostr(fidelity.clone()) {
-                    log::warn!("nostr re-ping failed: {:?}", e);
-                }
             }
 
             log::info!("nostr background task stopped");
@@ -646,7 +665,8 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
         .name("liquidity-monitor-taproot".to_string())
         .spawn(move || {
             let mut counter = 0;
-            let check_interval = 300 / HEART_BEAT_INTERVAL.as_secs(); // Check every 5 minutes
+            let heartbeat_secs = HEART_BEAT_INTERVAL.as_secs().max(1);
+            let check_interval = (300u64 / heartbeat_secs).max(1); // Check every 5 minutes
 
             loop {
                 if maker_clone_liquidity.shutdown.load(Relaxed) {
@@ -672,8 +692,9 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
         .name("fidelity-monitor-taproot".to_string())
         .spawn(move || {
             let mut counter = 0u64;
+            let heartbeat_secs = HEART_BEAT_INTERVAL.as_secs().max(1);
             let check_interval =
-                FIDELITY_BOND_UPDATE_INTERVAL as u64 / HEART_BEAT_INTERVAL.as_secs();
+                (FIDELITY_BOND_UPDATE_INTERVAL as u64 / heartbeat_secs).max(1);
 
             loop {
                 if maker_clone_fidelity.shutdown.load(Relaxed) {
@@ -717,7 +738,8 @@ pub fn start_maker_server_taproot(maker: Arc<Maker>) -> Result<(), MakerError> {
         .name("core-monitor-taproot".to_string())
         .spawn(move || {
             let mut counter = 0;
-            let check_interval = RPC_PING_INTERVAL as u64 / HEART_BEAT_INTERVAL.as_secs(); // Check every 9 seconds
+            let heartbeat_secs = HEART_BEAT_INTERVAL.as_secs().max(1);
+            let check_interval = (RPC_PING_INTERVAL as u64 / heartbeat_secs).max(1); // Check every 9 seconds
 
             loop {
                 if maker_clone_core.shutdown.load(Relaxed) {
