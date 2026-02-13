@@ -651,6 +651,27 @@ impl Wallet {
         self.store.unified_watchonly_swapcoins.remove(swap_id)
     }
 
+    /// Removes unified outgoing swapcoins whose `swap_id` matches.
+    pub(crate) fn remove_unified_outgoing_swapcoins(&mut self, swap_id: &str) {
+        let keys_to_remove: Vec<String> = self
+            .store
+            .unified_outgoing_swapcoins
+            .iter()
+            .filter(|(_, sc)| sc.swap_id.as_deref() == Some(swap_id))
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in &keys_to_remove {
+            self.store.unified_outgoing_swapcoins.remove(key);
+        }
+        if !keys_to_remove.is_empty() {
+            log::info!(
+                "Removed {} unified outgoing swapcoins for swap {}",
+                keys_to_remove.len(),
+                swap_id
+            );
+        }
+    }
+
     /// Returns all contract txids from unified watch-only swapcoins.
     #[allow(dead_code)]
     pub(crate) fn get_all_unified_watchonly_txids(&self) -> Vec<Txid> {
@@ -783,7 +804,11 @@ impl Wallet {
                             Ok(Some(_))
                         );
 
-                        if input_still_unspent {
+                        if input_still_unspent
+                            && swapcoin.protocol == crate::protocol::ProtocolVersion::Taproot
+                        {
+                            // For Taproot, contract_tx IS the funding tx.
+                            // If its input (wallet UTXO) is still unspent, funds are still ours.
                             log::info!(
                                 "Contract tx for {} was never broadcast — wallet UTXOs still unspent, discarding swapcoin",
                                 swap_id
@@ -791,6 +816,8 @@ impl Wallet {
                             discarded.push(swap_id.clone());
                             continue;
                         }
+                        // For Legacy, the input is the 2-of-2 multisig funding output,
+                        // not a wallet UTXO. Fall through to broadcast the contract tx.
 
                         // Inputs are spent but contract output isn't on-chain.
                         // For Legacy, the contract tx (pre-signed insurance) may
@@ -809,15 +836,29 @@ impl Wallet {
                                     );
                                 }
                                 Err(e) => {
+                                    let err_str = format!("{:?}", e);
                                     // RPC error -27 means "Transaction already in block chain"
                                     // — the contract tx IS on-chain, so proceed with recovery.
-                                    let is_already_in_chain = format!("{:?}", e).contains("-27")
-                                        || format!("{:?}", e).contains("already in utxo set");
+                                    let is_already_in_chain = err_str.contains("-27")
+                                        || err_str.contains("already in utxo set");
+                                    // RPC error -25 means inputs are missing or already spent
+                                    // — the funding tx was never broadcast (e.g. SkipFundingBroadcast),
+                                    // so this swapcoin is permanently unrecoverable. Discard it.
+                                    let is_inputs_missing = err_str.contains("-25")
+                                        || err_str.contains("bad-txns-inputs-missingorspent");
                                     if is_already_in_chain {
                                         log::info!(
                                             "Contract tx for {} already on-chain, proceeding with timelock recovery",
                                             swap_id
                                         );
+                                    } else if is_inputs_missing {
+                                        log::warn!(
+                                            "Contract tx for {} has missing/spent inputs — discarding swapcoin: {}",
+                                            swap_id,
+                                            err_str
+                                        );
+                                        discarded.push(swap_id.clone());
+                                        continue;
                                     } else {
                                         log::warn!(
                                             "Failed to broadcast contract tx for {}: {:?} — skipping recovery",
@@ -861,20 +902,6 @@ impl Wallet {
                         log::warn!("Failed to create recovery tx for {}: {:?}", swap_id, e);
                     }
                 }
-            }
-        }
-
-        for txid in &recovered {
-            let to_remove: Vec<_> = self
-                .store
-                .unified_outgoing_swapcoins
-                .iter()
-                .filter(|(_, sc)| sc.contract_tx.compute_txid() == *txid)
-                .map(|(id, _)| id.clone())
-                .collect();
-
-            for id in to_remove {
-                self.store.unified_outgoing_swapcoins.remove(&id);
             }
         }
 
@@ -2812,34 +2839,67 @@ impl Wallet {
                 }
             };
 
-            // Verify the UTXO actually exists on chain before attempting to spend
-            let utxo_exists = match self.rpc.get_tx_out(&utxo_txid, utxo_vout, Some(false)) {
-                Ok(Some(_)) => true,
-                Ok(None) => {
-                    log::warn!(
-                        "UTXO {}:{} not found on chain for swap {} - funding may not be confirmed yet",
+            // Verify the UTXO actually exists on chain before attempting to spend.
+            // First check confirmed UTXOs, then fall back to mempool.
+            let utxo_confirmed = matches!(
+                self.rpc.get_tx_out(&utxo_txid, utxo_vout, Some(false)),
+                Ok(Some(_))
+            );
+
+            if !utxo_confirmed {
+                // UTXO not yet confirmed. Check if it's at least in the mempool.
+                let in_mempool = matches!(
+                    self.rpc.get_tx_out(&utxo_txid, utxo_vout, None),
+                    Ok(Some(_))
+                );
+
+                if in_mempool {
+                    // The incoming contract tx is broadcast but unconfirmed.
+                    // Wait for it to confirm before sweeping.
+                    log::info!(
+                        "Incoming contract tx {}:{} is in mempool for {} — waiting for confirmation",
                         utxo_txid,
                         utxo_vout,
                         swap_id
                     );
-                    false
-                }
-                Err(e) => {
-                    log::warn!(
-                        "Error checking UTXO {}:{} for swap {}: {:?}",
-                        utxo_txid,
-                        utxo_vout,
-                        swap_id,
-                        e
-                    );
-                    false
-                }
-            };
-
-            if !utxo_exists {
-                // For hashlock spend (no other_privkey), try broadcasting the contract tx
-                // so the contract output becomes available on-chain.
-                if swapcoin.other_privkey.is_none() && swapcoin.others_contract_sig.is_some() {
+                    // Poll get_tx_out with confirmed-only until the UTXO appears.
+                    // We can't use wait_for_tx_confirmation here because that
+                    // requires the tx to be in our wallet's transaction history,
+                    // but this tx was broadcast by another party.
+                    let mut wait_secs = 0u64;
+                    loop {
+                        if matches!(
+                            self.rpc.get_tx_out(&utxo_txid, utxo_vout, Some(false)),
+                            Ok(Some(_))
+                        ) {
+                            log::info!(
+                                "Incoming contract tx {}:{} confirmed for {}",
+                                utxo_txid,
+                                utxo_vout,
+                                swap_id
+                            );
+                            break;
+                        }
+                        wait_secs += 10;
+                        if wait_secs > 600 {
+                            log::warn!(
+                                "Timed out waiting for contract tx {}:{} to confirm for {}",
+                                utxo_txid,
+                                utxo_vout,
+                                swap_id
+                            );
+                            break;
+                        }
+                        log::info!(
+                            "Still waiting for {}:{} to confirm ({}s elapsed)",
+                            utxo_txid,
+                            utxo_vout,
+                            wait_secs
+                        );
+                        std::thread::sleep(std::time::Duration::from_secs(10));
+                    }
+                } else if swapcoin.other_privkey.is_none() && swapcoin.others_contract_sig.is_some()
+                {
                     log::info!(
                         "Contract output not on-chain for {} — broadcasting signed contract tx",
                         swap_id

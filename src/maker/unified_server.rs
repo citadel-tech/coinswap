@@ -296,6 +296,8 @@ fn handle_connection(maker: Arc<UnifiedMakerServer>, stream: TcpStream) -> Resul
 
 /// Background thread that checks for idle swap states and spawns recovery.
 fn check_for_idle_states(maker: Arc<UnifiedMakerServer>) -> Result<(), MakerError> {
+    use super::swap_tracker::{now_secs, MakerRecoveryState, MakerSwapPhase, MakerSwapRecord};
+
     loop {
         if maker.is_shutdown() {
             break;
@@ -303,20 +305,42 @@ fn check_for_idle_states(maker: Arc<UnifiedMakerServer>) -> Result<(), MakerErro
 
         let idle_swaps = maker.drain_idle_swaps(IDLE_CONNECTION_TIMEOUT);
 
-        for (swap_id, incoming_swapcoins, outgoing_swapcoins) in idle_swaps {
+        for idle in idle_swaps {
             log::error!(
                 "[{}] Potential dropped connection from taker. Swap {} idle. Recovering from swap",
                 maker.config.network_port,
-                swap_id
+                idle.swap_id
             );
 
+            // Create a tracker record for this dropped swap.
+            let now = now_secs();
+            let record = MakerSwapRecord {
+                swap_id: idle.swap_id.clone(),
+                protocol: idle.protocol,
+                phase: MakerSwapPhase::TakerDropped,
+                swap_amount_sat: idle.swap_amount_sat,
+                incoming_count: idle.incoming_swapcoins.len(),
+                outgoing_count: idle.outgoing_swapcoins.len(),
+                recovery: MakerRecoveryState::default(),
+                created_at: now,
+                updated_at: now,
+            };
+
+            if let Err(e) = maker.swap_tracker.lock().unwrap().save_record(&record) {
+                log::error!("Failed to save swap tracker record: {:?}", e);
+            }
+
+            let swap_id = idle.swap_id.clone();
             let maker_clone = Arc::clone(&maker);
             let handle = thread::Builder::new()
                 .name(format!("swap-recovery-{}", swap_id))
                 .spawn(move || {
-                    if let Err(e) =
-                        recover_from_swap(maker_clone, incoming_swapcoins, outgoing_swapcoins)
-                    {
+                    if let Err(e) = recover_from_swap(
+                        maker_clone,
+                        idle.swap_id,
+                        idle.incoming_swapcoins,
+                        idle.outgoing_swapcoins,
+                    ) {
                         log::error!("Failed to recover from swap {}: {:?}", swap_id, e);
                     }
                 })
@@ -443,6 +467,25 @@ fn check_for_preimage_via_watchtower(
     Ok(())
 }
 
+/// Update the maker swap tracker with the given closure.
+///
+/// Locks the tracker, applies `f` to the record matching `swap_id`, then flushes.
+fn update_tracker(
+    maker: &UnifiedMakerServer,
+    swap_id: &str,
+    f: impl FnOnce(&mut super::swap_tracker::MakerSwapRecord),
+) {
+    let mut tracker = maker.swap_tracker.lock().unwrap();
+    if let Some(record) = tracker.get_record_mut(swap_id) {
+        f(record);
+        record.updated_at = super::swap_tracker::now_secs();
+        let cloned = record.clone();
+        if let Err(e) = tracker.save_record(&cloned) {
+            log::error!("Failed to flush swap tracker: {:?}", e);
+        }
+    }
+}
+
 /// Recover maker funds after taker drops.
 ///
 /// Two recovery paths are tried in a loop:
@@ -453,9 +496,11 @@ fn check_for_preimage_via_watchtower(
 ///    our outgoing funds via the timelock spending path.
 fn recover_from_swap(
     maker: Arc<UnifiedMakerServer>,
+    swap_id: String,
     incoming_swapcoins: Vec<crate::wallet::unified_swapcoin::IncomingSwapCoin>,
     outgoing_swapcoins: Vec<crate::wallet::unified_swapcoin::OutgoingSwapCoin>,
 ) -> Result<(), MakerError> {
+    use super::swap_tracker::{MakerRecoveryPhase, MakerSwapPhase};
     use bitcoind::bitcoincore_rpc::RpcApi;
 
     let timelock = outgoing_swapcoins
@@ -481,6 +526,12 @@ fn recover_from_swap(
         incoming_swapcoins.len(),
         outgoing_swapcoins.len()
     );
+
+    // Tracker: Recovering + Monitoring
+    update_tracker(&maker, &swap_id, |r| {
+        r.phase = MakerSwapPhase::Recovering;
+        r.recovery.phase = MakerRecoveryPhase::Monitoring;
+    });
 
     // NOTE: Do NOT re-register outgoing contract outputs here.
     // They were already registered with the watch tower during swap setup
@@ -534,6 +585,12 @@ fn recover_from_swap(
                     swept.len()
                 );
 
+                // Tracker: HashlockRecovered
+                update_tracker(&maker, &swap_id, |r| {
+                    r.recovery.incoming_swept = swept.clone();
+                    r.recovery.phase = MakerRecoveryPhase::HashlockRecovered;
+                });
+
                 // Clean up outgoing swapcoins — their funding was spent by
                 // someone else (hashlock), so they are no longer recoverable
                 // via timelock. Remove them from the wallet store.
@@ -549,6 +606,12 @@ fn recover_from_swap(
                     }
                     wallet.save_to_disk().map_err(MakerError::Wallet)?;
                 }
+
+                // Tracker: Recovered + CleanedUp
+                update_tracker(&maker, &swap_id, |r| {
+                    r.phase = MakerSwapPhase::Recovered;
+                    r.recovery.phase = MakerRecoveryPhase::CleanedUp;
+                });
 
                 #[cfg(feature = "integration-test")]
                 maker.shutdown.store(true, Relaxed);
@@ -573,6 +636,11 @@ fn recover_from_swap(
                 timelock_expiry
             );
 
+            // Tracker: TimelockWaiting
+            update_tracker(&maker, &swap_id, |r| {
+                r.recovery.phase = MakerRecoveryPhase::TimelockWaiting;
+            });
+
             log::info!("Sync at:----recover_from_swap timelock----");
             maker
                 .wallet
@@ -594,6 +662,17 @@ fn recover_from_swap(
                     maker.config.network_port,
                     recovered.len()
                 );
+
+                // Tracker: TimelockRecovered → Recovered + CleanedUp
+                update_tracker(&maker, &swap_id, |r| {
+                    r.recovery.outgoing_recovered = recovered;
+                    r.recovery.phase = MakerRecoveryPhase::TimelockRecovered;
+                });
+                update_tracker(&maker, &swap_id, |r| {
+                    r.phase = MakerSwapPhase::Recovered;
+                    r.recovery.phase = MakerRecoveryPhase::CleanedUp;
+                });
+
                 #[cfg(feature = "integration-test")]
                 maker.shutdown.store(true, Relaxed);
                 return Ok(());

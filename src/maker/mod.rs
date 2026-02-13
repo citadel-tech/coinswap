@@ -23,6 +23,7 @@ mod server2;
 pub mod legacy_handlers;
 pub mod taproot_handlers;
 
+pub mod swap_tracker;
 pub mod unified_api;
 pub mod unified_handlers;
 pub mod unified_server;
@@ -37,6 +38,7 @@ pub use api2::Maker as TaprootMaker;
 pub use api2::MakerBehavior as TaprootMakerBehavior;
 pub use server2::start_maker_server_taproot;
 
+pub use swap_tracker::MakerSwapTracker;
 #[cfg(feature = "integration-test")]
 pub use unified_api::UnifiedMakerBehavior;
 pub use unified_api::{UnifiedMakerServer, UnifiedMakerServerConfig};

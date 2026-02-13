@@ -104,6 +104,7 @@ impl fmt::Display for SwapPhase {
 pub struct MakerProgress {
     pub address: String,
     pub negotiated: bool,
+    pub funding_confirmed: bool,
     pub contracts_exchanged: bool,
     pub preimage_revealed: bool,
     pub privkey_received: bool,
@@ -178,6 +179,58 @@ impl fmt::Display for RecoveryPhase {
     }
 }
 
+/// Truncate each txid to its first 8 hex characters for compact display.
+fn short_txids(txids: &[Txid]) -> Vec<String> {
+    txids
+        .iter()
+        .map(|txid| {
+            let s = txid.to_string();
+            s[..8.min(s.len())].to_string()
+        })
+        .collect()
+}
+
+impl fmt::Display for MakerProgress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let flags = [
+            ("N", self.negotiated),
+            ("F", self.funding_confirmed),
+            ("C", self.contracts_exchanged),
+            ("P", self.preimage_revealed),
+            ("K", self.privkey_received),
+            ("W", self.privkey_forwarded),
+        ];
+        let status: String = flags
+            .iter()
+            .map(|(c, ok)| if *ok { *c } else { "-" })
+            .collect();
+        write!(f, "{}[{}]", self.address, status)
+    }
+}
+
+impl fmt::Display for RecoveryState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "phase={}", self.phase)?;
+        if !self.incoming_swept.is_empty() {
+            write!(f, " in_swept={:?}", short_txids(&self.incoming_swept))?;
+        }
+        if !self.incoming_watching.is_empty() {
+            write!(f, " in_watch={:?}", short_txids(&self.incoming_watching))?;
+        }
+        if !self.outgoing_recovered.is_empty() {
+            write!(
+                f,
+                " out_recovered={:?}",
+                short_txids(&self.outgoing_recovered)
+            )?;
+        }
+        if !self.outgoing_watching.is_empty() {
+            write!(f, " out_watch={:?}", short_txids(&self.outgoing_watching))?;
+        }
+        Ok(())
+    }
+}
+
 impl fmt::Display for SwapRecord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -190,27 +243,18 @@ impl fmt::Display for SwapRecord {
         }
         write!(
             f,
-            " recovery={} out_txids={} in_txids={} wo_txids={}",
-            self.recovery.phase,
+            " out_txids={} in_txids={} wo_txids={}",
             self.outgoing_contract_txids.len(),
             self.incoming_contract_txids.len(),
             self.watchonly_contract_txids.len(),
         )?;
-        let r = &self.recovery;
-        if !r.incoming_swept.is_empty()
-            || !r.incoming_watching.is_empty()
-            || !r.outgoing_recovered.is_empty()
-            || !r.outgoing_watching.is_empty()
-        {
-            write!(
-                f,
-                " [in_swept={} in_watch={} out_recovered={} out_watch={}]",
-                r.incoming_swept.len(),
-                r.incoming_watching.len(),
-                r.outgoing_recovered.len(),
-                r.outgoing_watching.len(),
-            )?;
+        if !self.makers.is_empty() {
+            write!(f, "\n  makers:")?;
+            for (i, m) in self.makers.iter().enumerate() {
+                write!(f, "\n    [{}] {}", i, m)?;
+            }
         }
+        write!(f, "\n  recovery: {}", self.recovery)?;
         Ok(())
     }
 }
@@ -326,7 +370,9 @@ impl SwapTracker {
             return;
         }
         for record in self.data.swaps.values() {
-            log::info!("[SwapTracker] {}", record);
+            for line in format!("{}", record).lines() {
+                log::info!("[SwapTracker] {}", line);
+            }
         }
     }
 }

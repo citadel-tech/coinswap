@@ -465,8 +465,10 @@ impl UnifiedTaker {
                 .collect();
 
             self.wait_for_txids_confirmation(&maker_funding_txids)?;
+            self.swap_state_mut()?.makers[maker_idx].funding_confirmed = true;
 
             log::info!("Maker {} processed successfully", maker_idx);
+            self.swap_state_mut()?.makers[maker_idx].contracts_exchanged = true;
         }
 
         // Create incoming swapcoins from the last maker's sender contract info.

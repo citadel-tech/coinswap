@@ -90,6 +90,12 @@ fn test_unified_legacy_recovery_after_funding_broadcast() {
     let _maker_spendable_balance = verify_unified_maker_pre_swap_balances(&unified_makers);
     log::info!("Starting Legacy recovery test...");
 
+    // Start periodic swap tracker logging (every 10s)
+    let tracker_logger = spawn_tracker_logger(
+        test_framework.temp_dir.join("unified_taker1"),
+        Duration::from_secs(10),
+    );
+
     // Swap params for unified coinswap (Legacy)
     let swap_params = UnifiedSwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 2)
         .with_tx_count(3)
@@ -104,6 +110,7 @@ fn test_unified_legacy_recovery_after_funding_broadcast() {
         "Swap should fail due to DropAfterFundsBroadcast behavior"
     );
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
+    unified_taker.log_tracker_state();
 
     // Wait for makers to timeout and broadcast contracts, then blocks mature timelocks.
     // Maker timeout is 60s in tests; block generation thread mines 10 blocks every 3s,
@@ -149,9 +156,13 @@ fn test_unified_legacy_recovery_after_funding_broadcast() {
     // broadcast their contracts. The taker has the preimage and can spend
     // the incoming contract outputs via the hashlock path.
     {
-        let mut wallet = unified_taker.get_wallet().write().unwrap();
-        wallet.sync_and_save().unwrap();
-        match wallet.sweep_unified_incoming_swapcoins(2.0) {
+        unified_taker
+            .get_wallet()
+            .write()
+            .unwrap()
+            .sync_and_save()
+            .unwrap();
+        match unified_taker.sweep_incoming_swapcoins(2.0) {
             Ok(swept) => info!("Swept {} incoming hashlock transactions", swept.len()),
             Err(e) => warn!("Hashlock sweep retry: {:?}", e),
         }
@@ -165,9 +176,13 @@ fn test_unified_legacy_recovery_after_funding_broadcast() {
     // timelock recovery failed (non-BIP68-final) because CSV wasn't mature yet.
     // After ~300 blocks, the CSV is now satisfied and we can recover.
     {
-        let mut wallet = unified_taker.get_wallet().write().unwrap();
-        wallet.sync_and_save().unwrap();
-        match wallet.recover_unified_timelocked_swapcoins(2.0) {
+        unified_taker
+            .get_wallet()
+            .write()
+            .unwrap()
+            .sync_and_save()
+            .unwrap();
+        match unified_taker.recover_timelocked_swapcoins(2.0) {
             Ok(recovered) => info!("Recovered {} timelock transactions", recovered.len()),
             Err(e) => warn!("Timelock recovery retry: {:?}", e),
         }
@@ -231,8 +246,10 @@ fn test_unified_legacy_recovery_after_funding_broadcast() {
         balance_diff.to_sat(),
     );
 
+    unified_taker.log_tracker_state();
     info!("Legacy recovery test completed successfully!");
 
+    tracker_logger.stop();
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }
@@ -304,8 +321,14 @@ fn test_unified_taproot_recovery_after_contract_broadcast() {
         maker.wallet.write().unwrap().sync_and_save().unwrap();
     }
 
-    let _maker_spendable_balance = verify_unified_maker_pre_swap_balances(&unified_makers);
+    let maker_spendable_balance = verify_unified_maker_pre_swap_balances(&unified_makers);
     log::info!("Starting Taproot recovery test...");
+
+    // Start periodic swap tracker logging (every 10s)
+    let tracker_logger = spawn_tracker_logger(
+        test_framework.temp_dir.join("unified_taker1"),
+        Duration::from_secs(10),
+    );
 
     // Swap params for unified coinswap (Taproot)
     let swap_params = UnifiedSwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 2)
@@ -321,12 +344,14 @@ fn test_unified_taproot_recovery_after_contract_broadcast() {
         "Swap should fail due to DropAfterFundsBroadcast behavior"
     );
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
+    unified_taker.log_tracker_state();
 
-    // For Taproot, contracts are already on-chain (broadcast by taker).
-    // Wait for blocks to mature timelocks. Block generation thread mines 10 blocks
-    // every 3s, so 30s ≈ 100 blocks — enough for the 60-block timelock.
-    info!("Waiting for blocks to mature timelocks...");
-    thread::sleep(Duration::from_secs(30));
+    // Wait for makers to timeout and recover. The maker's IDLE_CONNECTION_TIMEOUT
+    // is 60s in tests — after that the connection handler detects the dropped taker,
+    // and check_for_idle_states() triggers recovery. Block generation thread mines
+    // 10 blocks every 3s, so 90s ≈ 300 blocks — more than enough for timelock maturity.
+    info!("Waiting for makers to timeout and blocks to mature timelocks...");
+    thread::sleep(Duration::from_secs(90));
 
     // Shut down makers
     unified_makers
@@ -337,7 +362,7 @@ fn test_unified_taproot_recovery_after_contract_broadcast() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    // Verify maker balances — makers should have recovered their outgoing funds via timelock
+    // Verify maker balances — makers should have recovered their outgoing funds
     for (i, maker) in unified_makers.iter().enumerate() {
         maker.wallet.write().unwrap().sync_and_save().unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
@@ -365,9 +390,13 @@ fn test_unified_taproot_recovery_after_contract_broadcast() {
     // Retry hashlock recovery (incoming swapcoins) — for Taproot, the contract
     // tx is already on-chain (broadcast by taker). The taker can spend via hashlock.
     {
-        let mut wallet = unified_taker.get_wallet().write().unwrap();
-        wallet.sync_and_save().unwrap();
-        match wallet.sweep_unified_incoming_swapcoins(2.0) {
+        unified_taker
+            .get_wallet()
+            .write()
+            .unwrap()
+            .sync_and_save()
+            .unwrap();
+        match unified_taker.sweep_incoming_swapcoins(2.0) {
             Ok(swept) => info!("Swept {} incoming hashlock transactions", swept.len()),
             Err(e) => warn!("Hashlock sweep retry: {:?}", e),
         }
@@ -380,9 +409,13 @@ fn test_unified_taproot_recovery_after_contract_broadcast() {
     // The initial recover_from_swap() may have failed if the timelock wasn't
     // mature yet. After ~100 blocks, it should be satisfied.
     {
-        let mut wallet = unified_taker.get_wallet().write().unwrap();
-        wallet.sync_and_save().unwrap();
-        match wallet.recover_unified_timelocked_swapcoins(2.0) {
+        unified_taker
+            .get_wallet()
+            .write()
+            .unwrap()
+            .sync_and_save()
+            .unwrap();
+        match unified_taker.recover_timelocked_swapcoins(2.0) {
             Ok(recovered) => info!("Recovered {} timelock transactions", recovered.len()),
             Err(e) => warn!("Timelock recovery retry: {:?}", e),
         }
@@ -446,8 +479,37 @@ fn test_unified_taproot_recovery_after_contract_broadcast() {
         balance_diff.to_sat(),
     );
 
+    // Verify maker balances are close to pre-swap (post-fidelity) balances
+    for (i, maker) in unified_makers.iter().enumerate() {
+        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
+        let original = maker_spendable_balance[i];
+
+        let maker_diff = original
+            .checked_sub(maker_balances.spendable)
+            .unwrap_or(Amount::ZERO);
+
+        info!(
+            "Maker {} balance diff: {} sats (pre-swap: {}, current: {})",
+            i,
+            maker_diff.to_sat(),
+            original,
+            maker_balances.spendable,
+        );
+
+        // Makers should recover most of their funds (small loss from tx fees)
+        assert!(
+            maker_diff.to_sat() < 10000,
+            "Maker {} should have recovered most funds. Lost {} sats (expected < 10000)",
+            i,
+            maker_diff.to_sat(),
+        );
+    }
+
+    unified_taker.log_tracker_state();
     info!("Taproot recovery test completed successfully!");
 
+    tracker_logger.stop();
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }
@@ -532,6 +594,12 @@ fn test_unified_legacy_timelock_only_recovery() {
     let maker_spendable_balance = verify_unified_maker_pre_swap_balances(&unified_makers);
     log::info!("Starting Legacy timelock-only recovery test...");
 
+    // Start periodic swap tracker logging (every 10s)
+    let tracker_logger = spawn_tracker_logger(
+        test_framework.temp_dir.join("unified_taker1"),
+        Duration::from_secs(10),
+    );
+
     // Swap params for unified coinswap (Legacy)
     let swap_params = UnifiedSwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 2)
         .with_tx_count(3)
@@ -546,6 +614,7 @@ fn test_unified_legacy_timelock_only_recovery() {
         "Swap should fail due to Maker2 skipping funding broadcast"
     );
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
+    unified_taker.log_tracker_state();
 
     // Wait for timelocks to mature. Maker timeout is 60s in tests;
     // block generation thread mines 10 blocks every 3s, so 90s ~ 300 blocks.
@@ -593,12 +662,9 @@ fn test_unified_legacy_timelock_only_recovery() {
     }
 
     // Timelock recovery for outgoing swapcoins
-    {
-        let mut wallet = unified_taker.get_wallet().write().unwrap();
-        match wallet.recover_unified_timelocked_swapcoins(2.0) {
-            Ok(recovered) => info!("Recovered {} timelock transactions", recovered.len()),
-            Err(e) => warn!("Timelock recovery: {:?}", e),
-        }
+    match unified_taker.recover_timelocked_swapcoins(2.0) {
+        Ok(recovered) => info!("Recovered {} timelock transactions", recovered.len()),
+        Err(e) => warn!("Timelock recovery: {:?}", e),
     }
 
     // Mine a block to confirm the recovery tx
@@ -680,8 +746,10 @@ fn test_unified_legacy_timelock_only_recovery() {
         );
     }
 
+    unified_taker.log_tracker_state();
     info!("Legacy timelock-only recovery test completed successfully!");
 
+    tracker_logger.stop();
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }
@@ -766,6 +834,12 @@ fn test_unified_taproot_timelock_only_recovery() {
     let maker_spendable_balance = verify_unified_maker_pre_swap_balances(&unified_makers);
     log::info!("Starting Taproot timelock-only recovery test...");
 
+    // Start periodic swap tracker logging (every 10s)
+    let tracker_logger = spawn_tracker_logger(
+        test_framework.temp_dir.join("unified_taker1"),
+        Duration::from_secs(10),
+    );
+
     // Swap params for unified coinswap (Taproot)
     let swap_params = UnifiedSwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 2)
         .with_tx_count(3)
@@ -780,6 +854,7 @@ fn test_unified_taproot_timelock_only_recovery() {
         "Swap should fail due to Maker2 skipping funding broadcast"
     );
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
+    unified_taker.log_tracker_state();
 
     // Wait for timelocks to mature. Maker timeout is 60s in tests;
     // block generation thread mines 10 blocks every 3s, so 90s ~ 300 blocks.
@@ -829,15 +904,12 @@ fn test_unified_taproot_timelock_only_recovery() {
     // First recovery attempt: broadcasts contract/funding txs on-chain.
     // The CSV relative timelock may not be mature yet, so recovery txs
     // might fail with "non-BIP68-final". That's expected.
-    {
-        let mut wallet = unified_taker.get_wallet().write().unwrap();
-        match wallet.recover_unified_timelocked_swapcoins(2.0) {
-            Ok(recovered) => info!(
-                "First attempt: recovered {} timelock transactions",
-                recovered.len()
-            ),
-            Err(e) => warn!("First recovery attempt (expected): {:?}", e),
-        }
+    match unified_taker.recover_timelocked_swapcoins(2.0) {
+        Ok(recovered) => info!(
+            "First attempt: recovered {} timelock transactions",
+            recovered.len()
+        ),
+        Err(e) => warn!("First recovery attempt (expected): {:?}", e),
     }
 
     // Mine enough blocks to mature the CSV relative timelock.
@@ -847,9 +919,13 @@ fn test_unified_taproot_timelock_only_recovery() {
 
     // Retry recovery now that CSV is mature
     {
-        let mut wallet = unified_taker.get_wallet().write().unwrap();
-        wallet.sync_and_save().unwrap();
-        match wallet.recover_unified_timelocked_swapcoins(2.0) {
+        unified_taker
+            .get_wallet()
+            .write()
+            .unwrap()
+            .sync_and_save()
+            .unwrap();
+        match unified_taker.recover_timelocked_swapcoins(2.0) {
             Ok(recovered) => info!("Retry: recovered {} timelock transactions", recovered.len()),
             Err(e) => warn!("Retry recovery: {:?}", e),
         }
@@ -934,8 +1010,10 @@ fn test_unified_taproot_timelock_only_recovery() {
         );
     }
 
+    unified_taker.log_tracker_state();
     info!("Taproot timelock-only recovery test completed successfully!");
 
+    tracker_logger.stop();
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

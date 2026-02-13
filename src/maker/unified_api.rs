@@ -32,6 +32,7 @@ pub use super::unified_handlers::UnifiedMakerBehavior;
 
 use super::{
     error::MakerError,
+    swap_tracker::MakerSwapTracker,
     unified_handlers::{MakerConfig, UnifiedConnectionState, UnifiedMaker as UnifiedMakerTrait},
 };
 
@@ -195,9 +196,25 @@ pub struct UnifiedMakerServer {
     pub thread_pool: Arc<UnifiedThreadPool>,
     /// Data directory.
     pub data_dir: PathBuf,
+    /// Persistent swap tracker for recovery progress.
+    pub swap_tracker: Mutex<MakerSwapTracker>,
     /// Test-only behavior override.
     #[cfg(feature = "integration-test")]
     pub behavior: UnifiedMakerBehavior,
+}
+
+/// Idle swap data returned by [`UnifiedMakerServer::drain_idle_swaps`].
+pub struct IdleSwapData {
+    /// Unique swap identifier.
+    pub swap_id: String,
+    /// Protocol version used for this swap.
+    pub protocol: crate::protocol::common_messages::ProtocolVersion,
+    /// Swap amount in satoshis.
+    pub swap_amount_sat: u64,
+    /// Incoming swapcoins (maker receives).
+    pub incoming_swapcoins: Vec<UnifiedIncomingSwapCoin>,
+    /// Outgoing swapcoins (maker sends).
+    pub outgoing_swapcoins: Vec<UnifiedOutgoingSwapCoin>,
 }
 
 impl UnifiedMakerServer {
@@ -229,6 +246,17 @@ impl UnifiedMakerServer {
         )
         .map_err(MakerError::Watcher)?;
 
+        let swap_tracker = MakerSwapTracker::load_or_create(&data_dir)?;
+        let incomplete = swap_tracker.incomplete_swaps();
+        if !incomplete.is_empty() {
+            log::info!(
+                "[{}] Loaded {} incomplete swap records from previous run",
+                config.network_port,
+                incomplete.len()
+            );
+            swap_tracker.log_state();
+        }
+
         Ok(UnifiedMakerServer {
             config: config.clone(),
             wallet: Arc::new(RwLock::new(wallet)),
@@ -239,6 +267,7 @@ impl UnifiedMakerServer {
             watch_service,
             thread_pool: Arc::new(UnifiedThreadPool::new(config.network_port)),
             data_dir,
+            swap_tracker: Mutex::new(swap_tracker),
             #[cfg(feature = "integration-test")]
             behavior: UnifiedMakerBehavior::default(),
         })
@@ -468,16 +497,9 @@ impl UnifiedMakerServer {
     }
 
     /// Atomically find and remove stale entries from `ongoing_swaps`.
-    /// Returns the swap_id, incoming swapcoins, and outgoing swapcoins for each idle swap.
+    /// Returns swap data for each idle swap.
     /// Only drains entries where `outgoing_swapcoins` is non-empty (otherwise nothing to recover).
-    pub fn drain_idle_swaps(
-        &self,
-        timeout: Duration,
-    ) -> Vec<(
-        String,
-        Vec<UnifiedIncomingSwapCoin>,
-        Vec<UnifiedOutgoingSwapCoin>,
-    )> {
+    pub fn drain_idle_swaps(&self, timeout: Duration) -> Vec<IdleSwapData> {
         let mut swaps = self.ongoing_swaps.lock().unwrap();
         let mut idle = Vec::new();
 
@@ -491,7 +513,13 @@ impl UnifiedMakerServer {
 
         for id in stale_ids {
             if let Some(state) = swaps.remove(&id) {
-                idle.push((id, state.incoming_swapcoins, state.outgoing_swapcoins));
+                idle.push(IdleSwapData {
+                    swap_id: id,
+                    protocol: state.protocol,
+                    swap_amount_sat: state.swap_amount.to_sat(),
+                    incoming_swapcoins: state.incoming_swapcoins,
+                    outgoing_swapcoins: state.outgoing_swapcoins,
+                });
             }
         }
 

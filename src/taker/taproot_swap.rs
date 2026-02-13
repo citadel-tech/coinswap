@@ -284,6 +284,8 @@ impl UnifiedTaker {
                     }
 
                     received_contracts.push(*maker_contract);
+                    self.swap_state_mut()?.makers[i].funding_confirmed = true;
+                    self.swap_state_mut()?.makers[i].contracts_exchanged = true;
                 }
                 _ => {
                     return Err(TakerError::General(format!(
