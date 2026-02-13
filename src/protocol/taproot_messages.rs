@@ -2,7 +2,7 @@
 
 use super::common_messages::PrivateKeyHandover;
 use bitcoin::{
-    secp256k1::{Scalar, XOnlyPublicKey},
+    secp256k1::{Scalar, SecretKey, XOnlyPublicKey},
     Amount, PublicKey, ScriptBuf, Transaction,
 };
 use serde::{Deserialize, Serialize};
@@ -53,6 +53,16 @@ pub struct TaprootContractData {
     pub contract_txs: Vec<Transaction>,
     /// Contract amounts.
     pub amounts: Vec<Amount>,
+    /// Nonce for the receiver to reconstruct hashlock_privkey.
+    /// hashlock_privkey = tweakable_privkey + hashlock_nonce.
+    /// None in maker→taker responses (taker already knows).
+    #[serde(default)]
+    pub hashlock_nonce: Option<SecretKey>,
+    /// Nonce for the NEXT hop's hashlock script.
+    /// Maker uses this: next_hashlock_pubkey = next_hop_point + next_hashlock_nonce * G.
+    /// None for the last maker (next hop is taker, who uses its own key).
+    #[serde(default)]
+    pub next_hashlock_nonce: Option<SecretKey>,
 }
 
 impl TaprootContractData {
@@ -68,6 +78,8 @@ impl TaprootContractData {
         timelock_script: ScriptBuf,
         contract_txs: Vec<Transaction>,
         amounts: Vec<Amount>,
+        hashlock_nonce: Option<SecretKey>,
+        next_hashlock_nonce: Option<SecretKey>,
     ) -> Self {
         Self {
             id,
@@ -79,6 +91,8 @@ impl TaprootContractData {
             timelock_script,
             contract_txs,
             amounts,
+            hashlock_nonce,
+            next_hashlock_nonce,
         }
     }
 

@@ -809,12 +809,23 @@ impl Wallet {
                                     );
                                 }
                                 Err(e) => {
-                                    log::warn!(
-                                        "Failed to broadcast contract tx for {}: {:?} — skipping recovery",
-                                        swap_id,
-                                        e
-                                    );
-                                    continue;
+                                    // RPC error -27 means "Transaction already in block chain"
+                                    // — the contract tx IS on-chain, so proceed with recovery.
+                                    let is_already_in_chain = format!("{:?}", e).contains("-27")
+                                        || format!("{:?}", e).contains("already in utxo set");
+                                    if is_already_in_chain {
+                                        log::info!(
+                                            "Contract tx for {} already on-chain, proceeding with timelock recovery",
+                                            swap_id
+                                        );
+                                    } else {
+                                        log::warn!(
+                                            "Failed to broadcast contract tx for {}: {:?} — skipping recovery",
+                                            swap_id,
+                                            e
+                                        );
+                                        continue;
+                                    }
                                 }
                             },
                             Err(e) => {

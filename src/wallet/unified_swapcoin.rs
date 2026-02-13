@@ -601,10 +601,10 @@ impl IncomingSwapCoin {
                     .map_err(|e| WalletError::General(format!("Sighash error: {:?}", e)))?;
 
                 let msg = bitcoin::secp256k1::Message::from(sighash);
-                let my_privkey = self.my_privkey.as_ref().ok_or_else(|| {
-                    WalletError::General("Missing my_privkey for hashlock spend".to_string())
-                })?;
-                let keypair = Keypair::from_secret_key(&secp, my_privkey);
+                // Use hashlock_privkey for signing — it matches the pubkey in the hashlock script.
+                // For maker: hashlock_privkey = tweakable_privkey + received_nonce
+                // For taker: hashlock_privkey = my_privkey (set during swapcoin creation)
+                let keypair = Keypair::from_secret_key(&secp, &self.hashlock_privkey);
                 let signature = secp.sign_schnorr(&msg, &keypair);
                 let tap_sig = bitcoin::taproot::Signature {
                     signature,

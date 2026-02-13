@@ -402,20 +402,22 @@ fn check_for_preimage_via_watchtower(
 
         for preimage in &preimages {
             // Verify the preimage matches the incoming swapcoin's hashlock.
-            let hash = bitcoin::hashes::Hash::hash(preimage);
             let matches = if let Some(redeemscript) = incoming.contract_redeemscript() {
-                // Legacy: check against contract redeemscript
+                // Legacy: uses OP_HASH160 with 20-byte hash
+                let hash: bitcoin::hashes::hash160::Hash = bitcoin::hashes::Hash::hash(preimage);
                 crate::protocol::contract::read_hashvalue_from_contract(redeemscript)
                     .map(|h| h == hash)
                     .unwrap_or(false)
             } else {
-                // Taproot: check against hashlock script (contains OP_HASH160 <hash> OP_EQUAL)
+                // Taproot: uses OP_SHA256 with 32-byte hash
+                // Script format: OP_SHA256 OP_PUSHBYTES_32 <32-byte hash> OP_EQUALVERIFY ...
+                let sha256_hash: [u8; 32] =
+                    bitcoin::hashes::sha256::Hash::hash(preimage).to_byte_array();
                 incoming
                     .hashlock_script()
                     .map(|script| {
                         let bytes = script.as_bytes();
-                        // hashlock script format: OP_HASH160 OP_PUSHBYTES_20 <20-byte hash> OP_EQUAL ...
-                        bytes.len() >= 22 && bytes[2..22] == *hash.as_byte_array()
+                        bytes.len() >= 34 && bytes[2..34] == sha256_hash
                     })
                     .unwrap_or(false)
             };

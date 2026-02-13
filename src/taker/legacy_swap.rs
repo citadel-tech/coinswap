@@ -280,7 +280,9 @@ impl UnifiedTaker {
                     wallet.save_to_disk()?;
                 }
                 // Funding txs are now on-chain — mark the phase transition.
+                // SP4-L: Point of no return. Persist nonces needed for legacy recovery.
                 self.swap_state_mut()?.phase = super::unified_api::SwapPhase::FundsBroadcast;
+                self.persist_swap_phase(super::swap_tracker::SwapPhase::FundsBroadcast)?;
                 let funding_txids: Vec<_> = self
                     .swap_state()?
                     .outgoing_swapcoins
@@ -555,6 +557,9 @@ impl UnifiedTaker {
                 receiver_sigs.len()
             );
         }
+
+        // SP6-L: All makers responded, incoming swapcoins created.
+        self.persist_swap_phase(super::swap_tracker::SwapPhase::ContractsExchanged)?;
 
         log::info!("Multi-hop Legacy swap contract exchange completed");
         Ok(())

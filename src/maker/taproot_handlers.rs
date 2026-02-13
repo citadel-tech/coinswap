@@ -11,7 +11,11 @@ use super::{
 use crate::{
     protocol::{
         common_messages::{PrivateKeyHandover, SwapPrivkey},
-        contract2::{create_hashlock_script, create_timelock_script, extract_hash_from_hashlock},
+        contract::calculate_pubkey_from_nonce,
+        contract2::{
+            check_taproot_hashlock_has_pubkey, create_hashlock_script, create_timelock_script,
+            extract_hash_from_hashlock,
+        },
         router::MakerToTakerMessage,
         taproot_messages::{
             SerializableScalar, TaprootContractData, TaprootHashPreimage, TaprootTakerMessage,
@@ -59,11 +63,17 @@ fn process_taproot_contract<M: UnifiedMaker>(
     let (tweakable_privkey, tweakable_pubkey) = maker.get_tweakable_keypair()?;
     let secp = bitcoin::secp256k1::Secp256k1::new();
 
-    let hashlock_nonce =
-        bitcoin::secp256k1::SecretKey::new(&mut bitcoin::secp256k1::rand::thread_rng());
+    // Use the nonce from the received message to reconstruct hashlock_privkey.
+    let hashlock_nonce = data.hashlock_nonce.ok_or(MakerError::General(
+        "Missing hashlock_nonce in TaprootContractData",
+    ))?;
     let hashlock_privkey = tweakable_privkey
         .add_tweak(&hashlock_nonce.into())
         .map_err(|_| MakerError::General("Hashlock key derivation failed"))?;
+
+    // Verify: derived pubkey matches the pubkey in the hashlock script.
+    check_taproot_hashlock_has_pubkey(&data.hashlock_script, &tweakable_pubkey, &hashlock_nonce)
+        .map_err(|e| MakerError::General(format!("Hashlock pubkey mismatch: {:?}", e).leak()))?;
 
     let incoming_contract_tx = data
         .contract_txs
@@ -128,7 +138,15 @@ fn process_taproot_contract<M: UnifiedMaker>(
 
     let hash = extract_hash_from_hashlock(&data.hashlock_script)
         .map_err(|e| MakerError::General(format!("Invalid hashlock script: {:?}", e).leak()))?;
-    let next_hop_xonly = bitcoin::key::XOnlyPublicKey::from(data.next_hop_point.inner);
+    // If next_hashlock_nonce is provided, tweak the next hop's pubkey.
+    // Otherwise (last maker → taker), use the un-tweaked next_hop_point.
+    let next_hop_hashlock_pubkey = if let Some(ref nonce) = data.next_hashlock_nonce {
+        calculate_pubkey_from_nonce(&data.next_hop_point, nonce)
+            .map_err(|e| MakerError::General(format!("Next hop key derivation: {:?}", e).leak()))?
+    } else {
+        data.next_hop_point
+    };
+    let next_hop_xonly = bitcoin::key::XOnlyPublicKey::from(next_hop_hashlock_pubkey.inner);
     let hashlock_script = create_hashlock_script(&hash, &next_hop_xonly);
     let timelock_script = {
         let locktime = bitcoin::absolute::LockTime::from_height(state.timelock as u32)
@@ -252,6 +270,8 @@ fn process_taproot_contract<M: UnifiedMaker>(
         timelock_script,
         vec![contract_tx],
         vec![contract_output_amount],
+        None, // hashlock_nonce: taker already knows
+        None, // next_hashlock_nonce: taker manages all nonces
     );
 
     Ok(Some(MakerToTakerMessage::TaprootContractData(Box::new(

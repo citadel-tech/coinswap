@@ -14,6 +14,7 @@ mod routines;
 
 // Unified API
 mod legacy_swap;
+pub mod swap_tracker;
 mod taproot_swap;
 pub mod unified_api;
 

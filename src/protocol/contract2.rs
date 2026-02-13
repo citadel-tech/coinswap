@@ -7,10 +7,10 @@ use bitcoin::{
     locktime::absolute::LockTime,
     opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256},
     script,
-    secp256k1::{Secp256k1, XOnlyPublicKey},
+    secp256k1::{Secp256k1, SecretKey, XOnlyPublicKey},
     sighash::{Prevouts, SighashCache},
     taproot::{LeafVersion, TaprootBuilder, TaprootSpendInfo},
-    Amount, ScriptBuf,
+    Amount, PublicKey, ScriptBuf,
 };
 
 use bitcoind::bitcoincore_rpc::RpcApi;
@@ -47,6 +47,31 @@ pub(crate) fn extract_hash_from_hashlock(script: &ScriptBuf) -> Result<[u8; 32],
 
     Err(ProtocolError::General(
         "Failed to extract hash from hashlock script",
+    ))
+}
+
+/// Check that a Taproot hashlock script contains the pubkey derived from
+/// `tweakable_point + nonce * G`. Mirrors Legacy's `check_hashlock_has_pubkey`.
+pub(crate) fn check_taproot_hashlock_has_pubkey(
+    hashlock_script: &ScriptBuf,
+    tweakable_point: &PublicKey,
+    nonce: &SecretKey,
+) -> Result<(), ProtocolError> {
+    let expected = crate::protocol::contract::calculate_pubkey_from_nonce(tweakable_point, nonce)?;
+    let (expected_xonly, _) = expected.inner.x_only_public_key();
+
+    // Hashlock script: OP_SHA256 <hash> OP_EQUALVERIFY <pubkey> OP_CHECKSIG
+    let instructions: Vec<_> = hashlock_script.instructions().collect();
+    if let Some(Ok(bitcoin::script::Instruction::PushBytes(pk_bytes))) = instructions.get(3) {
+        if let Ok(script_xonly) = XOnlyPublicKey::from_slice(pk_bytes.as_bytes()) {
+            if script_xonly == expected_xonly {
+                return Ok(());
+            }
+        }
+    }
+
+    Err(ProtocolError::General(
+        "Taproot hashlock pubkey doesn't match nonce-derived key",
     ))
 }
 

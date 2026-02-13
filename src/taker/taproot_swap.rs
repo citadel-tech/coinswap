@@ -75,6 +75,8 @@ impl UnifiedTaker {
             // Convert to x-only pubkeys for Taproot
             let keypair = secp256k1::Keypair::from_secret_key(&secp, &my_privkey);
             let my_xonly = secp256k1::XOnlyPublicKey::from_keypair(&keypair).0;
+            // Use the tweaked hashlock_pubkey (= tweakable_point + nonce * G).
+            // The nonce is sent to the maker so it can reconstruct hashlock_privkey.
             let (other_xonly, _parity) = hashlock_pubkey.inner.x_only_public_key();
 
             // Create hashlock and timelock scripts
@@ -156,6 +158,7 @@ impl UnifiedTaker {
         log::info!("Exchanging contract data with makers...");
 
         let num_makers = self.swap_state()?.makers.len();
+        let hashlock_nonces = self.swap_state()?.hashlock_nonces.clone();
         let mut received_contracts: Vec<TaprootContractData> = Vec::new();
 
         for i in 0..num_makers {
@@ -213,6 +216,12 @@ impl UnifiedTaker {
                 timelock_scripts.first().cloned().unwrap_or_default(),
                 contract_txs,
                 amounts,
+                hashlock_nonces.get(i).copied(),
+                if i + 1 < num_makers {
+                    hashlock_nonces.get(i + 1).copied()
+                } else {
+                    None
+                },
             );
 
             send_message(
@@ -284,6 +293,9 @@ impl UnifiedTaker {
                 }
             }
         }
+
+        // SP6-T: All makers responded, incoming/watchonly swapcoins created.
+        self.persist_swap_phase(super::swap_tracker::SwapPhase::ContractsExchanged)?;
 
         Ok(())
     }
@@ -371,10 +383,10 @@ impl UnifiedTaker {
                 TakerError::General("No amount in Taproot contract data".to_string())
             })?;
 
-        let hashlock_privkey = SecretKey::new(&mut OsRng);
-
+        // The last maker's outgoing hashlock uses taker's my_pubkey (un-tweaked, no nonce),
+        // so my_privkey is the correct signing key for the hashlock script.
         let mut swapcoin = IncomingSwapCoin::new_taproot(
-            hashlock_privkey,
+            my_privkey,
             contract.hashlock_script.clone(),
             contract.timelock_script.clone(),
             contract_tx,
