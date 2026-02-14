@@ -305,6 +305,8 @@ pub struct UnifiedTaker {
     pub(crate) ongoing_swap: Option<OngoingSwapState>,
     /// Persistent swap tracker for crash-resilient recovery.
     pub(crate) swap_tracker: SwapTracker,
+    /// Background recovery loop (active when incomplete swap recovery is in progress).
+    recovery_loop: Option<RecoveryLoop>,
     /// Test behavior.
     #[cfg(feature = "integration-test")]
     pub behavior: UnifiedTakerBehavior,
@@ -320,6 +322,11 @@ impl Drop for UnifiedTaker {
                     log::error!("Failed to flush swap tracker on shutdown: {:?}", e);
                 }
             }
+        }
+        // Shut down background recovery loop (if running)
+        if let Some(recovery) = self.recovery_loop.take() {
+            log::info!("Shutting down recovery loop");
+            drop(recovery);
         }
         if let Err(e) = self.offerbook.persist() {
             log::error!("Failed to persist offerbook: {:?}", e);
@@ -392,6 +399,7 @@ impl UnifiedTaker {
             offer_sync_handle,
             ongoing_swap: None,
             swap_tracker,
+            recovery_loop: None,
             #[cfg(feature = "integration-test")]
             behavior: UnifiedTakerBehavior::Normal,
         };
@@ -476,7 +484,7 @@ impl UnifiedTaker {
         }
 
         // Also do the legacy blind sweep for any swapcoins that predate the tracker
-        match self.write_wallet() {
+        let has_remaining = match self.write_wallet() {
             Ok(mut wallet) => {
                 match wallet.sweep_unified_incoming_swapcoins(2.0) {
                     Ok(swept) if !swept.is_empty() => {
@@ -511,8 +519,16 @@ impl UnifiedTaker {
                         remaining.len()
                     );
                 }
+                !remaining.is_empty()
             }
-            Err(e) => log::warn!("Startup recovery: failed to lock wallet: {:?}", e),
+            Err(e) => {
+                log::warn!("Startup recovery: failed to lock wallet: {:?}", e);
+                false
+            }
+        };
+
+        if has_remaining {
+            self.recovery_loop = Some(RecoveryLoop::start(self.wallet.clone()));
         }
     }
 
@@ -616,6 +632,15 @@ impl UnifiedTaker {
     /// Log the current swap tracker state at INFO level.
     pub fn log_tracker_state(&self) {
         self.swap_tracker.log_state();
+    }
+
+    /// Check whether the background recovery loop has completed.
+    /// Returns `true` if no recovery is needed or if all contracts are resolved.
+    pub fn is_recovery_complete(&self) -> bool {
+        match &self.recovery_loop {
+            Some(loop_) => loop_.is_complete(),
+            None => true,
+        }
     }
 
     /// Recover timelocked outgoing swapcoins and update the swap tracker.
@@ -1874,7 +1899,20 @@ impl UnifiedTaker {
         })?;
 
         self.ongoing_swap = None;
-        log::info!("Recovery completed.");
+
+        // If contracts remain unresolved, spawn background recovery loop
+        let has_remaining = {
+            let wallet = self.read_wallet()?;
+            !wallet.unified_outgoing_contract_outpoints().is_empty()
+                || !wallet.unified_incoming_contract_outpoints().is_empty()
+        };
+        if has_remaining {
+            log::info!("Recovery incomplete, starting background retry loop");
+            self.recovery_loop = Some(RecoveryLoop::start(self.wallet.clone()));
+        } else {
+            log::info!("Recovery completed — all contracts resolved.");
+        }
+
         Ok(())
     }
 
@@ -2239,6 +2277,131 @@ impl UnifiedTaker {
         }
 
         Ok(())
+    }
+}
+
+/// Interval between recovery retry attempts.
+#[cfg(not(feature = "integration-test"))]
+const RECOVERY_LOOP_INTERVAL: Duration = Duration::from_secs(60);
+#[cfg(feature = "integration-test")]
+const RECOVERY_LOOP_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Background thread that periodically retries wallet-level recovery
+/// (hashlock sweep + timelock recovery) until all contract UTXOs are resolved.
+///
+/// Spawned at the end of `recover_active_swap()` or `init_recover_incomplete()`
+/// when some contracts remain unresolved (e.g. timelocks not yet mature).
+pub(crate) struct RecoveryLoop {
+    shutdown: Arc<AtomicBool>,
+    complete: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl RecoveryLoop {
+    /// Spawn the background recovery thread.
+    pub(crate) fn start(wallet: Arc<RwLock<Wallet>>) -> Self {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let complete = Arc::new(AtomicBool::new(false));
+
+        let shutdown_clone = shutdown.clone();
+        let complete_clone = complete.clone();
+
+        let handle = thread::Builder::new()
+            .name("Recovery loop".to_string())
+            .spawn(move || {
+                log::info!("Recovery loop started");
+                while !shutdown_clone.load(Relaxed) {
+                    // Sync wallet to refresh chain state
+                    if let Ok(mut w) = wallet.write() {
+                        if let Err(e) = w.sync_and_save() {
+                            log::warn!("Recovery loop: sync failed: {:?}", e);
+                        }
+                    }
+
+                    // Try hashlock sweep (incoming)
+                    if let Ok(mut w) = wallet.write() {
+                        match w.sweep_unified_incoming_swapcoins(2.0) {
+                            Ok(swept) if !swept.is_empty() => {
+                                log::info!(
+                                    "Recovery loop: swept {} incoming swapcoins",
+                                    swept.len()
+                                );
+                            }
+                            Err(e) => {
+                                log::debug!("Recovery loop: incoming sweep: {:?}", e);
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // Try timelock recovery (outgoing)
+                    if let Ok(mut w) = wallet.write() {
+                        match w.recover_unified_timelocked_swapcoins(2.0) {
+                            Ok(recovered) if !recovered.is_empty() => {
+                                log::info!(
+                                    "Recovery loop: recovered {} timelocked swapcoins",
+                                    recovered.len()
+                                );
+                            }
+                            Err(e) => {
+                                log::debug!("Recovery loop: timelock recovery: {:?}", e);
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // Check completion: all contract outpoints spent on-chain
+                    let all_resolved = match wallet.read() {
+                        Ok(w) => {
+                            let outgoing = w.unified_outgoing_contract_outpoints();
+                            let incoming = w.unified_incoming_contract_outpoints();
+
+                            if outgoing.is_empty() && incoming.is_empty() {
+                                true
+                            } else {
+                                // Check on-chain status of each remaining outpoint
+                                outgoing.iter().chain(incoming.iter()).all(|op| {
+                                    !matches!(
+                                        w.rpc.get_tx_out(&op.txid, op.vout, None),
+                                        Ok(Some(_))
+                                    )
+                                })
+                            }
+                        }
+                        Err(_) => false,
+                    };
+
+                    if all_resolved {
+                        log::info!("Recovery loop: all contracts resolved");
+                        complete_clone.store(true, Relaxed);
+                        return;
+                    }
+
+                    thread::sleep(RECOVERY_LOOP_INTERVAL);
+                }
+                log::info!("Recovery loop shut down");
+            })
+            .expect("failed to spawn recovery loop thread");
+
+        Self {
+            shutdown,
+            complete,
+            handle: Some(handle),
+        }
+    }
+
+    /// Check whether recovery is complete.
+    pub(crate) fn is_complete(&self) -> bool {
+        self.complete.load(Relaxed)
+    }
+}
+
+impl Drop for RecoveryLoop {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
     }
 }
 
