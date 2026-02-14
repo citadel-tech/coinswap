@@ -3,15 +3,19 @@
 use std::{
     net::TcpStream,
     path::PathBuf,
-    sync::{mpsc, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
-    thread,
+    sync::{
+        atomic::{AtomicBool, Ordering::Relaxed},
+        mpsc, Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard,
+    },
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
 pub(crate) use super::swap_tracker::SwapPhase;
 use super::swap_tracker::{
-    now_secs, MakerProgress, RecoveryPhase, RecoveryState, SerializableSecretKey, SwapRecord,
-    SwapTracker,
+    now_secs, ExchangeProgress, FinalizationProgress, LegacyExchangeProgress, MakerProgress,
+    RecoveryPhase, RecoveryState, SerializableSecretKey, SwapRecord, SwapTracker,
+    TaprootExchangeProgress,
 };
 
 use bitcoin::{
@@ -36,7 +40,10 @@ use crate::{
         router::{MakerToTakerMessage, TakerToMakerMessage},
         taproot_messages::TaprootHashPreimage,
     },
-    utill::{check_tor_status, generate_maker_keys, get_taker_dir, read_message, send_message},
+    utill::{
+        check_tor_status, generate_maker_keys, get_taker_dir, read_message, send_message,
+        HEART_BEAT_INTERVAL,
+    },
     wallet::{
         unified_swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         RPCConfig, Wallet,
@@ -238,7 +245,8 @@ pub(crate) struct OngoingSwapState {
     pub(crate) incoming_swapcoins: Vec<IncomingSwapCoin>,
     /// Watch-only swapcoins for intermediate hops (between makers).
     pub(crate) watchonly_swapcoins: Vec<WatchOnlySwapCoin>,
-    /// Multisig nonces for each outgoing swapcoin (used in ProofOfFunding).
+    /// Multisig nonces for each outgoing swapcoin (Legacy only, used in ProofOfFunding).
+    /// Empty for Taproot swaps.
     pub(crate) multisig_nonces: Vec<SecretKey>,
     /// Hashlock nonces for each outgoing swapcoin (used in ProofOfFunding).
     pub(crate) hashlock_nonces: Vec<SecretKey>,
@@ -255,16 +263,30 @@ pub(crate) struct MakerConnection {
     pub(crate) protocol: ProtocolVersion,
     /// Tweakable point for this swap.
     pub(crate) tweakable_point: Option<PublicKey>,
-    /// Whether the maker's funding transaction has been confirmed on-chain.
-    pub(crate) funding_confirmed: bool,
-    /// Whether contract signatures have been exchanged with this maker.
-    pub(crate) contracts_exchanged: bool,
-    /// Whether the preimage has been revealed to this maker.
-    pub(crate) preimage_revealed: bool,
-    /// Whether a private key has been received from this maker.
-    pub(crate) privkey_received: bool,
-    /// Whether a private key has been forwarded to this maker.
-    pub(crate) privkey_forwarded: bool,
+    /// Protocol-specific exchange progress milestones.
+    pub(crate) exchange: ExchangeProgress,
+    /// Shared finalization milestones (preimage, privkey exchange).
+    pub(crate) finalization: FinalizationProgress,
+}
+
+impl MakerConnection {
+    /// Get mutable reference to Legacy exchange progress.
+    /// Panics if protocol is Taproot.
+    pub(crate) fn legacy_exchange_mut(&mut self) -> &mut LegacyExchangeProgress {
+        match &mut self.exchange {
+            ExchangeProgress::Legacy(ref mut l) => l,
+            _ => panic!("Expected Legacy exchange progress"),
+        }
+    }
+
+    /// Get mutable reference to Taproot exchange progress.
+    /// Panics if protocol is Legacy.
+    pub(crate) fn taproot_exchange_mut(&mut self) -> &mut TaprootExchangeProgress {
+        match &mut self.exchange {
+            ExchangeProgress::Taproot(ref mut t) => t,
+            _ => panic!("Expected Taproot exchange progress"),
+        }
+    }
 }
 
 /// Unified Taker client.
@@ -293,7 +315,7 @@ impl Drop for UnifiedTaker {
         log::info!("Shutting down unified taker.");
         // Flush any pending swap state before shutdown
         if let Some(swap) = &self.ongoing_swap {
-            if let Ok(record) = self.build_swap_record_from_state(swap) {
+            if let Ok(record) = self.persist_build_record(swap) {
                 if let Err(e) = self.swap_tracker.save_record(&record) {
                     log::error!("Failed to flush swap tracker on shutdown: {:?}", e);
                 }
@@ -374,7 +396,7 @@ impl UnifiedTaker {
             behavior: UnifiedTakerBehavior::Normal,
         };
 
-        taker.recover_incomplete_swaps();
+        taker.init_recover_incomplete();
         Ok(taker)
     }
 
@@ -382,7 +404,7 @@ impl UnifiedTaker {
     ///
     /// Uses the persistent swap tracker to identify incomplete swaps and dispatch
     /// to the appropriate recovery strategy based on the recorded phase.
-    fn recover_incomplete_swaps(&mut self) {
+    fn init_recover_incomplete(&mut self) {
         log::info!("Checking for incomplete swaps from previous session...");
 
         // Collect incomplete swap IDs to avoid borrow issues
@@ -601,7 +623,7 @@ impl UnifiedTaker {
     /// Wraps `Wallet::recover_unified_timelocked_swapcoins` — after recovery,
     /// moves resolved contracts from `outgoing_watching` to `outgoing_recovered`
     /// and advances the recovery phase when all outgoing are resolved.
-    pub fn recover_timelocked_swapcoins(&mut self, fee_rate: f64) -> Result<Vec<Txid>, TakerError> {
+    pub fn recover_timelocked(&mut self, fee_rate: f64) -> Result<Vec<Txid>, TakerError> {
         // Snapshot which contract txids are being watched per swap
         let incomplete: Vec<(String, Vec<Txid>)> = self
             .swap_tracker
@@ -624,7 +646,7 @@ impl UnifiedTaker {
         // If the contract output is spent (recovered by us or claimed), move it
         // from outgoing_watching to outgoing_recovered.
         for (swap_id, watching) in &incomplete {
-            let mut changed = false;
+            let mut resolved_txids = Vec::new();
             for contract_txid in watching {
                 let is_resolved = {
                     let wallet = self.read_wallet()?;
@@ -637,24 +659,23 @@ impl UnifiedTaker {
                 };
 
                 if is_resolved {
-                    if let Some(record) = self.swap_tracker.get_record_mut(swap_id) {
-                        record
-                            .recovery
-                            .outgoing_watching
-                            .retain(|t| t != contract_txid);
-                        if !record.recovery.outgoing_recovered.contains(contract_txid) {
-                            record.recovery.outgoing_recovered.push(*contract_txid);
-                        }
-                        record.updated_at = now_secs();
-                        changed = true;
-                    }
+                    resolved_txids.push(*contract_txid);
                 }
             }
 
-            if changed {
+            if !resolved_txids.is_empty() {
+                self.swap_tracker.update_and_save(swap_id, |record| {
+                    for txid in &resolved_txids {
+                        record.recovery.outgoing_watching.retain(|t| t != txid);
+                        if !record.recovery.outgoing_recovered.contains(txid) {
+                            record.recovery.outgoing_recovered.push(*txid);
+                        }
+                    }
+                })?;
+
                 // Check if we can advance to OutgoingRecovered and CleanedUp
-                if self.is_outgoing_recovery_resolved(swap_id) {
-                    self.update_recovery_phase(swap_id, RecoveryPhase::OutgoingRecovered)?;
+                if self.recover_is_outgoing_done(swap_id) {
+                    self.recover_update_phase(swap_id, RecoveryPhase::OutgoingRecovered)?;
                     // Clean up recovered swapcoins from wallet store
                     {
                         let mut wallet = self.write_wallet()?;
@@ -662,16 +683,11 @@ impl UnifiedTaker {
                         wallet.remove_unified_watchonly_swapcoins(swap_id);
                         wallet.save_to_disk()?;
                     }
-                    self.update_recovery_phase(swap_id, RecoveryPhase::CleanedUp)?;
+                    self.recover_update_phase(swap_id, RecoveryPhase::CleanedUp)?;
 
-                    if let Some(record) = self.swap_tracker.get_record_mut(swap_id) {
+                    self.swap_tracker.update_and_save(swap_id, |record| {
                         record.phase = SwapPhase::Failed;
-                        record.updated_at = now_secs();
-                    }
-                }
-
-                if let Some(record) = self.swap_tracker.get_record(swap_id).cloned() {
-                    self.swap_tracker.save_record(&record)?;
+                    })?;
                 }
             }
         }
@@ -683,7 +699,7 @@ impl UnifiedTaker {
     ///
     /// Wraps `Wallet::sweep_unified_incoming_swapcoins` — after sweep,
     /// adds swept txids to tracker and advances the recovery phase.
-    pub fn sweep_incoming_swapcoins(&mut self, fee_rate: f64) -> Result<Vec<Txid>, TakerError> {
+    pub fn recover_sweep_incoming(&mut self, fee_rate: f64) -> Result<Vec<Txid>, TakerError> {
         let incomplete: Vec<(String, Vec<Txid>)> = self
             .swap_tracker
             .incomplete_swaps()
@@ -701,21 +717,19 @@ impl UnifiedTaker {
         }
 
         for (swap_id, already_swept) in &incomplete {
-            let mut changed = false;
-            for txid in &swept_txids {
-                if !already_swept.contains(txid) {
-                    if let Some(record) = self.swap_tracker.get_record_mut(swap_id) {
-                        record.recovery.incoming_swept.push(*txid);
-                        record.updated_at = now_secs();
-                        changed = true;
-                    }
-                }
-            }
+            let new_txids: Vec<Txid> = swept_txids
+                .iter()
+                .filter(|txid| !already_swept.contains(txid))
+                .copied()
+                .collect();
 
-            if changed && self.is_incoming_recovery_resolved(swap_id) {
-                self.update_recovery_phase(swap_id, RecoveryPhase::IncomingRecovered)?;
-                if let Some(record) = self.swap_tracker.get_record(swap_id).cloned() {
-                    self.swap_tracker.save_record(&record)?;
+            if !new_txids.is_empty() {
+                self.swap_tracker.update_and_save(swap_id, |record| {
+                    record.recovery.incoming_swept.extend(&new_txids);
+                })?;
+
+                if self.recover_is_incoming_done(swap_id) {
+                    self.recover_update_phase(swap_id, RecoveryPhase::IncomingRecovered)?;
                 }
             }
         }
@@ -772,10 +786,10 @@ impl UnifiedTaker {
         });
 
         // Pre-commitment phases: no funds on-chain yet, nothing to recover.
-        self.discover_and_select_makers()?;
+        self.discover_makers()?;
 
         // SP1: Persist initial swap record with preimage and maker list.
-        self.persist_swap_phase(SwapPhase::Negotiating)?;
+        self.persist_phase(SwapPhase::Negotiating)?;
 
         #[cfg(feature = "integration-test")]
         if self.behavior == UnifiedTakerBehavior::CloseEarly {
@@ -788,12 +802,12 @@ impl UnifiedTaker {
         self.negotiate_swap_details()?;
 
         // SP2: Persist after negotiation (tweakable_points updated).
-        self.persist_swap_phase(SwapPhase::Negotiating)?;
+        self.persist_phase(SwapPhase::Negotiating)?;
 
-        self.initialize_swap_funding()?;
+        self.funding_initialize()?;
 
         // SP3: Persist after funding initialization (outgoing txids created).
-        self.persist_swap_phase(SwapPhase::FundingCreated)?;
+        self.persist_phase(SwapPhase::FundingCreated)?;
 
         // Protocol-specific execution with phase-aware recovery triggers.
         let protocol = self.swap_state()?.params.protocol;
@@ -801,9 +815,9 @@ impl UnifiedTaker {
         match protocol {
             ProtocolVersion::Legacy => {
                 // Phase 1: Exchange contract data (includes funding tx broadcast).
-                // Phase transitions to FundsBroadcast inside exchange_legacy_contract_data()
+                // Phase transitions to FundsBroadcast inside exchange_legacy()
                 // after funding txs are sent.
-                match self.exchange_legacy_contract_data() {
+                match self.exchange_legacy() {
                     Ok(()) => {}
                     Err(e) => {
                         log::error!("Legacy contract exchange failed: {:?}", e);
@@ -813,8 +827,8 @@ impl UnifiedTaker {
                             .unwrap_or(SwapPhase::Negotiating);
                         if phase >= SwapPhase::FundsBroadcast {
                             log::warn!("Funding txs were broadcast, triggering recovery");
-                            self.persist_swap_failure(phase, &e);
-                            if let Err(re) = self.recover_from_swap() {
+                            self.persist_failure(phase, &e);
+                            if let Err(re) = self.recover_active_swap() {
                                 log::error!("Recovery failed: {:?}", re);
                             }
                         } else {
@@ -837,23 +851,23 @@ impl UnifiedTaker {
                         .unwrap_or(SwapPhase::FundsBroadcast);
                     let err =
                         TakerError::General("Test: dropped after funds broadcast".to_string());
-                    self.persist_swap_failure(phase, &err);
-                    if let Err(re) = self.recover_from_swap() {
+                    self.persist_failure(phase, &err);
+                    if let Err(re) = self.recover_active_swap() {
                         log::error!("Recovery failed: {:?}", re);
                     }
                     return Err(err);
                 }
 
                 // SP7: Finalization starts.
-                self.persist_swap_phase(SwapPhase::Finalizing)?;
+                self.persist_phase(SwapPhase::Finalizing)?;
 
                 // Phase 2: Finalize with retry (exchange succeeded → phase is FundsBroadcast).
                 match self.finalize_with_retry() {
                     Ok(()) => {}
                     Err(e) => {
                         log::error!("Legacy finalization failed after retries: {:?}", e);
-                        self.persist_swap_failure(SwapPhase::Finalizing, &e);
-                        if let Err(re) = self.recover_from_swap() {
+                        self.persist_failure(SwapPhase::Finalizing, &e);
+                        if let Err(re) = self.recover_active_swap() {
                             log::error!("Recovery failed: {:?}", re);
                         }
                         return Err(e);
@@ -866,13 +880,13 @@ impl UnifiedTaker {
                 // creating their own outgoing, so we must broadcast first.
                 self.swap_state_mut()?.phase = SwapPhase::FundsBroadcast;
                 // SP4-T: Persist before broadcast (point of no return).
-                self.persist_swap_phase(SwapPhase::FundsBroadcast)?;
-                match self.broadcast_contract_txs() {
+                self.persist_phase(SwapPhase::FundsBroadcast)?;
+                match self.funding_broadcast() {
                     Ok(()) => {}
                     Err(e) => {
                         log::error!("Taproot broadcast failed: {:?}", e);
-                        self.persist_swap_failure(SwapPhase::FundsBroadcast, &e);
-                        if let Err(re) = self.recover_from_swap() {
+                        self.persist_failure(SwapPhase::FundsBroadcast, &e);
+                        if let Err(re) = self.recover_active_swap() {
                             log::error!("Recovery failed: {:?}", re);
                         }
                         return Err(e);
@@ -881,12 +895,12 @@ impl UnifiedTaker {
 
                 // Phase 2: Exchange contract data with makers.
                 // Our outgoing is on-chain, so makers can verify it.
-                match self.exchange_contract_data() {
+                match self.exchange_taproot() {
                     Ok(()) => {}
                     Err(e) => {
                         log::error!("Taproot contract exchange failed: {:?}", e);
-                        self.persist_swap_failure(SwapPhase::FundsBroadcast, &e);
-                        if let Err(re) = self.recover_from_swap() {
+                        self.persist_failure(SwapPhase::FundsBroadcast, &e);
+                        if let Err(re) = self.recover_active_swap() {
                             log::error!("Recovery failed: {:?}", re);
                         }
                         return Err(e);
@@ -902,23 +916,23 @@ impl UnifiedTaker {
                         .unwrap_or(SwapPhase::FundsBroadcast);
                     let err =
                         TakerError::General("Test: dropped after contract broadcast".to_string());
-                    self.persist_swap_failure(phase, &err);
-                    if let Err(re) = self.recover_from_swap() {
+                    self.persist_failure(phase, &err);
+                    if let Err(re) = self.recover_active_swap() {
                         log::error!("Recovery failed: {:?}", re);
                     }
                     return Err(err);
                 }
 
                 // SP7: Finalization starts.
-                self.persist_swap_phase(SwapPhase::Finalizing)?;
+                self.persist_phase(SwapPhase::Finalizing)?;
 
                 // Phase 3: Finalize with retry + watch tower polling.
                 match self.finalize_with_retry() {
                     Ok(()) => {}
                     Err(e) => {
                         log::error!("Taproot finalization failed after retries: {:?}", e);
-                        self.persist_swap_failure(SwapPhase::Finalizing, &e);
-                        if let Err(re) = self.recover_from_swap() {
+                        self.persist_failure(SwapPhase::Finalizing, &e);
+                        if let Err(re) = self.recover_active_swap() {
                             log::error!("Recovery failed: {:?}", re);
                         }
                         return Err(e);
@@ -944,7 +958,7 @@ impl UnifiedTaker {
         }
 
         // SP10: Mark swap as completed in the tracker.
-        self.persist_swap_phase(SwapPhase::Completed)?;
+        self.persist_phase(SwapPhase::Completed)?;
 
         // Generate report
         let duration = swap_start_time.elapsed();
@@ -979,7 +993,7 @@ impl UnifiedTaker {
     }
 
     /// Discover and select makers for the swap.
-    fn discover_and_select_makers(&mut self) -> Result<(), TakerError> {
+    fn discover_makers(&mut self) -> Result<(), TakerError> {
         let swap = self.swap_state()?;
         let maker_count = swap.params.maker_count;
         let send_amount = swap.params.send_amount;
@@ -1032,15 +1046,22 @@ impl UnifiedTaker {
         let selected_makers: Vec<MakerConnection> = suitable_makers
             .into_iter()
             .take(maker_count)
-            .map(|offer_and_address| MakerConnection {
-                offer_and_address,
-                protocol,
-                tweakable_point: None,
-                funding_confirmed: false,
-                contracts_exchanged: false,
-                preimage_revealed: false,
-                privkey_received: false,
-                privkey_forwarded: false,
+            .map(|offer_and_address| {
+                let exchange = match protocol {
+                    ProtocolVersion::Legacy => {
+                        ExchangeProgress::Legacy(LegacyExchangeProgress::default())
+                    }
+                    ProtocolVersion::Taproot => {
+                        ExchangeProgress::Taproot(TaprootExchangeProgress::default())
+                    }
+                };
+                MakerConnection {
+                    offer_and_address,
+                    protocol,
+                    tweakable_point: None,
+                    exchange,
+                    finalization: FinalizationProgress::default(),
+                }
             })
             .collect();
 
@@ -1083,9 +1104,9 @@ impl UnifiedTaker {
                 .to_string();
             log::info!("Connecting to maker at {}", maker_address);
 
-            let mut stream = self.connect_to_maker(&maker_address)?;
+            let mut stream = self.net_connect(&maker_address)?;
 
-            let negotiated_protocol = self.handshake_maker(&mut stream)?;
+            let negotiated_protocol = self.net_handshake(&mut stream)?;
             log::info!("Handshake complete, protocol: {:?}", negotiated_protocol);
 
             let refund_locktime =
@@ -1128,7 +1149,7 @@ impl UnifiedTaker {
     }
 
     /// Initialize swap funding by creating outgoing swapcoins.
-    fn initialize_swap_funding(&mut self) -> Result<(), TakerError> {
+    fn funding_initialize(&mut self) -> Result<(), TakerError> {
         log::info!("Initializing swap funding...");
 
         let swap = self.swap_state()?;
@@ -1171,7 +1192,11 @@ impl UnifiedTaker {
 
         {
             let swap = self.swap_state_mut()?;
-            swap.multisig_nonces = multisig_nonces;
+            // Multisig nonces are only used by Legacy for ProofOfFunding recovery.
+            // Taproot uses a single aggregated key, so these are not needed.
+            if protocol == ProtocolVersion::Legacy {
+                swap.multisig_nonces = multisig_nonces;
+            }
             if let Some(ref nonces) = taproot_hashlock_nonces {
                 swap.hashlock_nonces = nonces.clone();
             } else {
@@ -1184,7 +1209,7 @@ impl UnifiedTaker {
         let network = wallet.store.network;
 
         let swapcoins = match protocol {
-            ProtocolVersion::Legacy => Self::create_legacy_funding_static(
+            ProtocolVersion::Legacy => Self::funding_create_legacy(
                 &mut wallet,
                 &multisig_pubkeys,
                 &hashlock_pubkeys,
@@ -1195,7 +1220,7 @@ impl UnifiedTaker {
                 network,
                 manually_selected_outpoints,
             )?,
-            ProtocolVersion::Taproot => Self::create_taproot_contracts_static(
+            ProtocolVersion::Taproot => Self::funding_create_taproot(
                 &mut wallet,
                 &[tweakable_point],
                 &[taproot_hashlock_pubkey.expect("taproot hashlock pubkey must be set")],
@@ -1224,7 +1249,7 @@ impl UnifiedTaker {
     }
 
     /// Perform handshake with a maker and verify protocol support.
-    pub(crate) fn handshake_maker(
+    pub(crate) fn net_handshake(
         &self,
         stream: &mut TcpStream,
     ) -> Result<ProtocolVersion, TakerError> {
@@ -1253,7 +1278,7 @@ impl UnifiedTaker {
     }
 
     /// Returns the effective connection type, accounting for integration-test mode.
-    fn effective_connection_type(&self) -> ConnectionType {
+    fn net_effective_type(&self) -> ConnectionType {
         if cfg!(feature = "integration-test") {
             ConnectionType::Clearnet
         } else {
@@ -1262,11 +1287,11 @@ impl UnifiedTaker {
     }
 
     /// Connect to a maker using either direct connection or Tor proxy.
-    pub(crate) fn connect_to_maker(&self, address: &str) -> Result<TcpStream, TakerError> {
+    pub(crate) fn net_connect(&self, address: &str) -> Result<TcpStream, TakerError> {
         log::debug!("Connecting to maker at {}", address);
         let timeout = Duration::from_secs(CONNECT_TIMEOUT_SECS);
 
-        let socket = match self.effective_connection_type() {
+        let socket = match self.net_effective_type() {
             ConnectionType::Clearnet => TcpStream::connect(address).map_err(|e| {
                 TakerError::General(format!("Failed to connect to {}: {}", address, e))
             })?,
@@ -1292,7 +1317,14 @@ impl UnifiedTaker {
     }
 
     /// Wait for specific transaction IDs to be confirmed.
-    pub(crate) fn wait_for_txids_confirmation(&self, txids: &[Txid]) -> Result<(), TakerError> {
+    ///
+    /// If a `BreachDetector` is provided, checks its atomic flag each poll cycle.
+    /// Returns `ContractsBroadcasted` immediately if the detector signals a breach.
+    pub(crate) fn net_wait_for_confirmation(
+        &self,
+        txids: &[Txid],
+        breach_detector: Option<&BreachDetector>,
+    ) -> Result<(), TakerError> {
         let required_confirms = self.swap_state()?.params.required_confirms;
         if required_confirms == 0 || txids.is_empty() {
             return Ok(());
@@ -1343,6 +1375,14 @@ impl UnifiedTaker {
                 return Ok(());
             }
 
+            // Check for adversarial contract activity via the background detector thread.
+            if let Some(detector) = breach_detector {
+                if detector.is_breached() {
+                    log::warn!("Breach detected by background detector — aborting wait");
+                    return Err(TakerError::ContractsBroadcasted(vec![]));
+                }
+            }
+
             if start.elapsed() > timeout {
                 return Err(TakerError::FundingTxWaitTimeOut);
             }
@@ -1355,18 +1395,18 @@ impl UnifiedTaker {
     fn finalize_swap(&mut self) -> Result<(), TakerError> {
         log::info!("Finalizing swap...");
 
-        let maker_privkeys = self.reveal_preimage_and_collect_privkeys()?;
-        self.set_incoming_swapcoin_privkey(&maker_privkeys)?;
+        let maker_privkeys = self.finalize_collect_privkeys()?;
+        self.finalize_set_incoming_privkey(&maker_privkeys)?;
 
         // SP8: All maker privkeys received.
-        self.persist_swap_phase(SwapPhase::PrivkeysCollected)?;
+        self.persist_phase(SwapPhase::PrivkeysCollected)?;
 
-        self.forward_privkeys_between_makers(&maker_privkeys)?;
+        self.finalize_forward_privkeys(&maker_privkeys)?;
 
         // SP9: Inter-maker privkey forwarding done.
-        self.persist_swap_phase(SwapPhase::PrivkeysForwarded)?;
+        self.persist_phase(SwapPhase::PrivkeysForwarded)?;
 
-        self.persist_incoming_swapcoins()?;
+        self.finalize_persist_incoming()?;
 
         log::info!("Swap finalized successfully");
         Ok(())
@@ -1387,7 +1427,7 @@ impl UnifiedTaker {
                         e
                     );
 
-                    if self.detect_adversarial_spend() {
+                    if self.monitor_adversarial_spend() {
                         log::error!("Adversarial contract spend detected — aborting retries");
                         return Err(TakerError::General(
                             "Adversarial contract spend detected during finalization".to_string(),
@@ -1408,7 +1448,7 @@ impl UnifiedTaker {
 
     /// Poll the watch service for spends on our swap's contract outpoints.
     /// Returns true if an adversarial spend was detected.
-    fn detect_adversarial_spend(&self) -> bool {
+    fn monitor_adversarial_spend(&self) -> bool {
         let contract_outpoints: Vec<OutPoint> = match self.swap_state() {
             Ok(swap) => swap
                 .outgoing_swapcoins
@@ -1436,7 +1476,7 @@ impl UnifiedTaker {
     }
 
     /// Phase 1: Reveal preimage to each maker (in reverse order) and collect their private keys.
-    fn reveal_preimage_and_collect_privkeys(
+    fn finalize_collect_privkeys(
         &mut self,
     ) -> Result<Vec<Option<bitcoin::secp256k1::SecretKey>>, TakerError> {
         let swap = self.swap_state()?;
@@ -1452,13 +1492,15 @@ impl UnifiedTaker {
                 .offer_and_address
                 .address
                 .to_string();
-            let mut stream = self.connect_to_maker(&maker_address)?;
+            let mut stream = self.net_connect(&maker_address)?;
 
-            self.handshake_maker(&mut stream)?;
+            self.net_handshake(&mut stream)?;
 
-            let preimage_msg = Self::make_preimage_message(protocol, swap_id.clone(), preimage);
+            let preimage_msg = Self::msg_build_preimage(protocol, swap_id.clone(), preimage);
             send_message(&mut stream, &preimage_msg)?;
-            self.swap_state_mut()?.makers[i].preimage_revealed = true;
+            self.swap_state_mut()?.makers[i]
+                .finalization
+                .preimage_revealed = true;
 
             let msg_bytes = read_message(&mut stream)?;
             let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
@@ -1478,13 +1520,15 @@ impl UnifiedTaker {
             };
 
             maker_privkeys[i] = received_privkey;
-            self.swap_state_mut()?.makers[i].privkey_received = true;
+            self.swap_state_mut()?.makers[i]
+                .finalization
+                .privkey_received = true;
 
             if i == 0 {
                 let swap = self.swap_state()?;
                 if let Some(outgoing) = swap.outgoing_swapcoins.first() {
                     if let Some(privkey) = outgoing.my_privkey {
-                        let msg = Self::make_handover_message(protocol, swap_id.clone(), privkey);
+                        let msg = Self::msg_build_handover(protocol, swap_id.clone(), privkey);
                         send_message(&mut stream, &msg)?;
                     }
                 }
@@ -1494,7 +1538,7 @@ impl UnifiedTaker {
         Ok(maker_privkeys)
     }
 
-    fn set_incoming_swapcoin_privkey(
+    fn finalize_set_incoming_privkey(
         &mut self,
         maker_privkeys: &[Option<bitcoin::secp256k1::SecretKey>],
     ) -> Result<(), TakerError> {
@@ -1511,7 +1555,7 @@ impl UnifiedTaker {
         Ok(())
     }
 
-    fn forward_privkeys_between_makers(
+    fn finalize_forward_privkeys(
         &mut self,
         maker_privkeys: &[Option<bitcoin::secp256k1::SecretKey>],
     ) -> Result<(), TakerError> {
@@ -1525,9 +1569,9 @@ impl UnifiedTaker {
                     .offer_and_address
                     .address
                     .to_string();
-                let mut stream = self.connect_to_maker(&maker_address)?;
+                let mut stream = self.net_connect(&maker_address)?;
 
-                self.handshake_maker(&mut stream)?;
+                self.net_handshake(&mut stream)?;
 
                 log::info!(
                     "Forwarding maker {}'s outgoing privkey to maker {}",
@@ -1535,10 +1579,11 @@ impl UnifiedTaker {
                     i
                 );
 
-                let msg =
-                    Self::make_handover_message(protocol, swap_id.clone(), prev_maker_privkey);
+                let msg = Self::msg_build_handover(protocol, swap_id.clone(), prev_maker_privkey);
                 send_message(&mut stream, &msg)?;
-                self.swap_state_mut()?.makers[i].privkey_forwarded = true;
+                self.swap_state_mut()?.makers[i]
+                    .finalization
+                    .privkey_forwarded = true;
             } else {
                 log::warn!("No privkey from maker {} to forward to maker {}", i - 1, i);
             }
@@ -1548,7 +1593,7 @@ impl UnifiedTaker {
     }
 
     /// Persist the taker's incoming swapcoins with their preimage to the wallet.
-    fn persist_incoming_swapcoins(&mut self) -> Result<(), TakerError> {
+    fn finalize_persist_incoming(&mut self) -> Result<(), TakerError> {
         // Set preimage on the incoming swapcoin before acquiring the wallet lock,
         // since swap_state_mut borrows self which conflicts with write_wallet.
         let swap = self.swap_state_mut()?;
@@ -1566,7 +1611,7 @@ impl UnifiedTaker {
     }
 
     /// Create a protocol-appropriate preimage reveal message.
-    fn make_preimage_message(
+    fn msg_build_preimage(
         protocol: ProtocolVersion,
         swap_id: String,
         preimage: [u8; 32],
@@ -1584,7 +1629,7 @@ impl UnifiedTaker {
     }
 
     /// Create a protocol-appropriate private key handover message.
-    fn make_handover_message(
+    fn msg_build_handover(
         protocol: ProtocolVersion,
         swap_id: String,
         privkey: SecretKey,
@@ -1604,7 +1649,7 @@ impl UnifiedTaker {
 
     /// Check if any contract transactions have been broadcast on-chain.
     #[allow(dead_code)]
-    pub(crate) fn check_for_broadcasted_contracts(&self) -> Result<Vec<Txid>, TakerError> {
+    pub(crate) fn monitor_contract_broadcasts(&self) -> Result<Vec<Txid>, TakerError> {
         let swap = self.swap_state()?;
         let contract_txids: Vec<Txid> = swap
             .incoming_swapcoins
@@ -1636,10 +1681,7 @@ impl UnifiedTaker {
     }
 
     /// Build a `SwapRecord` from the current `OngoingSwapState`.
-    fn build_swap_record_from_state(
-        &self,
-        swap: &OngoingSwapState,
-    ) -> Result<SwapRecord, TakerError> {
+    fn persist_build_record(&self, swap: &OngoingSwapState) -> Result<SwapRecord, TakerError> {
         let now = now_secs();
         Ok(SwapRecord {
             swap_id: swap.id.clone(),
@@ -1656,11 +1698,8 @@ impl UnifiedTaker {
                 .map(|m| MakerProgress {
                     address: m.offer_and_address.address.to_string(),
                     negotiated: m.tweakable_point.is_some(),
-                    funding_confirmed: m.funding_confirmed,
-                    contracts_exchanged: m.contracts_exchanged,
-                    preimage_revealed: m.preimage_revealed,
-                    privkey_received: m.privkey_received,
-                    privkey_forwarded: m.privkey_forwarded,
+                    exchange: m.exchange.clone(),
+                    finalization: m.finalization.clone(),
                 })
                 .collect(),
             outgoing_contract_txids: swap
@@ -1695,32 +1734,57 @@ impl UnifiedTaker {
     }
 
     /// Persist the current swap state at the given phase to the tracker.
-    pub(crate) fn persist_swap_phase(&mut self, phase: SwapPhase) -> Result<(), TakerError> {
+    ///
+    /// Always rebuilds the full record from `OngoingSwapState` so that maker
+    /// progress, txids, and nonces stay up-to-date. Preserves `created_at`
+    /// and `recovery` from any existing record.
+    pub(crate) fn persist_phase(&mut self, phase: SwapPhase) -> Result<(), TakerError> {
         let swap = self.swap_state_mut()?;
         swap.phase = phase;
 
-        // Build the record from the current state
-        let swap_ref = self.swap_state()?;
-        let mut record = self.build_swap_record_from_state(swap_ref)?;
-        record.phase = phase;
+        // Snapshot preserved fields from any existing record.
+        let swap_id = self.swap_state()?.id.clone();
+        let existing = self.swap_tracker.get_record(&swap_id);
+        let created_at = existing.map(|r| r.created_at);
+        let recovery = existing.map(|r| r.recovery.clone());
+        let failed_at = existing.and_then(|r| r.failed_at_phase);
+        let failure_reason = existing.and_then(|r| r.failure_reason.clone());
 
-        // Preserve existing recovery state and failure info if present
-        if let Some(existing) = self.swap_tracker.get_record(&record.swap_id) {
-            record.recovery = existing.recovery.clone();
-            record.failed_at_phase = existing.failed_at_phase;
-            record.failure_reason = existing.failure_reason.clone();
-            record.created_at = existing.created_at;
+        // Build full record from current live state.
+        let swap_ref = self.swap_state()?;
+        let mut record = self.persist_build_record(swap_ref)?;
+
+        // Restore preserved fields so we don't lose recovery progress or timestamps.
+        if let Some(ts) = created_at {
+            record.created_at = ts;
         }
-        record.updated_at = now_secs();
+        if let Some(rec) = recovery {
+            record.recovery = rec;
+        }
+        if let Some(fat) = failed_at {
+            record.failed_at_phase = Some(fat);
+        }
+        if let Some(reason) = failure_reason {
+            record.failure_reason = Some(reason);
+        }
 
         self.swap_tracker.save_record(&record)
     }
 
+    /// Persist the current maker progress without changing the swap phase.
+    ///
+    /// Call this after updating progress flags on `MakerConnection` so the
+    /// periodic tracker display (which reads from the CBOR file) stays current.
+    pub(crate) fn persist_progress(&mut self) -> Result<(), TakerError> {
+        let phase = self.swap_state()?.phase;
+        self.persist_phase(phase)
+    }
+
     /// Persist a swap failure (SP-ERR) with the phase at which failure occurred.
-    fn persist_swap_failure(&mut self, failed_at: SwapPhase, error: &TakerError) {
+    fn persist_failure(&mut self, failed_at: SwapPhase, error: &TakerError) {
         if let Ok(swap) = self.swap_state() {
             let swap_id = swap.id.clone();
-            if let Ok(mut record) = self.build_swap_record_from_state(swap) {
+            if let Ok(mut record) = self.persist_build_record(swap) {
                 record.phase = SwapPhase::Failed;
                 record.failed_at_phase = Some(failed_at);
                 record.failure_reason = Some(format!("{:?}", error));
@@ -1742,7 +1806,7 @@ impl UnifiedTaker {
     /// Uses the swap tracker for crash-resilient, idempotent recovery.
     /// Each recovery phase is gated on `record.recovery.phase` so that
     /// re-execution after a crash skips already-completed work.
-    pub fn recover_from_swap(&mut self) -> Result<(), TakerError> {
+    pub fn recover_active_swap(&mut self) -> Result<(), TakerError> {
         log::warn!("Starting swap recovery...");
 
         let swap_id = self.swap_state()?.id.clone();
@@ -1757,7 +1821,7 @@ impl UnifiedTaker {
         }
 
         // Update tracker: RSP1
-        self.update_recovery_phase(&swap_id, RecoveryPhase::PreimageStamped)?;
+        self.recover_update_phase(&swap_id, RecoveryPhase::PreimageStamped)?;
 
         // Phase 2: Persist all swapcoins to wallet (idempotent — add is upsert)
         {
@@ -1773,26 +1837,26 @@ impl UnifiedTaker {
         }
 
         // Update tracker: RSP2
-        self.update_recovery_phase(&swap_id, RecoveryPhase::SwapcoinsPersisted)?;
+        self.recover_update_phase(&swap_id, RecoveryPhase::SwapcoinsPersisted)?;
 
         // Phase 3: Recover incoming swapcoins (we have hashlock privilege)
-        self.recover_incoming_swapcoins(&swap_id)?;
+        self.recover_incoming(&swap_id)?;
 
         // Only mark IncomingRecovered if incoming contracts were actually
         // resolved (swept or none existed). If some are still being watched,
         // stay at SwapcoinsPersisted so retry re-attempts the sweep.
-        if self.is_incoming_recovery_resolved(&swap_id) {
-            self.update_recovery_phase(&swap_id, RecoveryPhase::IncomingRecovered)?;
+        if self.recover_is_incoming_done(&swap_id) {
+            self.recover_update_phase(&swap_id, RecoveryPhase::IncomingRecovered)?;
         }
 
         // Phase 4: Recover outgoing swapcoins (must wait for timelock)
-        self.recover_outgoing_swapcoins(&swap_id)?;
+        self.recover_outgoing(&swap_id)?;
 
         // Only advance if outgoing recovery is actually resolved:
         // all contracts recovered, or incoming were swept via hashlock
         // (so makers will claim outgoing with the revealed preimage).
-        if self.is_outgoing_recovery_resolved(&swap_id) {
-            self.update_recovery_phase(&swap_id, RecoveryPhase::OutgoingRecovered)?;
+        if self.recover_is_outgoing_done(&swap_id) {
+            self.recover_update_phase(&swap_id, RecoveryPhase::OutgoingRecovered)?;
 
             // Phase 5: Clean up watch-only entries + clear swap state
             {
@@ -1801,18 +1865,13 @@ impl UnifiedTaker {
                 wallet.remove_unified_watchonly_swapcoins(&swap_id_cleanup);
                 wallet.save_to_disk()?;
             }
-            self.update_recovery_phase(&swap_id, RecoveryPhase::CleanedUp)?;
+            self.recover_update_phase(&swap_id, RecoveryPhase::CleanedUp)?;
         }
 
         // Mark as terminal Failed in tracker
-        if let Some(record) = self.swap_tracker.get_record_mut(&swap_id) {
+        self.swap_tracker.update_and_save(&swap_id, |record| {
             record.phase = SwapPhase::Failed;
-            record.updated_at = now_secs();
-        }
-        // Flush the final state
-        if let Some(record) = self.swap_tracker.get_record(&swap_id).cloned() {
-            self.swap_tracker.save_record(&record)?;
-        }
+        })?;
 
         self.ongoing_swap = None;
         log::info!("Recovery completed.");
@@ -1821,7 +1880,7 @@ impl UnifiedTaker {
 
     /// Recover from an incomplete swap using a tracker record (on restart).
     ///
-    /// This is called from `recover_incomplete_swaps()` when a swap record
+    /// This is called from `init_recover_incomplete()` when a swap record
     /// is found in the tracker with `phase >= FundsBroadcast`.
     fn recover_from_record(&mut self, swap_id: &str) -> Result<(), TakerError> {
         let record = self
@@ -1857,41 +1916,40 @@ impl UnifiedTaker {
             }
             wallet.save_to_disk()?;
             drop(wallet);
-            self.update_recovery_phase(swap_id, RecoveryPhase::PreimageStamped)?;
+            self.recover_update_phase(swap_id, RecoveryPhase::PreimageStamped)?;
         }
 
         // Phase 2: Swapcoins should already be in wallet from the active swap.
         // If they aren't (crash before wallet save), we can't recover them from
         // the record alone. Mark as persisted and proceed.
         if recovery_phase < RecoveryPhase::SwapcoinsPersisted {
-            self.update_recovery_phase(swap_id, RecoveryPhase::SwapcoinsPersisted)?;
+            self.recover_update_phase(swap_id, RecoveryPhase::SwapcoinsPersisted)?;
         }
 
         // Phase 3: Recover incoming
         if recovery_phase < RecoveryPhase::IncomingRecovered {
-            self.recover_incoming_swapcoins(swap_id)?;
-            if self.is_incoming_recovery_resolved(swap_id) {
-                self.update_recovery_phase(swap_id, RecoveryPhase::IncomingRecovered)?;
+            self.recover_incoming(swap_id)?;
+            if self.recover_is_incoming_done(swap_id) {
+                self.recover_update_phase(swap_id, RecoveryPhase::IncomingRecovered)?;
             }
         }
 
         // Phase 4: Recover outgoing
         if recovery_phase < RecoveryPhase::OutgoingRecovered {
-            self.recover_outgoing_swapcoins(swap_id)?;
-            if self.is_outgoing_recovery_resolved(swap_id) {
-                self.update_recovery_phase(swap_id, RecoveryPhase::OutgoingRecovered)?;
+            self.recover_outgoing(swap_id)?;
+            if self.recover_is_outgoing_done(swap_id) {
+                self.recover_update_phase(swap_id, RecoveryPhase::OutgoingRecovered)?;
             }
         }
 
         // Phase 5: Cleanup
-        if recovery_phase < RecoveryPhase::CleanedUp && self.is_outgoing_recovery_resolved(swap_id)
-        {
+        if recovery_phase < RecoveryPhase::CleanedUp && self.recover_is_outgoing_done(swap_id) {
             {
                 let mut wallet = self.write_wallet()?;
                 wallet.remove_unified_watchonly_swapcoins(swap_id);
                 wallet.save_to_disk()?;
             }
-            self.update_recovery_phase(swap_id, RecoveryPhase::CleanedUp)?;
+            self.recover_update_phase(swap_id, RecoveryPhase::CleanedUp)?;
         }
 
         // Mark as terminal Failed only if cleanup is done, otherwise
@@ -1902,13 +1960,9 @@ impl UnifiedTaker {
             .map(|r| r.recovery.phase >= RecoveryPhase::CleanedUp)
             .unwrap_or(true);
         if is_cleaned_up {
-            if let Some(record) = self.swap_tracker.get_record_mut(swap_id) {
+            self.swap_tracker.update_and_save(swap_id, |record| {
                 record.phase = SwapPhase::Failed;
-                record.updated_at = now_secs();
-            }
-        }
-        if let Some(record) = self.swap_tracker.get_record(swap_id).cloned() {
-            self.swap_tracker.save_record(&record)?;
+            })?;
         }
 
         log::info!("Recovery from record completed for swap {}", swap_id);
@@ -1916,19 +1970,14 @@ impl UnifiedTaker {
     }
 
     /// Update the recovery phase for a swap in the tracker.
-    fn update_recovery_phase(
+    fn recover_update_phase(
         &mut self,
         swap_id: &str,
         phase: RecoveryPhase,
     ) -> Result<(), TakerError> {
-        if let Some(record) = self.swap_tracker.get_record_mut(swap_id) {
-            record.recovery.phase = phase;
-            record.updated_at = now_secs();
-        }
-        // Need to save — get a clone and save it
-        if let Some(record) = self.swap_tracker.get_record(swap_id).cloned() {
-            self.swap_tracker.save_record(&record)?;
-        }
+        self.swap_tracker.update_and_save(swap_id, |r| {
+            r.recovery.phase = phase;
+        })?;
         Ok(())
     }
 
@@ -1937,7 +1986,7 @@ impl UnifiedTaker {
     /// Returns `true` only if at least one incoming contract was swept.
     /// "No incoming contracts" is not the same as "incoming recovered" —
     /// the phase should reflect what actually happened.
-    fn is_incoming_recovery_resolved(&self, swap_id: &str) -> bool {
+    fn recover_is_incoming_done(&self, swap_id: &str) -> bool {
         let Some(record) = self.swap_tracker.get_record(swap_id) else {
             return false;
         };
@@ -1950,7 +1999,7 @@ impl UnifiedTaker {
     /// - All outgoing contracts were recovered (none still watching), OR
     /// - Incoming contracts were swept via hashlock, meaning the preimage is
     ///   public and makers will claim the outgoing contracts themselves.
-    fn is_outgoing_recovery_resolved(&self, swap_id: &str) -> bool {
+    fn recover_is_outgoing_done(&self, swap_id: &str) -> bool {
         let Some(record) = self.swap_tracker.get_record(swap_id) else {
             return true;
         };
@@ -1973,7 +2022,7 @@ impl UnifiedTaker {
     /// The maker's contract tx may still be in the mempool when recovery runs
     /// immediately after a drop. Without this wait, `sweep_unified_incoming_swapcoins`
     /// skips the UTXO ("not found on chain") and falls through to timelock-only recovery.
-    fn wait_for_incoming_contracts(&self, txids: &[Txid]) -> Result<(), TakerError> {
+    fn recover_wait_for_contracts(&self, txids: &[Txid]) -> Result<(), TakerError> {
         if txids.is_empty() {
             return Ok(());
         }
@@ -2023,7 +2072,7 @@ impl UnifiedTaker {
     /// Recover incoming swapcoins using protocol-dispatched strategy.
     ///
     /// Tracks per-swapcoin results in the swap record for crash resilience.
-    fn recover_incoming_swapcoins(&mut self, swap_id: &str) -> Result<(), TakerError> {
+    fn recover_incoming(&mut self, swap_id: &str) -> Result<(), TakerError> {
         // Get existing swept/watching txids to skip
         let (already_swept, already_watching) = self
             .swap_tracker
@@ -2037,7 +2086,7 @@ impl UnifiedTaker {
             .unwrap_or_default();
 
         // Wait for incoming contract UTXOs to be confirmed before attempting sweep.
-        // The maker broadcasts its contract tx during exchange_contract_data(), but
+        // The maker broadcasts its contract tx during exchange_taproot(), but
         // it may not be in a block yet when recovery runs immediately after a drop.
         let incoming_txids: Vec<Txid> = {
             let wallet = self.read_wallet()?;
@@ -2048,7 +2097,7 @@ impl UnifiedTaker {
                 .filter(|txid| !already_swept.contains(txid) && !already_watching.contains(txid))
                 .collect()
         };
-        self.wait_for_incoming_contracts(&incoming_txids)?;
+        self.recover_wait_for_contracts(&incoming_txids)?;
 
         // Sync wallet after confirmation so the UTXO set is up-to-date
         if !incoming_txids.is_empty() {
@@ -2075,15 +2124,12 @@ impl UnifiedTaker {
             }
         };
 
-        // Update tracker with swept results
-        for txid in &swept_txids {
-            if !already_swept.contains(txid) {
-                if let Some(record) = self.swap_tracker.get_record_mut(swap_id) {
-                    record.recovery.incoming_swept.push(*txid);
-                    record.updated_at = now_secs();
-                }
-            }
-        }
+        // Collect newly swept txids
+        let new_swept: Vec<Txid> = swept_txids
+            .iter()
+            .filter(|txid| !already_swept.contains(txid))
+            .copied()
+            .collect();
 
         // Get remaining incoming outpoints — collect, then drop wallet lock
         let remaining_outpoints = {
@@ -2093,7 +2139,8 @@ impl UnifiedTaker {
             }
         };
 
-        // Register remaining for monitoring and update tracker
+        // Register remaining for monitoring
+        let mut new_watching = Vec::new();
         for outpoint in &remaining_outpoints {
             let txid = outpoint.txid;
             if !already_swept.contains(&txid)
@@ -2101,16 +2148,16 @@ impl UnifiedTaker {
                 && !already_watching.contains(&txid)
             {
                 self.watch_service.register_watch_request(*outpoint);
-                if let Some(record) = self.swap_tracker.get_record_mut(swap_id) {
-                    record.recovery.incoming_watching.push(txid);
-                    record.updated_at = now_secs();
-                }
+                new_watching.push(txid);
             }
         }
 
-        // Flush tracker with updated results
-        if let Some(record) = self.swap_tracker.get_record(swap_id).cloned() {
-            self.swap_tracker.save_record(&record)?;
+        // Single update_and_save for all mutations
+        if !new_swept.is_empty() || !new_watching.is_empty() {
+            self.swap_tracker.update_and_save(swap_id, |record| {
+                record.recovery.incoming_swept.extend(&new_swept);
+                record.recovery.incoming_watching.extend(&new_watching);
+            })?;
         }
 
         Ok(())
@@ -2119,7 +2166,7 @@ impl UnifiedTaker {
     /// Recover outgoing swapcoins using protocol-dispatched strategy.
     ///
     /// Tracks per-swapcoin results in the swap record for crash resilience.
-    fn recover_outgoing_swapcoins(&mut self, swap_id: &str) -> Result<(), TakerError> {
+    fn recover_outgoing(&mut self, swap_id: &str) -> Result<(), TakerError> {
         // Get existing recovered/watching txids to skip
         let (already_recovered, already_watching) = self
             .swap_tracker
@@ -2154,15 +2201,12 @@ impl UnifiedTaker {
             }
         };
 
-        // Update tracker with recovered results
-        for txid in &recovered_txids {
-            if !already_recovered.contains(txid) {
-                if let Some(record) = self.swap_tracker.get_record_mut(swap_id) {
-                    record.recovery.outgoing_recovered.push(*txid);
-                    record.updated_at = now_secs();
-                }
-            }
-        }
+        // Collect newly recovered txids
+        let new_recovered: Vec<Txid> = recovered_txids
+            .iter()
+            .filter(|txid| !already_recovered.contains(txid))
+            .copied()
+            .collect();
 
         // Get remaining outgoing outpoints — collect, then drop wallet lock
         let remaining_outpoints = {
@@ -2172,7 +2216,8 @@ impl UnifiedTaker {
             }
         };
 
-        // Register remaining for monitoring and update tracker
+        // Register remaining for monitoring
+        let mut new_watching = Vec::new();
         for outpoint in &remaining_outpoints {
             let txid = outpoint.txid;
             if !already_recovered.contains(&txid)
@@ -2180,20 +2225,116 @@ impl UnifiedTaker {
                 && !already_watching.contains(&txid)
             {
                 self.watch_service.register_watch_request(*outpoint);
-                if let Some(record) = self.swap_tracker.get_record_mut(swap_id) {
-                    record.recovery.outgoing_watching.push(txid);
-                    record.updated_at = now_secs();
-                }
+                new_watching.push(txid);
                 log::info!("Registered outgoing contract {} for monitoring", outpoint);
             }
         }
 
-        // Flush tracker with updated results
-        if let Some(record) = self.swap_tracker.get_record(swap_id).cloned() {
-            self.swap_tracker.save_record(&record)?;
+        // Single update_and_save for all mutations
+        if !new_recovered.is_empty() || !new_watching.is_empty() {
+            self.swap_tracker.update_and_save(swap_id, |record| {
+                record.recovery.outgoing_recovered.extend(&new_recovered);
+                record.recovery.outgoing_watching.extend(&new_watching);
+            })?;
         }
 
         Ok(())
+    }
+}
+
+/// Background thread that monitors sentinel outpoints for adversarial spends
+/// via the WatchService. Queries the watcher's file registry periodically;
+/// the watcher's ZMQ backend captures spending transactions in real-time.
+///
+/// - **Legacy**: sentinels are funding outpoints — if spent, a contract tx was broadcast.
+/// - **Taproot**: sentinels are contract outpoints — if spent during exchange, a script-path
+///   spend occurred (adversarial since key-path settlement hasn't happened yet).
+pub(crate) struct BreachDetector {
+    breached: Arc<AtomicBool>,
+    sentinels: Arc<Mutex<Vec<OutPoint>>>,
+    shutdown: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl BreachDetector {
+    /// Spawn a background thread that polls the WatchService for sentinel spends.
+    pub(crate) fn start(watch_service: WatchService) -> Self {
+        let breached = Arc::new(AtomicBool::new(false));
+        let sentinels: Arc<Mutex<Vec<OutPoint>>> = Arc::new(Mutex::new(Vec::new()));
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let breached_clone = breached.clone();
+        let sentinels_clone = sentinels.clone();
+        let shutdown_clone = shutdown.clone();
+
+        let handle = thread::Builder::new()
+            .name("Breach detector thread".to_string())
+            .spawn(move || {
+                while !shutdown_clone.load(Relaxed) {
+                    thread::sleep(HEART_BEAT_INTERVAL);
+
+                    let current_sentinels = match sentinels_clone.lock() {
+                        Ok(guard) => guard.clone(),
+                        Err(_) => continue,
+                    };
+
+                    for sentinel in &current_sentinels {
+                        watch_service.watch_request(*sentinel);
+                        if let Some(WatcherEvent::UtxoSpent {
+                            spending_tx: Some(_),
+                            ..
+                        }) = watch_service.wait_for_event()
+                        {
+                            log::warn!(
+                                "Breach detector: adversarial spend on sentinel {}",
+                                sentinel
+                            );
+                            breached_clone.store(true, Relaxed);
+                            return;
+                        }
+                    }
+                }
+            })
+            .expect("failed to spawn breach detector thread");
+
+        Self {
+            breached,
+            sentinels,
+            shutdown,
+            handle: Some(handle),
+        }
+    }
+
+    /// Register outpoints as sentinels with the WatchService and add to the monitor list.
+    pub(crate) fn add_sentinels(&self, watch_service: &WatchService, outpoints: &[OutPoint]) {
+        for outpoint in outpoints {
+            watch_service.register_watch_request(*outpoint);
+        }
+        if let Ok(mut guard) = self.sentinels.lock() {
+            guard.extend_from_slice(outpoints);
+        }
+    }
+
+    /// Check whether an adversarial spend has been detected.
+    pub(crate) fn is_breached(&self) -> bool {
+        self.breached.load(Relaxed)
+    }
+
+    /// Signal the background thread to stop and wait for it to finish.
+    pub(crate) fn stop(mut self) {
+        self.shutdown.store(true, Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for BreachDetector {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
     }
 }
 

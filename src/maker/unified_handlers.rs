@@ -54,6 +54,8 @@ pub struct UnifiedConnectionState {
     pub pending_funding_txes: Vec<Transaction>,
     /// Contract fee rate for multi-hop swap creation.
     pub contract_feerate: f64,
+    /// Whether the funding transaction was actually broadcast to the network.
+    pub funding_broadcast: bool,
     /// Last activity timestamp.
     pub last_activity: Instant,
 }
@@ -89,6 +91,7 @@ impl Default for UnifiedConnectionState {
             outgoing_swapcoins: Vec::new(),
             pending_funding_txes: Vec::new(),
             contract_feerate: 0.0,
+            funding_broadcast: false,
             last_activity: Instant::now(),
         }
     }

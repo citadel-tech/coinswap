@@ -321,6 +321,7 @@ fn check_for_idle_states(maker: Arc<UnifiedMakerServer>) -> Result<(), MakerErro
                 swap_amount_sat: idle.swap_amount_sat,
                 incoming_count: idle.incoming_swapcoins.len(),
                 outgoing_count: idle.outgoing_swapcoins.len(),
+                funding_broadcast: idle.funding_broadcast,
                 recovery: MakerRecoveryState::default(),
                 created_at: now,
                 updated_at: now,
@@ -526,6 +527,51 @@ fn recover_from_swap(
         incoming_swapcoins.len(),
         outgoing_swapcoins.len()
     );
+
+    // Check if funding was ever broadcast. If not, there is nothing on-chain
+    // to recover — discard the swapcoins and exit immediately.
+    {
+        let funding_broadcast = maker
+            .swap_tracker
+            .lock()
+            .unwrap()
+            .get_record(&swap_id)
+            .map(|r| r.funding_broadcast)
+            .unwrap_or(false);
+
+        if !funding_broadcast {
+            log::info!(
+                "[{}] Funding was never broadcast for swap {} — nothing to recover. Discarding swapcoins.",
+                maker.config.network_port,
+                swap_id
+            );
+
+            {
+                let mut wallet = maker
+                    .wallet
+                    .write()
+                    .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+                for outgoing in &outgoing_swapcoins {
+                    let key = outgoing.contract_tx.compute_txid().to_string();
+                    wallet.remove_unified_outgoing_swapcoin(&key);
+                }
+                for incoming in &incoming_swapcoins {
+                    let key = incoming.contract_tx.compute_txid().to_string();
+                    wallet.remove_unified_incoming_swapcoin(&key);
+                }
+                wallet.save_to_disk().map_err(MakerError::Wallet)?;
+            }
+
+            update_tracker(&maker, &swap_id, |r| {
+                r.phase = MakerSwapPhase::Recovered;
+                r.recovery.phase = MakerRecoveryPhase::CleanedUp;
+            });
+
+            #[cfg(feature = "integration-test")]
+            maker.shutdown.store(true, Relaxed);
+            return Ok(());
+        }
+    }
 
     // Tracker: Recovering + Monitoring
     update_tracker(&maker, &swap_id, |r| {

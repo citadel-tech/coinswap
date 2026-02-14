@@ -99,16 +99,73 @@ impl fmt::Display for SwapPhase {
     }
 }
 
-/// Per-maker milestone tracking within a swap.
+/// Legacy per-maker exchange milestones.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct MakerProgress {
-    pub address: String,
-    pub negotiated: bool,
-    pub funding_confirmed: bool,
-    pub contracts_exchanged: bool,
+pub struct LegacyExchangeProgress {
+    /// TCP/Tor connection established.
+    pub connected: bool,
+    /// ReqContractSigsForSender sent to this maker.
+    /// First maker: signs taker's outgoing contracts.
+    /// Subsequent makers: signs previous maker's outgoing contracts.
+    pub sender_sigs_requested: bool,
+    /// RespContractSigsForSender received from this maker.
+    pub sender_sigs_received: bool,
+    /// Previous hop's funding tx broadcast to mempool.
+    /// First maker: taker's funding. Subsequent makers: previous maker's funding.
+    pub prev_funding_broadcast: bool,
+    /// Previous hop's funding tx confirmed on-chain.
+    pub prev_funding_confirmed: bool,
+    /// ProofOfFunding sent to maker.
+    pub proof_of_funding_sent: bool,
+    /// Maker responded with ReqContractSigsAsRecvrAndSender.
+    pub maker_contracts_received: bool,
+    /// Sender sigs obtained from next maker (or self-signed if last hop).
+    pub next_maker_sigs_obtained: bool,
+    /// Receiver sigs obtained from prev maker (or self-signed if first hop).
+    pub prev_maker_sigs_obtained: bool,
+    /// RespContractSigsForRecvrAndSender sent to maker.
+    pub combined_sigs_sent: bool,
+    /// Maker's funding tx confirmed on-chain.
+    pub maker_funding_confirmed: bool,
+    /// Watch-only swapcoins created (intermediate hops only).
+    pub watchonly_created: bool,
+}
+
+/// Taproot per-maker exchange milestones.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TaprootExchangeProgress {
+    /// TCP/Tor connection established.
+    pub connected: bool,
+    /// TaprootContractData sent to maker.
+    pub contract_data_sent: bool,
+    /// Maker's TaprootContractData received.
+    pub maker_contract_received: bool,
+    /// Incoming or watch-only swapcoins created from maker's response.
+    pub swapcoins_created: bool,
+}
+
+/// Protocol-specific exchange progress.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ExchangeProgress {
+    Legacy(LegacyExchangeProgress),
+    Taproot(TaprootExchangeProgress),
+}
+
+/// Shared finalization milestones (both protocols).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FinalizationProgress {
     pub preimage_revealed: bool,
     pub privkey_received: bool,
     pub privkey_forwarded: bool,
+}
+
+/// Per-maker milestone tracking within a swap.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MakerProgress {
+    pub address: String,
+    pub negotiated: bool,
+    pub exchange: ExchangeProgress,
+    pub finalization: FinalizationProgress,
 }
 
 /// Tracks recovery progress across crashes.
@@ -192,19 +249,54 @@ fn short_txids(txids: &[Txid]) -> Vec<String> {
 
 impl fmt::Display for MakerProgress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let flags = [
-            ("N", self.negotiated),
-            ("F", self.funding_confirmed),
-            ("C", self.contracts_exchanged),
-            ("P", self.preimage_revealed),
-            ("K", self.privkey_received),
-            ("W", self.privkey_forwarded),
+        let neg = if self.negotiated { "N" } else { "-" };
+
+        let exchange_str = match &self.exchange {
+            ExchangeProgress::Legacy(l) => {
+                let flags: &[(&str, bool)] = &[
+                    ("c", l.connected),
+                    ("q", l.sender_sigs_requested),
+                    ("Q", l.sender_sigs_received),
+                    ("b", l.prev_funding_broadcast),
+                    ("B", l.prev_funding_confirmed),
+                    ("p", l.proof_of_funding_sent),
+                    ("M", l.maker_contracts_received),
+                    ("n", l.next_maker_sigs_obtained),
+                    ("r", l.prev_maker_sigs_obtained),
+                    ("S", l.combined_sigs_sent),
+                    ("m", l.maker_funding_confirmed),
+                    ("w", l.watchonly_created),
+                ];
+                flags
+                    .iter()
+                    .map(|(c, ok)| if *ok { *c } else { "-" })
+                    .collect::<String>()
+            }
+            ExchangeProgress::Taproot(t) => {
+                let flags: &[(&str, bool)] = &[
+                    ("c", t.connected),
+                    ("s", t.contract_data_sent),
+                    ("r", t.maker_contract_received),
+                    ("w", t.swapcoins_created),
+                ];
+                flags
+                    .iter()
+                    .map(|(c, ok)| if *ok { *c } else { "-" })
+                    .collect::<String>()
+            }
+        };
+
+        let fin_flags: &[(&str, bool)] = &[
+            ("P", self.finalization.preimage_revealed),
+            ("K", self.finalization.privkey_received),
+            ("F", self.finalization.privkey_forwarded),
         ];
-        let status: String = flags
+        let fin_str: String = fin_flags
             .iter()
             .map(|(c, ok)| if *ok { *c } else { "-" })
             .collect();
-        write!(f, "{}[{}]", self.address, status)
+
+        write!(f, "{}[{}|{}|{}]", self.address, neg, exchange_str, fin_str)
     }
 }
 
@@ -254,7 +346,13 @@ impl fmt::Display for SwapRecord {
                 write!(f, "\n    [{}] {}", i, m)?;
             }
         }
-        write!(f, "\n  recovery: {}", self.recovery)?;
+        // Only show recovery details when recovery has started or the swap has failed.
+        if self.phase == SwapPhase::Failed
+            || self.failed_at_phase.is_some()
+            || self.recovery.phase > RecoveryPhase::NotStarted
+        {
+            write!(f, "\n  recovery: {}", self.recovery)?;
+        }
         Ok(())
     }
 }
@@ -361,6 +459,23 @@ impl SwapTracker {
     /// Get a mutable reference to a swap record by ID.
     pub fn get_record_mut(&mut self, swap_id: &str) -> Option<&mut SwapRecord> {
         self.data.swaps.get_mut(swap_id)
+    }
+
+    /// Mutate a record in-place and atomically flush to disk.
+    ///
+    /// Returns `Ok(true)` if the record was found and updated, `Ok(false)` if not found.
+    pub fn update_and_save<F>(&mut self, swap_id: &str, f: F) -> Result<bool, TakerError>
+    where
+        F: FnOnce(&mut SwapRecord),
+    {
+        let Some(record) = self.data.swaps.get_mut(swap_id) else {
+            return Ok(false);
+        };
+        f(record);
+        record.updated_at = now_secs();
+        let clone = record.clone();
+        self.save_record(&clone)?;
+        Ok(true)
     }
 
     /// Log all swap records at INFO level.
@@ -559,6 +674,38 @@ mod tests {
         assert!(
             !tmp_path.exists(),
             "tmp file should be removed after rename"
+        );
+    }
+
+    #[test]
+    fn test_update_and_save() {
+        let dir = TempDir::new().unwrap();
+        let mut tracker = SwapTracker::load_or_create(dir.path()).unwrap();
+
+        // Missing record returns Ok(false)
+        let found = tracker.update_and_save("missing", |_| {}).unwrap();
+        assert!(!found);
+
+        // Insert a record and mutate it
+        let record = make_test_record("swap1", SwapPhase::Negotiating);
+        tracker.save_record(&record).unwrap();
+
+        let found = tracker
+            .update_and_save("swap1", |r| {
+                r.phase = SwapPhase::FundsBroadcast;
+            })
+            .unwrap();
+        assert!(found);
+        assert_eq!(
+            tracker.get_record("swap1").unwrap().phase,
+            SwapPhase::FundsBroadcast
+        );
+
+        // Reload from disk and verify persistence
+        let tracker2 = SwapTracker::load_or_create(dir.path()).unwrap();
+        assert_eq!(
+            tracker2.get_record("swap1").unwrap().phase,
+            SwapPhase::FundsBroadcast
         );
     }
 }

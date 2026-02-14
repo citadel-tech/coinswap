@@ -21,34 +21,33 @@ use crate::{
 
 use super::{error::TakerError, unified_api::UnifiedTaker};
 
-/// Build contract data from a previous maker's response (for forwarding to the next maker).
-#[allow(clippy::type_complexity)]
-fn build_contract_data_from_response(
-    prev: &TaprootContractData,
-) -> (
-    Vec<PublicKey>,
-    Vec<ScriptBuf>,
-    Vec<ScriptBuf>,
-    secp256k1::XOnlyPublicKey,
-    SerializableScalar,
-    Vec<bitcoin::Transaction>,
-    Vec<Amount>,
-) {
-    (
-        prev.pubkeys.clone(),
-        vec![prev.hashlock_script.clone()],
-        vec![prev.timelock_script.clone()],
-        prev.internal_key,
-        prev.tap_tweak.clone(),
-        prev.contract_txs.clone(),
-        prev.amounts.clone(),
-    )
-}
-
 impl UnifiedTaker {
+    /// Build contract data from a previous maker's response (for forwarding to the next maker).
+    #[allow(clippy::type_complexity)]
+    fn exchange_build_from_response(
+        prev: &TaprootContractData,
+    ) -> (
+        Vec<PublicKey>,
+        Vec<ScriptBuf>,
+        Vec<ScriptBuf>,
+        secp256k1::XOnlyPublicKey,
+        SerializableScalar,
+        Vec<bitcoin::Transaction>,
+        Vec<Amount>,
+    ) {
+        (
+            prev.pubkeys.clone(),
+            vec![prev.hashlock_script.clone()],
+            vec![prev.timelock_script.clone()],
+            prev.internal_key,
+            prev.tap_tweak.clone(),
+            prev.contract_txs.clone(),
+            prev.amounts.clone(),
+        )
+    }
     /// Create Taproot (MuSig2) contract transactions and swapcoins (static version).
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn create_taproot_contracts_static(
+    pub(crate) fn funding_create_taproot(
         wallet: &mut Wallet,
         multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
@@ -154,7 +153,7 @@ impl UnifiedTaker {
     }
 
     /// Exchange contract data with makers (Taproot protocol).
-    pub(crate) fn exchange_contract_data(&mut self) -> Result<(), TakerError> {
+    pub(crate) fn exchange_taproot(&mut self) -> Result<(), TakerError> {
         log::info!("Exchanging contract data with makers...");
 
         let num_makers = self.swap_state()?.makers.len();
@@ -166,9 +165,12 @@ impl UnifiedTaker {
                 .offer_and_address
                 .address
                 .to_string();
-            let mut stream = self.connect_to_maker(&maker_address)?;
+            let mut stream = self.net_connect(&maker_address)?;
 
-            self.handshake_maker(&mut stream)?;
+            self.net_handshake(&mut stream)?;
+            self.swap_state_mut()?.makers[i]
+                .taproot_exchange_mut()
+                .connected = true;
 
             let (
                 pubkeys,
@@ -179,9 +181,9 @@ impl UnifiedTaker {
                 contract_txs,
                 amounts,
             ) = if i == 0 {
-                self.build_contract_data_from_outgoing()?
+                self.exchange_build_from_outgoing()?
             } else {
-                build_contract_data_from_response(&received_contracts[i - 1])
+                Self::exchange_build_from_response(&received_contracts[i - 1])
             };
 
             let secp = Secp256k1::new();
@@ -228,6 +230,9 @@ impl UnifiedTaker {
                 &mut stream,
                 &TakerToMakerMessage::TaprootContractData(Box::new(contract_data)),
             )?;
+            self.swap_state_mut()?.makers[i]
+                .taproot_exchange_mut()
+                .contract_data_sent = true;
 
             let msg_bytes = read_message(&mut stream)?;
             let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
@@ -240,10 +245,14 @@ impl UnifiedTaker {
                         maker_contract.contract_txs.len()
                     );
 
+                    self.swap_state_mut()?.makers[i]
+                        .taproot_exchange_mut()
+                        .maker_contract_received = true;
+
                     let is_last_maker = i == num_makers - 1;
                     if is_last_maker {
                         // Only the last maker's contract is addressed to the taker.
-                        self.create_swapcoins_from_taproot_contract(&maker_contract, my_privkey)?;
+                        self.exchange_create_incoming(&maker_contract, my_privkey)?;
                     } else {
                         // Intermediate contracts (maker→maker) are watch-only for the taker.
                         let sender_pubkey =
@@ -284,8 +293,10 @@ impl UnifiedTaker {
                     }
 
                     received_contracts.push(*maker_contract);
-                    self.swap_state_mut()?.makers[i].funding_confirmed = true;
-                    self.swap_state_mut()?.makers[i].contracts_exchanged = true;
+                    self.swap_state_mut()?.makers[i]
+                        .taproot_exchange_mut()
+                        .swapcoins_created = true;
+                    self.persist_progress()?;
                 }
                 _ => {
                     return Err(TakerError::General(format!(
@@ -297,14 +308,14 @@ impl UnifiedTaker {
         }
 
         // SP6-T: All makers responded, incoming/watchonly swapcoins created.
-        self.persist_swap_phase(super::swap_tracker::SwapPhase::ContractsExchanged)?;
+        self.persist_phase(super::swap_tracker::SwapPhase::ContractsExchanged)?;
 
         Ok(())
     }
 
     /// Build contract data from our outgoing swapcoins (first hop).
     #[allow(clippy::type_complexity)]
-    fn build_contract_data_from_outgoing(
+    fn exchange_build_from_outgoing(
         &self,
     ) -> Result<
         (
@@ -368,7 +379,7 @@ impl UnifiedTaker {
     }
 
     /// Create swapcoins from received Taproot contract data.
-    fn create_swapcoins_from_taproot_contract(
+    fn exchange_create_incoming(
         &mut self,
         contract: &TaprootContractData,
         my_privkey: SecretKey,
@@ -415,7 +426,7 @@ impl UnifiedTaker {
     }
 
     /// Broadcast contract transactions (Taproot).
-    pub(crate) fn broadcast_contract_txs(&mut self) -> Result<(), TakerError> {
+    pub(crate) fn funding_broadcast(&mut self) -> Result<(), TakerError> {
         log::info!("Broadcasting contract transactions...");
 
         let wallet = self.write_wallet()?;
@@ -446,7 +457,7 @@ impl UnifiedTaker {
             .iter()
             .map(|sc| sc.contract_tx.compute_txid())
             .collect();
-        self.wait_for_txids_confirmation(&contract_txids)?;
+        self.net_wait_for_confirmation(&contract_txids, None)?;
 
         log::info!("Contract transactions broadcast and confirmed");
         Ok(())

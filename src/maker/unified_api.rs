@@ -52,6 +52,8 @@ struct SwapState {
     /// Pending funding transactions (for Legacy protocol).
     /// Stored until signature exchange completes, then broadcast.
     pending_funding_txes: Vec<Transaction>,
+    /// Whether the funding transaction was actually broadcast to the network.
+    funding_broadcast: bool,
     /// Last activity timestamp.
     last_activity: Instant,
 }
@@ -65,6 +67,7 @@ impl Default for SwapState {
             incoming_swapcoins: Vec::new(),
             outgoing_swapcoins: Vec::new(),
             pending_funding_txes: Vec::new(),
+            funding_broadcast: false,
             last_activity: Instant::now(),
         }
     }
@@ -215,6 +218,8 @@ pub struct IdleSwapData {
     pub incoming_swapcoins: Vec<UnifiedIncomingSwapCoin>,
     /// Outgoing swapcoins (maker sends).
     pub outgoing_swapcoins: Vec<UnifiedOutgoingSwapCoin>,
+    /// Whether the funding transaction was actually broadcast.
+    pub funding_broadcast: bool,
 }
 
 impl UnifiedMakerServer {
@@ -519,6 +524,7 @@ impl UnifiedMakerServer {
                     swap_amount_sat: state.swap_amount.to_sat(),
                     incoming_swapcoins: state.incoming_swapcoins,
                     outgoing_swapcoins: state.outgoing_swapcoins,
+                    funding_broadcast: state.funding_broadcast,
                 });
             }
         }
@@ -746,6 +752,7 @@ impl UnifiedMakerTrait for UnifiedMakerServer {
         swap_state.incoming_swapcoins = state.incoming_swapcoins.clone();
         swap_state.outgoing_swapcoins = state.outgoing_swapcoins.clone();
         swap_state.pending_funding_txes = state.pending_funding_txes.clone();
+        swap_state.funding_broadcast = state.funding_broadcast;
         swap_state.last_activity = Instant::now();
         log::debug!(
             "[{}] Stored connection state for {}: amount={}, timelock={}, protocol={:?}, outgoing_count={}",
@@ -768,6 +775,7 @@ impl UnifiedMakerTrait for UnifiedMakerServer {
             state.incoming_swapcoins = s.incoming_swapcoins.clone();
             state.outgoing_swapcoins = s.outgoing_swapcoins.clone();
             state.pending_funding_txes = s.pending_funding_txes.clone();
+            state.funding_broadcast = s.funding_broadcast;
             state
         })
     }

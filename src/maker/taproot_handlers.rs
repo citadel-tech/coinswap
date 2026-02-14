@@ -244,6 +244,7 @@ fn process_taproot_contract<M: UnifiedMaker>(
         }
     }
 
+    state.funding_broadcast = true;
     maker.register_watch_outpoint(contract_outpoint);
 
     // Save to wallet

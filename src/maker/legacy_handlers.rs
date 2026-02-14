@@ -370,6 +370,7 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: UnifiedMaker>(
     }
 
     state.pending_funding_txes.clear();
+    state.funding_broadcast = true;
 
     for incoming in &state.incoming_swapcoins {
         maker.save_incoming_swapcoin(incoming)?;

@@ -120,6 +120,10 @@ pub struct MakerSwapRecord {
     pub swap_amount_sat: u64,
     pub incoming_count: usize,
     pub outgoing_count: usize,
+    /// Whether the funding transaction was actually broadcast to the network.
+    /// If `false`, there is nothing on-chain to recover for this swap.
+    #[serde(default)]
+    pub funding_broadcast: bool,
     pub recovery: MakerRecoveryState,
     pub created_at: u64,
     pub updated_at: u64,
@@ -129,13 +133,14 @@ impl fmt::Display for MakerSwapRecord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "[{}] phase={} proto={:?} amt={} in={} out={}",
+            "[{}] phase={} proto={:?} amt={} in={} out={} funded={}",
             self.swap_id,
             self.phase,
             self.protocol,
             self.swap_amount_sat,
             self.incoming_count,
             self.outgoing_count,
+            self.funding_broadcast,
         )?;
         write!(f, "\n  recovery: {}", self.recovery)?;
         Ok(())
@@ -279,6 +284,7 @@ mod tests {
             swap_amount_sat: 100_000,
             incoming_count: 2,
             outgoing_count: 2,
+            funding_broadcast: true,
             recovery: MakerRecoveryState::default(),
             created_at: now_secs(),
             updated_at: now_secs(),

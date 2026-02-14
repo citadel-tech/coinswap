@@ -881,6 +881,40 @@ impl Wallet {
                     }
                 }
 
+                // Check BIP68 relative timelock: the recovery tx uses
+                // Sequence::from_height(timelock), requiring the contract tx
+                // to have at least `timelock` confirmations.
+                let timelock_depth = swapcoin.get_timelock().unwrap_or(0);
+                match self
+                    .rpc
+                    .get_tx_out(&contract_txid, contract_vout, Some(false))
+                {
+                    Ok(Some(utxo_info)) if utxo_info.confirmations >= timelock_depth => {
+                        log::info!(
+                            "Contract tx {} has {} confirmations (need {}), proceeding with recovery",
+                            contract_txid,
+                            utxo_info.confirmations,
+                            timelock_depth
+                        );
+                    }
+                    Ok(Some(utxo_info)) => {
+                        log::info!(
+                            "Contract tx {} has {} confirmations, need {} for BIP68 timelock — waiting",
+                            contract_txid,
+                            utxo_info.confirmations,
+                            timelock_depth
+                        );
+                        continue;
+                    }
+                    _ => {
+                        log::info!(
+                            "Contract tx {} not yet confirmed, skipping recovery attempt",
+                            contract_txid
+                        );
+                        continue;
+                    }
+                }
+
                 match self.create_unified_timelock_recovery_tx(swapcoin, fee_rate) {
                     Ok(recovery_tx) => {
                         let txid = recovery_tx.compute_txid();
@@ -941,8 +975,12 @@ impl Wallet {
             WalletError::General("Insufficient funds for recovery fee".to_string())
         })?;
 
+        let address_type = match swapcoin.protocol {
+            crate::protocol::ProtocolVersion::Legacy => crate::wallet::AddressType::P2WPKH,
+            crate::protocol::ProtocolVersion::Taproot => crate::wallet::AddressType::P2TR,
+        };
         let recovery_address = self
-            .get_next_internal_addresses(1, crate::wallet::AddressType::P2WPKH)?
+            .get_next_internal_addresses(1, address_type)?
             .into_iter()
             .next()
             .ok_or_else(|| WalletError::General("Failed to get recovery address".to_string()))?;

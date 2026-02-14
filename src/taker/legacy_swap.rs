@@ -36,7 +36,7 @@ const MAKER_BROADCAST_DELAY: Duration = Duration::from_secs(2);
 impl UnifiedTaker {
     /// Create Legacy (ECDSA) funding transactions and swapcoins (static version).
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn create_legacy_funding_static(
+    pub(crate) fn funding_create_legacy(
         wallet: &mut Wallet,
         multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
@@ -116,7 +116,7 @@ impl UnifiedTaker {
     }
 
     /// Execute the multi-hop Legacy coinswap flow.
-    pub(crate) fn exchange_legacy_contract_data(&mut self) -> Result<(), TakerError> {
+    pub(crate) fn exchange_legacy(&mut self) -> Result<(), TakerError> {
         log::info!("Starting multi-hop Legacy swap with ProofOfFunding flow");
 
         let swap = self.swap_state()?;
@@ -127,6 +127,9 @@ impl UnifiedTaker {
         // Taker's own keys for the last hop (set during last iteration)
         let mut taker_multisig_privkeys: Option<Vec<SecretKey>> = None;
         let mut taker_hashlock_privkeys: Option<Vec<SecretKey>> = None;
+
+        // Background thread monitors funding outpoints for adversarial contract broadcasts.
+        let breach_detector = super::unified_api::BreachDetector::start(self.watch_service.clone());
 
         for maker_idx in 0..maker_count {
             let maker_address = self.swap_state()?.makers[maker_idx]
@@ -142,8 +145,11 @@ impl UnifiedTaker {
             );
 
             // Connect to this maker
-            let mut stream = self.connect_to_maker(&maker_address)?;
-            self.handshake_maker(&mut stream)?;
+            let mut stream = self.net_connect(&maker_address)?;
+            self.net_handshake(&mut stream)?;
+            self.swap_state_mut()?.makers[maker_idx]
+                .legacy_exchange_mut()
+                .connected = true;
 
             // Determine our position
             let is_first_peer = maker_idx == 0;
@@ -242,7 +248,7 @@ impl UnifiedTaker {
                     "Step 1: Requesting sender contract signatures from maker {}",
                     maker_idx
                 );
-                let sender_sigs = self.request_sender_contract_sigs(
+                let sender_sigs = self.exchange_req_sender_sigs(
                     &mut stream,
                     &swap_id,
                     &self.swap_state()?.outgoing_swapcoins,
@@ -256,6 +262,9 @@ impl UnifiedTaker {
                 {
                     swapcoin.others_contract_sig = Some(sig);
                 }
+                let exch = self.swap_state_mut()?.makers[maker_idx].legacy_exchange_mut();
+                exch.sender_sigs_requested = true;
+                exch.sender_sigs_received = true;
             } else {
                 log::info!(
                     "Step 1: Skipping separate signature request (handled in ProofOfFunding flow)"
@@ -281,15 +290,32 @@ impl UnifiedTaker {
                 }
                 // Funding txs are now on-chain — mark the phase transition.
                 // SP4-L: Point of no return. Persist nonces needed for legacy recovery.
+                self.swap_state_mut()?.makers[maker_idx]
+                    .legacy_exchange_mut()
+                    .prev_funding_broadcast = true;
                 self.swap_state_mut()?.phase = super::unified_api::SwapPhase::FundsBroadcast;
-                self.persist_swap_phase(super::swap_tracker::SwapPhase::FundsBroadcast)?;
+                self.persist_phase(super::swap_tracker::SwapPhase::FundsBroadcast)?;
                 let funding_txids: Vec<_> = self
                     .swap_state()?
                     .outgoing_swapcoins
                     .iter()
                     .filter_map(|sc| sc.funding_tx.as_ref().map(|tx| tx.compute_txid()))
                     .collect();
-                self.wait_for_txids_confirmation(&funding_txids)?;
+                self.net_wait_for_confirmation(&funding_txids, None)?;
+                self.swap_state_mut()?.makers[maker_idx]
+                    .legacy_exchange_mut()
+                    .prev_funding_confirmed = true;
+                self.persist_progress()?;
+
+                // Register outgoing funding outpoints as sentinels with the breach detector.
+                // These are the inputs to our contract txs. If spent, a contract was broadcast.
+                let outpoints: Vec<OutPoint> = self
+                    .swap_state()?
+                    .outgoing_swapcoins
+                    .iter()
+                    .map(|sc| sc.contract_tx.input[0].previous_output)
+                    .collect();
+                breach_detector.add_sentinels(&self.watch_service, &outpoints);
             }
 
             log::info!("Sending ProofOfFunding to maker {}", maker_idx);
@@ -321,7 +347,7 @@ impl UnifiedTaker {
             };
 
             let (receivers_contract_txs, senders_contract_txs_info) = self
-                .send_proof_of_funding_legacy(
+                .exchange_send_proof_of_funding(
                     &mut stream,
                     &swap_id,
                     &funding_txs,
@@ -335,6 +361,12 @@ impl UnifiedTaker {
                     &next_hashlock_nonces,
                     outgoing_locktime,
                 )?;
+            {
+                let exch = self.swap_state_mut()?.makers[maker_idx].legacy_exchange_mut();
+                exch.proof_of_funding_sent = true;
+                exch.maker_contracts_received = true;
+            }
+            self.persist_progress()?;
 
             let senders_sigs = if is_last_peer {
                 log::info!("Signing sender contracts (we are last peer)");
@@ -359,22 +391,30 @@ impl UnifiedTaker {
                     .offer_and_address
                     .address
                     .to_string();
-                let mut next_stream = self.connect_to_maker(&next_maker_address)?;
-                self.handshake_maker(&mut next_stream)?;
+                let mut next_stream = self.net_connect(&next_maker_address)?;
+                self.net_handshake(&mut next_stream)?;
 
                 let hashvalue = Hash160::hash(&self.swap_state()?.preimage);
                 let next_locktime = super::unified_api::REFUND_LOCKTIME_BASE
                     + super::unified_api::REFUND_LOCKTIME_STEP
                         * (maker_count - maker_idx - 2) as u16;
 
-                self.request_sender_sigs_for_contracts(
+                let sigs = self.exchange_req_sender_sigs_forwarded(
                     &mut next_stream,
                     &swap_id,
                     &senders_contract_txs_info,
                     hashvalue,
                     next_locktime,
-                )?
+                )?;
+                // Next maker provided sender sigs for current maker's outgoing.
+                let next_exch = self.swap_state_mut()?.makers[maker_idx + 1].legacy_exchange_mut();
+                next_exch.sender_sigs_requested = true;
+                next_exch.sender_sigs_received = true;
+                sigs
             };
+            self.swap_state_mut()?.makers[maker_idx]
+                .legacy_exchange_mut()
+                .next_maker_sigs_obtained = true;
 
             let receivers_sigs = if is_first_peer {
                 log::info!("Signing receiver contracts (we are first peer)");
@@ -402,22 +442,29 @@ impl UnifiedTaker {
                     .offer_and_address
                     .address
                     .to_string();
-                let mut prev_stream = self.connect_to_maker(&prev_maker_address)?;
-                self.handshake_maker(&mut prev_stream)?;
+                let mut prev_stream = self.net_connect(&prev_maker_address)?;
+                self.net_handshake(&mut prev_stream)?;
 
-                self.request_receiver_sigs_for_contracts(
+                self.exchange_req_receiver_sigs(
                     &mut prev_stream,
                     &swap_id,
                     &receivers_contract_txs,
                     prev_senders_info.as_ref().unwrap(),
                 )?
             };
+            self.swap_state_mut()?.makers[maker_idx]
+                .legacy_exchange_mut()
+                .prev_maker_sigs_obtained = true;
 
             log::info!(
                 "Sending RespContractSigsForRecvrAndSender to maker {}",
                 maker_idx
             );
-            self.send_recvr_and_sender_sigs(&mut stream, &swap_id, receivers_sigs, senders_sigs)?;
+            self.exchange_send_combined_sigs(&mut stream, &swap_id, receivers_sigs, senders_sigs)?;
+            self.swap_state_mut()?.makers[maker_idx]
+                .legacy_exchange_mut()
+                .combined_sigs_sent = true;
+            self.persist_progress()?;
 
             // Store this maker's outgoing info for next hop
             prev_senders_info = Some(senders_contract_txs_info.clone());
@@ -448,6 +495,9 @@ impl UnifiedTaker {
                 self.swap_state_mut()?
                     .watchonly_swapcoins
                     .extend(watchonly_coins);
+                self.swap_state_mut()?.makers[maker_idx]
+                    .legacy_exchange_mut()
+                    .watchonly_created = true;
             }
 
             // Wait for this maker's funding to be broadcast and confirmed
@@ -464,11 +514,27 @@ impl UnifiedTaker {
                 .map(|i| i.funding_tx.compute_txid())
                 .collect();
 
-            self.wait_for_txids_confirmation(&maker_funding_txids)?;
-            self.swap_state_mut()?.makers[maker_idx].funding_confirmed = true;
+            self.net_wait_for_confirmation(&maker_funding_txids, Some(&breach_detector))?;
+            self.swap_state_mut()?.makers[maker_idx]
+                .legacy_exchange_mut()
+                .maker_funding_confirmed = true;
+
+            // Register this maker's funding outpoints as sentinels for subsequent waits.
+            let maker_outpoints: Vec<OutPoint> = senders_contract_txs_info
+                .iter()
+                .map(|info| info.contract_tx.input[0].previous_output)
+                .collect();
+            breach_detector.add_sentinels(&self.watch_service, &maker_outpoints);
+
+            // This maker's funding is the previous hop for the next maker.
+            if maker_idx + 1 < maker_count {
+                let next_exch = self.swap_state_mut()?.makers[maker_idx + 1].legacy_exchange_mut();
+                next_exch.prev_funding_broadcast = true;
+                next_exch.prev_funding_confirmed = true;
+            }
+            self.persist_progress()?;
 
             log::info!("Maker {} processed successfully", maker_idx);
-            self.swap_state_mut()?.makers[maker_idx].contracts_exchanged = true;
         }
 
         // Create incoming swapcoins from the last maker's sender contract info.
@@ -534,15 +600,15 @@ impl UnifiedTaker {
                 "Requesting receiver contract sigs from last maker: {}",
                 last_maker_address
             );
-            let mut last_maker_stream = self.connect_to_maker(&last_maker_address)?;
-            self.handshake_maker(&mut last_maker_stream)?;
+            let mut last_maker_stream = self.net_connect(&last_maker_address)?;
+            self.net_handshake(&mut last_maker_stream)?;
 
             let incoming_contract_txs: Vec<Transaction> = last_senders_info
                 .iter()
                 .map(|info| info.contract_tx.clone())
                 .collect();
 
-            let receiver_sigs = self.request_receiver_sigs_for_contracts(
+            let receiver_sigs = self.exchange_req_receiver_sigs(
                 &mut last_maker_stream,
                 &swap_id,
                 &incoming_contract_txs,
@@ -560,15 +626,18 @@ impl UnifiedTaker {
             );
         }
 
+        // Exchange complete — stop the breach detector.
+        breach_detector.stop();
+
         // SP6-L: All makers responded, incoming swapcoins created.
-        self.persist_swap_phase(super::swap_tracker::SwapPhase::ContractsExchanged)?;
+        self.persist_phase(super::swap_tracker::SwapPhase::ContractsExchanged)?;
 
         log::info!("Multi-hop Legacy swap contract exchange completed");
         Ok(())
     }
 
     /// Request contract signatures for sender from a maker.
-    fn request_sender_contract_sigs(
+    fn exchange_req_sender_sigs(
         &self,
         stream: &mut TcpStream,
         swap_id: &str,
@@ -657,7 +726,7 @@ impl UnifiedTaker {
     /// Send proof of funding and receive ReqContractSigsAsRecvrAndSender.
     #[allow(clippy::type_complexity)]
     #[allow(clippy::too_many_arguments)]
-    fn send_proof_of_funding_legacy(
+    fn exchange_send_proof_of_funding(
         &self,
         stream: &mut TcpStream,
         swap_id: &str,
@@ -740,7 +809,7 @@ impl UnifiedTaker {
     }
 
     /// Send collected signatures for both receiver and sender contracts (Legacy protocol).
-    fn send_recvr_and_sender_sigs(
+    fn exchange_send_combined_sigs(
         &self,
         stream: &mut TcpStream,
         swap_id: &str,
@@ -766,7 +835,7 @@ impl UnifiedTaker {
     }
 
     /// Request sender contract signatures using SenderContractTxInfo.
-    fn request_sender_sigs_for_contracts(
+    fn exchange_req_sender_sigs_forwarded(
         &self,
         stream: &mut TcpStream,
         swap_id: &str,
@@ -812,7 +881,7 @@ impl UnifiedTaker {
     }
 
     /// Request receiver signatures from previous maker.
-    fn request_receiver_sigs_for_contracts(
+    fn exchange_req_receiver_sigs(
         &self,
         stream: &mut TcpStream,
         swap_id: &str,
