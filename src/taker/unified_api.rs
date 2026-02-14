@@ -304,7 +304,7 @@ pub struct UnifiedTaker {
     /// Ongoing swap state (`None` when no swap is active).
     pub(crate) ongoing_swap: Option<OngoingSwapState>,
     /// Persistent swap tracker for crash-resilient recovery.
-    pub(crate) swap_tracker: SwapTracker,
+    pub(crate) swap_tracker: Arc<Mutex<SwapTracker>>,
     /// Background recovery loop (active when incomplete swap recovery is in progress).
     recovery_loop: Option<RecoveryLoop>,
     /// Test behavior.
@@ -318,7 +318,7 @@ impl Drop for UnifiedTaker {
         // Flush any pending swap state before shutdown
         if let Some(swap) = &self.ongoing_swap {
             if let Ok(record) = self.persist_build_record(swap) {
-                if let Err(e) = self.swap_tracker.save_record(&record) {
+                if let Err(e) = self.swap_tracker.lock().unwrap().save_record(&record) {
                     log::error!("Failed to flush swap tracker on shutdown: {:?}", e);
                 }
             }
@@ -389,7 +389,7 @@ impl UnifiedTaker {
         let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
         let offer_sync_handle =
             Self::init_offer_sync(&offerbook, &watch_service, config.socks_port, rpc_config)?;
-        let swap_tracker = SwapTracker::load_or_create(&data_dir)?;
+        let swap_tracker = Arc::new(Mutex::new(SwapTracker::load_or_create(&data_dir)?));
 
         let mut taker = UnifiedTaker {
             config,
@@ -418,6 +418,8 @@ impl UnifiedTaker {
         // Collect incomplete swap IDs to avoid borrow issues
         let incomplete_ids: Vec<String> = self
             .swap_tracker
+            .lock()
+            .unwrap()
             .incomplete_swaps()
             .iter()
             .map(|r| r.swap_id.clone())
@@ -429,7 +431,7 @@ impl UnifiedTaker {
 
         for swap_id in &incomplete_ids {
             // Re-borrow for each iteration to satisfy borrow checker
-            let phase = match self.swap_tracker.get_record(swap_id) {
+            let phase = match self.swap_tracker.lock().unwrap().get_record(swap_id) {
                 Some(r) => r.phase,
                 None => continue,
             };
@@ -441,7 +443,7 @@ impl UnifiedTaker {
                         swap_id,
                         phase
                     );
-                    if let Err(e) = self.swap_tracker.remove_record(swap_id) {
+                    if let Err(e) = self.swap_tracker.lock().unwrap().remove_record(swap_id) {
                         log::error!("Failed to remove tracker record for {}: {:?}", swap_id, e);
                     }
                 }
@@ -462,6 +464,8 @@ impl UnifiedTaker {
                 SwapPhase::Failed => {
                     let recovery_phase = self
                         .swap_tracker
+                        .lock()
+                        .unwrap()
                         .get_record(swap_id)
                         .map(|r| r.recovery.phase)
                         .unwrap_or(RecoveryPhase::CleanedUp);
@@ -528,7 +532,10 @@ impl UnifiedTaker {
         };
 
         if has_remaining {
-            self.recovery_loop = Some(RecoveryLoop::start(self.wallet.clone()));
+            self.recovery_loop = Some(RecoveryLoop::start(
+                self.wallet.clone(),
+                self.swap_tracker.clone(),
+            ));
         }
     }
 
@@ -631,7 +638,7 @@ impl UnifiedTaker {
 
     /// Log the current swap tracker state at INFO level.
     pub fn log_tracker_state(&self) {
-        self.swap_tracker.log_state();
+        self.swap_tracker.lock().unwrap().log_state();
     }
 
     /// Check whether the background recovery loop has completed.
@@ -652,6 +659,8 @@ impl UnifiedTaker {
         // Snapshot which contract txids are being watched per swap
         let incomplete: Vec<(String, Vec<Txid>)> = self
             .swap_tracker
+            .lock()
+            .unwrap()
             .incomplete_swaps()
             .iter()
             .map(|r| (r.swap_id.clone(), r.recovery.outgoing_watching.clone()))
@@ -689,14 +698,17 @@ impl UnifiedTaker {
             }
 
             if !resolved_txids.is_empty() {
-                self.swap_tracker.update_and_save(swap_id, |record| {
-                    for txid in &resolved_txids {
-                        record.recovery.outgoing_watching.retain(|t| t != txid);
-                        if !record.recovery.outgoing_recovered.contains(txid) {
-                            record.recovery.outgoing_recovered.push(*txid);
+                self.swap_tracker
+                    .lock()
+                    .unwrap()
+                    .update_and_save(swap_id, |record| {
+                        for txid in &resolved_txids {
+                            record.recovery.outgoing_watching.retain(|t| t != txid);
+                            if !record.recovery.outgoing_recovered.contains(txid) {
+                                record.recovery.outgoing_recovered.push(*txid);
+                            }
                         }
-                    }
-                })?;
+                    })?;
 
                 // Check if we can advance to OutgoingRecovered and CleanedUp
                 if self.recover_is_outgoing_done(swap_id) {
@@ -710,9 +722,12 @@ impl UnifiedTaker {
                     }
                     self.recover_update_phase(swap_id, RecoveryPhase::CleanedUp)?;
 
-                    self.swap_tracker.update_and_save(swap_id, |record| {
-                        record.phase = SwapPhase::Failed;
-                    })?;
+                    self.swap_tracker
+                        .lock()
+                        .unwrap()
+                        .update_and_save(swap_id, |record| {
+                            record.phase = SwapPhase::Failed;
+                        })?;
                 }
             }
         }
@@ -727,6 +742,8 @@ impl UnifiedTaker {
     pub fn recover_sweep_incoming(&mut self, fee_rate: f64) -> Result<Vec<Txid>, TakerError> {
         let incomplete: Vec<(String, Vec<Txid>)> = self
             .swap_tracker
+            .lock()
+            .unwrap()
             .incomplete_swaps()
             .iter()
             .map(|r| (r.swap_id.clone(), r.recovery.incoming_swept.clone()))
@@ -749,9 +766,12 @@ impl UnifiedTaker {
                 .collect();
 
             if !new_txids.is_empty() {
-                self.swap_tracker.update_and_save(swap_id, |record| {
-                    record.recovery.incoming_swept.extend(&new_txids);
-                })?;
+                self.swap_tracker
+                    .lock()
+                    .unwrap()
+                    .update_and_save(swap_id, |record| {
+                        record.recovery.incoming_swept.extend(&new_txids);
+                    })?;
 
                 if self.recover_is_incoming_done(swap_id) {
                     self.recover_update_phase(swap_id, RecoveryPhase::IncomingRecovered)?;
@@ -858,7 +878,7 @@ impl UnifiedTaker {
                             }
                         } else {
                             log::info!("No funds on-chain — safe to abort");
-                            let _ = self.swap_tracker.remove_record(
+                            let _ = self.swap_tracker.lock().unwrap().remove_record(
                                 &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
                             );
                             self.ongoing_swap = None;
@@ -1769,11 +1789,13 @@ impl UnifiedTaker {
 
         // Snapshot preserved fields from any existing record.
         let swap_id = self.swap_state()?.id.clone();
-        let existing = self.swap_tracker.get_record(&swap_id);
+        let tracker_guard = self.swap_tracker.lock().unwrap();
+        let existing = tracker_guard.get_record(&swap_id);
         let created_at = existing.map(|r| r.created_at);
         let recovery = existing.map(|r| r.recovery.clone());
         let failed_at = existing.and_then(|r| r.failed_at_phase);
         let failure_reason = existing.and_then(|r| r.failure_reason.clone());
+        drop(tracker_guard);
 
         // Build full record from current live state.
         let swap_ref = self.swap_state()?;
@@ -1793,7 +1815,7 @@ impl UnifiedTaker {
             record.failure_reason = Some(reason);
         }
 
-        self.swap_tracker.save_record(&record)
+        self.swap_tracker.lock().unwrap().save_record(&record)
     }
 
     /// Persist the current maker progress without changing the swap phase.
@@ -1814,12 +1836,12 @@ impl UnifiedTaker {
                 record.failed_at_phase = Some(failed_at);
                 record.failure_reason = Some(format!("{:?}", error));
                 // Preserve existing recovery state if resuming
-                if let Some(existing) = self.swap_tracker.get_record(&swap_id) {
+                if let Some(existing) = self.swap_tracker.lock().unwrap().get_record(&swap_id) {
                     record.recovery = existing.recovery.clone();
                     record.created_at = existing.created_at;
                 }
                 record.updated_at = now_secs();
-                if let Err(e) = self.swap_tracker.save_record(&record) {
+                if let Err(e) = self.swap_tracker.lock().unwrap().save_record(&record) {
                     log::error!("Failed to persist swap failure: {:?}", e);
                 }
             }
@@ -1894,9 +1916,12 @@ impl UnifiedTaker {
         }
 
         // Mark as terminal Failed in tracker
-        self.swap_tracker.update_and_save(&swap_id, |record| {
-            record.phase = SwapPhase::Failed;
-        })?;
+        self.swap_tracker
+            .lock()
+            .unwrap()
+            .update_and_save(&swap_id, |record| {
+                record.phase = SwapPhase::Failed;
+            })?;
 
         self.ongoing_swap = None;
 
@@ -1908,7 +1933,10 @@ impl UnifiedTaker {
         };
         if has_remaining {
             log::info!("Recovery incomplete, starting background retry loop");
-            self.recovery_loop = Some(RecoveryLoop::start(self.wallet.clone()));
+            self.recovery_loop = Some(RecoveryLoop::start(
+                self.wallet.clone(),
+                self.swap_tracker.clone(),
+            ));
         } else {
             log::info!("Recovery completed — all contracts resolved.");
         }
@@ -1921,18 +1949,18 @@ impl UnifiedTaker {
     /// This is called from `init_recover_incomplete()` when a swap record
     /// is found in the tracker with `phase >= FundsBroadcast`.
     fn recover_from_record(&mut self, swap_id: &str) -> Result<(), TakerError> {
-        let record = self
-            .swap_tracker
-            .get_record(swap_id)
-            .ok_or_else(|| TakerError::General(format!("No tracker record for {}", swap_id)))?;
-
-        let preimage = record.preimage;
-        let recovery_phase = record.recovery.phase;
+        let (preimage, recovery_phase, record_phase) = {
+            let tracker_guard = self.swap_tracker.lock().unwrap();
+            let record = tracker_guard
+                .get_record(swap_id)
+                .ok_or_else(|| TakerError::General(format!("No tracker record for {}", swap_id)))?;
+            (record.preimage, record.recovery.phase, record.phase)
+        };
 
         log::info!(
             "Recovering swap {} from phase {:?}, recovery at {:?}",
             swap_id,
-            record.phase,
+            record_phase,
             recovery_phase
         );
 
@@ -1994,13 +2022,18 @@ impl UnifiedTaker {
         // leave the phase so incomplete_swaps() picks it up for retry.
         let is_cleaned_up = self
             .swap_tracker
+            .lock()
+            .unwrap()
             .get_record(swap_id)
             .map(|r| r.recovery.phase >= RecoveryPhase::CleanedUp)
             .unwrap_or(true);
         if is_cleaned_up {
-            self.swap_tracker.update_and_save(swap_id, |record| {
-                record.phase = SwapPhase::Failed;
-            })?;
+            self.swap_tracker
+                .lock()
+                .unwrap()
+                .update_and_save(swap_id, |record| {
+                    record.phase = SwapPhase::Failed;
+                })?;
         }
 
         log::info!("Recovery from record completed for swap {}", swap_id);
@@ -2013,9 +2046,12 @@ impl UnifiedTaker {
         swap_id: &str,
         phase: RecoveryPhase,
     ) -> Result<(), TakerError> {
-        self.swap_tracker.update_and_save(swap_id, |r| {
-            r.recovery.phase = phase;
-        })?;
+        self.swap_tracker
+            .lock()
+            .unwrap()
+            .update_and_save(swap_id, |r| {
+                r.recovery.phase = phase;
+            })?;
         Ok(())
     }
 
@@ -2025,7 +2061,8 @@ impl UnifiedTaker {
     /// "No incoming contracts" is not the same as "incoming recovered" —
     /// the phase should reflect what actually happened.
     fn recover_is_incoming_done(&self, swap_id: &str) -> bool {
-        let Some(record) = self.swap_tracker.get_record(swap_id) else {
+        let tracker_guard = self.swap_tracker.lock().unwrap();
+        let Some(record) = tracker_guard.get_record(swap_id) else {
             return false;
         };
         !record.recovery.incoming_swept.is_empty()
@@ -2038,7 +2075,8 @@ impl UnifiedTaker {
     /// - Incoming contracts were swept via hashlock, meaning the preimage is
     ///   public and makers will claim the outgoing contracts themselves.
     fn recover_is_outgoing_done(&self, swap_id: &str) -> bool {
-        let Some(record) = self.swap_tracker.get_record(swap_id) else {
+        let tracker_guard = self.swap_tracker.lock().unwrap();
+        let Some(record) = tracker_guard.get_record(swap_id) else {
             return true;
         };
         let has_unresolved_outgoing = !record.recovery.outgoing_watching.is_empty();
@@ -2112,16 +2150,18 @@ impl UnifiedTaker {
     /// Tracks per-swapcoin results in the swap record for crash resilience.
     fn recover_incoming(&mut self, swap_id: &str) -> Result<(), TakerError> {
         // Get existing swept/watching txids to skip
-        let (already_swept, already_watching) = self
-            .swap_tracker
-            .get_record(swap_id)
-            .map(|r| {
-                (
-                    r.recovery.incoming_swept.clone(),
-                    r.recovery.incoming_watching.clone(),
-                )
-            })
-            .unwrap_or_default();
+        let (already_swept, already_watching) = {
+            let tracker_guard = self.swap_tracker.lock().unwrap();
+            tracker_guard
+                .get_record(swap_id)
+                .map(|r| {
+                    (
+                        r.recovery.incoming_swept.clone(),
+                        r.recovery.incoming_watching.clone(),
+                    )
+                })
+                .unwrap_or_default()
+        };
 
         // Wait for incoming contract UTXOs to be confirmed before attempting sweep.
         // The maker broadcasts its contract tx during exchange_taproot(), but
@@ -2192,10 +2232,13 @@ impl UnifiedTaker {
 
         // Single update_and_save for all mutations
         if !new_swept.is_empty() || !new_watching.is_empty() {
-            self.swap_tracker.update_and_save(swap_id, |record| {
-                record.recovery.incoming_swept.extend(&new_swept);
-                record.recovery.incoming_watching.extend(&new_watching);
-            })?;
+            self.swap_tracker
+                .lock()
+                .unwrap()
+                .update_and_save(swap_id, |record| {
+                    record.recovery.incoming_swept.extend(&new_swept);
+                    record.recovery.incoming_watching.extend(&new_watching);
+                })?;
         }
 
         Ok(())
@@ -2206,16 +2249,18 @@ impl UnifiedTaker {
     /// Tracks per-swapcoin results in the swap record for crash resilience.
     fn recover_outgoing(&mut self, swap_id: &str) -> Result<(), TakerError> {
         // Get existing recovered/watching txids to skip
-        let (already_recovered, already_watching) = self
-            .swap_tracker
-            .get_record(swap_id)
-            .map(|r| {
-                (
-                    r.recovery.outgoing_recovered.clone(),
-                    r.recovery.outgoing_watching.clone(),
-                )
-            })
-            .unwrap_or_default();
+        let (already_recovered, already_watching) = {
+            let tracker_guard = self.swap_tracker.lock().unwrap();
+            tracker_guard
+                .get_record(swap_id)
+                .map(|r| {
+                    (
+                        r.recovery.outgoing_recovered.clone(),
+                        r.recovery.outgoing_watching.clone(),
+                    )
+                })
+                .unwrap_or_default()
+        };
 
         // Try immediate timelock recovery — collect results, then drop wallet lock
         let recovered_txids = {
@@ -2270,10 +2315,13 @@ impl UnifiedTaker {
 
         // Single update_and_save for all mutations
         if !new_recovered.is_empty() || !new_watching.is_empty() {
-            self.swap_tracker.update_and_save(swap_id, |record| {
-                record.recovery.outgoing_recovered.extend(&new_recovered);
-                record.recovery.outgoing_watching.extend(&new_watching);
-            })?;
+            self.swap_tracker
+                .lock()
+                .unwrap()
+                .update_and_save(swap_id, |record| {
+                    record.recovery.outgoing_recovered.extend(&new_recovered);
+                    record.recovery.outgoing_watching.extend(&new_watching);
+                })?;
         }
 
         Ok(())
@@ -2299,7 +2347,10 @@ pub(crate) struct RecoveryLoop {
 
 impl RecoveryLoop {
     /// Spawn the background recovery thread.
-    pub(crate) fn start(wallet: Arc<RwLock<Wallet>>) -> Self {
+    pub(crate) fn start(
+        wallet: Arc<RwLock<Wallet>>,
+        swap_tracker: Arc<Mutex<SwapTracker>>,
+    ) -> Self {
         let shutdown = Arc::new(AtomicBool::new(false));
         let complete = Arc::new(AtomicBool::new(false));
 
@@ -2318,19 +2369,58 @@ impl RecoveryLoop {
                         }
                     }
 
+                    // Snapshot incomplete swap info from tracker
+                    let incomplete: Vec<(String, Vec<Txid>, Vec<Txid>)> = {
+                        let tracker = swap_tracker.lock().unwrap();
+                        tracker
+                            .incomplete_swaps()
+                            .iter()
+                            .map(|r| {
+                                (
+                                    r.swap_id.clone(),
+                                    r.recovery.incoming_swept.clone(),
+                                    r.recovery.outgoing_watching.clone(),
+                                )
+                            })
+                            .collect()
+                    };
+
                     // Try hashlock sweep (incoming)
-                    if let Ok(mut w) = wallet.write() {
-                        match w.sweep_unified_incoming_swapcoins(2.0) {
-                            Ok(swept) if !swept.is_empty() => {
-                                log::info!(
-                                    "Recovery loop: swept {} incoming swapcoins",
-                                    swept.len()
-                                );
+                    let swept_txids = match wallet.write() {
+                        Ok(mut w) => w.sweep_unified_incoming_swapcoins(2.0).unwrap_or_default(),
+                        Err(_) => Vec::new(),
+                    };
+
+                    // Update tracker with sweep results
+                    if !swept_txids.is_empty() {
+                        log::info!(
+                            "Recovery loop: swept {} incoming swapcoins",
+                            swept_txids.len()
+                        );
+                        let mut tracker = swap_tracker.lock().unwrap();
+                        for (swap_id, already_swept, _) in &incomplete {
+                            let new: Vec<Txid> = swept_txids
+                                .iter()
+                                .filter(|t| !already_swept.contains(t))
+                                .copied()
+                                .collect();
+                            if !new.is_empty() {
+                                let _ = tracker.update_and_save(swap_id, |record| {
+                                    record.recovery.incoming_swept.extend(&new);
+                                });
+                                // Advance phase if incoming is done
+                                if tracker
+                                    .get_record(swap_id)
+                                    .map(|r| !r.recovery.incoming_swept.is_empty())
+                                    .unwrap_or(false)
+                                {
+                                    let _ = tracker.update_and_save(swap_id, |r| {
+                                        if r.recovery.phase < RecoveryPhase::IncomingRecovered {
+                                            r.recovery.phase = RecoveryPhase::IncomingRecovered;
+                                        }
+                                    });
+                                }
                             }
-                            Err(e) => {
-                                log::debug!("Recovery loop: incoming sweep: {:?}", e);
-                            }
-                            _ => {}
                         }
                     }
 
@@ -2350,16 +2440,88 @@ impl RecoveryLoop {
                         }
                     }
 
-                    // Check completion: all contract outpoints spent on-chain
+                    // Check on-chain status of watched outgoing contracts
+                    let resolved_per_swap: Vec<(String, Vec<Txid>)> = {
+                        match wallet.read() {
+                            Ok(w) => incomplete
+                                .iter()
+                                .map(|(swap_id, _, watching)| {
+                                    let resolved: Vec<Txid> = watching
+                                        .iter()
+                                        .filter(|txid| {
+                                            !matches!(w.rpc.get_tx_out(txid, 0, None), Ok(Some(_)))
+                                        })
+                                        .copied()
+                                        .collect();
+                                    (swap_id.clone(), resolved)
+                                })
+                                .collect(),
+                            Err(_) => Vec::new(),
+                        }
+                    };
+
+                    // Update tracker with outgoing resolution and clean up
+                    let mut swaps_to_cleanup: Vec<String> = Vec::new();
+                    {
+                        let mut tracker = swap_tracker.lock().unwrap();
+                        for (swap_id, resolved) in &resolved_per_swap {
+                            if resolved.is_empty() {
+                                continue;
+                            }
+                            let _ = tracker.update_and_save(swap_id, |record| {
+                                for txid in resolved {
+                                    record.recovery.outgoing_watching.retain(|t| t != txid);
+                                    if !record.recovery.outgoing_recovered.contains(txid) {
+                                        record.recovery.outgoing_recovered.push(*txid);
+                                    }
+                                }
+                            });
+
+                            // Check if outgoing is done
+                            let outgoing_done = tracker
+                                .get_record(swap_id)
+                                .map(|r| {
+                                    let has_unresolved = !r.recovery.outgoing_watching.is_empty();
+                                    let incoming_swept = !r.recovery.incoming_swept.is_empty();
+                                    !has_unresolved || incoming_swept
+                                })
+                                .unwrap_or(true);
+
+                            if outgoing_done {
+                                let _ = tracker.update_and_save(swap_id, |r| {
+                                    r.recovery.phase = RecoveryPhase::OutgoingRecovered;
+                                });
+                                swaps_to_cleanup.push(swap_id.clone());
+                            }
+                        }
+                    }
+
+                    // Clean up wallet entries for resolved swaps
+                    if !swaps_to_cleanup.is_empty() {
+                        if let Ok(mut w) = wallet.write() {
+                            for swap_id in &swaps_to_cleanup {
+                                w.remove_unified_outgoing_swapcoins(swap_id);
+                                w.remove_unified_watchonly_swapcoins(swap_id);
+                            }
+                            let _ = w.save_to_disk();
+                        }
+                        let mut tracker = swap_tracker.lock().unwrap();
+                        for swap_id in &swaps_to_cleanup {
+                            let _ = tracker.update_and_save(swap_id, |r| {
+                                r.recovery.phase = RecoveryPhase::CleanedUp;
+                                r.phase = SwapPhase::Failed;
+                            });
+                        }
+                    }
+
+                    // Check overall completion
                     let all_resolved = match wallet.read() {
                         Ok(w) => {
                             let outgoing = w.unified_outgoing_contract_outpoints();
                             let incoming = w.unified_incoming_contract_outpoints();
-
                             if outgoing.is_empty() && incoming.is_empty() {
                                 true
                             } else {
-                                // Check on-chain status of each remaining outpoint
                                 outgoing.iter().chain(incoming.iter()).all(|op| {
                                     !matches!(
                                         w.rpc.get_tx_out(&op.txid, op.vout, None),
