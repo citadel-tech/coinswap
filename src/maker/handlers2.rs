@@ -9,6 +9,7 @@ use super::{
     api2::{ConnectionState, Maker},
     error::MakerError,
 };
+use bitcoin::OutPoint;
 use std::sync::Arc;
 
 use crate::protocol::{
@@ -142,6 +143,23 @@ fn handle_senders_contract(
         return Err(MakerError::General(
             "Maker closing connection at contract exchange (test behavior)",
         ));
+    }
+
+    for contract_txid in &senders_contract.contract_txs {
+        let outpoint = OutPoint {
+            txid: *contract_txid,
+            vout: 0,
+        };
+        if maker.is_denied_outpoint(&outpoint)? {
+            log::warn!(
+                "[{}] Rejecting sender contract due to denied outpoint {}",
+                maker.config.network_port,
+                outpoint
+            );
+            return Err(MakerError::General(
+                "Blocked UTXO detected in incoming contract outpoint",
+            ));
+        }
     }
 
     // Process the sender's contract and create our response

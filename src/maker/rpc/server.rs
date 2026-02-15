@@ -29,6 +29,7 @@ pub trait MakerRpc {
     fn remove_denied_outpoint(&self, outpoint: OutPoint) -> Result<bool, MakerError>;
     fn import_denied_outpoints(&self, path: &Path) -> Result<usize, MakerError>;
     fn list_denied_outpoints(&self) -> Result<Vec<OutPoint>, MakerError>;
+    fn clear_denied_outpoints(&self) -> Result<usize, MakerError>;
 }
 
 fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result<(), MakerError> {
@@ -189,6 +190,10 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
             let resolved = resolve_deny_list_path(maker.data_dir(), &file_path);
             let imported = maker.import_denied_outpoints(&resolved)?;
             RpcMsgResp::Text(format!("imported {imported} new outpoints"))
+        }
+        RpcMsgReq::ClearDeniedUtxos => {
+            let cleared = maker.clear_denied_outpoints()?;
+            RpcMsgResp::ClearDeniedUtxosResp { cleared }
         }
     };
 

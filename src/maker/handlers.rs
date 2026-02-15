@@ -236,6 +236,23 @@ impl Maker {
             return Err(self.behavior.into());
         }
 
+        for txinfo in &message.txs_info {
+            let Some(first_input) = txinfo.senders_contract_tx.input.first() else {
+                return Err(MakerError::General(
+                    "Invalid number of inputs in sender contract transaction",
+                ));
+            };
+            let sender_prevout = first_input.previous_output;
+            if self.is_denied_outpoint(&sender_prevout)? {
+                log::warn!(
+                    "[{}] Rejecting sender contract request due to denied outpoint {}",
+                    self.config.network_port,
+                    sender_prevout
+                );
+                return Err(MakerError::General("Blocked UTXO detected in sender contract"));
+            }
+        }
+
         // Verify and sign the contract transaction, and check the function definition for all the checks.
         let sigs = self.verify_and_sign_contract_tx(&message)?;
 

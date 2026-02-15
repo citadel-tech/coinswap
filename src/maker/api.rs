@@ -382,6 +382,10 @@ impl Maker {
         Ok(self.utxo_deny_list.read()?.list())
     }
 
+    pub(crate) fn clear_denied_outpoints(&self) -> Result<usize, MakerError> {
+        Ok(self.utxo_deny_list.write()?.clear()?)
+    }
+
     /// Ensures all unconfirmed fidelity bonds in the maker's wallet are tracked until confirmation.  
     /// Once confirmed, updates their confirmation details in the wallet.
     pub(super) fn track_and_update_unconfirmed_fidelity_bonds(&self) -> Result<(), MakerError> {
@@ -641,6 +645,9 @@ impl MakerRpc for Maker {
     }
     fn list_denied_outpoints(&self) -> Result<Vec<OutPoint>, MakerError> {
         self.list_denied_outpoints()
+    }
+    fn clear_denied_outpoints(&self) -> Result<usize, MakerError> {
+        self.clear_denied_outpoints()
     }
 }
 

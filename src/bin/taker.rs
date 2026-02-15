@@ -180,6 +180,8 @@ enum Commands {
         #[clap(long, short = 'f')]
         file_path: String,
     },
+    /// Clear all outpoints from deny-list.
+    DenyListClear,
 }
 
 fn main() -> Result<(), TakerError> {
@@ -396,6 +398,10 @@ fn main() -> Result<(), TakerError> {
                 Commands::DenyListImport { file_path } => {
                     let imported = taker.import_denied_utxos(&PathBuf::from(file_path))?;
                     println!("imported {imported} new outpoints");
+                }
+                Commands::DenyListClear => {
+                    let cleared = taker.clear_denied_utxos()?;
+                    println!("cleared {cleared} outpoints from deny-list");
                 }
                 Commands::FetchOffers => {
                     use std::time::{Duration, Instant};

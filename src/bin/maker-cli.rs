@@ -88,6 +88,8 @@ enum Commands {
         #[clap(long, short = 'f')]
         file_path: String,
     },
+    /// Clear all outpoints from deny-list.
+    DenyListClear,
 }
 
 fn main() -> Result<(), MakerError> {
@@ -157,6 +159,9 @@ fn main() -> Result<(), MakerError> {
         }
         Commands::DenyListImport { file_path } => {
             send_rpc_req(stream, RpcMsgReq::ImportDeniedUtxos { file_path })?;
+        }
+        Commands::DenyListClear => {
+            send_rpc_req(stream, RpcMsgReq::ClearDeniedUtxos)?;
         }
     }
 

@@ -64,6 +64,8 @@ pub enum RpcMsgReq {
         /// Path to newline-separated txid:vout entries.
         file_path: String,
     },
+    /// Request to clear all denied UTXOs.
+    ClearDeniedUtxos,
 }
 
 /// Enum representing RPC message responses.
@@ -117,6 +119,11 @@ pub enum RpcMsgResp {
         /// Outpoints in txid:vout format.
         outpoints: Vec<String>,
     },
+    /// Response for deny-list clear operation.
+    ClearDeniedUtxosResp {
+        /// Number of outpoints removed from the deny-list.
+        cleared: usize,
+    },
     /// Generic text response.
     Text(String),
 }
@@ -164,6 +171,9 @@ impl Display for RpcMsgResp {
                     serde_json::to_string_pretty(outpoints)
                         .expect("deny-list JSON serialization failed")
                 )
+            }
+            Self::ClearDeniedUtxosResp { cleared } => {
+                write!(f, "cleared {cleared} outpoints from deny-list")
             }
             Self::Text(message) => write!(f, "{message}"),
         }

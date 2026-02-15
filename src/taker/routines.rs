@@ -272,6 +272,14 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
         }
     };
 
+    for senders_contract_tx_info in &contract_sigs_as_recvr_and_sender.senders_contract_txs_info {
+        if senders_contract_tx_info.contract_tx.input.len() != 1 {
+            return Err(TakerError::General(
+                "invalid sender contract from maker: expected exactly one input".to_string(),
+            ));
+        }
+    }
+
     let funding_tx_values = tmi
         .funding_tx_infos
         .iter()

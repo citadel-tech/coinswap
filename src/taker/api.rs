@@ -166,6 +166,7 @@ pub enum TakerBehavior {
 ///
 /// sequence and corresponding SwapCoin infos are stored in `ongoing_swap_state`.
 pub struct Taker {
+    data_dir: PathBuf,
     wallet: Wallet,
     /// Taker configuration with refund, connection, and sleep settings.
     pub config: TakerConfig,
@@ -282,6 +283,7 @@ impl Taker {
         .start();
 
         Ok(Self {
+            data_dir,
             wallet,
             config,
             offerbook,
@@ -355,7 +357,13 @@ impl Taker {
 
     /// Imports outpoints from a newline-separated file and persists them.
     pub fn import_denied_utxos(&mut self, path: &Path) -> Result<usize, TakerError> {
-        Ok(self.utxo_deny_list.import_from_file(path)?)
+        let resolved = resolve_deny_list_path(&self.data_dir, &path.to_string_lossy());
+        Ok(self.utxo_deny_list.import_from_file(&resolved)?)
+    }
+
+    /// Clears all denied outpoints and persists the empty list.
+    pub fn clear_denied_utxos(&mut self) -> Result<usize, TakerError> {
+        Ok(self.utxo_deny_list.clear()?)
     }
 
     fn first_blocked_input(&self, tx: &Transaction) -> Option<OutPoint> {
@@ -364,6 +372,23 @@ impl Taker {
 
     fn is_denied_outpoint(&self, outpoint: &OutPoint) -> bool {
         self.utxo_deny_list.contains(outpoint)
+    }
+
+    fn first_denied_outpoint<'a>(
+        &self,
+        outpoints: impl IntoIterator<Item = &'a OutPoint>,
+    ) -> Option<OutPoint> {
+        outpoints
+            .into_iter()
+            .copied()
+            .find(|outpoint| self.is_denied_outpoint(outpoint))
+    }
+
+    fn denied_outpoint_error(&self, context: &str, outpoint: OutPoint) -> TakerError {
+        TakerError::General(format!(
+            "Blocked UTXO detected in {}: {}",
+            context, outpoint
+        ))
     }
 
     ///  Does the coinswap process
@@ -504,11 +529,7 @@ impl Taker {
                     }
                 };
 
-            if let Some(blocked_outpoint) = funding_outpoints
-                .iter()
-                .copied()
-                .find(|outpoint| self.is_denied_outpoint(outpoint))
-            {
+            if let Some(blocked_outpoint) = self.first_denied_outpoint(&funding_outpoints) {
                 log::warn!(
                     "Detected denied funding outpoint {} from maker hop {}; aborting swap",
                     blocked_outpoint,
@@ -540,8 +561,17 @@ impl Taker {
 
             // For the last hop, initiate the incoming swapcoins, and request the sigs for it.
             if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
-                let incoming_swapcoins =
-                    self.create_incoming_swapcoins(multisig_reedemscripts, funding_outpoints)?;
+                let incoming_swapcoins = match self
+                    .create_incoming_swapcoins(multisig_reedemscripts, funding_outpoints)
+                {
+                    Ok(swapcoins) => swapcoins,
+                    Err(e) => {
+                        log::error!("Incoming SwapCoin generation failed: {e:?}");
+                        log::warn!("Starting recovery from existing swap");
+                        self.recover_from_swap()?;
+                        return Ok(None);
+                    }
+                };
                 log::debug!("Incoming Swapcoins: {incoming_swapcoins:?}");
                 self.ongoing_swap_state.incoming_swapcoins = incoming_swapcoins;
                 match self.request_sigs_for_incoming_swap() {
@@ -1106,10 +1136,10 @@ impl Taker {
                     let transaction =
                         deserialize::<Transaction>(&gettx.hex).map_err(WalletError::from)?;
                     if let Some(blocked_outpoint) = self.first_blocked_input(&transaction) {
-                        return Err(TakerError::General(format!(
-                            "Blocked UTXO detected in funding transaction: {}",
-                            blocked_outpoint
-                        )));
+                        return Err(self.denied_outpoint_error(
+                            "funding transaction",
+                            blocked_outpoint,
+                        ));
                     }
                     txid_tx_map.insert(*txid, transaction);
                     txid_blockhash_map.insert(*txid, gettx.blockhash.expect("Blockhash expected"));
@@ -1427,6 +1457,17 @@ impl Taker {
                 this_maker.address
             );
 
+            for sender_contract in &contract_sigs_as_recvr_sender.senders_contract_txs_info {
+                if let Some(blocked_outpoint) =
+                    self.first_blocked_input(&sender_contract.contract_tx)
+                {
+                    return Err(self.denied_outpoint_error(
+                        "maker-provided sender contract",
+                        blocked_outpoint,
+                    ));
+                }
+            }
+
             // If This Maker is the Sender, and we (the Taker) are the Receiver (Last Hop). We provide the Sender's Contact Tx Sigs.
             let senders_sigs = if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer
             {
@@ -1596,15 +1637,11 @@ impl Taker {
         multisig_redeemscripts: Vec<ScriptBuf>,
         funding_outpoints: Vec<OutPoint>,
     ) -> Result<Vec<IncomingSwapCoin>, TakerError> {
-        if let Some(blocked_outpoint) = funding_outpoints
-            .iter()
-            .copied()
-            .find(|outpoint| self.is_denied_outpoint(outpoint))
-        {
-            return Err(TakerError::General(format!(
-                "Blocked UTXO detected in incoming contract outpoint: {}",
-                blocked_outpoint
-            )));
+        if let Some(blocked_outpoint) = self.first_denied_outpoint(&funding_outpoints) {
+            return Err(self.denied_outpoint_error(
+                "incoming contract outpoint",
+                blocked_outpoint,
+            ));
         }
 
         let (funding_txs, funding_txs_merkleproofs) = self

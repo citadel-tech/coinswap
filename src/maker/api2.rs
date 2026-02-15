@@ -381,6 +381,10 @@ impl Maker {
         Ok(self.utxo_deny_list.read()?.list())
     }
 
+    pub(crate) fn clear_denied_outpoints(&self) -> Result<usize, MakerError> {
+        Ok(self.utxo_deny_list.write()?.clear()?)
+    }
+
     /// Creates an offer for the taker
     pub fn create_offer(&self) -> Result<Offer, MakerError> {
         let wallet = self.wallet.read()?;
@@ -1143,6 +1147,9 @@ impl MakerRpc for Maker {
     }
     fn list_denied_outpoints(&self) -> Result<Vec<OutPoint>, MakerError> {
         self.list_denied_outpoints()
+    }
+    fn clear_denied_outpoints(&self) -> Result<usize, MakerError> {
+        self.clear_denied_outpoints()
     }
 }
 
