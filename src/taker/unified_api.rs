@@ -635,22 +635,6 @@ impl UnifiedTaker {
         }
     }
 
-    /// Recover timelocked outgoing swapcoins and update the swap tracker.
-    ///
-    /// Wraps `Wallet::recover_unified_timelocked_swapcoins` — after recovery,
-    /// moves resolved contracts from `outgoing_watching` to `outgoing_recovered`
-    /// and advances the recovery phase when all outgoing are resolved.
-    pub fn recover_timelocked(&mut self, fee_rate: f64) -> Result<Vec<Txid>, TakerError> {
-        let mut wallet = self.write_wallet()?;
-        Ok(wallet.recover_unified_timelocked_swapcoins(fee_rate)?)
-    }
-
-    /// Sweep incoming swapcoins via hashlock preimage.
-    pub fn recover_sweep_incoming(&mut self, fee_rate: f64) -> Result<Vec<Txid>, TakerError> {
-        let mut wallet = self.write_wallet()?;
-        Ok(wallet.sweep_unified_incoming_swapcoins(fee_rate)?)
-    }
-
     /// Perform a coinswap with the given parameters.
     pub fn do_coinswap(
         &mut self,
@@ -1574,39 +1558,6 @@ impl UnifiedTaker {
             ProtocolVersion::Legacy => TakerToMakerMessage::LegacyPrivateKeyHandover(handover),
             ProtocolVersion::Taproot => TakerToMakerMessage::TaprootPrivateKeyHandover(handover),
         }
-    }
-
-    /// Check if any contract transactions have been broadcast on-chain.
-    #[allow(dead_code)]
-    pub(crate) fn monitor_contract_broadcasts(&self) -> Result<Vec<Txid>, TakerError> {
-        let swap = self.swap_state()?;
-        let contract_txids: Vec<Txid> = swap
-            .incoming_swapcoins
-            .iter()
-            .map(|sc| sc.contract_tx.compute_txid())
-            .chain(
-                swap.outgoing_swapcoins
-                    .iter()
-                    .map(|sc| sc.contract_tx.compute_txid()),
-            )
-            .chain(
-                swap.watchonly_swapcoins
-                    .iter()
-                    .map(|sc| sc.contract_tx.compute_txid()),
-            )
-            .collect();
-
-        let wallet = self.read_wallet()?;
-        let seen: Vec<Txid> = contract_txids
-            .iter()
-            .filter(|txid| wallet.rpc.get_raw_transaction_info(txid, None).is_ok())
-            .cloned()
-            .collect();
-
-        if !seen.is_empty() {
-            log::warn!("Detected {} broadcasted contract transactions!", seen.len());
-        }
-        Ok(seen)
     }
 
     /// Build a `SwapRecord` from the current `OngoingSwapState`.
