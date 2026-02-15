@@ -29,10 +29,7 @@ use crate::{
         rpc::start_rpc_server,
     },
     nostr_coinswap::broadcast_bond_on_nostr,
-    protocol::{
-        messages::FidelityProof,
-        messages2::{MakerToTakerMessage, TakerToMakerMessage},
-    },
+    protocol::messages2::{MakerToTakerMessage, TakerToMakerMessage},
     utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::{AddressType, WalletError},
 };
@@ -82,48 +79,50 @@ fn manage_fidelity_bonds_taproot(
         .write()?
         .redeem_expired_fidelity_bonds(AddressType::P2TR)?;
 
-    let fidelity = setup_fidelity_bond_taproot(maker.as_ref(), maker_addr)?;
+    setup_fidelity_bond_taproot(maker.as_ref(), maker_addr)?;
 
     if spawn_nostr {
-        spawn_nostr_broadcast_task(fidelity, maker)?;
+        spawn_nostr_broadcast_task(maker)?;
     }
 
     Ok(())
 }
 
-fn spawn_nostr_broadcast_task(
-    fidelity: FidelityProof,
-    maker: Arc<Maker>,
-) -> Result<(), MakerError> {
+fn spawn_nostr_broadcast_task(maker: Arc<Maker>) -> Result<(), MakerError> {
     log::info!("Spawning nostr background task for maker");
     let maker_clone = maker.clone();
-
     let handle = thread::Builder::new()
         .name("nostr-event-thread".to_string())
         .spawn(move || {
-            if let Err(e) = broadcast_bond_on_nostr(fidelity.clone()) {
-                log::warn!("initial nostr broadcast failed: {:?}", e);
-            }
-
             let interval = Duration::from_secs(30 * 60);
-            let tick = Duration::from_secs(2);
-            let mut elapsed = Duration::ZERO;
+            let mut elapsed = interval;
 
             while !maker_clone.shutdown.load(Ordering::Acquire) {
-                thread::sleep(tick);
-                elapsed += tick;
+                if elapsed >= interval {
+                    let fidelity = match maker_clone.highest_fidelity_proof.read() {
+                        Ok(guard) => guard.clone(),
+                        Err(e) => {
+                            log::error!("Failed to read highest_fidelity_proof: {:?}", e);
+                            return;
+                        }
+                    };
 
-                if elapsed < interval {
-                    continue;
+                    match fidelity {
+                        Some(proof) => {
+                            if let Err(e) = broadcast_bond_on_nostr(proof) {
+                                log::warn!("nostr broadcast failed: {:?}", e);
+                            }
+                        }
+                        None => {
+                            log::warn!("No fidelity proof available for nostr broadcast");
+                        }
+                    }
+
+                    elapsed = Duration::ZERO;
                 }
 
-                elapsed = Duration::ZERO;
-
-                log::debug!("re-pinging nostr relays with bond announcement");
-
-                if let Err(e) = broadcast_bond_on_nostr(fidelity.clone()) {
-                    log::warn!("nostr re-ping failed: {:?}", e);
-                }
+                thread::sleep(HEART_BEAT_INTERVAL);
+                elapsed += HEART_BEAT_INTERVAL;
             }
 
             log::info!("nostr background task stopped");
