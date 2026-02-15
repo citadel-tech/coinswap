@@ -149,8 +149,10 @@ fn process_taproot_contract<M: UnifiedMaker>(
     let next_hop_xonly = bitcoin::key::XOnlyPublicKey::from(next_hop_hashlock_pubkey.inner);
     let hashlock_script = create_hashlock_script(&hash, &next_hop_xonly);
     let timelock_script = {
-        let locktime = bitcoin::absolute::LockTime::from_height(state.timelock as u32)
-            .unwrap_or(bitcoin::absolute::LockTime::ZERO);
+        // For Taproot, state.timelock is already an absolute block height
+        // (computed by the taker from a single reference height).
+        let locktime = bitcoin::absolute::LockTime::from_height(state.timelock)
+            .map_err(|_| MakerError::General("Invalid locktime height"))?;
         create_timelock_script(locktime, &timelock_xonly)
     };
 

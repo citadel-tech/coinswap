@@ -44,8 +44,8 @@ pub struct UnifiedConnectionState {
     pub swap_id: Option<String>,
     /// Swap amount.
     pub swap_amount: Amount,
-    /// Timelock value.
-    pub timelock: u16,
+    /// Timelock value (Legacy: relative CSV, Taproot: absolute CLTV height).
+    pub timelock: u32,
     /// Incoming swap coins (we receive).
     pub incoming_swapcoins: Vec<IncomingSwapCoin>,
     /// Outgoing swap coins (we send).
@@ -140,7 +140,7 @@ pub trait UnifiedMaker: Send + Sync {
     fn validate_swap_parameters(&self, details: &SwapDetails) -> Result<(), MakerError>;
 
     /// Calculate the swap fee.
-    fn calculate_swap_fee(&self, amount: Amount, timelock: u16) -> Amount;
+    fn calculate_swap_fee(&self, amount: Amount, timelock: u32) -> Amount;
 
     /// Create a funding transaction for Legacy (P2WSH) address.
     fn create_funding_transaction(
@@ -172,6 +172,9 @@ pub trait UnifiedMaker: Send + Sync {
 
     /// Remove connection state for a completed swap.
     fn remove_connection_state(&self, swap_id: &str);
+
+    /// Get the current block height from the Bitcoin node.
+    fn get_current_height(&self) -> Result<u32, MakerError>;
 
     /// Verify that a contract transaction is on-chain or in the mempool.
     fn verify_contract_tx_on_chain(&self, txid: &bitcoin::Txid) -> Result<(), MakerError>;

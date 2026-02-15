@@ -129,7 +129,8 @@ impl UnifiedTaker {
         let mut taker_hashlock_privkeys: Option<Vec<SecretKey>> = None;
 
         // Background thread monitors funding outpoints for adversarial contract broadcasts.
-        let breach_detector = super::unified_api::BreachDetector::start(self.watch_service.clone());
+        let breach_detector =
+            super::background_services::BreachDetector::start(self.watch_service.clone());
 
         for maker_idx in 0..maker_count {
             let maker_address = self.swap_state()?.makers[maker_idx]
@@ -573,7 +574,7 @@ impl UnifiedTaker {
                     pubkey1
                 };
 
-                let incoming = IncomingSwapCoin::new_legacy(
+                let mut incoming = IncomingSwapCoin::new_legacy(
                     *multisig_privkey,
                     other_pubkey,
                     info.contract_tx.clone(),
@@ -581,6 +582,7 @@ impl UnifiedTaker {
                     *hashlock_privkey,
                     info.funding_amount,
                 );
+                incoming.set_preimage(self.swap_state()?.preimage);
                 self.swap_state_mut()?.incoming_swapcoins.push(incoming);
             }
 

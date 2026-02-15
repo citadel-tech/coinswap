@@ -66,8 +66,10 @@ pub struct SwapDetails {
     pub amount: Amount,
     /// Number of contract transactions.
     pub tx_count: u32,
-    /// Timelock value in blocks.
-    pub timelock: u16,
+    /// Timelock value.
+    /// - Legacy: relative block count (CSV).
+    /// - Taproot: absolute block height (CLTV).
+    pub timelock: u32,
 }
 
 /// Acknowledgment of swap details from Maker.

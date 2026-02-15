@@ -504,7 +504,11 @@ fn recover_from_swap(
     use super::swap_tracker::{MakerRecoveryPhase, MakerSwapPhase};
     use bitcoind::bitcoincore_rpc::RpcApi;
 
-    let timelock = outgoing_swapcoins
+    // For Taproot, get_timelock() returns an absolute CLTV height.
+    // For Legacy, it returns a relative CSV offset — but Legacy recovery
+    // uses wallet-level methods that handle CSV internally, so we only
+    // need the absolute value here for the monitoring loop.
+    let timelock_expiry = outgoing_swapcoins
         .first()
         .and_then(|o| o.get_timelock())
         .ok_or(MakerError::General("missing timelock on outgoing swapcoin"))?;
@@ -516,8 +520,6 @@ fn recover_from_swap(
         .rpc
         .get_block_count()
         .map_err(crate::wallet::WalletError::Rpc)? as u32;
-
-    let timelock_expiry = start_height.saturating_add(timelock);
 
     log::info!(
         "[{}] recover_from_swap started | height={} timelock_expiry={} | incoming={} outgoing={}",

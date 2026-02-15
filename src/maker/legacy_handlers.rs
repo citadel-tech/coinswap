@@ -85,7 +85,7 @@ fn process_req_contract_sigs_for_sender<M: UnifiedMaker>(
 
     // Store swap state
     state.swap_id = Some(req.id.clone());
-    state.timelock = req.locktime;
+    state.timelock = req.locktime as u32;
 
     // Store connection state for persistence
     maker.store_connection_state(&req.id, state);
@@ -119,7 +119,7 @@ fn process_proof_of_funding<M: UnifiedMaker>(
     );
 
     state.swap_id = Some(pof.id.clone());
-    state.timelock = pof.refund_locktime;
+    state.timelock = pof.refund_locktime as u32;
     state.contract_feerate = pof.contract_feerate;
 
     let (tweakable_privkey, _) = maker.get_tweakable_keypair()?;
@@ -185,7 +185,7 @@ fn process_proof_of_funding<M: UnifiedMaker>(
         incoming_amount
     );
 
-    let swap_fee = maker.calculate_swap_fee(incoming_amount, pof.refund_locktime);
+    let swap_fee = maker.calculate_swap_fee(incoming_amount, pof.refund_locktime as u32);
     let outgoing_amount = incoming_amount
         .checked_sub(swap_fee)
         .ok_or(MakerError::General("Swap fee exceeds incoming amount"))?;

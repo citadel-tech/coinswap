@@ -6,6 +6,8 @@ use bitcoin::{
     Amount, Network, OutPoint, PublicKey, ScriptBuf,
 };
 
+use bitcoind::bitcoincore_rpc::RpcApi;
+
 use crate::{
     protocol::{
         contract2::{create_hashlock_script, create_timelock_script},
@@ -61,6 +63,15 @@ impl UnifiedTaker {
         let secp = Secp256k1::new();
         let mut swapcoins = Vec::new();
 
+        // Taproot uses OP_CHECKLOCKTIMEVERIFY (absolute block height), so convert
+        // the relative locktime offset to an absolute height.
+        let current_height = wallet
+            .rpc
+            .get_block_count()
+            .map_err(|e| TakerError::General(format!("RPC error: {:?}", e)))?
+            as u32;
+        let absolute_locktime = current_height + locktime as u32;
+
         for (multisig_pubkey, hashlock_pubkey) in
             multisig_pubkeys.iter().zip(hashlock_pubkeys.iter())
         {
@@ -83,8 +94,8 @@ impl UnifiedTaker {
             let sha256_hash: [u8; 32] =
                 bitcoin::hashes::sha256::Hash::hash(&preimage).to_byte_array();
             let hashlock_script = create_hashlock_script(&sha256_hash, &other_xonly);
-            let locktime_abs = bitcoin::absolute::LockTime::from_height(locktime as u32)
-                .unwrap_or(bitcoin::absolute::LockTime::ZERO);
+            let locktime_abs = bitcoin::absolute::LockTime::from_height(absolute_locktime)
+                .map_err(|e| TakerError::General(format!("Invalid locktime: {:?}", e)))?;
             let timelock_script = create_timelock_script(locktime_abs, &my_xonly);
 
             let builder = bitcoin::taproot::TaprootBuilder::new()
@@ -421,6 +432,7 @@ impl UnifiedTaker {
         swapcoin.tap_tweak = Some(contract.tap_tweak.clone().into());
 
         swapcoin.swap_id = Some(contract.id.clone());
+        swapcoin.set_preimage(self.swap_state()?.preimage);
         self.swap_state_mut()?.incoming_swapcoins.push(swapcoin);
         Ok(())
     }

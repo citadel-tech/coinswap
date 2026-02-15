@@ -41,8 +41,8 @@ use super::{
 struct SwapState {
     /// Swap amount.
     swap_amount: Amount,
-    /// Timelock value.
-    timelock: u16,
+    /// Timelock value (Legacy: relative CSV, Taproot: absolute CLTV height).
+    timelock: u32,
     /// Protocol version for this swap.
     protocol: ProtocolVersion,
     /// Incoming swapcoins (we receive).
@@ -604,7 +604,7 @@ impl UnifiedMakerTrait for UnifiedMakerServer {
         Ok(())
     }
 
-    fn calculate_swap_fee(&self, amount: Amount, timelock: u16) -> Amount {
+    fn calculate_swap_fee(&self, amount: Amount, timelock: u32) -> Amount {
         let total_fee = self.config.base_fee as f64
             + (amount.to_sat() as f64 * self.config.amount_relative_fee_pct) / 100.00
             + (amount.to_sat() as f64 * timelock as f64 * self.config.time_relative_fee_pct)
@@ -648,6 +648,18 @@ impl UnifiedMakerTrait for UnifiedMakerServer {
             .unwrap_or(0);
 
         Ok((tx, output_position))
+    }
+
+    fn get_current_height(&self) -> Result<u32, MakerError> {
+        let wallet = self
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+        wallet
+            .rpc
+            .get_block_count()
+            .map(|h| h as u32)
+            .map_err(|e| MakerError::Wallet(crate::wallet::WalletError::Rpc(e)))
     }
 
     fn verify_contract_tx_on_chain(&self, txid: &bitcoin::Txid) -> Result<(), MakerError> {

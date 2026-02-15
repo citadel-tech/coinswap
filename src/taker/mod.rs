@@ -13,6 +13,7 @@ pub mod offers;
 mod routines;
 
 // Unified API
+mod background_services;
 mod legacy_swap;
 pub mod swap_tracker;
 mod taproot_swap;

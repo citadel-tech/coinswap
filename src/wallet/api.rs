@@ -608,16 +608,16 @@ impl Wallet {
         None
     }
 
-    /// Removes a unified incoming swap coin by swap_id.
+    /// Removes a unified incoming swap coin by contract txid.
     pub(crate) fn remove_unified_incoming_swapcoin(
         &mut self,
-        swap_id: &str,
+        contract_txid: &str,
     ) -> Option<super::unified_swapcoin::IncomingSwapCoin> {
-        let removed = self.store.unified_incoming_swapcoins.remove(swap_id);
+        let removed = self.store.unified_incoming_swapcoins.remove(contract_txid);
         if removed.is_some() {
             log::info!(
                 "Removed unified incoming swapcoin from wallet store: {} (remaining: {})",
-                swap_id,
+                contract_txid,
                 self.store.unified_incoming_swapcoins.len()
             );
         }
@@ -649,27 +649,6 @@ impl Wallet {
         swap_id: &str,
     ) -> Option<Vec<super::unified_swapcoin::WatchOnlySwapCoin>> {
         self.store.unified_watchonly_swapcoins.remove(swap_id)
-    }
-
-    /// Removes unified outgoing swapcoins whose `swap_id` matches.
-    pub(crate) fn remove_unified_outgoing_swapcoins(&mut self, swap_id: &str) {
-        let keys_to_remove: Vec<String> = self
-            .store
-            .unified_outgoing_swapcoins
-            .iter()
-            .filter(|(_, sc)| sc.swap_id.as_deref() == Some(swap_id))
-            .map(|(key, _)| key.clone())
-            .collect();
-        for key in &keys_to_remove {
-            self.store.unified_outgoing_swapcoins.remove(key);
-        }
-        if !keys_to_remove.is_empty() {
-            log::info!(
-                "Removed {} unified outgoing swapcoins for swap {}",
-                keys_to_remove.len(),
-                swap_id
-            );
-        }
     }
 
     /// Returns all contract txids from unified watch-only swapcoins.
@@ -722,7 +701,7 @@ impl Wallet {
             .collect()
     }
 
-    /// Remove a unified outgoing swapcoin by swap ID.
+    /// Remove a unified outgoing swapcoin by contract txid.
     pub(crate) fn remove_unified_outgoing_swapcoin(&mut self, contract_txid: &str) {
         if self
             .store
@@ -738,12 +717,23 @@ impl Wallet {
         }
     }
 
+    /// Returns contract_txid keys of unified outgoing swapcoins matching a swap_id.
+    pub(crate) fn unified_outgoing_keys_for_swap(&self, swap_id: &str) -> Vec<String> {
+        self.store
+            .unified_outgoing_swapcoins
+            .iter()
+            .filter(|(_, sc)| sc.swap_id.as_deref() == Some(swap_id))
+            .map(|(key, _)| key.clone())
+            .collect()
+    }
+
     /// Attempt to recover timelocked unified outgoing swapcoins.
     pub fn recover_unified_timelocked_swapcoins(
         &mut self,
         fee_rate: f64,
     ) -> Result<Vec<bitcoin::Txid>, WalletError> {
         let mut recovered = Vec::new();
+        let mut recovered_keys = Vec::new();
 
         let current_height = self.rpc.get_block_count()? as u32;
 
@@ -791,6 +781,30 @@ impl Wallet {
                         );
                     }
                     _ => {
+                        // get_tx_out returned None — either the UTXO was spent or
+                        // the contract tx was never broadcast.
+
+                        // First, check if the contract tx exists on-chain at all.
+                        let contract_tx_on_chain = self
+                            .rpc
+                            .get_raw_transaction_info(&contract_txid, None)
+                            .ok()
+                            .and_then(|info| info.confirmations)
+                            .unwrap_or(0)
+                            > 0;
+
+                        if contract_tx_on_chain {
+                            // Contract tx IS on-chain but UTXO is spent — someone
+                            // already claimed this output (hashlock or timelock).
+                            // Nothing left to recover.
+                            log::info!(
+                                "Contract UTXO for {} was already spent — discarding swapcoin",
+                                swap_id
+                            );
+                            discarded.push(swap_id.clone());
+                            continue;
+                        }
+
                         // Contract tx not on-chain. Check if the wallet UTXOs
                         // (inputs to the contract tx) are still unspent — if so,
                         // the tx was never broadcast and funds are still ours.
@@ -881,28 +895,39 @@ impl Wallet {
                     }
                 }
 
-                // Check BIP68 relative timelock: the recovery tx uses
-                // Sequence::from_height(timelock), requiring the contract tx
-                // to have at least `timelock` confirmations.
-                let timelock_depth = swapcoin.get_timelock().unwrap_or(0);
+                // Verify the contract UTXO is confirmed and the timelock is satisfied.
+                //
+                // Legacy uses BIP68 CSV (relative): the recovery tx sets
+                // Sequence::from_height(timelock), requiring `timelock` confirmations.
+                //
+                // Taproot uses BIP65 CLTV (absolute): the recovery tx sets
+                // nLockTime to the absolute height. We just need the UTXO to be
+                // confirmed (at least 1 confirmation).
+                let timelock_value = swapcoin.get_timelock().unwrap_or(0);
+                let required_confirmations =
+                    if swapcoin.protocol == crate::protocol::ProtocolVersion::Taproot {
+                        1 // CLTV only needs the UTXO to exist; height check is at lines 744-745
+                    } else {
+                        timelock_value // CSV needs this many confirmations
+                    };
                 match self
                     .rpc
                     .get_tx_out(&contract_txid, contract_vout, Some(false))
                 {
-                    Ok(Some(utxo_info)) if utxo_info.confirmations >= timelock_depth => {
+                    Ok(Some(utxo_info)) if utxo_info.confirmations >= required_confirmations => {
                         log::info!(
                             "Contract tx {} has {} confirmations (need {}), proceeding with recovery",
                             contract_txid,
                             utxo_info.confirmations,
-                            timelock_depth
+                            required_confirmations
                         );
                     }
                     Ok(Some(utxo_info)) => {
                         log::info!(
-                            "Contract tx {} has {} confirmations, need {} for BIP68 timelock — waiting",
+                            "Contract tx {} has {} confirmations, need {} — waiting",
                             contract_txid,
                             utxo_info.confirmations,
-                            timelock_depth
+                            required_confirmations
                         );
                         continue;
                     }
@@ -922,6 +947,7 @@ impl Wallet {
                             Ok(_) => {
                                 log::info!("Broadcast timelock recovery tx: {}", txid);
                                 recovered.push(txid);
+                                recovered_keys.push(swap_id.clone());
                             }
                             Err(e) => {
                                 log::warn!(
@@ -941,6 +967,9 @@ impl Wallet {
 
         for id in &discarded {
             self.store.unified_outgoing_swapcoins.remove(id);
+        }
+        for key in &recovered_keys {
+            self.store.unified_outgoing_swapcoins.remove(key);
         }
 
         if !recovered.is_empty() || !discarded.is_empty() {
@@ -985,16 +1014,28 @@ impl Wallet {
             .next()
             .ok_or_else(|| WalletError::General("Failed to get recovery address".to_string()))?;
 
+        // Legacy (CSV): nSequence encodes relative locktime, nLockTime = 0.
+        // Taproot (CLTV): nLockTime = absolute height, nSequence enables locktime.
+        let (lock_time, sequence) =
+            if swapcoin.protocol == crate::protocol::ProtocolVersion::Taproot {
+                (
+                    LockTime::from_height(timelock).unwrap_or(LockTime::ZERO),
+                    Sequence::ENABLE_LOCKTIME_NO_RBF,
+                )
+            } else {
+                (LockTime::ZERO, Sequence::from_height(timelock as u16))
+            };
+
         let recovery_tx = bitcoin::Transaction {
             version: Version::TWO,
-            lock_time: LockTime::from_height(timelock).unwrap_or(LockTime::ZERO),
+            lock_time,
             input: vec![TxIn {
                 previous_output: OutPoint {
                     txid: contract_txid,
                     vout: contract_vout,
                 },
                 script_sig: bitcoin::ScriptBuf::new(),
-                sequence: Sequence::from_height(timelock as u16),
+                sequence,
                 witness: bitcoin::Witness::new(),
             }],
             output: vec![TxOut {
