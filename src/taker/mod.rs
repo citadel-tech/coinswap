@@ -27,4 +27,5 @@ pub use config::TakerConfig;
 // Unified protocol exports
 #[cfg(feature = "integration-test")]
 pub use unified_api::UnifiedTakerBehavior;
+pub use offers::{format_state, MakerOfferCandidate, MakerState, OfferBook};
 pub use unified_api::{UnifiedSwapParams, UnifiedSwapReport, UnifiedTaker, UnifiedTakerConfig};

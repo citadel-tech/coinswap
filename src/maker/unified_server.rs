@@ -17,6 +17,7 @@ use crate::{
         common_messages::FidelityProof,
         router::{MakerToTakerMessage, TakerToMakerMessage},
     },
+    utill::get_tor_hostname,
 };
 
 use super::{
@@ -43,11 +44,17 @@ pub fn start_unified_server(maker: Arc<UnifiedMakerServer>) -> Result<(), MakerE
         maker.config.network_port
     );
 
+    let maker_port = maker.config.network_port;
     let maker_address = if cfg!(feature = "integration-test") {
-        format!("127.0.0.1:{}", maker.config.network_port)
+        format!("127.0.0.1:{maker_port}")
     } else {
-        // In production, would use Tor hostname
-        format!("127.0.0.1:{}", maker.config.network_port)
+        let maker_hostname = get_tor_hostname(
+            &maker.data_dir,
+            maker.config.control_port,
+            maker_port,
+            &maker.config.tor_auth_password,
+        )?;
+        format!("{maker_hostname}:{maker_port}")
     };
 
     log::info!(
@@ -88,6 +95,18 @@ pub fn start_unified_server(maker: Arc<UnifiedMakerServer>) -> Result<(), MakerE
         maker.config.network_port,
         maker.config.network_port
     );
+
+    // Spawn RPC server thread for maker-cli operations
+    let maker_rpc = Arc::clone(&maker);
+    let rpc_handle = thread::Builder::new()
+        .name("unified-rpc-server".to_string())
+        .spawn(move || {
+            if let Err(e) = crate::maker::rpc::server::start_rpc_server(maker_rpc) {
+                log::error!("RPC server error: {:?}", e);
+            }
+        })
+        .map_err(MakerError::IO)?;
+    maker.thread_pool.add_thread(rpc_handle);
 
     // Spawn idle state checker thread for recovery
     let maker_clone = Arc::clone(&maker);
@@ -630,12 +649,13 @@ fn recover_from_swap(
                 log::info!(
                     "[{}] Recovered {} incoming swapcoins via hashlock",
                     maker.config.network_port,
-                    swept.len()
+                    swept.resolved.len()
                 );
 
                 // Tracker: HashlockRecovered
+                let swept_txids: Vec<_> = swept.resolved.iter().map(|(_, txid)| *txid).collect();
                 update_tracker(&maker, &swap_id, |r| {
-                    r.recovery.incoming_swept = swept.clone();
+                    r.recovery.incoming_swept = swept_txids;
                     r.recovery.phase = MakerRecoveryPhase::HashlockRecovered;
                 });
 
@@ -712,8 +732,10 @@ fn recover_from_swap(
                 );
 
                 // Tracker: TimelockRecovered → Recovered + CleanedUp
+                let recovered_txids: Vec<_> =
+                    recovered.resolved.iter().map(|(_, txid)| *txid).collect();
                 update_tracker(&maker, &swap_id, |r| {
-                    r.recovery.outgoing_recovered = recovered;
+                    r.recovery.outgoing_recovered = recovered_txids;
                     r.recovery.phase = MakerRecoveryPhase::TimelockRecovered;
                 });
                 update_tracker(&maker, &swap_id, |r| {

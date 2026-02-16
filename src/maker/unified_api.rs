@@ -32,6 +32,7 @@ pub use super::unified_handlers::UnifiedMakerBehavior;
 
 use super::{
     error::MakerError,
+    rpc::server::MakerRpc,
     swap_tracker::MakerSwapTracker,
     unified_handlers::{MakerConfig, UnifiedConnectionState, UnifiedMaker as UnifiedMakerTrait},
 };
@@ -106,6 +107,14 @@ pub struct UnifiedMakerServerConfig {
     pub wallet_name: String,
     /// RPC configuration.
     pub rpc_config: RPCConfig,
+    /// Control port for Tor interface.
+    pub control_port: u16,
+    /// Socks port for Tor proxy.
+    pub socks_port: u16,
+    /// Authentication password for Tor interface.
+    pub tor_auth_password: String,
+    /// Wallet password (optional).
+    pub password: Option<String>,
 }
 
 impl Default for UnifiedMakerServerConfig {
@@ -121,11 +130,15 @@ impl Default for UnifiedMakerServerConfig {
             required_confirms: 1,
             supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
             zmq_addr: "tcp://127.0.0.1:28332".to_string(),
-            fidelity_amount: 5_000_000, // 0.05 BTC
-            fidelity_timelock: 26_000,  // ~6 months
+            fidelity_amount: 10_000, // 0.05 BTC
+            fidelity_timelock: 15_000,  // ~6 months (MAX_FIDELITY_TIMELOCK)
             network: Network::Regtest,
             wallet_name: "unified_maker".to_string(),
             rpc_config: RPCConfig::default(),
+            control_port: 9051,
+            socks_port: 9050,
+            tor_auth_password: String::new(),
+            password: None,
         }
     }
 }
@@ -201,6 +214,8 @@ pub struct UnifiedMakerServer {
     pub data_dir: PathBuf,
     /// Persistent swap tracker for recovery progress.
     pub swap_tracker: Mutex<MakerSwapTracker>,
+    /// Cached MakerConfig for the MakerRpc trait.
+    maker_rpc_config: super::config::MakerConfig,
     /// Test-only behavior override.
     #[cfg(feature = "integration-test")]
     pub behavior: UnifiedMakerBehavior,
@@ -235,7 +250,8 @@ impl UnifiedMakerServer {
         let mut rpc_config = config.rpc_config.clone();
         rpc_config.wallet_name = config.wallet_name.clone();
 
-        let wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config, None)?;
+        let wallet =
+            Wallet::load_or_init_wallet(&wallet_path, &rpc_config, config.password.clone())?;
 
         // Initial wallet sync
         let mut wallet = wallet;
@@ -262,6 +278,20 @@ impl UnifiedMakerServer {
             swap_tracker.log_state();
         }
 
+        // Build cached MakerConfig for RPC server compatibility
+        let maker_rpc_config = super::config::MakerConfig {
+            rpc_port: config.rpc_port,
+            network_port: config.network_port,
+            control_port: config.control_port,
+            socks_port: config.socks_port,
+            tor_auth_password: config.tor_auth_password.clone(),
+            min_swap_amount: config.min_swap_amount,
+            fidelity_amount: config.fidelity_amount,
+            fidelity_timelock: config.fidelity_timelock,
+            base_fee: config.base_fee,
+            amount_relative_fee_pct: config.amount_relative_fee_pct,
+        };
+
         Ok(UnifiedMakerServer {
             config: config.clone(),
             wallet: Arc::new(RwLock::new(wallet)),
@@ -273,6 +303,7 @@ impl UnifiedMakerServer {
             thread_pool: Arc::new(UnifiedThreadPool::new(config.network_port)),
             data_dir,
             swap_tracker: Mutex::new(swap_tracker),
+            maker_rpc_config,
             #[cfg(feature = "integration-test")]
             behavior: UnifiedMakerBehavior::default(),
         })
@@ -720,19 +751,18 @@ impl UnifiedMakerTrait for UnifiedMakerServer {
         );
 
         // Sweep all completed unified incoming swapcoins
-        let swept_txids = self
+        let sweep_outcome = self
             .wallet
             .write()
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
             .sweep_unified_incoming_swapcoins(MIN_FEE_RATE)
             .map_err(MakerError::Wallet)?;
 
-        if !swept_txids.is_empty() {
+        if !sweep_outcome.is_empty() {
             log::info!(
-                "[{}] ✅ Successfully swept {} unified incoming swap coins: {:?}",
+                "[{}] Successfully swept {} unified incoming swap coins",
                 self.config.network_port,
-                swept_txids.len(),
-                swept_txids
+                sweep_outcome.resolved.len(),
             );
         }
 
@@ -1118,5 +1148,23 @@ impl UnifiedMakerTrait for UnifiedMakerServer {
     #[cfg(feature = "integration-test")]
     fn behavior(&self) -> UnifiedMakerBehavior {
         self.behavior
+    }
+}
+
+impl MakerRpc for UnifiedMakerServer {
+    fn wallet(&self) -> &RwLock<Wallet> {
+        &self.wallet
+    }
+
+    fn data_dir(&self) -> &std::path::Path {
+        &self.data_dir
+    }
+
+    fn config(&self) -> &super::config::MakerConfig {
+        &self.maker_rpc_config
+    }
+
+    fn shutdown(&self) -> &AtomicBool {
+        &self.shutdown
     }
 }

@@ -238,6 +238,27 @@ impl Display for UTXOSpendInfo {
     }
 }
 
+/// Results of sweep/recovery operations with per-contract detail.
+#[derive(Debug, Default, Clone)]
+pub struct RecoveryOutcome {
+    /// (contract_txid, spending_txid) for contracts we successfully spent.
+    pub resolved: Vec<(Txid, Txid)>,
+    /// Contract txids that were discarded (already spent or never broadcast).
+    pub discarded: Vec<Txid>,
+}
+
+impl RecoveryOutcome {
+    /// Returns true if no contracts were resolved or discarded.
+    pub fn is_empty(&self) -> bool {
+        self.resolved.is_empty() && self.discarded.is_empty()
+    }
+
+    /// Total number of contracts handled (resolved + discarded).
+    pub fn len(&self) -> usize {
+        self.resolved.len() + self.discarded.len()
+    }
+}
+
 /// Represents total wallet balances of different categories.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Balances {
@@ -731,8 +752,8 @@ impl Wallet {
     pub fn recover_unified_timelocked_swapcoins(
         &mut self,
         fee_rate: f64,
-    ) -> Result<Vec<bitcoin::Txid>, WalletError> {
-        let mut recovered = Vec::new();
+    ) -> Result<RecoveryOutcome, WalletError> {
+        let mut outcome = RecoveryOutcome::default();
         let mut recovered_keys = Vec::new();
 
         let current_height = self.rpc.get_block_count()? as u32;
@@ -946,7 +967,7 @@ impl Wallet {
                         match self.send_tx(&recovery_tx) {
                             Ok(_) => {
                                 log::info!("Broadcast timelock recovery tx: {}", txid);
-                                recovered.push(txid);
+                                outcome.resolved.push((contract_txid, txid));
                                 recovered_keys.push(swap_id.clone());
                             }
                             Err(e) => {
@@ -966,17 +987,20 @@ impl Wallet {
         }
 
         for id in &discarded {
+            if let Some(sc) = self.store.unified_outgoing_swapcoins.get(id) {
+                outcome.discarded.push(sc.contract_tx.compute_txid());
+            }
             self.store.unified_outgoing_swapcoins.remove(id);
         }
         for key in &recovered_keys {
             self.store.unified_outgoing_swapcoins.remove(key);
         }
 
-        if !recovered.is_empty() || !discarded.is_empty() {
+        if !outcome.is_empty() || !discarded.is_empty() {
             self.save_to_disk()?;
         }
 
-        Ok(recovered)
+        Ok(outcome)
     }
 
     /// Create a recovery transaction for a timelocked unified outgoing swapcoin.
@@ -2842,8 +2866,8 @@ impl Wallet {
     pub fn sweep_unified_incoming_swapcoins(
         &mut self,
         feerate: f64,
-    ) -> Result<Vec<Txid>, WalletError> {
-        let mut swept_txids = Vec::new();
+    ) -> Result<RecoveryOutcome, WalletError> {
+        let mut outcome = RecoveryOutcome::default();
 
         let completed_swapcoins: Vec<_> = self
             .store
@@ -2857,7 +2881,7 @@ impl Wallet {
 
         if completed_swapcoins.is_empty() {
             log::info!("No completed unified incoming swap coins to sweep");
-            return Ok(swept_txids);
+            return Ok(outcome);
         }
 
         log::info!(
@@ -2868,6 +2892,7 @@ impl Wallet {
         self.sync_and_save()?;
 
         for (swap_id, swapcoin) in completed_swapcoins {
+            let contract_txid = swapcoin.contract_tx.compute_txid();
             // Determine which UTXO to spend based on protocol and spending path.
             let (utxo_txid, utxo_vout, input_value) = match swapcoin.protocol {
                 crate::protocol::ProtocolVersion::Legacy => {
@@ -3062,7 +3087,7 @@ impl Wallet {
                                 conf_height
                             );
 
-                            swept_txids.push(txid);
+                            outcome.resolved.push((contract_txid, txid));
                             log::info!(
                                 "Successfully swept unified incoming swap coin: {}",
                                 swap_id
@@ -3097,7 +3122,7 @@ impl Wallet {
         }
 
         self.save_to_disk()?;
-        Ok(swept_txids)
+        Ok(outcome)
     }
 
     /// Waits for a transaction to confirm and returns its block height.

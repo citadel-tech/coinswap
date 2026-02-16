@@ -22,6 +22,8 @@ use crate::{
     watch_tower::{service::WatchService, watcher::WatcherEvent},
 };
 
+use super::swap_tracker::{ContractOutcome, ContractResolution, RecoveryPhase, SwapTracker};
+
 /// Interval between recovery retry attempts.
 #[cfg(not(feature = "integration-test"))]
 const RECOVERY_LOOP_INTERVAL: Duration = Duration::from_secs(60);
@@ -41,7 +43,13 @@ pub(crate) struct RecoveryLoop {
 
 impl RecoveryLoop {
     /// Spawn the background recovery thread.
-    pub(crate) fn start(wallet: Arc<RwLock<Wallet>>) -> Self {
+    ///
+    /// The `swap_tracker` is used to update per-contract resolution outcomes
+    /// as contracts are resolved in the background.
+    pub(crate) fn start(
+        wallet: Arc<RwLock<Wallet>>,
+        swap_tracker: Arc<Mutex<SwapTracker>>,
+    ) -> Self {
         let shutdown = Arc::new(AtomicBool::new(false));
         let complete = Arc::new(AtomicBool::new(false));
 
@@ -61,34 +69,53 @@ impl RecoveryLoop {
                     }
 
                     // Try hashlock sweep (incoming)
-                    if let Ok(mut w) = wallet.write() {
+                    let incoming_result = if let Ok(mut w) = wallet.write() {
                         match w.sweep_unified_incoming_swapcoins(2.0) {
-                            Ok(swept) if !swept.is_empty() => {
+                            Ok(ref swept) if !swept.is_empty() => {
                                 log::info!(
                                     "Recovery loop: swept {} incoming swapcoins",
-                                    swept.len()
+                                    swept.resolved.len()
                                 );
+                                Some(swept.clone())
                             }
                             Err(e) => {
                                 log::debug!("Recovery loop: incoming sweep: {:?}", e);
+                                None
                             }
-                            _ => {}
+                            _ => None,
                         }
-                    }
+                    } else {
+                        None
+                    };
 
                     // Try timelock recovery (outgoing)
-                    if let Ok(mut w) = wallet.write() {
+                    let outgoing_result = if let Ok(mut w) = wallet.write() {
                         match w.recover_unified_timelocked_swapcoins(2.0) {
-                            Ok(recovered) if !recovered.is_empty() => {
+                            Ok(ref recovered) if !recovered.is_empty() => {
                                 log::info!(
                                     "Recovery loop: recovered {} timelocked swapcoins",
                                     recovered.len()
                                 );
+                                Some(recovered.clone())
                             }
                             Err(e) => {
                                 log::debug!("Recovery loop: timelock recovery: {:?}", e);
+                                None
                             }
-                            _ => {}
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+
+                    // Update tracker outcomes from recovery results
+                    if incoming_result.is_some() || outgoing_result.is_some() {
+                        if let Ok(mut tracker) = swap_tracker.lock() {
+                            Self::update_tracker_outcomes(
+                                &mut tracker,
+                                incoming_result.as_ref(),
+                                outgoing_result.as_ref(),
+                            );
                         }
                     }
 
@@ -113,6 +140,19 @@ impl RecoveryLoop {
 
                     if all_resolved {
                         log::info!("Recovery loop: all contracts resolved");
+                        // Update tracker phase to CleanedUp for all incomplete swaps
+                        if let Ok(mut tracker) = swap_tracker.lock() {
+                            let swap_ids: Vec<String> = tracker
+                                .incomplete_swaps()
+                                .iter()
+                                .map(|r| r.swap_id.clone())
+                                .collect();
+                            for swap_id in swap_ids {
+                                let _ = tracker.update_and_save(&swap_id, |r| {
+                                    r.recovery.phase = RecoveryPhase::CleanedUp;
+                                });
+                            }
+                        }
                         complete_clone.store(true, Relaxed);
                         return;
                     }
@@ -127,6 +167,125 @@ impl RecoveryLoop {
             shutdown,
             complete,
             handle: Some(handle),
+        }
+    }
+
+    /// Match resolved contract txids against tracker records and update outcomes.
+    fn update_tracker_outcomes(
+        tracker: &mut SwapTracker,
+        incoming: Option<&crate::wallet::RecoveryOutcome>,
+        outgoing: Option<&crate::wallet::RecoveryOutcome>,
+    ) {
+        let swap_ids: Vec<String> = tracker
+            .incomplete_swaps()
+            .iter()
+            .map(|r| r.swap_id.clone())
+            .collect();
+
+        for swap_id in swap_ids {
+            let mut changed = false;
+
+            let _ = tracker.update_and_save(&swap_id, |record| {
+                // Update incoming outcomes from sweep results
+                if let Some(swept) = incoming {
+                    for (contract_txid, spending_txid) in &swept.resolved {
+                        if record.incoming_contract_txids.contains(contract_txid) {
+                            // Find existing outcome or add new one
+                            if let Some(outcome) = record
+                                .recovery
+                                .incoming
+                                .iter_mut()
+                                .find(|o| o.contract_txid == *contract_txid)
+                            {
+                                if outcome.resolution == ContractResolution::Unresolved {
+                                    outcome.resolution = ContractResolution::Hashlock;
+                                    outcome.spending_txid = Some(*spending_txid);
+                                    changed = true;
+                                }
+                            } else {
+                                record.recovery.incoming.push(ContractOutcome {
+                                    contract_txid: *contract_txid,
+                                    resolution: ContractResolution::Hashlock,
+                                    spending_txid: Some(*spending_txid),
+                                });
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+
+                // Update outgoing outcomes from timelock recovery results
+                if let Some(recovered) = outgoing {
+                    for (contract_txid, spending_txid) in &recovered.resolved {
+                        if record.outgoing_contract_txids.contains(contract_txid) {
+                            if let Some(outcome) = record
+                                .recovery
+                                .outgoing
+                                .iter_mut()
+                                .find(|o| o.contract_txid == *contract_txid)
+                            {
+                                if outcome.resolution == ContractResolution::Unresolved {
+                                    outcome.resolution = ContractResolution::Timelock;
+                                    outcome.spending_txid = Some(*spending_txid);
+                                    changed = true;
+                                }
+                            } else {
+                                record.recovery.outgoing.push(ContractOutcome {
+                                    contract_txid: *contract_txid,
+                                    resolution: ContractResolution::Timelock,
+                                    spending_txid: Some(*spending_txid),
+                                });
+                                changed = true;
+                            }
+                        }
+                    }
+                    for contract_txid in &recovered.discarded {
+                        if record.outgoing_contract_txids.contains(contract_txid) {
+                            if let Some(outcome) = record
+                                .recovery
+                                .outgoing
+                                .iter_mut()
+                                .find(|o| o.contract_txid == *contract_txid)
+                            {
+                                if outcome.resolution == ContractResolution::Unresolved {
+                                    outcome.resolution = ContractResolution::Discarded;
+                                    changed = true;
+                                }
+                            } else {
+                                record.recovery.outgoing.push(ContractOutcome {
+                                    contract_txid: *contract_txid,
+                                    resolution: ContractResolution::Discarded,
+                                    spending_txid: None,
+                                });
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+
+                // Advance recovery phase based on what was resolved
+                if changed {
+                    let all_incoming_done = record
+                        .recovery
+                        .incoming
+                        .iter()
+                        .all(|o| o.resolution != ContractResolution::Unresolved);
+                    let all_outgoing_done = record
+                        .recovery
+                        .outgoing
+                        .iter()
+                        .all(|o| o.resolution != ContractResolution::Unresolved);
+
+                    if all_outgoing_done && record.recovery.phase < RecoveryPhase::OutgoingRecovered
+                    {
+                        record.recovery.phase = RecoveryPhase::OutgoingRecovered;
+                    } else if all_incoming_done
+                        && record.recovery.phase < RecoveryPhase::IncomingRecovered
+                    {
+                        record.recovery.phase = RecoveryPhase::IncomingRecovered;
+                    }
+                }
+            });
         }
     }
 

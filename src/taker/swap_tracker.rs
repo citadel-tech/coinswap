@@ -168,6 +168,49 @@ pub struct MakerProgress {
     pub finalization: FinalizationProgress,
 }
 
+/// How a contract UTXO was resolved.
+///
+/// Only encodes the spending path, not WHO spent it — the direction
+/// (`incoming`/`outgoing`/`watchonly`) already tells us the actor.
+/// E.g. `Hashlock` in `incoming` = we swept; `Hashlock` in `outgoing` = counterparty claimed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ContractResolution {
+    /// Script-path spend using hashlock (preimage + key).
+    Hashlock,
+    /// Script-path spend using timelock (CLTV matured + key).
+    Timelock,
+    /// Cooperative key-path spend (MuSig2 aggregate signature).
+    KeyPath,
+    /// Contract tx was never broadcast or UTXO was already spent before
+    /// we could act. No recovery needed.
+    Discarded,
+    /// Still on-chain, unspent. Recovery pending.
+    Unresolved,
+}
+
+impl fmt::Display for ContractResolution {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ContractResolution::Hashlock => write!(f, "Hashlock"),
+            ContractResolution::Timelock => write!(f, "Timelock"),
+            ContractResolution::KeyPath => write!(f, "KeyPath"),
+            ContractResolution::Discarded => write!(f, "Discarded"),
+            ContractResolution::Unresolved => write!(f, "Unresolved"),
+        }
+    }
+}
+
+/// Per-contract resolution record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractOutcome {
+    /// The contract transaction's txid (the UTXO being tracked).
+    pub contract_txid: Txid,
+    /// How the contract was resolved.
+    pub resolution: ContractResolution,
+    /// The txid that spent this contract output (None if Discarded/Unresolved).
+    pub spending_txid: Option<Txid>,
+}
+
 /// Tracks recovery progress across crashes.
 ///
 /// Derives `PartialOrd`/`Ord` so recovery can skip completed phases with
@@ -194,14 +237,12 @@ pub enum RecoveryPhase {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RecoveryState {
     pub phase: RecoveryPhase,
-    /// Txids of incoming contracts successfully swept via hashlock.
-    pub incoming_swept: Vec<Txid>,
-    /// Txids of incoming contracts registered for watch (sweep failed or deferred).
-    pub incoming_watching: Vec<Txid>,
-    /// Txids of outgoing contracts successfully recovered via timelock.
-    pub outgoing_recovered: Vec<Txid>,
-    /// Txids of outgoing contracts registered for watch (timelock not mature).
-    pub outgoing_watching: Vec<Txid>,
+    /// Resolution of each incoming contract (taker is receiver).
+    pub incoming: Vec<ContractOutcome>,
+    /// Resolution of each outgoing contract (taker is sender).
+    pub outgoing: Vec<ContractOutcome>,
+    /// Resolution of each intermediate maker-to-maker contract (watch-only).
+    pub watchonly: Vec<ContractOutcome>,
 }
 
 /// A persistent record of a single swap's state and progress.
@@ -236,15 +277,10 @@ impl fmt::Display for RecoveryPhase {
     }
 }
 
-/// Truncate each txid to its first 8 hex characters for compact display.
-fn short_txids(txids: &[Txid]) -> Vec<String> {
-    txids
-        .iter()
-        .map(|txid| {
-            let s = txid.to_string();
-            s[..8.min(s.len())].to_string()
-        })
-        .collect()
+/// Truncate a txid to its first 8 hex characters for compact display.
+fn short_txid(txid: &Txid) -> String {
+    let s = txid.to_string();
+    s[..8.min(s.len())].to_string()
 }
 
 impl fmt::Display for MakerProgress {
@@ -303,21 +339,26 @@ impl fmt::Display for MakerProgress {
 impl fmt::Display for RecoveryState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "phase={}", self.phase)?;
-        if !self.incoming_swept.is_empty() {
-            write!(f, " in_swept={:?}", short_txids(&self.incoming_swept))?;
-        }
-        if !self.incoming_watching.is_empty() {
-            write!(f, " in_watch={:?}", short_txids(&self.incoming_watching))?;
-        }
-        if !self.outgoing_recovered.is_empty() {
-            write!(
-                f,
-                " out_recovered={:?}",
-                short_txids(&self.outgoing_recovered)
-            )?;
-        }
-        if !self.outgoing_watching.is_empty() {
-            write!(f, " out_watch={:?}", short_txids(&self.outgoing_watching))?;
+        for (label, outcomes) in [
+            ("incoming", &self.incoming),
+            ("outgoing", &self.outgoing),
+            ("watchonly", &self.watchonly),
+        ] {
+            for (i, outcome) in outcomes.iter().enumerate() {
+                let spending = match &outcome.spending_txid {
+                    Some(txid) => format!(" (spending: {})", short_txid(txid)),
+                    None => String::new(),
+                };
+                write!(
+                    f,
+                    "\n    {}[{}]: {} -> {}{}",
+                    label,
+                    i,
+                    short_txid(&outcome.contract_txid),
+                    outcome.resolution,
+                    spending
+                )?;
+            }
         }
         Ok(())
     }
@@ -433,22 +474,6 @@ impl SwapTracker {
                         && r.recovery.phase >= RecoveryPhase::CleanedUp)
             })
             .collect()
-    }
-
-    /// Prune old Completed and fully-cleaned-up Failed records.
-    #[allow(dead_code)]
-    pub fn cleanup_old_records(&mut self, max_age_secs: u64) -> Result<(), TakerError> {
-        let now = now_secs();
-        self.data.swaps.retain(|_, r| {
-            let dominated = r.phase == SwapPhase::Completed
-                || (r.phase == SwapPhase::Failed && r.recovery.phase >= RecoveryPhase::CleanedUp);
-            if dominated {
-                now.saturating_sub(r.updated_at) < max_age_secs
-            } else {
-                true
-            }
-        });
-        self.flush()
     }
 
     /// Get a reference to a swap record by ID.
@@ -629,24 +654,6 @@ mod tests {
         assert!(RecoveryPhase::SwapcoinsPersisted < RecoveryPhase::IncomingRecovered);
         assert!(RecoveryPhase::IncomingRecovered < RecoveryPhase::OutgoingRecovered);
         assert!(RecoveryPhase::OutgoingRecovered < RecoveryPhase::CleanedUp);
-    }
-
-    #[test]
-    fn test_cleanup_old_records() {
-        let dir = TempDir::new().unwrap();
-        let mut tracker = SwapTracker::load_or_create(dir.path()).unwrap();
-
-        let mut old_complete = make_test_record("old", SwapPhase::Completed);
-        old_complete.updated_at = 0; // epoch = very old
-        tracker.save_record(&old_complete).unwrap();
-
-        let active = make_test_record("active", SwapPhase::FundsBroadcast);
-        tracker.save_record(&active).unwrap();
-
-        tracker.cleanup_old_records(3600).unwrap(); // 1 hour max age
-
-        assert!(tracker.get_record("old").is_none());
-        assert!(tracker.get_record("active").is_some());
     }
 
     #[test]

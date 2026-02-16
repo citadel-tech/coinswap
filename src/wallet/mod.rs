@@ -15,7 +15,7 @@ pub(crate) mod swapcoin;
 pub(crate) mod swapcoin2;
 pub(crate) mod unified_swapcoin;
 
-pub use api::{Balances, UTXOSpendInfo, Wallet};
+pub use api::{Balances, RecoveryOutcome, UTXOSpendInfo, Wallet};
 pub use backup::WalletBackup;
 pub use error::WalletError;
 pub use fidelity::FidelityBond;

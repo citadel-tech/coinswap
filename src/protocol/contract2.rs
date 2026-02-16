@@ -101,13 +101,25 @@ pub(crate) fn extract_preimage_from_spending_tx(spending_tx: &Transaction) -> Op
     Some(preimage)
 }
 
+/// Represents how a taproot contract output was spent
+#[derive(Debug, Clone)]
+pub enum TaprootSpendingPath {
+    /// Cooperative key-path spend (MuSig2)
+    KeyPath,
+    /// Script-path spend using hashlock
+    Hashlock {
+        /// The 32-byte hash preimage revealed in the spending transaction
+        preimage: [u8; 32],
+    },
+    /// Script-path spend using timelock
+    Timelock,
+}
+
 /// Detect how a taproot output was spent by analyzing witness data
 pub(crate) fn detect_taproot_spending_path(
     spending_tx: &Transaction,
     spent_outpoint: bitcoin::OutPoint,
-) -> Result<crate::taker::api2::TaprootSpendingPath, ProtocolError> {
-    use crate::taker::api2::TaprootSpendingPath;
-
+) -> Result<TaprootSpendingPath, ProtocolError> {
     // Find the input that spends the specific outpoint
     let input_index = spending_tx
         .input

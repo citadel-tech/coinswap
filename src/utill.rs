@@ -94,7 +94,7 @@ fn get_data_dir() -> PathBuf {
 }
 
 /// Get the Maker Directory
-pub(crate) fn get_maker_dir() -> PathBuf {
+pub fn get_maker_dir() -> PathBuf {
     get_data_dir().join("maker")
 }
 

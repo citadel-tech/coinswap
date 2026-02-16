@@ -2,13 +2,13 @@ use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
     maker::{
-        start_maker_server, start_maker_server_taproot, Maker, MakerBehavior, MakerError,
-        TaprootMaker,
+        start_unified_server, MakerError, UnifiedMakerServer, UnifiedMakerServerConfig,
     },
     utill::{parse_proxy_auth, setup_maker_logger},
     wallet::RPCConfig,
 };
 use std::{path::PathBuf, sync::Arc};
+
 /// Coinswap Maker Server
 ///
 /// The server requires a Bitcoin Core RPC connection running in Testnet4. It requires some starting balance, around 50,000 sats for Fidelity + Swap Liquidity (suggested 50,000 sats).
@@ -59,9 +59,6 @@ struct Cli {
     /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with the given name. Default: maker-wallet
     #[clap(name = "WALLET", long, short = 'w')]
     pub(crate) wallet_name: Option<String>,
-    /// Use experimental Taproot-based coinswap protocol
-    #[clap(long)]
-    pub taproot: bool,
     /// Optional Password for the encryption of the wallet.
     #[clap(name = "PASSWORD", long, short = 'p')]
     pub password: Option<String>,
@@ -74,44 +71,29 @@ fn main() -> Result<(), MakerError> {
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
-        wallet_name: "random".to_string(), // we can put anything here as it will get updated in the init.
+        wallet_name: "random".to_string(), // updated during init
     };
 
-    if args.taproot {
-        log::warn!("Using experimental Taproot-based coinswap protocol");
-        let maker = Arc::new(TaprootMaker::init(
-            args.data_directory,
-            args.wallet_name,
-            Some(rpc_config),
-            None,
-            None,
-            None,
-            args.tor_auth.clone(),
-            None,
-            args.zmq,
-            args.password,
-            #[cfg(feature = "integration-test")]
-            None,
-        )?);
+    let data_dir = args
+        .data_directory
+        .unwrap_or_else(coinswap::utill::get_maker_dir);
 
-        start_maker_server_taproot(maker)?;
-    } else {
-        let maker = Arc::new(Maker::init(
-            args.data_directory,
-            args.wallet_name,
-            Some(rpc_config),
-            None,
-            None,
-            None,
-            args.tor_auth,
-            None,
-            MakerBehavior::Normal,
-            args.zmq,
-            args.password,
-        )?);
+    let wallet_name = args
+        .wallet_name
+        .unwrap_or_else(|| "maker-wallet".to_string());
 
-        start_maker_server(maker)?;
-    }
+    let config = UnifiedMakerServerConfig {
+        data_dir,
+        wallet_name,
+        rpc_config,
+        zmq_addr: args.zmq,
+        tor_auth_password: args.tor_auth.unwrap_or_default(),
+        password: args.password,
+        ..UnifiedMakerServerConfig::default()
+    };
+
+    let maker = Arc::new(UnifiedMakerServer::init(config)?);
+    start_unified_server(maker)?;
 
     Ok(())
 }

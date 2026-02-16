@@ -1015,6 +1015,7 @@ impl TestFramework {
                     network: bitcoin::Network::Regtest,
                     wallet_name: maker_id,
                     rpc_config: rpc_config.clone(),
+                    ..UnifiedMakerServerConfig::default()
                 };
 
                 let mut server = UnifiedMakerServer::init(config).unwrap();

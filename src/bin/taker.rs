@@ -2,18 +2,16 @@ use bitcoin::{Address, Amount};
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
-    taker::{error::TakerError, offers::MakerState, SwapParams, Taker, TaprootTaker},
+    protocol::ProtocolVersion,
+    taker::{
+        error::TakerError, MakerState, UnifiedSwapParams, UnifiedTaker, UnifiedTakerConfig,
+    },
     utill::{parse_proxy_auth, setup_taker_logger, MIN_FEE_RATE, UTXO},
     wallet::{AddressType, Destination, RPCConfig, Wallet},
 };
 use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};
-
-#[cfg(feature = "integration-test")]
-use coinswap::taker::api2::TakerBehavior as TaprootTakerBehavior;
-#[cfg(feature = "integration-test")]
-use coinswap::taker::TakerBehavior;
 
 /// A simple command line app to operate as coinswap client.
 ///
@@ -68,10 +66,6 @@ struct Cli {
     #[clap(long, short = 'v', possible_values = &["off", "error", "warn", "info", "debug", "trace"], default_value = "info")]
     pub verbosity: String,
 
-    /// Use experimental Taproot-based coinswap protocol
-    #[clap(long)]
-    pub taproot: bool,
-
     /// List of commands for various wallet operations
     #[clap(subcommand)]
     command: Commands,
@@ -121,10 +115,9 @@ enum Commands {
         /// Sets the swap amount in sats.
         #[clap(long, short = 'a', default_value = "20000")]
         amount: u64,
-        // /// Sets how many new swap utxos to get. The swap amount will be randomly distributed across the new utxos.
-        // /// Increasing this number also increases the total swap fee.
-        // #[clap(long, short = 'u', default_value = "1")]
-        // utxos: u32,
+        /// Protocol version to use: "legacy" or "taproot"
+        #[clap(long, default_value = "legacy")]
+        protocol: String,
     },
     /// Recover from all failed swaps
     Recover,
@@ -162,6 +155,17 @@ enum Commands {
     },
 }
 
+fn parse_protocol(s: &str) -> Result<ProtocolVersion, TakerError> {
+    match s.to_lowercase().as_str() {
+        "legacy" => Ok(ProtocolVersion::Legacy),
+        "taproot" => Ok(ProtocolVersion::Taproot),
+        _ => Err(TakerError::General(format!(
+            "Unknown protocol '{}'. Use 'legacy' or 'taproot'.",
+            s
+        ))),
+    }
+}
+
 fn main() -> Result<(), TakerError> {
     let args = Cli::parse();
     setup_taker_logger(
@@ -180,252 +184,238 @@ fn main() -> Result<(), TakerError> {
     let rpc_config = RPCConfig {
         url: args.rpc,
         auth: Auth::UserPass(args.auth.0, args.auth.1),
-        wallet_name: "random_1".to_string(), // we can put anything here as it will get updated in the init.
+        wallet_name: "random_1".to_string(), // updated during init
     };
 
+    // Handle Restore before taker init (wallet may not exist yet)
+    if let Commands::Restore { ref backup_file } = args.command {
+        UnifiedTaker::restore_wallet(
+            args.data_directory,
+            args.wallet_name,
+            Some(rpc_config),
+            backup_file,
+        );
+        return Ok(());
+    }
+
+    // Build unified taker config
+    let config = UnifiedTakerConfig {
+        data_dir: args.data_directory,
+        wallet_file_name: args.wallet_name,
+        rpc_config: Some(rpc_config),
+        tor_auth_password: args.tor_auth,
+        zmq_addr: args.zmq,
+        password: args.password,
+        ..UnifiedTakerConfig::default()
+    };
+
+    let mut taker = UnifiedTaker::init(config)?;
+
+    // Sync wallet after initialization
+    taker.get_wallet().write().unwrap().sync_and_save()?;
+
     match &args.command {
-        Commands::Restore { backup_file } => {
-            Taker::restore_wallet(
-                args.data_directory,
-                args.wallet_name,
-                Some(rpc_config.clone()),
-                backup_file,
+        Commands::ListUtxo => {
+            let wallet = taker.get_wallet().read().unwrap();
+            let utxos = wallet.list_all_utxo_spend_info();
+            for utxo in utxos {
+                let utxo = UTXO::from_utxo_data(utxo);
+                println!("{}", serde_json::to_string_pretty(&utxo)?);
+            }
+        }
+        Commands::ListUtxoRegular => {
+            let wallet = taker.get_wallet().read().unwrap();
+            let utxos = wallet.list_descriptor_utxo_spend_info();
+            for utxo in utxos {
+                let utxo = UTXO::from_utxo_data(utxo);
+                println!("{}", serde_json::to_string_pretty(&utxo)?);
+            }
+        }
+        Commands::ListUtxoSwap => {
+            let wallet = taker.get_wallet().read().unwrap();
+            let utxos = wallet.list_incoming_swap_coin_utxo_spend_info();
+            for utxo in utxos {
+                let utxo = UTXO::from_utxo_data(utxo);
+                println!("{}", serde_json::to_string_pretty(&utxo)?);
+            }
+        }
+        Commands::ListUtxoContract => {
+            let wallet = taker.get_wallet().read().unwrap();
+            let utxos = wallet.list_live_timelock_contract_spend_info();
+            for utxo in utxos {
+                let utxo = UTXO::from_utxo_data(utxo);
+                println!("{}", serde_json::to_string_pretty(&utxo)?);
+            }
+        }
+        Commands::GetBalances => {
+            let wallet = taker.get_wallet().read().unwrap();
+            let balances = wallet.get_balances()?;
+            println!(
+                "{}",
+                to_string_pretty(&json!({
+                    "regular": balances.regular.to_sat(),
+                    "contract": balances.contract.to_sat(),
+                    "swap": balances.swap.to_sat(),
+                    "spendable": balances.spendable.to_sat(),
+                }))
+                .unwrap()
             );
         }
-        Commands::Recover if args.taproot => {
-            log::warn!("Using experimental Taproot-based recovery");
-            let mut taproot_taker = TaprootTaker::init(
-                args.data_directory.clone(),
-                args.wallet_name.clone(),
-                Some(rpc_config.clone()),
-                None,
-                args.tor_auth,
-                args.zmq,
-                None,
-                #[cfg(feature = "integration-test")]
-                TaprootTakerBehavior::Normal,
-            )?;
-            taproot_taker.recover_from_swap()?;
+        Commands::GetNewAddress => {
+            let mut wallet = taker.get_wallet().write().unwrap();
+            let address = wallet.get_next_external_address(AddressType::P2WPKH)?;
+            println!("{address:?}");
         }
-        Commands::Coinswap { makers, amount } if args.taproot => {
-            // For taproot coinswap, skip regular Taker initialization
-            log::warn!("Using experimental Taproot-based coinswap protocol");
-            let mut taproot_taker = TaprootTaker::init(
-                args.data_directory.clone(),
-                args.wallet_name.clone(),
-                Some(rpc_config.clone()),
-                None,
-                args.tor_auth,
-                args.zmq,
-                None,
-                #[cfg(feature = "integration-test")]
-                TaprootTakerBehavior::Normal,
-            )?;
-            // Sync and save the wallet data after initialization
-            taproot_taker.get_wallet_mut().sync_and_save()?;
+        Commands::SendToAddress {
+            address,
+            amount,
+            feerate,
+        } => {
+            let amount = Amount::from_sat(*amount);
 
-            let taproot_swap_params = coinswap::taker::api2::SwapParams {
-                send_amount: Amount::from_sat(*amount),
-                maker_count: *makers,
-                tx_count: 1,
-                required_confirms: 1,
-                manually_selected_outpoints: None,
-            };
-            taproot_taker.do_coinswap(taproot_swap_params)?;
-        }
-        _ => {
-            // Only initialize Taker if the command is NOT Restore, taproot Recover, or taproot Coinswap.
-            // For Restore, we don't initialize Taker because it tries to load the wallet,
-            // which may not exist yet before restoring from the backup.
-
-            let mut taker = Taker::init(
-                args.data_directory.clone(),
-                args.wallet_name.clone(),
-                Some(rpc_config.clone()),
-                #[cfg(feature = "integration-test")]
-                TakerBehavior::Normal,
-                None,
-                args.tor_auth,
-                args.zmq,
-                args.password,
-            )?;
-            // Sync and save the wallet data after initialization
-            taker.get_wallet_mut().sync_and_save()?;
-            match &args.command {
-                Commands::ListUtxo => {
-                    let utxos = taker.get_wallet().list_all_utxo_spend_info();
-                    for utxo in utxos {
-                        let utxo = UTXO::from_utxo_data(utxo);
-                        println!("{}", serde_json::to_string_pretty(&utxo)?);
-                    }
-                }
-                Commands::ListUtxoRegular => {
-                    let utxos = taker.get_wallet().list_descriptor_utxo_spend_info();
-                    for utxo in utxos {
-                        let utxo = UTXO::from_utxo_data(utxo);
-                        println!("{}", serde_json::to_string_pretty(&utxo)?);
-                    }
-                }
-                Commands::ListUtxoSwap => {
-                    let utxos = taker.get_wallet().list_incoming_swap_coin_utxo_spend_info();
-                    for utxo in utxos {
-                        let utxo = UTXO::from_utxo_data(utxo);
-                        println!("{}", serde_json::to_string_pretty(&utxo)?);
-                    }
-                }
-                Commands::ListUtxoContract => {
-                    let utxos = taker.get_wallet().list_live_timelock_contract_spend_info();
-                    for utxo in utxos {
-                        let utxo = UTXO::from_utxo_data(utxo);
-                        println!("{}", serde_json::to_string_pretty(&utxo)?);
-                    }
-                }
-                Commands::GetBalances => {
-                    let balances = taker.get_wallet().get_balances()?;
-                    println!(
-                        "{}",
-                        to_string_pretty(&json!({
-                            "regular": balances.regular.to_sat(),
-                            "contract": balances.contract.to_sat(),
-                            "swap": balances.swap.to_sat(),
-                            "spendable": balances.spendable.to_sat(),
-                        }))
-                        .unwrap()
-                    );
-                }
-                Commands::GetNewAddress => {
-                    let address = taker
-                        .get_wallet_mut()
-                        .get_next_external_address(AddressType::P2WPKH)?;
-                    println!("{address:?}");
-                }
-                Commands::SendToAddress {
-                    address,
-                    amount,
-                    feerate,
-                } => {
-                    let amount = Amount::from_sat(*amount);
-
-                    let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
-                        Some(
-                            coinswap::utill::interactive_select(
-                                taker.get_wallet().list_all_utxo_spend_info(),
-                                amount,
-                            )?
-                            .iter()
-                            .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
-                            .collect::<Vec<_>>(),
-                        )
-                    } else {
-                        None
-                    };
-
-                    let coins_to_spend = taker.get_wallet_mut().coin_select(
+            let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
+                let wallet = taker.get_wallet().read().unwrap();
+                Some(
+                    coinswap::utill::interactive_select(
+                        wallet.list_all_utxo_spend_info(),
                         amount,
-                        feerate.unwrap_or(MIN_FEE_RATE),
-                        manually_selected_outpoints,
-                    )?;
+                    )?
+                    .iter()
+                    .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
+                    .collect::<Vec<_>>(),
+                )
+            } else {
+                None
+            };
 
-                    let outputs = vec![(Address::from_str(address)?.assume_checked(), amount)];
-                    let destination = Destination::Multi {
-                        outputs,
-                        op_return_data: None,
-                        change_address_type: AddressType::P2WPKH,
-                    };
+            let mut wallet = taker.get_wallet().write().unwrap();
+            let coins_to_spend =
+                wallet.coin_select(amount, feerate.unwrap_or(MIN_FEE_RATE), manually_selected_outpoints)?;
 
-                    let tx = taker.get_wallet_mut().spend_from_wallet(
-                        feerate.unwrap_or(MIN_FEE_RATE),
-                        destination,
-                        &coins_to_spend,
-                    )?;
+            let outputs = vec![(Address::from_str(address)?.assume_checked(), amount)];
+            let destination = Destination::Multi {
+                outputs,
+                op_return_data: None,
+                change_address_type: AddressType::P2WPKH,
+            };
 
-                    let txid = taker.get_wallet().send_tx(&tx).unwrap();
+            let tx = wallet.spend_from_wallet(
+                feerate.unwrap_or(MIN_FEE_RATE),
+                destination,
+                &coins_to_spend,
+            )?;
 
-                    println!("{txid}");
+            let txid = wallet.send_tx(&tx).unwrap();
+            println!("{txid}");
 
-                    taker.get_wallet_mut().sync_and_save()?;
-                }
-                Commands::FetchOffers => {
-                    use std::time::{Duration, Instant};
+            wallet.sync_and_save()?;
+        }
+        Commands::FetchOffers => {
+            use std::time::{Duration, Instant};
 
-                    println!("Waiting for offerbook synchronization to complete…");
-                    let sync_start = Instant::now();
+            println!("Waiting for offerbook synchronization to complete…");
+            let sync_start = Instant::now();
 
-                    while taker.is_offerbook_syncing() {
-                        println!("Offerbook sync in progress...");
-                        std::thread::sleep(Duration::from_secs(2));
-                    }
-
-                    println!("Offerbook synchronized in {:.2?}", sync_start.elapsed());
-
-                    let offerbook = taker.fetch_offers()?;
-                    let makers = offerbook.all_makers();
-
-                    if makers.is_empty() {
-                        println!("No makers found in offerbook");
-                        return Ok(());
-                    }
-
-                    let mut good = 0;
-                    let mut bad = 0;
-                    let mut unresponsive = 0;
-
-                    println!("\nDiscovered {} makers\n", makers.len());
-
-                    for maker in &makers {
-                        match maker.state {
-                            MakerState::Good => good += 1,
-                            MakerState::Bad => bad += 1,
-                            MakerState::Unresponsive { .. } => unresponsive += 1,
-                        }
-
-                        println!("{}", taker.display_offer(maker)?);
-                    }
-
-                    println!(
-                        "\nOfferbook summary → good: {}, bad: {}, unresponsive: {} (total: {})",
-                        good,
-                        bad,
-                        unresponsive,
-                        makers.len()
-                    );
-                }
-                Commands::Coinswap { makers, amount } => {
-                    // Note: taproot coinswap is handled at the top level to avoid
-                    // double Taker initialization. Regular ECDSA coinswap goes here.
-                    let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
-                        let target_amount = Amount::from_sat(*amount);
-
-                        Some(
-                            coinswap::utill::interactive_select(
-                                taker.get_wallet().list_all_utxo_spend_info(),
-                                target_amount,
-                            )?
-                            .iter()
-                            .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
-                            .collect::<Vec<_>>(),
-                        )
-                    } else {
-                        None
-                    };
-
-                    let swap_params = SwapParams {
-                        send_amount: Amount::from_sat(*amount),
-                        maker_count: *makers,
-                        manually_selected_outpoints,
-                    };
-                    taker.do_coinswap(swap_params)?;
-                }
-                Commands::Recover => {
-                    // Note: taproot recovery is handled at the top level to avoid
-                    // overwriting the wallet file. Regular recovery goes here.
-                    taker.recover_from_swap()?;
-                }
-                Commands::Backup { encrypt } => {
-                    Wallet::backup_interactive(taker.get_wallet(), *encrypt);
-                }
-                _ => {}
+            // Wait for the initial sync to finish
+            while taker.is_offerbook_syncing() {
+                std::thread::sleep(Duration::from_secs(1));
             }
+
+            // If no makers found, the initial sync likely raced ahead of nostr
+            // discovery. Wait briefly for nostr to discover makers, then re-sync.
+            let offerbook = taker.fetch_offers()?;
+            if offerbook.all_makers().is_empty() {
+                println!("No makers found yet, waiting for network discovery…");
+                std::thread::sleep(Duration::from_secs(5));
+                taker.trigger_offerbook_sync();
+
+                // Wait for the triggered sync to actually start (up to 3s)
+                let wait_start = Instant::now();
+                while !taker.is_offerbook_syncing()
+                    && wait_start.elapsed() < Duration::from_secs(3)
+                {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+
+                // Now wait for the sync to finish
+                while taker.is_offerbook_syncing() {
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+            }
+
+            println!("Offerbook synchronized in {:.2?}", sync_start.elapsed());
+
+            let offerbook = taker.fetch_offers()?;
+            let makers = offerbook.all_makers();
+
+            if makers.is_empty() {
+                println!("No makers found in offerbook");
+                return Ok(());
+            }
+
+            let mut good = 0;
+            let mut bad = 0;
+            let mut unresponsive = 0;
+
+            println!("\nDiscovered {} makers\n", makers.len());
+
+            for maker in &makers {
+                match maker.state {
+                    MakerState::Good => good += 1,
+                    MakerState::Bad => bad += 1,
+                    MakerState::Unresponsive { .. } => unresponsive += 1,
+                }
+
+                println!("{}", taker.display_offer(maker)?);
+            }
+
+            println!(
+                "\nOfferbook summary → good: {}, bad: {}, unresponsive: {} (total: {})",
+                good,
+                bad,
+                unresponsive,
+                makers.len()
+            );
+        }
+        Commands::Coinswap {
+            makers,
+            amount,
+            protocol,
+        } => {
+            let protocol_version = parse_protocol(protocol)?;
+
+            let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
+                let target_amount = Amount::from_sat(*amount);
+                let wallet = taker.get_wallet().read().unwrap();
+                Some(
+                    coinswap::utill::interactive_select(
+                        wallet.list_all_utxo_spend_info(),
+                        target_amount,
+                    )?
+                    .iter()
+                    .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
+                    .collect::<Vec<_>>(),
+                )
+            } else {
+                None
+            };
+
+            let mut swap_params =
+                UnifiedSwapParams::new(protocol_version, Amount::from_sat(*amount), *makers);
+            swap_params.manually_selected_outpoints = manually_selected_outpoints;
+
+            taker.do_coinswap(swap_params)?;
+        }
+        Commands::Recover => {
+            taker.recover_active_swap()?;
+        }
+        Commands::Backup { encrypt } => {
+            let wallet = taker.get_wallet().read().unwrap();
+            Wallet::backup_interactive(&wallet, *encrypt);
+        }
+        Commands::Restore { .. } => {
+            // Handled above before taker init
+            unreachable!()
         }
     }
 
