@@ -430,12 +430,24 @@ impl UnifiedTaker {
                                 "Outgoing swapcoin missing my_privkey for signing",
                             ),
                         )?;
-                        let rs = outgoing.contract_redeemscript.as_ref().ok_or(
+                        let my_pubkey = outgoing.my_pubkey.ok_or(
                             crate::protocol::error::ProtocolError::General(
-                                "Outgoing swapcoin missing contract_redeemscript for signing",
+                                "Outgoing swapcoin missing my_pubkey for signing",
                             ),
                         )?;
-                        sign_contract_tx(rx_tx, rs, outgoing.funding_amount, &privkey)
+                        let other_pubkey = outgoing.other_pubkey.ok_or(
+                            crate::protocol::error::ProtocolError::General(
+                                "Outgoing swapcoin missing other_pubkey for signing",
+                            ),
+                        )?;
+                        let multisig_redeemscript =
+                            create_multisig_redeemscript(&my_pubkey, &other_pubkey);
+                        sign_contract_tx(
+                            rx_tx,
+                            &multisig_redeemscript,
+                            outgoing.funding_amount,
+                            &privkey,
+                        )
                     })
                     .collect::<Result<Vec<_>, _>>()?
             } else {

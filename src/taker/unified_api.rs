@@ -11,7 +11,7 @@ use std::{
 pub(crate) use super::swap_tracker::SwapPhase;
 use super::swap_tracker::{
     now_secs, ContractOutcome, ContractResolution, ExchangeProgress, FinalizationProgress,
-    LegacyExchangeProgress, MakerProgress, RecoveryPhase, RecoveryState, SerializableSecretKey,
+    LegacyExchangeProgress, MakerProgress, RecoveryState, SerializableSecretKey,
     SwapRecord, SwapTracker, TaprootExchangeProgress,
 };
 
@@ -1500,31 +1500,24 @@ impl UnifiedTaker {
         }
     }
 
-    /// Recover from a failed swap by spending contract outputs back to wallet.
-    ///
-    /// Uses the swap tracker for crash-resilient, idempotent recovery.
     /// Recover from a failed swap by persisting swapcoins to wallet and
-    /// attempting immediate recovery. Spawns a background RecoveryLoop if
-    /// contracts remain unresolved (e.g. timelocks not yet mature).
+    /// spawning a background `RecoveryLoop` for sweep/timelock recovery.
     ///
-    /// Recovery is driven entirely by wallet state — the tracker receives
-    /// fire-and-forget phase updates for observability only.
+    /// All recovery attempts, per-contract outcome tracking, phase transitions,
+    /// and wallet cleanup are handled by the `RecoveryLoop`.
     pub fn recover_active_swap(&mut self) -> Result<(), TakerError> {
         log::warn!("Starting swap recovery...");
 
         let swap_id = if let Some(ref swap) = self.ongoing_swap {
             let id = swap.id.clone();
-            // Persist all swapcoins to wallet (preimage already stamped at creation)
-            {
-                let mut wallet = self.write_wallet()?;
-                for outgoing in &swap.outgoing_swapcoins {
-                    wallet.add_unified_outgoing_swapcoin(outgoing);
-                }
-                if let Some(incoming) = swap.incoming_swapcoins.last() {
-                    wallet.add_unified_incoming_swapcoin(incoming);
-                }
-                wallet.save_to_disk()?;
+            let mut wallet = self.write_wallet()?;
+            for outgoing in &swap.outgoing_swapcoins {
+                wallet.add_unified_outgoing_swapcoin(outgoing);
             }
+            if let Some(incoming) = swap.incoming_swapcoins.last() {
+                wallet.add_unified_incoming_swapcoin(incoming);
+            }
+            wallet.save_to_disk()?;
             id
         } else {
             // Cross-session recovery: get swap_id from persisted swapcoins
@@ -1539,87 +1532,7 @@ impl UnifiedTaker {
                     TakerError::General("No persisted swapcoins found for recovery".to_string())
                 })?
         };
-        self.recover_update_phase(&swap_id, RecoveryPhase::SwapcoinsPersisted)?;
 
-        // Attempt incoming hashlock sweep
-        let incoming_outcome = {
-            let mut wallet = self.write_wallet()?;
-            match wallet.sweep_unified_incoming_swapcoins(2.0) {
-                Ok(swept) if !swept.is_empty() => {
-                    log::info!(
-                        "Recovery: swept {} incoming swapcoins",
-                        swept.resolved.len()
-                    );
-                    Some(swept)
-                }
-                Ok(_) => {
-                    log::info!("Recovery: no incoming contracts to sweep yet");
-                    None
-                }
-                Err(e) => {
-                    log::warn!("Recovery: incoming sweep failed: {:?}", e);
-                    None
-                }
-            }
-        };
-        if incoming_outcome.is_some() {
-            self.recover_update_phase(&swap_id, RecoveryPhase::IncomingRecovered)?;
-        }
-
-        // Attempt outgoing timelock recovery
-        let outgoing_outcome = {
-            let mut wallet = self.write_wallet()?;
-            match wallet.recover_unified_timelocked_swapcoins(2.0) {
-                Ok(recovered) if !recovered.is_empty() => {
-                    log::info!(
-                        "Recovery: recovered {} timelocked swapcoins",
-                        recovered.len()
-                    );
-                    Some(recovered)
-                }
-                Ok(_) => {
-                    log::info!("Recovery: no outgoing contracts ready for timelock recovery");
-                    None
-                }
-                Err(e) => {
-                    log::warn!("Recovery: timelock recovery failed: {:?}", e);
-                    None
-                }
-            }
-        };
-        if outgoing_outcome.is_some() {
-            self.recover_update_phase(&swap_id, RecoveryPhase::OutgoingRecovered)?;
-        }
-
-        // Build per-contract outcomes for the tracker
-        self.populate_recovery_outcomes(
-            &swap_id,
-            incoming_outcome.as_ref(),
-            outgoing_outcome.as_ref(),
-        )?;
-
-        // Check remaining contract outpoints
-        let has_remaining = {
-            let wallet = self.read_wallet()?;
-            !wallet.unified_outgoing_contract_outpoints().is_empty()
-                || !wallet.unified_incoming_contract_outpoints().is_empty()
-        };
-
-        if !has_remaining {
-            // All resolved — clean up wallet entries
-            let mut wallet = self.write_wallet()?;
-            let outgoing_keys = wallet.unified_outgoing_keys_for_swap(&swap_id);
-            for key in &outgoing_keys {
-                wallet.remove_unified_outgoing_swapcoin(key);
-            }
-            wallet.remove_unified_watchonly_swapcoins(&swap_id);
-            wallet.save_to_disk()?;
-            drop(wallet);
-            self.recover_update_phase(&swap_id, RecoveryPhase::CleanedUp)?;
-            log::info!("Recovery completed — all contracts resolved.");
-        }
-
-        // Mark as terminal Failed in tracker
         self.swap_tracker
             .lock()
             .unwrap()
@@ -1629,121 +1542,11 @@ impl UnifiedTaker {
 
         self.ongoing_swap = None;
 
-        // If contracts remain unresolved, spawn background recovery loop
-        if has_remaining {
-            log::info!("Recovery incomplete, starting background retry loop");
-            self.recovery_loop = Some(RecoveryLoop::start(
-                self.wallet.clone(),
-                self.swap_tracker.clone(),
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// Update the recovery phase for a swap in the tracker.
-    fn recover_update_phase(
-        &mut self,
-        swap_id: &str,
-        phase: RecoveryPhase,
-    ) -> Result<(), TakerError> {
-        self.swap_tracker
-            .lock()
-            .unwrap()
-            .update_and_save(swap_id, |r| {
-                r.recovery.phase = phase;
-            })?;
-        Ok(())
-    }
-
-    /// Populate per-contract resolution outcomes in the tracker after recovery.
-    ///
-    /// Maps wallet recovery results to `ContractOutcome` entries:
-    /// - Swept incoming contracts → `Hashlock` (we had preimage + key)
-    /// - Recovered outgoing contracts → `Timelock` (we spent via timelock)
-    /// - Discarded outgoing contracts → `Discarded` (already spent or never broadcast)
-    /// - Remaining contracts in swap state → `Unresolved`
-    /// - Watchonly contracts → `Unresolved` (we don't actively recover these)
-    fn populate_recovery_outcomes(
-        &mut self,
-        swap_id: &str,
-        incoming_outcome: Option<&RecoveryOutcome>,
-        outgoing_outcome: Option<&RecoveryOutcome>,
-    ) -> Result<(), TakerError> {
-        let mut incoming_outcomes = Vec::new();
-        let mut outgoing_outcomes = Vec::new();
-        let mut watchonly_outcomes = Vec::new();
-
-        // Build incoming outcomes from sweep results
-        if let Some(swept) = incoming_outcome {
-            for (contract_txid, spending_txid) in &swept.resolved {
-                incoming_outcomes.push(ContractOutcome {
-                    contract_txid: *contract_txid,
-                    resolution: ContractResolution::Hashlock,
-                    spending_txid: Some(*spending_txid),
-                });
-            }
-        }
-
-        // Build outgoing outcomes from timelock recovery results
-        if let Some(recovered) = outgoing_outcome {
-            for (contract_txid, spending_txid) in &recovered.resolved {
-                outgoing_outcomes.push(ContractOutcome {
-                    contract_txid: *contract_txid,
-                    resolution: ContractResolution::Timelock,
-                    spending_txid: Some(*spending_txid),
-                });
-            }
-            for contract_txid in &recovered.discarded {
-                outgoing_outcomes.push(ContractOutcome {
-                    contract_txid: *contract_txid,
-                    resolution: ContractResolution::Discarded,
-                    spending_txid: None,
-                });
-            }
-        }
-
-        // Mark remaining contracts from swap state as Unresolved
-        if let Ok(swap) = self.swap_state() {
-            for sc in &swap.incoming_swapcoins {
-                let txid = sc.contract_tx.compute_txid();
-                if !incoming_outcomes.iter().any(|o| o.contract_txid == txid) {
-                    incoming_outcomes.push(ContractOutcome {
-                        contract_txid: txid,
-                        resolution: ContractResolution::Unresolved,
-                        spending_txid: None,
-                    });
-                }
-            }
-            for sc in &swap.outgoing_swapcoins {
-                let txid = sc.contract_tx.compute_txid();
-                if !outgoing_outcomes.iter().any(|o| o.contract_txid == txid) {
-                    outgoing_outcomes.push(ContractOutcome {
-                        contract_txid: txid,
-                        resolution: ContractResolution::Unresolved,
-                        spending_txid: None,
-                    });
-                }
-            }
-            // Watchonly: intermediate maker contracts — unresolved during recovery
-            for sc in &swap.watchonly_swapcoins {
-                watchonly_outcomes.push(ContractOutcome {
-                    contract_txid: sc.contract_tx.compute_txid(),
-                    resolution: ContractResolution::Unresolved,
-                    spending_txid: None,
-                });
-            }
-        }
-
-        // Write outcomes to tracker
-        self.swap_tracker
-            .lock()
-            .unwrap()
-            .update_and_save(swap_id, |r| {
-                r.recovery.incoming = incoming_outcomes;
-                r.recovery.outgoing = outgoing_outcomes;
-                r.recovery.watchonly = watchonly_outcomes;
-            })?;
+        log::info!("Spawning recovery loop for swap {}", swap_id);
+        self.recovery_loop = Some(RecoveryLoop::start(
+            self.wallet.clone(),
+            self.swap_tracker.clone(),
+        ));
 
         Ok(())
     }

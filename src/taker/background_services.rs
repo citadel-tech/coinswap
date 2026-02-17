@@ -140,15 +140,32 @@ impl RecoveryLoop {
 
                     if all_resolved {
                         log::info!("Recovery loop: all contracts resolved");
-                        // Update tracker phase to CleanedUp for all incomplete swaps
+                        // Clean up wallet entries and update tracker
+                        let swap_ids: Vec<String> = swap_tracker
+                            .lock()
+                            .ok()
+                            .map(|t| {
+                                t.incomplete_swaps()
+                                    .iter()
+                                    .map(|r| r.swap_id.clone())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
+                        if let Ok(mut w) = wallet.write() {
+                            for swap_id in &swap_ids {
+                                let keys = w.unified_outgoing_keys_for_swap(swap_id);
+                                for key in &keys {
+                                    w.remove_unified_outgoing_swapcoin(key);
+                                }
+                                w.remove_unified_watchonly_swapcoins(swap_id);
+                            }
+                            let _ = w.save_to_disk();
+                        }
+
                         if let Ok(mut tracker) = swap_tracker.lock() {
-                            let swap_ids: Vec<String> = tracker
-                                .incomplete_swaps()
-                                .iter()
-                                .map(|r| r.swap_id.clone())
-                                .collect();
-                            for swap_id in swap_ids {
-                                let _ = tracker.update_and_save(&swap_id, |r| {
+                            for swap_id in &swap_ids {
+                                let _ = tracker.update_and_save(swap_id, |r| {
                                     r.recovery.phase = RecoveryPhase::CleanedUp;
                                 });
                             }
