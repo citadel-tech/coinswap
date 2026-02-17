@@ -21,7 +21,7 @@ use crate::{
     },
 };
 
-use super::{error::TakerError, unified_api::UnifiedTaker};
+use super::{error::TakerError, swap_tracker::SwapPhase, unified_api::UnifiedTaker};
 
 impl UnifiedTaker {
     /// Build contract data from a previous maker's response (for forwarding to the next maker).
@@ -163,8 +163,21 @@ impl UnifiedTaker {
         Ok(swapcoins)
     }
 
-    /// Exchange contract data with makers (Taproot protocol).
+    /// Broadcast outgoing contract transactions and exchange contract data
+    /// with makers (Taproot protocol).
+    ///
+    /// This is the single entrypoint for the taproot exchange phase:
+    /// 1. Broadcast our outgoing contract txs and wait for confirmation
+    /// 2. Exchange contract data with each maker in the route
     pub(crate) fn exchange_taproot(&mut self) -> Result<(), TakerError> {
+        // Phase 1: Broadcast our outgoing contract txs.
+        // Makers verify that contract txs are on-chain before creating their
+        // own outgoing, so we must broadcast first.
+        self.swap_state_mut()?.phase = SwapPhase::FundsBroadcast;
+        self.persist_swap(SwapPhase::FundsBroadcast)?;
+        self.funding_broadcast()?;
+
+        // Phase 2: Exchange contract data with makers.
         log::info!("Exchanging contract data with makers...");
 
         let num_makers = self.swap_state()?.makers.len();
@@ -180,7 +193,7 @@ impl UnifiedTaker {
 
             self.net_handshake(&mut stream)?;
             self.swap_state_mut()?.makers[i]
-                .taproot_exchange_mut()
+                .taproot_exchange_mut()?
                 .connected = true;
 
             let (
@@ -242,7 +255,7 @@ impl UnifiedTaker {
                 &TakerToMakerMessage::TaprootContractData(Box::new(contract_data)),
             )?;
             self.swap_state_mut()?.makers[i]
-                .taproot_exchange_mut()
+                .taproot_exchange_mut()?
                 .contract_data_sent = true;
 
             let msg_bytes = read_message(&mut stream)?;
@@ -257,7 +270,7 @@ impl UnifiedTaker {
                     );
 
                     self.swap_state_mut()?.makers[i]
-                        .taproot_exchange_mut()
+                        .taproot_exchange_mut()?
                         .maker_contract_received = true;
 
                     let is_last_maker = i == num_makers - 1;
@@ -305,7 +318,7 @@ impl UnifiedTaker {
 
                     received_contracts.push(*maker_contract);
                     self.swap_state_mut()?.makers[i]
-                        .taproot_exchange_mut()
+                        .taproot_exchange_mut()?
                         .swapcoins_created = true;
                     self.persist_progress()?;
                 }
@@ -319,7 +332,7 @@ impl UnifiedTaker {
         }
 
         // SP6-T: All makers responded, incoming/watchonly swapcoins created.
-        self.persist_phase(super::swap_tracker::SwapPhase::ContractsExchanged)?;
+        self.persist_swap(super::swap_tracker::SwapPhase::ContractsExchanged)?;
 
         Ok(())
     }
@@ -438,7 +451,7 @@ impl UnifiedTaker {
     }
 
     /// Broadcast contract transactions (Taproot).
-    pub(crate) fn funding_broadcast(&mut self) -> Result<(), TakerError> {
+    fn funding_broadcast(&mut self) -> Result<(), TakerError> {
         log::info!("Broadcasting contract transactions...");
 
         let wallet = self.write_wallet()?;

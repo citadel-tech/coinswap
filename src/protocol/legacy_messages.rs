@@ -161,38 +161,6 @@ pub struct RespContractSigsForRecvr {
     pub sigs: Vec<EcdsaSignature>,
 }
 
-/// Legacy hash preimage revelation for HTLC settlement.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LegacyHashPreimage {
-    /// Unique swap ID.
-    pub id: String,
-    /// The 32-byte preimage.
-    pub preimage: [u8; 32],
-    /// Multisig redeemscripts for sender's contracts.
-    /// Needed for the maker to construct sweep transactions.
-    pub senders_multisig_redeemscripts: Vec<ScriptBuf>,
-    /// Multisig redeemscripts for receiver's contracts.
-    /// Needed for verification.
-    pub receivers_multisig_redeemscripts: Vec<ScriptBuf>,
-}
-
-impl LegacyHashPreimage {
-    /// Create a new hash preimage message.
-    pub fn new(
-        id: String,
-        preimage: [u8; 32],
-        senders_multisig_redeemscripts: Vec<ScriptBuf>,
-        receivers_multisig_redeemscripts: Vec<ScriptBuf>,
-    ) -> Self {
-        Self {
-            id,
-            preimage,
-            senders_multisig_redeemscripts,
-            receivers_multisig_redeemscripts,
-        }
-    }
-}
-
 /// All Legacy-specific messages sent from Taker to Maker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LegacyTakerMessage {
@@ -208,8 +176,6 @@ pub enum LegacyTakerMessage {
     /// Request signatures for receiver's contract.
     ReqContractSigsForRecvr(ReqContractSigsForRecvr),
 
-    /// Hash preimage revelation.
-    HashPreimage(LegacyHashPreimage),
     /// Private key handover.
     PrivateKeyHandover(PrivateKeyHandover),
 }
@@ -223,7 +189,6 @@ impl Display for LegacyTakerMessage {
                 write!(f, "Legacy::RespContractSigsForRecvrAndSender")
             }
             Self::ReqContractSigsForRecvr(_) => write!(f, "Legacy::ReqContractSigsForRecvr"),
-            Self::HashPreimage(_) => write!(f, "Legacy::HashPreimage"),
             Self::PrivateKeyHandover(_) => write!(f, "Legacy::PrivateKeyHandover"),
         }
     }
@@ -237,7 +202,6 @@ impl LegacyTakerMessage {
             Self::ProofOfFunding(pof) => &pof.id,
             Self::RespContractSigsForRecvrAndSender(resp) => &resp.id,
             Self::ReqContractSigsForRecvr(req) => &req.id,
-            Self::HashPreimage(preimage) => &preimage.id,
             Self::PrivateKeyHandover(handover) => &handover.id,
         }
     }

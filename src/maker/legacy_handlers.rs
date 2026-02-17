@@ -15,7 +15,7 @@ use crate::{
             create_multisig_redeemscript, create_receivers_contract_tx,
             read_pubkeys_from_multisig_redeemscript,
         },
-        legacy_messages::{FundingTxInfo, LegacyHashPreimage, LegacyTakerMessage},
+        legacy_messages::{FundingTxInfo, LegacyTakerMessage},
         router::MakerToTakerMessage,
     },
     utill::redeemscript_to_scriptpubkey,
@@ -49,9 +49,6 @@ pub fn handle_legacy_message<M: UnifiedMaker>(
         }
 
         // Finalization messages
-        LegacyTakerMessage::HashPreimage(preimage) => {
-            process_legacy_preimage(maker, state, preimage)
-        }
         LegacyTakerMessage::PrivateKeyHandover(handover) => {
             process_legacy_handover(maker, state, handover)
         }
@@ -467,61 +464,9 @@ fn process_req_contract_sigs_for_recvr<M: UnifiedMaker>(
     )))
 }
 
-/// Process Legacy hash preimage.
-fn process_legacy_preimage<M: UnifiedMaker>(
-    maker: &Arc<M>,
-    state: &mut UnifiedConnectionState,
-    preimage: LegacyHashPreimage,
-) -> Result<Option<MakerToTakerMessage>, MakerError> {
-    log::info!(
-        "[{}] Processing Legacy hash preimage for swap {}",
-        maker.network_port(),
-        preimage.id
-    );
-
-    if state.outgoing_swapcoins.is_empty() {
-        return Err(MakerError::General("No outgoing swapcoin found"));
-    }
-
-    for incoming in state.incoming_swapcoins.iter_mut() {
-        incoming.hash_preimage = Some(preimage.preimage);
-    }
-
-    let mut privkeys = Vec::new();
-    for outgoing in &state.outgoing_swapcoins {
-        let privkey = outgoing
-            .my_privkey
-            .ok_or(MakerError::General("No private key in outgoing swapcoin"))?;
-        privkeys.push(SwapPrivkey {
-            identifier: ScriptBuf::new(),
-            key: privkey,
-        });
-    }
-
-    for incoming in &state.incoming_swapcoins {
-        maker.save_incoming_swapcoin(incoming)?;
-    }
-
-    maker.store_connection_state(&preimage.id, state);
-
-    log::info!(
-        "[{}] Preimage verified for swap {}, returning {} private key(s)",
-        maker.network_port(),
-        preimage.id,
-        privkeys.len()
-    );
-
-    let response = PrivateKeyHandover {
-        id: preimage.id,
-        privkeys,
-    };
-
-    Ok(Some(MakerToTakerMessage::LegacyPrivateKeyHandover(
-        response,
-    )))
-}
-
 /// Process Legacy private key handover.
+/// Stores the received privkey on incoming swapcoins, extracts outgoing privkeys
+/// as a response, then sweeps.
 fn process_legacy_handover<M: UnifiedMaker>(
     maker: &Arc<M>,
     state: &mut UnifiedConnectionState,
@@ -534,6 +479,23 @@ fn process_legacy_handover<M: UnifiedMaker>(
         handover.privkeys.len()
     );
 
+    if state.outgoing_swapcoins.is_empty() {
+        return Err(MakerError::General("No outgoing swapcoin found"));
+    }
+
+    // Extract outgoing privkeys for response
+    let mut privkeys = Vec::new();
+    for outgoing in &state.outgoing_swapcoins {
+        let privkey = outgoing
+            .my_privkey
+            .ok_or(MakerError::General("No private key in outgoing swapcoin"))?;
+        privkeys.push(SwapPrivkey {
+            identifier: ScriptBuf::new(),
+            key: privkey,
+        });
+    }
+
+    // Store received privkey on incoming swapcoins
     for (i, incoming) in state.incoming_swapcoins.iter_mut().enumerate() {
         if let Some(privkey) = handover.privkeys.get(i) {
             incoming.other_privkey = Some(privkey.key);
@@ -547,12 +509,20 @@ fn process_legacy_handover<M: UnifiedMaker>(
     maker.remove_connection_state(&handover.id);
 
     log::info!(
-        "[{}] Legacy swap {} completed successfully",
+        "[{}] Legacy swap {} completed successfully, returning {} private key(s)",
         maker.network_port(),
-        handover.id
+        handover.id,
+        privkeys.len()
     );
 
-    Ok(None)
+    let response = PrivateKeyHandover {
+        id: handover.id,
+        privkeys,
+    };
+
+    Ok(Some(MakerToTakerMessage::LegacyPrivateKeyHandover(
+        response,
+    )))
 }
 
 /// Find the index of the funding output in the funding transaction.

@@ -129,8 +129,8 @@ impl UnifiedTaker {
         let mut taker_hashlock_privkeys: Option<Vec<SecretKey>> = None;
 
         // Background thread monitors funding outpoints for adversarial contract broadcasts.
-        let breach_detector =
-            super::background_services::BreachDetector::start(self.watch_service.clone());
+        self.breach_detector =
+            Some(super::background_services::BreachDetector::start(self.watch_service.clone()));
 
         for maker_idx in 0..maker_count {
             let maker_address = self.swap_state()?.makers[maker_idx]
@@ -149,7 +149,7 @@ impl UnifiedTaker {
             let mut stream = self.net_connect(&maker_address)?;
             self.net_handshake(&mut stream)?;
             self.swap_state_mut()?.makers[maker_idx]
-                .legacy_exchange_mut()
+                .legacy_exchange_mut()?
                 .connected = true;
 
             // Determine our position
@@ -263,7 +263,7 @@ impl UnifiedTaker {
                 {
                     swapcoin.others_contract_sig = Some(sig);
                 }
-                let exch = self.swap_state_mut()?.makers[maker_idx].legacy_exchange_mut();
+                let exch = self.swap_state_mut()?.makers[maker_idx].legacy_exchange_mut()?;
                 exch.sender_sigs_requested = true;
                 exch.sender_sigs_received = true;
             } else {
@@ -292,10 +292,10 @@ impl UnifiedTaker {
                 // Funding txs are now on-chain — mark the phase transition.
                 // SP4-L: Point of no return. Persist nonces needed for legacy recovery.
                 self.swap_state_mut()?.makers[maker_idx]
-                    .legacy_exchange_mut()
+                    .legacy_exchange_mut()?
                     .prev_funding_broadcast = true;
                 self.swap_state_mut()?.phase = super::unified_api::SwapPhase::FundsBroadcast;
-                self.persist_phase(super::swap_tracker::SwapPhase::FundsBroadcast)?;
+                self.persist_swap(super::swap_tracker::SwapPhase::FundsBroadcast)?;
                 let funding_txids: Vec<_> = self
                     .swap_state()?
                     .outgoing_swapcoins
@@ -304,7 +304,7 @@ impl UnifiedTaker {
                     .collect();
                 self.net_wait_for_confirmation(&funding_txids, None)?;
                 self.swap_state_mut()?.makers[maker_idx]
-                    .legacy_exchange_mut()
+                    .legacy_exchange_mut()?
                     .prev_funding_confirmed = true;
                 self.persist_progress()?;
 
@@ -316,7 +316,9 @@ impl UnifiedTaker {
                     .iter()
                     .map(|sc| sc.contract_tx.input[0].previous_output)
                     .collect();
-                breach_detector.add_sentinels(&self.watch_service, &outpoints);
+                if let Some(ref detector) = self.breach_detector {
+                    detector.add_sentinels(&self.watch_service, &outpoints);
+                }
             }
 
             log::info!("Sending ProofOfFunding to maker {}", maker_idx);
@@ -363,7 +365,7 @@ impl UnifiedTaker {
                     outgoing_locktime,
                 )?;
             {
-                let exch = self.swap_state_mut()?.makers[maker_idx].legacy_exchange_mut();
+                let exch = self.swap_state_mut()?.makers[maker_idx].legacy_exchange_mut()?;
                 exch.proof_of_funding_sent = true;
                 exch.maker_contracts_received = true;
             }
@@ -408,13 +410,13 @@ impl UnifiedTaker {
                     next_locktime,
                 )?;
                 // Next maker provided sender sigs for current maker's outgoing.
-                let next_exch = self.swap_state_mut()?.makers[maker_idx + 1].legacy_exchange_mut();
+                let next_exch = self.swap_state_mut()?.makers[maker_idx + 1].legacy_exchange_mut()?;
                 next_exch.sender_sigs_requested = true;
                 next_exch.sender_sigs_received = true;
                 sigs
             };
             self.swap_state_mut()?.makers[maker_idx]
-                .legacy_exchange_mut()
+                .legacy_exchange_mut()?
                 .next_maker_sigs_obtained = true;
 
             let receivers_sigs = if is_first_peer {
@@ -454,7 +456,7 @@ impl UnifiedTaker {
                 )?
             };
             self.swap_state_mut()?.makers[maker_idx]
-                .legacy_exchange_mut()
+                .legacy_exchange_mut()?
                 .prev_maker_sigs_obtained = true;
 
             log::info!(
@@ -463,7 +465,7 @@ impl UnifiedTaker {
             );
             self.exchange_send_combined_sigs(&mut stream, &swap_id, receivers_sigs, senders_sigs)?;
             self.swap_state_mut()?.makers[maker_idx]
-                .legacy_exchange_mut()
+                .legacy_exchange_mut()?
                 .combined_sigs_sent = true;
             self.persist_progress()?;
 
@@ -497,7 +499,7 @@ impl UnifiedTaker {
                     .watchonly_swapcoins
                     .extend(watchonly_coins);
                 self.swap_state_mut()?.makers[maker_idx]
-                    .legacy_exchange_mut()
+                    .legacy_exchange_mut()?
                     .watchonly_created = true;
             }
 
@@ -515,9 +517,9 @@ impl UnifiedTaker {
                 .map(|i| i.funding_tx.compute_txid())
                 .collect();
 
-            self.net_wait_for_confirmation(&maker_funding_txids, Some(&breach_detector))?;
+            self.net_wait_for_confirmation(&maker_funding_txids, self.breach_detector.as_ref())?;
             self.swap_state_mut()?.makers[maker_idx]
-                .legacy_exchange_mut()
+                .legacy_exchange_mut()?
                 .maker_funding_confirmed = true;
 
             // Register this maker's funding outpoints as sentinels for subsequent waits.
@@ -525,11 +527,13 @@ impl UnifiedTaker {
                 .iter()
                 .map(|info| info.contract_tx.input[0].previous_output)
                 .collect();
-            breach_detector.add_sentinels(&self.watch_service, &maker_outpoints);
+            if let Some(ref detector) = self.breach_detector {
+                detector.add_sentinels(&self.watch_service, &maker_outpoints);
+            }
 
             // This maker's funding is the previous hop for the next maker.
             if maker_idx + 1 < maker_count {
-                let next_exch = self.swap_state_mut()?.makers[maker_idx + 1].legacy_exchange_mut();
+                let next_exch = self.swap_state_mut()?.makers[maker_idx + 1].legacy_exchange_mut()?;
                 next_exch.prev_funding_broadcast = true;
                 next_exch.prev_funding_confirmed = true;
             }
@@ -628,11 +632,9 @@ impl UnifiedTaker {
             );
         }
 
-        // Exchange complete — stop the breach detector.
-        breach_detector.stop();
-
         // SP6-L: All makers responded, incoming swapcoins created.
-        self.persist_phase(super::swap_tracker::SwapPhase::ContractsExchanged)?;
+        // Breach detector keeps running through finalization.
+        self.persist_swap(super::swap_tracker::SwapPhase::ContractsExchanged)?;
 
         log::info!("Multi-hop Legacy swap contract exchange completed");
         Ok(())

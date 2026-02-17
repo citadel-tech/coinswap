@@ -62,20 +62,20 @@ impl From<SerializableSecretKey> for SecretKey {
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default, Hash,
 )]
 pub enum SwapPhase {
-    /// Makers selected, negotiation underway. Safe to abort.
+    /// Makers selected from offerbook. Safe to abort.
     #[default]
-    Negotiating,
+    MakersDiscovered,
+    /// Swap details negotiated with makers. Safe to abort.
+    Negotiated,
     /// Outgoing swapcoins created, not yet broadcast. Safe to abort.
     FundingCreated,
     /// On-chain. Point of no return — recovery needed on failure.
     FundsBroadcast,
     /// All makers responded with contracts.
     ContractsExchanged,
-    /// Preimage reveal in progress.
+    /// Privkey exchange in progress.
     Finalizing,
-    /// All maker privkeys received by taker.
-    PrivkeysCollected,
-    /// Inter-maker privkey forwarding done.
+    /// Inter-maker privkey exchange done.
     PrivkeysForwarded,
     /// Swap finished, incoming swept.
     Completed,
@@ -86,12 +86,12 @@ pub enum SwapPhase {
 impl fmt::Display for SwapPhase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SwapPhase::Negotiating => write!(f, "Negotiating"),
+            SwapPhase::MakersDiscovered => write!(f, "MakersDiscovered"),
+            SwapPhase::Negotiated => write!(f, "Negotiated"),
             SwapPhase::FundingCreated => write!(f, "FundingCreated"),
             SwapPhase::FundsBroadcast => write!(f, "FundsBroadcast"),
             SwapPhase::ContractsExchanged => write!(f, "ContractsExchanged"),
             SwapPhase::Finalizing => write!(f, "Finalizing"),
-            SwapPhase::PrivkeysCollected => write!(f, "PrivkeysCollected"),
             SwapPhase::PrivkeysForwarded => write!(f, "PrivkeysForwarded"),
             SwapPhase::Completed => write!(f, "Completed"),
             SwapPhase::Failed => write!(f, "Failed"),
@@ -154,7 +154,6 @@ pub enum ExchangeProgress {
 /// Shared finalization milestones (both protocols).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FinalizationProgress {
-    pub preimage_revealed: bool,
     pub privkey_received: bool,
     pub privkey_forwarded: bool,
 }
@@ -323,7 +322,6 @@ impl fmt::Display for MakerProgress {
         };
 
         let fin_flags: &[(&str, bool)] = &[
-            ("P", self.finalization.preimage_revealed),
             ("K", self.finalization.privkey_received),
             ("F", self.finalization.privkey_forwarded),
         ];
@@ -503,6 +501,54 @@ impl SwapTracker {
         Ok(true)
     }
 
+    /// Clean up incomplete swap records from a previous session.
+    ///
+    /// - Early-phase swaps (Negotiating, FundingCreated) have no funds at risk — removes them.
+    /// - Late-phase swaps (FundsBroadcast, ContractsExchanged, etc.) are marked as Failed
+    ///   so wallet-driven recovery can handle them.
+    /// - Completed swaps are left untouched.
+    pub fn cleanup_incomplete(&mut self) {
+        let incomplete_ids: Vec<String> = self
+            .incomplete_swaps()
+            .iter()
+            .map(|r| r.swap_id.clone())
+            .collect();
+
+        if incomplete_ids.is_empty() {
+            log::info!("No incomplete swaps found in tracker.");
+            return;
+        }
+
+        for swap_id in &incomplete_ids {
+            let phase = match self.get_record(swap_id) {
+                Some(r) => r.phase,
+                None => continue,
+            };
+
+            match phase {
+                SwapPhase::MakersDiscovered | SwapPhase::Negotiated | SwapPhase::FundingCreated => {
+                    log::info!(
+                        "Swap {} was in phase {} — no funds at risk, cleaning up",
+                        swap_id, phase
+                    );
+                    if let Err(e) = self.remove_record(swap_id) {
+                        log::error!("Failed to remove tracker record for {}: {:?}", swap_id, e);
+                    }
+                }
+                SwapPhase::Completed => {}
+                _ => {
+                    log::warn!(
+                        "Swap {} was in phase {} — marking as Failed, wallet recovery will handle it",
+                        swap_id, phase
+                    );
+                    let _ = self.update_and_save(swap_id, |record| {
+                        record.phase = SwapPhase::Failed;
+                    });
+                }
+            }
+        }
+    }
+
     /// Log all swap records at INFO level.
     pub fn log_state(&self) {
         if self.data.swaps.is_empty() {
@@ -596,7 +642,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut tracker = SwapTracker::load_or_create(dir.path()).unwrap();
 
-        let record = make_test_record("swap1", SwapPhase::Negotiating);
+        let record = make_test_record("swap1", SwapPhase::MakersDiscovered);
         tracker.save_record(&record).unwrap();
         assert_eq!(tracker.incomplete_swaps().len(), 1);
 
@@ -638,12 +684,11 @@ mod tests {
 
     #[test]
     fn test_phase_ordering() {
-        assert!(SwapPhase::Negotiating < SwapPhase::FundingCreated);
+        assert!(SwapPhase::MakersDiscovered < SwapPhase::FundingCreated);
         assert!(SwapPhase::FundingCreated < SwapPhase::FundsBroadcast);
         assert!(SwapPhase::FundsBroadcast < SwapPhase::ContractsExchanged);
         assert!(SwapPhase::ContractsExchanged < SwapPhase::Finalizing);
-        assert!(SwapPhase::Finalizing < SwapPhase::PrivkeysCollected);
-        assert!(SwapPhase::PrivkeysCollected < SwapPhase::PrivkeysForwarded);
+        assert!(SwapPhase::Finalizing < SwapPhase::PrivkeysForwarded);
         assert!(SwapPhase::PrivkeysForwarded < SwapPhase::Completed);
     }
 
@@ -674,7 +719,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut tracker = SwapTracker::load_or_create(dir.path()).unwrap();
 
-        let record = make_test_record("swap1", SwapPhase::Negotiating);
+        let record = make_test_record("swap1", SwapPhase::MakersDiscovered);
         tracker.save_record(&record).unwrap();
 
         let tmp_path = dir.path().join("swap_tracker.cbor.tmp");
@@ -694,7 +739,7 @@ mod tests {
         assert!(!found);
 
         // Insert a record and mutate it
-        let record = make_test_record("swap1", SwapPhase::Negotiating);
+        let record = make_test_record("swap1", SwapPhase::MakersDiscovered);
         tracker.save_record(&record).unwrap();
 
         let found = tracker

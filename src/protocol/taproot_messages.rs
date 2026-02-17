@@ -102,29 +102,11 @@ impl TaprootContractData {
     }
 }
 
-/// Taproot hash preimage revelation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaprootHashPreimage {
-    /// Unique swap ID.
-    pub id: String,
-    /// The 32-byte preimage (SHA256 for Taproot, not Hash160).
-    pub preimage: [u8; 32],
-}
-
-impl TaprootHashPreimage {
-    /// Create a new hash preimage message.
-    pub fn new(id: String, preimage: [u8; 32]) -> Self {
-        Self { id, preimage }
-    }
-}
-
 /// All Taproot-specific messages sent from Taker to Maker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TaprootTakerMessage {
     /// Contract data exchange.
     ContractData(Box<TaprootContractData>),
-    /// Hash preimage revelation.
-    HashPreimage(TaprootHashPreimage),
     /// Private key handover.
     PrivateKeyHandover(PrivateKeyHandover),
 }
@@ -134,7 +116,6 @@ impl TaprootTakerMessage {
     pub fn swap_id(&self) -> &str {
         match self {
             Self::ContractData(data) => &data.id,
-            Self::HashPreimage(preimage) => &preimage.id,
             Self::PrivateKeyHandover(handover) => &handover.id,
         }
     }

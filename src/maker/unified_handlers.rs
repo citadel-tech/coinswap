@@ -273,9 +273,6 @@ pub fn handle_message<M: UnifiedMaker>(
             state,
             LegacyTakerMessage::ReqContractSigsForRecvr(req),
         ),
-        TakerToMakerMessage::LegacyHashPreimage(preimage) => {
-            handle_legacy_dispatch(maker, state, LegacyTakerMessage::HashPreimage(preimage))
-        }
         TakerToMakerMessage::LegacyPrivateKeyHandover(handover) => handle_legacy_dispatch(
             maker,
             state,
@@ -283,9 +280,6 @@ pub fn handle_message<M: UnifiedMaker>(
         ),
         TakerToMakerMessage::TaprootContractData(data) => {
             handle_taproot_dispatch(maker, state, TaprootTakerMessage::ContractData(data))
-        }
-        TakerToMakerMessage::TaprootHashPreimage(preimage) => {
-            handle_taproot_dispatch(maker, state, TaprootTakerMessage::HashPreimage(preimage))
         }
         TakerToMakerMessage::TaprootPrivateKeyHandover(handover) => handle_taproot_dispatch(
             maker,

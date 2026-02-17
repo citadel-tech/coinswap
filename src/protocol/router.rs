@@ -7,11 +7,11 @@ use super::{
         AckSwapDetails, GetOffer, MakerHello, Offer, PrivateKeyHandover, SwapDetails, TakerHello,
     },
     legacy_messages::{
-        LegacyHashPreimage, ProofOfFunding, ReqContractSigsAsRecvrAndSender,
-        ReqContractSigsForRecvr, ReqContractSigsForSender, RespContractSigsForRecvr,
-        RespContractSigsForRecvrAndSender, RespContractSigsForSender,
+        ProofOfFunding, ReqContractSigsAsRecvrAndSender, ReqContractSigsForRecvr,
+        ReqContractSigsForSender, RespContractSigsForRecvr, RespContractSigsForRecvrAndSender,
+        RespContractSigsForSender,
     },
-    taproot_messages::{TaprootContractData, TaprootHashPreimage},
+    taproot_messages::TaprootContractData,
 };
 
 /// All messages sent from Taker to Maker.
@@ -31,14 +31,10 @@ pub enum TakerToMakerMessage {
     RespContractSigsForRecvrAndSender(RespContractSigsForRecvrAndSender),
     /// Request signatures for receiver's contract.
     ReqContractSigsForRecvr(ReqContractSigsForRecvr),
-    /// Legacy hash preimage revelation.
-    LegacyHashPreimage(LegacyHashPreimage),
     /// Legacy private key handover.
     LegacyPrivateKeyHandover(PrivateKeyHandover),
     /// Taproot contract data exchange (MuSig2).
     TaprootContractData(Box<TaprootContractData>),
-    /// Taproot hash preimage revelation.
-    TaprootHashPreimage(TaprootHashPreimage),
     /// Taproot private key handover.
     TaprootPrivateKeyHandover(PrivateKeyHandover),
 }

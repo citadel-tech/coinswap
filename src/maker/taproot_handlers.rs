@@ -17,9 +17,7 @@ use crate::{
             extract_hash_from_hashlock,
         },
         router::MakerToTakerMessage,
-        taproot_messages::{
-            SerializableScalar, TaprootContractData, TaprootHashPreimage, TaprootTakerMessage,
-        },
+        taproot_messages::{SerializableScalar, TaprootContractData, TaprootTakerMessage},
     },
     wallet::unified_swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
 };
@@ -39,9 +37,6 @@ pub fn handle_taproot_message<M: UnifiedMaker>(
 
     match message {
         TaprootTakerMessage::ContractData(data) => process_taproot_contract(maker, state, *data),
-        TaprootTakerMessage::HashPreimage(preimage) => {
-            process_taproot_preimage(maker, state, preimage)
-        }
         TaprootTakerMessage::PrivateKeyHandover(handover) => {
             process_taproot_handover(maker, state, handover)
         }
@@ -285,57 +280,9 @@ fn process_taproot_contract<M: UnifiedMaker>(
     ))))
 }
 
-/// Process Taproot hash preimage.
-fn process_taproot_preimage<M: UnifiedMaker>(
-    maker: &Arc<M>,
-    state: &mut UnifiedConnectionState,
-    preimage: TaprootHashPreimage,
-) -> Result<Option<MakerToTakerMessage>, MakerError> {
-    log::info!(
-        "[{}] Processing Taproot hash preimage for swap {}",
-        maker.network_port(),
-        preimage.id
-    );
-
-    let outgoing = state
-        .outgoing_swapcoins
-        .first()
-        .ok_or(MakerError::General("No outgoing swapcoin found"))?;
-
-    let privkey = outgoing
-        .my_privkey
-        .ok_or(MakerError::General("No private key in outgoing swapcoin"))?;
-
-    for incoming in state.incoming_swapcoins.iter_mut() {
-        incoming.hash_preimage = Some(preimage.preimage);
-    }
-
-    for incoming in &state.incoming_swapcoins {
-        maker.save_incoming_swapcoin(incoming)?;
-    }
-
-    maker.store_connection_state(&preimage.id, state);
-
-    log::info!(
-        "[{}] Preimage verified for swap {}, returning private key",
-        maker.network_port(),
-        preimage.id
-    );
-
-    let response = PrivateKeyHandover {
-        id: preimage.id,
-        privkeys: vec![SwapPrivkey {
-            identifier: bitcoin::ScriptBuf::new(),
-            key: privkey,
-        }],
-    };
-
-    Ok(Some(MakerToTakerMessage::TaprootPrivateKeyHandover(
-        response,
-    )))
-}
-
 /// Process Taproot private key handover.
+/// Stores the received privkey on incoming swapcoins, extracts outgoing privkey
+/// as a response, then sweeps.
 fn process_taproot_handover<M: UnifiedMaker>(
     maker: &Arc<M>,
     state: &mut UnifiedConnectionState,
@@ -347,9 +294,19 @@ fn process_taproot_handover<M: UnifiedMaker>(
         handover.id
     );
 
+    let outgoing = state
+        .outgoing_swapcoins
+        .first()
+        .ok_or(MakerError::General("No outgoing swapcoin found"))?;
+
+    let privkey = outgoing
+        .my_privkey
+        .ok_or(MakerError::General("No private key in outgoing swapcoin"))?;
+
+    // Store received privkey on incoming swapcoins
     for (i, incoming) in state.incoming_swapcoins.iter_mut().enumerate() {
-        if let Some(privkey) = handover.privkeys.get(i) {
-            incoming.other_privkey = Some(privkey.key);
+        if let Some(pk) = handover.privkeys.get(i) {
+            incoming.other_privkey = Some(pk.key);
         }
     }
 
@@ -361,10 +318,20 @@ fn process_taproot_handover<M: UnifiedMaker>(
     maker.remove_connection_state(&handover.id);
 
     log::info!(
-        "[{}] Taproot swap {} completed successfully",
+        "[{}] Taproot swap {} completed successfully, returning private key",
         maker.network_port(),
         handover.id
     );
 
-    Ok(None)
+    let response = PrivateKeyHandover {
+        id: handover.id,
+        privkeys: vec![SwapPrivkey {
+            identifier: bitcoin::ScriptBuf::new(),
+            key: privkey,
+        }],
+    };
+
+    Ok(Some(MakerToTakerMessage::TaprootPrivateKeyHandover(
+        response,
+    )))
 }
