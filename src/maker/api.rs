@@ -821,7 +821,7 @@ fn recover_via_hashlock(
             .write()?
             .spend_from_hashlock_contract(&infos, &maker.watch_service)?;
         log::info!(
-            "[{}] hashlock recovery: {}/{} txs broadcasted",
+            "[{}] Maker hashlock recovery: {}/{} txs broadcasted",
             maker.config.network_port,
             broadcasted.len(),
             incoming.len()
@@ -851,7 +851,7 @@ fn recover_via_timelock(
             .write()?
             .spend_from_timelock_contract(&infos, &maker.watch_service)?;
         log::info!(
-            "[{}] timelock recovery: {}/{} txs broadcasted",
+            "[{}] Maker timelock recovery: {}/{} txs broadcasted",
             maker.config.network_port,
             broadcasted.len(),
             outgoing.len()

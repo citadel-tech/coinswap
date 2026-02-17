@@ -140,10 +140,14 @@ fn test_taproot_taker_abort3() {
     );
     // Wait for maker's automatic recovery to trigger
     // The idle-checker detects dropped connections after 60 seconds (IDLE_CONNECTION_TIMEOUT)
-    info!("⏳ Waiting for maker's automatic recovery (65 seconds)...");
-    thread::sleep(Duration::from_secs(65));
+    info!("⏳ Waiting for maker's automatic recovery...");
     // Mine blocks to confirm maker's recovery transactions
     generate_blocks(bitcoind, 10);
+    let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
+    test_framework.assert_log(
+        "Maker Successfully recovered outgoing contract via timelock",
+        &log_path,
+    );
 
     info!("✅ Taker abort 3 recovery test passed!");
     info!(

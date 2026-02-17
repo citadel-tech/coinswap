@@ -102,10 +102,6 @@ fn malice_2() {
 
     info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
-    //wait for maker's to complete recovery
-    info!("Waiting for maker to complete recovery");
-    thread::sleep(Duration::from_secs(10));
-
     ///////////////////
     let taker_wallet = taker.get_wallet_mut();
     taker_wallet.sync_and_save().unwrap();

@@ -120,8 +120,6 @@ fn multi_taker_single_maker_swap() {
 
     info!("🎯 All coinswaps processed. Transactions complete.");
 
-    thread::sleep(Duration::from_secs(10));
-
     info!("📊 Verifying Maker balances");
     // Verify spendable balances for makers.
     // TODO - Add more assertions / checks for balances.

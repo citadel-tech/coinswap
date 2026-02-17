@@ -660,19 +660,29 @@ impl TestFramework {
 
     /// Assert that a log message exists in the debug.log file
     pub fn assert_log(&self, expected_message: &str, log_path: &str) {
-        match std::fs::read_to_string(log_path) {
-            Ok(log_contents) => {
-                assert!(
-                    log_contents.contains(expected_message),
-                    "Expected log message '{}' not found in log file: {}",
+        let timeout = std::time::Duration::from_secs(120);
+        let poll_interval = std::time::Duration::from_millis(200);
+        let start = std::time::Instant::now();
+
+        loop {
+            if let Ok(log_contents) = std::fs::read_to_string(log_path) {
+                if log_contents.contains(expected_message) {
+                    log::info!("✅ Found expected log message: '{expected_message}'");
+                    return;
+                }
+            }
+
+            if start.elapsed() > timeout {
+                panic!(
+                    "Timed out waiting for log message:\n\
+                 '{}'\n\n\
+                 Last log contents:\n{}",
                     expected_message,
-                    log_path
+                    std::fs::read_to_string(log_path).unwrap_or_default()
                 );
-                log::info!("✅ Found expected log message: '{expected_message}'");
             }
-            Err(e) => {
-                panic!("Could not read log file at {}: {}", log_path, e);
-            }
+
+            std::thread::sleep(poll_interval);
         }
     }
 

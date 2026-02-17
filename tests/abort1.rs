@@ -112,8 +112,6 @@ fn taker_abort1() {
 
     info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
-    thread::sleep(Duration::from_secs(10));
-
     ///////////////////
     let taker_wallet = taker.get_wallet_mut();
     taker_wallet.sync_and_save().unwrap();
