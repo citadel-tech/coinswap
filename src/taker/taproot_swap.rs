@@ -186,7 +186,6 @@ impl UnifiedTaker {
 
         for i in 0..num_makers {
             let maker_address = self.swap_state()?.makers[i]
-                .offer_and_address
                 .address
                 .to_string();
             let mut stream = self.net_connect(&maker_address)?;

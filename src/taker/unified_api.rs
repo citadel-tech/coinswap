@@ -1,6 +1,7 @@
 //! Unified Taker API for both Legacy (ECDSA) and Taproot (MuSig2) protocols.
 
 use std::{
+    convert::TryFrom,
     net::TcpStream,
     path::PathBuf,
     sync::{mpsc, Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard},
@@ -54,8 +55,8 @@ use super::{
     config::TakerConfig,
     error::TakerError,
     offers::{
-        MakerOfferCandidate, MakerProtocol, OfferAndAddress, OfferBook, OfferBookHandle,
-        OfferSyncHandle, OfferSyncService,
+        MakerAddress, MakerOfferCandidate, MakerProtocol, OfferAndAddress, OfferBook,
+        OfferBookHandle, OfferSyncHandle, OfferSyncService,
     },
 };
 
@@ -179,6 +180,9 @@ pub struct UnifiedSwapParams {
     pub required_confirms: u32,
     /// User-selected UTXOs (optional).
     pub manually_selected_outpoints: Option<Vec<OutPoint>>,
+    /// Manually specified maker addresses (optional). When set, these makers
+    /// are used instead of auto-discovery from the offerbook.
+    pub preferred_makers: Option<Vec<String>>,
 }
 
 impl UnifiedSwapParams {
@@ -191,6 +195,7 @@ impl UnifiedSwapParams {
             tx_count: 1,
             required_confirms: 1,
             manually_selected_outpoints: None,
+            preferred_makers: None,
         }
     }
 
@@ -209,6 +214,13 @@ impl UnifiedSwapParams {
     /// Set manual UTXO selection.
     pub fn with_utxos(mut self, outpoints: Vec<OutPoint>) -> Self {
         self.manually_selected_outpoints = Some(outpoints);
+        self
+    }
+
+    /// Set preferred maker addresses (e.g. `"host:port"` strings).
+    /// When set, these makers are used directly instead of auto-discovery.
+    pub fn with_preferred_makers(mut self, makers: Vec<String>) -> Self {
+        self.preferred_makers = Some(makers);
         self
     }
 }
@@ -256,6 +268,8 @@ pub(crate) struct OngoingSwapState {
     pub(crate) multisig_nonces: Vec<SecretKey>,
     /// Hashlock nonces for each outgoing swapcoin (used in ProofOfFunding).
     pub(crate) hashlock_nonces: Vec<SecretKey>,
+    /// Spare maker addresses available to substitute if a selected maker rejects during negotiation.
+    pub(crate) spare_makers: Vec<MakerAddress>,
     /// Current phase of the swap lifecycle.
     pub(crate) phase: SwapPhase,
 }
@@ -263,8 +277,8 @@ pub(crate) struct OngoingSwapState {
 /// Connection state for a maker in the swap route.
 #[derive(Debug, Clone)]
 pub(crate) struct MakerConnection {
-    /// Maker's offer and address from offerbook.
-    pub(crate) offer_and_address: OfferAndAddress,
+    /// Maker's network address.
+    pub(crate) address: MakerAddress,
     /// Protocol version negotiated with this maker.
     pub(crate) protocol: ProtocolVersion,
     /// Tweakable point for this swap.
@@ -630,6 +644,7 @@ impl UnifiedTaker {
             watchonly_swapcoins: Vec::new(),
             multisig_nonces: Vec::new(),
             hashlock_nonces: Vec::new(),
+            spare_makers: Vec::new(),
             phase: SwapPhase::MakersDiscovered,
         });
 
@@ -816,60 +831,102 @@ impl UnifiedTaker {
     }
 
     /// Discover and select makers for the swap.
+    ///
+    /// If `preferred_makers` is set in swap params, those addresses are used
+    /// directly (no offerbook lookup). Otherwise, makers are auto-selected
+    /// from the offerbook.
     fn discover_makers(&mut self) -> Result<(), TakerError> {
         let swap = self.swap_state()?;
         let maker_count = swap.params.maker_count;
         let send_amount = swap.params.send_amount;
         let protocol = swap.params.protocol;
+        let preferred = swap.params.preferred_makers.clone();
 
         log::info!("Discovering makers for {} hops...", maker_count);
 
-        let maker_protocol = match protocol {
-            ProtocolVersion::Legacy => MakerProtocol::Legacy,
-            ProtocolVersion::Taproot => MakerProtocol::Taproot,
-        };
+        // If preferred makers are specified, use them directly.
+        let (primary_addrs, spares) = if let Some(addrs) = preferred {
+            let parsed: Vec<MakerAddress> = addrs
+                .iter()
+                .filter_map(|s| match MakerAddress::try_from(s.clone()) {
+                    Ok(addr) => Some(addr),
+                    Err(e) => {
+                        log::warn!("Invalid maker address '{}': {:?}", s, e);
+                        None
+                    }
+                })
+                .collect();
 
-        let mut available_makers = self.offerbook.active_makers(&maker_protocol);
-
-        // Polling loop: wait for offer sync to complete if no makers are available yet.
-        if available_makers.is_empty() {
-            log::warn!("No makers found in offerbook. Waiting for offer sync...");
-
-            let start = Instant::now();
-            let timeout = Duration::from_secs(60);
-
-            while self.offer_sync_handle.is_syncing() && start.elapsed() < timeout {
-                thread::sleep(Duration::from_millis(500));
+            if parsed.len() < maker_count {
+                return Err(TakerError::General(format!(
+                    "Not enough valid preferred makers. Required: {}, Parsed: {}",
+                    maker_count,
+                    parsed.len()
+                )));
             }
 
-            available_makers = self.offerbook.active_makers(&maker_protocol);
+            let mut addrs = parsed;
+            let spares = addrs.split_off(maker_count);
+            (addrs, spares)
+        } else {
+            // Auto-select from offerbook.
+            let maker_protocol = match protocol {
+                ProtocolVersion::Legacy => MakerProtocol::Legacy,
+                ProtocolVersion::Taproot => MakerProtocol::Taproot,
+            };
+
+            let mut available_makers = self.offerbook.active_makers(&maker_protocol);
+
             if available_makers.is_empty() {
+                log::warn!("No makers found in offerbook. Waiting for offer sync...");
+
+                let start = Instant::now();
+                let timeout = Duration::from_secs(60);
+
+                while self.offer_sync_handle.is_syncing() && start.elapsed() < timeout {
+                    thread::sleep(Duration::from_millis(500));
+                }
+
+                available_makers = self.offerbook.active_makers(&maker_protocol);
+                if available_makers.is_empty() {
+                    return Err(TakerError::NotEnoughMakersInOfferBook);
+                }
+            }
+
+            let suitable_makers: Vec<OfferAndAddress> = available_makers
+                .into_iter()
+                .filter(|maker| {
+                    let min_ok = send_amount.to_sat() >= maker.offer.min_size;
+                    let max_ok = send_amount.to_sat() <= maker.offer.max_size;
+                    min_ok && max_ok
+                })
+                .collect();
+
+            if suitable_makers.len() < maker_count {
+                log::error!(
+                    "Not enough suitable makers. Required: {}, Available: {}",
+                    maker_count,
+                    suitable_makers.len()
+                );
                 return Err(TakerError::NotEnoughMakersInOfferBook);
             }
-        }
 
-        let suitable_makers: Vec<OfferAndAddress> = available_makers
+            let spare_count = suitable_makers.len().saturating_sub(maker_count).min(2);
+            let total_select = maker_count + spare_count;
+
+            let mut selected: Vec<MakerAddress> = suitable_makers
+                .into_iter()
+                .take(total_select)
+                .map(|oa| oa.address)
+                .collect();
+
+            let spares = selected.split_off(maker_count);
+            (selected, spares)
+        };
+
+        let selected_makers: Vec<MakerConnection> = primary_addrs
             .into_iter()
-            .filter(|maker| {
-                let min_ok = send_amount.to_sat() >= maker.offer.min_size;
-                let max_ok = send_amount.to_sat() <= maker.offer.max_size;
-                min_ok && max_ok
-            })
-            .collect();
-
-        if suitable_makers.len() < maker_count {
-            log::error!(
-                "Not enough suitable makers. Required: {}, Available: {}",
-                maker_count,
-                suitable_makers.len()
-            );
-            return Err(TakerError::NotEnoughMakersInOfferBook);
-        }
-
-        let selected_makers: Vec<MakerConnection> = suitable_makers
-            .into_iter()
-            .take(maker_count)
-            .map(|offer_and_address| {
+            .map(|address| {
                 let exchange = match protocol {
                     ProtocolVersion::Legacy => {
                         ExchangeProgress::Legacy(LegacyExchangeProgress::default())
@@ -879,7 +936,7 @@ impl UnifiedTaker {
                     }
                 };
                 MakerConnection {
-                    offer_and_address,
+                    address,
                     protocol,
                     tweakable_point: None,
                     exchange,
@@ -889,102 +946,163 @@ impl UnifiedTaker {
             .collect();
 
         log::info!(
-            "Selected {} makers: {}",
+            "Selected {} makers (+ {} spares): {}",
             selected_makers.len(),
+            spares.len(),
             selected_makers
                 .iter()
                 .enumerate()
-                .map(|(i, m)| format!(
-                    "#{} {} (fee: {})",
-                    i + 1,
-                    m.offer_and_address.address,
-                    m.offer_and_address.offer.base_fee
-                ))
+                .map(|(i, m)| format!("#{} {}", i + 1, m.address))
                 .collect::<Vec<_>>()
                 .join(", ")
         );
 
-        self.swap_state_mut()?.makers = selected_makers;
+        let swap = self.swap_state_mut()?;
+        swap.makers = selected_makers;
+        swap.spare_makers = spares;
         Ok(())
     }
 
-    /// Negotiate swap details with each maker.
-    /// TODO: Look for another maker if a maker rejects
+    /// Negotiate swap details with each maker, substituting spare makers on failure.
     fn negotiate_swap_details(&mut self) -> Result<(), TakerError> {
         log::info!("Negotiating swap details with makers...");
 
         let swap = self.swap_state()?;
-        let num_makers = swap.makers.len();
         let maker_count = swap.params.maker_count;
         let swap_id = swap.id.clone();
         let send_amount = swap.params.send_amount;
         let tx_count = swap.params.tx_count;
+        let protocol = swap.params.protocol;
 
         // Get reference height once for consistent absolute timelocks (Taproot).
-        let reference_height =
-            {
-                let wallet = self.read_wallet()?;
-                wallet.rpc.get_block_count().map_err(|e| {
-                    TakerError::General(format!("Failed to get block count: {:?}", e))
-                })? as u32
-            };
+        let reference_height = {
+            let wallet = self.read_wallet()?;
+            wallet.rpc.get_block_count().map_err(|e| {
+                TakerError::General(format!("Failed to get block count: {:?}", e))
+            })? as u32
+        };
 
-        for i in 0..num_makers {
-            let maker_address = self.swap_state()?.makers[i]
-                .offer_and_address
-                .address
-                .to_string();
-            log::info!("Connecting to maker at {}", maker_address);
-
-            let mut stream = self.net_connect(&maker_address)?;
-
-            let negotiated_protocol = self.net_handshake(&mut stream)?;
-            log::info!("Handshake complete, protocol: {:?}", negotiated_protocol);
-
-            let refund_locktime_offset =
-                REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * (maker_count - i - 1) as u16;
-
-            // Legacy: send relative offset (CSV). Taproot: send absolute height (CLTV).
-            let timelock = if negotiated_protocol == ProtocolVersion::Taproot {
-                reference_height + refund_locktime_offset as u32
-            } else {
-                refund_locktime_offset as u32
-            };
-
-            let swap_details = SwapDetails {
-                id: swap_id.clone(),
-                protocol_version: negotiated_protocol,
-                amount: send_amount,
+        let mut i = 0;
+        while i < maker_count {
+            let result = self.negotiate_with_maker(
+                i,
+                &swap_id,
+                send_amount,
                 tx_count,
-                timelock,
-            };
+                maker_count,
+                reference_height,
+            );
 
-            send_message(&mut stream, &TakerToMakerMessage::SwapDetails(swap_details))?;
-
-            let msg_bytes = read_message(&mut stream)?;
-            let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
-
-            match msg {
-                MakerToTakerMessage::AckSwapDetails(ack) => {
-                    if let Some(tweakable_point) = ack.tweakable_point {
-                        let swap = self.swap_state_mut()?;
-                        swap.makers[i].tweakable_point = Some(tweakable_point);
-                        swap.makers[i].protocol = negotiated_protocol;
-                        log::info!("Maker {} accepted swap with tweakable point", i);
-                    } else {
-                        return Err(TakerError::General(format!("Maker {} rejected swap", i)));
-                    }
+            match result {
+                Ok(()) => {
+                    i += 1;
                 }
-                _ => {
-                    return Err(TakerError::General(format!(
-                        "Unexpected message from maker {}: expected AckSwapDetails",
-                        i
-                    )));
+                Err(e) => {
+                    log::warn!("Maker {} failed during negotiation: {:?}", i, e);
+
+                    let spare = self.swap_state_mut()?.spare_makers.pop();
+                    if let Some(spare_addr) = spare {
+                        log::info!(
+                            "Substituting maker {} with spare at {}",
+                            i,
+                            spare_addr
+                        );
+                        let exchange = match protocol {
+                            ProtocolVersion::Legacy => {
+                                ExchangeProgress::Legacy(LegacyExchangeProgress::default())
+                            }
+                            ProtocolVersion::Taproot => {
+                                ExchangeProgress::Taproot(TaprootExchangeProgress::default())
+                            }
+                        };
+                        let replacement = MakerConnection {
+                            address: spare_addr,
+                            protocol,
+                            tweakable_point: None,
+                            exchange,
+                            finalization: FinalizationProgress::default(),
+                        };
+                        self.swap_state_mut()?.makers[i] = replacement;
+                        // Don't increment i — retry with the replacement
+                    } else {
+                        return Err(TakerError::General(format!(
+                            "Maker {} failed and no spare makers available: {:?}",
+                            i, e
+                        )));
+                    }
                 }
             }
         }
 
         Ok(())
+    }
+
+    /// Negotiate swap details with a single maker at the given route index.
+    fn negotiate_with_maker(
+        &mut self,
+        maker_idx: usize,
+        swap_id: &str,
+        send_amount: Amount,
+        tx_count: u32,
+        maker_count: usize,
+        reference_height: u32,
+    ) -> Result<(), TakerError> {
+        let maker_address = self.swap_state()?.makers[maker_idx]
+            .address
+            .to_string();
+        log::info!("Connecting to maker {} at {}", maker_idx, maker_address);
+
+        let mut stream = self.net_connect(&maker_address)?;
+
+        let negotiated_protocol = self.net_handshake(&mut stream)?;
+        log::info!("Handshake complete, protocol: {:?}", negotiated_protocol);
+
+        let refund_locktime_offset =
+            REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * (maker_count - maker_idx - 1) as u16;
+
+        // Legacy: send relative offset (CSV). Taproot: send absolute height (CLTV).
+        let timelock = if negotiated_protocol == ProtocolVersion::Taproot {
+            reference_height + refund_locktime_offset as u32
+        } else {
+            refund_locktime_offset as u32
+        };
+
+        let swap_details = SwapDetails {
+            id: swap_id.to_string(),
+            protocol_version: negotiated_protocol,
+            amount: send_amount,
+            tx_count,
+            timelock,
+        };
+
+        send_message(
+            &mut stream,
+            &TakerToMakerMessage::SwapDetails(swap_details),
+        )?;
+
+        let msg_bytes = read_message(&mut stream)?;
+        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+
+        match msg {
+            MakerToTakerMessage::AckSwapDetails(ack) => {
+                if let Some(tweakable_point) = ack.tweakable_point {
+                    let swap = self.swap_state_mut()?;
+                    swap.makers[maker_idx].tweakable_point = Some(tweakable_point);
+                    swap.makers[maker_idx].protocol = negotiated_protocol;
+                    log::info!("Maker {} accepted swap with tweakable point", maker_idx);
+                    Ok(())
+                } else {
+                    Err(TakerError::General(format!(
+                        "Maker {} rejected swap",
+                        maker_idx
+                    )))
+                }
+            }
+            _ => Err(TakerError::General(format!(
+                "Unexpected message from maker {}: expected AckSwapDetails",
+                maker_idx
+            ))),
+        }
     }
 
     /// Initialize swap funding by creating outgoing swapcoins.
@@ -1298,7 +1416,6 @@ impl UnifiedTaker {
 
         for i in 0..num_makers {
             let maker_address = self.swap_state()?.makers[i]
-                .offer_and_address
                 .address
                 .to_string();
             let mut stream = self.net_connect(&maker_address)?;
@@ -1396,7 +1513,7 @@ impl UnifiedTaker {
                 .makers
                 .iter()
                 .map(|m| MakerProgress {
-                    address: m.offer_and_address.address.to_string(),
+                    address: m.address.to_string(),
                     negotiated: m.tweakable_point.is_some(),
                     exchange: m.exchange.clone(),
                     finalization: m.finalization.clone(),

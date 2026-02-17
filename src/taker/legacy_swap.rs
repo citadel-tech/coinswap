@@ -134,7 +134,6 @@ impl UnifiedTaker {
 
         for maker_idx in 0..maker_count {
             let maker_address = self.swap_state()?.makers[maker_idx]
-                .offer_and_address
                 .address
                 .to_string();
 
@@ -391,7 +390,6 @@ impl UnifiedTaker {
             } else {
                 log::info!("Requesting sender signatures from next maker");
                 let next_maker_address = self.swap_state()?.makers[maker_idx + 1]
-                    .offer_and_address
                     .address
                     .to_string();
                 let mut next_stream = self.net_connect(&next_maker_address)?;
@@ -454,7 +452,6 @@ impl UnifiedTaker {
                 log::info!("Requesting receiver signatures from previous maker");
                 // For subsequent hops, request from previous maker
                 let prev_maker_address = self.swap_state()?.makers[maker_idx - 1]
-                    .offer_and_address
                     .address
                     .to_string();
                 let mut prev_stream = self.net_connect(&prev_maker_address)?;
@@ -611,7 +608,6 @@ impl UnifiedTaker {
             // This allows the taker to broadcast the incoming contract tx during recovery
             // (for hashlock spending) without depending on the maker.
             let last_maker_address = self.swap_state()?.makers[maker_count - 1]
-                .offer_and_address
                 .address
                 .to_string();
             log::info!(

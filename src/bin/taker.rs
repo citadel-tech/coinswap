@@ -118,6 +118,10 @@ enum Commands {
         /// Protocol version to use: "legacy" or "taproot"
         #[clap(long, default_value = "legacy")]
         protocol: String,
+        /// Manually specify maker addresses (host:port). Can be repeated.
+        /// When set, these makers are used directly instead of auto-discovery.
+        #[clap(long = "maker-address")]
+        maker_addresses: Vec<String>,
     },
     /// Recover from all failed swaps
     Recover,
@@ -381,6 +385,7 @@ fn main() -> Result<(), TakerError> {
             makers,
             amount,
             protocol,
+            maker_addresses,
         } => {
             let protocol_version = parse_protocol(protocol)?;
 
@@ -403,6 +408,9 @@ fn main() -> Result<(), TakerError> {
             let mut swap_params =
                 UnifiedSwapParams::new(protocol_version, Amount::from_sat(*amount), *makers);
             swap_params.manually_selected_outpoints = manually_selected_outpoints;
+            if !maker_addresses.is_empty() {
+                swap_params.preferred_makers = Some(maker_addresses.clone());
+            }
 
             taker.do_coinswap(swap_params)?;
         }
