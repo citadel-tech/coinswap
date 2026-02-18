@@ -31,7 +31,7 @@ use crate::{
     nostr_coinswap::broadcast_bond_on_nostr,
     protocol::messages2::{MakerToTakerMessage, TakerToMakerMessage},
     utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
-    wallet::{AddressType, WalletError},
+    wallet::{AddressType, SwapReport, WalletError},
 };
 
 use crate::maker::error::MakerError;
@@ -516,6 +516,46 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
                     ip,
                     e
                 );
+
+                if connection_state.swap_amount > Amount::ZERO {
+                    let network = maker
+                        .wallet
+                        .read()
+                        .map(|w| w.store.network.to_string())
+                        .unwrap_or_default();
+                    let incoming_txid = connection_state
+                        .incoming_contract
+                        .contract_txid
+                        .map(|t| t.to_string())
+                        .unwrap_or_else(|| "N/A".to_string());
+                    let outgoing_txid = if connection_state
+                        .outgoing_contract
+                        .contract_tx
+                        .input
+                        .is_empty()
+                    {
+                        "N/A".to_string()
+                    } else {
+                        connection_state
+                            .outgoing_contract
+                            .contract_tx
+                            .compute_txid()
+                            .to_string()
+                    };
+
+                    let report = SwapReport::maker_failed(
+                        swap_id.clone(),
+                        connection_state.incoming_contract.funding_amount.to_sat(),
+                        connection_state.outgoing_contract.funding_amount.to_sat(),
+                        incoming_txid,
+                        outgoing_txid,
+                        connection_state.timelock,
+                        network,
+                        format!("{:?}", e),
+                    );
+                    report.print();
+                    let _ = report.save_to_disk(maker.data_dir());
+                }
 
                 // Check if this is a behavior-triggered error
                 match &e {

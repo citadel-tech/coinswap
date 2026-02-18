@@ -16,7 +16,7 @@ use crate::{
         check_tor_status, get_maker_dir, redeemscript_to_scriptpubkey, BLOCK_DELAY,
         HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
     },
-    wallet::{RPCConfig, SwapCoin, WalletSwapCoin},
+    wallet::{ffi::SwapReport, RPCConfig, SwapCoin, WalletSwapCoin},
     watch_tower::{
         service::{start_maker_watch_service, WatchService},
         watcher::{Role, WatcherEvent},
@@ -827,6 +827,31 @@ fn recover_via_hashlock(
             incoming.len()
         );
         if broadcasted.len() == incoming.len() {
+            let network = maker.wallet.read()?.store.network.to_string();
+            for (i, inc) in incoming.iter().enumerate() {
+                let incoming_txid = inc.contract_tx.compute_txid();
+                let swap_id = format!("recovery_hashlock_{}", incoming_txid);
+
+                let report = SwapReport::maker_recovery(
+                    swap_id,
+                    "hashlock",
+                    inc.funding_amount.to_sat(),
+                    0,
+                    incoming_txid.to_string(),
+                    "N/A".to_string(),
+                    broadcasted
+                        .get(i)
+                        .map(|t| t.compute_txid().to_string())
+                        .unwrap_or_default(),
+                    0,
+                    network.clone(),
+                );
+                report.print();
+                if let Err(e) = report.save_to_disk(&maker.data_dir) {
+                    log::warn!("Failed to save hashlock recovery report: {:?}", e);
+                }
+            }
+
             #[cfg(feature = "integration-test")]
             maker.shutdown.store(true, Relaxed);
             break;
@@ -857,6 +882,32 @@ fn recover_via_timelock(
             outgoing.len()
         );
         if broadcasted.len() == outgoing.len() {
+            let network = maker.wallet.read()?.store.network.to_string();
+            for (i, out) in outgoing.iter().enumerate() {
+                let outgoing_txid = out.contract_tx.compute_txid();
+                let swap_id = format!("recovery_timelock_{}", outgoing_txid);
+                let timelock = out.get_timelock().unwrap_or(0);
+
+                let report = SwapReport::maker_recovery(
+                    swap_id,
+                    "timelock",
+                    0,
+                    out.funding_amount.to_sat(),
+                    "N/A".to_string(),
+                    outgoing_txid.to_string(),
+                    broadcasted
+                        .get(i)
+                        .map(|t| t.compute_txid().to_string())
+                        .unwrap_or_default(),
+                    timelock,
+                    network.clone(),
+                );
+                report.print();
+                if let Err(e) = report.save_to_disk(&maker.data_dir) {
+                    log::warn!("Failed to save timelock recovery report: {:?}", e);
+                }
+            }
+
             #[cfg(feature = "integration-test")]
             maker.shutdown.store(true, Relaxed);
             break;

@@ -25,6 +25,7 @@ use super::{
 };
 
 use crate::{
+    maker::rpc::server::MakerRpc,
     protocol::{
         contract::{
             calculate_coinswap_fee, create_receivers_contract_tx, find_funding_output_index,
@@ -41,7 +42,7 @@ use crate::{
     },
     taker::SwapParams,
     utill::{calculate_fee_sats, MIN_FEE_RATE, REQUIRED_CONFIRMS},
-    wallet::{IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletError},
+    wallet::{ffi::SwapReport, IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletError},
 };
 
 /// The Global Handle Message function. Takes in a [`Arc<Maker>`] and handles messages
@@ -686,10 +687,57 @@ impl Maker {
                 .expect("incoming swapcoin not found")
                 .apply_privkey(swapcoin_private_key.key)?;
         }
+
         // Remove only the connection state for this swap id so watchtowers are not triggered.
         let mut conn_state = self.ongoing_swap_state.lock()?;
 
-        if let Some((conn_state, _)) = conn_state.remove(&message.id) {
+        if let Some((conn_state_data, start_instant)) = conn_state.remove(&message.id) {
+            let network = self.wallet.read()?.store.network.to_string();
+
+            let incoming_total: u64 = conn_state_data
+                .incoming_swapcoins
+                .iter()
+                .map(|s| s.funding_amount.to_sat())
+                .sum();
+            let outgoing_total: u64 = conn_state_data
+                .outgoing_swapcoins
+                .iter()
+                .map(|s| s.funding_amount.to_sat())
+                .sum();
+
+            let incoming_txid = conn_state_data
+                .incoming_swapcoins
+                .first()
+                .map(|s| s.contract_tx.compute_txid().to_string())
+                .unwrap_or_else(|| "N/A".to_string());
+            let outgoing_txid = conn_state_data
+                .outgoing_swapcoins
+                .first()
+                .map(|s| s.contract_tx.compute_txid().to_string())
+                .unwrap_or_else(|| "N/A".to_string());
+
+            let timelock = conn_state_data
+                .outgoing_swapcoins
+                .first()
+                .and_then(|s| s.get_timelock().ok())
+                .unwrap_or(0);
+
+            let report = SwapReport::maker_success(
+                message.id.clone(),
+                start_instant,
+                incoming_total,
+                outgoing_total,
+                incoming_txid,
+                outgoing_txid,
+                timelock,
+                network,
+            );
+            report.print();
+            if let Err(e) = report.save_to_disk(self.data_dir()) {
+                log::warn!("Failed to save success report to disk: {:?}", e);
+            }
+
+            // Unwatch contract outputs
             let unwatch_contract_outputs = |contract_tx: &Transaction| {
                 let txid = contract_tx.compute_txid();
                 for (vout, _) in contract_tx.output.iter().enumerate() {
@@ -699,10 +747,10 @@ impl Maker {
                     });
                 }
             };
-            for swap in &conn_state.incoming_swapcoins {
+            for swap in &conn_state_data.incoming_swapcoins {
                 unwatch_contract_outputs(&swap.contract_tx);
             }
-            for swap in &conn_state.outgoing_swapcoins {
+            for swap in &conn_state_data.outgoing_swapcoins {
                 unwatch_contract_outputs(&swap.contract_tx);
             }
         }

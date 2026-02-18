@@ -24,8 +24,8 @@ use crate::{
     },
     utill::{check_tor_status, get_taker_dir, read_message, send_message},
     wallet::{
-        ffi::{MakerFeeInfo, SwapReport},
-        AddressType, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError,
+        ffi::MakerFeeInfo, AddressType, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig,
+        SwapReport, Wallet, WalletError,
     },
     watch_tower::{
         registry_storage::FileRegistry,
@@ -449,7 +449,6 @@ impl Taker {
         initial_utxos: Vec<ListUnspentResultEntry>,
     ) -> Result<SwapReport, TakerError> {
         let swap_state = prereset_swapstate;
-        let target_amount = swap_state.swap_params.send_amount.to_sat();
         let swap_duration = start_time.elapsed();
 
         let all_regular_utxo = self
@@ -507,7 +506,6 @@ impl Taker {
 
         let network = self.wallet.store.network;
 
-        // Get swept swap UTXOs (V2)
         let output_swap_utxos = self
             .wallet
             .list_swept_incoming_swap_utxos()
@@ -546,178 +544,76 @@ impl Taker {
         let total_input_amount = input_utxos.iter().sum::<u64>();
         let total_output_amount = output_utxos.iter().sum::<u64>();
 
-        println!("\n\x1b[1;36m════════════════════════════════════════════════════════════════════════════════");
-        println!("                         🪙 TAPROOT COINSWAP REPORT 🪙");
-        println!("════════════════════════════════════════════════════════════════════════════════\x1b[0m\n");
-
-        println!("\x1b[1;37mSwap ID           :\x1b[0m {}", swap_state.id);
-        println!("\x1b[1;37mStatus            :\x1b[0m \x1b[1;32m✅ COMPLETED SUCCESSFULLY\x1b[0m");
-        println!(
-            "\x1b[1;37mDuration          :\x1b[0m {:.2} seconds",
-            swap_duration.as_secs_f64()
-        );
-
-        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
-        println!("                              Swap Parameters");
-        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
-        println!("\x1b[1;37mTarget Amount     :\x1b[0m {target_amount} Sats");
-        println!("\x1b[1;37mTotal Input       :\x1b[0m {total_input_amount} Sats");
-        println!("\x1b[1;37mTotal Output      :\x1b[0m {total_output_amount} Sats");
-        println!(
-            "\x1b[1;37mMakers Involved   :\x1b[0m {}",
-            swap_state.swap_params.maker_count
-        );
-
-        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
-        println!("                                Makers Used");
-        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
-        for (index, maker) in swap_state.chosen_makers.iter().enumerate() {
-            println!("  \x1b[1;33m{}.\x1b[0m {}", index + 1, maker.address);
-        }
-
-        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
-        println!("                            Transaction Details");
-        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
-
-        // Outgoing contracts section
-
-        println!("\n\x1b[1;37mOutgoing Contracts:\x1b[0m");
-        // Taker's outgoing contract (sent to first maker)
-        let taker_outgoing_txid = swap_state.outgoing_contract.contract_tx.compute_txid();
-        println!("  \x1b[1;33mTaker:\x1b[0m");
-        println!("     ← \x1b[2m{}\x1b[0m → ", taker_outgoing_txid);
-        let mut all_outgoing_txid = vec![vec![taker_outgoing_txid.to_string()]];
-        // Each maker's outgoing contracts
-        for (maker_index, maker_txs) in swap_state.maker_contract_txs.iter().enumerate() {
-            if !maker_txs.is_empty() {
-                println!("  \x1b[1;33mMaker {}:\x1b[0m", maker_index + 1);
-                all_outgoing_txid.push(
-                    maker_txs
-                        .iter()
-                        .map(|txid| txid.to_string())
-                        .collect::<Vec<_>>()
-                        .clone(),
-                );
-                for txid in maker_txs.iter() {
-                    println!("     ← \x1b[2m{}\x1b[0m → ", txid);
-                }
-            }
-        }
-
-        // Incoming contracts section
-
-        println!("\n\x1b[1;37mIncoming Contracts:\x1b[0m");
-        // First maker receives taker's outgoing
-        println!("  \x1b[1;33mMaker 1:\x1b[0m");
-        println!("    → \x1b[2m{}\x1b[0m ← ", taker_outgoing_txid);
-        if swap_state.maker_contract_txs.len() > 1 {
-            // For more than a single maker, the outgoing txn of maker at index `i` is the incoming txn of maker at index `i+1`
-            for maker_index in 0..(swap_state.maker_contract_txs.len() - 1) {
-                if let Some(maker_txs) = swap_state.maker_contract_txs.get(maker_index) {
-                    if !maker_txs.is_empty() {
-                        if let Some(txid) = maker_txs.first() {
-                            println!("  \x1b[1;33mMaker {}:\x1b[0m", maker_index + 2);
-                            println!("    → \x1b[2m{}\x1b[0m ← ", txid);
-                        }
-                    }
-                }
-            }
-        }
-        // Taker receives last maker's outgoing
-        let taker_incoming_txid = swap_state.incoming_contract.contract_tx.compute_txid();
-        println!("  \x1b[1;33mTaker:\x1b[0m");
-        println!("    → \x1b[2m{}\x1b[0m ← ", taker_incoming_txid);
-
-        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
-        println!("                              Fee Information");
-        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
-
-        let total_fee = total_input_amount.saturating_sub(total_output_amount);
-        println!("\x1b[1;37mTotal Fees        :\x1b[0m \x1b[1;31m{total_fee} sats\x1b[0m");
-
-        // Collect maker fee information for V2
-        let mut maker_fee_info = Vec::new();
-        let mut total_maker_fees = 0u64;
-        let mut temp_target_amount = swap_state.swap_params.send_amount.to_sat();
-
-        for (maker_index, maker) in swap_state.chosen_makers.iter().enumerate() {
-            let maker_refund_locktime = REFUND_LOCKTIME
-                + REFUND_LOCKTIME_STEP
-                    * (swap_state.swap_params.maker_count - maker_index - 1) as u16;
-            let base_fee = maker.offer.base_fee as f64;
-            let amount_rel_fee =
-                (maker.offer.amount_relative_fee_pct * temp_target_amount as f64) / 100.0;
-            let time_rel_fee = (maker.offer.time_relative_fee_pct
-                * maker_refund_locktime as f64
-                * temp_target_amount as f64)
-                / 100.0;
-
-            println!("\n\x1b[1;33mMaker {}:\x1b[0m", maker_index + 1);
-            println!("    Address              : {}", maker.address);
-            println!("    Base Fee             : {base_fee}");
-            println!("    Amount Relative Fee  : {amount_rel_fee:.2}");
-            println!("    Time Relative Fee    : {time_rel_fee:.2}");
-
-            let total_maker_fee = base_fee + amount_rel_fee + time_rel_fee;
-            println!("    Total Fee            : {total_maker_fee:.2} sats");
-
-            maker_fee_info.push(MakerFeeInfo {
-                maker_index,
-                maker_address: maker.address.to_string(),
-                base_fee,
-                amount_relative_fee: amount_rel_fee,
-                time_relative_fee: time_rel_fee,
-                total_fee: total_maker_fee,
-            });
-
-            temp_target_amount = temp_target_amount.saturating_sub(total_maker_fee as u64);
-            total_maker_fees += total_maker_fee as u64;
-        }
-
-        let mining_fee = total_fee.saturating_sub(total_maker_fees);
-        println!("\n\x1b[1;37mTotal Maker Fees  :\x1b[0m \x1b[36m{total_maker_fees} sats\x1b[0m");
-        println!("\x1b[1;37mMining Fees       :\x1b[0m \x1b[36m{mining_fee} sats\x1b[0m");
-
-        let fee_percentage = if target_amount > 0 {
-            (total_fee as f64 / target_amount as f64) * 100.0
-        } else {
-            0.0
-        };
-        println!("\x1b[1;37mTotal Fee Rate    :\x1b[0m \x1b[1;31m{fee_percentage:.2} %\x1b[0m");
-
-        println!("\n\x1b[1;36m────────────────────────────────────────────────────────────────────────────────");
-        println!("                              UTXO Information");
-        println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
-        println!("\x1b[1;37mInput UTXOs:\x1b[0m {input_utxos:?}");
-        println!("\x1b[1;37mOutput UTXOs:\x1b[0m");
-        println!("  Seed / Regular : {output_change_utxos:?}");
-        println!("  Swap Coins     : {output_swap_utxos:?}");
-
-        println!("\n\x1b[1;36m════════════════════════════════════════════════════════════════════════════════");
-        println!("                                END REPORT");
-        println!("════════════════════════════════════════════════════════════════════════════════\x1b[0m\n");
-
-        // Collect maker addresses
         let maker_addresses = swap_state
             .chosen_makers
             .iter()
             .map(|maker| maker.address.to_string())
             .collect::<Vec<_>>();
 
-        // For V2, we have a single funding tx (the outgoing contract)
-        let funding_txids_by_hop = all_outgoing_txid;
-        let total_funding_txs = funding_txids_by_hop.len();
+        let mut funding_txids = Vec::new();
 
-        let report = SwapReport {
-            swap_id: swap_state.id.clone(),
-            swap_duration_seconds: swap_duration.as_secs_f64(),
-            target_amount,
-            total_input_amount,
+        let first_hop_txid = swap_state
+            .outgoing_contract
+            .contract_tx
+            .compute_txid()
+            .to_string();
+        funding_txids.push(vec![first_hop_txid]);
+
+        funding_txids.extend(swap_state.maker_contract_txs.iter().map(|txids| {
+            txids
+                .iter()
+                .map(|txid| txid.to_string())
+                .collect::<Vec<_>>()
+        }));
+
+        // Collect maker fee information
+        let mut maker_fee_info = Vec::new();
+        let mut temp_target_amount = swap_state.swap_params.send_amount.to_sat();
+
+        let total_maker_fees = (0..swap_state.swap_params.maker_count)
+            .filter_map(|maker_index| {
+                let maker = swap_state.chosen_makers.get(maker_index)?;
+                let maker_refund_locktime = REFUND_LOCKTIME
+                    + REFUND_LOCKTIME_STEP
+                        * (swap_state.swap_params.maker_count - maker_index - 1) as u16;
+
+                let base_fee = maker.offer.base_fee as f64;
+                let amount_rel_fee =
+                    (maker.offer.amount_relative_fee_pct * temp_target_amount as f64) / 100.0;
+                let time_rel_fee = (maker.offer.time_relative_fee_pct
+                    * maker_refund_locktime as f64
+                    * temp_target_amount as f64)
+                    / 100.0;
+
+                let total_maker_fee = base_fee + amount_rel_fee + time_rel_fee;
+
+                maker_fee_info.push(MakerFeeInfo {
+                    maker_index,
+                    maker_address: maker.address.to_string(),
+                    base_fee,
+                    amount_relative_fee: amount_rel_fee,
+                    time_relative_fee: time_rel_fee,
+                    total_fee: total_maker_fee,
+                });
+
+                temp_target_amount = temp_target_amount.saturating_sub(total_maker_fee as u64);
+                Some(total_maker_fee as u64)
+            })
+            .sum();
+
+        let total_fee = total_input_amount.saturating_sub(total_output_amount);
+        let mining_fee = total_fee.saturating_sub(total_maker_fees);
+        let fee_percentage =
+            (total_fee as f64 / swap_state.swap_params.send_amount.to_sat() as f64) * 100.0;
+
+        let report = SwapReport::taker_success(
+            swap_state.id.clone(),
+            swap_duration.as_secs_f64(),
+            swap_state.swap_params.send_amount.to_sat(),
             total_output_amount,
-            makers_count: swap_state.swap_params.maker_count,
+            swap_state.swap_params.maker_count,
             maker_addresses,
-            total_funding_txs,
-            funding_txids_by_hop,
+            funding_txids,
             total_fee,
             total_maker_fees,
             mining_fee,
@@ -726,9 +622,16 @@ impl Taker {
             input_utxos,
             output_change_amounts,
             output_swap_amounts,
-            output_swap_utxos,
             output_change_utxos,
-        };
+            output_swap_utxos,
+            network.to_string(),
+        );
+
+        report.print();
+        let _ = report.save_to_disk(&get_taker_dir()).map_err(|e| {
+            log::warn!("Failed to save taker swap report to disk: {:?}", e);
+        });
+
         Ok(report)
     }
 

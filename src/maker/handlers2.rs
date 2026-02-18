@@ -92,6 +92,9 @@ fn handle_swap_details(
     connection_state.swap_amount = swap_details.amount;
     connection_state.timelock = swap_details.timelock;
 
+    // Track swap start time for reporting
+    connection_state.swap_start_time = Some(std::time::Instant::now());
+
     // Calculate our fee for this swap
     let our_fee = maker.calculate_swap_fee(swap_details.amount, swap_details.timelock);
     log::info!(
