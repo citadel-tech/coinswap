@@ -68,29 +68,29 @@ fn main() -> Result<(), MakerError> {
     let args = Cli::parse();
     setup_maker_logger(log::LevelFilter::Info, args.data_directory.clone());
 
-    let rpc_config = RPCConfig {
-        url: args.rpc,
-        auth: Auth::UserPass(args.auth.0, args.auth.1),
-        wallet_name: "random".to_string(), // updated during init
-    };
-
     let data_dir = args
         .data_directory
         .unwrap_or_else(coinswap::utill::get_maker_dir);
 
-    let wallet_name = args
+    // Load static settings from config file (auto-creates defaults if missing)
+    let config_path = data_dir.join("config.toml");
+    let mut config = UnifiedMakerServerConfig::new(Some(&config_path))?;
+
+    // Override with CLI / runtime args
+    config.data_dir = data_dir;
+    config.wallet_name = args
         .wallet_name
         .unwrap_or_else(|| "maker-wallet".to_string());
-
-    let config = UnifiedMakerServerConfig {
-        data_dir,
-        wallet_name,
-        rpc_config,
-        zmq_addr: args.zmq,
-        tor_auth_password: args.tor_auth.unwrap_or_default(),
-        password: args.password,
-        ..UnifiedMakerServerConfig::default()
+    config.rpc_config = RPCConfig {
+        url: args.rpc,
+        auth: Auth::UserPass(args.auth.0, args.auth.1),
+        wallet_name: "random".to_string(), // updated during init
     };
+    config.zmq_addr = args.zmq;
+    config.password = args.password;
+    if let Some(tor_auth) = args.tor_auth {
+        config.tor_auth_password = tor_auth;
+    }
 
     let maker = Arc::new(UnifiedMakerServer::init(config)?);
     start_unified_server(maker)?;

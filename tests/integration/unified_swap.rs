@@ -84,8 +84,14 @@ fn test_unified_coinswap_legacy() {
     // Mine some blocks before the swap to ensure wallet is ready
     generate_blocks(bitcoind, 1);
 
-    // Perform the swap
-    match unified_taker.do_coinswap(swap_params) {
+    // Prepare the swap (negotiate with makers, get fee summary)
+    let summary = unified_taker
+        .prepare_coinswap(swap_params)
+        .expect("Failed to prepare Legacy coinswap");
+    log::info!("Swap summary: {:?}", summary);
+
+    // Execute the swap
+    match unified_taker.start_coinswap(&summary.swap_id) {
         Ok(report) => {
             log::info!("Unified coinswap (Legacy) completed successfully!");
             log::info!("Swap report: {:?}", report);
@@ -262,8 +268,14 @@ fn test_unified_coinswap_taproot() {
     // Mine some blocks before the swap to ensure wallet is ready
     generate_blocks(bitcoind, 1);
 
-    // Perform the swap
-    match unified_taker.do_coinswap(swap_params) {
+    // Prepare the swap (negotiate with makers, get fee summary)
+    let summary = unified_taker
+        .prepare_coinswap(swap_params)
+        .expect("Failed to prepare Taproot coinswap");
+    log::info!("Swap summary: {:?}", summary);
+
+    // Execute the swap
+    match unified_taker.start_coinswap(&summary.swap_id) {
         Ok(report) => {
             log::info!("Unified coinswap (Taproot) completed successfully!");
             log::info!("Swap report: {:?}", report);

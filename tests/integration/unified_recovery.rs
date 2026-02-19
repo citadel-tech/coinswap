@@ -105,8 +105,11 @@ fn test_unified_legacy_recovery_after_funding_broadcast() {
 
     generate_blocks(bitcoind, 1);
 
-    // Perform the swap — should fail with DropAfterFundsBroadcast
-    let swap_result = unified_taker.do_coinswap(swap_params);
+    // Prepare should succeed; execution should fail with DropAfterFundsBroadcast
+    let summary = unified_taker
+        .prepare_coinswap(swap_params)
+        .expect("Prepare should succeed");
+    let swap_result = unified_taker.start_coinswap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to DropAfterFundsBroadcast behavior"
@@ -310,8 +313,11 @@ fn test_unified_taproot_recovery_after_contract_broadcast() {
 
     generate_blocks(bitcoind, 1);
 
-    // Perform the swap — should fail with DropAfterFundsBroadcast
-    let swap_result = unified_taker.do_coinswap(swap_params);
+    // Prepare should succeed; execution should fail with DropAfterFundsBroadcast
+    let summary = unified_taker
+        .prepare_coinswap(swap_params)
+        .expect("Prepare should succeed");
+    let swap_result = unified_taker.start_coinswap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to DropAfterFundsBroadcast behavior"
@@ -553,8 +559,11 @@ fn test_unified_legacy_timelock_only_recovery() {
 
     generate_blocks(bitcoind, 1);
 
-    // Perform the swap — should fail because Maker2 closes the connection
-    let swap_result = unified_taker.do_coinswap(swap_params);
+    // Prepare should succeed; execution should fail because Maker2 closes the connection
+    let summary = unified_taker
+        .prepare_coinswap(swap_params)
+        .expect("Prepare should succeed");
+    let swap_result = unified_taker.start_coinswap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to Maker2 skipping funding broadcast"
@@ -788,8 +797,11 @@ fn test_unified_taproot_timelock_only_recovery() {
 
     generate_blocks(bitcoind, 1);
 
-    // Perform the swap — should fail because Maker2 closes the connection
-    let swap_result = unified_taker.do_coinswap(swap_params);
+    // Prepare should succeed; execution should fail because Maker2 closes the connection
+    let summary = unified_taker
+        .prepare_coinswap(swap_params)
+        .expect("Prepare should succeed");
+    let swap_result = unified_taker.start_coinswap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to Maker2 skipping funding broadcast"

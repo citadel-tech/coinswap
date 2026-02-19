@@ -912,6 +912,8 @@ impl UnifiedTaker {
             return Err(err);
         }
 
+        self.finalize_persist_incoming()?;
+
         // SP7: Finalization starts.
         self.persist_swap(SwapPhase::Finalizing)?;
 

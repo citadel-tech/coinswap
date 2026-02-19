@@ -2,7 +2,8 @@
 
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    io::Write,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, RwLock,
@@ -16,13 +17,14 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
     protocol::common_messages::{FidelityProof, ProtocolVersion, SwapDetails},
-    utill::MIN_FEE_RATE,
+    utill::{get_maker_dir, parse_field, parse_toml, MIN_FEE_RATE},
     wallet::{
         unified_swapcoin::{
             IncomingSwapCoin as UnifiedIncomingSwapCoin,
             OutgoingSwapCoin as UnifiedOutgoingSwapCoin,
         },
-        AddressType, RPCConfig, Wallet, WalletError,
+        AddressType, FidelityError, RPCConfig, Wallet, WalletError, MAX_FIDELITY_TIMELOCK,
+        MIN_FIDELITY_TIMELOCK,
     },
     watch_tower::service::WatchService,
 };
@@ -140,6 +142,161 @@ impl Default for UnifiedMakerServerConfig {
             tor_auth_password: String::new(),
             password: None,
         }
+    }
+}
+
+impl UnifiedMakerServerConfig {
+    /// Load configuration from a TOML file at the given path.
+    ///
+    /// If `config_path` is `None`, defaults to `~/.coinswap/maker/config.toml`.
+    /// If the file doesn't exist or is empty, a default config file is created.
+    /// Fields missing from the file fall back to defaults.
+    pub fn new(config_path: Option<&Path>) -> Result<Self, WalletError> {
+        let default_config_path = get_maker_dir().join("config.toml");
+        let config_path = config_path.unwrap_or(&default_config_path);
+        let default_config = Self::default();
+
+        if !config_path.exists() || std::fs::metadata(config_path)?.len() == 0 {
+            log::warn!(
+                "Maker config file not found, creating default at: {}",
+                config_path.display()
+            );
+            default_config.write_to_file(config_path)?;
+        }
+
+        let config_map = parse_toml(config_path)?;
+        log::info!(
+            "Loaded config file from: {}",
+            config_path.display()
+        );
+
+        let fidelity_timelock = parse_field(
+            config_map.get("fidelity_timelock"),
+            default_config.fidelity_timelock,
+        );
+        if !(MIN_FIDELITY_TIMELOCK..=MAX_FIDELITY_TIMELOCK).contains(&fidelity_timelock) {
+            log::warn!(
+                "Invalid fidelity_timelock: {} blocks. Accepted range is [{}-{}] blocks.",
+                fidelity_timelock,
+                MIN_FIDELITY_TIMELOCK,
+                MAX_FIDELITY_TIMELOCK
+            );
+            return Err(WalletError::Fidelity(FidelityError::InvalidBondLocktime));
+        }
+
+        let min_swap_amount = parse_field(
+            config_map.get("min_swap_amount"),
+            default_config.min_swap_amount,
+        );
+        if min_swap_amount < super::api::MIN_SWAP_AMOUNT {
+            log::error!(
+                "Configured min_swap_amount {} is below protocol minimum {} sats",
+                min_swap_amount,
+                super::api::MIN_SWAP_AMOUNT
+            );
+            return Err(WalletError::InsufficientFund {
+                available: min_swap_amount,
+                required: super::api::MIN_SWAP_AMOUNT,
+            });
+        }
+
+        Ok(UnifiedMakerServerConfig {
+            network_port: parse_field(
+                config_map.get("network_port"),
+                default_config.network_port,
+            ),
+            rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
+            base_fee: parse_field(config_map.get("base_fee"), default_config.base_fee),
+            amount_relative_fee_pct: parse_field(
+                config_map.get("amount_relative_fee_pct"),
+                default_config.amount_relative_fee_pct,
+            ),
+            time_relative_fee_pct: parse_field(
+                config_map.get("time_relative_fee_pct"),
+                default_config.time_relative_fee_pct,
+            ),
+            min_swap_amount,
+            required_confirms: parse_field(
+                config_map.get("required_confirms"),
+                default_config.required_confirms,
+            ),
+            fidelity_amount: parse_field(
+                config_map.get("fidelity_amount"),
+                default_config.fidelity_amount,
+            ),
+            fidelity_timelock,
+            control_port: parse_field(
+                config_map.get("control_port"),
+                default_config.control_port,
+            ),
+            socks_port: parse_field(config_map.get("socks_port"), default_config.socks_port),
+            tor_auth_password: parse_field(
+                config_map.get("tor_auth_password"),
+                default_config.tor_auth_password,
+            ),
+            // Runtime fields — not read from config file
+            data_dir: default_config.data_dir,
+            network: default_config.network,
+            wallet_name: default_config.wallet_name,
+            rpc_config: default_config.rpc_config,
+            zmq_addr: default_config.zmq_addr,
+            password: default_config.password,
+            supported_protocols: default_config.supported_protocols,
+        })
+    }
+
+    /// Write the current configuration to a TOML file.
+    pub fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
+        let toml_data = format!(
+            "\
+# Unified Maker Configuration File
+
+# Network port for client connections
+network_port = {}
+# RPC port for maker-cli operations
+rpc_port = {}
+# Socks port for Tor proxy
+socks_port = {}
+# Control port for Tor interface
+control_port = {}
+# Authentication password for Tor interface
+tor_auth_password = {}
+# Minimum amount in satoshis that can be swapped
+min_swap_amount = {}
+# Fidelity Bond amount in satoshis
+fidelity_amount = {}
+# Fidelity Bond timelock in blocks (must be between {} and {})
+fidelity_timelock = {}
+# A fixed base fee charged by the Maker for providing its services (in satoshis)
+base_fee = {}
+# A percentage fee based on the swap amount
+amount_relative_fee_pct = {}
+# A percentage fee based on the swap duration
+time_relative_fee_pct = {}
+# Required confirmations for funding transactions
+required_confirms = {}
+",
+            self.network_port,
+            self.rpc_port,
+            self.socks_port,
+            self.control_port,
+            self.tor_auth_password,
+            self.min_swap_amount,
+            self.fidelity_amount,
+            MIN_FIDELITY_TIMELOCK,
+            MAX_FIDELITY_TIMELOCK,
+            self.fidelity_timelock,
+            self.base_fee,
+            self.amount_relative_fee_pct,
+            self.time_relative_fee_pct,
+            self.required_confirms,
+        );
+
+        std::fs::create_dir_all(path.parent().expect("Config path should not be root"))?;
+        let mut file = std::fs::File::create(path)?;
+        file.write_all(toml_data.as_bytes())?;
+        file.flush()?;
+        Ok(())
     }
 }
 
