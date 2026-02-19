@@ -1596,7 +1596,7 @@ fn recover_via_hashlock(maker: Arc<Maker>, incoming: IncomingSwapCoinV2) -> Resu
                 match wallet.spend_via_hashlock_v2(&incoming, &preimage, &maker.watch_service) {
                     Ok(txid) => {
                         log::info!(
-                            "[{}] Successfully recovered incoming contract via hashlock: {}",
+                            "[{}] Maker Successfully recovered incoming contract via hashlock: {}",
                             maker.config.network_port,
                             txid
                         );
@@ -1679,7 +1679,7 @@ fn recover_via_timelock(maker: Arc<Maker>, outgoing: OutgoingSwapCoinV2) -> Resu
             match wallet.spend_via_timelock_v2(&outgoing, &maker.watch_service) {
                 Ok(txid) => {
                     log::info!(
-                        "[{}] Successfully recovered outgoing contract via timelock: {}",
+                        "[{}] Maker Successfully recovered outgoing contract via timelock: {}",
                         maker.config.network_port,
                         txid
                     );

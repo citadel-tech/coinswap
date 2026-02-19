@@ -125,7 +125,11 @@ fn test_taproot_maker_abort2() {
     );
     // Now wait for maker to extract preimage and recover via hashlock
     info!("⏳ Waiting for maker to extract preimage and recover via hashlock...");
-    std::thread::sleep(std::time::Duration::from_secs(60));
+    let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
+    test_framework.assert_log(
+        " Maker Successfully recovered incoming contract via hashlock",
+        &log_path,
+    );
     // Mine more blocks to give maker time to see the hashlock sweep
     generate_blocks(bitcoind, 2);
 

@@ -105,7 +105,8 @@ fn maker_abort3_case3() {
 
     //wait for maker's to complete recovery
     info!("Waiting for maker to complete recovery");
-    thread::sleep(Duration::from_secs(60));
+    let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
+    test_framework.assert_log("Maker hashlock recovery: 1/1 txs broadcasted", &log_path);
 
     let taker_wallet = taker.get_wallet_mut();
     taker_wallet.sync_and_save().unwrap();

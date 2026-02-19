@@ -21,7 +21,6 @@ use log::{info, warn};
 use std::{
     sync::{atomic::Ordering::Relaxed, Arc},
     thread,
-    time::Duration,
 };
 
 #[test]
@@ -58,11 +57,9 @@ fn test_low_swap_liquidity() {
 
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
     // Wait for fidelity bond to be created, before draining the wallet.
-    thread::sleep(Duration::from_secs(12));
     test_framework.assert_log(" Successfully created fidelity bond", &log_path);
     // Drain the maker wallet
     drain_maker_liquidity_after_fidelity(maker, bitcoind);
-    thread::sleep(Duration::from_secs(10));
     test_framework.assert_log(
         " Low taproot swap liquidity | Min: 10000 sats | Available: 0 sats | Add Funds to: ",
         &log_path,

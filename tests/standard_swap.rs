@@ -95,8 +95,6 @@ fn test_standard_coinswap() {
 
     info!("🎯 All coinswaps processed successfully. Transaction complete.");
 
-    thread::sleep(Duration::from_secs(10));
-
     //-------- Fee Tracking and Workflow:------------
     //
     // | Participant    | Amount Received (Sats) | Amount Forwarded (Sats) | Fee (Sats) | Total Fees (Sats) |

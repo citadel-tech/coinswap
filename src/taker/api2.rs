@@ -1710,7 +1710,7 @@ impl Taker {
                             ) {
                                 Ok(txid) => {
                                     log::info!(
-                                        "Successfully recovered incoming contract via hashlock: {}",
+                                        "Taker Successfully recovered incoming contract via hashlock: {}",
                                         txid
                                     );
                                 }
@@ -1811,7 +1811,7 @@ impl Taker {
                                         .spend_via_timelock_v2(outgoing, &self.watch_service)
                                     {
                                         Ok(txid) => {
-                                            log::info!("Successfully recovered outgoing contract via timelock: {}", txid);
+                                            log::info!("Taker Successfully recovered outgoing contract via timelock: {}", txid);
                                             recovered_indices.push(idx);
                                         }
                                         Err(e) => {
