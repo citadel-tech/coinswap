@@ -45,7 +45,7 @@ fn test_taproot_timelock_recovery_end_to_end() {
     let taker_behavior = vec![TakerBehavior::Normal];
 
     // Initialize test framework
-    let (test_framework, mut taproot_taker, taproot_makers, block_generation_handle) =
+    let (test_framework, mut taproot_taker, taproot_makers) =
         TestFramework::init_taproot(makers_config_map, taker_behavior);
 
     let bitcoind = &test_framework.bitcoind;
@@ -254,7 +254,4 @@ fn test_taproot_timelock_recovery_end_to_end() {
     taproot_maker_threads
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
-
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
 }
