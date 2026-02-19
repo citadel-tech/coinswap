@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use bitcoin::OutPoint;
+use bitcoin::{OutPoint, Txid};
 use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
@@ -330,7 +330,10 @@ impl Drop for RecoveryLoop {
 ///   spend occurred (adversarial since key-path settlement hasn't happened yet).
 pub(crate) struct BreachDetector {
     breached: Arc<AtomicBool>,
-    sentinels: Arc<Mutex<Vec<OutPoint>>>,
+    /// Mapping of funding outpoint → expected contract txid.
+    /// Only a spend whose txid matches the expected contract txid is adversarial.
+    /// Cooperative spends (after finalization) produce a different txid.
+    sentinels: Arc<Mutex<Vec<(OutPoint, Txid)>>>,
     shutdown: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
@@ -339,7 +342,7 @@ impl BreachDetector {
     /// Spawn a background thread that polls the WatchService for sentinel spends.
     pub(crate) fn start(watch_service: WatchService) -> Self {
         let breached = Arc::new(AtomicBool::new(false));
-        let sentinels: Arc<Mutex<Vec<OutPoint>>> = Arc::new(Mutex::new(Vec::new()));
+        let sentinels: Arc<Mutex<Vec<(OutPoint, Txid)>>> = Arc::new(Mutex::new(Vec::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
 
         let breached_clone = breached.clone();
@@ -357,19 +360,29 @@ impl BreachDetector {
                         Err(_) => continue,
                     };
 
-                    for sentinel in &current_sentinels {
-                        watch_service.watch_request(*sentinel);
+                    for (outpoint, expected_contract_txid) in &current_sentinels {
+                        watch_service.watch_request(*outpoint);
                         if let Some(WatcherEvent::UtxoSpent {
-                            spending_tx: Some(_),
+                            spending_tx: Some(ref tx),
                             ..
                         }) = watch_service.wait_for_event()
                         {
-                            log::warn!(
-                                "Breach detector: adversarial spend on sentinel {}",
-                                sentinel
+                            let actual_txid = tx.compute_txid();
+                            if actual_txid == *expected_contract_txid {
+                                // The funding outpoint was spent by the pre-signed contract tx.
+                                // This is an adversarial broadcast.
+                                log::warn!(
+                                    "Breach detector: contract tx {} broadcast on sentinel {}",
+                                    actual_txid, outpoint
+                                );
+                                breached_clone.store(true, Relaxed);
+                                return;
+                            }
+                            // Spent by a different tx — cooperative sweep after finalization.
+                            log::info!(
+                                "Breach detector: cooperative spend on sentinel {} (tx {})",
+                                outpoint, actual_txid
                             );
-                            breached_clone.store(true, Relaxed);
-                            return;
                         }
                     }
                 }
@@ -384,13 +397,21 @@ impl BreachDetector {
         }
     }
 
-    /// Register outpoints as sentinels with the WatchService and add to the monitor list.
-    pub(crate) fn add_sentinels(&self, watch_service: &WatchService, outpoints: &[OutPoint]) {
-        for outpoint in outpoints {
+    /// Register funding outpoints as sentinels with the WatchService.
+    ///
+    /// Each sentinel is a `(funding_outpoint, expected_contract_txid)` pair.
+    /// Only a spend matching the contract txid is considered adversarial;
+    /// cooperative spends (after finalization) produce a different txid and are ignored.
+    pub(crate) fn add_sentinels(
+        &self,
+        watch_service: &WatchService,
+        sentinels: &[(OutPoint, Txid)],
+    ) {
+        for (outpoint, _) in sentinels {
             watch_service.register_watch_request(*outpoint);
         }
         if let Ok(mut guard) = self.sentinels.lock() {
-            guard.extend_from_slice(outpoints);
+            guard.extend_from_slice(sentinels);
         }
     }
 

@@ -763,21 +763,29 @@ impl Wallet {
         for (swap_id, swapcoin) in &self.store.unified_outgoing_swapcoins {
             if swapcoin.my_privkey.is_some() {
                 if let Some(timelock) = swapcoin.get_timelock() {
-                    if current_height >= timelock {
-                        log::info!(
-                            "Outgoing swapcoin {} ready for timelock recovery (current: {}, timelock: {})",
-                            swap_id,
-                            current_height,
-                            timelock
+                    if swapcoin.protocol == crate::protocol::ProtocolVersion::Taproot {
+                        // Taproot uses CLTV (absolute height).
+                        if current_height >= timelock {
+                            log::info!(
+                                "Outgoing swapcoin {} ready for timelock recovery (current: {}, CLTV: {})",
+                                swap_id, current_height, timelock
+                            );
+                            to_recover.push(swap_id.clone());
+                        } else {
+                            log::debug!(
+                                "Outgoing swapcoin {} not yet ready (current: {}, CLTV: {})",
+                                swap_id, current_height, timelock
+                            );
+                        }
+                    } else {
+                        // Legacy uses CSV (relative to contract tx confirmation).
+                        // Can't filter by height alone — the downstream confirmation
+                        // count check (line 938) is the real gate.
+                        log::debug!(
+                            "Outgoing swapcoin {} queued for timelock recovery (CSV: {} blocks)",
+                            swap_id, timelock
                         );
                         to_recover.push(swap_id.clone());
-                    } else {
-                        log::debug!(
-                            "Outgoing swapcoin {} not yet ready (current: {}, timelock: {})",
-                            swap_id,
-                            current_height,
-                            timelock
-                        );
                     }
                 }
             }

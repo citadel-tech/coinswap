@@ -127,6 +127,8 @@ impl UnifiedTaker {
         // Taker's own keys for the last hop (set during last iteration)
         let mut taker_multisig_privkeys: Option<Vec<SecretKey>> = None;
         let mut taker_hashlock_privkeys: Option<Vec<SecretKey>> = None;
+        // Track the previous hop's confirmation height to verify timelock staggering.
+        let mut prev_confirm_height: u32 = 0;
 
         // Background thread monitors funding outpoints for adversarial contract broadcasts.
         self.breach_detector =
@@ -155,8 +157,8 @@ impl UnifiedTaker {
             let is_first_peer = maker_idx == 0;
             let is_last_peer = maker_idx == maker_count - 1;
 
-            let outgoing_locktime = super::unified_api::REFUND_LOCKTIME_BASE
-                + super::unified_api::REFUND_LOCKTIME_STEP * (maker_count - maker_idx - 1) as u16;
+            let outgoing_locktime =
+                self.swap_state()?.makers[maker_idx].negotiated_timelock as u16;
 
             let (
                 funding_txs,
@@ -265,15 +267,11 @@ impl UnifiedTaker {
                 let exch = self.swap_state_mut()?.makers[maker_idx].legacy_exchange_mut()?;
                 exch.sender_sigs_requested = true;
                 exch.sender_sigs_received = true;
-            } else {
-                log::info!(
-                    "Step 1: Skipping separate signature request (handled in ProofOfFunding flow)"
-                );
             }
 
             if is_first_peer {
                 log::info!(
-                    "Step 1.5: Broadcasting funding transactions and waiting for confirmation"
+                    "Broadcasting funding transactions and waiting for confirmation"
                 );
                 {
                     let wallet = self.write_wallet()?;
@@ -289,7 +287,7 @@ impl UnifiedTaker {
                     wallet.save_to_disk()?;
                 }
                 // Funding txs are now on-chain — mark the phase transition.
-                // SP4-L: Point of no return. Persist nonces needed for legacy recovery.
+                // Point of no return. Persist nonces needed for legacy recovery.
                 self.swap_state_mut()?.makers[maker_idx]
                     .legacy_exchange_mut()?
                     .prev_funding_broadcast = true;
@@ -301,22 +299,29 @@ impl UnifiedTaker {
                     .iter()
                     .filter_map(|sc| sc.funding_tx.as_ref().map(|tx| tx.compute_txid()))
                     .collect();
-                self.net_wait_for_confirmation(&funding_txids, None)?;
+                prev_confirm_height =
+                    self.net_wait_for_confirmation(&funding_txids, None)?;
                 self.swap_state_mut()?.makers[maker_idx]
                     .legacy_exchange_mut()?
                     .prev_funding_confirmed = true;
                 self.persist_progress()?;
 
                 // Register outgoing funding outpoints as sentinels with the breach detector.
-                // These are the inputs to our contract txs. If spent, a contract was broadcast.
-                let outpoints: Vec<OutPoint> = self
+                // Each sentinel maps a funding outpoint to its expected contract txid.
+                // Only a spend matching the contract txid is adversarial.
+                let sentinels: Vec<(OutPoint, bitcoin::Txid)> = self
                     .swap_state()?
                     .outgoing_swapcoins
                     .iter()
-                    .map(|sc| sc.contract_tx.input[0].previous_output)
+                    .map(|sc| {
+                        (
+                            sc.contract_tx.input[0].previous_output,
+                            sc.contract_tx.compute_txid(),
+                        )
+                    })
                     .collect();
                 if let Some(ref detector) = self.breach_detector {
-                    detector.add_sentinels(&self.watch_service, &outpoints);
+                    detector.add_sentinels(&self.watch_service, &sentinels);
                 }
             }
 
@@ -352,6 +357,7 @@ impl UnifiedTaker {
                 .exchange_send_proof_of_funding(
                     &mut stream,
                     &swap_id,
+                    maker_idx,
                     &funding_txs,
                     &contract_redeemscripts,
                     &multisig_redeemscripts,
@@ -369,6 +375,42 @@ impl UnifiedTaker {
                 exch.maker_contracts_received = true;
             }
             self.persist_progress()?;
+
+            // Verify the receiver contract txs are identical to the sender contract txs.
+            // Both should produce the same txid (same outpoint, value, redeemscript).
+            // A mismatch means the maker sent a tampered receiver contract.
+            {
+                let expected_txids: Vec<Txid> = if is_first_peer {
+                    self.swap_state()?
+                        .outgoing_swapcoins
+                        .iter()
+                        .map(|sc| sc.contract_tx.compute_txid())
+                        .collect()
+                } else {
+                    prev_senders_info
+                        .as_ref()
+                        .ok_or_else(|| {
+                            TakerError::General(
+                                "Missing prev_senders_info for receiver contract verification"
+                                    .to_string(),
+                            )
+                        })?
+                        .iter()
+                        .map(|info| info.contract_tx.compute_txid())
+                        .collect()
+                };
+                for (i, rx_tx) in receivers_contract_txs.iter().enumerate() {
+                    if let Some(expected) = expected_txids.get(i) {
+                        let actual = rx_tx.compute_txid();
+                        if actual != *expected {
+                            return Err(TakerError::General(format!(
+                                "Receiver contract tx {} txid mismatch: expected {}, got {}",
+                                i, expected, actual
+                            )));
+                        }
+                    }
+                }
+            }
 
             let senders_sigs = if is_last_peer {
                 log::info!("Signing sender contracts (we are last peer)");
@@ -396,9 +438,8 @@ impl UnifiedTaker {
                 self.net_handshake(&mut next_stream)?;
 
                 let hashvalue = Hash160::hash(&self.swap_state()?.preimage);
-                let next_locktime = super::unified_api::REFUND_LOCKTIME_BASE
-                    + super::unified_api::REFUND_LOCKTIME_STEP
-                        * (maker_count - maker_idx - 2) as u16;
+                let next_locktime =
+                    self.swap_state()?.makers[maker_idx + 1].negotiated_timelock as u16;
 
                 let sigs = self.exchange_req_sender_sigs_forwarded(
                     &mut next_stream,
@@ -526,18 +567,51 @@ impl UnifiedTaker {
                 .map(|i| i.funding_tx.compute_txid())
                 .collect();
 
-            self.net_wait_for_confirmation(&maker_funding_txids, self.breach_detector.as_ref())?;
+            let maker_confirm_height = self
+                .net_wait_for_confirmation(&maker_funding_txids, self.breach_detector.as_ref())?;
+
+            // Verify that the maker's funding confirmed within a few blocks of the
+            // previous hop. For legacy (CSV relative locktime), a large gap between
+            // confirmations breaks the staggered timelock ordering.
+            if prev_confirm_height > 0 && maker_confirm_height > 0 {
+                let gap = maker_confirm_height.saturating_sub(prev_confirm_height);
+                if gap > super::unified_api::CONFIRMATION_HEIGHT_TOLERANCE {
+                    return Err(TakerError::General(format!(
+                        "Maker {} funding confirmed at height {} ({} blocks after previous hop at {}). \
+                         Exceeds tolerance of {} blocks — timelock staggering may be compromised",
+                        maker_idx,
+                        maker_confirm_height,
+                        gap,
+                        prev_confirm_height,
+                        super::unified_api::CONFIRMATION_HEIGHT_TOLERANCE,
+                    )));
+                }
+                log::info!(
+                    "Maker {} funding confirmed at height {} ({} blocks after previous hop)",
+                    maker_idx,
+                    maker_confirm_height,
+                    gap,
+                );
+            }
+            prev_confirm_height = maker_confirm_height;
+
             self.swap_state_mut()?.makers[maker_idx]
                 .legacy_exchange_mut()?
                 .maker_funding_confirmed = true;
 
             // Register this maker's funding outpoints as sentinels for subsequent waits.
-            let maker_outpoints: Vec<OutPoint> = senders_contract_txs_info
+            // Each sentinel maps a funding outpoint to its expected contract txid.
+            let maker_sentinels: Vec<(bitcoin::OutPoint, bitcoin::Txid)> = senders_contract_txs_info
                 .iter()
-                .map(|info| info.contract_tx.input[0].previous_output)
+                .map(|info| {
+                    (
+                        info.contract_tx.input[0].previous_output,
+                        info.contract_tx.compute_txid(),
+                    )
+                })
                 .collect();
             if let Some(ref detector) = self.breach_detector {
-                detector.add_sentinels(&self.watch_service, &maker_outpoints);
+                detector.add_sentinels(&self.watch_service, &maker_sentinels);
             }
 
             // This maker's funding is the previous hop for the next maker.
@@ -726,6 +800,8 @@ impl UnifiedTaker {
                     "Received {} sender contract signatures from maker",
                     resp.sigs.len()
                 );
+                // Verify each signature against the corresponding outgoing swapcoin
+                self.verify_sender_sigs(&resp.sigs)?;
                 Ok(resp.sigs)
             }
             other => Err(TakerError::General(format!(
@@ -742,6 +818,7 @@ impl UnifiedTaker {
         &self,
         stream: &mut TcpStream,
         swap_id: &str,
+        maker_idx: usize,
         funding_txs: &[Transaction],
         contract_redeemscripts: &[ScriptBuf],
         multisig_redeemscripts: &[ScriptBuf],
@@ -811,6 +888,21 @@ impl UnifiedTaker {
                     req.receivers_contract_txs.len(),
                     req.senders_contract_txs_info.len()
                 );
+                // Verify the maker's sender contracts (structure, hashvalue, locktime, pubkeys, amounts)
+                let min_expected = self.min_expected_amount_for_hop(maker_idx);
+                self.verify_maker_sender_contracts(
+                    &req.senders_contract_txs_info,
+                    next_multisig_pubkeys,
+                    next_hashlock_pubkeys,
+                    refund_locktime,
+                    min_expected,
+                )?;
+                // Verify the maker's receiver contract txs (structure, funding reference, scriptpubkey, amounts)
+                self.verify_maker_receiver_contracts(
+                    &req.receivers_contract_txs,
+                    funding_txs,
+                    contract_redeemscripts,
+                )?;
                 Ok((req.receivers_contract_txs, req.senders_contract_txs_info))
             }
             other => Err(TakerError::General(format!(
@@ -883,6 +975,8 @@ impl UnifiedTaker {
         match msg {
             MakerToTakerMessage::RespContractSigsForSender(resp) => {
                 log::info!("Received {} sender signatures", resp.sigs.len());
+                // Verify each forwarded signature against the sender contract info
+                self.verify_sender_sigs_from_info(&resp.sigs, senders_info)?;
                 Ok(resp.sigs)
             }
             other => Err(TakerError::General(format!(
@@ -923,6 +1017,8 @@ impl UnifiedTaker {
         match msg {
             MakerToTakerMessage::RespContractSigsForRecvr(resp) => {
                 log::info!("Received {} receiver signatures", resp.sigs.len());
+                // Verify each receiver signature
+                self.verify_receiver_sigs(&resp.sigs, receivers_txs, prev_senders_info)?;
                 Ok(resp.sigs)
             }
             other => Err(TakerError::General(format!(

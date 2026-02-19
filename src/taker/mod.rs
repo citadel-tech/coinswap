@@ -15,8 +15,10 @@ mod routines;
 // Unified API
 mod background_services;
 mod legacy_swap;
+mod legacy_verification;
 pub mod swap_tracker;
 mod taproot_swap;
+mod taproot_verification;
 pub mod unified_api;
 
 pub use self::api::TakerBehavior;
@@ -28,4 +30,4 @@ pub use config::TakerConfig;
 #[cfg(feature = "integration-test")]
 pub use unified_api::UnifiedTakerBehavior;
 pub use offers::{format_state, MakerOfferCandidate, MakerState, OfferBook};
-pub use unified_api::{UnifiedSwapParams, UnifiedSwapReport, UnifiedTaker, UnifiedTakerConfig};
+pub use unified_api::{MakerFeeInfo, SwapSummary, UnifiedSwapParams, UnifiedSwapReport, UnifiedTaker, UnifiedTakerConfig};

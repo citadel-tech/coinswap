@@ -47,7 +47,7 @@ impl UnifiedTaker {
             prev.amounts.clone(),
         )
     }
-    /// Create Taproot (MuSig2) contract transactions and swapcoins (static version).
+    /// Create Taproot (MuSig2) contract transactions and swapcoins
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn funding_create_taproot(
         wallet: &mut Wallet,
@@ -170,7 +170,6 @@ impl UnifiedTaker {
     /// 1. Broadcast our outgoing contract txs and wait for confirmation
     /// 2. Exchange contract data with each maker in the route
     pub(crate) fn exchange_taproot(&mut self) -> Result<(), TakerError> {
-        // Phase 1: Broadcast our outgoing contract txs.
         // Makers verify that contract txs are on-chain before creating their
         // own outgoing, so we must broadcast first.
         self.swap_state_mut()?.phase = SwapPhase::FundsBroadcast;
@@ -267,6 +266,64 @@ impl UnifiedTaker {
                         i,
                         maker_contract.contract_txs.len()
                     );
+
+                    // Verify contract data before creating swapcoins
+                    let expected_locktime = self.swap_state()?.makers[i].negotiated_timelock;
+                    let min_expected = self.min_expected_amount_for_hop(i);
+                    self.verify_maker_taproot_contract(
+                        &maker_contract,
+                        i,
+                        expected_locktime,
+                        min_expected,
+                    )?;
+
+                    // Verify hashlock pubkey matches expected key
+                    if i + 1 < num_makers {
+                        // Non-last maker: pubkey should be derived from next_hop_point + nonce
+                        if let (Some(nonce), Some(next_tp)) = (
+                            hashlock_nonces.get(i + 1),
+                            self.swap_state()?.makers[i + 1].tweakable_point,
+                        ) {
+                            crate::protocol::contract2::check_taproot_hashlock_has_pubkey(
+                                &maker_contract.hashlock_script,
+                                &next_tp,
+                                nonce,
+                            )
+                            .map_err(|e| {
+                                TakerError::General(format!(
+                                    "Maker {} Taproot hashlock pubkey verification failed: {:?}",
+                                    i, e
+                                ))
+                            })?;
+                        }
+                    } else {
+                        // Last maker: hashlock pubkey should be taker's own key
+                        let (expected_xonly, _) = my_pubkey.inner.x_only_public_key();
+                        let mut hl_instructions =
+                            maker_contract.hashlock_script.instructions();
+                        // Skip first 3 instructions to get to the pubkey
+                        for _ in 0..3 {
+                            hl_instructions.next();
+                        }
+                        if let Some(Ok(bitcoin::script::Instruction::PushBytes(pk_bytes))) =
+                            hl_instructions.next()
+                        {
+                            let script_xonly =
+                                secp256k1::XOnlyPublicKey::from_slice(pk_bytes.as_bytes())
+                                    .map_err(|_| {
+                                        TakerError::General(format!(
+                                            "Last maker {} Taproot hashlock has invalid pubkey",
+                                            i
+                                        ))
+                                    })?;
+                            if script_xonly != expected_xonly {
+                                return Err(TakerError::General(format!(
+                                    "Last maker {} Taproot hashlock pubkey doesn't match taker's key",
+                                    i
+                                )));
+                            }
+                        }
+                    }
 
                     self.swap_state_mut()?.makers[i]
                         .taproot_exchange_mut()?

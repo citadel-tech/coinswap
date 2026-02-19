@@ -4,7 +4,8 @@ use clap::Parser;
 use coinswap::{
     protocol::ProtocolVersion,
     taker::{
-        error::TakerError, MakerState, UnifiedSwapParams, UnifiedTaker, UnifiedTakerConfig,
+        error::TakerError, format_state, MakerOfferCandidate, MakerState, UnifiedSwapParams,
+        UnifiedTaker, UnifiedTakerConfig,
     },
     utill::{parse_proxy_auth, setup_taker_logger, MIN_FEE_RATE, UTXO},
     wallet::{AddressType, Destination, RPCConfig, Wallet},
@@ -168,6 +169,68 @@ fn parse_protocol(s: &str) -> Result<ProtocolVersion, TakerError> {
             s
         ))),
     }
+}
+
+/// Format a maker offer candidate as a human-readable string.
+fn display_offer(wallet: &Wallet, candidate: &MakerOfferCandidate) -> Result<String, TakerError> {
+    let header = format!(
+        r#"
+    Maker
+    ─────
+    Address        : {address}
+    Protocol       : {protocol}
+    State          : {state}
+    "#,
+        address = candidate.address,
+        protocol = candidate
+            .protocol
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "Unknown".into()),
+        state = format_state(&candidate.state),
+    );
+
+    let Some(offer) = &candidate.offer else {
+        return Ok(header);
+    };
+
+    let bond = &offer.fidelity.bond;
+    let bond_value = wallet.calculate_bond_value(bond)?;
+
+    Ok(format!(
+        r#"{header}
+
+    Offer
+    ─────
+    Base Fee       : {base_fee}
+    Amount Fee %   : {amount_fee:.4}
+    Time Fee %     : {time_fee:.4}
+
+    Limits
+    ──────
+    Min Size       : {min_size}
+    Max Size       : {max_size}
+    Required Conf. : {confirms}
+    Min Locktime   : {locktime}
+
+    Fidelity Bond
+    ─────────────
+    Outpoint       : {outpoint}
+    Value          : {bond_value}
+    Expiry         : {expiry}
+    "#,
+        header = header.trim_end(),
+        base_fee = offer.base_fee,
+        amount_fee = offer.amount_relative_fee_pct,
+        time_fee = offer.time_relative_fee_pct,
+        min_size = offer.min_size,
+        max_size = offer.max_size,
+        confirms = offer.required_confirms,
+        locktime = offer.minimum_locktime,
+        outpoint = bond.outpoint(),
+        bond_value = bond_value,
+        expiry = bond.lock_time,
+    ))
 }
 
 fn main() -> Result<(), TakerError> {
@@ -370,7 +433,8 @@ fn main() -> Result<(), TakerError> {
                     MakerState::Unresponsive { .. } => unresponsive += 1,
                 }
 
-                println!("{}", taker.display_offer(maker)?);
+                let wallet = taker.get_wallet().read().unwrap();
+                println!("{}", display_offer(&wallet, maker)?);
             }
 
             println!(
@@ -412,7 +476,51 @@ fn main() -> Result<(), TakerError> {
                 swap_params.preferred_makers = Some(maker_addresses.clone());
             }
 
-            taker.do_coinswap(swap_params)?;
+            // Phase 1: Prepare — discover makers, negotiate, get fee summary.
+            let summary = taker.prepare_coinswap(swap_params)?;
+
+            println!("\n========== Swap Summary ==========");
+            println!("Swap ID:   {}", summary.swap_id);
+            println!("Protocol:  {:?}", summary.protocol);
+            println!("Sending:   {}", summary.send_amount);
+            println!();
+            for (i, maker) in summary.makers.iter().enumerate() {
+                println!(
+                    "  Hop {}: {} ({:?})",
+                    i, maker.address, maker.protocol
+                );
+                println!(
+                    "         Fees: base={} sats, amt={:.4}%, time={:.6}%",
+                    maker.base_fee, maker.amount_relative_fee_pct, maker.time_relative_fee_pct
+                );
+                println!(
+                    "         Locktime: {} blocks, Estimated fee: {} sats",
+                    maker.locktime, maker.estimated_fee_sats
+                );
+            }
+            println!();
+            println!("Total estimated fee: {}", summary.total_estimated_fee);
+            println!("Estimated receive:   {}", summary.estimated_receive_amount);
+            println!("==================================\n");
+
+            // In integration tests, skip the confirmation prompt.
+            if cfg!(not(feature = "integration-test")) {
+                print!("Proceed with this swap? [y/N] ");
+                use std::io::{self, Write};
+                io::stdout().flush().unwrap();
+                let mut input = String::new();
+                io::stdin().read_line(&mut input).map_err(|e| {
+                    TakerError::General(format!("Failed to read input: {:?}", e))
+                })?;
+                let input = input.trim().to_lowercase();
+                if input != "y" && input != "yes" {
+                    println!("Swap cancelled.");
+                    return Ok(());
+                }
+            }
+
+            // Phase 2: Execute — commit funds and complete the swap.
+            taker.start_coinswap(&summary.swap_id)?;
         }
         Commands::Recover => {
             taker.recover_active_swap()?;

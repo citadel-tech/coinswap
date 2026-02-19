@@ -31,7 +31,8 @@ use socks::Socks5Stream;
 use crate::{
     protocol::{
         common_messages::{
-            PrivateKeyHandover, ProtocolVersion, SwapDetails, SwapPrivkey, TakerHello,
+            GetOffer, Offer, PrivateKeyHandover, ProtocolVersion, SwapDetails, SwapPrivkey,
+            TakerHello,
         },
         contract::calculate_pubkey_from_nonce,
         router::{MakerToTakerMessage, TakerToMakerMessage},
@@ -55,7 +56,7 @@ use super::{
     config::TakerConfig,
     error::TakerError,
     offers::{
-        MakerAddress, MakerOfferCandidate, MakerProtocol, OfferAndAddress, OfferBook,
+        MakerAddress, MakerProtocol, OfferAndAddress, OfferBook,
         OfferBookHandle, OfferSyncHandle, OfferSyncService,
     },
 };
@@ -99,6 +100,20 @@ const MAX_FINALIZE_RETRIES: u32 = 2;
 const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(15);
 #[cfg(feature = "integration-test")]
 const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+/// Maximum number of blocks between consecutive hop confirmations.
+/// If a maker's funding confirms more than this many blocks after the previous
+/// hop, the relative timelock staggering may be compromised (legacy CSV only).
+/// In integration tests, blocks are mined in rapid batches so the gap is larger.
+#[cfg(not(feature = "integration-test"))]
+pub(crate) const CONFIRMATION_HEIGHT_TOLERANCE: u32 = 6;
+#[cfg(feature = "integration-test")]
+pub(crate) const CONFIRMATION_HEIGHT_TOLERANCE: u32 = 50;
+
+/// Margin multiplier applied to the computed maker fee when verifying amounts.
+/// Accounts for mining transaction fees and rounding. For example, 1.5 means the
+/// actual deduction may be up to 50% more than the advertised maker fee.
+pub(crate) const FEE_VERIFICATION_MARGIN: f64 = 1.5;
 
 /// Unified Taker configuration.
 #[derive(Debug, Clone)]
@@ -246,6 +261,42 @@ pub struct UnifiedSwapReport {
     pub fee_percentage: f64,
 }
 
+/// Per-maker fee breakdown returned in SwapSummary.
+#[derive(Debug, Clone)]
+pub struct MakerFeeInfo {
+    /// Maker's network address.
+    pub address: String,
+    /// Protocol version negotiated with this maker.
+    pub protocol: ProtocolVersion,
+    /// Base fee in satoshis.
+    pub base_fee: u64,
+    /// Percentage fee relative to swap amount.
+    pub amount_relative_fee_pct: f64,
+    /// Percentage fee for time-locked funds.
+    pub time_relative_fee_pct: f64,
+    /// Locktime (blocks) for this hop.
+    pub locktime: u16,
+    /// Estimated fee for this hop in satoshis.
+    pub estimated_fee_sats: u64,
+}
+
+/// Summary returned after the prepare phase, before the user commits funds.
+#[derive(Debug, Clone)]
+pub struct SwapSummary {
+    /// Unique swap ID (use this to call `start_coinswap`).
+    pub swap_id: String,
+    /// Protocol version.
+    pub protocol: ProtocolVersion,
+    /// Amount the taker is sending.
+    pub send_amount: Amount,
+    /// Per-maker fee breakdown (one entry per hop, in route order).
+    pub makers: Vec<MakerFeeInfo>,
+    /// Total estimated fees across all hops.
+    pub total_estimated_fee: Amount,
+    /// Estimated amount the taker will receive after all fees.
+    pub estimated_receive_amount: Amount,
+}
+
 /// State for an ongoing swap.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct OngoingSwapState {
@@ -283,6 +334,11 @@ pub(crate) struct MakerConnection {
     pub(crate) protocol: ProtocolVersion,
     /// Tweakable point for this swap.
     pub(crate) tweakable_point: Option<PublicKey>,
+    /// Maker's offer (fee schedule), if known from offerbook discovery.
+    pub(crate) offer: Option<Offer>,
+    /// The timelock value sent to this maker in `SwapDetails`.
+    /// For Legacy this is a relative CSV offset; for Taproot an absolute CLTV height.
+    pub(crate) negotiated_timelock: u32,
     /// Protocol-specific exchange progress milestones.
     pub(crate) exchange: ExchangeProgress,
     /// Shared finalization milestones (preimage, privkey exchange).
@@ -304,6 +360,41 @@ impl MakerConnection {
             ExchangeProgress::Taproot(ref mut t) => Ok(t),
             _ => Err(TakerError::General("Expected Taproot exchange progress".to_string())),
         }
+    }
+
+}
+
+impl UnifiedTaker {
+    /// Compute the minimum expected output amount for a specific maker hop.
+    ///
+    /// Accounts for cumulative fees from all previous hops so that each maker's
+    /// output is compared against the correct input amount (not the original
+    /// `send_amount`).
+    ///
+    /// Returns `None` if any maker along the route (up to and including `maker_idx`)
+    /// has no stored offer.
+    ///
+    /// Fee formula: `total_fee = base_fee + (amount * amt_pct)/100 + (amount * locktime * time_pct)/100`
+    /// TODO: Use fee estimation here
+    pub(crate) fn min_expected_amount_for_hop(&self, maker_idx: usize) -> Option<Amount> {
+        let swap = self.swap_state().ok()?;
+        let send_amount = swap.params.send_amount;
+        let maker_count = swap.makers.len();
+
+        // Iteratively compute the amount reaching each hop after deducting fees.
+        let mut amount_sats = send_amount.to_sat() as f64;
+        for i in 0..=maker_idx {
+            let offer = swap.makers[i].offer.as_ref()?;
+            let locktime = REFUND_LOCKTIME_BASE
+                + REFUND_LOCKTIME_STEP * (maker_count - i - 1) as u16;
+            let fee = offer.base_fee as f64
+                + (amount_sats * offer.amount_relative_fee_pct) / 100.0
+                + (amount_sats * locktime as f64 * offer.time_relative_fee_pct) / 100.0;
+            let fee_with_margin = fee * FEE_VERIFICATION_MARGIN;
+            amount_sats = (amount_sats - fee_with_margin).max(0.0);
+        }
+
+        Some(Amount::from_sat(amount_sats as u64))
     }
 }
 
@@ -599,23 +690,23 @@ impl UnifiedTaker {
         }
     }
 
-    /// Perform a coinswap with the given parameters.
-    pub fn do_coinswap(
+    /// Prepare a coinswap: discover makers, negotiate, and return a summary.
+    ///
+    /// No funds are committed. The caller reviews the summary and then calls
+    /// `start_coinswap` with the returned `swap_id` to execute.
+    pub fn prepare_coinswap(
         &mut self,
         params: UnifiedSwapParams,
-    ) -> Result<UnifiedSwapReport, TakerError> {
-        let swap_start_time = Instant::now();
-
+    ) -> Result<SwapSummary, TakerError> {
         log::info!(
-            "Starting unified coinswap: amount={}, makers={}, protocol={:?}",
+            "Preparing coinswap: amount={}, makers={}, protocol={:?}",
             params.send_amount,
             params.maker_count,
             params.protocol
         );
 
         let available = self.read_wallet()?.get_balances()?.spendable;
-
-        let required = params.send_amount + Amount::from_sat(10000); // Buffer for fees
+        let required = params.send_amount + Amount::from_sat(10000);
         if available < required {
             return Err(TakerError::General(format!(
                 "Insufficient balance: available={}, required={}",
@@ -626,14 +717,12 @@ impl UnifiedTaker {
         let mut preimage = [0u8; 32];
         OsRng.fill_bytes(&mut preimage);
 
-        let swap_id = preimage[0..8].to_lower_hex_string();
-        log::info!("Initiating coinswap with id: {}", swap_id);
+        let swap_id = Hash160::hash(&preimage)[0..8].to_lower_hex_string();
+        log::info!("Preparing coinswap with id: {}", swap_id);
 
-        // Extract values needed for the report before moving params into swap state
-        let amount_sent = params.send_amount;
+        let send_amount = params.send_amount;
         let maker_count = params.maker_count;
 
-        // Initialize swap state
         self.ongoing_swap = Some(OngoingSwapState {
             id: swap_id.clone(),
             preimage,
@@ -648,10 +737,7 @@ impl UnifiedTaker {
             phase: SwapPhase::MakersDiscovered,
         });
 
-        // Pre-commitment phases: no funds on-chain yet, nothing to recover.
         self.discover_makers()?;
-
-        // SP1: Persist initial swap record with preimage and maker list.
         self.persist_swap(SwapPhase::MakersDiscovered)?;
 
         #[cfg(feature = "integration-test")]
@@ -663,9 +749,90 @@ impl UnifiedTaker {
         }
 
         self.negotiate_swap_details()?;
-
-        // SP2: Persist after negotiation (tweakable_points updated).
         self.persist_swap(SwapPhase::Negotiated)?;
+
+        // Build the summary from negotiated state.
+        let swap = self.swap_state()?;
+        let protocol = swap.params.protocol;
+        let mut maker_fees = Vec::with_capacity(maker_count);
+        let mut amount_sats = send_amount.to_sat() as f64;
+
+        for (i, mc) in swap.makers.iter().enumerate() {
+            let locktime =
+                REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * (maker_count - i - 1) as u16;
+
+            let (base_fee, amt_pct, time_pct) = match &mc.offer {
+                Some(offer) => (
+                    offer.base_fee,
+                    offer.amount_relative_fee_pct,
+                    offer.time_relative_fee_pct,
+                ),
+                None => (0, 0.0, 0.0),
+            };
+
+            let fee = base_fee as f64
+                + (amount_sats * amt_pct) / 100.0
+                + (amount_sats * locktime as f64 * time_pct) / 100.0;
+            let fee_sats = fee.ceil() as u64;
+
+            maker_fees.push(MakerFeeInfo {
+                address: mc.address.to_string(),
+                protocol: mc.protocol,
+                base_fee,
+                amount_relative_fee_pct: amt_pct,
+                time_relative_fee_pct: time_pct,
+                locktime,
+                estimated_fee_sats: fee_sats,
+            });
+
+            amount_sats = (amount_sats - fee).max(0.0);
+        }
+
+        let total_fee_sats: u64 = maker_fees.iter().map(|m| m.estimated_fee_sats).sum();
+        let estimated_receive = send_amount
+            .checked_sub(Amount::from_sat(total_fee_sats))
+            .unwrap_or(Amount::ZERO);
+
+        let summary = SwapSummary {
+            swap_id,
+            protocol,
+            send_amount,
+            makers: maker_fees,
+            total_estimated_fee: Amount::from_sat(total_fee_sats),
+            estimated_receive_amount: estimated_receive,
+        };
+
+        log::info!(
+            "Swap prepared: id={}, estimated_fee={}, estimated_receive={}",
+            summary.swap_id,
+            summary.total_estimated_fee,
+            summary.estimated_receive_amount
+        );
+
+        Ok(summary)
+    }
+
+    /// Execute a prepared coinswap. Call after reviewing the `SwapSummary`
+    /// from `prepare_coinswap`.
+    ///
+    /// Commits funds on-chain: creates funding transactions, exchanges
+    /// contracts with makers, finalizes, and sweeps.
+    pub fn start_coinswap(&mut self, swap_id: &str) -> Result<UnifiedSwapReport, TakerError> {
+        let swap_start_time = Instant::now();
+
+        // Verify the swap_id matches the prepared swap.
+        let current_id = self.swap_state()?.id.clone();
+        if current_id != swap_id {
+            return Err(TakerError::General(format!(
+                "No prepared swap with id '{}' (current: '{}')",
+                swap_id, current_id
+            )));
+        }
+
+        let amount_sent = self.swap_state()?.params.send_amount;
+        let maker_count = self.swap_state()?.params.maker_count;
+
+        log::info!("Starting coinswap execution for id: {}", swap_id);
 
         self.funding_initialize()?;
 
@@ -677,9 +844,6 @@ impl UnifiedTaker {
 
         match protocol {
             ProtocolVersion::Legacy => {
-                // Phase 1: Exchange contract data (includes funding tx broadcast).
-                // Phase transitions to FundsBroadcast inside exchange_legacy()
-                // after funding txs are sent.
                 match self.exchange_legacy() {
                     Ok(()) => {}
                     Err(e) => {
@@ -704,7 +868,6 @@ impl UnifiedTaker {
                         return Err(e);
                     }
                 }
-
             }
             ProtocolVersion::Taproot => {
                 match self.exchange_taproot() {
@@ -733,8 +896,6 @@ impl UnifiedTaker {
                 }
             }
         }
-
-        // Common post-exchange path (both protocols).
 
         #[cfg(feature = "integration-test")]
         if self.behavior == UnifiedTakerBehavior::DropAfterFundsBroadcast {
@@ -772,6 +933,7 @@ impl UnifiedTaker {
         }
 
         // Success path: sweep + report (shared by both protocols)
+        let swap_id_owned = swap_id.to_string();
         let swept = {
             let mut wallet = self.write_wallet()?;
             let swept = wallet.sweep_unified_incoming_swapcoins(2.0)?;
@@ -780,10 +942,8 @@ impl UnifiedTaker {
             swept
         };
 
-        // Record per-contract outcomes before cleanup removes swap state
-        self.populate_success_outcomes(&swap_id, &swept)?;
+        self.populate_success_outcomes(&swap_id_owned, &swept)?;
 
-        // Clean up outgoing and watch-only entries on success
         {
             let swap_id_for_cleanup = self.swap_state()?.id.clone();
             let mut wallet = self.write_wallet()?;
@@ -795,10 +955,8 @@ impl UnifiedTaker {
             wallet.save_to_disk()?;
         }
 
-        // SP10: Mark swap as completed in the tracker.
         self.persist_swap(SwapPhase::Completed)?;
 
-        // Generate report
         let duration = swap_start_time.elapsed();
         let amount_received = Amount::from_sat(
             self.swap_state()?
@@ -812,7 +970,7 @@ impl UnifiedTaker {
             .unwrap_or(Amount::ZERO);
 
         let report = UnifiedSwapReport {
-            swap_id,
+            swap_id: swap_id_owned,
             protocol_version: self.swap_state()?.params.protocol,
             amount_sent,
             amount_received,
@@ -845,7 +1003,7 @@ impl UnifiedTaker {
         log::info!("Discovering makers for {} hops...", maker_count);
 
         // If preferred makers are specified, use them directly.
-        let (primary_addrs, spares) = if let Some(addrs) = preferred {
+        let (selected_makers, spares) = if let Some(addrs) = preferred {
             let parsed: Vec<MakerAddress> = addrs
                 .iter()
                 .filter_map(|s| match MakerAddress::try_from(s.clone()) {
@@ -866,8 +1024,30 @@ impl UnifiedTaker {
             }
 
             let mut addrs = parsed;
-            let spares = addrs.split_off(maker_count);
-            (addrs, spares)
+            let spare_addrs = addrs.split_off(maker_count);
+            let makers: Vec<MakerConnection> = addrs
+                .into_iter()
+                .map(|address| {
+                    let exchange = match protocol {
+                        ProtocolVersion::Legacy => {
+                            ExchangeProgress::Legacy(LegacyExchangeProgress::default())
+                        }
+                        ProtocolVersion::Taproot => {
+                            ExchangeProgress::Taproot(TaprootExchangeProgress::default())
+                        }
+                    };
+                    MakerConnection {
+                        address,
+                        protocol,
+                        tweakable_point: None,
+                        offer: None,
+                        negotiated_timelock: 0,
+                        exchange,
+                        finalization: FinalizationProgress::default(),
+                    }
+                })
+                .collect();
+            (makers, spare_addrs)
         } else {
             // Auto-select from offerbook.
             let maker_protocol = match protocol {
@@ -914,36 +1094,38 @@ impl UnifiedTaker {
             let spare_count = suitable_makers.len().saturating_sub(maker_count).min(2);
             let total_select = maker_count + spare_count;
 
-            let mut selected: Vec<MakerAddress> = suitable_makers
+            let mut selected: Vec<OfferAndAddress> = suitable_makers
                 .into_iter()
                 .take(total_select)
-                .map(|oa| oa.address)
                 .collect();
 
-            let spares = selected.split_off(maker_count);
-            (selected, spares)
+            let spare_oas = selected.split_off(maker_count);
+            let spare_addrs: Vec<MakerAddress> =
+                spare_oas.into_iter().map(|oa| oa.address).collect();
+            let makers: Vec<MakerConnection> = selected
+                .into_iter()
+                .map(|oa| {
+                    let exchange = match protocol {
+                        ProtocolVersion::Legacy => {
+                            ExchangeProgress::Legacy(LegacyExchangeProgress::default())
+                        }
+                        ProtocolVersion::Taproot => {
+                            ExchangeProgress::Taproot(TaprootExchangeProgress::default())
+                        }
+                    };
+                    MakerConnection {
+                        address: oa.address,
+                        protocol,
+                        tweakable_point: None,
+                        offer: None,
+                        negotiated_timelock: 0,
+                        exchange,
+                        finalization: FinalizationProgress::default(),
+                    }
+                })
+                .collect();
+            (makers, spare_addrs)
         };
-
-        let selected_makers: Vec<MakerConnection> = primary_addrs
-            .into_iter()
-            .map(|address| {
-                let exchange = match protocol {
-                    ProtocolVersion::Legacy => {
-                        ExchangeProgress::Legacy(LegacyExchangeProgress::default())
-                    }
-                    ProtocolVersion::Taproot => {
-                        ExchangeProgress::Taproot(TaprootExchangeProgress::default())
-                    }
-                };
-                MakerConnection {
-                    address,
-                    protocol,
-                    tweakable_point: None,
-                    exchange,
-                    finalization: FinalizationProgress::default(),
-                }
-            })
-            .collect();
 
         log::info!(
             "Selected {} makers (+ {} spares): {}",
@@ -1019,6 +1201,8 @@ impl UnifiedTaker {
                             address: spare_addr,
                             protocol,
                             tweakable_point: None,
+                            offer: None,
+                            negotiated_timelock: 0,
                             exchange,
                             finalization: FinalizationProgress::default(),
                         };
@@ -1057,6 +1241,26 @@ impl UnifiedTaker {
         let negotiated_protocol = self.net_handshake(&mut stream)?;
         log::info!("Handshake complete, protocol: {:?}", negotiated_protocol);
 
+        // Fetch the maker's offer before proposing swap details.
+        // This gives us the fee schedule for amount verification later.
+        send_message(&mut stream, &TakerToMakerMessage::GetOffer(GetOffer))?;
+        let offer_bytes = read_message(&mut stream)?;
+        let offer_msg: MakerToTakerMessage = serde_cbor::from_slice(&offer_bytes)?;
+        match offer_msg {
+            MakerToTakerMessage::Offer(offer) => {
+                log::info!("Received offer from maker {}: base_fee={}, amt_pct={}, time_pct={}",
+                    maker_idx, offer.base_fee, offer.amount_relative_fee_pct, offer.time_relative_fee_pct);
+                Self::validate_offer(&offer, maker_idx, send_amount)?;
+                self.swap_state_mut()?.makers[maker_idx].offer = Some(*offer);
+            }
+            other => {
+                return Err(TakerError::General(format!(
+                    "Expected Offer from maker {}, got {:?}",
+                    maker_idx, other
+                )));
+            }
+        }
+
         let refund_locktime_offset =
             REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * (maker_count - maker_idx - 1) as u16;
 
@@ -1089,6 +1293,7 @@ impl UnifiedTaker {
                     let swap = self.swap_state_mut()?;
                     swap.makers[maker_idx].tweakable_point = Some(tweakable_point);
                     swap.makers[maker_idx].protocol = negotiated_protocol;
+                    swap.makers[maker_idx].negotiated_timelock = timelock;
                     log::info!("Maker {} accepted swap with tweakable point", maker_idx);
                     Ok(())
                 } else {
@@ -1103,6 +1308,68 @@ impl UnifiedTaker {
                 maker_idx
             ))),
         }
+    }
+
+    /// Validate a maker's offer for fee sanity and size limits.
+    fn validate_offer(
+        offer: &Offer,
+        maker_idx: usize,
+        send_amount: Amount,
+    ) -> Result<(), TakerError> {
+        // Fee percentage sanity: must be finite and non-negative, and < 100%
+        if offer.amount_relative_fee_pct.is_nan()
+            || offer.amount_relative_fee_pct.is_infinite()
+            || offer.amount_relative_fee_pct < 0.0
+            || offer.amount_relative_fee_pct >= 100.0
+        {
+            return Err(TakerError::General(format!(
+                "Maker {} offer has invalid amount_relative_fee_pct: {}",
+                maker_idx, offer.amount_relative_fee_pct
+            )));
+        }
+        if offer.time_relative_fee_pct.is_nan()
+            || offer.time_relative_fee_pct.is_infinite()
+            || offer.time_relative_fee_pct < 0.0
+            || offer.time_relative_fee_pct >= 100.0
+        {
+            return Err(TakerError::General(format!(
+                "Maker {} offer has invalid time_relative_fee_pct: {}",
+                maker_idx, offer.time_relative_fee_pct
+            )));
+        }
+
+        // Base fee must not exceed the send amount (that would consume everything)
+        if offer.base_fee > send_amount.to_sat() {
+            return Err(TakerError::General(format!(
+                "Maker {} offer base_fee ({} sats) exceeds send amount ({} sats)",
+                maker_idx, offer.base_fee, send_amount.to_sat()
+            )));
+        }
+
+        // Size limits must be consistent
+        if offer.min_size > offer.max_size {
+            return Err(TakerError::General(format!(
+                "Maker {} offer has min_size ({}) > max_size ({})",
+                maker_idx, offer.min_size, offer.max_size
+            )));
+        }
+
+        // Send amount must fall within the maker's accepted range
+        let send_sats = send_amount.to_sat();
+        if send_sats < offer.min_size {
+            return Err(TakerError::General(format!(
+                "Send amount ({} sats) is below maker {} min_size ({} sats)",
+                send_sats, maker_idx, offer.min_size
+            )));
+        }
+        if send_sats > offer.max_size {
+            return Err(TakerError::General(format!(
+                "Send amount ({} sats) exceeds maker {} max_size ({} sats)",
+                send_sats, maker_idx, offer.max_size
+            )));
+        }
+
+        Ok(())
     }
 
     /// Initialize swap funding by creating outgoing swapcoins.
@@ -1271,18 +1538,19 @@ impl UnifiedTaker {
         Ok(socket)
     }
 
-    /// Wait for specific transaction IDs to be confirmed.
+    /// Wait for transactions to reach the required number of confirmations.
     ///
-    /// If a `BreachDetector` is provided, checks its atomic flag each poll cycle.
-    /// Returns `ContractsBroadcasted` immediately if the detector signals a breach.
+    /// Returns the highest block height at which any of the transactions was
+    /// confirmed (i.e. `current_height - confirmations + 1`). Returns 0 if
+    /// `required_confirms` is 0 or `txids` is empty.
     pub(crate) fn net_wait_for_confirmation(
         &self,
         txids: &[Txid],
         breach_detector: Option<&BreachDetector>,
-    ) -> Result<(), TakerError> {
+    ) -> Result<u32, TakerError> {
         let required_confirms = self.swap_state()?.params.required_confirms;
         if required_confirms == 0 || txids.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
 
         log::info!(
@@ -1300,9 +1568,13 @@ impl UnifiedTaker {
 
         loop {
             let mut all_confirmed = true;
+            let mut max_confirm_height: u32 = 0;
 
             {
                 let wallet = self.read_wallet()?;
+                let current_height = wallet.rpc.get_block_count().map_err(|e| {
+                    TakerError::General(format!("Failed to get block count: {:?}", e))
+                })? as u32;
                 for txid in txids {
                     match wallet.rpc.get_raw_transaction_info(txid, None) {
                         Ok(tx_info) => {
@@ -1315,6 +1587,12 @@ impl UnifiedTaker {
                                     required_confirms
                                 );
                                 all_confirmed = false;
+                            } else {
+                                // confirmation height = current - confirms + 1
+                                let confirm_height =
+                                    current_height.saturating_sub(confirms) + 1;
+                                max_confirm_height =
+                                    max_confirm_height.max(confirm_height);
                             }
                         }
                         Err(e) => {
@@ -1326,8 +1604,11 @@ impl UnifiedTaker {
             }
 
             if all_confirmed {
-                log::info!("All transactions confirmed");
-                return Ok(());
+                log::info!(
+                    "All transactions confirmed (latest at height {})",
+                    max_confirm_height
+                );
+                return Ok(max_confirm_height);
             }
 
             // Check for adversarial contract activity via the background detector thread.
@@ -1449,12 +1730,32 @@ impl UnifiedTaker {
             self.swap_state_mut()?.makers[i].finalization.privkey_received = true;
             self.swap_state_mut()?.makers[i].finalization.privkey_forwarded = true;
 
-            // For the last maker: set their privkey on taker's incoming swapcoin
+            // For the last maker: validate and set their privkey on taker's incoming swapcoin.
+            // Derive the public key from the received private key and verify it matches
+            // the expected other_pubkey on the incoming swapcoin, preventing a malicious
+            // maker from sending a garbage key that would make funds unspendable.
             if i == num_makers - 1 {
                 if let Some(incoming) = self.swap_state_mut()?.incoming_swapcoins.last_mut() {
+                    let secp = bitcoin::secp256k1::Secp256k1::new();
+                    let derived_pubkey = PublicKey {
+                        compressed: true,
+                        inner: bitcoin::secp256k1::PublicKey::from_secret_key(
+                            &secp,
+                            &received_privkey,
+                        ),
+                    };
+                    if let Some(expected_pubkey) = incoming.other_pubkey {
+                        if derived_pubkey != expected_pubkey {
+                            return Err(TakerError::General(format!(
+                                "Last maker {} sent incorrect private key: derived pubkey {} \
+                                 does not match expected {}",
+                                i, derived_pubkey, expected_pubkey
+                            )));
+                        }
+                    }
                     incoming.set_other_privkey(received_privkey);
                     log::info!(
-                        "Set taker's incoming swapcoin other_privkey from last maker ({})",
+                        "Validated and set taker's incoming swapcoin other_privkey from last maker ({})",
                         i
                     );
                 }
@@ -1737,68 +2038,6 @@ impl UnifiedTaker {
     /// Triggers a manual offerbook re-sync without waiting for the next interval.
     pub fn trigger_offerbook_sync(&self) {
         self.offer_sync_handle.run_sync_now();
-    }
-
-    /// Displays a maker offer candidate in a human-readable format.
-    pub fn display_offer(&self, candidate: &MakerOfferCandidate) -> Result<String, TakerError> {
-        let header = format!(
-            r#"
-    Maker
-    ─────
-    Address        : {address}
-    Protocol       : {protocol}
-    State          : {state}
-    "#,
-            address = candidate.address,
-            protocol = candidate
-                .protocol
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "Unknown".into()),
-            state = super::offers::format_state(&candidate.state),
-        );
-
-        let Some(offer) = &candidate.offer else {
-            return Ok(header);
-        };
-
-        let bond = &offer.fidelity.bond;
-        let bond_value = self.read_wallet()?.calculate_bond_value(bond)?;
-
-        Ok(format!(
-            r#"{header}
-
-    Offer
-    ─────
-    Base Fee       : {base_fee}
-    Amount Fee %   : {amount_fee:.4}
-    Time Fee %     : {time_fee:.4}
-
-    Limits
-    ──────
-    Min Size       : {min_size}
-    Max Size       : {max_size}
-    Required Conf. : {confirms}
-    Min Locktime   : {locktime}
-
-    Fidelity Bond
-    ─────────────
-    Outpoint       : {outpoint}
-    Value          : {bond_value}
-    Expiry         : {expiry}
-    "#,
-            header = header.trim_end(),
-            base_fee = offer.base_fee,
-            amount_fee = offer.amount_relative_fee_pct,
-            time_fee = offer.time_relative_fee_pct,
-            min_size = offer.min_size,
-            max_size = offer.max_size,
-            confirms = offer.required_confirms,
-            locktime = offer.minimum_locktime,
-            outpoint = bond.outpoint,
-            bond_value = bond_value,
-            expiry = bond.lock_time,
-        ))
     }
 
     /// Restore a wallet from a backup file (static — no taker instance needed).
