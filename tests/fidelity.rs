@@ -38,8 +38,7 @@ fn test_fidelity() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map.into(), taker_behavior);
+    let (test_framework, _, makers) = TestFramework::init(makers_config_map.into(), taker_behavior);
 
     log::info!("🧪 Running Test: Fidelity Bond Creation and Redemption");
 
@@ -240,9 +239,6 @@ fn test_fidelity() {
 
     thread::sleep(Duration::from_secs(10));
 
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
-
     log::info!("🎉 Fidelity bond lifecycle test completed successfully");
 }
 
@@ -260,8 +256,7 @@ fn test_fidelity_spending() {
     let makers_config_map = [((6102, None), MakerBehavior::Normal)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
-    let (test_framework, _, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map.into(), taker_behavior);
+    let (test_framework, _, makers) = TestFramework::init(makers_config_map.into(), taker_behavior);
 
     log::info!("🧪 Running Test: Assert Fidelity Spending Behavior");
 
@@ -484,6 +479,4 @@ fn test_fidelity_spending() {
     }
 
     log::info!("🎉 SUCCESS: All requirements from issue #525 verified!");
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
 }
