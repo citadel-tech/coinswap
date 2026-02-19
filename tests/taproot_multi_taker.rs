@@ -162,7 +162,7 @@ fn test_taproot_multi_taker() {
         let taker_total_after = taker_balances.spendable;
         assert_in_range!(
             taker_total_after.to_sat(),
-            [14943199, 14943203], // Spendable balance like normal case (with slight variance)
+            [14943199], // Spendable balance like normal case (with slight variance)
             "Taproot Taker spendable balance check."
         );
 
@@ -171,7 +171,7 @@ fn test_taproot_multi_taker() {
         assert_in_range!(
             // Here the fee consist of each maker fee i.e. is 13500 sats, and mining fees -> 29797 sats
             balance_diff.to_sat(),
-            [56797, 56801], // fee paid in normal swap case (with slight variance)
+            [56801], // fee paid in normal swap case (with slight variance)
             "Taproot Taker should have paid reasonable fees."
         );
         info!(
@@ -198,7 +198,7 @@ fn test_taproot_multi_taker() {
             // Use spendable (regular + swap) for comparison
             assert_in_range!(
                 balances.spendable.to_sat(),
-                [35040880, 35040888, 35040898, 35063890, 35063900, 35063908], // 8 utxos were funded to makers in this case,that's why more spendable balance (with variance)
+                [35040888, 35063900], // 8 utxos were funded to makers in this case,that's why more spendable balance (with variance)
                 "Taproot Maker after balance check."
             );
 
@@ -206,7 +206,7 @@ fn test_taproot_multi_taker() {
             // maker gained fee
             assert_in_range!(
                 balance_diff,
-                [41360, 41370, 41378, 41380, 41396, 64372, 64382, 64390, 64408], // Each maker performed 2 swap,hence almost 2x sats earned compared to normal swap (with variance).
+                [64384, 41370], // Each maker performed 2 swap,hence almost 2x sats earned compared to normal swap (with variance).
                 "Taproot Maker should have gained some fee here."
             );
 
