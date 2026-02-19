@@ -6,7 +6,7 @@ use bitcoin::{OutPoint, PublicKey};
 
 use super::{
     error::MakerError,
-    unified_handlers::{UnifiedConnectionState, UnifiedMaker},
+    unified_handlers::{SwapPhase, UnifiedConnectionState, UnifiedMaker},
 };
 use crate::{
     protocol::{
@@ -282,7 +282,8 @@ fn process_taproot_contract<M: UnifiedMaker>(
 
 /// Process Taproot private key handover.
 /// Stores the received privkey on incoming swapcoins, extracts outgoing privkey
-/// as a response, then sweeps.
+/// as a response. Sweep and state cleanup happen in the server loop after the
+/// response has been sent to the taker, to avoid blocking delivery.
 fn process_taproot_handover<M: UnifiedMaker>(
     maker: &Arc<M>,
     state: &mut UnifiedConnectionState,
@@ -314,8 +315,9 @@ fn process_taproot_handover<M: UnifiedMaker>(
         maker.save_incoming_swapcoin(incoming)?;
     }
 
-    maker.sweep_incoming_swapcoins()?;
-    maker.remove_connection_state(&handover.id);
+    // Mark swap as completed — sweep happens in the server loop after the
+    // response is delivered to the taker.
+    state.phase = SwapPhase::Completed;
 
     log::info!(
         "[{}] Taproot swap {} completed successfully, returning private key",

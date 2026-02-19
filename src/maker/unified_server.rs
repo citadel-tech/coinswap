@@ -23,7 +23,7 @@ use crate::{
 use super::{
     error::MakerError,
     unified_api::UnifiedMakerServer,
-    unified_handlers::{handle_message, UnifiedConnectionState},
+    unified_handlers::{handle_message, UnifiedConnectionState, UnifiedMaker},
 };
 
 /// Heartbeat interval for connections.
@@ -298,9 +298,19 @@ fn handle_connection(maker: Arc<UnifiedMakerServer>, stream: TcpStream) -> Resul
 
         if state.phase == super::unified_handlers::SwapPhase::Completed {
             log::info!(
-                "[{}] Swap completed successfully",
+                "[{}] Swap completed, sweeping incoming swapcoins",
                 maker.config.network_port
             );
+            if let Err(e) = maker.sweep_incoming_swapcoins() {
+                log::error!(
+                    "[{}] Failed to sweep incoming swapcoins: {:?}",
+                    maker.config.network_port,
+                    e
+                );
+            }
+            if let Some(ref swap_id) = state.swap_id {
+                maker.remove_connection_state(swap_id);
+            }
             break;
         }
     }
