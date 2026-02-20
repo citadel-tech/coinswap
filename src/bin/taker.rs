@@ -25,16 +25,16 @@ use coinswap::taker::TakerBehavior;
 ///
 /// This is early beta, and there are known and unknown bugs. Please report issues at: <https://github.com/citadel-tech/coinswap/issues>
 #[derive(Parser, Debug)]
-#[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
+#[command(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
     /// Optional data directory. Default value: "~/.coinswap/taker"
-    #[clap(long, short = 'd')]
+    #[arg(long, short = 'd')]
     data_directory: Option<PathBuf>,
 
     /// Bitcoin Core RPC address:port value
-    #[clap(
-        name = "ADDRESS:PORT",
+    #[arg(
+        id = "ADDRESS:PORT",
         long,
         short = 'r',
         default_value = "127.0.0.1:38332"
@@ -42,8 +42,8 @@ struct Cli {
     pub rpc: String,
 
     /// Bitcoin Core ZMQ address:port value
-    #[clap(
-        name = "ZMQ",
+    #[arg(
+        id = "ZMQ",
         long,
         short = 'z',
         default_value = "tcp://127.0.0.1:28332"
@@ -51,29 +51,29 @@ struct Cli {
     pub zmq: String,
 
     /// Bitcoin Core RPC authentication string. Ex: username:password
-    #[clap(name="USER:PASSWORD",short='a',long, value_parser = parse_proxy_auth, default_value = "user:password")]
+    #[arg(id="USER:PASSWORD",short='a',long, value_parser = parse_proxy_auth, default_value = "user:password")]
     pub auth: (String, String),
-    #[clap(long, short = 't')]
+    #[arg(long, short = 't')]
     pub tor_auth: Option<String>,
 
     /// Sets the taker wallet's name. If the wallet file already exists, it will load that wallet. Default: taker-wallet
-    #[clap(name = "WALLET", long, short = 'w')]
+    #[arg(id = "WALLET", long, short = 'w')]
     pub wallet_name: Option<String>,
 
     /// Optional Password for the encryption of the wallet.
-    #[clap(name = "PASSWORD", long, short = 'p')]
+    #[arg(id = "PASSWORD", long, short = 'p')]
     pub password: Option<String>,
 
     /// Sets the verbosity level of debug.log file
-    #[clap(long, short = 'v', possible_values = &["off", "error", "warn", "info", "debug", "trace"], default_value = "info")]
+    #[arg(long, short = 'v', value_parser = ["off", "error", "warn", "info", "debug", "trace"], default_value = "info")]
     pub verbosity: String,
 
     /// Use experimental Taproot-based coinswap protocol
-    #[clap(long)]
+    #[arg(long)]
     pub taproot: bool,
 
     /// List of commands for various wallet operations
-    #[clap(subcommand)]
+    #[command(subcommand)]
     command: Commands,
 }
 
@@ -99,13 +99,13 @@ enum Commands {
     /// Send to an external wallet address.
     SendToAddress {
         /// Recipient's address.
-        #[clap(long, short = 't')]
+        #[arg(long, short = 't')]
         address: String,
         /// Amount to send in sats
-        #[clap(long, short = 'a')]
+        #[arg(long, short = 'a')]
         amount: u64,
         /// Feerate in sats/vByte. Defaults to 2 sats/vByte
-        #[clap(long, short = 'f')]
+        #[arg(long, short = 'f')]
         feerate: Option<f64>,
     },
     /// Update the offerbook with current market offers and display them
@@ -116,14 +116,14 @@ enum Commands {
     Coinswap {
         /// Sets the maker count to swap with. Swapping with less than 2 makers is not allowed to maintain client privacy.
         /// Adding more makers in the swap will incur more swap fees.
-        #[clap(long, short = 'm', default_value = "2")]
+        #[arg(long, short = 'm', default_value = "2")]
         makers: usize,
         /// Sets the swap amount in sats.
-        #[clap(long, short = 'a', default_value = "20000")]
+        #[arg(long, short = 'a', default_value = "20000")]
         amount: u64,
         // /// Sets how many new swap utxos to get. The swap amount will be randomly distributed across the new utxos.
         // /// Increasing this number also increases the total swap fee.
-        // #[clap(long, short = 'u', default_value = "1")]
+        // #[arg(long, short = 'u', default_value = "1")]
         // utxos: u32,
     },
     /// Recover from all failed swaps
@@ -142,9 +142,9 @@ enum Commands {
     /// interactively to enter a passphrase.
     ///
     ///
-    #[clap(verbatim_doc_comment)]
+    #[command(verbatim_doc_comment)]
     Backup {
-        #[clap(long, short = 'e')]
+        #[arg(long, short = 'e')]
         encrypt: bool,
     },
 
@@ -157,7 +157,7 @@ enum Commands {
     /// stored in the backup. If a wallet name is provided, the backup will be restored
     /// under that name instead.
     Restore {
-        #[clap(long, short = 'f')]
+        #[arg(long, short = 'f')]
         backup_file: String,
     },
 }
