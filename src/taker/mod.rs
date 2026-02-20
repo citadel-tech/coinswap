@@ -12,7 +12,25 @@ pub mod error;
 pub mod offers;
 mod routines;
 
+// Unified API
+mod background_services;
+mod legacy_swap;
+mod legacy_verification;
+pub mod swap_tracker;
+mod taproot_swap;
+mod taproot_verification;
+pub mod unified_api;
+
 pub use self::api::TakerBehavior;
 pub use api::{SwapParams, Taker};
 pub use api2::Taker as TaprootTaker;
 pub use config::TakerConfig;
+
+// Unified protocol exports
+pub use offers::{format_state, MakerOfferCandidate, MakerState, OfferBook};
+#[cfg(feature = "integration-test")]
+pub use unified_api::UnifiedTakerBehavior;
+pub use unified_api::{
+    MakerFeeInfo, SwapSummary, UnifiedSwapParams, UnifiedSwapReport, UnifiedTaker,
+    UnifiedTakerConfig,
+};

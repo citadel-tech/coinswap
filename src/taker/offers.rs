@@ -25,9 +25,15 @@ use socks::Socks5Stream;
 
 use crate::{
     protocol::{
+        // Router messages for unified protocol
+        common_messages::{GetOffer as RouterGetOffer, TakerHello as RouterTakerHello},
         error::ProtocolError,
         messages::{FidelityProof, GiveOffer, MakerToTakerMessage, Offer, TakerToMakerMessage},
         messages2::{self, GetOffer},
+        router::{
+            MakerToTakerMessage as RouterMakerToTakerMessage,
+            TakerToMakerMessage as RouterTakerToMakerMessage,
+        },
     },
     taker::{
         api::{
@@ -136,6 +142,20 @@ pub enum MakerProtocol {
     Legacy,
     /// Taproot
     Taproot,
+    /// Unified - supports both Legacy and Taproot
+    Unified,
+}
+
+impl MakerProtocol {
+    /// Check if this protocol supports the requested protocol.
+    /// Unified makers support both Legacy and Taproot.
+    pub fn supports(&self, requested: &MakerProtocol) -> bool {
+        match self {
+            MakerProtocol::Unified => true, // Unified supports both
+            MakerProtocol::Legacy => *requested == MakerProtocol::Legacy,
+            MakerProtocol::Taproot => *requested == MakerProtocol::Taproot,
+        }
+    }
 }
 
 impl fmt::Display for MakerProtocol {
@@ -143,6 +163,7 @@ impl fmt::Display for MakerProtocol {
         match self {
             MakerProtocol::Legacy => f.write_str("Legacy"),
             MakerProtocol::Taproot => f.write_str("Taproot"),
+            MakerProtocol::Unified => f.write_str("Unified"),
         }
     }
 }
@@ -514,13 +535,19 @@ impl OfferBook {
     }
 
     /// Gets all active (good) offers for a given protocol.
+    /// Unified makers are included for both Legacy and Taproot requests.
     fn active_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
         let mut makers = self.makers.clone();
         makers.sort_by(|a, b| a.address.0.port.cmp(&b.address.0.port));
         makers
             .iter()
             .filter(|m| m.state == MakerState::Good)
-            .filter(|m| m.protocol.as_ref() == Some(protocol))
+            .filter(|m| {
+                m.protocol
+                    .as_ref()
+                    .map(|p| p.supports(protocol))
+                    .unwrap_or(false)
+            })
             .filter_map(|m| m.as_offer_and_address())
             .collect()
     }
@@ -539,13 +566,19 @@ impl OfferBook {
     }
 
     /// Gets the list of bad makers.
+    /// Unified makers are included for both Legacy and Taproot requests.
     fn get_bad_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
         let mut makers = self.makers.clone();
         makers.sort_by(|a, b| a.address.0.port.len().cmp(&b.address.0.port.len()));
         makers
             .iter()
             .filter(|m| m.state == MakerState::Bad)
-            .filter(|m| m.protocol.as_ref() == Some(protocol))
+            .filter(|m| {
+                m.protocol
+                    .as_ref()
+                    .map(|p| p.supports(protocol))
+                    .unwrap_or(false)
+            })
             .filter_map(|m| m.as_offer_and_address())
             .collect()
     }
@@ -687,6 +720,22 @@ impl MakerAddress {
     }
 
     fn download_offer_auto(self, socks_port: u16) -> Result<OfferAndAddress, TakerError> {
+        // Try unified protocol first (supports both Legacy and Taproot)
+        match self.fetch_unified_offer(socks_port) {
+            Ok((offer, protocol)) => {
+                return Ok(OfferAndAddress {
+                    offer,
+                    address: self,
+                    state: MakerState::Good,
+                    protocol,
+                });
+            }
+            Err(e) => {
+                log::debug!("Unified offer fetch failed for {}: {:?}", self, e);
+            }
+        }
+
+        // Fall back to legacy protocol
         match self.fetch_legacy_offer(socks_port) {
             Ok(offer) => {
                 return Ok(OfferAndAddress {
@@ -701,6 +750,7 @@ impl MakerAddress {
             }
         }
 
+        // Fall back to taproot protocol
         match self.clone().fetch_taproot_offer(socks_port) {
             Ok(offer) => {
                 return Ok(OfferAndAddress {
@@ -716,7 +766,7 @@ impl MakerAddress {
         }
 
         Err(TakerError::General(
-            "maker does not support legacy or taproot offer exchange".into(),
+            "maker does not support unified, legacy or taproot offer exchange".into(),
         ))
     }
 
@@ -747,7 +797,7 @@ impl MakerAddress {
             msg => {
                 return Err(ProtocolError::WrongMessage {
                     expected: "RespOffer".to_string(),
-                    received: format!("{msg}"),
+                    received: format!("{msg:?}"),
                 }
                 .into());
             }
@@ -782,7 +832,7 @@ impl MakerAddress {
             msg => {
                 return Err(ProtocolError::WrongMessage {
                     expected: "RespOffer".to_string(),
-                    received: format!("{msg}"),
+                    received: format!("{msg:?}"),
                 }
                 .into());
             }
@@ -813,6 +863,89 @@ impl MakerAddress {
         );
 
         Ok(offer)
+    }
+
+    /// Download a single offer from a unified maker
+    fn fetch_unified_offer(&self, socks_port: u16) -> Result<(Offer, MakerProtocol), TakerError> {
+        let maker_addr = self.to_string();
+        log::debug!("Downloading offer from unified maker: {}", maker_addr);
+
+        let mut socket = if cfg!(feature = "integration-test") {
+            TcpStream::connect(&maker_addr)?
+        } else {
+            Socks5Stream::connect(
+                format!("127.0.0.1:{socks_port}").as_str(),
+                maker_addr.as_ref(),
+            )?
+            .into_inner()
+        };
+
+        socket.set_read_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
+        socket.set_write_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
+
+        // Send TakerHello
+        let taker_hello = RouterTakerToMakerMessage::TakerHello(RouterTakerHello);
+        send_message(&mut socket, &taker_hello)?;
+
+        // Read MakerHello
+        let msg_bytes = read_message(&mut socket)?;
+        let msg: RouterMakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+
+        match msg {
+            RouterMakerToTakerMessage::MakerHello(_hello) => {
+                // Unified maker - supports both Legacy and Taproot
+            }
+            msg => {
+                return Err(ProtocolError::WrongMessage {
+                    expected: "MakerHello".to_string(),
+                    received: format!("{msg:?}"),
+                }
+                .into());
+            }
+        };
+
+        // Send GetOffer
+        let get_offer = RouterTakerToMakerMessage::GetOffer(RouterGetOffer);
+        send_message(&mut socket, &get_offer)?;
+
+        // Read Offer
+        let offer_bytes = read_message(&mut socket)?;
+        let offer_msg: RouterMakerToTakerMessage = serde_cbor::from_slice(&offer_bytes)?;
+
+        let router_offer = match offer_msg {
+            RouterMakerToTakerMessage::Offer(offer) => *offer,
+            msg => {
+                return Err(ProtocolError::WrongMessage {
+                    expected: "Offer".to_string(),
+                    received: format!("{msg:?}"),
+                }
+                .into());
+            }
+        };
+
+        // Convert router offer to legacy Offer format for storage
+        let offer = Offer {
+            base_fee: router_offer.base_fee,
+            amount_relative_fee_pct: router_offer.amount_relative_fee_pct,
+            time_relative_fee_pct: router_offer.time_relative_fee_pct,
+            required_confirms: router_offer.required_confirms,
+            minimum_locktime: router_offer.minimum_locktime,
+            max_size: router_offer.max_size,
+            min_size: router_offer.min_size,
+            tweakable_point: router_offer.tweakable_point,
+            fidelity: FidelityProof {
+                bond: router_offer.fidelity.bond,
+                cert_hash: router_offer.fidelity.cert_hash,
+                cert_sig: router_offer.fidelity.cert_sig,
+            },
+        };
+
+        log::info!(
+            "Successfully downloaded offer from unified maker: {} (protocol: Unified)",
+            maker_addr
+        );
+
+        Ok((offer, MakerProtocol::Unified))
     }
 }
 

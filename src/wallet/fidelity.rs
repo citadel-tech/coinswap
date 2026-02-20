@@ -223,6 +223,11 @@ pub struct FidelityBond {
 }
 
 impl FidelityBond {
+    /// The UTXO outpoint backing this bond.
+    pub fn outpoint(&self) -> OutPoint {
+        self.outpoint
+    }
+
     /// Whether the fidelity bond is spent or not
     pub fn is_spent(&self) -> bool {
         self.is_spent

@@ -68,19 +68,8 @@ pub enum TakerBehavior {
     CloseAtSendersContractFromMaker,
 }
 
-/// Represents how a taproot contract output was spent
-#[derive(Debug, Clone)]
-pub enum TaprootSpendingPath {
-    /// Cooperative key-path spend (MuSig2)
-    KeyPath,
-    /// Script-path spend using hashlock
-    Hashlock {
-        /// The 32-byte hash preimage revealed in the spending transaction
-        preimage: [u8; 32],
-    },
-    /// Script-path spend using timelock
-    Timelock,
-}
+// Re-export TaprootSpendingPath from protocol module.
+pub use crate::protocol::contract2::TaprootSpendingPath;
 
 #[derive(Debug, Default, Clone)]
 /// Parameters for initiating a coinswap
