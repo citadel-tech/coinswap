@@ -12,8 +12,8 @@ use std::{
 pub(crate) use super::swap_tracker::SwapPhase;
 use super::swap_tracker::{
     now_secs, ContractOutcome, ContractResolution, ExchangeProgress, FinalizationProgress,
-    LegacyExchangeProgress, MakerProgress, RecoveryState, SerializableSecretKey,
-    SwapRecord, SwapTracker, TaprootExchangeProgress,
+    LegacyExchangeProgress, MakerProgress, RecoveryState, SerializableSecretKey, SwapRecord,
+    SwapTracker, TaprootExchangeProgress,
 };
 
 use bitcoin::{
@@ -56,8 +56,8 @@ use super::{
     config::TakerConfig,
     error::TakerError,
     offers::{
-        MakerAddress, MakerProtocol, OfferAndAddress, OfferBook,
-        OfferBookHandle, OfferSyncHandle, OfferSyncService,
+        MakerAddress, MakerProtocol, OfferAndAddress, OfferBook, OfferBookHandle, OfferSyncHandle,
+        OfferSyncService,
     },
 };
 
@@ -347,21 +347,28 @@ pub(crate) struct MakerConnection {
 
 impl MakerConnection {
     /// Get mutable reference to Legacy exchange progress.
-    pub(crate) fn legacy_exchange_mut(&mut self) -> Result<&mut LegacyExchangeProgress, TakerError> {
+    pub(crate) fn legacy_exchange_mut(
+        &mut self,
+    ) -> Result<&mut LegacyExchangeProgress, TakerError> {
         match &mut self.exchange {
             ExchangeProgress::Legacy(ref mut l) => Ok(l),
-            _ => Err(TakerError::General("Expected Legacy exchange progress".to_string())),
+            _ => Err(TakerError::General(
+                "Expected Legacy exchange progress".to_string(),
+            )),
         }
     }
 
     /// Get mutable reference to Taproot exchange progress.
-    pub(crate) fn taproot_exchange_mut(&mut self) -> Result<&mut TaprootExchangeProgress, TakerError> {
+    pub(crate) fn taproot_exchange_mut(
+        &mut self,
+    ) -> Result<&mut TaprootExchangeProgress, TakerError> {
         match &mut self.exchange {
             ExchangeProgress::Taproot(ref mut t) => Ok(t),
-            _ => Err(TakerError::General("Expected Taproot exchange progress".to_string())),
+            _ => Err(TakerError::General(
+                "Expected Taproot exchange progress".to_string(),
+            )),
         }
     }
-
 }
 
 impl UnifiedTaker {
@@ -385,8 +392,8 @@ impl UnifiedTaker {
         let mut amount_sats = send_amount.to_sat() as f64;
         for i in 0..=maker_idx {
             let offer = swap.makers[i].offer.as_ref()?;
-            let locktime = REFUND_LOCKTIME_BASE
-                + REFUND_LOCKTIME_STEP * (maker_count - i - 1) as u16;
+            let locktime =
+                REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * (maker_count - i - 1) as u16;
             let fee = offer.base_fee as f64
                 + (amount_sats * offer.amount_relative_fee_pct) / 100.0
                 + (amount_sats * locktime as f64 * offer.time_relative_fee_pct) / 100.0;
@@ -559,9 +566,8 @@ impl UnifiedTaker {
                     Err(e) => log::warn!("Startup timelock recovery failed: {:?}", e),
                 }
 
-                let has_contracts =
-                    !wallet.unified_outgoing_contract_outpoints().is_empty()
-                        || !wallet.unified_incoming_contract_outpoints().is_empty();
+                let has_contracts = !wallet.unified_outgoing_contract_outpoints().is_empty()
+                    || !wallet.unified_incoming_contract_outpoints().is_empty();
                 drop(wallet);
                 has_contracts
             }
@@ -617,7 +623,7 @@ impl UnifiedTaker {
         let registry = FileRegistry::load(file_registry);
 
         let (tx_requests, rx_requests) = mpsc::channel();
-        let (tx_events, rx_responses) = mpsc::channel();
+        let (tx_events, rx_responses) = crossbeam_channel::unbounded();
         let rpc_config_watcher = rpc_config.clone();
 
         let mut watcher = Watcher::<UnifiedTaker>::new(backend, registry, rx_requests, tx_events);
@@ -843,58 +849,54 @@ impl UnifiedTaker {
         let protocol = self.swap_state()?.params.protocol;
 
         match protocol {
-            ProtocolVersion::Legacy => {
-                match self.exchange_legacy() {
-                    Ok(()) => {}
-                    Err(e) => {
-                        log::error!("Legacy contract exchange failed: {:?}", e);
-                        let phase = self
-                            .swap_state()
-                            .map(|s| s.phase)
-                            .unwrap_or(SwapPhase::MakersDiscovered);
-                        if phase >= SwapPhase::FundsBroadcast {
-                            log::warn!("Funding txs were broadcast, triggering recovery");
-                            self.persist_failure(phase, &e);
-                            if let Err(re) = self.recover_active_swap() {
-                                log::error!("Recovery failed: {:?}", re);
-                            }
-                        } else {
-                            log::info!("No funds on-chain — safe to abort");
-                            let _ = self.swap_tracker.lock().unwrap().remove_record(
-                                &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
-                            );
-                            self.ongoing_swap = None;
+            ProtocolVersion::Legacy => match self.exchange_legacy() {
+                Ok(()) => {}
+                Err(e) => {
+                    log::error!("Legacy contract exchange failed: {:?}", e);
+                    let phase = self
+                        .swap_state()
+                        .map(|s| s.phase)
+                        .unwrap_or(SwapPhase::MakersDiscovered);
+                    if phase >= SwapPhase::FundsBroadcast {
+                        log::warn!("Funding txs were broadcast, triggering recovery");
+                        self.persist_failure(phase, &e);
+                        if let Err(re) = self.recover_active_swap() {
+                            log::error!("Recovery failed: {:?}", re);
                         }
-                        return Err(e);
+                    } else {
+                        log::info!("No funds on-chain — safe to abort");
+                        let _ = self.swap_tracker.lock().unwrap().remove_record(
+                            &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
+                        );
+                        self.ongoing_swap = None;
                     }
+                    return Err(e);
                 }
-            }
-            ProtocolVersion::Taproot => {
-                match self.exchange_taproot() {
-                    Ok(()) => {}
-                    Err(e) => {
-                        log::error!("Taproot exchange failed: {:?}", e);
-                        let phase = self
-                            .swap_state()
-                            .map(|s| s.phase)
-                            .unwrap_or(SwapPhase::MakersDiscovered);
-                        if phase >= SwapPhase::FundsBroadcast {
-                            log::warn!("Funds were broadcast, triggering recovery");
-                            self.persist_failure(phase, &e);
-                            if let Err(re) = self.recover_active_swap() {
-                                log::error!("Recovery failed: {:?}", re);
-                            }
-                        } else {
-                            log::info!("No funds on-chain — safe to abort");
-                            let _ = self.swap_tracker.lock().unwrap().remove_record(
-                                &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
-                            );
-                            self.ongoing_swap = None;
+            },
+            ProtocolVersion::Taproot => match self.exchange_taproot() {
+                Ok(()) => {}
+                Err(e) => {
+                    log::error!("Taproot exchange failed: {:?}", e);
+                    let phase = self
+                        .swap_state()
+                        .map(|s| s.phase)
+                        .unwrap_or(SwapPhase::MakersDiscovered);
+                    if phase >= SwapPhase::FundsBroadcast {
+                        log::warn!("Funds were broadcast, triggering recovery");
+                        self.persist_failure(phase, &e);
+                        if let Err(re) = self.recover_active_swap() {
+                            log::error!("Recovery failed: {:?}", re);
                         }
-                        return Err(e);
+                    } else {
+                        log::info!("No funds on-chain — safe to abort");
+                        let _ = self.swap_tracker.lock().unwrap().remove_record(
+                            &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
+                        );
+                        self.ongoing_swap = None;
                     }
+                    return Err(e);
                 }
-            }
+            },
         }
 
         #[cfg(feature = "integration-test")]
@@ -1096,10 +1098,8 @@ impl UnifiedTaker {
             let spare_count = suitable_makers.len().saturating_sub(maker_count).min(2);
             let total_select = maker_count + spare_count;
 
-            let mut selected: Vec<OfferAndAddress> = suitable_makers
-                .into_iter()
-                .take(total_select)
-                .collect();
+            let mut selected: Vec<OfferAndAddress> =
+                suitable_makers.into_iter().take(total_select).collect();
 
             let spare_oas = selected.split_off(maker_count);
             let spare_addrs: Vec<MakerAddress> =
@@ -1159,12 +1159,13 @@ impl UnifiedTaker {
         let protocol = swap.params.protocol;
 
         // Get reference height once for consistent absolute timelocks (Taproot).
-        let reference_height = {
-            let wallet = self.read_wallet()?;
-            wallet.rpc.get_block_count().map_err(|e| {
-                TakerError::General(format!("Failed to get block count: {:?}", e))
-            })? as u32
-        };
+        let reference_height =
+            {
+                let wallet = self.read_wallet()?;
+                wallet.rpc.get_block_count().map_err(|e| {
+                    TakerError::General(format!("Failed to get block count: {:?}", e))
+                })? as u32
+            };
 
         let mut i = 0;
         while i < maker_count {
@@ -1186,11 +1187,7 @@ impl UnifiedTaker {
 
                     let spare = self.swap_state_mut()?.spare_makers.pop();
                     if let Some(spare_addr) = spare {
-                        log::info!(
-                            "Substituting maker {} with spare at {}",
-                            i,
-                            spare_addr
-                        );
+                        log::info!("Substituting maker {} with spare at {}", i, spare_addr);
                         let exchange = match protocol {
                             ProtocolVersion::Legacy => {
                                 ExchangeProgress::Legacy(LegacyExchangeProgress::default())
@@ -1233,9 +1230,7 @@ impl UnifiedTaker {
         maker_count: usize,
         reference_height: u32,
     ) -> Result<(), TakerError> {
-        let maker_address = self.swap_state()?.makers[maker_idx]
-            .address
-            .to_string();
+        let maker_address = self.swap_state()?.makers[maker_idx].address.to_string();
         log::info!("Connecting to maker {} at {}", maker_idx, maker_address);
 
         let mut stream = self.net_connect(&maker_address)?;
@@ -1250,8 +1245,13 @@ impl UnifiedTaker {
         let offer_msg: MakerToTakerMessage = serde_cbor::from_slice(&offer_bytes)?;
         match offer_msg {
             MakerToTakerMessage::Offer(offer) => {
-                log::info!("Received offer from maker {}: base_fee={}, amt_pct={}, time_pct={}",
-                    maker_idx, offer.base_fee, offer.amount_relative_fee_pct, offer.time_relative_fee_pct);
+                log::info!(
+                    "Received offer from maker {}: base_fee={}, amt_pct={}, time_pct={}",
+                    maker_idx,
+                    offer.base_fee,
+                    offer.amount_relative_fee_pct,
+                    offer.time_relative_fee_pct
+                );
                 Self::validate_offer(&offer, maker_idx, send_amount)?;
                 self.swap_state_mut()?.makers[maker_idx].offer = Some(*offer);
             }
@@ -1281,10 +1281,7 @@ impl UnifiedTaker {
             timelock,
         };
 
-        send_message(
-            &mut stream,
-            &TakerToMakerMessage::SwapDetails(swap_details),
-        )?;
+        send_message(&mut stream, &TakerToMakerMessage::SwapDetails(swap_details))?;
 
         let msg_bytes = read_message(&mut stream)?;
         let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
@@ -1344,7 +1341,9 @@ impl UnifiedTaker {
         if offer.base_fee > send_amount.to_sat() {
             return Err(TakerError::General(format!(
                 "Maker {} offer base_fee ({} sats) exceeds send amount ({} sats)",
-                maker_idx, offer.base_fee, send_amount.to_sat()
+                maker_idx,
+                offer.base_fee,
+                send_amount.to_sat()
             )));
         }
 
@@ -1591,10 +1590,8 @@ impl UnifiedTaker {
                                 all_confirmed = false;
                             } else {
                                 // confirmation height = current - confirms + 1
-                                let confirm_height =
-                                    current_height.saturating_sub(confirms) + 1;
-                                max_confirm_height =
-                                    max_confirm_height.max(confirm_height);
+                                let confirm_height = current_height.saturating_sub(confirms) + 1;
+                                max_confirm_height = max_confirm_height.max(confirm_height);
                             }
                         }
                         Err(e) => {
@@ -1698,9 +1695,7 @@ impl UnifiedTaker {
             .ok_or_else(|| TakerError::General("No outgoing privkey".to_string()))?;
 
         for i in 0..num_makers {
-            let maker_address = self.swap_state()?.makers[i]
-                .address
-                .to_string();
+            let maker_address = self.swap_state()?.makers[i].address.to_string();
             let mut stream = self.net_connect(&maker_address)?;
 
             self.net_handshake(&mut stream)?;
@@ -1729,8 +1724,12 @@ impl UnifiedTaker {
                 }
             };
 
-            self.swap_state_mut()?.makers[i].finalization.privkey_received = true;
-            self.swap_state_mut()?.makers[i].finalization.privkey_forwarded = true;
+            self.swap_state_mut()?.makers[i]
+                .finalization
+                .privkey_received = true;
+            self.swap_state_mut()?.makers[i]
+                .finalization
+                .privkey_forwarded = true;
 
             // For the last maker: validate and set their privkey on taker's incoming swapcoin.
             // Derive the public key from the received private key and verify it matches

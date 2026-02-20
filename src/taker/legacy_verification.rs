@@ -211,14 +211,13 @@ impl UnifiedTaker {
             )?;
 
             // Verify hash in contract redeemscript matches our preimage
-            let hashvalue = read_hashvalue_from_contract(&info.contract_redeemscript).map_err(
-                |e| {
+            let hashvalue =
+                read_hashvalue_from_contract(&info.contract_redeemscript).map_err(|e| {
                     TakerError::General(format!(
                         "Sender contract {} has unreadable hashvalue: {:?}",
                         i, e
                     ))
-                },
-            )?;
+                })?;
             if hashvalue != expected_hashvalue {
                 return Err(TakerError::General(format!(
                     "Sender contract {} has wrong hashvalue: expected {:?}, got {:?}",
@@ -252,8 +251,7 @@ impl UnifiedTaker {
 
             // Verify multisig contains the expected next-hop pubkey
             if !next_multisig_pubkeys.is_empty() {
-                let expected_pubkey =
-                    next_multisig_pubkeys[i % next_multisig_pubkeys.len()];
+                let expected_pubkey = next_multisig_pubkeys[i % next_multisig_pubkeys.len()];
                 let (pubkey1, pubkey2) =
                     read_pubkeys_from_multisig_redeemscript(&info.multisig_redeemscript)?;
                 if pubkey1 != expected_pubkey && pubkey2 != expected_pubkey {
@@ -266,17 +264,16 @@ impl UnifiedTaker {
 
             // Verify hashlock pubkey matches what we provided for the next hop
             if !next_hashlock_pubkeys.is_empty() {
-                let expected_hashlock =
-                    next_hashlock_pubkeys[i % next_hashlock_pubkeys.len()];
-                let contract_hashlock =
-                    read_hashlock_pubkey_from_contract(&info.contract_redeemscript).map_err(
-                        |e| {
-                            TakerError::General(format!(
-                                "Sender contract {} has unreadable hashlock pubkey: {:?}",
-                                i, e
-                            ))
-                        },
-                    )?;
+                let expected_hashlock = next_hashlock_pubkeys[i % next_hashlock_pubkeys.len()];
+                let contract_hashlock = read_hashlock_pubkey_from_contract(
+                    &info.contract_redeemscript,
+                )
+                .map_err(|e| {
+                    TakerError::General(format!(
+                        "Sender contract {} has unreadable hashlock pubkey: {:?}",
+                        i, e
+                    ))
+                })?;
                 if contract_hashlock != expected_hashlock {
                     return Err(TakerError::General(format!(
                         "Sender contract {} hashlock pubkey does not match expected next-hop key",
@@ -289,10 +286,7 @@ impl UnifiedTaker {
         // Verify total funding amount is consistent with expected amount after fees.
         // This uses the maker's advertised fee schedule from the offer.
         if let Some(min_amount) = min_expected_amount {
-            let total_funding: Amount = senders_info
-                .iter()
-                .map(|info| info.funding_amount)
-                .sum();
+            let total_funding: Amount = senders_info.iter().map(|info| info.funding_amount).sum();
             if total_funding < min_amount {
                 return Err(TakerError::General(format!(
                     "Maker sender contracts total funding {} is below expected minimum {} \
@@ -347,7 +341,6 @@ impl UnifiedTaker {
                     ))
                 })?;
             }
-
         }
 
         log::info!(

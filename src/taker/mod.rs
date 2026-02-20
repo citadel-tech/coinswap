@@ -27,7 +27,10 @@ pub use api2::Taker as TaprootTaker;
 pub use config::TakerConfig;
 
 // Unified protocol exports
+pub use offers::{format_state, MakerOfferCandidate, MakerState, OfferBook};
 #[cfg(feature = "integration-test")]
 pub use unified_api::UnifiedTakerBehavior;
-pub use offers::{format_state, MakerOfferCandidate, MakerState, OfferBook};
-pub use unified_api::{MakerFeeInfo, SwapSummary, UnifiedSwapParams, UnifiedSwapReport, UnifiedTaker, UnifiedTakerConfig};
+pub use unified_api::{
+    MakerFeeInfo, SwapSummary, UnifiedSwapParams, UnifiedSwapReport, UnifiedTaker,
+    UnifiedTakerConfig,
+};

@@ -131,13 +131,12 @@ impl UnifiedTaker {
         let mut prev_confirm_height: u32 = 0;
 
         // Background thread monitors funding outpoints for adversarial contract broadcasts.
-        self.breach_detector =
-            Some(super::background_services::BreachDetector::start(self.watch_service.clone()));
+        self.breach_detector = Some(super::background_services::BreachDetector::start(
+            self.watch_service.clone(),
+        ));
 
         for maker_idx in 0..maker_count {
-            let maker_address = self.swap_state()?.makers[maker_idx]
-                .address
-                .to_string();
+            let maker_address = self.swap_state()?.makers[maker_idx].address.to_string();
 
             log::info!(
                 "Processing maker {} of {}: {}",
@@ -157,8 +156,7 @@ impl UnifiedTaker {
             let is_first_peer = maker_idx == 0;
             let is_last_peer = maker_idx == maker_count - 1;
 
-            let outgoing_locktime =
-                self.swap_state()?.makers[maker_idx].negotiated_timelock as u16;
+            let outgoing_locktime = self.swap_state()?.makers[maker_idx].negotiated_timelock as u16;
 
             let (
                 funding_txs,
@@ -270,9 +268,7 @@ impl UnifiedTaker {
             }
 
             if is_first_peer {
-                log::info!(
-                    "Broadcasting funding transactions and waiting for confirmation"
-                );
+                log::info!("Broadcasting funding transactions and waiting for confirmation");
                 {
                     let wallet = self.write_wallet()?;
 
@@ -299,8 +295,7 @@ impl UnifiedTaker {
                     .iter()
                     .filter_map(|sc| sc.funding_tx.as_ref().map(|tx| tx.compute_txid()))
                     .collect();
-                prev_confirm_height =
-                    self.net_wait_for_confirmation(&funding_txids, None)?;
+                prev_confirm_height = self.net_wait_for_confirmation(&funding_txids, None)?;
                 self.swap_state_mut()?.makers[maker_idx]
                     .legacy_exchange_mut()?
                     .prev_funding_confirmed = true;
@@ -431,9 +426,8 @@ impl UnifiedTaker {
                     .collect::<Result<Vec<_>, _>>()?
             } else {
                 log::info!("Requesting sender signatures from next maker");
-                let next_maker_address = self.swap_state()?.makers[maker_idx + 1]
-                    .address
-                    .to_string();
+                let next_maker_address =
+                    self.swap_state()?.makers[maker_idx + 1].address.to_string();
                 let mut next_stream = self.net_connect(&next_maker_address)?;
                 self.net_handshake(&mut next_stream)?;
 
@@ -449,7 +443,8 @@ impl UnifiedTaker {
                     next_locktime,
                 )?;
                 // Next maker provided sender sigs for current maker's outgoing.
-                let next_exch = self.swap_state_mut()?.makers[maker_idx + 1].legacy_exchange_mut()?;
+                let next_exch =
+                    self.swap_state_mut()?.makers[maker_idx + 1].legacy_exchange_mut()?;
                 next_exch.sender_sigs_requested = true;
                 next_exch.sender_sigs_received = true;
                 sigs
@@ -492,9 +487,8 @@ impl UnifiedTaker {
             } else {
                 log::info!("Requesting receiver signatures from previous maker");
                 // For subsequent hops, request from previous maker
-                let prev_maker_address = self.swap_state()?.makers[maker_idx - 1]
-                    .address
-                    .to_string();
+                let prev_maker_address =
+                    self.swap_state()?.makers[maker_idx - 1].address.to_string();
                 let mut prev_stream = self.net_connect(&prev_maker_address)?;
                 self.net_handshake(&mut prev_stream)?;
 
@@ -601,22 +595,24 @@ impl UnifiedTaker {
 
             // Register this maker's funding outpoints as sentinels for subsequent waits.
             // Each sentinel maps a funding outpoint to its expected contract txid.
-            let maker_sentinels: Vec<(bitcoin::OutPoint, bitcoin::Txid)> = senders_contract_txs_info
-                .iter()
-                .map(|info| {
-                    (
-                        info.contract_tx.input[0].previous_output,
-                        info.contract_tx.compute_txid(),
-                    )
-                })
-                .collect();
+            let maker_sentinels: Vec<(bitcoin::OutPoint, bitcoin::Txid)> =
+                senders_contract_txs_info
+                    .iter()
+                    .map(|info| {
+                        (
+                            info.contract_tx.input[0].previous_output,
+                            info.contract_tx.compute_txid(),
+                        )
+                    })
+                    .collect();
             if let Some(ref detector) = self.breach_detector {
                 detector.add_sentinels(&self.watch_service, &maker_sentinels);
             }
 
             // This maker's funding is the previous hop for the next maker.
             if maker_idx + 1 < maker_count {
-                let next_exch = self.swap_state_mut()?.makers[maker_idx + 1].legacy_exchange_mut()?;
+                let next_exch =
+                    self.swap_state_mut()?.makers[maker_idx + 1].legacy_exchange_mut()?;
                 next_exch.prev_funding_broadcast = true;
                 next_exch.prev_funding_confirmed = true;
             }

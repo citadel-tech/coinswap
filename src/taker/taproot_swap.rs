@@ -184,9 +184,7 @@ impl UnifiedTaker {
         let mut received_contracts: Vec<TaprootContractData> = Vec::new();
 
         for i in 0..num_makers {
-            let maker_address = self.swap_state()?.makers[i]
-                .address
-                .to_string();
+            let maker_address = self.swap_state()?.makers[i].address.to_string();
             let mut stream = self.net_connect(&maker_address)?;
 
             self.net_handshake(&mut stream)?;
@@ -299,8 +297,7 @@ impl UnifiedTaker {
                     } else {
                         // Last maker: hashlock pubkey should be taker's own key
                         let (expected_xonly, _) = my_pubkey.inner.x_only_public_key();
-                        let mut hl_instructions =
-                            maker_contract.hashlock_script.instructions();
+                        let mut hl_instructions = maker_contract.hashlock_script.instructions();
                         // Skip first 3 instructions to get to the pubkey
                         for _ in 0..3 {
                             hl_instructions.next();

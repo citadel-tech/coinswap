@@ -1,9 +1,7 @@
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
-    maker::{
-        start_unified_server, MakerError, UnifiedMakerServer, UnifiedMakerServerConfig,
-    },
+    maker::{start_unified_server, MakerError, UnifiedMakerServer, UnifiedMakerServerConfig},
     utill::{parse_proxy_auth, setup_maker_logger},
     wallet::RPCConfig,
 };

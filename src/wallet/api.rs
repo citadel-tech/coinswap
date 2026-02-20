@@ -774,7 +774,9 @@ impl Wallet {
                         } else {
                             log::debug!(
                                 "Outgoing swapcoin {} not yet ready (current: {}, CLTV: {})",
-                                swap_id, current_height, timelock
+                                swap_id,
+                                current_height,
+                                timelock
                             );
                         }
                     } else {
@@ -783,7 +785,8 @@ impl Wallet {
                         // count check (line 938) is the real gate.
                         log::debug!(
                             "Outgoing swapcoin {} queued for timelock recovery (CSV: {} blocks)",
-                            swap_id, timelock
+                            swap_id,
+                            timelock
                         );
                         to_recover.push(swap_id.clone());
                     }

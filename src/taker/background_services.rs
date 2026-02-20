@@ -373,7 +373,8 @@ impl BreachDetector {
                                 // This is an adversarial broadcast.
                                 log::warn!(
                                     "Breach detector: contract tx {} broadcast on sentinel {}",
-                                    actual_txid, outpoint
+                                    actual_txid,
+                                    outpoint
                                 );
                                 breached_clone.store(true, Relaxed);
                                 return;
@@ -381,7 +382,8 @@ impl BreachDetector {
                             // Spent by a different tx — cooperative sweep after finalization.
                             log::info!(
                                 "Breach detector: cooperative spend on sentinel {} (tx {})",
-                                outpoint, actual_txid
+                                outpoint,
+                                actual_txid
                             );
                         }
                     }

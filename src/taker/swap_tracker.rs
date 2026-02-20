@@ -529,7 +529,8 @@ impl SwapTracker {
                 SwapPhase::MakersDiscovered | SwapPhase::Negotiated | SwapPhase::FundingCreated => {
                     log::info!(
                         "Swap {} was in phase {} — no funds at risk, cleaning up",
-                        swap_id, phase
+                        swap_id,
+                        phase
                     );
                     if let Err(e) = self.remove_record(swap_id) {
                         log::error!("Failed to remove tracker record for {}: {:?}", swap_id, e);

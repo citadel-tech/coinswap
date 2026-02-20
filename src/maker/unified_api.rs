@@ -132,8 +132,8 @@ impl Default for UnifiedMakerServerConfig {
             required_confirms: 1,
             supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
             zmq_addr: "tcp://127.0.0.1:28332".to_string(),
-            fidelity_amount: 10_000, // 0.05 BTC
-            fidelity_timelock: 15_000,  // ~6 months (MAX_FIDELITY_TIMELOCK)
+            fidelity_amount: 10_000,   // 0.05 BTC
+            fidelity_timelock: 15_000, // ~6 months (MAX_FIDELITY_TIMELOCK)
             network: Network::Regtest,
             wallet_name: "unified_maker".to_string(),
             rpc_config: RPCConfig::default(),
@@ -165,10 +165,7 @@ impl UnifiedMakerServerConfig {
         }
 
         let config_map = parse_toml(config_path)?;
-        log::info!(
-            "Loaded config file from: {}",
-            config_path.display()
-        );
+        log::info!("Loaded config file from: {}", config_path.display());
 
         let fidelity_timelock = parse_field(
             config_map.get("fidelity_timelock"),
@@ -201,10 +198,7 @@ impl UnifiedMakerServerConfig {
         }
 
         Ok(UnifiedMakerServerConfig {
-            network_port: parse_field(
-                config_map.get("network_port"),
-                default_config.network_port,
-            ),
+            network_port: parse_field(config_map.get("network_port"), default_config.network_port),
             rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
             base_fee: parse_field(config_map.get("base_fee"), default_config.base_fee),
             amount_relative_fee_pct: parse_field(
@@ -225,10 +219,7 @@ impl UnifiedMakerServerConfig {
                 default_config.fidelity_amount,
             ),
             fidelity_timelock,
-            control_port: parse_field(
-                config_map.get("control_port"),
-                default_config.control_port,
-            ),
+            control_port: parse_field(config_map.get("control_port"), default_config.control_port),
             socks_port: parse_field(config_map.get("socks_port"), default_config.socks_port),
             tor_auth_password: parse_field(
                 config_map.get("tor_auth_password"),

@@ -343,21 +343,21 @@ fn main() -> Result<(), TakerError> {
             let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
                 let wallet = taker.get_wallet().read().unwrap();
                 Some(
-                    coinswap::utill::interactive_select(
-                        wallet.list_all_utxo_spend_info(),
-                        amount,
-                    )?
-                    .iter()
-                    .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
-                    .collect::<Vec<_>>(),
+                    coinswap::utill::interactive_select(wallet.list_all_utxo_spend_info(), amount)?
+                        .iter()
+                        .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
+                        .collect::<Vec<_>>(),
                 )
             } else {
                 None
             };
 
             let mut wallet = taker.get_wallet().write().unwrap();
-            let coins_to_spend =
-                wallet.coin_select(amount, feerate.unwrap_or(MIN_FEE_RATE), manually_selected_outpoints)?;
+            let coins_to_spend = wallet.coin_select(
+                amount,
+                feerate.unwrap_or(MIN_FEE_RATE),
+                manually_selected_outpoints,
+            )?;
 
             let outputs = vec![(Address::from_str(address)?.assume_checked(), amount)];
             let destination = Destination::Multi {
@@ -398,8 +398,7 @@ fn main() -> Result<(), TakerError> {
 
                 // Wait for the triggered sync to actually start (up to 3s)
                 let wait_start = Instant::now();
-                while !taker.is_offerbook_syncing()
-                    && wait_start.elapsed() < Duration::from_secs(3)
+                while !taker.is_offerbook_syncing() && wait_start.elapsed() < Duration::from_secs(3)
                 {
                     std::thread::sleep(Duration::from_millis(100));
                 }
@@ -485,10 +484,7 @@ fn main() -> Result<(), TakerError> {
             println!("Sending:   {}", summary.send_amount);
             println!();
             for (i, maker) in summary.makers.iter().enumerate() {
-                println!(
-                    "  Hop {}: {} ({:?})",
-                    i, maker.address, maker.protocol
-                );
+                println!("  Hop {}: {} ({:?})", i, maker.address, maker.protocol);
                 println!(
                     "         Fees: base={} sats, amt={:.4}%, time={:.6}%",
                     maker.base_fee, maker.amount_relative_fee_pct, maker.time_relative_fee_pct
@@ -509,9 +505,9 @@ fn main() -> Result<(), TakerError> {
                 use std::io::{self, Write};
                 io::stdout().flush().unwrap();
                 let mut input = String::new();
-                io::stdin().read_line(&mut input).map_err(|e| {
-                    TakerError::General(format!("Failed to read input: {:?}", e))
-                })?;
+                io::stdin()
+                    .read_line(&mut input)
+                    .map_err(|e| TakerError::General(format!("Failed to read input: {:?}", e)))?;
                 let input = input.trim().to_lowercase();
                 if input != "y" && input != "yes" {
                     println!("Swap cancelled.");
