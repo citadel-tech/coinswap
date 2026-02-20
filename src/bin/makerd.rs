@@ -23,15 +23,17 @@ use std::{path::PathBuf, sync::Arc};
 ///
 /// This is early beta, and there are known and unknown bugs. Please report issues in the [Project Issue Board]<https://github.com/citadel-tech/coinswap/issues>
 #[derive(Parser, Debug)]
-#[command(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
-author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
+#[command(
+    version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown"),
+    author = option_env!("CARGO_PKG_AUTHORS").unwrap_or("")
+)]
 struct Cli {
     /// Optional DNS data directory. Default value: "~/.coinswap/maker"
     #[arg(long, short = 'd')]
     data_directory: Option<PathBuf>,
     /// Bitcoin Core RPC network address.
     #[arg(
-        id = "ADDRESS:PORT",
+        value_name = "ADDRESS:PORT",
         long,
         short = 'r',
         default_value = "127.0.0.1:38332"
@@ -39,7 +41,7 @@ struct Cli {
     pub rpc: String,
     /// Bitcoin Core ZMQ address:port value
     #[arg(
-        id = "ZMQ",
+        value_name = "ZMQ",
         long,
         short = 'z',
         default_value = "tcp://127.0.0.1:28332"
@@ -47,7 +49,7 @@ struct Cli {
     pub zmq: String,
     /// Bitcoin Core RPC authentication string (username, password).
     #[arg(
-        id = "USER:PASSWORD",
+        value_name = "USER:PASSWORD",
         short = 'a',
         long,
         value_parser = parse_proxy_auth,
@@ -57,13 +59,13 @@ struct Cli {
     #[arg(long, short = 't')]
     pub tor_auth: Option<String>,
     /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with the given name. Default: maker-wallet
-    #[arg(id = "WALLET", long, short = 'w')]
+    #[arg(value_name = "WALLET", long, short = 'w')]
     pub(crate) wallet_name: Option<String>,
     /// Use experimental Taproot-based coinswap protocol
     #[arg(long)]
     pub taproot: bool,
     /// Optional Password for the encryption of the wallet.
-    #[arg(id = "PASSWORD", long, short = 'p')]
+    #[arg(value_name = "PASSWORD", long, short = 'p')]
     pub password: Option<String>,
 }
 
