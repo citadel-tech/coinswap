@@ -6,6 +6,7 @@
 //! It uses asynchronous channels for concurrent processing of maker offers.
 
 use std::{
+    collections::HashSet,
     convert::TryFrom,
     fmt,
     io::BufWriter,
@@ -16,7 +17,7 @@ use std::{
         mpsc, Arc, Mutex, RwLock,
     },
     thread::{sleep, Builder, JoinHandle},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use bitcoin::hashes::Hash;
@@ -50,6 +51,25 @@ const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(15 * 60);
 #[cfg(feature = "integration-test")]
 const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(10);
 
+#[cfg(not(feature = "integration-test"))]
+const OFFER_MAX_AGE_BEFORE_REFRESH: Duration = Duration::from_secs(30 * 60);
+
+#[cfg(feature = "integration-test")]
+const OFFER_MAX_AGE_BEFORE_REFRESH: Duration = Duration::from_secs(10);
+
+#[cfg(not(feature = "integration-test"))]
+const UNRESPONSIVE_MAKER_BACKOFF_STEP: Duration = Duration::from_secs(30 * 60);
+
+#[cfg(feature = "integration-test")]
+const UNRESPONSIVE_MAKER_BACKOFF_STEP: Duration = Duration::from_secs(10);
+
+fn unix_timestamp_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs()
+}
+
 /// Represents an offer along with the corresponding maker address.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OfferAndAddress {
@@ -78,18 +98,30 @@ pub struct MakerOfferCandidate {
 
     /// Supporting protocol (Legacy or Taproot), if known
     pub protocol: Option<MakerProtocol>,
+
+    /// Timestamp(secs) of last successful offer download, used to avoid re-downloading offers too frequently.
+    pub last_offer_update_ts: Option<u64>,
+
+    /// Timestamp (secs) after which we will attempt the next offer download, used to back off to makers that are repeatedly unresponsive.
+    pub next_offer_check_ts: Option<u64>,
 }
 
 impl MakerOfferCandidate {
-    fn mark_success(&mut self, offer: Offer, protocol: MakerProtocol) {
+    fn mark_success(&mut self, offer: Offer, protocol: MakerProtocol, now_ts: u64) {
         self.offer = Some(offer);
         self.protocol = Some(protocol);
+        self.last_offer_update_ts = Some(now_ts);
+        self.next_offer_check_ts = None;
         if self.state != MakerState::Bad {
             self.state = MakerState::Good;
         }
     }
 
-    fn mark_failure(&mut self) {
+    fn mark_failure(&mut self, now_ts: u64) {
+        let step_secs = UNRESPONSIVE_MAKER_BACKOFF_STEP.as_secs();
+        let base = self.next_offer_check_ts.unwrap_or(now_ts).max(now_ts);
+        self.next_offer_check_ts = Some(base.saturating_add(step_secs));
+
         self.state = match self.state {
             MakerState::Good => MakerState::Unresponsive { retries: 1 },
             MakerState::Unresponsive { retries } if retries < 10 => MakerState::Unresponsive {
@@ -361,7 +393,12 @@ impl OfferSyncService {
             }
         }
 
-        let to_poll = self.offerbook.inner.read().unwrap().makers_to_poll();
+        let to_poll = self
+            .offerbook
+            .inner
+            .read()
+            .unwrap()
+            .makers_to_poll(unix_timestamp_secs());
 
         if to_poll.is_empty() {
             return Ok(());
@@ -369,20 +406,16 @@ impl OfferSyncService {
 
         let offers = fetch_offer_from_makers(to_poll.clone(), self.socks_port)?;
 
-        {
-            let mut book = self.offerbook.inner.write().unwrap();
-            for addr in &to_poll {
-                book.mark_failure(addr);
-            }
-        }
-
+        let mut responded = HashSet::with_capacity(offers.len());
         for oa in offers {
+            responded.insert(oa.address.clone());
             match self.verify_fidelity_proof(&oa.offer.fidelity, &oa.address.to_string()) {
                 Ok(_) => {
                     self.offerbook.inner.write().unwrap().mark_success(
                         &oa.address,
                         oa.offer,
                         oa.protocol,
+                        unix_timestamp_secs(),
                     );
                 }
                 Err(_) => {
@@ -390,7 +423,16 @@ impl OfferSyncService {
                         .inner
                         .write()
                         .unwrap()
-                        .mark_failure(&oa.address);
+                        .mark_failure(&oa.address, unix_timestamp_secs());
+                }
+            }
+        }
+
+        {
+            let mut book = self.offerbook.inner.write().unwrap();
+            for addr in &to_poll {
+                if !responded.contains(addr) {
+                    book.mark_failure(addr, unix_timestamp_secs());
                 }
             }
         }
@@ -479,6 +521,8 @@ impl OfferBook {
             offer: None,
             state: MakerState::Unresponsive { retries: 0 },
             protocol: None,
+            last_offer_update_ts: None,
+            next_offer_check_ts: None,
         });
     }
 
@@ -487,22 +531,33 @@ impl OfferBook {
         address: &MakerAddress,
         offer: Offer,
         protocol: MakerProtocol,
+        now_ts: u64,
     ) {
         if let Some(m) = self.makers.iter_mut().find(|m| &m.address == address) {
-            m.mark_success(offer, protocol);
+            m.mark_success(offer, protocol, now_ts);
         }
     }
 
-    fn mark_failure(&mut self, address: &MakerAddress) {
+    fn mark_failure(&mut self, address: &MakerAddress, now_ts: u64) {
         if let Some(m) = self.makers.iter_mut().find(|m| &m.address == address) {
-            m.mark_failure();
+            m.mark_failure(now_ts);
         }
     }
 
-    fn makers_to_poll(&self) -> Vec<MakerAddress> {
+    fn makers_to_poll(&self, now_ts: u64) -> Vec<MakerAddress> {
         self.makers
             .iter()
             .filter(|m| !matches!(m.state, MakerState::Bad))
+            .filter(|m| match m.next_offer_check_ts {
+                Some(next_ts) => now_ts >= next_ts,
+                None => true,
+            })
+            .filter(|m| match m.last_offer_update_ts {
+                Some(last_ts) => {
+                    now_ts.saturating_sub(last_ts) >= OFFER_MAX_AGE_BEFORE_REFRESH.as_secs()
+                }
+                None => true,
+            })
             .map(|m| m.address.clone())
             .collect()
     }
@@ -824,5 +879,54 @@ pub fn format_state(state: &MakerState) -> String {
             format!("Unresponsive (retries: {retries})")
         }
         MakerState::Bad => "Bad".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn addr(port: &str) -> MakerAddress {
+        MakerAddress(OnionAddress {
+            port: port.to_string(),
+            onion_addr: "testonionaddress.onion".to_string(),
+        })
+    }
+
+    #[test]
+    fn makers_to_poll_skips_recently_updated_offers() {
+        let now_ts = 170000;
+        let mut book = OfferBook { makers: vec![] };
+        book.makers.push(MakerOfferCandidate {
+            address: addr("6102"),
+            offer: None,
+            state: MakerState::Good,
+            protocol: Some(MakerProtocol::Legacy),
+            last_offer_update_ts: Some(now_ts - (OFFER_MAX_AGE_BEFORE_REFRESH.as_secs() - 1)),
+            next_offer_check_ts: None,
+        });
+
+        let to_poll = book.makers_to_poll(now_ts);
+        assert!(to_poll.is_empty());
+    }
+
+    #[test]
+    fn makers_to_poll_respects_backoff_timer() {
+        let now_ts = 170000;
+        let mut book = OfferBook { makers: vec![] };
+        book.makers.push(MakerOfferCandidate {
+            address: addr("6103"),
+            offer: None,
+            state: MakerState::Unresponsive { retries: 3 },
+            protocol: None,
+            last_offer_update_ts: None,
+            next_offer_check_ts: Some(now_ts + 10),
+        });
+
+        let to_poll = book.makers_to_poll(now_ts);
+        assert!(to_poll.is_empty());
+
+        let to_poll_after = book.makers_to_poll(now_ts + 11);
+        assert_eq!(to_poll_after, vec![addr("6103")]);
     }
 }
