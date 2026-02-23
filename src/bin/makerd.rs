@@ -59,13 +59,13 @@ struct Cli {
     #[arg(long, short = 't')]
     pub tor_auth: Option<String>,
     /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with the given name. Default: maker-wallet
-    #[arg(value_name = "WALLET", long="WALLET", short = 'w')]
+    #[arg(value_name = "WALLET", long = "WALLET", short = 'w')]
     pub(crate) wallet_name: Option<String>,
     /// Use experimental Taproot-based coinswap protocol
     #[arg(long)]
     pub taproot: bool,
     /// Optional Password for the encryption of the wallet.
-    #[arg(value_name = "PASSWORD", long="PASSWORD", short = 'p')]
+    #[arg(value_name = "PASSWORD", long = "PASSWORD", short = 'p')]
     pub password: Option<String>,
 }
 

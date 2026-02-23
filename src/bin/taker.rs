@@ -57,11 +57,11 @@ struct Cli {
     pub tor_auth: Option<String>,
 
     /// Sets the taker wallet's name. If the wallet file already exists, it will load that wallet. Default: taker-wallet
-    #[arg(value_name = "WALLET", long="WALLET", short = 'w')]
+    #[arg(value_name = "WALLET", long = "WALLET", short = 'w')]
     pub wallet_name: Option<String>,
 
     /// Optional Password for the encryption of the wallet.
-    #[arg(value_name = "PASSWORD", long="PASSWORD", short = 'p')]
+    #[arg(value_name = "PASSWORD", long = "PASSWORD", short = 'p')]
     pub password: Option<String>,
 
     /// Sets the verbosity level of debug.log file
