@@ -34,7 +34,7 @@ struct Cli {
     /// Bitcoin Core RPC network address.
     #[arg(
         value_name = "ADDRESS:PORT",
-        long,
+        long = "ADDRESS:PORT",
         short = 'r',
         default_value = "127.0.0.1:38332"
     )]
@@ -42,7 +42,7 @@ struct Cli {
     /// Bitcoin Core ZMQ address:port value
     #[arg(
         value_name = "ZMQ",
-        long,
+        long = "ZMQ",
         short = 'z',
         default_value = "tcp://127.0.0.1:28332"
     )]
@@ -51,7 +51,7 @@ struct Cli {
     #[arg(
         value_name = "USER:PASSWORD",
         short = 'a',
-        long,
+        long = "USER:PASSWORD",
         value_parser = parse_proxy_auth,
         default_value = "user:password",
     )]
@@ -59,13 +59,13 @@ struct Cli {
     #[arg(long, short = 't')]
     pub tor_auth: Option<String>,
     /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with the given name. Default: maker-wallet
-    #[arg(value_name = "WALLET", long, short = 'w')]
+    #[arg(value_name = "WALLET", long="WALLET", short = 'w')]
     pub(crate) wallet_name: Option<String>,
     /// Use experimental Taproot-based coinswap protocol
     #[arg(long)]
     pub taproot: bool,
     /// Optional Password for the encryption of the wallet.
-    #[arg(value_name = "PASSWORD", long, short = 'p')]
+    #[arg(value_name = "PASSWORD", long="PASSWORD", short = 'p')]
     pub password: Option<String>,
 }
 

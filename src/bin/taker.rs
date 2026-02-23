@@ -35,7 +35,7 @@ struct Cli {
     /// Bitcoin Core RPC address:port value
     #[arg(
         value_name = "ADDRESS:PORT",
-        long,
+        long = "ADDRESS:PORT",
         short = 'r',
         default_value = "127.0.0.1:38332"
     )]
@@ -43,25 +43,25 @@ struct Cli {
 
     /// Bitcoin Core ZMQ address:port value
     #[arg(
-        value_name = "ZMQ_ADDRESS:PORT",
-        long,
+        value_name = "ZMQ",
+        long = "ZMQ",
         short = 'z',
         default_value = "tcp://127.0.0.1:28332"
     )]
     pub zmq: String,
 
     /// Bitcoin Core RPC authentication string. Ex: username:password
-    #[arg(value_name="USER:PASSWORD", short='a', long, value_parser = parse_proxy_auth, default_value = "user:password")]
+    #[arg(value_name="USER:PASSWORD", short='a', long = "USER:PASSWORD", value_parser = parse_proxy_auth, default_value = "user:password")]
     pub auth: (String, String),
     #[arg(long, short = 't')]
     pub tor_auth: Option<String>,
 
     /// Sets the taker wallet's name. If the wallet file already exists, it will load that wallet. Default: taker-wallet
-    #[arg(value_name = "WALLET", long, short = 'w')]
+    #[arg(value_name = "WALLET", long="WALLET", short = 'w')]
     pub wallet_name: Option<String>,
 
     /// Optional Password for the encryption of the wallet.
-    #[arg(value_name = "PASSWORD", long, short = 'p')]
+    #[arg(value_name = "PASSWORD", long="PASSWORD", short = 'p')]
     pub password: Option<String>,
 
     /// Sets the verbosity level of debug.log file
