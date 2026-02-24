@@ -144,7 +144,7 @@ fn test_taproot_coinswap() {
     // are tracked as SweptCoinV2 and appear in swap balance
     assert_in_range!(
         taker_total_after.to_sat(),
-        [14943199, 14943203], // Normal Taproot swap case (with slight fee variance)
+        [14943199], // Normal Taproot swap case
         "Taproot Taker spendable balance check."
     );
 
@@ -152,7 +152,7 @@ fn test_taproot_coinswap() {
     let balance_diff = taproot_taker_original_balance - taker_total_after;
     assert_in_range!(
         balance_diff.to_sat(),
-        [56797, 56801], // sats paid as fees in a normal swap case (with slight variance)
+        [56801], // sats paid as fees in a normal swap case
         "Taproot Taker should have paid reasonable fees."
     );
     info!(
@@ -179,7 +179,7 @@ fn test_taproot_coinswap() {
         // The spendable contains maker's regular balance + maker's swap balance,therefore used spendable balance for comparision.
         assert_in_range!(
             balances.spendable.to_sat(),
-            [15020189, 15020203, 15031694, 15031708], // Normal swap spendable balance for makers (with slight variance)
+            [15020203, 15031708], // Normal swap spendable balance for makers
             "Taproot Maker after balance check."
         );
 
@@ -187,7 +187,7 @@ fn test_taproot_coinswap() {
         // maker gained fee arranged in the order of corresponding spendable balance in the above assertion.
         assert_in_range!(
             balance_diff,
-            [20685, 20689, 20703, 32190, 32194, 32208], // (with slight variance)
+            [20685, 32192],
             "Taproot Maker should have gained some fee"
         );
 

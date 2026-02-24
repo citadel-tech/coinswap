@@ -170,7 +170,10 @@ fn test_taproot_maker_abort3() {
         // Use spendable (regular + swap) for comparison
         assert_in_range!(
             balances.spendable.to_sat(),
-            [14999500, 14999518], // here no fund loss because swap never happened (with slight fee variance)
+            [
+                14999518, // 1st Maker here no fund loss because swap never happened.
+                14999516  // 2nd Maker
+            ],
             "Taproot Maker after balance check."
         );
 

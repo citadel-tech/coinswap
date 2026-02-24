@@ -158,10 +158,6 @@ fn test_standard_coinswap() {
             .checked_sub(balances.spendable)
             .unwrap();
 
-        log::info!(
-            "🔍 DEBUG Taker balance diff: {} sats",
-            balance_diff.to_sat()
-        );
         assert_in_range!(
             balance_diff.to_sat(),
             [

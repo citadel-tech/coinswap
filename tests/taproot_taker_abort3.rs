@@ -165,7 +165,7 @@ fn test_taproot_taker_abort3() {
     let taker_total_after = taker_balances.spendable;
     assert_in_range!(
         taker_total_after.to_sat(),
-        [14999492, 14999496], // swap never happened, funds recovered via timelock (with slight fee variance)
+        [14999492], // swap never happened, funds recovered via timelock (with slight fee variance)
         "Taproot Taker Balance should decrease a little."
     );
 
@@ -173,7 +173,7 @@ fn test_taproot_taker_abort3() {
     let balance_diff = taproot_taker_original_balance - taker_total_after;
     assert_in_range!(
         balance_diff.to_sat(),
-        [504, 508], // here a little fund loss because of outgoing contract creation, timelock recovery transaction.
+        [508], // here a little fund loss because of outgoing contract creation, timelock recovery transaction.
         "Taproot Taker should have paid a little fees."
     );
     info!(
@@ -201,10 +201,8 @@ fn test_taproot_taker_abort3() {
         assert_in_range!(
             balances.spendable.to_sat(),
             [
-                14999500, // The corresponding maker didn't had any outgoing contract,so no need of recovery, hence no fund loss.
-                14999518, // No recovery needed (with slight fee variance)
-                14999010, // Recovery needed (with slight fee variance)
-                14998996, // Here a little fund loss because of outgoing contract creation, and therefore a timelock recovery transaction for recovering it.
+                14999518, // The corresponding maker didn't had any outgoing contract,so no need of recovery, hence no fund loss.
+                14999010, // Here a little fund loss because of outgoing contract creation, and therefore a timelock recovery transaction for recovering it.
             ],
             "Taproot Maker after balance check."
         );
@@ -215,8 +213,7 @@ fn test_taproot_taker_abort3() {
             balance_diff,
             [
                 0,   // Here the maker was not having any outgoing contract (depends on the order of maker)
-                504, // Corresponding maker recovered it's outgoing contract via timelock spending path
-                508, // Slight fee variance
+                508, // Corresponding maker recovered it's outgoing contract via timelock spending path
             ],
             "Taproot Maker should have loose some funds here due to timelock recovery transaction."
         );
