@@ -63,13 +63,6 @@ const UNRESPONSIVE_MAKER_BACKOFF_STEP: Duration = Duration::from_secs(30 * 60);
 #[cfg(feature = "integration-test")]
 const UNRESPONSIVE_MAKER_BACKOFF_STEP: Duration = Duration::from_secs(10);
 
-fn unix_timestamp_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .as_secs()
-}
-
 /// Represents an offer along with the corresponding maker address.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OfferAndAddress {
@@ -384,7 +377,10 @@ impl OfferSyncService {
     }
 
     fn run_once(&self) -> Result<(), TakerError> {
-        let now = unix_timestamp_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_secs();
         if let Some(WatcherEvent::MakerAddresses { maker_addresses }) =
             self.watch_service.request_maker_address()
         {
@@ -598,7 +594,12 @@ impl OfferBook {
 
     /// Load existing file, updates it, writes it back (errors if path doesn't exist).
     fn write_to_disk(&self, path: &Path) -> Result<(), TakerError> {
-        let offerdata_file = std::fs::OpenOptions::new().write(true).open(path)?;
+        // Truncate to avoid leaving stale bytes if the JSON becomes shorter.
+        let offerdata_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)?;
         let writer = BufWriter::new(offerdata_file);
         Ok(serde_json::to_writer_pretty(writer, &self)?)
     }
