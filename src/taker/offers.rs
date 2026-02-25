@@ -276,7 +276,7 @@ impl OfferBookHandle {
 
     /// Checks if an address is bad or not
     pub fn is_bad_maker(&self, offer_and_address: &OfferAndAddress) -> bool {
-        let offerbook = self.inner.write().unwrap();
+        let offerbook = self.inner.read().unwrap();
         let value = offerbook
             .makers
             .iter()
@@ -384,6 +384,7 @@ impl OfferSyncService {
     }
 
     fn run_once(&self) -> Result<(), TakerError> {
+        let now = unix_timestamp_secs();
         if let Some(WatcherEvent::MakerAddresses { maker_addresses }) =
             self.watch_service.request_maker_address()
         {
@@ -393,12 +394,7 @@ impl OfferSyncService {
             }
         }
 
-        let to_poll = self
-            .offerbook
-            .inner
-            .read()
-            .unwrap()
-            .makers_to_poll(unix_timestamp_secs());
+        let to_poll = self.offerbook.inner.read().unwrap().makers_to_poll(now);
 
         if to_poll.is_empty() {
             return Ok(());
@@ -407,37 +403,32 @@ impl OfferSyncService {
         let offers = fetch_offer_from_makers(to_poll.clone(), self.socks_port)?;
 
         let mut responded = HashSet::with_capacity(offers.len());
-        for oa in offers {
-            responded.insert(oa.address.clone());
-            match self.verify_fidelity_proof(&oa.offer.fidelity, &oa.address.to_string()) {
-                Ok(_) => {
-                    self.offerbook.inner.write().unwrap().mark_success(
-                        &oa.address,
-                        oa.offer,
-                        oa.protocol,
-                        unix_timestamp_secs(),
-                    );
-                }
-                Err(_) => {
-                    self.offerbook
-                        .inner
-                        .write()
-                        .unwrap()
-                        .mark_failure(&oa.address, unix_timestamp_secs());
-                }
-            }
-        }
 
         {
             let mut book = self.offerbook.inner.write().unwrap();
-            for addr in &to_poll {
-                if !responded.contains(addr) {
-                    book.mark_failure(addr, unix_timestamp_secs());
+
+            for oa in offers {
+                responded.insert(oa.address.clone());
+                match self.verify_fidelity_proof(&oa.offer.fidelity, &oa.address.to_string()) {
+                    Ok(_) => {
+                        book.mark_success(&oa.address, oa.offer, oa.protocol, now);
+                    }
+                    Err(_) => {
+                        book.mark_failure(&oa.address, now);
+                    }
                 }
             }
-        }
 
-        self.offerbook.persist()?;
+            for addr in &to_poll {
+                if !responded.contains(addr) {
+                    book.mark_failure(addr, now);
+                }
+            }
+
+            // Persist without re-locking (avoid deadlock via OfferBookHandle::persist()).
+            let path = self.offerbook.path.clone();
+            book.write_to_disk(&path)?;
+        }
         Ok(())
     }
 
@@ -570,10 +561,10 @@ impl OfferBook {
 
     /// Gets all active (good) offers for a given protocol.
     fn active_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
-        let mut makers = self.makers.clone();
+        let mut makers: Vec<&MakerOfferCandidate> = self.makers.iter().collect();
         makers.sort_by(|a, b| a.address.0.port.cmp(&b.address.0.port));
         makers
-            .iter()
+            .into_iter()
             .filter(|m| m.state == MakerState::Good)
             .filter(|m| m.protocol.as_ref() == Some(protocol))
             .filter_map(|m| m.as_offer_and_address())
@@ -595,10 +586,10 @@ impl OfferBook {
 
     /// Gets the list of bad makers.
     fn get_bad_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
-        let mut makers = self.makers.clone();
+        let mut makers: Vec<&MakerOfferCandidate> = self.makers.iter().collect();
         makers.sort_by(|a, b| a.address.0.port.len().cmp(&b.address.0.port.len()));
         makers
-            .iter()
+            .into_iter()
             .filter(|m| m.state == MakerState::Bad)
             .filter(|m| m.protocol.as_ref() == Some(protocol))
             .filter_map(|m| m.as_offer_and_address())
@@ -817,7 +808,8 @@ impl MakerAddress {
     fn fetch_taproot_offer(self, socks_port: u16) -> Result<Offer, TakerError> {
         let maker_addr = self.to_string();
         log::debug!("Downloading offer from taproot maker: {}", maker_addr);
-        let mut socket = connect_to_maker(&maker_addr, socks_port, 30)?;
+        let mut socket =
+            connect_to_maker(&maker_addr, socks_port, FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)?;
 
         let get_offer_msg = GetOffer {
             protocol_version_min: 1,
