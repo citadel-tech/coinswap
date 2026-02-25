@@ -776,7 +776,6 @@ impl Maker {
             );
         }
         log::info!("Sync at:----sweep_after_successful_coinswap----");
-        self.wallet.write()?.sync_and_save()?;
         Ok(())
     }
 }
