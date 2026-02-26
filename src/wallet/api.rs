@@ -2238,8 +2238,6 @@ impl Wallet {
             completed_swapcoins.len()
         );
 
-        self.sync_and_save()?;
-
         for (multisig_redeemscript, _) in completed_swapcoins {
             let utxo_info = self
                 .list_incoming_swap_coin_utxo_spend_info()
@@ -2280,7 +2278,8 @@ impl Wallet {
                 log::warn!("Could not find UTXO for completed incoming swap coin");
             }
         }
-        self.save_to_disk()?;
+        log::info!("Sync at:----sweep_incoming_swapcoins----");
+        self.sync_and_save()?;
         Ok(swept_txids)
     }
 
@@ -2325,7 +2324,7 @@ impl Wallet {
             let contract_tx = incoming.get_fully_signed_contract_tx()?;
             let txid = contract_tx.compute_txid();
             if self.rpc.get_raw_transaction_info(&txid, None).is_ok() {
-                log::info!("Incoming Contract already broadacsted. Txid : {txid}");
+                log::info!("Incoming Contract already broadcasted. Txid : {txid}");
             } else {
                 self.send_tx(&contract_tx)?;
                 log::info!("Broadcasting Incoming Contract. Removing from wallet. Txid : {txid}");
@@ -2338,8 +2337,7 @@ impl Wallet {
                 self.create_hashlock_spend(&incoming, next_internal, MIN_FEE_RATE)?;
             incoming_infos.push(((reedem_script, contract_tx), (0, hashlock_spend)));
         }
-        self.sync_and_save()?;
-        log::info!("Wallet file synced and saved.");
+        log::info!("Sync at:----broadcast_incoming_contracts----");
 
         Ok(incoming_infos)
     }
@@ -2369,8 +2367,7 @@ impl Wallet {
                 self.create_timelock_spend(&outgoing, next_internal, MIN_FEE_RATE)?;
             outgoing_infos.push(((reedem_script, contract_tx), (timelock, timelock_spend)));
         }
-        self.sync_and_save()?;
-        log::info!("Wallet file synced and saved.");
+        log::info!("Sync at:----broadcast_outgoing_contracts----");
 
         Ok(outgoing_infos)
     }
