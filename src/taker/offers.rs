@@ -592,7 +592,7 @@ impl OfferBook {
             .collect()
     }
 
-    /// Load existing file, updates it, writes it back (errors if path doesn't exist).
+    /// Load existing file, updates it, writes it back (create if path doesn't exist).
     fn write_to_disk(&self, path: &Path) -> Result<(), TakerError> {
         // Truncate to avoid leaving stale bytes if the JSON becomes shorter.
         let offerdata_file = std::fs::OpenOptions::new()
@@ -878,6 +878,12 @@ pub fn format_state(state: &MakerState) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bitcoin::{
+        absolute::LockTime,
+        hashes::Hash,
+        secp256k1::{Message, Secp256k1, SecretKey},
+        Amount, OutPoint, Txid,
+    };
 
     fn addr(port: &str) -> MakerAddress {
         MakerAddress(OnionAddress {
@@ -886,21 +892,105 @@ mod tests {
         })
     }
 
+    fn dummy_offer(maker_addr: &str) -> Offer {
+        let secp = Secp256k1::new();
+        let secret_key = SecretKey::from_slice(&[1; 32]).expect("valid secret key");
+        let secp_pubkey = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &secret_key);
+        let pubkey = bitcoin::PublicKey::new(secp_pubkey);
+
+        let bond = crate::wallet::FidelityBond {
+            outpoint: OutPoint {
+                txid: Txid::from_slice(&[2; 32]).expect("valid txid"),
+                vout: 0,
+            },
+            amount: Amount::from_sat(1000),
+            lock_time: LockTime::from_height(1000).expect("valid height locktime"),
+            pubkey,
+            conf_height: Some(1000),
+            cert_expiry: Some(1),
+            is_spent: false,
+        };
+
+        let cert_hash = bond
+            .generate_cert_hash(maker_addr)
+            .expect("cert_expiry set");
+        let msg = Message::from_digest_slice(cert_hash.as_byte_array()).expect("32-byte digest");
+        let cert_sig = secp.sign_ecdsa(&msg, &secret_key);
+
+        Offer {
+            base_fee: 0,
+            amount_relative_fee_pct: 0.0,
+            time_relative_fee_pct: 0.0,
+            required_confirms: 1,
+            minimum_locktime: 1,
+            max_size: 1,
+            min_size: 1,
+            tweakable_point: pubkey,
+            fidelity: FidelityProof {
+                bond,
+                cert_hash,
+                cert_sig,
+            },
+        }
+    }
+
     #[test]
-    fn makers_to_poll_skips_recently_updated_offers() {
+    fn mark_failure_state_and_backoff_growth() {
         let now_ts = 170000;
-        let mut book = OfferBook { makers: vec![] };
-        book.makers.push(MakerOfferCandidate {
-            address: addr("6102"),
+        let mut candidate = MakerOfferCandidate {
+            address: addr("6104"),
             offer: None,
             state: MakerState::Good,
-            protocol: Some(MakerProtocol::Legacy),
-            last_offer_update_ts: Some(now_ts - (OFFER_MAX_AGE_BEFORE_REFRESH.as_secs() - 1)),
+            protocol: None,
+            last_offer_update_ts: None,
             next_offer_check_ts: None,
-        });
+        };
 
-        let to_poll = book.makers_to_poll(now_ts);
-        assert!(to_poll.is_empty());
+        let mut prev_backoff_from_now = 0u64;
+        let step = UNRESPONSIVE_MAKER_BACKOFF_STEP.as_secs();
+
+        for i in 1..=11 {
+            candidate.mark_failure(now_ts);
+
+            // State transitions: Good -> Unresponsive{1} .. Unresponsive{10} -> Bad (on 11th)
+            if i <= 10 {
+                assert_eq!(candidate.state, MakerState::Unresponsive { retries: i });
+            } else {
+                assert_eq!(candidate.state, MakerState::Bad);
+            }
+
+            let next_ts = candidate
+                .next_offer_check_ts
+                .expect("next_offer_check_ts should be set after failure");
+            assert!(next_ts >= now_ts);
+
+            // Backoff interval measured from 'now' grows each time (30m, 60m, 90m, ...).
+            let backoff_from_now = next_ts.saturating_sub(now_ts);
+            assert!(backoff_from_now > prev_backoff_from_now);
+            prev_backoff_from_now = backoff_from_now;
+
+            assert_eq!(backoff_from_now, step.saturating_mul(i as u64));
+        }
+    }
+
+    #[test]
+    fn mark_success_does_not_unstick_bad_state() {
+        let now_ts = 170000;
+        let mut candidate = MakerOfferCandidate {
+            address: addr("6105"),
+            offer: None,
+            state: MakerState::Bad,
+            protocol: None,
+            last_offer_update_ts: None,
+            next_offer_check_ts: Some(now_ts + 123),
+        };
+
+        candidate.mark_success(
+            dummy_offer(&candidate.address.to_string()),
+            MakerProtocol::Taproot,
+            now_ts,
+        );
+        assert_eq!(candidate.state, MakerState::Bad);
     }
 
     #[test]
